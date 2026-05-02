@@ -556,6 +556,8 @@ internal static class CompilerCli
                 && LlvmTextRequiresWinsockLibrary(llvmModule.Text);
             var requiresWindowsSynchronizationLibrary = TargetRequiresWindowsSynchronizationLibrary(compilerOptions.TargetInfo)
                 && LlvmTextRequiresWindowsSynchronizationLibrary(llvmModule.Text);
+            var requiresNtDllLibrary = TargetRequiresNtDllLibrary(compilerOptions.TargetInfo)
+                && LlvmTextRequiresNtDllLibrary(llvmModule.Text);
 
             if (result.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules)
                 && loadedModules is not null)
@@ -601,6 +603,7 @@ internal static class CompilerCli
                 requiresMathLibrary |= sourceDependencyResult.RequiresMathLibrary;
                 requiresWinsockLibrary |= sourceDependencyResult.RequiresWinsockLibrary;
                 requiresWindowsSynchronizationLibrary |= sourceDependencyResult.RequiresWindowsSynchronizationLibrary;
+                requiresNtDllLibrary |= sourceDependencyResult.RequiresNtDllLibrary;
             }
 
             var nativeDependencyResult = CompileNativeDependenciesForExecutable(
@@ -635,6 +638,7 @@ internal static class CompilerCli
                 requiresMathLibrary,
                 requiresWinsockLibrary,
                 requiresWindowsSynchronizationLibrary,
+                requiresNtDllLibrary,
                 compilerOptions.TargetInfo);
             var toolchainResult = NativeToolchain.LinkExecutable(
                 linkInputs,
@@ -728,6 +732,14 @@ internal static class CompilerCli
             }
 
             objectPaths.Add(rootObjectResult.OutputPath);
+            var requiresMathLibrary = TargetRequiresExplicitMathLibrary(compilerOptions.TargetInfo)
+                && LlvmTextRequiresMathLibrary(llvmModule.Text);
+            var requiresWinsockLibrary = TargetRequiresWinsockLibrary(compilerOptions.TargetInfo)
+                && LlvmTextRequiresWinsockLibrary(llvmModule.Text);
+            var requiresWindowsSynchronizationLibrary = TargetRequiresWindowsSynchronizationLibrary(compilerOptions.TargetInfo)
+                && LlvmTextRequiresWindowsSynchronizationLibrary(llvmModule.Text);
+            var requiresNtDllLibrary = TargetRequiresNtDllLibrary(compilerOptions.TargetInfo)
+                && LlvmTextRequiresNtDllLibrary(llvmModule.Text);
 
             if (result.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules)
                 && loadedModules is not null)
@@ -760,6 +772,11 @@ internal static class CompilerCli
                     {
                         objectPaths.Add(dependencyResult.ObjectPath);
                     }
+
+                    requiresMathLibrary |= dependencyResult.RequiresMathLibrary;
+                    requiresWinsockLibrary |= dependencyResult.RequiresWinsockLibrary;
+                    requiresWindowsSynchronizationLibrary |= dependencyResult.RequiresWindowsSynchronizationLibrary;
+                    requiresNtDllLibrary |= dependencyResult.RequiresNtDllLibrary;
                 }
             }
 
@@ -785,7 +802,13 @@ internal static class CompilerCli
             var manifest = PackageImageBuilder.Create(
                 result,
                 toolchainResult.OutputPath,
-                toolchainOptions.NativeDependencies.ToManifest(Path.GetDirectoryName(manifestPath) ?? Environment.CurrentDirectory));
+                BuildPackageNativeDependencyManifest(
+                    toolchainOptions.NativeDependencies,
+                    Path.GetDirectoryName(manifestPath) ?? Environment.CurrentDirectory,
+                    requiresMathLibrary,
+                    requiresWinsockLibrary,
+                    requiresWindowsSynchronizationLibrary,
+                    requiresNtDllLibrary));
             await File.WriteAllTextAsync(manifestPath, manifest.ToJson());
 
             await toolchainMetrics.WriteAsync(toolchainOptions.ToolchainMetricsPath);
@@ -1045,11 +1068,13 @@ internal static class CompilerCli
         bool requiresMathLibrary,
         bool requiresWinsockLibrary,
         bool requiresWindowsSynchronizationLibrary,
+        bool requiresNtDllLibrary,
         LlvmTargetInfo? targetInfo)
     {
         if ((!requiresMathLibrary || explicitArguments.Contains("-lm", StringComparer.Ordinal))
             && (!requiresWinsockLibrary || ContainsWinsockLinkArgument(explicitArguments))
-            && (!requiresWindowsSynchronizationLibrary || ContainsWindowsSynchronizationLinkArgument(explicitArguments)))
+            && (!requiresWindowsSynchronizationLibrary || ContainsWindowsSynchronizationLinkArgument(explicitArguments))
+            && (!requiresNtDllLibrary || ContainsNtDllLinkArgument(explicitArguments)))
         {
             return explicitArguments;
         }
@@ -1070,7 +1095,99 @@ internal static class CompilerCli
             combined.Add(WindowsSynchronizationLinkArgument(targetInfo));
         }
 
+        if (requiresNtDllLibrary && !ContainsNtDllLinkArgument(explicitArguments))
+        {
+            combined.Add(NtDllLinkArgument(targetInfo));
+        }
+
         return combined;
+    }
+
+    private static StarkPackageNativeDependencyManifest? BuildPackageNativeDependencyManifest(
+        NativeDependencyCliOptions nativeDependencies,
+        string packageImageDirectory,
+        bool requiresMathLibrary,
+        bool requiresWinsockLibrary,
+        bool requiresWindowsSynchronizationLibrary,
+        bool requiresNtDllLibrary)
+    {
+        var manifest = nativeDependencies.ToManifest(packageImageDirectory);
+        if (!requiresMathLibrary
+            && !requiresWinsockLibrary
+            && !requiresWindowsSynchronizationLibrary
+            && !requiresNtDllLibrary)
+        {
+            return manifest;
+        }
+
+        var libraries = manifest?.Libraries?.ToList() ?? [];
+        var linkArguments = manifest?.LinkArguments ?? [];
+
+        if (requiresMathLibrary
+            && !ContainsNativeLibraryName(libraries, "m")
+            && !linkArguments.Contains("-lm", StringComparer.Ordinal))
+        {
+            libraries.Add("m");
+        }
+
+        if (requiresWinsockLibrary
+            && !ContainsNativeLibraryName(libraries, "ws2_32")
+            && !ContainsWinsockLinkArgument(linkArguments))
+        {
+            libraries.Add("ws2_32");
+        }
+
+        if (requiresWindowsSynchronizationLibrary
+            && !ContainsNativeLibraryName(libraries, "synchronization")
+            && !ContainsWindowsSynchronizationLinkArgument(linkArguments))
+        {
+            libraries.Add("synchronization");
+        }
+
+        if (requiresNtDllLibrary
+            && !ContainsNativeLibraryName(libraries, "ntdll")
+            && !ContainsNtDllLinkArgument(linkArguments))
+        {
+            libraries.Add("ntdll");
+        }
+
+        if (manifest is null && libraries.Count == 0)
+        {
+            return null;
+        }
+
+        return new StarkPackageNativeDependencyManifest(
+            Sources: manifest?.Sources,
+            IncludeDirectories: manifest?.IncludeDirectories,
+            LibraryDirectories: manifest?.LibraryDirectories,
+            Libraries: libraries.Count == 0 ? null : CombineDistinct(libraries),
+            LinkArguments: manifest?.LinkArguments,
+            PkgConfigPackages: manifest?.PkgConfigPackages);
+    }
+
+    private static bool ContainsNativeLibraryName(IReadOnlyList<string> libraries, string name)
+    {
+        foreach (var library in libraries)
+        {
+            var trimmed = library.Trim();
+            if (trimmed.StartsWith("-l", StringComparison.Ordinal))
+            {
+                trimmed = trimmed[2..];
+            }
+
+            if (trimmed.EndsWith(".lib", StringComparison.OrdinalIgnoreCase)
+                || trimmed.EndsWith(".a", StringComparison.OrdinalIgnoreCase))
+            {
+                trimmed = Path.GetFileNameWithoutExtension(trimmed);
+            }
+
+            if (string.Equals(trimmed, name, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static bool TargetRequiresExplicitMathLibrary(LlvmTargetInfo? targetInfo)
@@ -1096,6 +1213,17 @@ internal static class CompilerCli
     }
 
     private static bool TargetRequiresWindowsSynchronizationLibrary(LlvmTargetInfo? targetInfo)
+    {
+        if (targetInfo?.Triple is { Length: > 0 } triple)
+        {
+            return triple.Contains("windows", StringComparison.OrdinalIgnoreCase)
+                || triple.Contains("win32", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return OperatingSystem.IsWindows();
+    }
+
+    private static bool TargetRequiresNtDllLibrary(LlvmTargetInfo? targetInfo)
     {
         if (targetInfo?.Triple is { Length: > 0 } triple)
         {
@@ -1147,6 +1275,26 @@ internal static class CompilerCli
         {
             if (string.Equals(argument, "synchronization.lib", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(argument, "-lsynchronization", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string NtDllLinkArgument(LlvmTargetInfo? targetInfo)
+    {
+        _ = targetInfo;
+        return "-lntdll";
+    }
+
+    private static bool ContainsNtDllLinkArgument(IReadOnlyList<string> arguments)
+    {
+        foreach (var argument in arguments)
+        {
+            if (string.Equals(argument, "ntdll.lib", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(argument, "-lntdll", StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }
@@ -1217,6 +1365,25 @@ internal static class CompilerCli
             "@WaitOnAddress(",
             "@WakeByAddressSingle(",
             "@WakeByAddressAll("
+        ];
+
+        foreach (var symbolName in symbolNames)
+        {
+            if (llvmText.Contains(symbolName, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool LlvmTextRequiresNtDllLibrary(string llvmText)
+    {
+        ReadOnlySpan<string> symbolNames =
+        [
+            "@NtReadFile(",
+            "@NtWriteFile("
         ];
 
         foreach (var symbolName in symbolNames)
@@ -1865,14 +2032,15 @@ internal static class CompilerCli
                 null,
                 RequiresMathLibrary: false,
                 RequiresWinsockLibrary: false,
-                RequiresWindowsSynchronizationLibrary: false);
+                RequiresWindowsSynchronizationLibrary: false,
+                RequiresNtDllLibrary: false);
         }
 
         var toolchainResult = EmitDependencyObject(dependencyResult, rootOptions, intermediateDirectory, preserveTemps, enableLto);
         toolchainMetrics?.AddLlvmObject(toolchainResult);
         return toolchainResult.Succeeded
-            ? new DependencyCompileResult(true, toolchainResult.OutputPath, [], dependencyResult.Logs, toolchainResult, dependencyResult.RequiresMathLibrary, dependencyResult.RequiresWinsockLibrary, dependencyResult.RequiresWindowsSynchronizationLibrary)
-            : new DependencyCompileResult(false, null, [], dependencyResult.Logs, toolchainResult, RequiresMathLibrary: false, RequiresWinsockLibrary: false, RequiresWindowsSynchronizationLibrary: false);
+            ? new DependencyCompileResult(true, toolchainResult.OutputPath, [], dependencyResult.Logs, toolchainResult, dependencyResult.RequiresMathLibrary, dependencyResult.RequiresWinsockLibrary, dependencyResult.RequiresWindowsSynchronizationLibrary, dependencyResult.RequiresNtDllLibrary)
+            : new DependencyCompileResult(false, null, [], dependencyResult.Logs, toolchainResult, RequiresMathLibrary: false, RequiresWinsockLibrary: false, RequiresWindowsSynchronizationLibrary: false, RequiresNtDllLibrary: false);
     }
 
     private static SourceDependencyLinkResult CompileAndEmitReferencedDependencyObjects(
@@ -1898,7 +2066,8 @@ internal static class CompilerCli
                     null,
                     RequiresMathLibrary: false,
                     RequiresWinsockLibrary: false,
-                    RequiresWindowsSynchronizationLibrary: false);
+                    RequiresWindowsSynchronizationLibrary: false,
+                    RequiresNtDllLibrary: false);
             }
 
             compiledModules.Add(dependencyResult);
@@ -1916,6 +2085,7 @@ internal static class CompilerCli
         var requiresMathLibrary = false;
         var requiresWinsockLibrary = false;
         var requiresWindowsSynchronizationLibrary = false;
+        var requiresNtDllLibrary = false;
         var madeProgress = true;
 
         while (madeProgress)
@@ -1955,7 +2125,8 @@ internal static class CompilerCli
                         toolchainResult,
                         requiresMathLibrary,
                         requiresWinsockLibrary,
-                        requiresWindowsSynchronizationLibrary);
+                        requiresWindowsSynchronizationLibrary,
+                        requiresNtDllLibrary);
                 }
 
                 emittedModuleIndexes.Add(index);
@@ -1963,6 +2134,7 @@ internal static class CompilerCli
                 requiresMathLibrary |= dependencyResult.RequiresMathLibrary;
                 requiresWinsockLibrary |= dependencyResult.RequiresWinsockLibrary;
                 requiresWindowsSynchronizationLibrary |= dependencyResult.RequiresWindowsSynchronizationLibrary;
+                requiresNtDllLibrary |= dependencyResult.RequiresNtDllLibrary;
                 unresolvedSymbols.ExceptWith(dependencyResult.Symbols.DefinedSymbols);
                 foreach (var referencedSymbol in dependencyResult.Symbols.ReferencedSymbols)
                 {
@@ -1984,7 +2156,8 @@ internal static class CompilerCli
             null,
             requiresMathLibrary,
             requiresWinsockLibrary,
-            requiresWindowsSynchronizationLibrary);
+            requiresWindowsSynchronizationLibrary,
+            requiresNtDllLibrary);
     }
 
     private static bool ContainsMonomorphizedStarkSymbols(string llvmText)
@@ -2001,7 +2174,7 @@ internal static class CompilerCli
         {
             if (module.Reference.FilePath is null || !File.Exists(module.Reference.FilePath))
             {
-            return new DependencyLlvmCompileResult(false, module, null, EmptyLlvmSymbolSummary(), [], [], RequiresMathLibrary: false, RequiresWinsockLibrary: false, RequiresWindowsSynchronizationLibrary: false);
+                return new DependencyLlvmCompileResult(false, module, null, EmptyLlvmSymbolSummary(), [], [], RequiresMathLibrary: false, RequiresWinsockLibrary: false, RequiresWindowsSynchronizationLibrary: false, RequiresNtDllLibrary: false);
             }
 
             sourceText = File.ReadAllText(module.Reference.FilePath);
@@ -2022,12 +2195,12 @@ internal static class CompilerCli
 
         if (!dependencyResult.Succeeded)
         {
-            return new DependencyLlvmCompileResult(false, module, null, EmptyLlvmSymbolSummary(), dependencyResult.Diagnostics, dependencyResult.Logs, RequiresMathLibrary: false, RequiresWinsockLibrary: false, RequiresWindowsSynchronizationLibrary: false);
+            return new DependencyLlvmCompileResult(false, module, null, EmptyLlvmSymbolSummary(), dependencyResult.Diagnostics, dependencyResult.Logs, RequiresMathLibrary: false, RequiresWinsockLibrary: false, RequiresWindowsSynchronizationLibrary: false, RequiresNtDllLibrary: false);
         }
 
         if (!dependencyResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule) || llvmModule is null)
         {
-            return new DependencyLlvmCompileResult(false, module, null, EmptyLlvmSymbolSummary(), [], dependencyResult.Logs, RequiresMathLibrary: false, RequiresWinsockLibrary: false, RequiresWindowsSynchronizationLibrary: false);
+            return new DependencyLlvmCompileResult(false, module, null, EmptyLlvmSymbolSummary(), [], dependencyResult.Logs, RequiresMathLibrary: false, RequiresWinsockLibrary: false, RequiresWindowsSynchronizationLibrary: false, RequiresNtDllLibrary: false);
         }
 
         var requiresMathLibrary = TargetRequiresExplicitMathLibrary(rootOptions.TargetInfo)
@@ -2036,6 +2209,8 @@ internal static class CompilerCli
             && LlvmTextRequiresWinsockLibrary(llvmModule.Text);
         var requiresWindowsSynchronizationLibrary = TargetRequiresWindowsSynchronizationLibrary(rootOptions.TargetInfo)
             && LlvmTextRequiresWindowsSynchronizationLibrary(llvmModule.Text);
+        var requiresNtDllLibrary = TargetRequiresNtDllLibrary(rootOptions.TargetInfo)
+            && LlvmTextRequiresNtDllLibrary(llvmModule.Text);
         return new DependencyLlvmCompileResult(
             true,
             module,
@@ -2045,7 +2220,8 @@ internal static class CompilerCli
             dependencyResult.Logs,
             requiresMathLibrary,
             requiresWinsockLibrary,
-            requiresWindowsSynchronizationLibrary);
+            requiresWindowsSynchronizationLibrary,
+            requiresNtDllLibrary);
     }
 
     private static NativeToolchainResult EmitDependencyObject(
@@ -2817,7 +2993,8 @@ internal static class CompilerCli
         NativeToolchainResult? ToolchainResult,
         bool RequiresMathLibrary,
         bool RequiresWinsockLibrary,
-        bool RequiresWindowsSynchronizationLibrary);
+        bool RequiresWindowsSynchronizationLibrary,
+        bool RequiresNtDllLibrary);
 
     private sealed record DependencyLlvmCompileResult(
         bool Success,
@@ -2828,7 +3005,8 @@ internal static class CompilerCli
         IReadOnlyList<CompilerLogEntry> Logs,
         bool RequiresMathLibrary,
         bool RequiresWinsockLibrary,
-        bool RequiresWindowsSynchronizationLibrary);
+        bool RequiresWindowsSynchronizationLibrary,
+        bool RequiresNtDllLibrary);
 
     private sealed record SourceDependencyLinkResult(
         bool Success,
@@ -2838,7 +3016,8 @@ internal static class CompilerCli
         NativeToolchainResult? ToolchainResult,
         bool RequiresMathLibrary,
         bool RequiresWinsockLibrary,
-        bool RequiresWindowsSynchronizationLibrary);
+        bool RequiresWindowsSynchronizationLibrary,
+        bool RequiresNtDllLibrary);
 
     private sealed record LlvmSymbolSummary(
         HashSet<string> DefinedSymbols,

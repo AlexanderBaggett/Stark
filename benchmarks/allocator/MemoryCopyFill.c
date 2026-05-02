@@ -30,15 +30,18 @@ int main(void) {
     int8_t *byte_destination = (int8_t *)malloc((size_t)byte_count);
     int32_t *code_point_source = (int32_t *)malloc((size_t)code_point_count * sizeof(int32_t));
     int32_t *code_point_destination = (int32_t *)malloc((size_t)code_point_count * sizeof(int32_t));
-    int8_t byte_move_buffer[32];
-    int32_t code_point_move_buffer[32];
+    int8_t *byte_move_buffer = (int8_t *)malloc((size_t)byte_count);
+    int32_t *code_point_move_buffer = (int32_t *)malloc((size_t)code_point_count * sizeof(int32_t));
 
     if (byte_source == NULL || byte_destination == NULL ||
-        code_point_source == NULL || code_point_destination == NULL) {
+        code_point_source == NULL || code_point_destination == NULL ||
+        byte_move_buffer == NULL || code_point_move_buffer == NULL) {
         free(byte_source);
         free(byte_destination);
         free(code_point_source);
         free(code_point_destination);
+        free(byte_move_buffer);
+        free(code_point_move_buffer);
         return 1;
     }
 
@@ -88,5 +91,7 @@ int main(void) {
     free(byte_destination);
     free(code_point_source);
     free(code_point_destination);
+    free(byte_move_buffer);
+    free(code_point_move_buffer);
     return checksum == 93749676 ? 0 : 1;
 }

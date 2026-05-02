@@ -31,10 +31,11 @@ and writes CSV rows:
 benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib,c_avg_ratio
 ```
 
-The Windows PowerShell runner currently writes:
+The Windows PowerShell runner records the same Stark compile/toolchain timing
+plus median runtime and writes CSV rows:
 
 ```text
-benchmark,language,runs,compile_us,min_us,avg_us,max_us,peak_rss_kib,c_avg_ratio
+benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,median_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib,c_median_ratio,c_avg_ratio
 ```
 
 Set `STARK_BENCH_CAPTURE_RSS=1` to capture peak RSS. On Linux, the Bash runner
@@ -44,12 +45,14 @@ runner records `Process.PeakWorkingSet64` after each benchmark process exits. A
 `0` value means peak RSS capture was disabled, unavailable on that host, or the
 Linux process exited before the sampler observed it.
 
-The `c_avg_ratio` column is calculated after the last benchmark finishes. It
-uses the average runtime for the same benchmark: `row avg_us / C avg_us`.
-The C row is `1.000000`; faster rows are below `1.0`, slower rows are above
-`1.0`. Rows without a same-benchmark C result leave the ratio blank. To add or
-refresh this column on an existing Linux/macOS result file without rerunning
-benchmarks:
+Ratio columns are calculated after the last benchmark finishes. The Windows
+PowerShell runner makes `c_median_ratio` the primary runtime comparison:
+`row median_us / C median_us`. It also keeps `c_avg_ratio` as an outlier
+diagnostic. The Bash runner currently records `c_avg_ratio` only:
+`row avg_us / C avg_us`. The C row is `1.000000`; faster rows are below `1.0`,
+slower rows are above `1.0`. Rows without a same-benchmark C result leave the
+ratio blank. To add or refresh the Bash `c_avg_ratio` column on an existing
+Linux/macOS result file without rerunning benchmarks:
 
 ```bash
 scripts/add-benchmark-c-ratios.sh benchmarks/results/results-file.csv
@@ -57,7 +60,10 @@ scripts/add-benchmark-c-ratios.sh benchmarks/results/results-file.csv
 
 The Bash runner also records `runtime_spread_pct`, calculated from one run's
 samples as `(max_us - min_us) / avg_us * 100`. Treat high spread as a warning
-that the average may not be stable enough for a performance conclusion.
+that the average may not be stable enough for a performance conclusion. On
+Windows, prefer `median_us` and `c_median_ratio` for standard-library runtime
+comparisons; use `avg_us`, `max_us`, and `runtime_spread_pct` to spot noisy
+runs.
 
 Stable and experimental Stark variants share one canonical benchmark name in the
 CSV; the variant lives in the `language` column as either `stark` or
@@ -77,6 +83,9 @@ Useful environment variables:
 - `STARK_BENCH_RUNS`: measured executions per benchmark after one warmup run.
   Defaults to `20`. Set it lower for quick smoke runs.
 - `STARK_BENCH_FILTER`: substring filter matched against benchmark file paths.
+- `STARK_BENCH_SUBSET`: PowerShell runner shortcut for targeted Windows
+  investigations. Supported values are `allocator`, `console`, `directory`,
+  `file`, `socket`, `network`, `windows-io`, and `windows-core`.
 - `STARK_BENCH_LANGUAGES`: comma-separated language list. Defaults to
   `stark,c,rust`.
 - `STARK_BENCH_TIMEOUT_SECONDS`: per-executable warmup/run timeout. Defaults
@@ -93,6 +102,15 @@ Useful environment variables:
   Defaults to `benchmarks/results/`.
 - `STARK_BENCH_RESULTS_FILE`: explicit CSV output path.
 - `STARK_BENCH_MACHINE_FILE`: explicit machine metadata output path.
+- `STARK_BENCH_BINARY_DIR`: PowerShell runner directory for preserved
+  benchmark executables. Use it with `STARK_BENCH_KEEP_BINARIES=1` for the
+  compile pass, then with `STARK_BENCH_RUNTIME_ONLY=1` for repeated runtime
+  measurements that amortize compile, ThinLTO, and `lld-link` cost.
+- `STARK_BENCH_KEEP_BINARIES`: PowerShell runner flag that keeps compiled
+  executables in `STARK_BENCH_BINARY_DIR`.
+- `STARK_BENCH_RUNTIME_ONLY`: PowerShell runner flag that reuses existing
+  executables from `STARK_BENCH_BINARY_DIR` and reports compile/toolchain
+  fields as `0`.
 - `STARK_BENCH_BASELINE_FILE`: optional previous CSV to compare against after
   the run.
 - `STARK_BENCH_REQUIRE_BASELINE`: set to `1` to fail when a gate is configured
@@ -144,6 +162,14 @@ C counterparts marked with `// stark-bench: skip-c-windows` are skipped by the
 Windows PowerShell runner when C rows are enabled. Use this only for C baselines
 that are currently POSIX-specific; the Stark and Rust rows for the benchmark
 still run normally.
+
+For Windows standard-library investigations, keep linker cost separate from
+payload runtime. `compile_us` is total build wall time; Stark rows may also
+report `llvm_object_us`, `link_us`, and `toolchain_us` from compiler toolchain
+metrics. If `lld-link` or ThinLTO dominates the run, preserve binaries and use
+runtime-only mode before drawing conclusions about library code. Windows rows
+for benchmarks with `skip-c-windows` C counterparts intentionally have no C
+ratio until a Windows C baseline exists.
 
 Each run writes:
 

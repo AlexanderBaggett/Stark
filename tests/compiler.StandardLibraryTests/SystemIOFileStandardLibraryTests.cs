@@ -22,6 +22,8 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     System.IO.File.WriteText(handle, (unicode)"ascii");
                     System.IO.File.WriteLine(handle, "line");
                     System.IO.File.WriteLine(handle, (unicode)"line");
+                    System.IO.File.Flush(handle);
+                    System.IO.File.SyncAll(handle);
                     System.IO.File.Close(handle);
                     return;
                 }
@@ -51,6 +53,8 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     file.WriteText((unicode)"ascii");
                     file.WriteLine("line");
                     file.WriteLine((unicode)"line");
+                    file.Flush();
+                    file.SyncAll();
                     file.Close();
                     return;
                 }
@@ -92,6 +96,68 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void StdLibSourceOwnedFileFlushDrainsOnlyUserBufferAndSyncAllCallsPlatformFlush()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var filePath = Path.Combine(sourceRoot, "System", "IO", "File.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                File.ReadAllText(filePath),
+                filePath),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+        foreach (var signaturePrefix in new[]
+        {
+            "define fastcc noundef i32 @File_Close(",
+            "define fastcc noundef i32 @File_Flush(",
+            "define fastcc noundef i64 @File_ReadBytes(",
+            "define fastcc noundef i64 @File_WriteBytes(",
+            "define fastcc noundef i64 @File_ReadByteRegion(",
+            "define fastcc noundef i64 @File_WriteByteRegion(",
+            "define fastcc noundef i64 @File_Seek(",
+            "define fastcc noundef i32 @Flush("
+        })
+        {
+            var body = ExtractDefinedFunctionText(llvm, signaturePrefix, $"Expected {signaturePrefix} definition in emitted LLVM.");
+            Assert.DoesNotContain("@System_Runtime_Platform_FlushFile(", body, StringComparison.Ordinal);
+        }
+
+        foreach (var signaturePrefix in new[]
+        {
+            "define fastcc noundef i32 @File_Close(",
+            "define fastcc noundef i32 @File_Flush(",
+            "define fastcc noundef i64 @File_ReadBytes(",
+            "define fastcc noundef i64 @File_WriteBytes(",
+            "define fastcc noundef i64 @File_ReadByteRegion(",
+            "define fastcc noundef i64 @File_WriteByteRegion(",
+            "define fastcc noundef i64 @File_Seek("
+        })
+        {
+            var body = ExtractDefinedFunctionText(llvm, signaturePrefix, $"Expected {signaturePrefix} definition in emitted LLVM.");
+            Assert.Contains("@File_FlushBufferedWrite(", body, StringComparison.Ordinal);
+        }
+
+        var ownedSyncBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i32 @File_SyncAll(",
+            "Expected File.SyncAll definition in emitted LLVM.");
+        var rawSyncBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i32 @SyncAll(",
+            "Expected raw SyncAll definition in emitted LLVM.");
+
+        Assert.Contains("@File_FlushBufferedWrite(", ownedSyncBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Runtime_Platform_FlushFile(", ownedSyncBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Runtime_Platform_FlushFile(", rawSyncBody, StringComparison.Ordinal);
     }
 
     [Fact]

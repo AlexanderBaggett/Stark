@@ -49,6 +49,8 @@ public sealed class SystemExperimentalNetTcpStandardLibraryTests : StandardLibra
                 fn i32[min max] RunClosedSurface() {
                     stack mut System.Experimental.Net.Tcp.TcpClient client = new();
                     stack mut i8[-128 127][4] rawBuffer = { 1, 2, 3, 4 };
+                    stack mut i8[-128 127][2] rawFirst = { 1, 2 };
+                    stack mut i8[-128 127][2] rawSecond = { 3, 4 };
                     stack mut System.Experimental.Runtime.Buffer.FixedByteBuffer512 fixedBuffer = new();
                     stack mut System.Experimental.Runtime.Buffer.DynamicByteBuffer dynamicBuffer = new();
 
@@ -72,37 +74,45 @@ public sealed class SystemExperimentalNetTcpStandardLibraryTests : StandardLibra
                         return 5;
                     }
 
-                    if (!CountFailed(client.Write(fixedBuffer))) {
+                    if (!CountFailed(client.ReadVectored(rawFirst, rawSecond))) {
                         return 6;
                     }
 
-                    if (StatusOk(client.WaitReadable(0)) || StatusOk(client.WaitWritable(0))) {
+                    if (!CountFailed(client.WriteVectored(rawFirst, rawSecond))) {
                         return 7;
                     }
 
-                    if (StatusOk(client.Shutdown(System.Experimental.Net.Tcp.TcpShutdown.Both))) {
+                    if (!CountFailed(client.Write(fixedBuffer))) {
                         return 8;
                     }
 
-                    if (!StatusOk(client.Close())) {
+                    if (StatusOk(client.WaitReadable(0)) || StatusOk(client.WaitWritable(0))) {
                         return 9;
+                    }
+
+                    if (StatusOk(client.Shutdown(System.Experimental.Net.Tcp.TcpShutdown.Both))) {
+                        return 10;
+                    }
+
+                    if (!StatusOk(client.Close())) {
+                        return 11;
                     }
 
                     stack mut System.Experimental.Net.Tcp.TcpListener listener = new();
                     if (listener.IsOpen()) {
-                        return 10;
-                    }
-
-                    if (!ClientFailed(listener.Accept())) {
-                        return 11;
-                    }
-
-                    if (StatusOk(listener.WaitReadable(0))) {
                         return 12;
                     }
 
-                    if (!StatusOk(listener.Close())) {
+                    if (!ClientFailed(listener.Accept())) {
                         return 13;
+                    }
+
+                    if (StatusOk(listener.WaitReadable(0))) {
+                        return 14;
+                    }
+
+                    if (!StatusOk(listener.Close())) {
+                        return 15;
                     }
 
                     return 0;
@@ -120,6 +130,8 @@ public sealed class SystemExperimentalNetTcpStandardLibraryTests : StandardLibra
         Assert.Contains("System_Experimental_Runtime_Buffer_FixedByteBuffer512_WriteFill", llvm, StringComparison.Ordinal);
         Assert.Contains("System_Runtime_Platform_ReadSocket", llvm, StringComparison.Ordinal);
         Assert.Contains("System_Runtime_Platform_WriteSocket", llvm, StringComparison.Ordinal);
+        Assert.Contains("System_Runtime_Platform_ReadSocketVector2", llvm, StringComparison.Ordinal);
+        Assert.Contains("System_Runtime_Platform_WriteSocketVector2", llvm, StringComparison.Ordinal);
         Assert.Contains("System_Runtime_Platform_WaitReadable", llvm, StringComparison.Ordinal);
         Assert.Contains("System_Runtime_Platform_WaitWritable", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("System_Net_Tcp", llvm, StringComparison.Ordinal);
@@ -150,6 +162,8 @@ public sealed class SystemExperimentalNetTcpStandardLibraryTests : StandardLibra
 
         Assert.Contains("ptr noundef nonnull noalias nocapture dereferenceable(528) align 8 %arg_destination", fixed512Read, StringComparison.Ordinal);
         Assert.Contains("System_Runtime_Platform_ReadSocket", fixedReads, StringComparison.Ordinal);
+        Assert.Contains("System_Runtime_Platform_ReadSocketVector2", llvm, StringComparison.Ordinal);
+        Assert.Contains("System_Runtime_Platform_WriteSocketVector2", llvm, StringComparison.Ordinal);
         Assert.Contains("FixedByteBuffer512_WriteSlice__mutborrowFixedByteBuffer512_", fixed512Read, StringComparison.Ordinal);
         Assert.Contains("FixedByteBuffer512_AdvanceWrite", fixed512Read, StringComparison.Ordinal);
         Assert.Contains("FixedByteBuffer4096_WriteSlice__mutborrowFixedByteBuffer4096_", fixed4096Read, StringComparison.Ordinal);

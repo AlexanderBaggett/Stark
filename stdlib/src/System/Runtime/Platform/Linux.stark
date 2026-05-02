@@ -2021,6 +2021,44 @@ internal fn i64[-9223372036854775808 9223372036854775807] WriteSocket(
         length);
 }
 
+internal fn i64[-9223372036854775808 9223372036854775807] ReadSocketVector2(
+    rawptr<i8[-128 127]> handle,
+    rawmutptr<i8[-128 127]>[firstCapacity] firstBuffer,
+    i64[0 max] firstCapacity,
+    rawmutptr<i8[-128 127]>[secondCapacity] secondBuffer,
+    i64[0 max] secondCapacity)
+{
+    if (firstCapacity > 0) {
+        return ReadSocket(handle, firstBuffer, firstCapacity);
+    }
+
+    return ReadSocket(handle, secondBuffer, secondCapacity);
+}
+
+internal fn i64[-9223372036854775808 9223372036854775807] WriteSocketVector2(
+    rawptr<i8[-128 127]> handle,
+    rawptr<i8[-128 127]>[firstLength] firstBuffer,
+    i64[0 max] firstLength,
+    rawptr<i8[-128 127]>[secondLength] secondBuffer,
+    i64[0 max] secondLength)
+{
+    if (firstLength == 0) {
+        return WriteSocket(handle, secondBuffer, secondLength);
+    }
+
+    stack i64[-9223372036854775808 9223372036854775807] first = WriteSocket(handle, firstBuffer, firstLength);
+    if (first < 0 || first < (i64[-9223372036854775808 9223372036854775807])firstLength || secondLength == 0) {
+        return first;
+    }
+
+    stack i64[-9223372036854775808 9223372036854775807] second = WriteSocket(handle, secondBuffer, secondLength);
+    if (second < 0) {
+        return second;
+    }
+
+    return first + second;
+}
+
 internal fn rawptr<i8[-128 127]> AcceptSocket(
     rawptr<i8[-128 127]> handle,
     rawmutptr<i32[-2147483648 2147483647]> status)

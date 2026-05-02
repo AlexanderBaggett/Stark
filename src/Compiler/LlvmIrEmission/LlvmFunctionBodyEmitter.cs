@@ -817,6 +817,12 @@ internal sealed class LlvmFunctionBodyEmitter
     {
         plan = null!;
         if ((requiredKind is null || requiredKind == RawPointerLoopIntrinsicKind.Memmove)
+            && TryMatchForwardBackwardRawPointerMemmoveLoop(function, tryGetConcreteTypeLayout, out plan))
+        {
+            return true;
+        }
+
+        if ((requiredKind is null || requiredKind == RawPointerLoopIntrinsicKind.Memmove)
             && TryMatchOverlapSafeRawPointerMemmoveLoop(function, tryGetConcreteTypeLayout, out plan))
         {
             return true;
@@ -1227,8 +1233,498 @@ internal sealed class LlvmFunctionBodyEmitter
         bool ReferencesSkippedDefinition(SsaValue? value)
         {
             return value is SsaValueReference reference
-                && skippedDefinitions.Contains(reference.Name);
+            && skippedDefinitions.Contains(reference.Name);
         }
+    }
+
+    private static bool TryMatchForwardBackwardRawPointerMemmoveLoop(
+        SsaFunction function,
+        Func<StarkTypeSymbol, ConcreteTypeLayout?> tryGetConcreteTypeLayout,
+        out RawPointerLoopIntrinsicPlan plan)
+    {
+        plan = null!;
+        if (!function.HasBody
+            || function.ReturnType.Kind != StarkTypeKind.Void)
+        {
+            return false;
+        }
+
+        var definitions = CollectValueDefinitions(function);
+        var nonEntryValueNames = CollectNonEntrySsaValueNames(function);
+        var blocksById = function.Blocks.ToDictionary(static block => block.Id);
+        if (!blocksById.TryGetValue(function.EntryBlockId, out var entry)
+            || !TryMatchOptionalZeroCountGuard(
+                entry,
+                blocksById,
+                definitions,
+                out var directionBlock,
+                out var guardedCount)
+            || directionBlock.Terminator.Kind != SsaTerminatorKind.Branch
+            || directionBlock.Terminator.Condition is null
+            || directionBlock.Terminator.Targets.Count != 2
+            || !TryResolveComparisonCondition(directionBlock.Terminator.Condition, definitions, out var directionComparison))
+        {
+            return false;
+        }
+
+        if (TryMatchForwardBackwardCandidate(
+                directionBlock.Terminator.Targets[0],
+                directionBlock.Terminator.Targets[1],
+                conditionTrueSelectsForward: true,
+                out plan))
+        {
+            return true;
+        }
+
+        return TryMatchForwardBackwardCandidate(
+            directionBlock.Terminator.Targets[1],
+            directionBlock.Terminator.Targets[0],
+            conditionTrueSelectsForward: false,
+            out plan);
+
+        bool TryMatchForwardBackwardCandidate(
+            int forwardPreheaderId,
+            int backwardPreheaderId,
+            bool conditionTrueSelectsForward,
+            out RawPointerLoopIntrinsicPlan candidatePlan)
+        {
+            candidatePlan = null!;
+            if (!blocksById.TryGetValue(forwardPreheaderId, out var forwardPreheader)
+                || !blocksById.TryGetValue(backwardPreheaderId, out var backwardPreheader))
+            {
+                return false;
+            }
+
+            if (!TryMatchCanonicalRawPointerLoopFromPreheader(
+                    function,
+                    forwardPreheader,
+                    blocksById,
+                    definitions,
+                    nonEntryValueNames,
+                    out var forwardLoop,
+                    out var forwardExit)
+                || !TryMatchBackwardRawPointerLoopFromPreheader(
+                    function,
+                    backwardPreheader,
+                    blocksById,
+                    definitions,
+                    nonEntryValueNames,
+                    out var backwardLoop,
+                    out var backwardExit)
+                || !IsPlainVoidReturnBlock(forwardExit)
+                || !IsPlainVoidReturnBlock(backwardExit))
+            {
+                return false;
+            }
+
+            if (guardedCount is not null
+                && !AreEquivalentFunctionEntryValues(function, guardedCount, forwardLoop.Count, definitions, nonEntryValueNames))
+            {
+                return false;
+            }
+
+            if (!AreEquivalentFunctionEntryValues(function, forwardLoop.Count, backwardLoop.Count, definitions, nonEntryValueNames))
+            {
+                return false;
+            }
+
+            if (!TryMatchRawPointerMemmoveCopyLoop(
+                    forwardLoop,
+                    tryGetConcreteTypeLayout,
+                    out var forwardCopy)
+                || !TryMatchRawPointerMemmoveCopyLoop(
+                    backwardLoop,
+                    tryGetConcreteTypeLayout,
+                    out var backwardCopy)
+                || NormalizeAggregateType(forwardCopy.ElementType) != NormalizeAggregateType(backwardCopy.ElementType))
+            {
+                return false;
+            }
+
+            if (!AreEquivalentMemoryBases(
+                    function,
+                    forwardCopy.SourceBase,
+                    backwardCopy.SourceBase,
+                    definitions,
+                    nonEntryValueNames)
+                || !AreEquivalentMemoryBases(
+                    function,
+                    forwardCopy.DestinationBase,
+                    backwardCopy.DestinationBase,
+                    definitions,
+                    nonEntryValueNames))
+            {
+                return false;
+            }
+
+            if (!TryMatchMemmoveDirectionComparison(
+                    function,
+                    directionComparison,
+                    forwardCopy,
+                    conditionTrueSelectsForward,
+                    definitions))
+            {
+                return false;
+            }
+
+            candidatePlan = new RawPointerLoopIntrinsicPlan(
+                RawPointerLoopIntrinsicKind.Memmove,
+                forwardCopy.DestinationBase,
+                forwardCopy.SourceBase,
+                null,
+                forwardCopy.ElementType,
+                forwardLoop.Count,
+                forwardCopy.Location,
+                DestinationBaseIsSlice: forwardCopy.DestinationBaseIsSlice,
+                SourceBaseIsSlice: forwardCopy.SourceBaseIsSlice);
+            return true;
+        }
+    }
+
+    private static bool TryMatchOptionalZeroCountGuard(
+        SsaBasicBlock entry,
+        IReadOnlyDictionary<int, SsaBasicBlock> blocksById,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        out SsaBasicBlock directionBlock,
+        out SsaValue? guardedCount)
+    {
+        directionBlock = entry;
+        guardedCount = null;
+        if (entry.Terminator.Kind != SsaTerminatorKind.Branch
+            || entry.Terminator.Condition is null
+            || entry.Terminator.Targets.Count != 2
+            || !TryResolveComparisonCondition(entry.Terminator.Condition, definitions, out var comparison)
+            || !TryMatchZeroCountComparison(comparison, definitions, out guardedCount))
+        {
+            return true;
+        }
+
+        var trueTargetId = entry.Terminator.Targets[0];
+        var falseTargetId = entry.Terminator.Targets[1];
+        if (comparison.Operator == SsaBinaryOperator.Equal
+            && blocksById.TryGetValue(trueTargetId, out var zeroExit)
+            && IsPlainVoidReturnBlock(zeroExit)
+            && blocksById.TryGetValue(falseTargetId, out var nonZeroBlock))
+        {
+            directionBlock = nonZeroBlock;
+            return true;
+        }
+
+        if (comparison.Operator == SsaBinaryOperator.NotEqual
+            && blocksById.TryGetValue(falseTargetId, out zeroExit)
+            && IsPlainVoidReturnBlock(zeroExit)
+            && blocksById.TryGetValue(trueTargetId, out nonZeroBlock))
+        {
+            directionBlock = nonZeroBlock;
+            return true;
+        }
+
+        directionBlock = null!;
+        guardedCount = null;
+        return false;
+    }
+
+    private static bool TryMatchZeroCountComparison(
+        SsaBinaryRValue comparison,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        out SsaValue count)
+    {
+        count = null!;
+        if (comparison.Operator is not (SsaBinaryOperator.Equal or SsaBinaryOperator.NotEqual))
+        {
+            return false;
+        }
+
+        if (IsZeroIntegerValue(comparison.Left, definitions, new HashSet<string>(StringComparer.Ordinal)))
+        {
+            count = comparison.Right;
+            return true;
+        }
+
+        if (IsZeroIntegerValue(comparison.Right, definitions, new HashSet<string>(StringComparer.Ordinal)))
+        {
+            count = comparison.Left;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool TryMatchBackwardRawPointerLoopFromPreheader(
+        SsaFunction function,
+        SsaBasicBlock preheader,
+        IReadOnlyDictionary<int, SsaBasicBlock> blocksById,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> nonEntryValueNames,
+        out CanonicalRawPointerLoop loop,
+        out SsaBasicBlock exit)
+    {
+        loop = null!;
+        exit = null!;
+        if (preheader.Terminator.Kind != SsaTerminatorKind.Goto
+            || preheader.Terminator.Targets.Count != 1
+            || !blocksById.TryGetValue(preheader.Terminator.Targets[0], out var condition)
+            || condition.Phis.Count != 1
+            || condition.Terminator.Kind != SsaTerminatorKind.Branch
+            || condition.Terminator.Condition is null
+            || condition.Terminator.Targets.Count != 2)
+        {
+            return false;
+        }
+
+        var bodyId = condition.Terminator.Targets[0];
+        var exitId = condition.Terminator.Targets[1];
+        if (!blocksById.TryGetValue(bodyId, out var body)
+            || !blocksById.TryGetValue(exitId, out var exitBlock)
+            || body.Phis.Count != 0
+            || body.Terminator.Kind != SsaTerminatorKind.Goto
+            || body.Terminator.Targets.Count != 1
+            || body.Terminator.Targets[0] != condition.Id)
+        {
+            return false;
+        }
+
+        exit = exitBlock;
+        var induction = condition.Phis[0];
+        if (!TryGetPhiIncoming(induction, preheader.Id, out var initialValue)
+            || !TryResolveEntryAvailableValue(initialValue, definitions, nonEntryValueNames, out var count)
+            || !TryGetPhiIncoming(induction, body.Id, out var updateValue)
+            || updateValue is not SsaValueReference updateReference
+            || !definitions.TryGetValue(updateReference.Name, out var updateDefinition)
+            || !IsDecrementByOne(updateDefinition, induction.ResultName, definitions)
+            || !CanRepresentRawPointerLoopByteLength(count, elementLayout: null, definitions))
+        {
+            return false;
+        }
+
+        if (!TryResolveComparisonCondition(condition.Terminator.Condition, definitions, out var comparison)
+            || !IsPositiveInductionCondition(comparison, induction.ResultName, definitions))
+        {
+            return false;
+        }
+
+        loop = new CanonicalRawPointerLoop(
+            function,
+            preheader.Id,
+            condition.Id,
+            body,
+            exitBlock.Id,
+            updateReference.Name,
+            updateReference.Name,
+            count,
+            definitions,
+            nonEntryValueNames);
+        return true;
+    }
+
+    private static bool IsPositiveInductionCondition(
+        SsaBinaryRValue comparison,
+        string inductionValueName,
+        IReadOnlyDictionary<string, SsaRValue> definitions)
+    {
+        return comparison.Operator == SsaBinaryOperator.GreaterThan
+                && IsInductionValue(comparison.Left, inductionValueName, definitions, new HashSet<string>(StringComparer.Ordinal))
+                && IsZeroIntegerValue(comparison.Right, definitions, new HashSet<string>(StringComparer.Ordinal))
+            || comparison.Operator == SsaBinaryOperator.LessThan
+                && IsZeroIntegerValue(comparison.Left, definitions, new HashSet<string>(StringComparer.Ordinal))
+                && IsInductionValue(comparison.Right, inductionValueName, definitions, new HashSet<string>(StringComparer.Ordinal));
+    }
+
+    private static bool TryMatchRawPointerMemmoveCopyLoop(
+        CanonicalRawPointerLoop loop,
+        Func<StarkTypeSymbol, ConcreteTypeLayout?> tryGetConcreteTypeLayout,
+        out RawPointerCopyLoopMatch match)
+    {
+        match = null!;
+        if (!TryGetSingleStore(loop.Body, out var store)
+            || store.Value is not SsaValueReference loadReference
+            || !loop.ValueDefinitions.TryGetValue(loadReference.Name, out var loadDefinition)
+            || !TryMatchMemoryLoopIndexedElementAddress(
+                store.Address,
+                loop.InductionValueName,
+                loop.ValueDefinitions,
+                loop.NonEntryValueNames,
+                requireMutablePointer: true,
+                out var destinationBase,
+                out var destinationElementType,
+                out var destinationAddressName,
+                out var destinationBaseIsSlice,
+                out var destinationSupportValueNames)
+            || !TryMatchMemoryLoopLoad(
+                loadDefinition,
+                loop.InductionValueName,
+                loop.ValueDefinitions,
+                loop.NonEntryValueNames,
+                out var sourceBase,
+                out var sourceElementType,
+                out var sourceAddressName,
+                out var sourceBaseIsSlice,
+                out var sourceSupportValueNames)
+            || NormalizeAggregateType(destinationElementType) != NormalizeAggregateType(sourceElementType)
+            || NormalizeAggregateType(store.ValueType) != NormalizeAggregateType(destinationElementType)
+            || NormalizeAggregateType(store.Value.Type) != NormalizeAggregateType(destinationElementType)
+            || !CanUseRawPointerMemcpyElement(destinationElementType)
+            || tryGetConcreteTypeLayout(NormalizeAggregateType(destinationElementType)) is not { } elementLayout
+            || !CanRepresentRawPointerLoopByteLength(loop.Count, elementLayout, loop.ValueDefinitions))
+        {
+            return false;
+        }
+
+        var allowedValueNames = new HashSet<string>(StringComparer.Ordinal)
+        {
+            destinationAddressName,
+            loadReference.Name,
+            loop.UpdateValueName
+        };
+        if (!string.IsNullOrEmpty(sourceAddressName))
+        {
+            allowedValueNames.Add(sourceAddressName);
+        }
+
+        foreach (var valueName in destinationSupportValueNames.Concat(sourceSupportValueNames))
+        {
+            allowedValueNames.Add(valueName);
+        }
+
+        if (!BodyContainsOnlyAllowedInstructions(loop.Body, allowedValueNames))
+        {
+            return false;
+        }
+
+        match = new RawPointerCopyLoopMatch(
+            destinationBase,
+            sourceBase,
+            destinationElementType,
+            store.Location,
+            destinationBaseIsSlice,
+            sourceBaseIsSlice);
+        return true;
+    }
+
+    private static bool AreEquivalentMemoryBases(
+        SsaFunction function,
+        SsaValue left,
+        SsaValue right,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> nonEntryValueNames)
+    {
+        if (AreEquivalentEntryValues(left, right, definitions, nonEntryValueNames))
+        {
+            return true;
+        }
+
+        return TryResolveParameterName(function, left, definitions, out var leftParameter)
+            && TryResolveParameterName(function, right, definitions, out var rightParameter)
+            && string.Equals(leftParameter, rightParameter, StringComparison.Ordinal);
+    }
+
+    private static bool AreEquivalentFunctionEntryValues(
+        SsaFunction function,
+        SsaValue left,
+        SsaValue right,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> nonEntryValueNames)
+    {
+        if (AreEquivalentEntryValues(left, right, definitions, nonEntryValueNames))
+        {
+            return true;
+        }
+
+        return TryResolveParameterName(function, left, definitions, out var leftParameter)
+            && TryResolveParameterName(function, right, definitions, out var rightParameter)
+            && string.Equals(leftParameter, rightParameter, StringComparison.Ordinal);
+    }
+
+    private static bool TryMatchMemmoveDirectionComparison(
+        SsaFunction function,
+        SsaBinaryRValue comparison,
+        RawPointerCopyLoopMatch copy,
+        bool conditionTrueSelectsForward,
+        IReadOnlyDictionary<string, SsaRValue> definitions)
+    {
+        if (!TryResolveParameterName(function, copy.DestinationBase, definitions, out var destinationParameter)
+            || !TryResolveParameterName(function, copy.SourceBase, definitions, out var sourceParameter)
+            || string.Equals(destinationParameter, sourceParameter, StringComparison.Ordinal)
+            || !TryResolveZeroOffsetPointerParameterName(function, comparison.Left, definitions, out var leftParameter)
+            || !TryResolveZeroOffsetPointerParameterName(function, comparison.Right, definitions, out var rightParameter))
+        {
+            return false;
+        }
+
+        bool destinationBeforeSourceWhenTrue;
+        if (comparison.Operator == SsaBinaryOperator.LessThan
+            && string.Equals(leftParameter, destinationParameter, StringComparison.Ordinal)
+            && string.Equals(rightParameter, sourceParameter, StringComparison.Ordinal)
+            || comparison.Operator == SsaBinaryOperator.GreaterThan
+            && string.Equals(leftParameter, sourceParameter, StringComparison.Ordinal)
+            && string.Equals(rightParameter, destinationParameter, StringComparison.Ordinal))
+        {
+            destinationBeforeSourceWhenTrue = true;
+        }
+        else if (comparison.Operator == SsaBinaryOperator.LessThan
+                 && string.Equals(leftParameter, sourceParameter, StringComparison.Ordinal)
+                 && string.Equals(rightParameter, destinationParameter, StringComparison.Ordinal)
+                 || comparison.Operator == SsaBinaryOperator.GreaterThan
+                 && string.Equals(leftParameter, destinationParameter, StringComparison.Ordinal)
+                 && string.Equals(rightParameter, sourceParameter, StringComparison.Ordinal))
+        {
+            destinationBeforeSourceWhenTrue = false;
+        }
+        else
+        {
+            return false;
+        }
+
+        return destinationBeforeSourceWhenTrue == conditionTrueSelectsForward;
+    }
+
+    private static bool TryResolveZeroOffsetPointerParameterName(
+        SsaFunction function,
+        SsaValue value,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        out string parameterName)
+    {
+        switch (value)
+        {
+            case SsaValueReference reference when definitions.TryGetValue(reference.Name, out var definition):
+                return TryResolveZeroOffsetPointerParameterName(function, definition, definitions, out parameterName);
+            default:
+                return TryResolveParameterName(function, value, definitions, out parameterName);
+        }
+    }
+
+    private static bool TryResolveZeroOffsetPointerParameterName(
+        SsaFunction function,
+        SsaRValue value,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        out string parameterName)
+    {
+        switch (value)
+        {
+            case SsaUseRValue use:
+                return TryResolveZeroOffsetPointerParameterName(function, use.Value, definitions, out parameterName);
+            case SsaConvertRValue convert:
+                return TryResolveZeroOffsetPointerParameterName(function, convert.Operand, definitions, out parameterName);
+            case SsaSliceElementAddressRValue sliceElementAddress
+                when IsZeroIntegerValue(sliceElementAddress.Index, definitions, new HashSet<string>(StringComparer.Ordinal)):
+                return TryResolveParameterName(function, sliceElementAddress.Slice, definitions, out parameterName);
+            case SsaElementAddressRValue elementAddress
+                when elementAddress.ConstantIndex == 0
+                     || elementAddress.Index is not null
+                     && IsZeroIntegerValue(elementAddress.Index, definitions, new HashSet<string>(StringComparer.Ordinal)):
+                return TryResolveParameterName(function, elementAddress.Address, definitions, out parameterName);
+            default:
+                parameterName = string.Empty;
+                return false;
+        }
+    }
+
+    private static bool IsPlainVoidReturnBlock(SsaBasicBlock block)
+    {
+        return block.Phis.Count == 0
+            && block.Instructions.Count == 0
+            && block.Terminator.Kind == SsaTerminatorKind.Return
+            && block.Terminator.Value is null;
     }
 
     private static bool TryMatchOverlapSafeRawPointerMemmoveLoop(
@@ -2637,6 +3133,19 @@ internal sealed class LlvmFunctionBodyEmitter
                     && IsOneIntegerConstant(binary.Left));
     }
 
+    private static bool IsDecrementByOne(
+        SsaRValue definition,
+        string inductionValueName,
+        IReadOnlyDictionary<string, SsaRValue> definitions)
+    {
+        return definition is SsaBinaryRValue
+            {
+                Operator: SsaBinaryOperator.Subtract or SsaBinaryOperator.WrappingSubtract
+            } binary
+            && IsInductionValue(binary.Left, inductionValueName, definitions, new HashSet<string>(StringComparer.Ordinal))
+            && IsOneIntegerConstant(binary.Right);
+    }
+
     private static bool IsInductionValue(
         SsaValue value,
         string inductionValueName,
@@ -2853,6 +3362,8 @@ internal sealed class LlvmFunctionBodyEmitter
         {
             case SsaUseRValue use:
                 return TryResolveParameterName(function, use.Value, definitions, out parameterName);
+            case SsaConvertRValue convert:
+                return TryResolveParameterName(function, convert.Operand, definitions, out parameterName);
             case SsaLoadLocalRValue loadLocal
                 when TryResolveSingleStoredLocalValue(function, loadLocal.LocalName, out var storedValue):
                 return TryResolveParameterName(function, storedValue, definitions, out parameterName);
@@ -3048,6 +3559,14 @@ internal sealed class LlvmFunctionBodyEmitter
         int? ExitBlockId = null,
         IReadOnlyList<int>? SkippedBlockIds = null,
         DynamicLengthCommitPlan? DynamicLengthCommit = null);
+
+    private sealed record RawPointerCopyLoopMatch(
+        SsaValue DestinationBase,
+        SsaValue SourceBase,
+        StarkTypeSymbol ElementType,
+        SourceLocation? Location,
+        bool DestinationBaseIsSlice,
+        bool SourceBaseIsSlice);
 
     private sealed record DynamicLengthCommitPlan(
         SsaValue LengthAddress,

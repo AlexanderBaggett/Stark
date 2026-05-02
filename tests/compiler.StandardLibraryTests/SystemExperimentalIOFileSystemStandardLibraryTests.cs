@@ -361,6 +361,10 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
                     return file.Write(source);
                 }
 
+                fn System.IO.IOStatus SyncFile(mut borrow System.Experimental.IO.File.File file) {
+                    return file.SyncAll();
+                }
+
                 fn System.IO.IOResult<System.Experimental.FileSystem.Directory> OpenDir(ascii path) {
                     return System.Experimental.FileSystem.OpenDirectory(path);
                 }
@@ -385,14 +389,19 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
 
         Assert.Contains("System_Experimental_Runtime_Buffer_FixedByteBuffer8192_WriteFill", llvm, StringComparison.Ordinal);
         Assert.Contains("ReadDirectoryEntry", llvm, StringComparison.Ordinal);
+        Assert.Contains("OpenDirectoryFast", llvm, StringComparison.Ordinal);
         Assert.Contains("ReadFileBytes", llvm, StringComparison.Ordinal);
         Assert.Contains("WriteFileBytes", llvm, StringComparison.Ordinal);
+        Assert.Contains("ReadFileBytesFast", llvm, StringComparison.Ordinal);
+        Assert.Contains("WriteFileBytesFast", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("System_FileSystem_", llvm, StringComparison.Ordinal);
 
         var platformSource = File.ReadAllText(Path.Combine(sourceRoot, "System", "Runtime", "Platform.stark"));
         Assert.Contains("rawmutptr<i8[-128 127]>[capacity] buffer", platformSource, StringComparison.Ordinal);
         Assert.Contains("ReadFileBytes(rawmutptr<i8[-128 127]>[length] buffer", platformSource, StringComparison.Ordinal);
         Assert.Contains("WriteFileBytes(rawptr<i8[-128 127]>[length] buffer", platformSource, StringComparison.Ordinal);
+        Assert.Contains("ReadFileBytesFast(rawmutptr<i8[-128 127]>[length] buffer", platformSource, StringComparison.Ordinal);
+        Assert.Contains("WriteFileBytesFast(rawptr<i8[-128 127]>[length] buffer", platformSource, StringComparison.Ordinal);
     }
 
     [Fact]

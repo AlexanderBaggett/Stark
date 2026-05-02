@@ -543,6 +543,7 @@ public struct File {
     finite law bool IsOpen(borrow File self);
     fn i32 Close(mut borrow File self);
     fn i32 Flush(mut borrow File self);
+    fn i32 SyncAll(mut borrow File self);
     fn i64 ReadBytes(mut borrow File self, rawptr<i8> buffer, i64 size, i64 count);
     fn i64 WriteBytes(mut borrow File self, rawptr<i8> buffer, i64 size, i64 count);
     fn void WriteText(mut borrow File self, ascii text);
@@ -562,6 +563,7 @@ public fn rawptr<i8> OpenAppend(ascii path);
 
 public fn i32 Close(rawptr<i8> handle);
 public fn i32 Flush(rawptr<i8> handle);
+public fn i32 SyncAll(rawptr<i8> handle);
 public fn i64 ReadBytes(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle);
 public fn i64 WriteBytes(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle);
 public fn void WriteText(rawptr<i8> handle, ascii text);
@@ -616,7 +618,7 @@ The destructor is constrained by Stark's destructor rules:
 
 Explicit `Close` is available for code that wants to handle close ordering. After an explicit `Close`, the destructor is a no-op.
 
-Because destructors cannot surface rich failure values, implicit destructor cleanup is best-effort. Code that needs flush or close error handling must call `Flush` and `Close` explicitly before scope exit.
+Because destructors cannot surface rich failure values, implicit destructor cleanup is best-effort. Code that needs flush or close error handling must call `Flush` and `Close` explicitly before scope exit. Code that needs durable-storage synchronization must call `SyncAll` explicitly.
 
 ### File Encoding Behavior
 
@@ -636,8 +638,8 @@ The `encoding` field and `System.Text.Encoding` enum are in place, but the curre
 
 Internal implementation:
 
-- On Linux, `Open` calls the internal platform open boundary backed by `openat(2)`. `Close` calls the internal close boundary backed by `close(2)`. `ReadBytes` calls the internal read boundary backed by `read(2)`. `WriteBytes` calls the internal write boundary backed by `write(2)`. `Flush` drains the userspace buffer via repeated writes. `Delete` calls the internal delete boundary backed by `unlinkat(2)`. `Move` calls the internal rename boundary backed by `renameat2(2)`. `Exists` uses `newfstatat(2)`.
-- On Windows, `Open` calls `CreateFileW`. `Close` calls `CloseHandle`. `ReadBytes` calls `ReadFile`. `WriteBytes` calls `WriteFile`. `Flush` calls `FlushFileBuffers`. `Delete` calls `DeleteFileW`. `Move` calls `MoveFileExW`. `Exists` uses `GetFileAttributesW`.
+- On Linux, `Open` calls the internal platform open boundary backed by `openat(2)`. `Close` calls the internal close boundary backed by `close(2)`. `ReadBytes` calls the internal read boundary backed by `read(2)`. `WriteBytes` calls the internal write boundary backed by `write(2)`. `Flush` drains Stark userspace buffers. `Delete` calls the internal delete boundary backed by `unlinkat(2)`. `Move` calls the internal rename boundary backed by `renameat2(2)`. `Exists` uses `newfstatat(2)`.
+- On Windows, `Open` calls `CreateFileW`. `Close` calls `CloseHandle`. `ReadBytes` calls `ReadFile`. `WriteBytes` calls `WriteFile`. `Flush` drains Stark userspace buffers. `SyncAll` calls `FlushFileBuffers`. `Delete` calls `DeleteFileW`. `Move` calls `MoveFileExW`. `Exists` uses `GetFileAttributesW`.
 - Path strings are converted at the platform boundary. On Linux, `ascii` paths pass through as-is. On Windows, `ascii` paths are converted from UTF-8 to UTF-16LE before calling the `W` APIs, and `GetCurrentDirectoryW` results are converted back to UTF-8 for `System.IO.Path.CurrentDirectory`.
 
 ## Path API
@@ -746,7 +748,8 @@ The required Win32 APIs are:
 | read | `ReadFile` |
 | open | `CreateFileW` |
 | close | `CloseHandle` |
-| flush | `FlushFileBuffers` |
+| flush | userspace buffer drain |
+| sync all | `FlushFileBuffers` |
 | seek | `SetFilePointerEx` |
 | delete | `DeleteFileW` |
 | rename | `MoveFileExW` |

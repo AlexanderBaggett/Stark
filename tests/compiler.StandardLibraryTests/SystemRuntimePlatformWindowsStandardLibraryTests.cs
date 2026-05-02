@@ -42,7 +42,10 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         Assert.Contains("declare ptr @GetStdHandle(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @WriteFile(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @ReadFile(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @WriteConsoleW(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @GetConsoleMode(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef ptr @CachedStdout(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef ptr @CachedStderr(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @WriteStdoutAscii(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @WriteStdoutUnicode(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @WriteStderrAscii(", llvm, StringComparison.Ordinal);
@@ -53,6 +56,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         Assert.Contains("call ptr @GetStdHandle(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @WriteFile(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @ReadFile(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @WriteConsoleW(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @GetConsoleMode(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@LinuxSyscall", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@fputs(", llvm, StringComparison.Ordinal);
@@ -73,6 +77,8 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         Assert.Contains("declare i32 @FlushFileBuffers(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @ReadFile(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @WriteFile(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @NtReadFile(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @NtWriteFile(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @SetFilePointerEx(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef ptr @OpenFileRead(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef ptr @OpenFileWrite(", llvm, StringComparison.Ordinal);
@@ -82,12 +88,16 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         Assert.Contains("define fastcc noundef i32 @FlushFile(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i64 @ReadFile__", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i64 @WriteFile__", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i64 @ReadFileBytesFast(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i64 @WriteFileBytesFast(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i64 @SeekFile(", llvm, StringComparison.Ordinal);
         Assert.Contains("call ptr @CreateFileW(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @CloseHandle(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @FlushFileBuffers(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @ReadFile(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @WriteFile(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @NtReadFile(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @NtWriteFile(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @SetFilePointerEx(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@LinuxSyscall", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@fopen(", llvm, StringComparison.Ordinal);
@@ -107,7 +117,8 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         Assert.Contains("declare i32 @GetFileAttributesW(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @CreateDirectoryW(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @RemoveDirectoryW(", llvm, StringComparison.Ordinal);
-        Assert.Contains("declare ptr @FindFirstFileW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare ptr @FindFirstFileExW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("@WinFindFirstExLargeFetch = local_unnamed_addr constant i8 2", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @FindNextFileW(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @FindClose(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @PathExists(", llvm, StringComparison.Ordinal);
@@ -116,14 +127,17 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         Assert.Contains("define fastcc noundef i1 @IsDirectory(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @CreateDirectory(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @DeleteDirectory(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef ptr @OpenDirectoryWithFlags(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef ptr @OpenDirectory(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef ptr @OpenDirectoryFast(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @CloseDirectory(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @ReadDirectoryEntry(", llvm, StringComparison.Ordinal);
         Assert.Contains("@DirectoryEntryKindFromWindowsAttributes(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @GetFileAttributesW(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @CreateDirectoryW(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @RemoveDirectoryW(", llvm, StringComparison.Ordinal);
-        Assert.Contains("call ptr @FindFirstFileW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call ptr @FindFirstFileExW(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("call ptr @FindFirstFileW(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @FindNextFileW(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @FindClose(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@LinuxSyscall", llvm, StringComparison.Ordinal);
@@ -148,6 +162,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         Assert.Contains("define fastcc noundef i1 @IsDriveAbsoluteWidePath(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @IsUncWidePath(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @TryDecodeUtf8PathToWide(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef i32 @TryCopyWideAscii(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @TryBuildAbsoluteWindowsWidePath(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @TryBuildLongWindowsWidePath(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @TryBuildWindowsWidePath(", llvm, StringComparison.Ordinal);
@@ -157,6 +172,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         Assert.Contains("define fastcc noundef i1 @IsDirectorySeparator(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i1 @TryCurrentDirectory(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @GetCurrentDirectoryW(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i32 @TryCopyWideAscii(", llvm, StringComparison.Ordinal);
         Assert.Contains("call fastcc i1 @TryDecodeUtf8PathToWide(", llvm, StringComparison.Ordinal);
         Assert.Contains("call fastcc i1 @TryBuildLongWindowsWidePath(", llvm, StringComparison.Ordinal);
         Assert.Contains("call fastcc i1 @TryBuildWindowsWidePath(", llvm, StringComparison.Ordinal);
@@ -271,6 +287,238 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         }
     }
 
+    [Fact]
+    public async Task SourceWindowsConsoleExecutableWritesRedirectedOutputAndErrors()
+    {
+        if (!OperatingSystem.IsWindows()
+            || !NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-windows-console-runtime-");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, "App.exe");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import System
+                import System.Experimental.Console
+                module App
+
+                fn bool IsOk(System.IO.IOStatus status) {
+                    switch (status) {
+                        case System.IO.IOStatus.Ok:
+                            return true;
+                        case System.IO.IOStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                export ffi fn i32[-2147483648 2147483647] main() {
+                    if (!IsOk(System.Console.Write((unicode)"Console"))) {
+                        return 1;
+                    }
+
+                    if (!IsOk(System.Console.WriteLine((unicode)" Status"))) {
+                        return 2;
+                    }
+
+                    if (!IsOk(System.Console.WriteErrorLine("stderr works"))) {
+                        return 3;
+                    }
+
+                    if (!IsOk(System.Experimental.Console.WriteLine((unicode)"Experimental"))) {
+                        return 4;
+                    }
+
+                    if (!IsOk(System.Experimental.Console.WriteErrorLine("experimental stderr"))) {
+                        return 5;
+                    }
+
+                    return 0;
+                }
+                """);
+
+            var compileStdout = new StringWriter();
+            var compileStderr = new StringWriter();
+            var compileExitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                compileStdout,
+                compileStderr);
+
+            Assert.True(compileExitCode == 0, compileStdout + Environment.NewLine + compileStderr);
+            Assert.True(File.Exists(outputPath));
+
+            var execution = await RunProcessAsync(outputPath, tempDirectory.FullName);
+            Assert.Equal(0, execution.ExitCode);
+            Assert.Equal("Console Status\nExperimental\n", NormalizeNewlines(execution.Stdout));
+            Assert.Equal("stderr works\nexperimental stderr\n", NormalizeNewlines(execution.Stderr));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SourceWindowsDirectoryEnumerationProbeCompilesAsciiUnicodeAndLongNameChecks()
+    {
+        if (!OperatingSystem.IsWindows()
+            || !NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-windows-dir-enum-");
+        var appPath = Path.Combine(tempDirectory.FullName, "DirectoryDecodeProbe.stark");
+        var llvmPath = Path.Combine(tempDirectory.FullName, "DirectoryDecodeProbe.ll");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import System.Experimental.FileSystem
+                import System.Experimental.Text
+                import System.IO
+                module WindowsDirectoryDecodeProbe
+
+                fn bool IOOk(System.IO.IOStatus status) {
+                    switch (status) {
+                        case System.IO.IOStatus.Ok:
+                            return true;
+                        case System.IO.IOStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn bool IsWideName(mut borrow System.Experimental.FileSystem.FileSystemEntry entry) {
+                    if (entry.Name.Length() != 11) {
+                        return false;
+                    }
+
+                    stack i8[-128 127][] view = entry.Name.AsSlice();
+                    return view[0] == 119
+                        && view[1] == 105
+                        && view[2] == 100
+                        && view[3] == 101
+                        && view[4] == 45
+                        && view[5] == (i8[-128 127])-61
+                        && view[6] == (i8[-128 127])-87
+                        && view[7] == 46
+                        && view[8] == 116
+                        && view[9] == 120
+                        && view[10] == 116;
+                }
+
+                fn bool IsLongName(mut borrow System.Experimental.FileSystem.FileSystemEntry entry) {
+                    if (entry.Name.Length() != 184) {
+                        return false;
+                    }
+
+                    stack i8[-128 127][] view = entry.Name.AsSlice();
+                    return view[0] == 97
+                        && view[179] == 97
+                        && view[180] == 46
+                        && view[181] == 116
+                        && view[182] == 120
+                        && view[183] == 116;
+                }
+
+                export ffi fn i32[min max] main() {
+                    stack System.IO.IOResult<System.Experimental.FileSystem.Directory> opened =
+                        System.Experimental.FileSystem.OpenDirectory("scan-root");
+                    switch (opened) {
+                        case System.IO.IOResult<System.Experimental.FileSystem.Directory>.Err(var openError):
+                            return 1;
+                        case System.IO.IOResult<System.Experimental.FileSystem.Directory>.Ok(var directoryValue):
+                            stack mut System.Experimental.FileSystem.Directory directory = directoryValue;
+                            stack mut bool foundWide = false;
+                            stack mut bool foundLong = false;
+
+                            for willexit (stack mut i32[0 8] index = 0; index < 8; index += 1) {
+                                switch (directory.ReadNext()) {
+                                    case System.Experimental.FileSystem.DirectoryReadResult.Err(var readError):
+                                        directory.Close();
+                                        return 2;
+                                    case System.Experimental.FileSystem.DirectoryReadResult.End:
+                                        if (!IOOk(directory.Close())) {
+                                            return 3;
+                                        }
+
+                                        if (!foundWide) {
+                                            return 4;
+                                        }
+
+                                        if (!foundLong) {
+                                            return 5;
+                                        }
+
+                                        return 0;
+                                    case System.Experimental.FileSystem.DirectoryReadResult.Entry(var entry):
+                                        stack mut System.Experimental.FileSystem.FileSystemEntry mutableEntry = entry;
+                                        if (IsWideName(mutableEntry)) {
+                                            foundWide = true;
+                                        }
+
+                                        if (IsLongName(mutableEntry)) {
+                                            foundLong = true;
+                                        }
+                                }
+                            }
+
+                            directory.Close();
+                            return 6;
+                    }
+                }
+                """);
+
+            var compileStdout = new StringWriter();
+            var compileStderr = new StringWriter();
+            var compileExitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-llvm", "-I", sourceRoot, "-o", llvmPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                compileStdout,
+                compileStderr);
+
+            Assert.True(compileExitCode == 0, compileStdout + Environment.NewLine + compileStderr);
+            Assert.True(File.Exists(llvmPath));
+
+            var llvm = await File.ReadAllTextAsync(llvmPath);
+            Assert.Contains("System_Experimental_FileSystem_Directory_ReadNext", llvm, StringComparison.Ordinal);
+            Assert.Contains("System_Experimental_FileSystem_OpenDirectory", llvm, StringComparison.Ordinal);
+            Assert.Contains("TryCopyWideAscii", llvm, StringComparison.Ordinal);
+            Assert.Contains("TryCopyWideUtf8", llvm, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
     private static CompilationResult CompileWindowsPlatformSource()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -351,5 +599,29 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         }
 
         throw new InvalidOperationException("Unable to locate the Stark repository root for stdlib integration tests.");
+    }
+
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunProcessAsync(string fileName, string workingDirectory)
+    {
+        using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+        {
+            FileName = fileName,
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        });
+
+        Assert.NotNull(process);
+        var stdout = await process!.StandardOutput.ReadToEndAsync();
+        var stderr = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        return (process.ExitCode, stdout, stderr);
+    }
+
+    private static string NormalizeNewlines(string text)
+    {
+        return text.Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 }

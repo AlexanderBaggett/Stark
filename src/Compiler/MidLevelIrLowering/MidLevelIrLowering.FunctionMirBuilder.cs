@@ -5185,7 +5185,13 @@ internal sealed partial class MidLevelIrLowerer
 
                 if (overloads.Count == 1 && !overloads[0].IsGeneric)
                 {
-                    return TryBuildCall(overloads[0].Name, overloads[0], receiver: null, receiverPlace: null, arguments, text, out call);
+                    if (TryBuildCall(overloads[0].Name, overloads[0], receiver: null, receiverPlace: null, arguments, text, out call))
+                    {
+                        return true;
+                    }
+
+                    MarkUnsupported(arguments, $"Call '{functionName}' could not bind its arguments to '{overloads[0].Name}'.");
+                    return false;
                 }
 
                 return TryBuildOverloadedCall(overloads, receiver: null, receiverPlace: null, arguments, text, out call);
@@ -5203,7 +5209,13 @@ internal sealed partial class MidLevelIrLowerer
                 return false;
             }
 
-            return TryBuildCall(signature.Name, signature, receiver: null, receiverPlace: null, arguments, text, out call);
+            if (TryBuildCall(signature.Name, signature, receiver: null, receiverPlace: null, arguments, text, out call))
+            {
+                return true;
+            }
+
+            MarkUnsupported(arguments, $"Call '{functionName}' could not bind its arguments to '{signature.Name}'.");
+            return false;
         }
 
         private bool TryBuildMemberCall(
@@ -5905,11 +5917,11 @@ internal sealed partial class MidLevelIrLowerer
 
             if (TryResolveFunctionSignature(name, out _))
             {
-                MarkUnsupported();
+                MarkUnsupported(reason: $"Function '{name}' cannot be used as a value without a function-pointer target type.");
                 return null;
             }
 
-            MarkUnsupported();
+            MarkUnsupported(reason: $"Named operand '{name}' could not be resolved.");
             return null;
         }
 
@@ -6021,6 +6033,25 @@ internal sealed partial class MidLevelIrLowerer
                 {
                     overloads = importedCandidates;
                     return true;
+                }
+
+                var suffix = $".{sourceName}";
+                var uniqueSuffixMatches = _typeModel.Overloads
+                    .Where(candidate => candidate.Key.EndsWith(suffix, StringComparison.Ordinal))
+                    .SelectMany(static candidate => candidate.Value)
+                    .ToArray();
+                if (uniqueSuffixMatches.Length > 0)
+                {
+                    var uniqueOwnerNames = uniqueSuffixMatches
+                        .Select(static candidate => candidate.Name)
+                        .Distinct(StringComparer.Ordinal)
+                        .Take(2)
+                        .ToArray();
+                    if (uniqueOwnerNames.Length == 1)
+                    {
+                        overloads = uniqueSuffixMatches;
+                        return true;
+                    }
                 }
             }
 
@@ -6540,6 +6571,21 @@ internal sealed partial class MidLevelIrLowerer
             {
                 namedType = _typeModel.NamedTypes[importedMatches[0]];
                 return true;
+            }
+
+            if (!typeName.Contains('.', StringComparison.Ordinal))
+            {
+                var suffix = $".{typeName}";
+                var uniqueSuffixMatches = _typeModel.NamedTypes
+                    .Where(candidate => candidate.Key.EndsWith(suffix, StringComparison.Ordinal))
+                    .Select(static candidate => candidate.Value)
+                    .Take(2)
+                    .ToArray();
+                if (uniqueSuffixMatches.Length == 1)
+                {
+                    namedType = uniqueSuffixMatches[0];
+                    return true;
+                }
             }
 
             namedType = null!;

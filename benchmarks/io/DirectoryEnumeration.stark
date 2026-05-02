@@ -1,0 +1,199 @@
+import System.FileSystem
+import System.IO.File
+import System.Text
+module Benchmarks.IO.DirectoryEnumeration
+
+const Entries = 128;
+const AsciiEntries = 120;
+const UnicodeEntries = 8;
+const Iterations = 128;
+const RootName = "dir-enum-bench";
+const PathLength = 28;
+const HundredsIndex = 21;
+const TensIndex = 22;
+const OnesIndex = 23;
+const ExpectedChecksum = 212992;
+
+fn void WriteAsciiEntryPath(rawmutptr<i8[-128 127]> data, i32[0 119] index) {
+    stack i32[-2147483648 2147483647] value = (i32[-2147483648 2147483647])index;
+    *(&data[HundredsIndex]) = (i8[-128 127])(48 + ((value / 100) % 10));
+    *(&data[TensIndex]) = (i8[-128 127])(48 + ((value / 10) % 10));
+    *(&data[OnesIndex]) = (i8[-128 127])(48 + (value % 10));
+}
+
+fn void WriteUnicodeEntryPath(rawmutptr<i8[-128 127]> data, i32[0 7] index) {
+    *(&data[OnesIndex]) = (i8[-128 127])(48 + (i32[-2147483648 2147483647])index);
+}
+
+fn bool CreateEntry(ascii path) {
+    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenWrite(path);
+    if (handle == null) {
+        return false;
+    }
+
+    return System.IO.File.Close(handle) == 0;
+}
+
+fn void DeleteEntries() {
+    stack mut i8[-128 127][32] pathStorage = {
+        100, 105, 114, 45, 101, 110, 117, 109,
+        45, 98, 101, 110, 99, 104, 47, 101,
+        110, 116, 114, 121, 45, 48, 48, 48,
+        46, 116, 109, 112, 0, 0, 0, 0
+    };
+    stack mut Ascii path = new Ascii() {
+        Data = &pathStorage[0],
+        Length = PathLength,
+        Capacity = 32
+    };
+
+    for willexit (stack mut i32[0 120] index = 0; index < AsciiEntries; index += 1) {
+        WriteAsciiEntryPath(&pathStorage[0], (i32[0 119])index);
+        System.IO.File.Delete(System.Text.AsciiView(path));
+    }
+
+    stack mut i8[-128 127][32] unicodePathStorage = {
+        100, 105, 114, 45, 101, 110, 117, 109,
+        45, 98, 101, 110, 99, 104, 47, 119,
+        105, 100, 101, 45, -61, -87, 45, 48,
+        46, 116, 109, 112, 0, 0, 0, 0
+    };
+    stack mut Ascii unicodePath = new Ascii() {
+        Data = &unicodePathStorage[0],
+        Length = PathLength,
+        Capacity = 32
+    };
+
+    for willexit (stack mut i32[0 8] index = 0; index < UnicodeEntries; index += 1) {
+        WriteUnicodeEntryPath(&unicodePathStorage[0], (i32[0 7])index);
+        System.IO.File.Delete(System.Text.AsciiView(unicodePath));
+    }
+
+    System.FileSystem.DeleteDirectory(RootName);
+}
+
+fn bool CreateEntries() {
+    DeleteEntries();
+    System.FileSystem.CreateDirectory(RootName);
+
+    stack mut i8[-128 127][32] pathStorage = {
+        100, 105, 114, 45, 101, 110, 117, 109,
+        45, 98, 101, 110, 99, 104, 47, 101,
+        110, 116, 114, 121, 45, 48, 48, 48,
+        46, 116, 109, 112, 0, 0, 0, 0
+    };
+    stack mut Ascii path = new Ascii() {
+        Data = &pathStorage[0],
+        Length = PathLength,
+        Capacity = 32
+    };
+
+    for willexit (stack mut i32[0 120] index = 0; index < AsciiEntries; index += 1) {
+        WriteAsciiEntryPath(&pathStorage[0], (i32[0 119])index);
+        if (!CreateEntry(System.Text.AsciiView(path))) {
+            return false;
+        }
+    }
+
+    stack mut i8[-128 127][32] unicodePathStorage = {
+        100, 105, 114, 45, 101, 110, 117, 109,
+        45, 98, 101, 110, 99, 104, 47, 119,
+        105, 100, 101, 45, -61, -87, 45, 48,
+        46, 116, 109, 112, 0, 0, 0, 0
+    };
+    stack mut Ascii unicodePath = new Ascii() {
+        Data = &unicodePathStorage[0],
+        Length = PathLength,
+        Capacity = 32
+    };
+
+    for willexit (stack mut i32[0 8] index = 0; index < UnicodeEntries; index += 1) {
+        WriteUnicodeEntryPath(&unicodePathStorage[0], (i32[0 7])index);
+        if (!CreateEntry(System.Text.AsciiView(unicodePath))) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+fn i64[-9223372036854775808 9223372036854775807] EntryLength(System.FileSystem.DirectoryReadResult result) {
+    switch (result) {
+        case System.FileSystem.DirectoryReadResult.Entry(var entry):
+            return entry.Name.Length;
+        case System.FileSystem.DirectoryReadResult.End:
+            return -1;
+        case System.FileSystem.DirectoryReadResult.Err(var error):
+            return -1;
+    }
+}
+
+fn bool IsEnd(System.FileSystem.DirectoryReadResult result) {
+    switch (result) {
+        case System.FileSystem.DirectoryReadResult.Entry(var entry):
+            return false;
+        case System.FileSystem.DirectoryReadResult.End:
+            return true;
+        case System.FileSystem.DirectoryReadResult.Err(var error):
+            return false;
+    }
+}
+
+fn i64[-9223372036854775808 9223372036854775807] EnumerateOnce() {
+    stack System.IO.IOResult<System.FileSystem.Directory> opened = System.FileSystem.OpenDirectory(RootName);
+    switch (opened) {
+        case System.IO.IOResult<System.FileSystem.Directory>.Err(var openError):
+            return -1;
+        case System.IO.IOResult<System.FileSystem.Directory>.Ok(var directoryValue):
+            stack mut System.FileSystem.Directory directory = directoryValue;
+            stack mut i64[-9223372036854775808 9223372036854775807] checksum = 0;
+            stack mut i64[-9223372036854775808 9223372036854775807] count = 0;
+
+            for willexit (stack mut i32[0 128] index = 0; index < Entries; index += 1) {
+                stack i64[-9223372036854775808 9223372036854775807] length = EntryLength(directory.ReadNext());
+                if (length < 0) {
+                    directory.Close();
+                    return -1;
+                }
+
+                checksum += length;
+                count += 1;
+            }
+
+            if (count != Entries || !IsEnd(directory.ReadNext())) {
+                directory.Close();
+                return -1;
+            }
+
+            if (directory.Close() != System.IO.IOStatus.Ok) {
+                return -1;
+            }
+
+            return checksum;
+    }
+}
+
+export ffi fn i32[-2147483648 2147483647] main() {
+    if (!CreateEntries()) {
+        DeleteEntries();
+        return 1;
+    }
+
+    stack mut i64[-9223372036854775808 9223372036854775807] checksum = 0;
+    for willexit (stack mut i32[0 128] iteration = 0; iteration < Iterations; iteration += 1) {
+        stack i64[-9223372036854775808 9223372036854775807] iterationChecksum = EnumerateOnce();
+        if (iterationChecksum < 0) {
+            DeleteEntries();
+            return 2;
+        }
+
+        checksum += iterationChecksum;
+    }
+
+    DeleteEntries();
+    if (checksum != ExpectedChecksum) {
+        return 3;
+    }
+
+    return 0;
+}

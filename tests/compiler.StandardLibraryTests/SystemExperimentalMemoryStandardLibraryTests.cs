@@ -709,10 +709,10 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
         Assert.Contains("icmp ule ptr", appendCodePointsBody, StringComparison.Ordinal);
         Assert.Contains("icmp ule ptr", copyBytesBody, StringComparison.Ordinal);
         Assert.Contains("icmp ule ptr", copyCodePointsBody, StringComparison.Ordinal);
-        Assert.Contains("icmp ule ptr", moveBytesInfallibleBody, StringComparison.Ordinal);
-        Assert.Contains("icmp ule ptr", moveCodePointsInfallibleBody, StringComparison.Ordinal);
         Assert.DoesNotContain("icmp ule ptr", appendBytesDisjointBody, StringComparison.Ordinal);
         Assert.DoesNotContain("icmp ule ptr", appendCodePointsDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("icmp ule ptr", moveBytesInfallibleBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("icmp ule ptr", moveCodePointsInfallibleBody, StringComparison.Ordinal);
         Assert.DoesNotContain("snapshot", appendBytesDisjointBody, StringComparison.Ordinal);
         Assert.DoesNotContain("snapshot", appendCodePointsDisjointBody, StringComparison.Ordinal);
         Assert.Contains("@MoveBytesInfallible", moveBytesBody, StringComparison.Ordinal);

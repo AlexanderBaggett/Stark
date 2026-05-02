@@ -133,6 +133,10 @@ public struct File {
         return StatusFromPlatformResult(self.Inner.Flush());
     }
 
+    fn System.IO.IOStatus SyncAll(mut borrow File self) {
+        return StatusFromPlatformResult(self.Inner.SyncAll());
+    }
+
     fn System.IO.IOResult<i64[0 max]> Seek(mut borrow File self, i64[-9223372036854775808 9223372036854775807] offset, SeekOrigin origin) {
         return ByteCountFromPlatformResult(self.Inner.Seek(offset, StableSeekOrigin(origin)));
     }
@@ -153,7 +157,7 @@ public struct File {
 
         stack mut i64[-9223372036854775808 9223372036854775807] readCount = 0;
         unsafe {
-            readCount = self.Inner.ReadByteRegion(destinationParts.Data, destinationParts.Length);
+            readCount = self.Inner.ReadByteRegionFast(destinationParts.Data, destinationParts.Length);
         }
 
         return ByteCountFromPlatformResult(readCount);
@@ -178,7 +182,7 @@ public struct File {
             stack rawptr<i8[-128 127]> chunk = &sourceParts.Data[totalWritten];
             stack mut i64[-9223372036854775808 9223372036854775807] written = 0;
             unsafe {
-                written = self.Inner.WriteByteRegion(chunk, sourceParts.Length - totalWritten);
+                written = self.Inner.WriteByteRegionFast(chunk, sourceParts.Length - totalWritten);
             }
 
             if (written <= 0) {

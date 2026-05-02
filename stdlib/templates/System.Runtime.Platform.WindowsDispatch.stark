@@ -139,6 +139,14 @@ internal fn i64[-9223372036854775808 9223372036854775807] WriteFileBytes(rawptr<
     return System.Runtime.Platform.Windows.WriteFileBytes(buffer, length, handle);
 }
 
+internal fn i64[-9223372036854775808 9223372036854775807] ReadFileBytesFast(rawmutptr<i8[-128 127]>[length] buffer, i64[0 max] length, rawptr<i8[-128 127]> handle) {
+    return System.Runtime.Platform.Windows.ReadFileBytesFast(buffer, length, handle);
+}
+
+internal fn i64[-9223372036854775808 9223372036854775807] WriteFileBytesFast(rawptr<i8[-128 127]>[length] buffer, i64[0 max] length, rawptr<i8[-128 127]> handle) {
+    return System.Runtime.Platform.Windows.WriteFileBytesFast(buffer, length, handle);
+}
+
 internal fn i64[-9223372036854775808 9223372036854775807] SeekFile(rawptr<i8[-128 127]> handle, i64[-9223372036854775808 9223372036854775807] offset, i32[-2147483648 2147483647] origin) {
     return System.Runtime.Platform.Windows.SeekFile(handle, offset, origin);
 }
@@ -178,6 +186,11 @@ internal fn i32[-2147483648 2147483647] DeleteDirectory(ascii path) {
 internal fn rawptr<i8[-128 127]> OpenDirectory(ascii path)
 {
     return System.Runtime.Platform.Windows.OpenDirectory(path);
+}
+
+internal fn rawptr<i8[-128 127]> OpenDirectoryFast(ascii path)
+{
+    return System.Runtime.Platform.Windows.OpenDirectoryFast(path);
 }
 
 internal fn i32[-2147483648 2147483647] CloseDirectory(rawptr<i8[-128 127]> handle) {
@@ -248,6 +261,26 @@ internal fn i64[-9223372036854775808 9223372036854775807] WriteSocket(
     i64[0 max] length)
 {
     return System.Runtime.Platform.Windows.WriteSocket(handle, buffer, length);
+}
+
+internal fn i64[-9223372036854775808 9223372036854775807] ReadSocketVector2(
+    rawptr<i8[-128 127]> handle,
+    rawmutptr<i8[-128 127]>[firstCapacity] firstBuffer,
+    i64[0 max] firstCapacity,
+    rawmutptr<i8[-128 127]>[secondCapacity] secondBuffer,
+    i64[0 max] secondCapacity)
+{
+    return System.Runtime.Platform.Windows.ReadSocketVector2(handle, firstBuffer, firstCapacity, secondBuffer, secondCapacity);
+}
+
+internal fn i64[-9223372036854775808 9223372036854775807] WriteSocketVector2(
+    rawptr<i8[-128 127]> handle,
+    rawptr<i8[-128 127]>[firstLength] firstBuffer,
+    i64[0 max] firstLength,
+    rawptr<i8[-128 127]>[secondLength] secondBuffer,
+    i64[0 max] secondLength)
+{
+    return System.Runtime.Platform.Windows.WriteSocketVector2(handle, firstBuffer, firstLength, secondBuffer, secondLength);
 }
 
 internal fn rawptr<i8[-128 127]> AcceptSocket(

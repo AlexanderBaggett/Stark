@@ -27,8 +27,8 @@ fn main() {
     let mut byte_destination = vec![0_i8; BYTE_COUNT];
     let code_point_source = vec![65_i32; CODE_POINT_COUNT];
     let mut code_point_destination = vec![0_i32; CODE_POINT_COUNT];
-    let mut byte_move_buffer = [0_i8; BYTE_COUNT];
-    let mut code_point_move_buffer = [0_i32; CODE_POINT_COUNT];
+    let mut byte_move_buffer = vec![0_i8; BYTE_COUNT];
+    let mut code_point_move_buffer = vec![0_i32; CODE_POINT_COUNT];
     let mut checksum = 0_i64;
 
     for iteration in 0..ITERATIONS {

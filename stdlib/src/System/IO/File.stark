@@ -473,7 +473,7 @@ public struct File {
             return 0;
         }
 
-        stack i32[-2147483648 2147483647] flushStatus = self.Flush();
+        stack i32[-2147483648 2147483647] flushStatus = self.FlushBufferedWrite();
         stack i32[-2147483648 2147483647] closeStatus = System.Runtime.Platform.CloseFile(self.Handle);
         self.Handle = null;
         self.Closed = true;
@@ -486,6 +486,14 @@ public struct File {
     }
 
     fn i32[-2147483648 2147483647] Flush(mut borrow File self) {
+        if (self.Closed || self.Handle == null) {
+            return 0;
+        }
+
+        return self.FlushBufferedWrite();
+    }
+
+    fn i32[-2147483648 2147483647] SyncAll(mut borrow File self) {
         if (self.Closed || self.Handle == null) {
             return 0;
         }
@@ -503,7 +511,7 @@ public struct File {
             return 0;
         }
 
-        if (self.Flush() != 0) {
+        if (self.FlushBufferedWrite() != 0) {
             return 0;
         }
 
@@ -515,7 +523,7 @@ public struct File {
             return 0;
         }
 
-        if (self.Flush() != 0) {
+        if (self.FlushBufferedWrite() != 0) {
             return 0;
         }
 
@@ -527,7 +535,7 @@ public struct File {
             return 0;
         }
 
-        if (self.Flush() != 0) {
+        if (self.FlushBufferedWrite() != 0) {
             return 0;
         }
 
@@ -539,11 +547,35 @@ public struct File {
             return 0;
         }
 
-        if (self.Flush() != 0) {
+        if (self.FlushBufferedWrite() != 0) {
             return 0;
         }
 
         return System.Runtime.Platform.WriteFileBytes(buffer, count, self.Handle);
+    }
+
+    fn i64[-9223372036854775808 9223372036854775807] ReadByteRegionFast(mut borrow File self, rawmutptr<i8[-128 127]>[count] buffer, i64[0 max] count) {
+        if (self.Closed || self.Handle == null) {
+            return 0;
+        }
+
+        if (self.FlushBufferedWrite() != 0) {
+            return 0;
+        }
+
+        return System.Runtime.Platform.ReadFileBytesFast(buffer, count, self.Handle);
+    }
+
+    fn i64[-9223372036854775808 9223372036854775807] WriteByteRegionFast(mut borrow File self, rawptr<i8[-128 127]>[count] buffer, i64[0 max] count) {
+        if (self.Closed || self.Handle == null) {
+            return 0;
+        }
+
+        if (self.FlushBufferedWrite() != 0) {
+            return 0;
+        }
+
+        return System.Runtime.Platform.WriteFileBytesFast(buffer, count, self.Handle);
     }
 
     fn i64[-9223372036854775808 9223372036854775807] Seek(mut borrow File self, i64[-9223372036854775808 9223372036854775807] offset, SeekOrigin origin) {
@@ -551,7 +583,7 @@ public struct File {
             return -1;
         }
 
-        if (self.Flush() != 0) {
+        if (self.FlushBufferedWrite() != 0) {
             return -1;
         }
 
@@ -818,6 +850,14 @@ public fn i32[-2147483648 2147483647] Close(rawptr<i8[-128 127]> handle) {
 }
 
 public fn i32[-2147483648 2147483647] Flush(rawptr<i8[-128 127]> handle) {
+    if (handle == null) {
+        return 0;
+    }
+
+    return 0;
+}
+
+public fn i32[-2147483648 2147483647] SyncAll(rawptr<i8[-128 127]> handle) {
     return System.Runtime.Platform.FlushFile(handle);
 }
 

@@ -42,6 +42,7 @@ internal sealed class LlvmIrEmitter
     private readonly IReadOnlyDictionary<string, string> _specializationTemplateNames;
     private readonly IReadOnlyDictionary<string, SourceLocation> _functionLocations;
     private readonly IReadOnlyDictionary<string, ImportedLawClonePlan> _closedWorldImportedLawClones;
+    private readonly IReadOnlyDictionary<string, ImportedInlineBodyPlan> _closedWorldImportedInlineBodies;
     private readonly IReadOnlySet<string> _referencedImportedFunctions;
     private readonly bool _isOptimizedBuild;
     private readonly DebugMetadataEmitter _debugInfo;
@@ -144,7 +145,11 @@ internal sealed class LlvmIrEmitter
         _specializationTemplateNames = BuildSpecializationTemplateNames(specializationCodegenStrategy);
         _functionLocations = BuildFunctionLocationMap(loadedModules, input.FilePath);
         _closedWorldImportedLawClones = BuildClosedWorldImportedLawClones();
-        _referencedImportedFunctions = CollectReferencedImportedFunctions(ssa, _closedWorldImportedLawClones.Values);
+        _closedWorldImportedInlineBodies = BuildClosedWorldImportedInlineBodies();
+        _referencedImportedFunctions = CollectReferencedImportedFunctions(
+            ssa,
+            _closedWorldImportedLawClones.Values,
+            _closedWorldImportedInlineBodies.Values);
         _debugInfo = new DebugMetadataEmitter(
             input.FilePath ?? $"{syntaxModel.ModuleName}.stark",
             _isOptimizedBuild,
@@ -381,6 +386,25 @@ internal sealed class LlvmIrEmitter
             builder.AppendLine();
         }
 
+        foreach (var clone in _closedWorldImportedInlineBodies.Values.OrderBy(static clone => clone.FunctionName, StringComparer.Ordinal))
+        {
+            var parameterEffects = GetParameterEffects(clone.FunctionName, hasBody: true);
+            var memoryEffects = GetFunctionMemoryEffects(clone.FunctionName, hasBody: true);
+            builder.AppendLine($"; closed-world imported inline body: {clone.FunctionName}");
+            EmitFunctionDefinition(
+                builder,
+                internalize: true,
+                availableExternally: false,
+                clone.Signature,
+                clone.AbiSignature,
+                clone.Effects,
+                memoryEffects,
+                clone.SsaFunction,
+                parameterEffects,
+                resolveCallAbi);
+            builder.AppendLine();
+        }
+
         foreach (var abiFunction in _abiModel.Functions.Values
                      .Where(function => !handledFunctionNames.Contains(function.Name)
                                         )
@@ -445,7 +469,8 @@ internal sealed class LlvmIrEmitter
 
     private static IReadOnlySet<string> CollectReferencedImportedFunctions(
         SsaIrModule ssa,
-        IEnumerable<ImportedLawClonePlan> importedLawClones)
+        IEnumerable<ImportedLawClonePlan> importedLawClones,
+        IEnumerable<ImportedInlineBodyPlan> importedInlineBodies)
     {
         var referencedFunctions = new HashSet<string>(StringComparer.Ordinal);
 
@@ -455,6 +480,11 @@ internal sealed class LlvmIrEmitter
         }
 
         foreach (var clone in importedLawClones)
+        {
+            CollectReferencedFunctions(clone.SsaFunction, referencedFunctions);
+        }
+
+        foreach (var clone in importedInlineBodies)
         {
             CollectReferencedFunctions(clone.SsaFunction, referencedFunctions);
         }
@@ -554,6 +584,11 @@ internal sealed class LlvmIrEmitter
                 && FunctionKindFacts.IsLaw(callerEffects.Kind))
             {
                 return clone.AbiSignature;
+            }
+
+            if (_closedWorldImportedInlineBodies.TryGetValue(functionName, out var inlineBody))
+            {
+                return inlineBody.AbiSignature;
             }
 
             return _allAbiFunctions.TryGetValue(functionName, out var abiFunction)
@@ -680,6 +715,18 @@ internal sealed class LlvmIrEmitter
             _enumLayoutModel,
             _closedWorldModel,
             _specializationCodegenStrategy,
+            _allFunctionEffects,
+            _allFunctionSignatures);
+    }
+
+    private IReadOnlyDictionary<string, ImportedInlineBodyPlan> BuildClosedWorldImportedInlineBodies()
+    {
+        return LlvmSpecializationEmissionPlanner.BuildClosedWorldImportedInlineBodies(
+            _loadedModules,
+            _ssa,
+            _syntaxModel,
+            _typeModel,
+            _enumLayoutModel,
             _allFunctionEffects,
             _allFunctionSignatures);
     }

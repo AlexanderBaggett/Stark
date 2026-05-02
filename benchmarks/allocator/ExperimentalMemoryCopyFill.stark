@@ -33,8 +33,8 @@ fn i64[min max] SumCodePoints(borrow i32[-2147483648 2147483647][] values, i64[0
 
 export ffi fn i32[min max] main() {
     stack i64[0 max] byteCount = 32;
-    stack i64[0 max] codePointCount = 32;
-    stack i64[0 max] moveCount = 16;
+    stack i64[0 (2 ** 61) - 1] codePointCount = 32;
+    stack i64[0 (2 ** 61) - 1] moveCount = 16;
     stack i64[0 max] moveDestinationStart = 8;
     stack mut i8[-128 127][32] byteSource = {
         3, 3, 3, 3, 3, 3, 3, 3,

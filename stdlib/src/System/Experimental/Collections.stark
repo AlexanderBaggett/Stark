@@ -1,5 +1,6 @@
 import System.Memory
 import System.Collections
+import System.BitOperations
 module System.Experimental.Collections
 
 internal fn System.Memory.MemoryStatus ComputeContiguousGrowthCapacity(
@@ -71,6 +72,35 @@ internal fn System.Memory.MemoryStatus ComputeHashStorageGrowthCapacity(
 
     stack i64[0 max] targetAdditional = (i64[0 max])(targetCapacity - length);
     return ComputeContiguousGrowthCapacity(length, currentCapacity, targetAdditional, 8, nextCapacity);
+}
+
+internal inline finite law i64[-9223372036854775808 9223372036854775807] DictionaryStateOneBytes() {
+    return 72340172838076673;
+}
+
+internal inline finite law i64[-9223372036854775808 9223372036854775807] DictionaryStateTwoBytes() {
+    return 144680345676153346;
+}
+
+internal inline finite law i64[-9223372036854775808 9223372036854775807] DictionaryStateHighBits() {
+    return -9187201950435737472;
+}
+
+internal inline finite law i64[-9223372036854775808 9223372036854775807] DictionaryStateMatchMask(
+    i64[-9223372036854775808 9223372036854775807] stateWord,
+    i64[-9223372036854775808 9223372036854775807] repeatedByte) {
+    stack i64[-9223372036854775808 9223372036854775807] candidate = stateWord ^ repeatedByte;
+    return ((candidate -% DictionaryStateOneBytes()) & ~candidate) & DictionaryStateHighBits();
+}
+
+internal inline finite law i64[0 max] DictionaryStateMaskByteOffset(
+    i64[-9223372036854775808 9223372036854775807] mask) {
+    return (i64[0 max])(System.BitOperations.TrailingZeroCount(mask) / 8);
+}
+
+internal inline finite law i64[-9223372036854775808 9223372036854775807] DictionaryStateClearLowestMaskBit(
+    i64[-9223372036854775808 9223372036854775807] mask) {
+    return mask & (mask -% 1);
 }
 
 public struct List<T> {
@@ -573,7 +603,7 @@ public struct Dictionary<K, V> {
         self.StatesAllocation = new System.Memory.Allocation() {
             Pointer = null,
             ByteLength = 0,
-            Alignment = alignof(u8[0 2]),
+            Alignment = alignof(i64[-9223372036854775808 9223372036854775807]),
             Allocator = self.Allocator
         };
         self.Length = 0;
@@ -600,7 +630,7 @@ public struct Dictionary<K, V> {
         self.StatesAllocation = new System.Memory.Allocation() {
             Pointer = null,
             ByteLength = 0,
-            Alignment = alignof(u8[0 2]),
+            Alignment = alignof(i64[-9223372036854775808 9223372036854775807]),
             Allocator = allocator
         };
         self.Length = 0;
@@ -655,7 +685,98 @@ public struct Dictionary<K, V> {
         return self.Values[index];
     }
 
-    fn i64[0 max] FindIndex(borrow Dictionary<K, V> self, borrow K key) {
+    internal inline finite void InitializeStates(
+        mut borrow Dictionary<K, V> self,
+        i64[0 max] capacity,
+        rawmutptr<u8[0 2]> states) {
+        for willexit (stack mut i64[0 max] index = 0; index < capacity; index += 1) {
+            *(&states[index]) = 0;
+        }
+    }
+
+    internal inline finite i64[0 max] FindEmptyStateIndex(
+        borrow Dictionary<K, V> self,
+        i64[0 max] capacity,
+        rawptr<u8[0 2]> states,
+        i64[0 max] startIndex) {
+        stack mut i64[0 max] index = startIndex;
+        stack mut i64[0 max] probe = 0;
+
+        stack mut bool scanScalarPrefix = true;
+        while willexit (scanScalarPrefix) {
+            if (probe >= capacity) {
+                scanScalarPrefix = false;
+            }
+            else if ((index & 7) == 0) {
+                scanScalarPrefix = false;
+            }
+            else {
+                if (*(&states[index]) == 0) {
+                    return index;
+                }
+
+                index += 1;
+                if (index >= capacity) {
+                    index = 0;
+                }
+
+                probe += 1;
+            }
+        }
+
+        stack mut bool scanGroups = true;
+        while willexit (scanGroups) {
+            if (probe + 16 > capacity) {
+                scanGroups = false;
+            }
+            else if (index + 16 > capacity) {
+                scanGroups = false;
+            }
+            else {
+                stack rawptr<i64[-9223372036854775808 9223372036854775807]> lowerStateWord =
+                    (rawptr<i64[-9223372036854775808 9223372036854775807]>)(&states[index]);
+                stack i64[-9223372036854775808 9223372036854775807] lowerWord = *lowerStateWord;
+                stack i64[-9223372036854775808 9223372036854775807] lowerEmptyMask =
+                    DictionaryStateMatchMask(lowerWord, 0);
+                if (lowerEmptyMask != 0) {
+                    return (i64[0 max])(index + DictionaryStateMaskByteOffset(lowerEmptyMask));
+                }
+
+                stack rawptr<i64[-9223372036854775808 9223372036854775807]> upperStateWord =
+                    (rawptr<i64[-9223372036854775808 9223372036854775807]>)(&states[(i64[0 max])(index + 8)]);
+                stack i64[-9223372036854775808 9223372036854775807] upperWord = *upperStateWord;
+                stack i64[-9223372036854775808 9223372036854775807] upperEmptyMask =
+                    DictionaryStateMatchMask(upperWord, 0);
+                if (upperEmptyMask != 0) {
+                    return (i64[0 max])(index + 8 + DictionaryStateMaskByteOffset(upperEmptyMask));
+                }
+
+                index += 16;
+                if (index >= capacity) {
+                    index = 0;
+                }
+
+                probe += 16;
+            }
+        }
+
+        while willexit (probe < capacity) {
+            if (*(&states[index]) == 0) {
+                return index;
+            }
+
+            index += 1;
+            if (index >= capacity) {
+                index = 0;
+            }
+
+            probe += 1;
+        }
+
+        return capacity;
+    }
+
+    inline finite law i64[0 max] FindIndex(borrow Dictionary<K, V> self, borrow K key) {
         if (self.StorageCapacity == 0) {
             return 0;
         }
@@ -664,6 +785,108 @@ public struct Dictionary<K, V> {
         stack mut i64[0 max] index =
             (i64[0 max])(DictionaryKey.Hash(key) & (u64[0 max])storageMask);
         stack mut i64[0 max] probe = 0;
+
+        stack mut bool scanScalarPrefix = true;
+        while willexit (scanScalarPrefix) {
+            if (probe >= self.StorageCapacity) {
+                scanScalarPrefix = false;
+            }
+            else if ((index & 7) == 0) {
+                scanScalarPrefix = false;
+            }
+            else {
+                stack u8[0 2] state = *(&self.States[index]);
+                if (state == 0) {
+                    return self.StorageCapacity;
+                }
+
+                if (state == 1 && DictionaryKey.Equals(self.Keys[index], key)) {
+                    return index;
+                }
+
+                index += 1;
+                if (index >= self.StorageCapacity) {
+                    index = 0;
+                }
+
+                probe += 1;
+            }
+        }
+
+        stack mut bool scanGroups = true;
+        while willexit (scanGroups) {
+            if (probe + 16 > self.StorageCapacity) {
+                scanGroups = false;
+            }
+            else if (index + 16 > self.StorageCapacity) {
+                scanGroups = false;
+            }
+            else {
+                stack rawptr<i64[-9223372036854775808 9223372036854775807]> lowerStateWord =
+                    (rawptr<i64[-9223372036854775808 9223372036854775807]>)(&self.States[index]);
+                stack i64[-9223372036854775808 9223372036854775807] lowerWord = *lowerStateWord;
+                stack i64[-9223372036854775808 9223372036854775807] lowerEmptyMask =
+                    DictionaryStateMatchMask(lowerWord, 0);
+                stack mut i64[-9223372036854775808 9223372036854775807] lowerOccupiedMask =
+                    DictionaryStateMatchMask(lowerWord, DictionaryStateOneBytes());
+
+                while willexit (lowerOccupiedMask != 0) {
+                    stack i64[0 max] candidateBit =
+                        (i64[0 max])System.BitOperations.TrailingZeroCount(lowerOccupiedMask);
+                    if (lowerEmptyMask != 0
+                        && System.BitOperations.TrailingZeroCount(lowerEmptyMask) < (i64[-9223372036854775808 9223372036854775807])candidateBit) {
+                        return self.StorageCapacity;
+                    }
+
+                    stack i64[0 max] candidateIndex = (i64[0 max])(index + candidateBit / 8);
+                    if (DictionaryKey.Equals(self.Keys[candidateIndex], key)) {
+                        return candidateIndex;
+                    }
+
+                    lowerOccupiedMask = DictionaryStateClearLowestMaskBit(lowerOccupiedMask);
+                }
+
+                if (lowerEmptyMask != 0) {
+                    return self.StorageCapacity;
+                }
+
+                stack rawptr<i64[-9223372036854775808 9223372036854775807]> upperStateWord =
+                    (rawptr<i64[-9223372036854775808 9223372036854775807]>)(&self.States[(i64[0 max])(index + 8)]);
+                stack i64[-9223372036854775808 9223372036854775807] upperWord = *upperStateWord;
+                stack i64[-9223372036854775808 9223372036854775807] upperEmptyMask =
+                    DictionaryStateMatchMask(upperWord, 0);
+                stack mut i64[-9223372036854775808 9223372036854775807] upperOccupiedMask =
+                    DictionaryStateMatchMask(upperWord, DictionaryStateOneBytes());
+
+                while willexit (upperOccupiedMask != 0) {
+                    stack i64[0 max] candidateBit =
+                        (i64[0 max])System.BitOperations.TrailingZeroCount(upperOccupiedMask);
+                    if (upperEmptyMask != 0
+                        && System.BitOperations.TrailingZeroCount(upperEmptyMask) < (i64[-9223372036854775808 9223372036854775807])candidateBit) {
+                        return self.StorageCapacity;
+                    }
+
+                    stack i64[0 max] candidateIndex = (i64[0 max])(index + 8 + candidateBit / 8);
+                    if (DictionaryKey.Equals(self.Keys[candidateIndex], key)) {
+                        return candidateIndex;
+                    }
+
+                    upperOccupiedMask = DictionaryStateClearLowestMaskBit(upperOccupiedMask);
+                }
+
+                if (upperEmptyMask != 0) {
+                    return self.StorageCapacity;
+                }
+
+                index += 16;
+                if (index >= self.StorageCapacity) {
+                    index = 0;
+                }
+
+                probe += 16;
+            }
+        }
+
         while willexit (probe < self.StorageCapacity) {
             stack u8[0 2] state = *(&self.States[index]);
             if (state == 0) {
@@ -680,6 +903,201 @@ public struct Dictionary<K, V> {
             }
 
             probe += 1;
+        }
+
+        return self.StorageCapacity;
+    }
+
+    internal inline fn i64[0 max] FindInsertionIndex(
+        borrow Dictionary<K, V> self,
+        borrow K key,
+        u64[0 max] hash,
+        out bool found) {
+        found = false;
+        if (self.StorageCapacity == 0) {
+            return 0;
+        }
+
+        stack i64[0 max] storageMask = (i64[0 max])(self.StorageCapacity - 1);
+        stack mut i64[0 max] index = (i64[0 max])(hash & (u64[0 max])storageMask);
+        stack mut i64[0 max] firstDeleted = self.StorageCapacity;
+        stack mut i64[0 max] probe = 0;
+
+        stack mut bool scanScalarPrefix = true;
+        while willexit (scanScalarPrefix) {
+            if (probe >= self.StorageCapacity) {
+                scanScalarPrefix = false;
+            }
+            else if ((index & 7) == 0) {
+                scanScalarPrefix = false;
+            }
+            else {
+                stack u8[0 2] state = *(&self.States[index]);
+                if (state == 0) {
+                    if (firstDeleted < self.StorageCapacity) {
+                        return firstDeleted;
+                    }
+
+                    return index;
+                }
+
+                if (state == 2 && firstDeleted >= self.StorageCapacity) {
+                    firstDeleted = index;
+                }
+
+                if (state == 1 && DictionaryKey.Equals(self.Keys[index], key)) {
+                    found = true;
+                    return index;
+                }
+
+                index += 1;
+                if (index >= self.StorageCapacity) {
+                    index = 0;
+                }
+
+                probe += 1;
+            }
+        }
+
+        stack mut bool scanGroups = true;
+        while willexit (scanGroups) {
+            if (probe + 16 > self.StorageCapacity) {
+                scanGroups = false;
+            }
+            else if (index + 16 > self.StorageCapacity) {
+                scanGroups = false;
+            }
+            else {
+                stack rawptr<i64[-9223372036854775808 9223372036854775807]> lowerStateWord =
+                    (rawptr<i64[-9223372036854775808 9223372036854775807]>)(&self.States[index]);
+                stack i64[-9223372036854775808 9223372036854775807] lowerWord = *lowerStateWord;
+                stack i64[-9223372036854775808 9223372036854775807] lowerEmptyMask =
+                    DictionaryStateMatchMask(lowerWord, 0);
+                stack i64[-9223372036854775808 9223372036854775807] lowerDeletedMask =
+                    DictionaryStateMatchMask(lowerWord, DictionaryStateTwoBytes());
+                stack mut i64[-9223372036854775808 9223372036854775807] lowerOccupiedMask =
+                    DictionaryStateMatchMask(lowerWord, DictionaryStateOneBytes());
+
+                if (firstDeleted >= self.StorageCapacity && lowerDeletedMask != 0) {
+                    if (lowerEmptyMask == 0
+                        || System.BitOperations.TrailingZeroCount(lowerDeletedMask) < System.BitOperations.TrailingZeroCount(lowerEmptyMask)) {
+                        firstDeleted = (i64[0 max])(index + DictionaryStateMaskByteOffset(lowerDeletedMask));
+                    }
+                }
+
+                while willexit (lowerOccupiedMask != 0) {
+                    stack i64[0 max] candidateBit =
+                        (i64[0 max])System.BitOperations.TrailingZeroCount(lowerOccupiedMask);
+                    if (lowerEmptyMask != 0
+                        && System.BitOperations.TrailingZeroCount(lowerEmptyMask) < (i64[-9223372036854775808 9223372036854775807])candidateBit) {
+                        if (firstDeleted < self.StorageCapacity) {
+                            return firstDeleted;
+                        }
+
+                        return (i64[0 max])(index + DictionaryStateMaskByteOffset(lowerEmptyMask));
+                    }
+
+                    stack i64[0 max] candidateIndex = (i64[0 max])(index + candidateBit / 8);
+                    if (DictionaryKey.Equals(self.Keys[candidateIndex], key)) {
+                        found = true;
+                        return candidateIndex;
+                    }
+
+                    lowerOccupiedMask = DictionaryStateClearLowestMaskBit(lowerOccupiedMask);
+                }
+
+                if (lowerEmptyMask != 0) {
+                    if (firstDeleted < self.StorageCapacity) {
+                        return firstDeleted;
+                    }
+
+                    return (i64[0 max])(index + DictionaryStateMaskByteOffset(lowerEmptyMask));
+                }
+
+                stack rawptr<i64[-9223372036854775808 9223372036854775807]> upperStateWord =
+                    (rawptr<i64[-9223372036854775808 9223372036854775807]>)(&self.States[(i64[0 max])(index + 8)]);
+                stack i64[-9223372036854775808 9223372036854775807] upperWord = *upperStateWord;
+                stack i64[-9223372036854775808 9223372036854775807] upperEmptyMask =
+                    DictionaryStateMatchMask(upperWord, 0);
+                stack i64[-9223372036854775808 9223372036854775807] upperDeletedMask =
+                    DictionaryStateMatchMask(upperWord, DictionaryStateTwoBytes());
+                stack mut i64[-9223372036854775808 9223372036854775807] upperOccupiedMask =
+                    DictionaryStateMatchMask(upperWord, DictionaryStateOneBytes());
+
+                if (firstDeleted >= self.StorageCapacity && upperDeletedMask != 0) {
+                    if (upperEmptyMask == 0
+                        || System.BitOperations.TrailingZeroCount(upperDeletedMask) < System.BitOperations.TrailingZeroCount(upperEmptyMask)) {
+                        firstDeleted = (i64[0 max])(index + 8 + DictionaryStateMaskByteOffset(upperDeletedMask));
+                    }
+                }
+
+                while willexit (upperOccupiedMask != 0) {
+                    stack i64[0 max] candidateBit =
+                        (i64[0 max])System.BitOperations.TrailingZeroCount(upperOccupiedMask);
+                    if (upperEmptyMask != 0
+                        && System.BitOperations.TrailingZeroCount(upperEmptyMask) < (i64[-9223372036854775808 9223372036854775807])candidateBit) {
+                        if (firstDeleted < self.StorageCapacity) {
+                            return firstDeleted;
+                        }
+
+                        return (i64[0 max])(index + 8 + DictionaryStateMaskByteOffset(upperEmptyMask));
+                    }
+
+                    stack i64[0 max] candidateIndex = (i64[0 max])(index + 8 + candidateBit / 8);
+                    if (DictionaryKey.Equals(self.Keys[candidateIndex], key)) {
+                        found = true;
+                        return candidateIndex;
+                    }
+
+                    upperOccupiedMask = DictionaryStateClearLowestMaskBit(upperOccupiedMask);
+                }
+
+                if (upperEmptyMask != 0) {
+                    if (firstDeleted < self.StorageCapacity) {
+                        return firstDeleted;
+                    }
+
+                    return (i64[0 max])(index + 8 + DictionaryStateMaskByteOffset(upperEmptyMask));
+                }
+
+                index += 16;
+                if (index >= self.StorageCapacity) {
+                    index = 0;
+                }
+
+                probe += 16;
+            }
+        }
+
+        while willexit (probe < self.StorageCapacity) {
+            stack u8[0 2] state = *(&self.States[index]);
+            if (state == 0) {
+                if (firstDeleted < self.StorageCapacity) {
+                    return firstDeleted;
+                }
+
+                return index;
+            }
+
+            if (state == 2 && firstDeleted >= self.StorageCapacity) {
+                firstDeleted = index;
+            }
+
+            if (state == 1 && DictionaryKey.Equals(self.Keys[index], key)) {
+                found = true;
+                return index;
+            }
+
+            index += 1;
+            if (index >= self.StorageCapacity) {
+                index = 0;
+            }
+
+            probe += 1;
+        }
+
+        if (firstDeleted < self.StorageCapacity) {
+            return firstDeleted;
         }
 
         return self.StorageCapacity;
@@ -726,7 +1144,8 @@ public struct Dictionary<K, V> {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
         }
 
-        stack System.Memory.Allocation nextStatesAllocation = System.Memory.Allocate(self.Allocator, statesByteLength, alignof(u8[0 2]));
+        stack System.Memory.Allocation nextStatesAllocation =
+            System.Memory.Allocate(self.Allocator, statesByteLength, alignof(i64[-9223372036854775808 9223372036854775807]));
         if (nextStatesAllocation.Pointer == null) {
             System.Memory.Free(nextValuesAllocation);
             System.Memory.Free(nextKeysAllocation);
@@ -737,11 +1156,7 @@ public struct Dictionary<K, V> {
         stack rawmutptr<V> nextValues = (rawmutptr<V>)nextValuesAllocation.Pointer;
         stack rawmutptr<u8[0 2]> nextStates = (rawmutptr<u8[0 2]>)nextStatesAllocation.Pointer;
 
-        stack mut i64[0 max] stateIndex = 0;
-        while willexit (stateIndex < nextCapacity) {
-            *(&nextStates[stateIndex]) = 0;
-            stateIndex += 1;
-        }
+        self.InitializeStates(nextCapacity, nextStates);
 
         stack mut i64[0 max] oldIndex = 0;
         while willexit (oldIndex < self.StorageCapacity) {
@@ -749,25 +1164,13 @@ public struct Dictionary<K, V> {
                 stack K movedKey = *(&self.Keys[oldIndex]);
                 stack V movedValue = *(&self.Values[oldIndex]);
                 stack i64[0 max] nextMask = (i64[0 max])(nextCapacity - 1);
-                stack mut i64[0 max] nextIndex =
+                stack i64[0 max] nextIndex =
                     (i64[0 max])(DictionaryKey.Hash(movedKey) & (u64[0 max])nextMask);
-                stack mut i64[0 max] probe = 0;
-                while willexit (probe < nextCapacity) {
-                    if (*(&nextStates[nextIndex]) == 0) {
-                        *(&nextKeys[nextIndex]) = movedKey;
-                        *(&nextValues[nextIndex]) = movedValue;
-                        *(&nextStates[nextIndex]) = 1;
-                        probe = nextCapacity;
-                    }
-                    else {
-                        nextIndex += 1;
-                        if (nextIndex >= nextCapacity) {
-                            nextIndex = 0;
-                        }
-
-                        probe += 1;
-                    }
-                }
+                stack i64[0 max] targetIndex =
+                    self.FindEmptyStateIndex(nextCapacity, nextStates, nextIndex);
+                *(&nextKeys[targetIndex]) = movedKey;
+                *(&nextValues[targetIndex]) = movedValue;
+                *(&nextStates[targetIndex]) = 1;
             }
 
             oldIndex += 1;
@@ -795,52 +1198,20 @@ public struct Dictionary<K, V> {
         return System.Memory.MemoryStatus.Ok;
     }
 
-    fn System.Memory.MemoryStatus Set(mut borrow Dictionary<K, V> self, K key, V value) {
+    inline fn System.Memory.MemoryStatus Set(mut borrow Dictionary<K, V> self, K key, V value) {
         if (self.Length == 9223372036854775807) {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
         }
 
+        stack u64[0 max] keyHash = DictionaryKey.Hash(key);
+        stack mut bool foundExisting = false;
         stack mut i64[0 max] insertionIndex = self.StorageCapacity;
         if (self.StorageCapacity > 0) {
-            stack i64[0 max] existingStorageMask = (i64[0 max])(self.StorageCapacity - 1);
-            stack mut i64[0 max] existingIndex =
-                (i64[0 max])(DictionaryKey.Hash(key) & (u64[0 max])existingStorageMask);
-            stack mut i64[0 max] firstDeleted = self.StorageCapacity;
-            stack mut i64[0 max] existingProbe = 0;
-            while willexit (existingProbe < self.StorageCapacity) {
-                stack u8[0 2] state = *(&self.States[existingIndex]);
-                if (state == 0) {
-                    if (firstDeleted < self.StorageCapacity) {
-                        insertionIndex = firstDeleted;
-                    }
-                    else {
-                        insertionIndex = existingIndex;
-                    }
-
-                    existingProbe = self.StorageCapacity;
-                }
-                else {
-                    if (state == 2 && firstDeleted >= self.StorageCapacity) {
-                        firstDeleted = existingIndex;
-                    }
-
-                    if (state == 1 && DictionaryKey.Equals(self.Keys[existingIndex], key)) {
-                        stack V oldValue = *(&self.Values[existingIndex]);
-                        *(&self.Values[existingIndex]) = value;
-                        return System.Memory.MemoryStatus.Ok;
-                    }
-
-                    existingIndex += 1;
-                    if (existingIndex >= self.StorageCapacity) {
-                        existingIndex = 0;
-                    }
-
-                    existingProbe += 1;
-                }
-            }
-
-            if (insertionIndex >= self.StorageCapacity && firstDeleted < self.StorageCapacity) {
-                insertionIndex = firstDeleted;
+            insertionIndex = self.FindInsertionIndex(key, keyHash, foundExisting);
+            if (foundExisting) {
+                stack V oldValue = *(&self.Values[insertionIndex]);
+                *(&self.Values[insertionIndex]) = value;
+                return System.Memory.MemoryStatus.Ok;
             }
         }
 
@@ -867,39 +1238,11 @@ public struct Dictionary<K, V> {
         }
 
         if (insertionIndex >= self.StorageCapacity) {
-            stack i64[0 max] storageMask = (i64[0 max])(self.StorageCapacity - 1);
-            stack mut i64[0 max] index =
-                (i64[0 max])(DictionaryKey.Hash(key) & (u64[0 max])storageMask);
-            stack mut i64[0 max] firstDeleted = self.StorageCapacity;
-            stack mut i64[0 max] probe = 0;
-            while willexit (probe < self.StorageCapacity) {
-                stack u8[0 2] state = *(&self.States[index]);
-                if (state == 0) {
-                    if (firstDeleted < self.StorageCapacity) {
-                        insertionIndex = firstDeleted;
-                    }
-                    else {
-                        insertionIndex = index;
-                    }
-
-                    probe = self.StorageCapacity;
-                }
-                else {
-                    if (state == 2 && firstDeleted >= self.StorageCapacity) {
-                        firstDeleted = index;
-                    }
-
-                    index += 1;
-                    if (index >= self.StorageCapacity) {
-                        index = 0;
-                    }
-
-                    probe += 1;
-                }
-            }
-
-            if (insertionIndex >= self.StorageCapacity && firstDeleted < self.StorageCapacity) {
-                insertionIndex = firstDeleted;
+            insertionIndex = self.FindInsertionIndex(key, keyHash, foundExisting);
+            if (foundExisting) {
+                stack V oldValue = *(&self.Values[insertionIndex]);
+                *(&self.Values[insertionIndex]) = value;
+                return System.Memory.MemoryStatus.Ok;
             }
         }
 
@@ -914,168 +1257,58 @@ public struct Dictionary<K, V> {
         return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
     }
 
-    finite law bool ContainsKey(borrow Dictionary<K, V> self, borrow K key) {
-        if (self.StorageCapacity == 0) {
+    inline finite law bool ContainsKey(borrow Dictionary<K, V> self, borrow K key) {
+        return self.FindIndex(key) < self.StorageCapacity;
+    }
+
+    inline fn bool TryGet(borrow Dictionary<K, V> self, borrow K key, out V value) {
+        stack i64[0 max] index = self.FindIndex(key);
+        if (index >= self.StorageCapacity) {
             return false;
         }
 
-        stack i64[0 max] storageMask = (i64[0 max])(self.StorageCapacity - 1);
-        stack mut i64[0 max] index =
-            (i64[0 max])(DictionaryKey.Hash(key) & (u64[0 max])storageMask);
-        stack mut i64[0 max] probe = 0;
-        while willexit (probe < self.StorageCapacity) {
-            stack u8[0 2] state = *(&self.States[index]);
-            if (state == 0) {
-                return false;
-            }
-
-            if (state == 1 && DictionaryKey.Equals(self.Keys[index], key)) {
-                return true;
-            }
-
-            index += 1;
-            if (index >= self.StorageCapacity) {
-                index = 0;
-            }
-
-            probe += 1;
-        }
-
-        return false;
+        value = *(&self.Values[index]);
+        return true;
     }
 
-    fn bool TryGet(borrow Dictionary<K, V> self, borrow K key, out V value) {
-        if (self.StorageCapacity == 0) {
-            return false;
-        }
-
-        stack i64[0 max] storageMask = (i64[0 max])(self.StorageCapacity - 1);
-        stack mut i64[0 max] index =
-            (i64[0 max])(DictionaryKey.Hash(key) & (u64[0 max])storageMask);
-        stack mut i64[0 max] probe = 0;
-        while willexit (probe < self.StorageCapacity) {
-            stack u8[0 2] state = *(&self.States[index]);
-            if (state == 0) {
-                return false;
-            }
-
-            if (state == 1 && DictionaryKey.Equals(self.Keys[index], key)) {
-                value = *(&self.Values[index]);
-                return true;
-            }
-
-            index += 1;
-            if (index >= self.StorageCapacity) {
-                index = 0;
-            }
-
-            probe += 1;
-        }
-
-        return false;
-    }
-
-    fn DictionaryRemoveResult<V> RemoveMove(mut borrow Dictionary<K, V> self, borrow K key) {
-        if (self.StorageCapacity == 0) {
+    inline fn DictionaryRemoveResult<V> RemoveMove(mut borrow Dictionary<K, V> self, borrow K key) {
+        stack i64[0 max] index = self.FindIndex(key);
+        if (index >= self.StorageCapacity) {
             return DictionaryRemoveResult<V>.Missing;
         }
 
-        stack i64[0 max] storageMask = (i64[0 max])(self.StorageCapacity - 1);
-        stack mut i64[0 max] index =
-            (i64[0 max])(DictionaryKey.Hash(key) & (u64[0 max])storageMask);
-        stack mut i64[0 max] probe = 0;
-        while willexit (probe < self.StorageCapacity) {
-            stack u8[0 2] state = *(&self.States[index]);
-            if (state == 0) {
-                return DictionaryRemoveResult<V>.Missing;
-            }
-
-            if (state == 1 && DictionaryKey.Equals(self.Keys[index], key)) {
-                stack K removedKey = *(&self.Keys[index]);
-                stack V removedValue = *(&self.Values[index]);
-                *(&self.States[index]) = 2;
-                self.Length -= 1;
-                return DictionaryRemoveResult<V>.Removed(removedValue);
-            }
-
-            index += 1;
-            if (index >= self.StorageCapacity) {
-                index = 0;
-            }
-
-            probe += 1;
-        }
-
-        return DictionaryRemoveResult<V>.Missing;
+        stack K removedKey = *(&self.Keys[index]);
+        stack V removedValue = *(&self.Values[index]);
+        *(&self.States[index]) = 2;
+        self.Length -= 1;
+        return DictionaryRemoveResult<V>.Removed(removedValue);
     }
 
-    fn bool TryRemove(mut borrow Dictionary<K, V> self, borrow K key, out V value) {
-        if (self.StorageCapacity == 0) {
+    inline fn bool TryRemove(mut borrow Dictionary<K, V> self, borrow K key, out V value) {
+        stack i64[0 max] index = self.FindIndex(key);
+        if (index >= self.StorageCapacity) {
             return false;
         }
 
-        stack i64[0 max] storageMask = (i64[0 max])(self.StorageCapacity - 1);
-        stack mut i64[0 max] index =
-            (i64[0 max])(DictionaryKey.Hash(key) & (u64[0 max])storageMask);
-        stack mut i64[0 max] probe = 0;
-        while willexit (probe < self.StorageCapacity) {
-            stack u8[0 2] state = *(&self.States[index]);
-            if (state == 0) {
-                return false;
-            }
-
-            if (state == 1 && DictionaryKey.Equals(self.Keys[index], key)) {
-                stack K removedKey = *(&self.Keys[index]);
-                stack V removedValue = *(&self.Values[index]);
-                init value = removedValue;
-                *(&self.States[index]) = 2;
-                self.Length -= 1;
-                return true;
-            }
-
-            index += 1;
-            if (index >= self.StorageCapacity) {
-                index = 0;
-            }
-
-            probe += 1;
-        }
-
-        return false;
+        stack K removedKey = *(&self.Keys[index]);
+        stack V removedValue = *(&self.Values[index]);
+        init value = removedValue;
+        *(&self.States[index]) = 2;
+        self.Length -= 1;
+        return true;
     }
 
-    fn bool Remove(mut borrow Dictionary<K, V> self, borrow K key) {
-        if (self.StorageCapacity == 0) {
+    inline fn bool Remove(mut borrow Dictionary<K, V> self, borrow K key) {
+        stack i64[0 max] index = self.FindIndex(key);
+        if (index >= self.StorageCapacity) {
             return false;
         }
 
-        stack i64[0 max] storageMask = (i64[0 max])(self.StorageCapacity - 1);
-        stack mut i64[0 max] index =
-            (i64[0 max])(DictionaryKey.Hash(key) & (u64[0 max])storageMask);
-        stack mut i64[0 max] probe = 0;
-        while willexit (probe < self.StorageCapacity) {
-            stack u8[0 2] state = *(&self.States[index]);
-            if (state == 0) {
-                return false;
-            }
-
-            if (state == 1 && DictionaryKey.Equals(self.Keys[index], key)) {
-                stack K removedKey = *(&self.Keys[index]);
-                stack V removedValue = *(&self.Values[index]);
-                *(&self.States[index]) = 2;
-                self.Length -= 1;
-                return true;
-            }
-
-            index += 1;
-            if (index >= self.StorageCapacity) {
-                index = 0;
-            }
-
-            probe += 1;
-        }
-
-        return false;
+        stack K removedKey = *(&self.Keys[index]);
+        stack V removedValue = *(&self.Values[index]);
+        *(&self.States[index]) = 2;
+        self.Length -= 1;
+        return true;
     }
 
     fn void Clear(mut borrow Dictionary<K, V> self) {

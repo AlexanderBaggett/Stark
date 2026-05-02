@@ -1861,6 +1861,52 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
     }
 
     [Fact]
+    public void ExperimentalDictionaryLookupUsesGroupedControlByteProbe()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var benchmarkPath = Path.Combine(repositoryRoot, "benchmarks", "collections", "ExperimentalDictionaryLookup.stark");
+        var targetInfo = new LlvmTargetInfo("x86_64-unknown-linux-gnu", null);
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(File.ReadAllText(benchmarkPath), benchmarkPath),
+            new CompilerOptions(
+                OptimizationLevel: CompilerOptimizationLevel.O3,
+                EmitLlvmIr: true,
+                TargetInfo: targetInfo,
+                ModuleResolver: new TargetAwareStdLibModuleResolver(
+                    new FileSystemModuleResolver(sourceRoot),
+                    [sourceRoot],
+                    targetInfo)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+        var findIndexBody = ExtractDefinedFunctionText(
+            llvm,
+            "define linkonce_odr dso_local fastcc noundef range(i64 0, -9223372036854775808) i64 @__stark_mono_fn_System_Experimental_Collections__System_Experimental_Collections_Dictionary_FindIndex__i32_0_2147483647__i32_0_2147483647(");
+        var findInsertionBody = ExtractDefinedFunctionText(
+            llvm,
+            "define linkonce_odr dso_local fastcc noundef range(i64 0, -9223372036854775808) i64 @__stark_mono_fn_System_Experimental_Collections__System_Experimental_Collections_Dictionary_FindInsertionIndex__i32_0_2147483647__i32_0_2147483647(");
+        var initializeBody = ExtractDefinedFunctionText(
+            llvm,
+            "define linkonce_odr dso_local fastcc void @__stark_mono_fn_System_Experimental_Collections__System_Experimental_Collections_Dictionary_InitializeStates__i32_0_2147483647__i32_0_2147483647(");
+
+        Assert.DoesNotContain("; LLVM body emission fallback", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("br i1 undef", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("DictionaryStateWordAt", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("FindDictionaryEmptyStateIndex", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("InitializeDictionaryStates", llvm, StringComparison.Ordinal);
+        Assert.Contains("load i64", findIndexBody, StringComparison.Ordinal);
+        Assert.Contains("72340172838076673", findIndexBody, StringComparison.Ordinal);
+        Assert.Contains("-9187201950435737472", findIndexBody, StringComparison.Ordinal);
+        Assert.Contains("TrailingZeroCount", findIndexBody, StringComparison.Ordinal);
+        Assert.Contains("load i64", findInsertionBody, StringComparison.Ordinal);
+        Assert.Contains("72340172838076673", findInsertionBody, StringComparison.Ordinal);
+        Assert.Contains("-9187201950435737472", findInsertionBody, StringComparison.Ordinal);
+        Assert.Contains("TrailingZeroCount", findInsertionBody, StringComparison.Ordinal);
+        Assert.Contains("llvm.memset.p0.i64", initializeBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void StdLibSourceExperimentalCollectionReservesUseTailInitializationRegions()
     {
         var repositoryRoot = FindRepositoryRoot();

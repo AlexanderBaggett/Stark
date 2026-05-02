@@ -2913,3 +2913,99 @@ debuggability unless a task explicitly says otherwise.
   - [x] add focused gates for fixed runtime buffers, runtime buffer compaction, TCP reads, console byte writes, linked-list push/churn, queue dequeue/churn, dictionary mixed workloads, text append, path join/normalize/query, and Unicode formatting
   - [x] make each gate compare `stark` and `stark-experimental` with the same benchmark name and only the language column differing
   - [x] include generated LLVM or call-count checks for the optimizations where wall-clock noise hides the root cause
+
+- [x] Restore imported inline body visibility for benchmark-critical experimental helpers.
+  - [x] make source-loaded imported `inline` and `alwaysinline` helper bodies available to optimized root-module builds when the dependency is transparent and the callee is not `ffi`, `cold`, explicitly `noinline`, recursive, or `[Backend(Opaque)]`
+  - [x] include non-law exported helpers such as `System.Experimental.Memory.CopyBytesDisjointInfallible`, `FillInitializedBytesInfallible`, `CopyCodePointsDisjointInfallible`, `FillInitializedCodePointsInfallible`, `MoveBytesInfallible`, and `MoveCodePointsInfallible`; these currently appear as external `alwaysinline` declarations in `MemoryCopyFill` IR, which LLVM cannot inline without bodies
+  - [x] preserve function effects, parameter alias facts, bounded region facts, `disjoint` contracts, and `independent` loop metadata when cloning imported helper bodies into the caller optimization unit
+  - [x] add LLVM regression tests proving imported experimental memory helpers inline the same way as same-module helpers at `-O3`
+  - [x] add `MemoryCopyFill` IR gates proving the hot loop contains no calls to `System_Experimental_Memory_Copy*`, `Fill*`, or `Move*` helpers when the helper body is available
+
+- [x] Lower experimental memory copy, fill, and move hot paths to LLVM memory intrinsics or equivalent vectorized code.
+  - [x] inline `ReserveBytes` and `ReserveCodePoints` so optimized root-module builds do not retain opaque experimental reserve calls in `MemoryCopyFill`
+  - [x] simplify `MoveBytesInfallible` and `MoveCodePointsInfallible` so known-overlap calls lower to one memmove-style path instead of retaining a runtime disjoint/memcpy branch
+    - [x] remove the separate runtime `disjoint(...)` fast-path branch from the generic infallible move helpers so known overlapping calls no longer retain a competing `llvm.memcpy` path
+    - [x] add or extend compiler recognition for memmove-style forward/backward direction branches so the remaining generic move shape folds to one `llvm.memmove` when source and destination are known at the call site
+  - [x] make `MemoryCopyFill` compare like-for-like move buffers across Stark, Stark experimental, C, and Rust, or split the dynamic-buffer variant into a separate dynamic benchmark
+  - [x] audit Stark allocator return attributes against Rust/C allocator declarations and add missing `noalias`/allocation-family facts where valid
+  - [x] ensure fixed-size disjoint byte/code-point copies lower to `llvm.memcpy` or fully unrolled/vectorized loads and stores instead of scalar helper-call loops
+  - [x] ensure initialized byte fills lower to `llvm.memset` or vector splats when the value and count make that profitable
+  - [x] ensure overlap-safe byte/code-point moves lower to `llvm.memmove` or an optimized forward/backward in-place loop once the source and destination ranges are known
+  - [x] keep the allocation-free overlap-safe behavior already added for `MoveBytes` and `MoveCodePoints`
+  - [x] compare generated assembly for `benchmarks/allocator/MemoryCopyFill` against Rust and C, specifically checking hot-loop call counts, `memcpy`/`memmove`/`memset` calls, and SIMD/unrolled stores
+
+- [x] Add SIMD-style group probing to `System.Experimental.Collections.Dictionary<K, V>`.
+  - [x] evaluate a control-byte layout compatible with 16-byte group scans while preserving empty, occupied, and tombstone state semantics
+  - [x] implement lookup, insert, update, remove, and rehash probing so common integer-key workloads can scan occupancy/control metadata in groups instead of one state byte at a time
+  - [x] use the strongest currently accepted Stark features for the probe helpers: generic `inline` probe bodies, immutable key borrows, tightly contained raw state-word loads, and 8-byte aligned control storage; raw-pointer `independent` initialization remains verifier-limited, but the initialization body lowers to `llvm.memset`
+  - [x] keep a scalar fallback path for targets where SIMD group probing is not available or not yet exposed by the compiler
+  - [x] preserve probe-chain correctness with tombstones, moved-out values, drop safety, replacement updates, and wraparound
+  - [x] add LLVM or assembly gates looking for the expected grouped compare/mask/count-first-set pattern on Windows and Linux, analogous to Rust hashbrown's `pcmpeqb`/`pmovmskb`/`tzcnt` path on x64
+  - [x] rerun `DictionaryLookup`, `DictionaryMixed`, insert/update/remove benchmarks, and same-name `stark` versus `stark-experimental` comparisons after the layout change
+
+- [x] Audit `[Backend(Opaque)]`, `noinline`, and `optnone` boundaries exposed by assembly comparison.
+  - [x] verify no experimental standard-library hot type or helper is accidentally emitted with `optnone` or forced `noinline`
+  - [x] decide whether callable `noinline` should mean only "do not inline" while reserving LLVM `optnone` for explicit `[Backend(Opaque)]` optimizer-containment boundaries
+  - [x] add IR regression tests that reject `optnone` on source-backed optimized experimental helpers and monomorphized experimental collection functions
+  - [x] keep `[Backend(Opaque)]` usage benchmark-backed and narrow so representation containment does not silently block LLVM optimization of hot stdlib method bodies
+  - [x] document any stable-library opacity that remains intentionally slower while experimental implementations are being optimized toward replacement; the remaining stdlib opaque boundary is the legacy `System.Collections.Dictionary`, while `System.Experimental.Collections.Dictionary` stays optimizer-transparent
+
+- [x] Add assembly-guided optimization gates for the experimental standard library.
+  - [x] add a small script or test helper that preserves optimized LLVM IR and object disassembly for selected Stark benchmarks beside the Rust and C counterparts
+  - [x] cover at least `Arithmetic`, `MemoryCopyFill`, `DictionaryLookup`, `DictionaryMixed`, and one file/console benchmark on Windows
+  - [x] report hot-loop external call counts, retained `optnone` functions, memory intrinsic use, vector/SIMD instruction presence, and obvious runtime helper calls
+  - [x] make these gates diagnostic by default so they explain performance regressions without making every instruction-selection difference a hard failure
+  - [x] use the assembly gates to distinguish harness/process noise from real payload codegen regressions before marking an optimization task complete
+
+- [x] Align Windows experimental file flushing with buffered IO semantics.
+  - [x] split user-space buffer flushing from durable storage synchronization in the file APIs
+  - [x] keep ordinary `Flush`/read/write/seek transitions from calling Windows `FlushFileBuffers` by default
+  - [x] add explicit durable sync APIs such as `SyncAll`, `SyncData`, or `FlushToDisk` for callers that intentionally need `FlushFileBuffers`
+  - [x] make close drain pending Stark buffers without forcing an OS-level disk flush unless an explicit sync API was requested
+  - [x] update `System.Experimental.IO.File` to use the new split semantics while preserving correctness for read-after-write, seek-after-write, and close-after-write cases
+  - [x] add Windows-focused tests proving ordinary writes, reads, seeks, and closes do not issue durable flushes on the hot path
+  - [x] rerun file IO benchmarks against Rust and C after the flush split, using medians and call-count or LLVM gates where wall-clock noise hides the effect; Windows executable linking for `ExperimentalFileBufferedReadWrite` timed out in `lld-link`, so `scripts/analyze-benchmark-codegen.ps1 -LlvmOnly` was used for Stark experimental, C, and Rust LLVM call-count comparison and confirmed the hot benchmark path has no `FlushFileBuffers` calls
+
+- [x] Evaluate lower-level Windows handle IO for experimental file paths.
+  - [x] add a controlled experimental platform path for synchronous file reads and writes through `NtReadFile` and `NtWriteFile`
+  - [x] preserve the existing `ReadFile` and `WriteFile` path as a fallback or comparison backend while the performance difference is measured
+  - [x] ensure the NT path handles pending synchronous status, EOF, partial reads, partial writes, and error mapping correctly
+  - [x] compare `NtReadFile`/`NtWriteFile` against `ReadFile`/`WriteFile` only after durable flush overhead has been removed from ordinary IO
+  - [x] add targeted Windows file read/write benchmarks and regression gates for the chosen backend; `ExperimentalFileBufferedReadWrite` now routes byte slice reads/writes through the NT path, the stable path remains on `ReadFile`/`WriteFile`, and saved-temps/codegen checks verify the split without relying on noisy executable link timing
+
+- [x] Optimize Windows experimental console output paths.
+  - [x] avoid repeated `GetStdHandle` lookups in hot stdout and stderr write paths by caching handles or exposing a locked console writer
+  - [x] keep redirected stdout and stderr on direct byte writes so benchmark pipe output remains allocation-free
+  - [x] detect real console handles with `GetConsoleMode` and use `WriteConsoleW` for Unicode output when byte writes would require console-codepage translation
+  - [x] avoid large fixed-buffer initialization for tiny line writes; use a small newline coalescing path or a direct two-write fallback when it is cheaper
+  - [x] add correctness tests for redirected stdout/stderr, real-console-capable Unicode paths, empty writes, line writes, and error propagation; Windows platform IR coverage verifies cached handles, `WriteConsoleW`, line-write split paths, and direct `WriteFile` fallback, and the focused Windows runtime test covers redirected stdout/stderr plus stable and experimental Unicode line writes
+  - [x] add Windows console benchmark gates that separate formatting cost from platform write cost; saved-temps checks for `ExperimentalConsoleWrites` now confirm cached standard-handle calls and keep the 8 KiB line buffer behind a `noinline` large-line helper
+
+- [x] Optimize Windows experimental directory enumeration.
+  - [x] replace hot directory open paths that use `FindFirstFileW` with `FindFirstFileExW` and `FindExInfoBasic`
+  - [x] evaluate `FIND_FIRST_EX_LARGE_FETCH` for bulk or recursive enumeration modes without forcing it on latency-sensitive single-directory probes; stable directory opens now use `FindFirstFileExW` with basic info and no large-fetch flag, while `System.Experimental.FileSystem.OpenDirectory` routes through `OpenDirectoryFast` with `FIND_FIRST_EX_LARGE_FETCH`
+  - [x] preserve UTF-16 filename decoding correctness for non-ASCII paths and long names; `ReadDirectoryEntry` keeps the surrogate-safe UTF-16-to-UTF-8 fallback and the Windows directory probe compiles explicit UTF-8 byte checks for `wide-é.txt` plus a 184-byte long filename
+  - [x] add an ASCII filename fast path only if it measurably improves common directory scans without complicating Unicode correctness; `TryCopyWideAscii` handles the common single-byte filename path before falling back to `TryCopyWideUtf8`
+  - [x] add a four-way many-entry directory-open benchmark matrix (`DirectoryEnumeration`) for Stark, Stark experimental, C, and Rust, with the benchmark harness reporting the experimental Stark implementation only as `stark-experimental`
+  - [x] add Windows directory enumeration benchmarks against Rust and C, including many-entry directories and Unicode-heavy names
+
+- [x] Add a Windows `HeapReAlloc` path for experimental fallback reallocations.
+  - [x] use `HeapReAlloc` for process-heap allocations where alignment, ownership headers, and bucket metadata make in-place growth or shrink safe
+  - [x] preserve existing bucket reuse fast paths and keep allocate-copy-free fallback behavior for over-aligned or non-heap-owned regions
+  - [x] ensure failed reallocations leave the original allocation valid and observable ownership state unchanged
+  - [x] add correctness tests for grow, shrink, same-size, failure, bucket, fallback, and over-aligned reallocation cases
+  - [x] add benchmark and IR gates for `MemoryDynamicReserveGrowth`, `SystemMemoryFallbackReallocate`, and bucket reallocation cases on Windows
+
+- [x] Add Windows vectored socket IO readiness to experimental networking.
+  - [x] add bounded `WSABUF` wrappers and platform calls for `WSARecv` and `WSASend`
+  - [x] expose vectored read/write helpers only where ownership and disjoint buffer facts prove the regions are valid for the full OS call
+  - [x] keep simple `recv` and `send` paths for single contiguous buffers where they remain faster or equivalent
+  - [x] preserve Winsock startup behavior and make it thread-safe if concurrent networking benchmarks begin exercising it
+  - [x] add benchmark coverage for scatter/gather socket writes and reads before routing general APIs through vectored IO
+
+- [x] Improve Windows benchmark signal for experimental standard library work.
+  - [x] keep compile, link, and runtime metrics separated so slow `lld-link` or ThinLTO work is not mistaken for standard-library runtime cost
+  - [x] make median runtime the primary Windows comparison metric, with averages and max values retained as noise/outlier diagnostics
+  - [x] add targeted benchmark subsets for Windows file, console, directory, allocator, and socket investigations so each change can be measured quickly
+  - [x] consider a runtime-benchmark mode that disables or amortizes ThinLTO/link cost when the goal is standard-library runtime comparison rather than compiler/linker performance
+  - [x] document any Windows-only gaps against Rust or C before marking a Windows optimization pass complete

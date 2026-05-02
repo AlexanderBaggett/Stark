@@ -137,22 +137,6 @@ fn System.IO.IOStatus StatusFromPlatformResult(i32[min max] result) {
     return System.IO.IOStatus.Ok;
 }
 
-fn FileSystemEntryKind EntryKindFromCode(i32[min max] kindCode) {
-    if (kindCode == 1) {
-        return FileSystemEntryKind.File;
-    }
-
-    if (kindCode == 2) {
-        return FileSystemEntryKind.Directory;
-    }
-
-    if (kindCode == 3) {
-        return FileSystemEntryKind.Symlink;
-    }
-
-    return FileSystemEntryKind.Other;
-}
-
 fn DirectoryReadResult DirectoryReadResultFromPlatformResult(
     Ascii name,
     i32[min max] kindCode)
@@ -165,16 +149,27 @@ fn DirectoryReadResult DirectoryReadResultFromPlatformResult(
         return DirectoryReadResult.Err(IOErrorFromPlatformResult(kindCode));
     }
 
-    return CreateEntry(name, EntryKindFromCode(kindCode));
-}
+    stack mut FileSystemEntryKind kind = FileSystemEntryKind.Other;
+    if (kindCode == 1) {
+        kind = FileSystemEntryKind.File;
+    }
+    else {
+        if (kindCode == 2) {
+            kind = FileSystemEntryKind.Directory;
+        }
+        else {
+            if (kindCode == 3) {
+                kind = FileSystemEntryKind.Symlink;
+            }
+        }
+    }
 
-fn DirectoryReadResult CreateEntry(Ascii sourceName, FileSystemEntryKind kind) {
-    if (sourceName.Length < 0 || sourceName.Length > sourceName.Capacity) {
+    if (name.Length < 0 || name.Length > name.Capacity) {
         return DirectoryReadResult.Err(System.IO.IOError.InvalidPath);
     }
 
     stack mut System.Experimental.Text.OwnedAscii entryName = new();
-    stack System.Memory.MemoryStatus status = entryName.AppendAscii(System.Experimental.Text.AsciiView(sourceName));
+    stack System.Memory.MemoryStatus status = entryName.AppendAscii(System.Experimental.Text.AsciiView(name));
     switch (status) {
         case System.Memory.MemoryStatus.Err(var error):
             return DirectoryReadResult.Err(System.IO.IOError.Unknown(-1));
@@ -216,7 +211,7 @@ public fn System.IO.IOStatus DeleteDirectory(ascii path) {
 }
 
 public fn System.IO.IOResult<Directory> OpenDirectory(ascii path) {
-    return DirectoryResultFromHandle(System.Runtime.Platform.OpenDirectory(path));
+    return DirectoryResultFromHandle(System.Runtime.Platform.OpenDirectoryFast(path));
 }
 
 public fn System.IO.IOResult<bool> Exists(ascii path) {

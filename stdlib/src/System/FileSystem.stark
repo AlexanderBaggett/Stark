@@ -144,34 +144,21 @@ fn DirectoryReadResult DirectoryReadResultFromPlatformResult(
         return DirectoryReadResult.Err(IOErrorFromPlatformResult(kindCode));
     }
 
-    return CreateEntry(name, EntryKindFromCode(kindCode));
-}
-
-fn FileSystemEntryKind EntryKindFromCode(i32[-2147483648 2147483647] kindCode) {
+    stack mut FileSystemEntryKind kind = FileSystemEntryKind.Other;
     if (kindCode == 1) {
-        return FileSystemEntryKind.File;
+        kind = FileSystemEntryKind.File;
+    }
+    else {
+        if (kindCode == 2) {
+            kind = FileSystemEntryKind.Directory;
+        }
+        else {
+            if (kindCode == 3) {
+                kind = FileSystemEntryKind.Symlink;
+            }
+        }
     }
 
-    if (kindCode == 2) {
-        return FileSystemEntryKind.Directory;
-    }
-
-    if (kindCode == 3) {
-        return FileSystemEntryKind.Symlink;
-    }
-
-    return FileSystemEntryKind.Other;
-}
-
-fn void CopyAscii(rawmutptr<i8[-128 127]> destination, rawptr<i8[-128 127]> source, i64[-9223372036854775808 9223372036854775807] length) {
-    stack mut i64[-9223372036854775808 9223372036854775807] index = 0;
-    while willexit (index < length) {
-        *(&destination[index]) = *(&source[index]);
-        index += 1;
-    }
-}
-
-fn DirectoryReadResult CreateEntry(Ascii name, FileSystemEntryKind kind) {
     stack i64[-9223372036854775808 9223372036854775807] length = name.Length;
     if (length < 0 || length > name.Capacity) {
         return DirectoryReadResult.Err(System.IO.IOError.InvalidPath);
@@ -197,7 +184,11 @@ fn DirectoryReadResult CreateEntry(Ascii name, FileSystemEntryKind kind) {
         }
 
         data = (rawmutptr<i8[-128 127]>)allocation.Pointer;
-        CopyAscii(data, source, length);
+        stack mut i64[-9223372036854775808 9223372036854775807] index = 0;
+        while willexit (index < length) {
+            *(&data[index]) = *(&source[index]);
+            index += 1;
+        }
     }
 
     stack FileSystemEntry entry = new FileSystemEntry() {

@@ -7,6 +7,143 @@ namespace compiler.PipelineTests;
 public sealed class CompilerPipelineEmitLlvmTests
 {
     [Fact]
+    public void SourceBackedImportedInlineFunctionsEmitInternalLlvmBodyClones()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-source-imported-inline-body-llvm-pipeline-");
+        var libPath = Path.Combine(tempDirectory.FullName, "Lib.stark");
+        var demoPath = Path.Combine(tempDirectory.FullName, "Demo.stark");
+
+        try
+        {
+            File.WriteAllText(
+                libPath,
+                """
+                module Lib
+
+                export inline finite i32[0 102] SelectOrAdd(i32[0 100] value, bool add) {
+                    if (add) {
+                        return value + 1;
+                    }
+
+                    return value + 2;
+                }
+                """);
+
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    import Lib
+                    module Demo
+
+                    fn i32[0 102] Run(i32[0 100] value, bool add) {
+                        return Lib.SelectOrAdd(value, add);
+                    }
+                    """,
+                    demoPath),
+                new CompilerOptions(
+                    StopAfterPassId: "emit-llvm",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+            Assert.Contains("; closed-world imported inline body: Lib.SelectOrAdd", llvm, StringComparison.Ordinal);
+            Assert.True(
+                System.Text.RegularExpressions.Regex.IsMatch(
+                    llvm,
+                    @"define internal[^\r\n]*@__stark_inline_clone_Lib_SelectOrAdd\(",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+                "Expected source-backed imported inline function to be emitted as an internal clone definition.");
+            Assert.True(
+                System.Text.RegularExpressions.Regex.IsMatch(
+                    llvm,
+                    @"call fastcc[^\r\n]*@__stark_inline_clone_Lib_SelectOrAdd\(",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+                "Expected root call to target the imported inline body clone.");
+            Assert.False(
+                System.Text.RegularExpressions.Regex.IsMatch(
+                    llvm,
+                    @"call fastcc[^\r\n]*@Lib_SelectOrAdd\(",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+                "Expected root call to avoid the imported ABI declaration when an inline body clone exists.");
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void SourceBackedImportedNoInlineFunctionsStayAbiDeclarations()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-source-imported-noinline-body-llvm-pipeline-");
+        var libPath = Path.Combine(tempDirectory.FullName, "Lib.stark");
+        var demoPath = Path.Combine(tempDirectory.FullName, "Demo.stark");
+
+        try
+        {
+            File.WriteAllText(
+                libPath,
+                """
+                module Lib
+
+                public noinline finite i32[0 102] SelectOrAdd(i32[0 100] value, bool add) {
+                    if (add) {
+                        return value + 1;
+                    }
+
+                    return value + 2;
+                }
+                """);
+
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    import Lib
+                    module Demo
+
+                    fn i32[0 102] Run(i32[0 100] value, bool add) {
+                        return Lib.SelectOrAdd(value, add);
+                    }
+                    """,
+                    demoPath),
+                new CompilerOptions(
+                    StopAfterPassId: "emit-llvm",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+            Assert.DoesNotContain("closed-world imported inline body: Lib.SelectOrAdd", llvm, StringComparison.Ordinal);
+            Assert.DoesNotContain("@__stark_inline_clone_Lib_SelectOrAdd", llvm, StringComparison.Ordinal);
+            Assert.True(
+                System.Text.RegularExpressions.Regex.IsMatch(
+                    llvm,
+                    @"call fastcc[^\r\n]*@Lib_SelectOrAdd\(",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+                "Expected noinline imports to remain ABI calls.");
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void ManifestBackedColdNoInlineGenericInstantiationsPreserveTypedInterfaceModifiersWithoutCompilerFacts()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-typed-interface-modifiers-generic-codegen-pipeline-");

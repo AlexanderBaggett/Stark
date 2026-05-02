@@ -161,7 +161,7 @@ public sealed class LlvmIrEmissionTests
 
         Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
         Assert.Contains("@__stark_runtime_try_realloc", llvm);
-        Assert.Contains("define weak_odr hidden ptr @__stark_runtime_try_alloc", llvm);
+        Assert.Contains("define weak_odr hidden noalias noundef ptr @__stark_runtime_try_alloc", llvm);
         Assert.Contains("define weak_odr hidden i1 @__stark_dynamic_try_reserve", llvm);
         Assert.Contains("dynamic_try_reserve_needed", runBody);
         Assert.Contains("call ptr @__stark_runtime_try_realloc", runBody);
@@ -4438,10 +4438,10 @@ public sealed class LlvmIrEmissionTests
         Assert.DoesNotContain("@malloc(", llvm);
         Assert.DoesNotContain("@realloc(", llvm);
         Assert.DoesNotContain("@free(", llvm);
-        Assert.Contains("define internal dso_local noalias nonnull noundef ptr @__stark_heap_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") nounwind", llvm);
-        Assert.Contains("define internal dso_local void @__stark_heap_free(ptr %ptr) unnamed_addr nounwind", llvm);
-        Assert.Contains("define weak_odr hidden noalias nonnull noundef ptr @__stark_runtime_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") nounwind", llvm);
-        Assert.Contains("define internal dso_local ptr @__stark_os_allocate(i64 noundef %size) unnamed_addr nounwind", llvm);
+        Assert.Contains("define internal dso_local noalias nonnull noundef ptr @__stark_heap_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"__stark_heap_alloc\" nounwind", llvm);
+        Assert.Contains("define internal dso_local void @__stark_heap_free(ptr %ptr) unnamed_addr allockind(\"free\") \"alloc-family\"=\"__stark_heap_alloc\" nounwind", llvm);
+        Assert.Contains("define weak_odr hidden noalias nonnull noundef ptr @__stark_runtime_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"__stark_runtime_alloc\" nounwind", llvm);
+        Assert.Contains("define internal dso_local noalias noundef ptr @__stark_os_allocate(i64 noundef %size) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized\") \"alloc-family\"=\"__stark_os_allocate\" nounwind", llvm);
         Assert.Contains("@__stark_alloc_lock = weak_odr hidden global i32 0, align 4", llvm);
         Assert.Contains("@__stark_alloc_bucket_16 = weak_odr hidden thread_local(localexec) global ptr null, align 8", llvm);
         Assert.Contains("@__stark_alloc_bucket_4096 = weak_odr hidden thread_local(localexec) global ptr null, align 8", llvm);
@@ -4455,7 +4455,7 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("br i1 %can_bucket, label %bucket_select_16, label %large_allocate", llvm);
         Assert.Contains("br label %bucket_16_refill", llvm);
         Assert.Contains("bucket_16_refill:", llvm);
-        Assert.Contains("%bucket_16_slab_base = call ptr @__stark_os_allocate(i64 noundef", llvm);
+        Assert.Contains("%bucket_16_slab_base = call noalias noundef ptr @__stark_os_allocate(i64 noundef", llvm);
         Assert.Contains("%bucket_16_refill_index = phi i64 [1, %bucket_16_slab_ok], [%bucket_16_refill_next, %bucket_16_refill_body]", llvm);
         Assert.Contains("%bucket_16_refill_offset = mul i64 %bucket_16_refill_index, 48", llvm);
         Assert.Contains("store i64 16, ptr %bucket_16_block_bucket_size_slot, align 8", llvm);
@@ -4559,11 +4559,13 @@ public sealed class LlvmIrEmissionTests
         Assert.DoesNotContain("@malloc(", llvm);
         Assert.DoesNotContain("@realloc(", llvm);
         Assert.DoesNotContain("@free(", llvm);
-        Assert.Contains("define weak_odr hidden noalias nonnull noundef ptr @__stark_runtime_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") nounwind", llvm);
-        Assert.Contains("define weak_odr hidden nonnull noundef ptr @__stark_runtime_realloc(ptr %old_ptr, i64 noundef %old_size, i64 noundef %new_size, i64 noundef allocalign %alignment) unnamed_addr allocsize(2) allockind(\"realloc,aligned\") nounwind", llvm);
+        Assert.Contains("define weak_odr hidden noalias nonnull noundef ptr @__stark_runtime_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"__stark_runtime_alloc\" nounwind", llvm);
+        Assert.Contains("define weak_odr hidden noalias noundef ptr @__stark_runtime_try_alloc(i64 noundef %size, i64 noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") \"alloc-family\"=\"__stark_runtime_alloc\" nounwind", llvm);
+        Assert.Contains("define weak_odr hidden nonnull noundef ptr @__stark_runtime_realloc(ptr %old_ptr, i64 noundef %old_size, i64 noundef %new_size, i64 noundef allocalign %alignment) unnamed_addr allocsize(2) allockind(\"realloc,aligned\") \"alloc-family\"=\"__stark_runtime_alloc\" nounwind", llvm);
         Assert.DoesNotContain("define weak_odr hidden noalias nonnull noundef ptr @__stark_runtime_realloc", llvm);
-        Assert.Contains("define weak_odr hidden void @__stark_runtime_free(ptr %ptr) unnamed_addr nounwind", llvm);
-        Assert.Contains("define internal dso_local ptr @__stark_os_allocate(i64 noundef %size) unnamed_addr nounwind", llvm);
+        Assert.Contains("define weak_odr hidden ptr @__stark_runtime_try_realloc(ptr %old_ptr, i64 noundef %old_size, i64 noundef %new_size, i64 noundef allocalign %alignment) unnamed_addr allocsize(2) allockind(\"realloc,aligned\") \"alloc-family\"=\"__stark_runtime_alloc\" nounwind", llvm);
+        Assert.Contains("define weak_odr hidden void @__stark_runtime_free(ptr %ptr) unnamed_addr allockind(\"free\") \"alloc-family\"=\"__stark_runtime_alloc\" nounwind", llvm);
+        Assert.Contains("define internal dso_local noalias noundef ptr @__stark_os_allocate(i64 noundef %size) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized\") \"alloc-family\"=\"__stark_os_allocate\" nounwind", llvm);
         Assert.Contains("call i64 asm sideeffect \"syscall\"", llvm);
         Assert.Contains("@Allocate(", llvm);
         var allocateHeader = ExtractDefinitionHeader(llvm, "Allocate");
@@ -4617,9 +4619,19 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvmRaw(result);
 
         Assert.Contains("declare ptr @GetProcessHeap() nounwind", llvm);
-        Assert.Contains("declare ptr @HeapAlloc(ptr, i32, i64) nounwind", llvm);
-        Assert.Contains("declare i32 @HeapFree(ptr, i32, ptr) nounwind", llvm);
-        Assert.Contains("call ptr @HeapAlloc(ptr %heap, i32 0, i64 %size)", llvm);
+        Assert.Contains("declare noalias noundef ptr @HeapAlloc(ptr, i32, i64 noundef) allocsize(2) allockind(\"alloc,uninitialized\") \"alloc-family\"=\"__stark_os_allocate\" nounwind", llvm);
+        Assert.Contains("declare noundef ptr @HeapReAlloc(ptr, i32, ptr, i64 noundef) allocsize(3) allockind(\"realloc\") \"alloc-family\"=\"__stark_os_allocate\" nounwind", llvm);
+        Assert.Contains("declare i32 @HeapFree(ptr, i32, ptr) allockind(\"free\") \"alloc-family\"=\"__stark_os_allocate\" nounwind", llvm);
+        Assert.Contains("call noalias noundef ptr @HeapAlloc(ptr %heap, i32 0, i64 noundef %size)", llvm);
+        Assert.Contains("define internal dso_local noundef ptr @__stark_os_reallocate(ptr %ptr, i64 noundef %size) unnamed_addr allocsize(1) allockind(\"realloc\") \"alloc-family\"=\"__stark_os_allocate\" nounwind", llvm);
+        Assert.Contains("call noundef ptr @HeapReAlloc(ptr %heap, i32 0, ptr %ptr, i64 noundef %size)", llvm);
+        Assert.Contains("os_realloc_check:", llvm);
+        Assert.Contains("%realloc_header_is_base = icmp eq ptr %realloc_base, %realloc_header", llvm);
+        Assert.Contains("%realloc_os_alignment_ok = icmp ule i64 %realloc_effective_alignment, 8", llvm);
+        Assert.Contains("br i1 %realloc_can_os_realloc, label %try_os_reallocate, label %fallback", llvm);
+        Assert.Contains("call noundef ptr @__stark_os_reallocate(ptr %realloc_base, i64 noundef %os_total)", llvm);
+        Assert.Contains("br i1 %os_realloc_failed, label %fallback, label %os_reallocated", llvm);
+        Assert.Contains("%os_realloc_ptr = getelementptr i8, ptr %os_realloc_base, i64 24", llvm);
         Assert.Contains("call i32 @HeapFree(ptr %heap, i32 0, ptr %ptr)", llvm);
         Assert.DoesNotContain("@malloc(", llvm);
         Assert.DoesNotContain("@realloc(", llvm);
@@ -9415,6 +9427,98 @@ public sealed class LlvmIrEmissionTests
         Assert.Matches(@"call void @llvm\.memmove\.p0\.p0\.i64\(ptr align 4 %arg_output, ptr align 4 %arg_input, i64 16, i1 false\)", llvm);
         Assert.Contains("store i32 17", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@llvm.memcpy.p0.p0.i64", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BoundedRawPointerForwardBackwardMoveLoopLowersToMemmove()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void MoveOverlapSafe(
+                rawptr<i32[-2147483648 2147483647]>[count] input,
+                rawmutptr<i32[-2147483648 2147483647]>[count] output,
+                i32[0 10] count) {
+                if (count == 0) {
+                    return;
+                }
+
+                stack rawptr<i32[-2147483648 2147483647]> sourceStart = input;
+                stack rawptr<i32[-2147483648 2147483647]> destinationStart = (rawptr<i32[-2147483648 2147483647]>)output;
+                if (destinationStart < sourceStart) {
+                    for willexit (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                        *(&output[index]) = *(&input[index]);
+                    }
+
+                    return;
+                }
+
+                stack mut i32[0 10] remaining = count;
+                while willexit (remaining > 0) {
+                    remaining -= 1;
+                    *(&output[remaining]) = *(&input[remaining]);
+                }
+
+                return;
+            }
+            """,
+            options: new CompilerOptions(EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("declare void @llvm.memmove.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)", llvm, StringComparison.Ordinal);
+        Assert.Matches(@"%abi_rawptr_loop_bytes_\d+ = mul i64 %abi_rawptr_loop_count_\d+, 4", llvm);
+        Assert.Matches(@"call void @llvm\.memmove\.p0\.p0\.i64\(ptr align 4 %arg_output, ptr align 4 %arg_input, i64 %abi_rawptr_loop_bytes_\d+, i1 false\)", llvm);
+        Assert.DoesNotContain("icmp ult ptr", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("_phi = phi", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SliceForwardBackwardMoveLoopLowersToMemmoveWhenByteLengthIsRepresentable()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void MoveOverlapSafe(
+                borrow i32[-2147483648 2147483647][] input,
+                borrow mut i32[-2147483648 2147483647][] output,
+                i64[0 (2 ** 61) - 1] count) {
+                if (count == 0) {
+                    return;
+                }
+
+                stack rawptr<i32[-2147483648 2147483647]> sourceStart = &input[0];
+                stack rawptr<i32[-2147483648 2147483647]> destinationStart = (rawptr<i32[-2147483648 2147483647]>)(&output[0]);
+                if (destinationStart < sourceStart) {
+                    for willexit (stack mut i64[0 (2 ** 61) - 1] index = 0; index < count; index += 1) {
+                        output[index] = input[index];
+                    }
+
+                    return;
+                }
+
+                stack mut i64[0 (2 ** 61) - 1] remaining = count;
+                while willexit (remaining > 0) {
+                    remaining -= 1;
+                    output[remaining] = input[remaining];
+                }
+
+                return;
+            }
+            """,
+            options: new CompilerOptions(EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("declare void @llvm.memmove.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)", llvm, StringComparison.Ordinal);
+        Assert.Matches(@"%abi_rawptr_loop_bytes_\d+ = mul i64 %arg_count, 4", llvm);
+        Assert.Matches(@"call void @llvm\.memmove\.p0\.p0\.i64\(ptr align 4 %abi_rawptr_loop_destination_data_\d+, ptr align 4 %abi_rawptr_loop_source_data_\d+, i64 %abi_rawptr_loop_bytes_\d+, i1 false\)", llvm);
+        Assert.DoesNotContain("icmp ult ptr", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("_phi = phi", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
