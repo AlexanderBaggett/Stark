@@ -248,7 +248,7 @@ internal static class SyntaxModelFactory
         var function = declaration.Function!;
         var nameToken = context.Identifier().Symbol;
         var modifiers = context.functionModifier().Select(static modifier => modifier.GetText()).ToHashSet(StringComparer.Ordinal);
-        var hasUnsupportedModifier = modifiers.Any(static modifier => modifier is not "ffi");
+        var hasUnsupportedModifier = modifiers.Any(static modifier => modifier is not "ffi" and not "unsafe");
 
         if (function.Asm!.Architecture == StarkAsmArchitecture.Unknown)
         {
@@ -269,7 +269,7 @@ internal static class SyntaxModelFactory
         {
             diagnostics.Add(new SyntaxModelDiagnostic(
                 "STK2105",
-                $"Asm declaration '{declaration.Name}' must use the v1 surface 'ffi asm(arch) fn' with no generics or extra modifiers, and must use an asm template body.",
+                $"Asm declaration '{declaration.Name}' must use the v1 surface 'unsafe ffi asm(arch) fn' with no generics or extra modifiers except 'unsafe', and must use an asm template body.",
                 nameToken.Line,
                 nameToken.Column + 1));
             return false;

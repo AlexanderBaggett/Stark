@@ -211,7 +211,7 @@ public sealed class TypeTypingDiagnosticsTests
                 End,
             }
 
-            ffi fn void Use(Token token);
+            unsafe ffi fn void Use(Token token);
             """,
             new CompilerOptions(StopAfterPassId: "type-check"));
 
@@ -226,7 +226,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            public ffi asm(x86_64) fn bool Broken(ascii text, i32[-2147483648 2147483647] count)
+            public unsafe ffi asm(x86_64) fn bool Broken(ascii text, i32[-2147483648 2147483647] count)
                 in("rdi") text,
                 in("rsi") count,
                 out("rax") return
@@ -250,7 +250,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            public ffi asm(x86_64) fn f64 Identity(f64 value)
+            public unsafe ffi asm(x86_64) fn f64 Identity(f64 value)
                 in("xmm0") value,
                 out("xmm0") return
             {
@@ -271,7 +271,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            public ffi asm(aarch64) fn f32 Identity(f32 value)
+            public unsafe ffi asm(aarch64) fn f32 Identity(f32 value)
                 in("s0") value,
                 out("s0") return
             {
@@ -292,7 +292,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            public ffi asm(x86_64) fn f32 Broken(f32 scale, i32[-2147483648 2147483647] count)
+            public unsafe ffi asm(x86_64) fn f32 Broken(f32 scale, i32[-2147483648 2147483647] count)
                 in("rdi") scale,
                 in("xmm1") count,
                 out("rax") return
@@ -397,7 +397,7 @@ public sealed class TypeTypingDiagnosticsTests
                 Token Current;
             }
 
-            ffi fn void Use(State value);
+            unsafe ffi fn void Use(State value);
             """,
             new CompilerOptions(StopAfterPassId: "type-check"));
 
@@ -942,7 +942,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn void Run(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
+            unsafe fn void Run(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
                 *ptr = 1;
                 return;
             }
@@ -1062,7 +1062,7 @@ public sealed class TypeTypingDiagnosticsTests
                 rawmutptr<i32[-2147483648 2147483647]> Ptr;
             }
 
-            fn void Inspect(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
+            unsafe fn void Inspect(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
                 return;
             }
 
@@ -1087,7 +1087,7 @@ public sealed class TypeTypingDiagnosticsTests
                 return;
             }
 
-            fn void Run(
+            unsafe fn void Run(
                 frozen rawmutptr<i32[-2147483648 2147483647]>[count] pointer,
                 i32[1 10] count) {
                 unsafe {
@@ -1281,9 +1281,9 @@ public sealed class TypeTypingDiagnosticsTests
             module System.Text
 
             public finite law ascii AsciiView(Ascii source);
-            public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+            public unsafe fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
 
-            fn Ascii Label(rawptr<i8[-128 127]> pointer) {
+            unsafe fn Ascii Label(rawptr<i8[-128 127]> pointer) {
                 stack Ascii label[64] = $"Pointer: {pointer}";
                 return label;
             }
@@ -1399,7 +1399,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn rawptr<i32[-2147483648 2147483647]> Run() {
+            unsafe fn rawptr<i32[-2147483648 2147483647]> Run() {
                 return &(1 + 2);
             }
             """);

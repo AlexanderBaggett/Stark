@@ -1,7 +1,7 @@
-import System.Process
+﻿import System.Process
 module Benchmarks.Micro.NullBranchPruning
 
-noinline finite law i32[min max] Score(rawmutptr<i64[min max]> ptr, i64[min max] seed) {
+unsafe noinline finite law i32[min max] Score(rawmutptr<i64[min max]> ptr, i64[min max] seed) {
     if (ptr != null) {
         if (ptr == null) {
             return 1;
@@ -13,7 +13,7 @@ noinline finite law i32[min max] Score(rawmutptr<i64[min max]> ptr, i64[min max]
     return 0;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack mut i64[min max] total = (i64[min max])System.Process.CurrentId();
     stack mut i64[min max] slot = total;
     stack rawmutptr<i64[min max]> ptr = &slot;

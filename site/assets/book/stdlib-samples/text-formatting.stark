@@ -11,7 +11,7 @@ fn bool FixedInterpolationHasExpectedLength() {
         && System.Text.UnicodeLength(System.Text.UnicodeView(wideLabel)) == 9;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     if (!FixedInterpolationHasExpectedLength()) {
         return 1;
     }

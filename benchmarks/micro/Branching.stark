@@ -1,7 +1,7 @@
-import System.Process
+﻿import System.Process
 module Benchmarks.Micro.Branching
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack i32[min max] seed = System.Process.CurrentId() % 13;
     stack mut i64[min max] score = 0;
 

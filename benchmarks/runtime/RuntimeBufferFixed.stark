@@ -1,10 +1,10 @@
-import System.Experimental.Runtime.Buffer
+import System.Runtime.Buffer
 import System.Memory
-module Benchmarks.Runtime.ExperimentalRuntimeBufferFixed
+module Benchmarks.Runtime.RuntimeBufferFixed
 
 const Iterations = 6000;
 
-fn bool Ok(System.Memory.MemoryStatus status) {
+unsafe fn bool Ok(System.Memory.MemoryStatus status) {
     switch (status) {
         case System.Memory.MemoryStatus.Err(var error):
             return false;
@@ -13,7 +13,7 @@ fn bool Ok(System.Memory.MemoryStatus status) {
     }
 }
 
-fn i64[min max] SumBytes(borrow i8[-128 127][] values, i64[0 max] count) {
+unsafe fn i64[min max] SumBytes(borrow i8[-128 127][] values, i64[0 max] count) {
     stack mut i64[min max] checksum = count;
     for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
         checksum += (i64[min max])values[index];
@@ -22,7 +22,7 @@ fn i64[min max] SumBytes(borrow i8[-128 127][] values, i64[0 max] count) {
     return checksum;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack mut i64[min max] checksum = 0;
     stack mut i8[-128 127][32] source = {
         1, 2, 3, 4, 5, 6, 7, 8,
@@ -30,7 +30,7 @@ export ffi fn i32[min max] main() {
         1, 2, 3, 4, 5, 6, 7, 8,
         9, 10, 11, 12, 13, 14, 15, 16
     };
-    stack mut System.Experimental.Runtime.Buffer.FixedByteBuffer512 buffer = new();
+    stack mut System.Runtime.Buffer.FixedByteBuffer512 buffer = new();
 
     if (!Ok(buffer.WriteFill(0, 0))) {
         return 1;

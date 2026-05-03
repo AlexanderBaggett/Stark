@@ -29,7 +29,7 @@ finite law i32[min max] Classify(i32[min max] value) {
     }
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     if (SumFromTwoUntil(6, 5) != 9) {
         return 1;
     }

@@ -1,10 +1,9 @@
-import System.Experimental.Runtime.Buffer
-import System.Experimental.Text
+﻿import System.Runtime.Buffer
+import System.Text
 import System.IO
 import System.IO.File
 import System.Memory
 import System.Runtime
-import System.Text
 module System.Experimental.IO.File
 
 public enum FileMode {
@@ -61,15 +60,15 @@ fn System.IO.File.SeekOrigin StableSeekOrigin(SeekOrigin origin) {
     }
 }
 
-fn System.Text.Encoding StableEncoding(System.Experimental.Text.Encoding encoding) {
+fn System.Text.Encoding StableEncoding(System.Text.Encoding encoding) {
     switch (encoding) {
-        case System.Experimental.Text.Encoding.Binary:
+        case System.Text.Encoding.Binary:
             return System.Text.Encoding.Binary;
-        case System.Experimental.Text.Encoding.UTF8:
+        case System.Text.Encoding.UTF8:
             return System.Text.Encoding.UTF8;
-        case System.Experimental.Text.Encoding.UTF16:
+        case System.Text.Encoding.UTF16:
             return System.Text.Encoding.UTF16;
-        case System.Experimental.Text.Encoding.UTF32:
+        case System.Text.Encoding.UTF32:
             return System.Text.Encoding.UTF32;
     }
 }
@@ -126,133 +125,83 @@ public struct File {
     }
 
     fn System.IO.IOStatus Close(mut borrow File self) {
-        return StatusFromPlatformResult(self.Inner.Close());
+        unsafe {
+            return self.Inner.Close();
+        }
     }
 
     fn System.IO.IOStatus Flush(mut borrow File self) {
-        return StatusFromPlatformResult(self.Inner.Flush());
+        unsafe {
+            return self.Inner.Flush();
+        }
     }
 
     fn System.IO.IOStatus SyncAll(mut borrow File self) {
-        return StatusFromPlatformResult(self.Inner.SyncAll());
+        unsafe {
+            return self.Inner.SyncAll();
+        }
     }
 
     fn System.IO.IOResult<i64[0 max]> Seek(mut borrow File self, i64[-9223372036854775808 9223372036854775807] offset, SeekOrigin origin) {
-        return ByteCountFromPlatformResult(self.Inner.Seek(offset, StableSeekOrigin(origin)));
+        unsafe {
+            return self.Inner.Seek(offset, StableSeekOrigin(origin));
+        }
     }
 
     fn System.IO.IOResult<i64[0 max]> Read(mut borrow File self, mut borrow i8[-128 127][] destination) {
-        if (!self.IsOpen()) {
-            return System.IO.IOResult<i64[0 max]>.Err(System.IO.IOError.Unknown(-1));
-        }
-
-        stack System.Runtime.MutableByteSliceParts destinationParts = System.Runtime.GetMutableByteSliceParts(destination);
-        if (destinationParts.Length == 0) {
-            return System.IO.IOResult<i64[0 max]>.Ok(0);
-        }
-
-        if (destinationParts.Data == null) {
-            return System.IO.IOResult<i64[0 max]>.Err(System.IO.IOError.InvalidPath);
-        }
-
-        stack mut i64[-9223372036854775808 9223372036854775807] readCount = 0;
-        unsafe {
-            readCount = self.Inner.ReadByteRegionFast(destinationParts.Data, destinationParts.Length);
-        }
-
-        return ByteCountFromPlatformResult(readCount);
+        return self.Inner.Read(destination);
     }
 
     fn System.IO.IOResult<i64[0 max]> Write(mut borrow File self, borrow i8[-128 127][] source) {
-        if (!self.IsOpen()) {
-            return System.IO.IOResult<i64[0 max]>.Err(System.IO.IOError.Unknown(-1));
-        }
-
-        stack System.Runtime.ByteSliceParts sourceParts = System.Runtime.GetByteSliceParts(source);
-        if (sourceParts.Length == 0) {
-            return System.IO.IOResult<i64[0 max]>.Ok(0);
-        }
-
-        if (sourceParts.Data == null) {
-            return System.IO.IOResult<i64[0 max]>.Err(System.IO.IOError.InvalidPath);
-        }
-
-        stack mut i64[0 max] totalWritten = 0;
-        while willexit (totalWritten < sourceParts.Length) {
-            stack rawptr<i8[-128 127]> chunk = &sourceParts.Data[totalWritten];
-            stack mut i64[-9223372036854775808 9223372036854775807] written = 0;
-            unsafe {
-                written = self.Inner.WriteByteRegionFast(chunk, sourceParts.Length - totalWritten);
-            }
-
-            if (written <= 0) {
-                return System.IO.IOResult<i64[0 max]>.Err(System.IO.IOError.BrokenPipe);
-            }
-
-            totalWritten += (i64[0 max])written;
-        }
-
-        return System.IO.IOResult<i64[0 max]>.Ok(totalWritten);
+        return self.Inner.Write(source);
     }
 
     fn System.IO.IOResult<i64[0 max]> Write(
         mut borrow File self,
-        borrow System.Experimental.Runtime.Buffer.DynamicByteBuffer source) {
+        borrow System.Runtime.Buffer.DynamicByteBuffer source) {
         return self.Write(source.ReadSlice());
     }
 
     fn System.IO.IOResult<i64[0 max]> Write(
         mut borrow File self,
-        borrow System.Experimental.Runtime.Buffer.FixedByteBuffer512 source) {
+        borrow System.Runtime.Buffer.FixedByteBuffer512 source) {
         return self.Write(source.ReadSlice());
     }
 
     fn System.IO.IOResult<i64[0 max]> Write(
         mut borrow File self,
-        borrow System.Experimental.Runtime.Buffer.FixedByteBuffer4096 source) {
+        borrow System.Runtime.Buffer.FixedByteBuffer4096 source) {
         return self.Write(source.ReadSlice());
     }
 
     fn System.IO.IOResult<i64[0 max]> Write(
         mut borrow File self,
-        borrow System.Experimental.Runtime.Buffer.FixedByteBuffer8192 source) {
+        borrow System.Runtime.Buffer.FixedByteBuffer8192 source) {
         return self.Write(source.ReadSlice());
     }
 
     fn System.IO.IOStatus WriteText(mut borrow File self, ascii text) {
-        if (!self.IsOpen()) {
-            return System.IO.IOStatus.Err(System.IO.IOError.Unknown(-1));
+        unsafe {
+            return self.Inner.WriteText(text);
         }
-
-        self.Inner.WriteText(text);
-        return System.IO.IOStatus.Ok;
     }
 
     fn System.IO.IOStatus WriteText(mut borrow File self, unicode text) {
-        if (!self.IsOpen()) {
-            return System.IO.IOStatus.Err(System.IO.IOError.Unknown(-1));
+        unsafe {
+            return self.Inner.WriteText(text);
         }
-
-        self.Inner.WriteText(text);
-        return System.IO.IOStatus.Ok;
     }
 
     fn System.IO.IOStatus WriteLine(mut borrow File self, ascii text) {
-        if (!self.IsOpen()) {
-            return System.IO.IOStatus.Err(System.IO.IOError.Unknown(-1));
+        unsafe {
+            return self.Inner.WriteLine(text);
         }
-
-        self.Inner.WriteLine(text);
-        return System.IO.IOStatus.Ok;
     }
 
     fn System.IO.IOStatus WriteLine(mut borrow File self, unicode text) {
-        if (!self.IsOpen()) {
-            return System.IO.IOStatus.Err(System.IO.IOError.Unknown(-1));
+        unsafe {
+            return self.Inner.WriteLine(text);
         }
-
-        self.Inner.WriteLine(text);
-        return System.IO.IOStatus.Ok;
     }
 
     mut drop {
@@ -260,14 +209,15 @@ public struct File {
     }
 }
 
-fn System.IO.IOResult<File> FileResult(System.IO.File.File inner) {
-    if (!inner.IsOpen()) {
-        return System.IO.IOResult<File>.Err(System.IO.IOError.Unknown(-1));
+fn System.IO.IOResult<File> FileResult(System.IO.IOResult<System.IO.File.File> innerResult) {
+    switch (innerResult) {
+        case System.IO.IOResult<System.IO.File.File>.Err(var error):
+            return System.IO.IOResult<File>.Err(error);
+        case System.IO.IOResult<System.IO.File.File>.Ok(var inner):
+            return System.IO.IOResult<File>.Ok(new File() {
+                Inner = inner
+            });
     }
-
-    return System.IO.IOResult<File>.Ok(new File() {
-        Inner = inner
-    });
 }
 
 public fn System.IO.IOResult<File> Open(ascii path, FileMode mode) {
@@ -278,26 +228,26 @@ public fn System.IO.IOResult<File> Open(ascii path, FileMode mode, FileBuffering
     return FileResult(System.IO.File.Open(path, StableFileMode(mode), StableFileBuffering(buffering)));
 }
 
-public fn System.IO.IOResult<File> Open(ascii path, FileMode mode, System.Experimental.Text.Encoding encoding) {
+public fn System.IO.IOResult<File> Open(ascii path, FileMode mode, System.Text.Encoding encoding) {
     return FileResult(System.IO.File.Open(path, StableFileMode(mode), StableEncoding(encoding)));
 }
 
 public fn System.IO.IOResult<File> Open(
     ascii path,
     FileMode mode,
-    System.Experimental.Text.Encoding encoding,
+    System.Text.Encoding encoding,
     FileBuffering buffering) {
     return FileResult(System.IO.File.Open(path, StableFileMode(mode), StableEncoding(encoding), StableFileBuffering(buffering)));
 }
 
 public fn System.IO.IOStatus Delete(ascii path) {
-    return StatusFromPlatformResult(System.IO.File.Delete(path));
+    return System.IO.File.Delete(path);
 }
 
 public fn System.IO.IOStatus Move(ascii oldPath, ascii newPath) {
-    return StatusFromPlatformResult(System.IO.File.Move(oldPath, newPath));
+    return System.IO.File.Move(oldPath, newPath);
 }
 
 public fn System.IO.IOResult<bool> Exists(ascii path) {
-    return System.IO.IOResult<bool>.Ok(System.IO.File.Exists(path));
+    return System.IO.File.Exists(path);
 }

@@ -5,15 +5,15 @@ namespace compiler.StandardLibraryTests;
 public sealed class SystemExperimentalBackendBoundaryAuditTests : StandardLibraryTestSuite
 {
     [Fact]
-    public void OptimizedExperimentalBenchmarksDoNotEmitOpaqueExperimentalFunctions()
+    public void OptimizedStandardLibraryBenchmarksDoNotEmitOpaqueStandardLibraryFunctions()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
         var targetInfo = new LlvmTargetInfo("x86_64-unknown-linux-gnu", null);
         var benchmarkPaths = new[]
         {
-            Path.Combine(repositoryRoot, "benchmarks", "allocator", "ExperimentalMemoryCopyFill.stark"),
-            Path.Combine(repositoryRoot, "benchmarks", "collections", "ExperimentalDictionaryLookup.stark")
+            Path.Combine(repositoryRoot, "benchmarks", "allocator", "MemoryCopyFill.stark"),
+            Path.Combine(repositoryRoot, "benchmarks", "collections", "DictionaryLookup.stark")
         };
 
         foreach (var benchmarkPath in benchmarkPaths)
@@ -38,8 +38,10 @@ public sealed class SystemExperimentalBackendBoundaryAuditTests : StandardLibrar
                     Text = line.TrimEnd('\r')
                 })
                 .Where(static item =>
-                    (item.Text.Contains("@System_Experimental_", StringComparison.Ordinal)
-                        || item.Text.Contains("@__stark_mono_fn_System_Experimental_", StringComparison.Ordinal))
+                    (item.Text.Contains("@System_", StringComparison.Ordinal)
+                        || item.Text.Contains("@__stark_mono_fn_System_", StringComparison.Ordinal)
+                        || item.Text.Contains("@System_Memory_", StringComparison.Ordinal)
+                        || item.Text.Contains("@__stark_mono_fn_System_Memory_", StringComparison.Ordinal))
                     && (item.Text.Contains("optnone", StringComparison.Ordinal)
                         || item.Text.Contains("noinline", StringComparison.Ordinal)))
                 .Select(item => $"{Path.GetRelativePath(repositoryRoot, benchmarkPath)}:{item.Line}: {item.Text}")
@@ -47,7 +49,7 @@ public sealed class SystemExperimentalBackendBoundaryAuditTests : StandardLibrar
 
             Assert.True(
                 violations.Length == 0,
-                "Optimized experimental standard-library functions should stay transparent to LLVM unless an explicit benchmark-backed opaque boundary is added."
+                "Optimized standard-library functions should stay transparent to LLVM unless an explicit benchmark-backed opaque boundary is added."
                 + Environment.NewLine
                 + string.Join(Environment.NewLine, violations));
         }

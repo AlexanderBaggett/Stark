@@ -1110,12 +1110,38 @@ internal sealed class LlvmIrEmitter
 
     private void EmitIntrinsicDeclarations(StringBuilder builder)
     {
-        _builtinAndHelperEmitter.EmitIntrinsicDeclarations(builder, _allFunctionSignatures.Values);
+        _builtinAndHelperEmitter.EmitIntrinsicDeclarations(builder, EnumerateBuiltinDefinitionSignatures());
     }
 
     private void EmitInternalHelperDefinitions(StringBuilder builder)
     {
-        _builtinAndHelperEmitter.EmitInternalHelperDefinitions(builder, _allFunctionSignatures.Values);
+        _builtinAndHelperEmitter.EmitInternalHelperDefinitions(builder, EnumerateBuiltinDefinitionSignatures());
+    }
+
+    private IEnumerable<TypedFunctionSignature> EnumerateBuiltinDefinitionSignatures()
+    {
+        foreach (var declaration in _syntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
+        {
+            var function = declaration.Function!;
+            if (function.HasBody)
+            {
+                continue;
+            }
+
+            var resolvedName = FunctionOverloadFacts.GetResolvedLocalName(_syntaxModel, declaration);
+            if (_typeModel.Functions.TryGetValue(resolvedName, out var signature))
+            {
+                yield return signature;
+            }
+        }
+
+        foreach (var functionName in _referencedImportedFunctions)
+        {
+            if (_allFunctionSignatures.TryGetValue(functionName, out var signature))
+            {
+                yield return signature;
+            }
+        }
     }
 
     private bool UsesLifetimeMarkers()

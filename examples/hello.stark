@@ -1,7 +1,7 @@
 import System.Console
 module Hello
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     WriteLine("Hello, World!");
     return 0;
 }

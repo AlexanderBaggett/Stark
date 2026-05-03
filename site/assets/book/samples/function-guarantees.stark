@@ -28,7 +28,7 @@ fn i32[min max] Choose(bool useClamp, i32[min max] value) {
     return value;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     if (ClampToZero(-2) != 0) {
         return 1;
     }

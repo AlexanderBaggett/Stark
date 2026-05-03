@@ -9,7 +9,7 @@ finite law bool RangesStillMatch() {
     return score >= 0 && score <= 100;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     if (!ArithmeticStillWorks()) {
         return 1;
     }

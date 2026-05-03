@@ -101,7 +101,7 @@ fn bool RepositoryMetadataLooksInitialized() {
     }
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     if (!RepositoryMetadataLooksInitialized()) {
         return 1;
     }

@@ -18,7 +18,7 @@ finite law i32[min max] ReadFrozen(frozen Box box) {
     return box.Value;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     if (ReadFrozen(Current.Item) != 42) {
         return 1;
     }

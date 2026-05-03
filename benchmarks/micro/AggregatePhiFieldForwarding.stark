@@ -6,14 +6,14 @@ struct Pair {
     i64[min max] Tag;
 }
 
-finite law i64[min max] ReadValue(bool flag, i64[min max] value, i64[min max] tag) {
+unsafe finite law i64[min max] ReadValue(bool flag, i64[min max] value, i64[min max] tag) {
     stack Pair pair = flag
         ? new Pair() { Value = value, Tag = tag }
         : new Pair() { Value = value, Tag = tag + 1 };
     return pair.Value;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack mut i64[min max] total = (i64[min max])System.Process.CurrentId();
 
     for willexit (stack mut i32[0 300000] i = 0; i < 300000; i += 1) {

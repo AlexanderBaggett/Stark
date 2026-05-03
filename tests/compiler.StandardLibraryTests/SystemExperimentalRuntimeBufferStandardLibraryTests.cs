@@ -1,11 +1,11 @@
-using Stark.Compiler;
+﻿using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
 public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : StandardLibraryTestSuite
 {
     private const string ExperimentalRuntimeBufferProgram = """
-        import System.Experimental.Runtime.Buffer
+        import System.Runtime.Buffer
         import System.Memory
         module App
 
@@ -37,7 +37,7 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
         }
 
         fn bool WriteFirstWritable(
-            mut borrow System.Experimental.Runtime.Buffer.FixedByteBuffer512 buffer,
+            mut borrow System.Runtime.Buffer.FixedByteBuffer512 buffer,
             i8[-128 127] value,
             i64[0 max] expectedWritable) {
             if (buffer.Writable() != expectedWritable) {
@@ -48,7 +48,7 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
             return true;
         }
 
-        fn bool IncrementFirstReadable(mut borrow System.Experimental.Runtime.Buffer.FixedByteBuffer512 buffer) {
+        fn bool IncrementFirstReadable(mut borrow System.Runtime.Buffer.FixedByteBuffer512 buffer) {
             if (buffer.Readable() == 0) {
                 return false;
             }
@@ -57,8 +57,8 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
             return true;
         }
 
-        export ffi fn i32[min max] main() {
-            stack mut System.Experimental.Runtime.Buffer.FixedByteBuffer512 fixedBuffer = new();
+        export unsafe ffi fn i32[min max] main() {
+            stack mut System.Runtime.Buffer.FixedByteBuffer512 fixedBuffer = new();
             stack mut i8[-128 127][8] source = { 1, 2, 3, 4, 5, 6, 7, 8 };
 
             if (fixedBuffer.Capacity() != 512 || !fixedBuffer.IsEmpty() || fixedBuffer.Writable() != 512) {
@@ -145,7 +145,7 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
                 return 34;
             }
 
-            stack mut System.Experimental.Runtime.Buffer.DynamicByteBuffer dynamicBuffer = new();
+            stack mut System.Runtime.Buffer.DynamicByteBuffer dynamicBuffer = new();
             if (!Ok(dynamicBuffer.Reserve(16)) || dynamicBuffer.Capacity() < 16) {
                 return 16;
             }
@@ -208,7 +208,7 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
                 return 36;
             }
 
-            stack mut System.Experimental.Runtime.Buffer.FixedByteBuffer4096 fixed4096 = new();
+            stack mut System.Runtime.Buffer.FixedByteBuffer4096 fixed4096 = new();
             if (!Ok(fixed4096.WriteFill(3, 4096)) || !fixed4096.IsFull()) {
                 return 26;
             }
@@ -218,7 +218,7 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
                 return 35;
             }
 
-            stack mut System.Experimental.Runtime.Buffer.FixedByteBuffer8192 fixed8192 = new();
+            stack mut System.Runtime.Buffer.FixedByteBuffer8192 fixed8192 = new();
             if (!Ok(fixed8192.WriteByte(4)) || fixed8192.Readable() != 1) {
                 return 27;
             }
@@ -236,20 +236,20 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(
                 """
-                import System.Experimental.Runtime
-                import System.Experimental.Runtime.Buffer
+                import System.Runtime
+                import System.Runtime.Buffer
                 import System.Memory
                 module Demo
 
                 fn System.Memory.MemoryStatus FillFixed(
-                    mut borrow System.Experimental.Runtime.Buffer.FixedByteBuffer512 buffer,
+                    mut borrow System.Runtime.Buffer.FixedByteBuffer512 buffer,
                     i8[-128 127] value,
                     i64[0 max] count) {
                     return buffer.WriteFill(value, count);
                 }
 
                 fn System.Memory.MemoryStatus AppendDynamic(
-                    mut borrow System.Experimental.Runtime.Buffer.DynamicByteBuffer buffer,
+                    mut borrow System.Runtime.Buffer.DynamicByteBuffer buffer,
                     borrow i8[-128 127][] source,
                     i64[0 max] count) {
                     return buffer.WriteSlice(source, count);
@@ -263,8 +263,8 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
 
-        Assert.Contains("System_Experimental_Runtime_Buffer_FixedByteBuffer512_WriteFill", llvm, StringComparison.Ordinal);
-        Assert.Contains("System_Experimental_Runtime_Buffer_DynamicByteBuffer_WriteSlice", llvm, StringComparison.Ordinal);
+        Assert.Contains("System_Runtime_Buffer_FixedByteBuffer512_WriteFill", llvm, StringComparison.Ordinal);
+        Assert.Contains("System_Runtime_Buffer_DynamicByteBuffer_WriteSlice", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -272,7 +272,7 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var modulePath = Path.Combine(sourceRoot, "System", "Experimental", "Runtime", "Buffer.stark");
+        var modulePath = Path.Combine(sourceRoot, "System", "Runtime", "Buffer.stark");
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(File.ReadAllText(modulePath), modulePath),
             new CompilerOptions(
@@ -294,7 +294,7 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var modulePath = Path.Combine(sourceRoot, "System", "Experimental", "Runtime", "Buffer.stark");
+        var modulePath = Path.Combine(sourceRoot, "System", "Runtime", "Buffer.stark");
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(File.ReadAllText(modulePath), modulePath),
             new CompilerOptions(
@@ -306,9 +306,13 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
         var dynamicWriteSliceBody = ExtractLlvmFunctionBody(llvm, "@DynamicByteBuffer_WriteSlice(");
         var dynamicWriteFillBody = ExtractLlvmFunctionBody(llvm, "@DynamicByteBuffer_WriteFill(");
+        var fillBytesCloneBody = ExtractLlvmFunctionBody(
+            llvm,
+            "define internal dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_inline_clone_System_Memory_FillBytes(");
 
-        Assert.Contains("@System_Experimental_Memory_InitializeBytesDisjoint", dynamicWriteSliceBody, StringComparison.Ordinal);
-        Assert.Contains("@System_Experimental_Memory_FillBytes", dynamicWriteFillBody, StringComparison.Ordinal);
+        Assert.Contains("@__stark_inline_clone_System_Memory_InitializeBytesDisjoint", dynamicWriteSliceBody, StringComparison.Ordinal);
+        Assert.Contains("@__stark_inline_clone_System_Memory_FillBytes", dynamicWriteFillBody, StringComparison.Ordinal);
+        Assert.Contains("@llvm.memset.p0.i64", fillBytesCloneBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@DynamicByteBuffer_WriteByte", dynamicWriteFillBody, StringComparison.Ordinal);
     }
 
@@ -317,7 +321,7 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var modulePath = Path.Combine(sourceRoot, "System", "Experimental", "Runtime", "Buffer.stark");
+        var modulePath = Path.Combine(sourceRoot, "System", "Runtime", "Buffer.stark");
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(File.ReadAllText(modulePath), modulePath),
             new CompilerOptions(
@@ -434,3 +438,4 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
         return llvm[start..next];
     }
 }
+

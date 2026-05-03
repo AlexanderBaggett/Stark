@@ -1,4 +1,4 @@
-module System.Memory
+﻿module System.Memory
 
 public enum MemoryError {
     OutOfMemory,
@@ -41,3 +41,500 @@ internal struct Allocation {
 internal fn Allocation Allocate(Allocator allocator, i64[0 max] byteLength, i64[1 max] alignment);
 internal fn Allocation Reallocate(Allocation allocation, i64[0 max] byteLength, i64[1 max] alignment);
 internal fn void Free(Allocation allocation);
+
+public finite law bool SupportsDynamicAllocator(Allocator allocator) {
+    return allocator.IsDefault();
+}
+
+public inline fn MemoryStatus ReserveBytes(
+    mut borrow dynamic i8[-128 127] storage,
+    i64[0 max] additional) {
+    if (!storage.TryReserve(additional)) {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    return MemoryStatus.Ok;
+}
+
+public inline fn MemoryStatus ReserveCodePoints(
+    mut borrow dynamic i32[-2147483648 2147483647] storage,
+    i64[0 max] additional) {
+    if (!storage.TryReserve(additional)) {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    return MemoryStatus.Ok;
+}
+
+public inline fn MemoryStatus AppendBytesDisjoint(
+    disjoint mut borrow dynamic i8[-128 127] storage,
+    disjoint borrow i8[-128 127][] source,
+    i64[0 max] count) {
+    if (count == 0) {
+        return MemoryStatus.Ok;
+    }
+
+    if (!storage.TryReserve(count)) {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    stack init i8[-128 127][] tail = init storage[storage.Length, count];
+    unsafe {
+        return InitializeBytesDisjoint(source, tail, count);
+    }
+}
+
+public fn MemoryStatus AppendBytes(
+    mut borrow dynamic i8[-128 127] storage,
+    borrow i8[-128 127][] source,
+    i64[0 max] count) {
+        unsafe {
+        if (count == 0) {
+            return MemoryStatus.Ok;
+        }
+
+        stack i8[-128 127][] initialized = storage[0, storage.Length];
+        if disjoint(source, initialized) {
+            unsafe {
+                return AppendBytesDisjoint(storage, source, count);
+            }
+        }
+
+        stack mut dynamic i8[-128 127] snapshot = new();
+        if (!snapshot.TryReserve(count)) {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        stack init i8[-128 127][] snapshotTail = init snapshot[snapshot.Length, count];
+        unsafe {
+            InitializeBytesDisjoint(source, snapshotTail, count);
+        }
+
+        stack i8[-128 127][] snapshotView = snapshot[0, snapshot.Length];
+        unsafe {
+            return AppendBytesDisjoint(storage, snapshotView, count);
+        }
+        }
+}
+
+public inline fn MemoryStatus AppendFillBytes(
+    mut borrow dynamic i8[-128 127] storage,
+    i8[-128 127] value,
+    i64[0 max] count) {
+    if (count == 0) {
+        return MemoryStatus.Ok;
+    }
+
+    if (!storage.TryReserve(count)) {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    stack init i8[-128 127][] tail = init storage[storage.Length, count];
+    return FillBytes(tail, value, count);
+}
+
+public inline fn MemoryStatus AppendCodePointsDisjoint(
+    disjoint mut borrow dynamic i32[-2147483648 2147483647] storage,
+    disjoint borrow i32[-2147483648 2147483647][] source,
+    i64[0 max] count) {
+    if (count == 0) {
+        return MemoryStatus.Ok;
+    }
+
+    if (count > ((2 ** 61) - 1)) {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    if (!storage.TryReserve((i64[0 (2 ** 61) - 1])count)) {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    stack init i32[-2147483648 2147483647][] tail = init storage[storage.Length, (i64[0 (2 ** 61) - 1])count];
+    unsafe {
+        return InitializeCodePointsDisjoint(source, tail, (i64[0 (2 ** 61) - 1])count);
+    }
+}
+
+public fn MemoryStatus AppendCodePoints(
+    mut borrow dynamic i32[-2147483648 2147483647] storage,
+    borrow i32[-2147483648 2147483647][] source,
+    i64[0 max] count) {
+        unsafe {
+        if (count == 0) {
+            return MemoryStatus.Ok;
+        }
+
+        if (count > ((2 ** 61) - 1)) {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        stack i64[0 (2 ** 61) - 1] safeCount = (i64[0 (2 ** 61) - 1])count;
+        stack i32[-2147483648 2147483647][] initialized = storage[0, storage.Length];
+        if disjoint(source, initialized) {
+            unsafe {
+                return AppendCodePointsDisjoint(storage, source, safeCount);
+            }
+        }
+
+        stack mut dynamic i32[-2147483648 2147483647] snapshot = new();
+        if (!snapshot.TryReserve(safeCount)) {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        stack init i32[-2147483648 2147483647][] snapshotTail = init snapshot[snapshot.Length, safeCount];
+        unsafe {
+            InitializeCodePointsDisjoint(source, snapshotTail, safeCount);
+        }
+
+        stack i32[-2147483648 2147483647][] snapshotView = snapshot[0, snapshot.Length];
+        unsafe {
+            return AppendCodePointsDisjoint(storage, snapshotView, safeCount);
+        }
+        }
+}
+
+public inline fn MemoryStatus AppendFillCodePoints(
+    mut borrow dynamic i32[-2147483648 2147483647] storage,
+    i32[-2147483648 2147483647] value,
+    i64[0 max] count) {
+    if (count == 0) {
+        return MemoryStatus.Ok;
+    }
+
+    if (count > ((2 ** 61) - 1)) {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    stack i64[0 (2 ** 61) - 1] safeCount = (i64[0 (2 ** 61) - 1])count;
+    if (!storage.TryReserve(safeCount)) {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    stack init i32[-2147483648 2147483647][] tail = init storage[storage.Length, safeCount];
+    return FillCodePoints(tail, value, safeCount);
+}
+
+public inline finite MemoryStatus InitializeBytesDisjoint(
+    disjoint borrow i8[-128 127][] source,
+    disjoint init i8[-128 127][] destination,
+    i64[0 max] count) {
+    for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        init destination[index] = source[index];
+    }
+
+    return MemoryStatus.Ok;
+}
+
+public inline finite MemoryStatus InitializeBytes(
+    borrow i8[-128 127][] source,
+    init i8[-128 127][] destination,
+    i64[0 max] count) {
+    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        init destination[index] = source[index];
+    }
+
+    return MemoryStatus.Ok;
+}
+
+public unsafe inline finite MemoryStatus InitializeBytesFromPointerDisjoint(
+    i64[0 max] count,
+    disjoint rawptr<i8[-128 127]>[count] source,
+    disjoint init i8[-128 127][] destination) {
+    for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        init destination[index] = *(&source[index]);
+    }
+
+    return MemoryStatus.Ok;
+}
+
+public inline finite void CopyBytesDisjointInfallible(
+    disjoint borrow i8[-128 127][] source,
+    disjoint borrow mut i8[-128 127][] destination,
+    i64[0 max] count) {
+    for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        destination[index] = source[index];
+    }
+
+    return;
+}
+
+public inline finite MemoryStatus CopyBytesDisjoint(
+    disjoint borrow i8[-128 127][] source,
+    disjoint borrow mut i8[-128 127][] destination,
+    i64[0 max] count) {
+    CopyBytesDisjointInfallible(source, destination, count);
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus CopyBytes(
+    borrow i8[-128 127][] source,
+    borrow mut i8[-128 127][] destination,
+    i64[0 max] count) {
+        unsafe {
+        if (count == 0) {
+            return MemoryStatus.Ok;
+        }
+
+        if disjoint(source, destination) {
+            for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
+                destination[index] = source[index];
+            }
+
+            return MemoryStatus.Ok;
+        }
+
+        stack mut dynamic i8[-128 127] snapshot = new();
+        if (!snapshot.TryReserve(count)) {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        for willexit (stack mut i64[0 max] snapshotIndex = 0; snapshotIndex < count; snapshotIndex += 1) {
+            init snapshot[snapshot.Length] = source[snapshotIndex];
+        }
+
+        stack i8[-128 127][] snapshotView = snapshot[0, snapshot.Length];
+        for willexit (stack mut i64[0 max] copyIndex = 0; copyIndex < count; copyIndex += 1) {
+            destination[copyIndex] = snapshotView[copyIndex];
+        }
+
+        return MemoryStatus.Ok;
+        }
+}
+
+public inline finite void MoveBytesInfallible(
+    borrow i8[-128 127][] source,
+    borrow mut i8[-128 127][] destination,
+    i64[0 max] count) {
+        unsafe {
+        if (count == 0) {
+            return;
+        }
+
+        stack rawptr<i8[-128 127]> sourceStart = &source[0];
+        stack rawptr<i8[-128 127]> destinationStart = (rawptr<i8[-128 127]>)(&destination[0]);
+        if (destinationStart < sourceStart) {
+            for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+                destination[index] = source[index];
+            }
+
+            return;
+        }
+
+        stack mut i64[0 max] remaining = count;
+        while willexit (remaining > 0) {
+            remaining -= 1;
+            destination[remaining] = source[remaining];
+        }
+
+        return;
+        }
+}
+
+public inline finite MemoryStatus MoveBytes(
+    borrow i8[-128 127][] source,
+    borrow mut i8[-128 127][] destination,
+    i64[0 max] count) {
+    MoveBytesInfallible(source, destination, count);
+    return MemoryStatus.Ok;
+}
+
+public inline finite MemoryStatus FillBytes(
+    init i8[-128 127][] destination,
+    i8[-128 127] value,
+    i64[0 max] count) {
+    for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        init destination[index] = value;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+public inline finite void FillInitializedBytesInfallible(
+    borrow mut i8[-128 127][] destination,
+    i8[-128 127] value,
+    i64[0 max] count) {
+    for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        destination[index] = value;
+    }
+
+    return;
+}
+
+public inline finite MemoryStatus FillInitializedBytes(
+    borrow mut i8[-128 127][] destination,
+    i8[-128 127] value,
+    i64[0 max] count) {
+    FillInitializedBytesInfallible(destination, value, count);
+    return MemoryStatus.Ok;
+}
+
+public inline finite MemoryStatus InitializeCodePointsDisjoint(
+    disjoint borrow i32[-2147483648 2147483647][] source,
+    disjoint init i32[-2147483648 2147483647][] destination,
+    i64[0 (2 ** 61) - 1] count) {
+    for willexit independent (stack mut i64[0 (2 ** 61) - 1] index = 0; index < count; index += 1) {
+        init destination[index] = source[index];
+    }
+
+    return MemoryStatus.Ok;
+}
+
+public inline finite MemoryStatus InitializeCodePoints(
+    borrow i32[-2147483648 2147483647][] source,
+    init i32[-2147483648 2147483647][] destination,
+    i64[0 (2 ** 61) - 1] count) {
+    for willexit (stack mut i64[0 (2 ** 61) - 1] index = 0; index < count; index += 1) {
+        init destination[index] = source[index];
+    }
+
+    return MemoryStatus.Ok;
+}
+
+public unsafe inline finite MemoryStatus InitializeCodePointsFromPointerDisjoint(
+    i64[0 (2 ** 61) - 1] count,
+    disjoint rawptr<i32[-2147483648 2147483647]>[count] source,
+    disjoint init i32[-2147483648 2147483647][] destination) {
+    for willexit independent (stack mut i64[0 (2 ** 61) - 1] index = 0; index < count; index += 1) {
+        init destination[index] = *(&source[index]);
+    }
+
+    return MemoryStatus.Ok;
+}
+
+public inline finite void CopyCodePointsDisjointInfallible(
+    disjoint borrow i32[-2147483648 2147483647][] source,
+    disjoint borrow mut i32[-2147483648 2147483647][] destination,
+    i64[0 (2 ** 61) - 1] count) {
+    for willexit independent (stack mut i64[0 (2 ** 61) - 1] index = 0; index < count; index += 1) {
+        destination[index] = source[index];
+    }
+
+    return;
+}
+
+public inline finite MemoryStatus CopyCodePointsDisjoint(
+    disjoint borrow i32[-2147483648 2147483647][] source,
+    disjoint borrow mut i32[-2147483648 2147483647][] destination,
+    i64[0 max] count) {
+    if (count > ((2 ** 61) - 1)) {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    CopyCodePointsDisjointInfallible(source, destination, (i64[0 (2 ** 61) - 1])count);
+    return MemoryStatus.Ok;
+}
+
+public fn MemoryStatus CopyCodePoints(
+    borrow i32[-2147483648 2147483647][] source,
+    borrow mut i32[-2147483648 2147483647][] destination,
+    i64[0 max] count) {
+        unsafe {
+        if (count == 0) {
+            return MemoryStatus.Ok;
+        }
+
+        if (count > ((2 ** 61) - 1)) {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        stack i64[0 (2 ** 61) - 1] safeCount = (i64[0 (2 ** 61) - 1])count;
+        if disjoint(source, destination) {
+            for willexit independent (stack mut i64[0 (2 ** 61) - 1] index = 0; index < safeCount; index += 1) {
+                destination[index] = source[index];
+            }
+
+            return MemoryStatus.Ok;
+        }
+
+        stack mut dynamic i32[-2147483648 2147483647] snapshot = new();
+        if (!snapshot.TryReserve(safeCount)) {
+            return MemoryStatus.Err(MemoryError.OutOfMemory);
+        }
+
+        for willexit (stack mut i64[0 (2 ** 61) - 1] snapshotIndex = 0; snapshotIndex < safeCount; snapshotIndex += 1) {
+            init snapshot[snapshot.Length] = source[snapshotIndex];
+        }
+
+        stack i32[-2147483648 2147483647][] snapshotView = snapshot[0, snapshot.Length];
+        for willexit (stack mut i64[0 (2 ** 61) - 1] copyIndex = 0; copyIndex < safeCount; copyIndex += 1) {
+            destination[copyIndex] = snapshotView[copyIndex];
+        }
+
+        return MemoryStatus.Ok;
+        }
+}
+
+public inline finite void MoveCodePointsInfallible(
+    borrow i32[-2147483648 2147483647][] source,
+    borrow mut i32[-2147483648 2147483647][] destination,
+    i64[0 (2 ** 61) - 1] count) {
+        unsafe {
+        if (count == 0) {
+            return;
+        }
+
+        stack rawptr<i32[-2147483648 2147483647]> sourceStart = &source[0];
+        stack rawptr<i32[-2147483648 2147483647]> destinationStart = (rawptr<i32[-2147483648 2147483647]>)(&destination[0]);
+        if (destinationStart < sourceStart) {
+            for willexit (stack mut i64[0 (2 ** 61) - 1] index = 0; index < count; index += 1) {
+                destination[index] = source[index];
+            }
+
+            return;
+        }
+
+        stack mut i64[0 (2 ** 61) - 1] remaining = count;
+        while willexit (remaining > 0) {
+            remaining -= 1;
+            destination[remaining] = source[remaining];
+        }
+
+        return;
+        }
+}
+
+public inline finite MemoryStatus MoveCodePoints(
+    borrow i32[-2147483648 2147483647][] source,
+    borrow mut i32[-2147483648 2147483647][] destination,
+    i64[0 max] count) {
+    if (count > ((2 ** 61) - 1)) {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    MoveCodePointsInfallible(source, destination, (i64[0 (2 ** 61) - 1])count);
+    return MemoryStatus.Ok;
+}
+
+public inline finite MemoryStatus FillCodePoints(
+    init i32[-2147483648 2147483647][] destination,
+    i32[-2147483648 2147483647] value,
+    i64[0 (2 ** 61) - 1] count) {
+    for willexit independent (stack mut i64[0 (2 ** 61) - 1] index = 0; index < count; index += 1) {
+        init destination[index] = value;
+    }
+
+    return MemoryStatus.Ok;
+}
+
+public inline finite void FillInitializedCodePointsInfallible(
+    borrow mut i32[-2147483648 2147483647][] destination,
+    i32[-2147483648 2147483647] value,
+    i64[0 (2 ** 61) - 1] count) {
+    for willexit independent (stack mut i64[0 (2 ** 61) - 1] index = 0; index < count; index += 1) {
+        destination[index] = value;
+    }
+
+    return;
+}
+
+public inline finite MemoryStatus FillInitializedCodePoints(
+    borrow mut i32[-2147483648 2147483647][] destination,
+    i32[-2147483648 2147483647] value,
+    i64[0 max] count) {
+    if (count > ((2 ** 61) - 1)) {
+        return MemoryStatus.Err(MemoryError.OutOfMemory);
+    }
+
+    FillInitializedCodePointsInfallible(destination, value, (i64[0 (2 ** 61) - 1])count);
+    return MemoryStatus.Ok;
+}

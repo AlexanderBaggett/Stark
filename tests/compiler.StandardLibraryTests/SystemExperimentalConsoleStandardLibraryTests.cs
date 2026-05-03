@@ -1,13 +1,13 @@
-using Stark.Compiler;
+﻿using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
 public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibraryTestSuite
 {
     private const string ExperimentalConsoleProgram = """
-        import System.Experimental.Console
-        import System.Experimental.Runtime.Buffer
-        import System.Experimental.Text
+        import System.Console
+        import System.Runtime.Buffer
+        import System.Text
         import System.IO
         import System.Memory
         module App
@@ -39,12 +39,12 @@ public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibr
             }
         }
 
-        fn bool IsAlpha(System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii> result) {
+        fn bool IsAlpha(System.Memory.MemoryResult<System.Text.OwnedAscii> result) {
             switch (result) {
-                case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Err(var error):
+                case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
                     return false;
-                case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Ok(var value):
-                    stack mut System.Experimental.Text.OwnedAscii line = value;
+                case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
+                    stack mut System.Text.OwnedAscii line = value;
                     if (line.Length() != 5) {
                         return false;
                     }
@@ -58,12 +58,12 @@ public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibr
             }
         }
 
-        fn bool IsCafe(System.Memory.MemoryResult<System.Experimental.Text.OwnedUnicode> result) {
+        fn bool IsCafe(System.Memory.MemoryResult<System.Text.OwnedUnicode> result) {
             switch (result) {
-                case System.Memory.MemoryResult<System.Experimental.Text.OwnedUnicode>.Err(var error):
+                case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Err(var error):
                     return false;
-                case System.Memory.MemoryResult<System.Experimental.Text.OwnedUnicode>.Ok(var value):
-                    stack mut System.Experimental.Text.OwnedUnicode line = value;
+                case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Ok(var value):
+                    stack mut System.Text.OwnedUnicode line = value;
                     if (line.Length() != 4) {
                         return false;
                     }
@@ -76,12 +76,12 @@ public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibr
             }
         }
 
-        fn bool IsZ(System.Memory.MemoryResult<System.Experimental.Text.OwnedUnicode> result) {
+        fn bool IsZ(System.Memory.MemoryResult<System.Text.OwnedUnicode> result) {
             switch (result) {
-                case System.Memory.MemoryResult<System.Experimental.Text.OwnedUnicode>.Err(var error):
+                case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Err(var error):
                     return false;
-                case System.Memory.MemoryResult<System.Experimental.Text.OwnedUnicode>.Ok(var value):
-                    stack mut System.Experimental.Text.OwnedUnicode unit = value;
+                case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Ok(var value):
+                    stack mut System.Text.OwnedUnicode unit = value;
                     if (unit.Length() != 1) {
                         return false;
                     }
@@ -91,11 +91,11 @@ public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibr
             }
         }
 
-        fn bool IsTooLargeAscii(System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii> result) {
+        fn bool IsTooLargeAscii(System.Memory.MemoryResult<System.Text.OwnedAscii> result) {
             switch (result) {
-                case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Ok(var value):
+                case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
                     return false;
-                case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Err(var error):
+                case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
                     switch (error) {
                         case System.Memory.MemoryError.OutOfMemory:
                             return false;
@@ -109,41 +109,41 @@ public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibr
             }
         }
 
-        export ffi fn i32[min max] main() {
-            stack mut System.Experimental.Text.OwnedAscii owned = new();
+        export unsafe ffi fn i32[min max] main() {
+            stack mut System.Text.OwnedAscii owned = new();
             if (!MemoryOk(owned.AppendAscii("owned"))) {
                 return 1;
             }
 
             stack mut i8[-128 127][3] bufferBytes = { 66, 85, 70 };
-            stack mut System.Experimental.Runtime.Buffer.FixedByteBuffer512 fixedBuffer = new();
+            stack mut System.Runtime.Buffer.FixedByteBuffer512 fixedBuffer = new();
             if (!MemoryOk(fixedBuffer.WriteSlice(bufferBytes, 3))) {
                 return 2;
             }
 
-            if (!StatusOk(System.Experimental.Console.Write("ascii:"))
-                || !StatusOk(System.Experimental.Console.WriteLine(owned))
-                || !StatusOk(System.Experimental.Console.Write((unicode)"unicode:"))
-                || !StatusOk(System.Experimental.Console.WriteLine((unicode)"α"))
-                || !StatusOk(System.Experimental.Console.WriteLine(fixedBuffer))
-                || !StatusOk(System.Experimental.Console.WriteErrorLine("err"))) {
+            if (!StatusOk(System.Console.Write("ascii:"))
+                || !StatusOk(System.Console.WriteLine(owned))
+                || !StatusOk(System.Console.Write((unicode)"unicode:"))
+                || !StatusOk(System.Console.WriteLine((unicode)"Î±"))
+                || !StatusOk(System.Console.WriteLine(fixedBuffer))
+                || !StatusOk(System.Console.WriteErrorLine("err"))) {
                 return 3;
             }
 
-            if (!IsAlpha(System.Experimental.Console.ReadAsciiLine())) {
+            if (!IsAlpha(System.Console.ReadAsciiLine())) {
                 return 4;
             }
 
-            if (!IsCafe(System.Experimental.Console.ReadUnicodeLine())) {
+            if (!IsCafe(System.Console.ReadUnicodeLine())) {
                 return 5;
             }
 
-            if (!IsZ(System.Experimental.Console.Read())) {
+            if (!IsZ(System.Console.Read())) {
                 return 6;
             }
 
-            stack mut System.Experimental.Runtime.Buffer.DynamicByteBuffer dynamicBytes = new();
-            if (!ReadCount(System.Experimental.Console.ReadBytes(dynamicBytes, 3), 3)) {
+            stack mut System.Runtime.Buffer.DynamicByteBuffer dynamicBytes = new();
+            if (!ReadCount(System.Console.ReadBytes(dynamicBytes, 3), 3)) {
                 return 7;
             }
 
@@ -152,7 +152,7 @@ public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibr
                 return 8;
             }
 
-            if (!IsTooLargeAscii(System.Experimental.Console.ReadAsciiLine())) {
+            if (!IsTooLargeAscii(System.Console.ReadAsciiLine())) {
                 return 9;
             }
 
@@ -169,28 +169,28 @@ public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibr
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(
                 """
-                import System.Experimental.Console
-                import System.Experimental.Runtime.Buffer
-                import System.Experimental.Text
+                import System.Console
+                import System.Runtime.Buffer
+                import System.Text
                 import System.IO
                 import System.Memory
                 module Demo
 
-                fn System.IO.IOStatus WriteOwned(mut borrow System.Experimental.Text.OwnedAscii text) {
-                    return System.Experimental.Console.WriteLine(text);
+                fn System.IO.IOStatus WriteOwned(mut borrow System.Text.OwnedAscii text) {
+                    return System.Console.WriteLine(text);
                 }
 
-                fn System.IO.IOStatus WriteBuffer(borrow System.Experimental.Runtime.Buffer.DynamicByteBuffer buffer) {
-                    return System.Experimental.Console.Write(buffer);
+                fn System.IO.IOStatus WriteBuffer(borrow System.Runtime.Buffer.DynamicByteBuffer buffer) {
+                    return System.Console.Write(buffer);
                 }
 
                 fn System.Memory.MemoryResult<i64[0 max]> ReadInto(
-                    mut borrow System.Experimental.Runtime.Buffer.FixedByteBuffer8192 buffer) {
-                    return System.Experimental.Console.ReadBytes(buffer, 32);
+                    mut borrow System.Runtime.Buffer.FixedByteBuffer8192 buffer) {
+                    return System.Console.ReadBytes(buffer, 32);
                 }
 
-                fn System.Memory.MemoryResult<System.Experimental.Text.OwnedUnicode> ReadLine() {
-                    return System.Experimental.Console.ReadLine();
+                fn System.Memory.MemoryResult<System.Text.OwnedUnicode> ReadLine() {
+                    return System.Console.ReadLine();
                 }
                 """,
                 appPath),
@@ -201,9 +201,9 @@ public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibr
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
 
-        Assert.Contains("System_Experimental_Console", llvm, StringComparison.Ordinal);
-        Assert.Contains("System_Experimental_Runtime_Buffer_FixedByteBuffer8192_WriteByte", llvm, StringComparison.Ordinal);
-        Assert.DoesNotContain("System_Console_", llvm, StringComparison.Ordinal);
+        Assert.Contains("System_Console", llvm, StringComparison.Ordinal);
+        Assert.Contains("System_Runtime_Buffer_FixedByteBuffer8192_WriteByte", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("System_Experimental_Console", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -211,7 +211,7 @@ public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibr
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var modulePath = Path.Combine(sourceRoot, "System", "Experimental", "Console.stark");
+        var modulePath = Path.Combine(sourceRoot, "System", "Console.stark");
         var platformPath = Path.Combine(sourceRoot, "System", "Runtime", "Platform.stark");
         var resolver = new TargetAwareStdLibModuleResolver(
             new FileSystemModuleResolver(sourceRoot),
@@ -251,7 +251,7 @@ public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibr
         Assert.Contains("@System_Runtime_Platform_WriteStderrAsciiLine(", writeErrorLineAscii, StringComparison.Ordinal);
         Assert.Contains("@System_Runtime_Platform_WriteStderrUnicodeLine(", writeErrorLineUnicode, StringComparison.Ordinal);
         Assert.Contains("@WriteBytesLineToStderr(", writeErrorLineBytes, StringComparison.Ordinal);
-        Assert.DoesNotContain("System_Experimental_Text_OwnedAscii_AppendByte", byteWriteBodies, StringComparison.Ordinal);
+        Assert.DoesNotContain("System_Text_OwnedAscii_AppendByte", byteWriteBodies, StringComparison.Ordinal);
         Assert.DoesNotContain("@Write__ascii_", writeLineAscii, StringComparison.Ordinal);
         Assert.DoesNotContain("@WriteError__ascii_", writeErrorLineAscii, StringComparison.Ordinal);
 
@@ -281,10 +281,10 @@ public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibr
         var asciiLine = ExtractLlvmFunctionBody(llvm, "@WriteAsciiLineToHandle(");
         var unicodeLine = ExtractLlvmFunctionBody(llvm, "@WriteUnicodeLineToHandle(");
 
-        Assert.Contains("%System_Runtime_Buffer_ByteBuffer8192", bufferLine, StringComparison.Ordinal);
+        Assert.Contains("%System_Runtime_Buffer_FixedByteBuffer8192", bufferLine, StringComparison.Ordinal);
         Assert.Contains("@WriteBufferToHandle(", bufferLine, StringComparison.Ordinal);
         Assert.Contains("@WriteBufferLineToHandle(", asciiLine, StringComparison.Ordinal);
-        Assert.Contains("%System_Runtime_Buffer_ByteBuffer4096", unicodeLine, StringComparison.Ordinal);
+        Assert.Contains("%System_Runtime_Buffer_FixedByteBuffer4096", unicodeLine, StringComparison.Ordinal);
         Assert.Contains("@AppendUtf8CodePoint(", unicodeLine, StringComparison.Ordinal);
         Assert.Contains("i32 10", unicodeLine, StringComparison.Ordinal);
     }
@@ -295,8 +295,8 @@ public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibr
         await AssertSourceExecutableRunsAsync(
             ExperimentalConsoleProgram,
             "stark-stdlib-experimental-console-",
-            "alpha\r\ncafé\nZ123" + new string('a', 8193),
-            "ascii:owned\nunicode:α\nBUF\n",
+            "alpha\r\ncafÃ©\nZ123" + new string('a', 8193),
+            "ascii:owned\nunicode:Î±\nBUF\n",
             "err\n",
             skipWindows: true);
     }
@@ -379,3 +379,4 @@ public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibr
         return llvm[start..next];
     }
 }
+

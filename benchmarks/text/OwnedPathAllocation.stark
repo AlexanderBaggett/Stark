@@ -1,7 +1,9 @@
-import System
+﻿import System.IO.Path
+import System.Text
+import System.Memory
 module Benchmarks.Text.OwnedPathAllocation
 
-fn bool AddPathFacts(System.Memory.MemoryResult<System.Text.OwnedAscii> result, rawmutptr<i64[min max]> checksum) {
+unsafe fn bool AddPathFacts(System.Memory.MemoryResult<System.Text.OwnedAscii> result, rawmutptr<i64[min max]> checksum) {
     switch (result) {
         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
             stack System.IO.Path.PathFacts facts = System.IO.Path.GetFacts(value.View());
@@ -15,7 +17,7 @@ fn bool AddPathFacts(System.Memory.MemoryResult<System.Text.OwnedAscii> result, 
     }
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack mut i64[min max] checksum = 0;
 
     for willexit (stack mut i32[0 2000] i = 0; i < 2000; i += 1) {

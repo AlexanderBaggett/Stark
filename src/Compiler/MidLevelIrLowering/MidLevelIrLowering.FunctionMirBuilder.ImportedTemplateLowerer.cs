@@ -1800,6 +1800,11 @@ internal sealed partial class MidLevelIrLowerer
                     $"{target.Text}[{RenderImportedTypedTemplateExpressionCore(expression.Args[1])}, {RenderImportedTypedTemplateExpressionCore(expression.Args[2])}]");
             }
 
+            if (target.Type.Kind == StarkTypeKind.Dynamic && target.Type.ElementType is not null)
+            {
+                return LowerImportedTypedTemplateDynamicStorageAccess(target, expression);
+            }
+
             var current = target;
             for (var argumentIndex = 1; argumentIndex < expression.Args.Count; argumentIndex++)
             {
@@ -1934,6 +1939,71 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             return current;
+        }
+
+        private MidLevelIrOperand? LowerImportedTypedTemplateDynamicStorageAccess(
+            MidLevelIrOperand target,
+            ImportedTemplateTypedBodyExpressionSummary expression)
+        {
+            if (expression.Args.Count is not (2 or 3)
+                || target.Type.ElementType is null)
+            {
+                MarkUnsupported(reason: "Imported typed template-body dynamic storage indexing requires one integer index or a start/count pair.");
+                return null;
+            }
+
+            var start = LowerImportedTypedTemplateExpressionCore(expression.Args[1], expectedType: null);
+            if (start is null || start.Type.Kind != StarkTypeKind.Integer)
+            {
+                return null;
+            }
+
+            var dataPointerType = StarkTypeSymbols.RawPointer(target.Type.ElementType, isMutable: true);
+            var dataPointer = LowerKnownFieldAccess(target, "Data", 0, dataPointerType, "Data");
+            var elementType = UsesFrozenProjectionSemantics(target)
+                ? StarkTypeSymbols.FreezeReachableView(target.Type.ElementType)
+                : ProjectFrozenView(target.Type, target.Type.ElementType);
+            var startText = RenderImportedTypedTemplateExpressionCore(expression.Args[1]);
+            var elementAddress = EmitTemporary(
+                new MidLevelIrElementAddressRValue(
+                    dataPointer,
+                    elementType,
+                    start,
+                    ConstantIndex: null,
+                    AddressType(elementType, dataPointer.Type.IsMutablePointer && CanMutateThroughType(elementType)),
+                    $"{target.Text}[{startText}]"),
+                "addr");
+            if (elementAddress is null)
+            {
+                return null;
+            }
+
+            if (expression.Args.Count == 3)
+            {
+                var length = LowerImportedTypedTemplateExpressionCore(expression.Args[2], expectedType: null);
+                if (length is null || length.Type.Kind != StarkTypeKind.Integer)
+                {
+                    return null;
+                }
+
+                var sliceType = StarkTypeSymbols.ApplyQualifiers(
+                    StarkTypeSymbols.Slice(elementType),
+                    isMutableView: dataPointer.Type.IsMutablePointer && CanMutateThroughType(elementType));
+                return EmitTemporary(
+                    new MidLevelIrMakeSliceFromPointerRValue(
+                        elementAddress,
+                        length,
+                        sliceType,
+                        $"{target.Text}[{startText}, {RenderImportedTypedTemplateExpressionCore(expression.Args[2])}]"),
+                    "slice");
+            }
+
+            return EmitTemporary(
+                new MidLevelIrLoadIndirectRValue(
+                    elementAddress,
+                    elementType,
+                    $"{target.Text}[{startText}]"),
+                "load");
         }
 
         private static bool TryResolveImportedTypedTemplateConstantIndex(

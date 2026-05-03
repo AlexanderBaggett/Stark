@@ -1,7 +1,7 @@
-import System
+﻿import System
 module Benchmarks.Text.AsciiToUnicodeWideningKernel
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack ascii source = "alpha/beta.txt";
     stack rawptr<i8[-128 127]> sourceData = System.Text.AsciiData(source);
     stack i64[-9223372036854775808 9223372036854775807] sourceLength = System.Text.AsciiLength(source);

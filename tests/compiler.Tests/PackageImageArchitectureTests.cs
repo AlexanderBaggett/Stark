@@ -220,7 +220,7 @@ public sealed class PackageImageArchitectureTests
     }
 
     [Fact]
-    public void SystemCollectionsSourceUsesDictionaryBackendOpaqueWithoutModuleNameGate()
+    public void SystemCollectionsSourceUsesDefaultBackendOptimizationWithoutModuleNameGate()
     {
         var repositoryRoot = FindRepositoryRoot();
         var collectionsPath = Path.Combine(repositoryRoot, "stdlib", "src", "System", "Collections.stark");
@@ -231,9 +231,9 @@ public sealed class PackageImageArchitectureTests
         Assert.Equal(ModuleBackendOptimizationMode.Default, syntaxModel.BackendOptimizationMode);
 
         var dictionary = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Name == "Dictionary");
-        Assert.Equal(ModuleBackendOptimizationMode.Opaque, dictionary.BackendOptimizationMode);
+        Assert.Equal(ModuleBackendOptimizationMode.Default, dictionary.BackendOptimizationMode);
         var dictionaryReserve = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Name == "Dictionary.Reserve");
-        Assert.Equal(ModuleBackendOptimizationMode.Opaque, dictionaryReserve.Function!.BackendOptimizationMode);
+        Assert.Equal(ModuleBackendOptimizationMode.Default, dictionaryReserve.Function!.BackendOptimizationMode);
 
         var list = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Name == "List");
         Assert.Equal(ModuleBackendOptimizationMode.Default, list.BackendOptimizationMode);
@@ -278,7 +278,7 @@ public sealed class PackageImageArchitectureTests
                     """
                     module Facade
 
-                    public ffi varargs fn i32[min max] printf(ascii format);
+                    public unsafe ffi varargs fn i32[min max] printf(ascii format);
                     """,
                     sourcePath),
                 new CompilerOptions(StopAfterPassId: "lower-abi"));
@@ -298,7 +298,7 @@ public sealed class PackageImageArchitectureTests
             Assert.True(abiFunction.IsVarargs);
 
             Assert.True(PackageImageLoader.TryBuildModuleSource(CreateResolvedPackageModule(facadeModule), out var sourceText));
-            Assert.Contains("public ffi varargs fn i32[", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public ffi varargs unsafe fn i32[", sourceText, StringComparison.Ordinal);
             Assert.Contains("printf(ascii format);", sourceText, StringComparison.Ordinal);
         }
         finally
@@ -327,22 +327,22 @@ public sealed class PackageImageArchitectureTests
                     """
                     module Facade
 
-                    public fn void Inspect(const rawmutptr<i32[min max]> ptr) {
+                    public unsafe fn void Inspect(const rawmutptr<i32[min max]> ptr) {
                         return;
                     }
 
-                    public fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
+                    public unsafe fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
                         return;
                     }
 
-                    public fn void TouchWhere(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) where disjoint(left, right) {
+                    public unsafe fn void TouchWhere(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) where disjoint(left, right) {
                         return;
                     }
 
                     public struct Reader {
                         i32[min max] Value;
 
-                        public fn void Read(borrow Reader self, const rawmutptr<i32[min max]> ptr) {
+                        public unsafe fn void Read(borrow Reader self, const rawmutptr<i32[min max]> ptr) {
                             return;
                         }
                     }
@@ -486,7 +486,7 @@ public sealed class PackageImageArchitectureTests
                 """
                 module Facade
 
-                public fn void TouchWhere(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) where disjoint(left, right) {
+                public unsafe fn void TouchWhere(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) where disjoint(left, right) {
                     return;
                 }
                 """,
@@ -504,7 +504,7 @@ public sealed class PackageImageArchitectureTests
                     import Facade
                     module Demo
 
-                    fn void Run(rawmutptr<i32[min max]> ptr) {
+                    unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
                         Facade.TouchWhere(ptr, ptr);
                         return;
                     }

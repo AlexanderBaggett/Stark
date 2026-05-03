@@ -1,4 +1,4 @@
-using Stark.Compiler;
+﻿using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
@@ -19,6 +19,38 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
                 fn bool UseDefaultAllocator() {
                     stack System.Memory.Allocator allocator = System.Memory.Allocator.Default();
                     return allocator.IsDefault();
+                }
+
+                fn bool MemoryOk(System.Memory.MemoryStatus status) {
+                    switch (status) {
+                        case System.Memory.MemoryStatus.Ok:
+                            return true;
+                        case System.Memory.MemoryStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn bool UsePromotedDynamicMemory() {
+                    stack mut dynamic i8[-128 127] bytes = new();
+                    stack mut i8[-128 127][4] source = { 1, 2, 3, 4 };
+                    stack i64[0 max] four = 4;
+                    if (!MemoryOk(System.Memory.ReserveBytes(bytes, four))) {
+                        return false;
+                    }
+
+                    if (!MemoryOk(System.Memory.AppendBytes(bytes, source, four))) {
+                        return false;
+                    }
+
+                    if (!MemoryOk(System.Memory.AppendFillBytes(bytes, 9, four))) {
+                        return false;
+                    }
+
+                    if (!MemoryOk(System.Memory.MoveBytes(bytes[2, four], bytes[0, four], four))) {
+                        return false;
+                    }
+
+                    return bytes.Length == 8;
                 }
                 """,
                 appPath),
@@ -58,7 +90,7 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("os_realloc_check:", llvm, StringComparison.Ordinal);
         Assert.Contains("br i1 %realloc_can_os_realloc, label %try_os_reallocate, label %fallback", llvm, StringComparison.Ordinal);
         Assert.Contains("br i1 %os_realloc_failed, label %fallback, label %os_reallocated", llvm, StringComparison.Ordinal);
-        Assert.Contains("@__stark_alloc_bucket_16 = weak_odr hidden thread_local global ptr null, align 8", llvm, StringComparison.Ordinal);
+        Assert.Contains("@__stark_alloc_bucket_16 = linkonce_odr hidden thread_local global ptr null, comdat, align 8", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("thread_local(localexec)", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@malloc(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@realloc(", llvm, StringComparison.Ordinal);
@@ -125,7 +157,7 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
                     return true;
                 }
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
                     stack mut Allocation large = Allocate(Allocator.Default(), 5000, 8);
                     if (large.Pointer == null) {
                         return 1;
@@ -483,10 +515,11 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
             import System
             module App
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 System.Console.WriteLine("allocator stays unused");
                 return 0;
             }
             """);
     }
 }
+

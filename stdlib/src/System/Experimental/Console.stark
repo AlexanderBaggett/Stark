@@ -1,5 +1,5 @@
-import System.Experimental.Runtime.Buffer
-import System.Experimental.Text
+﻿import System.Runtime.Buffer
+import System.Text
 import System.IO
 import System.Memory
 import System.Runtime
@@ -36,27 +36,29 @@ fn i32[min max] UnsignedByte(i8[min max] value) {
 }
 
 fn i64[0 4] Utf8ExpectedByteCount(i8[min max] firstByte) {
-    stack i32[min max] first = UnsignedByte(firstByte);
-    if (first <= 127) {
-        return 1;
-    }
+    unsafe {
+        stack i32[min max] first = UnsignedByte(firstByte);
+        if (first <= 127) {
+            return 1;
+        }
 
-    if (194 <= first && first <= 223) {
-        return 2;
-    }
+        if (194 <= first && first <= 223) {
+            return 2;
+        }
 
-    if (224 <= first && first <= 239) {
-        return 3;
-    }
+        if (224 <= first && first <= 239) {
+            return 3;
+        }
 
-    if (240 <= first && first <= 244) {
-        return 4;
-    }
+        if (240 <= first && first <= 244) {
+            return 4;
+        }
 
-    return 0;
+        return 0;
+    }
 }
 
-fn rawptr<i8[min max]> EnsureConsoleInputHandle() {
+unsafe fn rawptr<i8[min max]> EnsureConsoleInputHandle() {
     if (ConsoleInputEndOfInput) {
         return null;
     }
@@ -71,54 +73,60 @@ fn rawptr<i8[min max]> EnsureConsoleInputHandle() {
 }
 
 fn void CloseConsoleInputHandle() {
-    if (ConsoleInputHandle != null) {
-        System.Runtime.Platform.CloseStdin(ConsoleInputHandle);
-        ConsoleInputHandle = null;
-    }
+    unsafe {
+        if (ConsoleInputHandle != null) {
+            System.Runtime.Platform.CloseStdin(ConsoleInputHandle);
+            ConsoleInputHandle = null;
+        }
 
-    ConsoleInputReadPos = 0;
-    ConsoleInputWritePos = 0;
-    ConsoleInputEndOfInput = true;
-    return;
+        ConsoleInputReadPos = 0;
+        ConsoleInputWritePos = 0;
+        ConsoleInputEndOfInput = true;
+        return;
+    }
 }
 
 fn bool RefillConsoleInput() {
-    stack rawptr<i8[min max]> handle = EnsureConsoleInputHandle();
-    if (handle == null) {
-        CloseConsoleInputHandle();
-        return false;
-    }
-
-    stack mut i64[min max] readCount = 0;
     unsafe {
-        readCount = System.Runtime.Platform.ReadStdin(&ConsoleInputStorage.Storage[0], ConsoleInputByteCapacity);
-    }
+        stack rawptr<i8[min max]> handle = EnsureConsoleInputHandle();
+        if (handle == null) {
+            CloseConsoleInputHandle();
+            return false;
+        }
 
-    if (readCount <= 0) {
-        CloseConsoleInputHandle();
-        return false;
-    }
+        stack mut i64[min max] readCount = 0;
+        unsafe {
+            readCount = System.Runtime.Platform.ReadStdin(&ConsoleInputStorage.Storage[0], ConsoleInputByteCapacity);
+        }
 
-    ConsoleInputReadPos = 0;
-    ConsoleInputWritePos = readCount;
-    return true;
+        if (readCount <= 0) {
+            CloseConsoleInputHandle();
+            return false;
+        }
+
+        ConsoleInputReadPos = 0;
+        ConsoleInputWritePos = readCount;
+        return true;
+    }
 }
 
 fn bool TryReadInputByte(out i8[min max] destination) {
-    destination = 0;
-    if (ConsoleInputReadPos >= ConsoleInputWritePos) {
-        if (!RefillConsoleInput()) {
-            return false;
+    unsafe {
+        destination = 0;
+        if (ConsoleInputReadPos >= ConsoleInputWritePos) {
+            if (!RefillConsoleInput()) {
+                return false;
+            }
         }
-    }
 
-    destination = *(&ConsoleInputStorage.Storage[ConsoleInputReadPos]);
-    ConsoleInputReadPos += 1;
-    return true;
+        destination = *(&ConsoleInputStorage.Storage[ConsoleInputReadPos]);
+        ConsoleInputReadPos += 1;
+        return true;
+    }
 }
 
 fn System.Memory.MemoryStatus AppendAsciiByte(
-    mut borrow System.Experimental.Text.OwnedAscii destination,
+    mut borrow System.Text.OwnedAscii destination,
     i8[min max] value) {
     if (destination.Length() >= ConsoleInputByteCapacity) {
         return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
@@ -128,7 +136,7 @@ fn System.Memory.MemoryStatus AppendAsciiByte(
 }
 
 fn System.Memory.MemoryStatus AppendCarriageReturnIfPending(
-    mut borrow System.Experimental.Text.OwnedAscii destination,
+    mut borrow System.Text.OwnedAscii destination,
     out bool pendingCarriageReturn) {
     if (!pendingCarriageReturn) {
         return System.Memory.MemoryStatus.Ok;
@@ -138,91 +146,99 @@ fn System.Memory.MemoryStatus AppendCarriageReturnIfPending(
     return AppendAsciiByte(destination, (i8[min max])13);
 }
 
-fn System.Memory.MemoryResult<System.Experimental.Text.OwnedUnicode> DecodeAsciiBytes(
-    mut borrow System.Experimental.Text.OwnedAscii source) {
-    stack mut System.Experimental.Text.OwnedUnicode destination = new();
+fn System.Memory.MemoryResult<System.Text.OwnedUnicode> DecodeAsciiBytes(
+    mut borrow System.Text.OwnedAscii source) {
+    stack mut System.Text.OwnedUnicode destination = new();
     stack System.Memory.MemoryStatus status = destination.AppendAscii(source.View());
     switch (status) {
         case System.Memory.MemoryStatus.Err(var error):
-            return System.Memory.MemoryResult<System.Experimental.Text.OwnedUnicode>.Err(error);
+            return System.Memory.MemoryResult<System.Text.OwnedUnicode>.Err(error);
         case System.Memory.MemoryStatus.Ok:
-            return System.Memory.MemoryResult<System.Experimental.Text.OwnedUnicode>.Ok(destination);
+            return System.Memory.MemoryResult<System.Text.OwnedUnicode>.Ok(destination);
     }
 }
 
-fn System.Memory.MemoryResult<System.Experimental.Text.OwnedUnicode> ReplacementUnicodeResult() {
-    stack mut System.Experimental.Text.OwnedUnicode replacement = new();
+fn System.Memory.MemoryResult<System.Text.OwnedUnicode> ReplacementUnicodeResult() {
+    stack mut System.Text.OwnedUnicode replacement = new();
     stack System.Memory.MemoryStatus status = replacement.AppendCodePoint(65533);
     switch (status) {
         case System.Memory.MemoryStatus.Err(var error):
-            return System.Memory.MemoryResult<System.Experimental.Text.OwnedUnicode>.Err(error);
+            return System.Memory.MemoryResult<System.Text.OwnedUnicode>.Err(error);
         case System.Memory.MemoryStatus.Ok:
-            return System.Memory.MemoryResult<System.Experimental.Text.OwnedUnicode>.Ok(replacement);
+            return System.Memory.MemoryResult<System.Text.OwnedUnicode>.Ok(replacement);
     }
 }
 
 fn System.IO.IOStatus WriteBytesToStdout(borrow i8[min max][] source) {
-    stack System.Runtime.ByteSliceParts sourceParts = System.Runtime.GetByteSliceParts(source);
-    if (sourceParts.Length == 0) {
-        return System.IO.IOStatus.Ok;
-    }
-
-    if (sourceParts.Data == null) {
-        return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
-    }
-
-    stack mut i32[min max] result = 0;
     unsafe {
-        result = System.Runtime.Platform.WriteStdoutBytes(sourceParts.Data, sourceParts.Length);
-    }
+        stack System.Runtime.ByteSliceParts sourceParts = System.Runtime.GetByteSliceParts(source);
+        if (sourceParts.Length == 0) {
+            return System.IO.IOStatus.Ok;
+        }
 
-    return StatusFromWriteResult(result);
+        if (sourceParts.Data == null) {
+            return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
+        }
+
+        stack mut i32[min max] result = 0;
+        unsafe {
+            result = System.Runtime.Platform.WriteStdoutBytes(sourceParts.Data, sourceParts.Length);
+        }
+
+        return StatusFromWriteResult(result);
+    }
 }
 
 fn System.IO.IOStatus WriteBytesToStderr(borrow i8[min max][] source) {
-    stack System.Runtime.ByteSliceParts sourceParts = System.Runtime.GetByteSliceParts(source);
-    if (sourceParts.Length == 0) {
-        return System.IO.IOStatus.Ok;
-    }
-
-    if (sourceParts.Data == null) {
-        return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
-    }
-
-    stack mut i32[min max] result = 0;
     unsafe {
-        result = System.Runtime.Platform.WriteStderrBytes(sourceParts.Data, sourceParts.Length);
-    }
+        stack System.Runtime.ByteSliceParts sourceParts = System.Runtime.GetByteSliceParts(source);
+        if (sourceParts.Length == 0) {
+            return System.IO.IOStatus.Ok;
+        }
 
-    return StatusFromWriteResult(result);
+        if (sourceParts.Data == null) {
+            return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
+        }
+
+        stack mut i32[min max] result = 0;
+        unsafe {
+            result = System.Runtime.Platform.WriteStderrBytes(sourceParts.Data, sourceParts.Length);
+        }
+
+        return StatusFromWriteResult(result);
+    }
 }
 
 fn System.IO.IOStatus WriteBytesLineToStdout(borrow i8[min max][] source) {
-    stack System.Runtime.ByteSliceParts sourceParts = System.Runtime.GetByteSliceParts(source);
-    if (sourceParts.Length > 0 && sourceParts.Data == null) {
-        return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
-    }
-
-    stack mut i32[min max] result = 0;
     unsafe {
-        result = System.Runtime.Platform.WriteStdoutBytesLine(sourceParts.Data, sourceParts.Length);
-    }
+        stack System.Runtime.ByteSliceParts sourceParts = System.Runtime.GetByteSliceParts(source);
+        if (sourceParts.Length > 0 && sourceParts.Data == null) {
+            return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
+        }
 
-    return StatusFromWriteResult(result);
+        stack mut i32[min max] result = 0;
+        unsafe {
+            result = System.Runtime.Platform.WriteStdoutBytesLine(sourceParts.Data, sourceParts.Length);
+        }
+
+        return StatusFromWriteResult(result);
+    }
 }
 
 fn System.IO.IOStatus WriteBytesLineToStderr(borrow i8[min max][] source) {
-    stack System.Runtime.ByteSliceParts sourceParts = System.Runtime.GetByteSliceParts(source);
-    if (sourceParts.Length > 0 && sourceParts.Data == null) {
-        return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
-    }
-
-    stack mut i32[min max] result = 0;
     unsafe {
-        result = System.Runtime.Platform.WriteStderrBytesLine(sourceParts.Data, sourceParts.Length);
-    }
+        stack System.Runtime.ByteSliceParts sourceParts = System.Runtime.GetByteSliceParts(source);
+        if (sourceParts.Length > 0 && sourceParts.Data == null) {
+            return System.IO.IOStatus.Err(System.IO.IOError.InvalidPath);
+        }
 
-    return StatusFromWriteResult(result);
+        stack mut i32[min max] result = 0;
+        unsafe {
+            result = System.Runtime.Platform.WriteStderrBytesLine(sourceParts.Data, sourceParts.Length);
+        }
+
+        return StatusFromWriteResult(result);
+    }
 }
 
 public fn System.IO.IOStatus Write(ascii text) {
@@ -233,11 +249,11 @@ public fn System.IO.IOStatus Write(unicode text) {
     return StatusFromWriteResult(System.Runtime.Platform.WriteStdoutUnicode(text));
 }
 
-public fn System.IO.IOStatus Write(mut borrow System.Experimental.Text.OwnedAscii text) {
+public fn System.IO.IOStatus Write(mut borrow System.Text.OwnedAscii text) {
     return Write(text.View());
 }
 
-public fn System.IO.IOStatus Write(mut borrow System.Experimental.Text.OwnedUnicode text) {
+public fn System.IO.IOStatus Write(mut borrow System.Text.OwnedUnicode text) {
     return Write(text.View());
 }
 
@@ -245,19 +261,19 @@ public fn System.IO.IOStatus Write(borrow i8[min max][] source) {
     return WriteBytesToStdout(source);
 }
 
-public fn System.IO.IOStatus Write(borrow System.Experimental.Runtime.Buffer.DynamicByteBuffer source) {
+public fn System.IO.IOStatus Write(borrow System.Runtime.Buffer.DynamicByteBuffer source) {
     return WriteBytesToStdout(source.ReadSlice());
 }
 
-public fn System.IO.IOStatus Write(borrow System.Experimental.Runtime.Buffer.FixedByteBuffer512 source) {
+public fn System.IO.IOStatus Write(borrow System.Runtime.Buffer.FixedByteBuffer512 source) {
     return WriteBytesToStdout(source.ReadSlice());
 }
 
-public fn System.IO.IOStatus Write(borrow System.Experimental.Runtime.Buffer.FixedByteBuffer4096 source) {
+public fn System.IO.IOStatus Write(borrow System.Runtime.Buffer.FixedByteBuffer4096 source) {
     return WriteBytesToStdout(source.ReadSlice());
 }
 
-public fn System.IO.IOStatus Write(borrow System.Experimental.Runtime.Buffer.FixedByteBuffer8192 source) {
+public fn System.IO.IOStatus Write(borrow System.Runtime.Buffer.FixedByteBuffer8192 source) {
     return WriteBytesToStdout(source.ReadSlice());
 }
 
@@ -269,32 +285,44 @@ public fn System.IO.IOStatus WriteLine(unicode text) {
     return StatusFromWriteResult(System.Runtime.Platform.WriteStdoutUnicodeLine(text));
 }
 
-public fn System.IO.IOStatus WriteLine(mut borrow System.Experimental.Text.OwnedAscii text) {
-    return WriteLine(text.View());
+public fn System.IO.IOStatus WriteLine(mut borrow System.Text.OwnedAscii text) {
+    unsafe {
+        return WriteLine(text.View());
+    }
 }
 
-public fn System.IO.IOStatus WriteLine(mut borrow System.Experimental.Text.OwnedUnicode text) {
-    return WriteLine(text.View());
+public fn System.IO.IOStatus WriteLine(mut borrow System.Text.OwnedUnicode text) {
+    unsafe {
+        return WriteLine(text.View());
+    }
 }
 
 public fn System.IO.IOStatus WriteLine(borrow i8[min max][] source) {
     return WriteBytesLineToStdout(source);
 }
 
-public fn System.IO.IOStatus WriteLine(borrow System.Experimental.Runtime.Buffer.DynamicByteBuffer source) {
-    return WriteLine(source.ReadSlice());
+public fn System.IO.IOStatus WriteLine(borrow System.Runtime.Buffer.DynamicByteBuffer source) {
+    unsafe {
+        return WriteLine(source.ReadSlice());
+    }
 }
 
-public fn System.IO.IOStatus WriteLine(borrow System.Experimental.Runtime.Buffer.FixedByteBuffer512 source) {
-    return WriteLine(source.ReadSlice());
+public fn System.IO.IOStatus WriteLine(borrow System.Runtime.Buffer.FixedByteBuffer512 source) {
+    unsafe {
+        return WriteLine(source.ReadSlice());
+    }
 }
 
-public fn System.IO.IOStatus WriteLine(borrow System.Experimental.Runtime.Buffer.FixedByteBuffer4096 source) {
-    return WriteLine(source.ReadSlice());
+public fn System.IO.IOStatus WriteLine(borrow System.Runtime.Buffer.FixedByteBuffer4096 source) {
+    unsafe {
+        return WriteLine(source.ReadSlice());
+    }
 }
 
-public fn System.IO.IOStatus WriteLine(borrow System.Experimental.Runtime.Buffer.FixedByteBuffer8192 source) {
-    return WriteLine(source.ReadSlice());
+public fn System.IO.IOStatus WriteLine(borrow System.Runtime.Buffer.FixedByteBuffer8192 source) {
+    unsafe {
+        return WriteLine(source.ReadSlice());
+    }
 }
 
 public fn System.IO.IOStatus WriteError(ascii text) {
@@ -305,11 +333,11 @@ public fn System.IO.IOStatus WriteError(unicode text) {
     return StatusFromWriteResult(System.Runtime.Platform.WriteStderrUnicode(text));
 }
 
-public fn System.IO.IOStatus WriteError(mut borrow System.Experimental.Text.OwnedAscii text) {
+public fn System.IO.IOStatus WriteError(mut borrow System.Text.OwnedAscii text) {
     return WriteError(text.View());
 }
 
-public fn System.IO.IOStatus WriteError(mut borrow System.Experimental.Text.OwnedUnicode text) {
+public fn System.IO.IOStatus WriteError(mut borrow System.Text.OwnedUnicode text) {
     return WriteError(text.View());
 }
 
@@ -325,11 +353,11 @@ public fn System.IO.IOStatus WriteErrorLine(unicode text) {
     return StatusFromWriteResult(System.Runtime.Platform.WriteStderrUnicodeLine(text));
 }
 
-public fn System.IO.IOStatus WriteErrorLine(mut borrow System.Experimental.Text.OwnedAscii text) {
+public fn System.IO.IOStatus WriteErrorLine(mut borrow System.Text.OwnedAscii text) {
     return WriteErrorLine(text.View());
 }
 
-public fn System.IO.IOStatus WriteErrorLine(mut borrow System.Experimental.Text.OwnedUnicode text) {
+public fn System.IO.IOStatus WriteErrorLine(mut borrow System.Text.OwnedUnicode text) {
     return WriteErrorLine(text.View());
 }
 
@@ -337,208 +365,220 @@ public fn System.IO.IOStatus WriteErrorLine(borrow i8[min max][] source) {
     return WriteBytesLineToStderr(source);
 }
 
-public fn System.IO.IOStatus WriteErrorLine(borrow System.Experimental.Runtime.Buffer.DynamicByteBuffer source) {
+public fn System.IO.IOStatus WriteErrorLine(borrow System.Runtime.Buffer.DynamicByteBuffer source) {
     return WriteErrorLine(source.ReadSlice());
 }
 
-public fn System.IO.IOStatus WriteErrorLine(borrow System.Experimental.Runtime.Buffer.FixedByteBuffer512 source) {
+public fn System.IO.IOStatus WriteErrorLine(borrow System.Runtime.Buffer.FixedByteBuffer512 source) {
     return WriteErrorLine(source.ReadSlice());
 }
 
-public fn System.IO.IOStatus WriteErrorLine(borrow System.Experimental.Runtime.Buffer.FixedByteBuffer4096 source) {
+public fn System.IO.IOStatus WriteErrorLine(borrow System.Runtime.Buffer.FixedByteBuffer4096 source) {
     return WriteErrorLine(source.ReadSlice());
 }
 
-public fn System.IO.IOStatus WriteErrorLine(borrow System.Experimental.Runtime.Buffer.FixedByteBuffer8192 source) {
+public fn System.IO.IOStatus WriteErrorLine(borrow System.Runtime.Buffer.FixedByteBuffer8192 source) {
     return WriteErrorLine(source.ReadSlice());
 }
 
 public fn System.Memory.MemoryResult<i64[0 max]> ReadBytes(
-    mut borrow System.Experimental.Runtime.Buffer.DynamicByteBuffer destination,
+    mut borrow System.Runtime.Buffer.DynamicByteBuffer destination,
     i64[0 max] maxCount) {
-    stack mut i64[0 max] readCount = 0;
-    while willexit (readCount < maxCount) {
-        stack mut i8[min max] value = 0;
-        if (!TryReadInputByte(value)) {
-            break;
-        }
+        unsafe {
+        stack mut i64[0 max] readCount = 0;
+        while willexit (readCount < maxCount) {
+            stack mut i8[min max] value = 0;
+            if (!TryReadInputByte(value)) {
+                break;
+            }
 
-        stack System.Memory.MemoryStatus status = destination.WriteByte(value);
-        switch (status) {
-            case System.Memory.MemoryStatus.Err(var error):
-                return System.Memory.MemoryResult<i64[0 max]>.Err(error);
-            case System.Memory.MemoryStatus.Ok:
-        }
-
-        readCount += 1;
-    }
-
-    return System.Memory.MemoryResult<i64[0 max]>.Ok(readCount);
-}
-
-public fn System.Memory.MemoryResult<i64[0 max]> ReadBytes(
-    mut borrow System.Experimental.Runtime.Buffer.FixedByteBuffer512 destination,
-    i64[0 max] maxCount) {
-    stack mut i64[0 max] readCount = 0;
-    while willexit (readCount < maxCount && destination.Writable() > 0) {
-        stack mut i8[min max] value = 0;
-        if (!TryReadInputByte(value)) {
-            break;
-        }
-
-        stack System.Memory.MemoryStatus status = destination.WriteByte(value);
-        switch (status) {
-            case System.Memory.MemoryStatus.Err(var error):
-                return System.Memory.MemoryResult<i64[0 max]>.Err(error);
-            case System.Memory.MemoryStatus.Ok:
-        }
-
-        readCount += 1;
-    }
-
-    return System.Memory.MemoryResult<i64[0 max]>.Ok(readCount);
-}
-
-public fn System.Memory.MemoryResult<i64[0 max]> ReadBytes(
-    mut borrow System.Experimental.Runtime.Buffer.FixedByteBuffer4096 destination,
-    i64[0 max] maxCount) {
-    stack mut i64[0 max] readCount = 0;
-    while willexit (readCount < maxCount && destination.Writable() > 0) {
-        stack mut i8[min max] value = 0;
-        if (!TryReadInputByte(value)) {
-            break;
-        }
-
-        stack System.Memory.MemoryStatus status = destination.WriteByte(value);
-        switch (status) {
-            case System.Memory.MemoryStatus.Err(var error):
-                return System.Memory.MemoryResult<i64[0 max]>.Err(error);
-            case System.Memory.MemoryStatus.Ok:
-        }
-
-        readCount += 1;
-    }
-
-    return System.Memory.MemoryResult<i64[0 max]>.Ok(readCount);
-}
-
-public fn System.Memory.MemoryResult<i64[0 max]> ReadBytes(
-    mut borrow System.Experimental.Runtime.Buffer.FixedByteBuffer8192 destination,
-    i64[0 max] maxCount) {
-    stack mut i64[0 max] readCount = 0;
-    while willexit (readCount < maxCount && destination.Writable() > 0) {
-        stack mut i8[min max] value = 0;
-        if (!TryReadInputByte(value)) {
-            break;
-        }
-
-        stack System.Memory.MemoryStatus status = destination.WriteByte(value);
-        switch (status) {
-            case System.Memory.MemoryStatus.Err(var error):
-                return System.Memory.MemoryResult<i64[0 max]>.Err(error);
-            case System.Memory.MemoryStatus.Ok:
-        }
-
-        readCount += 1;
-    }
-
-    return System.Memory.MemoryResult<i64[0 max]>.Ok(readCount);
-}
-
-public fn System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii> ReadAsciiLine() {
-    stack mut System.Experimental.Text.OwnedAscii line = new();
-    stack mut bool pendingCarriageReturn = false;
-    while willexit (true) {
-        stack mut i8[min max] value = 0;
-        if (!TryReadInputByte(value)) {
-            stack System.Memory.MemoryStatus finalStatus = AppendCarriageReturnIfPending(line, pendingCarriageReturn);
-            switch (finalStatus) {
-                case System.Memory.MemoryStatus.Err(var finalError):
-                    return System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Err(finalError);
+            stack System.Memory.MemoryStatus status = destination.WriteByte(value);
+            switch (status) {
+                case System.Memory.MemoryStatus.Err(var error):
+                    return System.Memory.MemoryResult<i64[0 max]>.Err(error);
                 case System.Memory.MemoryStatus.Ok:
             }
 
-            break;
+            readCount += 1;
         }
 
-        if (value == (i8[min max])10) {
-            pendingCarriageReturn = false;
-            break;
+        return System.Memory.MemoryResult<i64[0 max]>.Ok(readCount);
         }
-
-        stack System.Memory.MemoryStatus pendingStatus = AppendCarriageReturnIfPending(line, pendingCarriageReturn);
-        switch (pendingStatus) {
-            case System.Memory.MemoryStatus.Err(var pendingError):
-                return System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Err(pendingError);
-            case System.Memory.MemoryStatus.Ok:
-        }
-
-        if (value == (i8[min max])13) {
-            pendingCarriageReturn = true;
-        }
-        else {
-            stack System.Memory.MemoryStatus appendStatus = AppendAsciiByte(line, value);
-            switch (appendStatus) {
-                case System.Memory.MemoryStatus.Err(var appendError):
-                    return System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Err(appendError);
-                case System.Memory.MemoryStatus.Ok:
-            }
-        }
-    }
-
-    return System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Ok(line);
 }
 
-public fn System.Memory.MemoryResult<System.Experimental.Text.OwnedUnicode> ReadUnicodeLine() {
-    stack System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii> asciiResult = ReadAsciiLine();
+public fn System.Memory.MemoryResult<i64[0 max]> ReadBytes(
+    mut borrow System.Runtime.Buffer.FixedByteBuffer512 destination,
+    i64[0 max] maxCount) {
+        unsafe {
+        stack mut i64[0 max] readCount = 0;
+        while willexit (readCount < maxCount && destination.Writable() > 0) {
+            stack mut i8[min max] value = 0;
+            if (!TryReadInputByte(value)) {
+                break;
+            }
+
+            stack System.Memory.MemoryStatus status = destination.WriteByte(value);
+            switch (status) {
+                case System.Memory.MemoryStatus.Err(var error):
+                    return System.Memory.MemoryResult<i64[0 max]>.Err(error);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            readCount += 1;
+        }
+
+        return System.Memory.MemoryResult<i64[0 max]>.Ok(readCount);
+        }
+}
+
+public fn System.Memory.MemoryResult<i64[0 max]> ReadBytes(
+    mut borrow System.Runtime.Buffer.FixedByteBuffer4096 destination,
+    i64[0 max] maxCount) {
+        unsafe {
+        stack mut i64[0 max] readCount = 0;
+        while willexit (readCount < maxCount && destination.Writable() > 0) {
+            stack mut i8[min max] value = 0;
+            if (!TryReadInputByte(value)) {
+                break;
+            }
+
+            stack System.Memory.MemoryStatus status = destination.WriteByte(value);
+            switch (status) {
+                case System.Memory.MemoryStatus.Err(var error):
+                    return System.Memory.MemoryResult<i64[0 max]>.Err(error);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            readCount += 1;
+        }
+
+        return System.Memory.MemoryResult<i64[0 max]>.Ok(readCount);
+        }
+}
+
+public fn System.Memory.MemoryResult<i64[0 max]> ReadBytes(
+    mut borrow System.Runtime.Buffer.FixedByteBuffer8192 destination,
+    i64[0 max] maxCount) {
+        unsafe {
+        stack mut i64[0 max] readCount = 0;
+        while willexit (readCount < maxCount && destination.Writable() > 0) {
+            stack mut i8[min max] value = 0;
+            if (!TryReadInputByte(value)) {
+                break;
+            }
+
+            stack System.Memory.MemoryStatus status = destination.WriteByte(value);
+            switch (status) {
+                case System.Memory.MemoryStatus.Err(var error):
+                    return System.Memory.MemoryResult<i64[0 max]>.Err(error);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            readCount += 1;
+        }
+
+        return System.Memory.MemoryResult<i64[0 max]>.Ok(readCount);
+        }
+}
+
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> ReadAsciiLine() {
+    unsafe {
+        stack mut System.Text.OwnedAscii line = new();
+        stack mut bool pendingCarriageReturn = false;
+        while willexit (true) {
+            stack mut i8[min max] value = 0;
+            if (!TryReadInputByte(value)) {
+                stack System.Memory.MemoryStatus finalStatus = AppendCarriageReturnIfPending(line, pendingCarriageReturn);
+                switch (finalStatus) {
+                    case System.Memory.MemoryStatus.Err(var finalError):
+                        return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(finalError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+
+                break;
+            }
+
+            if (value == (i8[min max])10) {
+                pendingCarriageReturn = false;
+                break;
+            }
+
+            stack System.Memory.MemoryStatus pendingStatus = AppendCarriageReturnIfPending(line, pendingCarriageReturn);
+            switch (pendingStatus) {
+                case System.Memory.MemoryStatus.Err(var pendingError):
+                    return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(pendingError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            if (value == (i8[min max])13) {
+                pendingCarriageReturn = true;
+            }
+            else {
+                stack System.Memory.MemoryStatus appendStatus = AppendAsciiByte(line, value);
+                switch (appendStatus) {
+                    case System.Memory.MemoryStatus.Err(var appendError):
+                        return System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(appendError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+        }
+
+        return System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(line);
+    }
+}
+
+public fn System.Memory.MemoryResult<System.Text.OwnedUnicode> ReadUnicodeLine() {
+    stack System.Memory.MemoryResult<System.Text.OwnedAscii> asciiResult = ReadAsciiLine();
     switch (asciiResult) {
-        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Err(var error):
-            return System.Memory.MemoryResult<System.Experimental.Text.OwnedUnicode>.Err(error);
-        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Ok(var asciiLine):
-            stack mut System.Experimental.Text.OwnedAscii mutableAsciiLine = asciiLine;
+        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
+            return System.Memory.MemoryResult<System.Text.OwnedUnicode>.Err(error);
+        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var asciiLine):
+            stack mut System.Text.OwnedAscii mutableAsciiLine = asciiLine;
             return DecodeAsciiBytes(mutableAsciiLine);
     }
 }
 
-public fn System.Memory.MemoryResult<System.Experimental.Text.OwnedUnicode> ReadLine() {
+public fn System.Memory.MemoryResult<System.Text.OwnedUnicode> ReadLine() {
     return ReadUnicodeLine();
 }
 
-public fn System.Memory.MemoryResult<System.Experimental.Text.OwnedUnicode> Read() {
-    stack mut System.Experimental.Text.OwnedAscii bytes = new();
-    stack mut i8[min max] first = 0;
-    if (!TryReadInputByte(first)) {
-        return DecodeAsciiBytes(bytes);
-    }
+public fn System.Memory.MemoryResult<System.Text.OwnedUnicode> Read() {
+    unsafe {
+        stack mut System.Text.OwnedAscii bytes = new();
+        stack mut i8[min max] first = 0;
+        if (!TryReadInputByte(first)) {
+            return DecodeAsciiBytes(bytes);
+        }
 
-    stack i64[0 4] expectedLength = Utf8ExpectedByteCount(first);
-    if (expectedLength == 0) {
-        return ReplacementUnicodeResult();
-    }
-
-    stack System.Memory.MemoryStatus firstStatus = bytes.AppendByte(first);
-    switch (firstStatus) {
-        case System.Memory.MemoryStatus.Err(var firstError):
-            return System.Memory.MemoryResult<System.Experimental.Text.OwnedUnicode>.Err(firstError);
-        case System.Memory.MemoryStatus.Ok:
-    }
-
-    stack mut i64[0 4] index = 1;
-    while willexit (index < expectedLength) {
-        stack mut i8[min max] value = 0;
-        if (!TryReadInputByte(value)) {
+        stack i64[0 4] expectedLength = Utf8ExpectedByteCount(first);
+        if (expectedLength == 0) {
             return ReplacementUnicodeResult();
         }
 
-        stack System.Memory.MemoryStatus appendStatus = bytes.AppendByte(value);
-        switch (appendStatus) {
-            case System.Memory.MemoryStatus.Err(var appendError):
-                return System.Memory.MemoryResult<System.Experimental.Text.OwnedUnicode>.Err(appendError);
+        stack System.Memory.MemoryStatus firstStatus = bytes.AppendByte(first);
+        switch (firstStatus) {
+            case System.Memory.MemoryStatus.Err(var firstError):
+                return System.Memory.MemoryResult<System.Text.OwnedUnicode>.Err(firstError);
             case System.Memory.MemoryStatus.Ok:
         }
 
-        index += 1;
-    }
+        stack mut i64[0 4] index = 1;
+        while willexit (index < expectedLength) {
+            stack mut i8[min max] value = 0;
+            if (!TryReadInputByte(value)) {
+                return ReplacementUnicodeResult();
+            }
 
-    return DecodeAsciiBytes(bytes);
+            stack System.Memory.MemoryStatus appendStatus = bytes.AppendByte(value);
+            switch (appendStatus) {
+                case System.Memory.MemoryStatus.Err(var appendError):
+                    return System.Memory.MemoryResult<System.Text.OwnedUnicode>.Err(appendError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            index += 1;
+        }
+
+        return DecodeAsciiBytes(bytes);
+    }
 }

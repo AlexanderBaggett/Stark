@@ -3,13 +3,13 @@ module Benchmarks.Text.IntegerFormatting
 
 const Iterations = 50;
 
-fn i64[min max] AsciiChecksum(borrow Ascii text) {
+unsafe fn i64[min max] AsciiChecksum(borrow Ascii text) {
     return text.Length
         + (i64[min max])(*text.Data)
         + (i64[min max])(*(&text.Data[text.Length - 1]));
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack mut i8[-128 127][320] storage;
     stack mut Ascii text = new Ascii() {
         Data = &storage[0],

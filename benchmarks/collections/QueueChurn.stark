@@ -1,7 +1,8 @@
-import System
+import System.Collections
+import System.Memory
 module Benchmarks.Collections.QueueChurn
 
-finite law bool Ok(MemoryStatus status) {
+unsafe finite law bool Ok(MemoryStatus status) {
     switch (status) {
         case MemoryStatus.Ok:
             return true;
@@ -10,8 +11,8 @@ finite law bool Ok(MemoryStatus status) {
     }
 }
 
-export ffi fn i32[min max] main() {
-    stack mut Queue<i32[0 max]> queue = new();
+export unsafe ffi fn i32[min max] main() {
+    stack mut System.Collections.Queue<i32[0 max]> queue = new();
     stack mut i64[min max] checksum = 0;
     stack mut i32[0 max] next = 0;
 

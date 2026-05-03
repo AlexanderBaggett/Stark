@@ -27,7 +27,7 @@ finite law Status Classify(Count value) {
     }
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack mut Accumulator accumulator = new Accumulator() {
         Value = 0
     };

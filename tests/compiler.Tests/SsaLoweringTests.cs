@@ -11,7 +11,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(bool flag) {
+            unsafe fn i32[-2147483648 2147483647] Run(bool flag) {
                 stack mut i32[-2147483648 2147483647] value = 0;
                 if (flag) {
                     value = 1;
@@ -39,7 +39,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 stack i32[-2147483648 2147483647] first = left + right;
                 stack i32[-2147483648 2147483647] second = right + left;
                 return first + second;
@@ -63,7 +63,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(bool flag) {
+            unsafe fn i32[-2147483648 2147483647] Run(bool flag) {
                 stack mut i32[-2147483648 2147483647] value = 7;
                 if (flag) {
                     value = 7;
@@ -140,7 +140,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 stack mut i32[-2147483648 2147483647] i = 0;
                 while willexit (i < 4) {
                     i = i + 1;
@@ -170,7 +170,7 @@ public sealed class SsaLoweringTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run(bool flag) {
+            unsafe fn i32[-2147483648 2147483647] Run(bool flag) {
                 stack mut Box box = new Box() { Value = 0 };
                 if (flag) {
                     box = new Box() { Value = 1 };
@@ -199,7 +199,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 if (true) {
                     return 1;
                 } else {
@@ -226,7 +226,7 @@ public sealed class SsaLoweringTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 stack mut Box box = new Box() { Value = 1 };
                 box.Value = 2;
                 return box.Value;
@@ -252,7 +252,7 @@ public sealed class SsaLoweringTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 register Box box = new Box() { Value = 7 };
                 return box.Value;
             }
@@ -275,7 +275,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 register mut i32[-2147483648 2147483647] value = 7;
                 value = value + 1;
                 return value;
@@ -304,7 +304,7 @@ public sealed class SsaLoweringTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 heap Box box = new Box() { Value = 7 };
                 return box.Value;
             }
@@ -333,7 +333,7 @@ public sealed class SsaLoweringTests
                 i32[-2147483648 2147483647] Right;
             }
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 heap mut Pair pair;
                 pair.Left = left;
                 pair.Right = right;
@@ -361,7 +361,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 heap mut i32[-2147483648 2147483647][2] values;
                 values[0] = left;
                 values[1] = right;
@@ -393,7 +393,7 @@ public sealed class SsaLoweringTests
                 i32[-2147483648 2147483647] Right;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 stack Pair source = new Pair() { Left = 1, Right = 2 };
                 stack mut Pair dest = new Pair() { Left = 0, Right = 0 };
                 stack rawptr<Pair> sourcePtr = &source;
@@ -435,10 +435,10 @@ public sealed class SsaLoweringTests
                 i32[-2147483648 2147483647] Right;
             }
 
-            fn void Touch(Pair value) {
+            unsafe fn void Touch(Pair value) {
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 stack mut Pair source = new Pair() { Left = 1, Right = 2 };
                 stack rawptr<Pair> sourcePtr = &source;
                 Touch(source);
@@ -473,7 +473,7 @@ public sealed class SsaLoweringTests
                 i32[-2147483648 2147483647] Right;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 stack Pair value = new Pair() { Left = 1, Right = 2 };
                 stack rawptr<Pair> ptr = &value;
                 return value.Right;
@@ -508,7 +508,7 @@ public sealed class SsaLoweringTests
                 i32[-2147483648 2147483647] Right;
             }
 
-            fn i32[-2147483648 2147483647] Run(bool flag) {
+            unsafe fn i32[-2147483648 2147483647] Run(bool flag) {
                 stack Pair value = flag ? new Pair() { Left = 1, Right = 2 } : new Pair() { Left = 3, Right = 4 };
                 stack rawptr<Pair> ptr = &value;
                 return value.Right;
@@ -538,7 +538,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 stack mut i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
                 values[1] = 9;
                 return values[1];
@@ -564,7 +564,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
+            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
                 stack i32[-2147483648 2147483647][3] values = { 4, 7, 9 };
                 stack i32[-2147483648 2147483647][] view = values;
                 return view[index];
@@ -591,7 +591,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn unicode Run(unicode text, i32[-2147483648 2147483647] start, i32[-2147483648 2147483647] length) {
+            unsafe fn unicode Run(unicode text, i32[-2147483648 2147483647] start, i32[-2147483648 2147483647] length) {
                 return text[start, length];
             }
             """);
@@ -622,7 +622,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn unicode Run() {
+            unsafe fn unicode Run() {
                 return (unicode)"Hello";
             }
             """);
@@ -652,7 +652,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
+            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
                 stack mut i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
                 values[index] = 9;
                 return values[index];
@@ -679,7 +679,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(mut i32[-2147483648 2147483647][] view, i32[-2147483648 2147483647] index) {
+            unsafe fn i32[-2147483648 2147483647] Run(mut i32[-2147483648 2147483647][] view, i32[-2147483648 2147483647] index) {
                 view[index] = 9;
                 return view[index];
             }
@@ -701,7 +701,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i64[-9223372036854775808 9223372036854775807] bits) {
+            unsafe fn i32[-2147483648 2147483647] Run(i64[-9223372036854775808 9223372036854775807] bits) {
                 stack mut i32[-2147483648 2147483647] value = 1;
                 stack rawmutptr<i32[-2147483648 2147483647]> ptr = &value;
                 stack rawptr<i32[-2147483648 2147483647]> readonlyPtr = (rawptr<i32[-2147483648 2147483647]>)ptr;
@@ -745,7 +745,7 @@ public sealed class SsaLoweringTests
 
             static mut i32[-2147483648 2147483647] Counter = 0;
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] input) {
+            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] input) {
                 stack mut Box box = new Box() { Value = 1 };
                 *(&(box.Value)) = input;
                 Counter = *(&(box.Value));
@@ -783,7 +783,7 @@ public sealed class SsaLoweringTests
                 i64[-9223372036854775808 9223372036854775807] WritePos;
             }
 
-            fn i32[-2147483648 2147483647] Touch(rawmutptr<Buffer> buffer, i64[-9223372036854775808 9223372036854775807] index, i8[-128 127] value) {
+            unsafe fn i32[-2147483648 2147483647] Touch(rawmutptr<Buffer> buffer, i64[-9223372036854775808 9223372036854775807] index, i8[-128 127] value) {
                 *(&(*buffer).Storage[index]) = value;
                 return (i32[-2147483648 2147483647])*(&(*buffer).Storage[index]);
             }
@@ -813,11 +813,11 @@ public sealed class SsaLoweringTests
             static i32[-2147483648 2147483647] Counter = 0;
             static Box Current = new Box() { Value = 5 };
 
-            fn rawptr<i32[-2147483648 2147483647]> CounterPtr() {
+            unsafe fn rawptr<i32[-2147483648 2147483647]> CounterPtr() {
                 return &Counter;
             }
 
-            fn rawptr<i32[-2147483648 2147483647]> FieldPtr() {
+            unsafe fn rawptr<i32[-2147483648 2147483647]> FieldPtr() {
                 return &(Current.Value);
             }
             """);
@@ -860,7 +860,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn rawptr<frozen i32[-2147483648 2147483647]> FirstPtr(frozen i32[-2147483648 2147483647][] view) {
+            unsafe fn rawptr<frozen i32[-2147483648 2147483647]> FirstPtr(frozen i32[-2147483648 2147483647][] view) {
                 return &(view[0]);
             }
             """);
@@ -886,7 +886,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(
+            unsafe fn i32[-2147483648 2147483647] Run(
                 rawmutptr<i32[-2147483648 2147483647]> left,
                 rawmutptr<i32[-2147483648 2147483647]> right) {
                 if disjoint(left, right) {
@@ -932,7 +932,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[0 10] Run() {
+            unsafe fn i32[0 10] Run() {
                 stack mut i32[0 10] sum = 0;
                 for willexit independent (stack mut i32[0 10] index = 0; index < 4; index += 1) {
                     sum += index;
@@ -958,7 +958,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn void Add(
+            unsafe fn void Add(
                 disjoint borrow i32[-2147483648 2147483647][] left,
                 disjoint borrow i32[-2147483648 2147483647][] right,
                 disjoint borrow mut i32[-2147483648 2147483647][] output,

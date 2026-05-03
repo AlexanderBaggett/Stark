@@ -11,19 +11,19 @@ public sealed class LlvmTextOrderedComparisonEmissionTests
             """
             module Demo
 
-            fn bool LessAscii(ascii left, ascii right) {
+            unsafe fn bool LessAscii(ascii left, ascii right) {
                 return left < right;
             }
 
-            fn bool GreaterOrEqualUnicode(unicode left, unicode right) {
+            unsafe fn bool GreaterOrEqualUnicode(unicode left, unicode right) {
                 return left >= right;
             }
 
-            fn bool BoolLess(bool left, bool right) {
+            unsafe fn bool BoolLess(bool left, bool right) {
                 return left < right;
             }
 
-            fn bool PointerLess(rawptr<i32[-2147483648 2147483647]> left, rawptr<i32[-2147483648 2147483647]> right) {
+            unsafe fn bool PointerLess(rawptr<i32[-2147483648 2147483647]> left, rawptr<i32[-2147483648 2147483647]> right) {
                 return left < right;
             }
             """);

@@ -1,6 +1,6 @@
 module Book.BoundedRawPointerRegions
 
-fn void CopyFast(
+unsafe fn void CopyFast(
     rawptr<i32[min max]>[4] source,
     rawmutptr<i32[min max]>[4] destination)
     where disjoint(source[0, 4], destination[0, 4]) {
@@ -11,7 +11,7 @@ fn void CopyFast(
     return;
 }
 
-fn void CopyOverlapSafe(rawptr<i32[min max]>[4] source, rawmutptr<i32[min max]>[4] destination) {
+unsafe fn void CopyOverlapSafe(rawptr<i32[min max]>[4] source, rawmutptr<i32[min max]>[4] destination) {
     stack mut i32[min max][4] temporary = { 0, 0, 0, 0 };
 
     for willexit (stack mut i32[0 4] index = 0; index < 4; index += 1) {
@@ -25,7 +25,7 @@ fn void CopyOverlapSafe(rawptr<i32[min max]>[4] source, rawmutptr<i32[min max]>[
     return;
 }
 
-fn bool TryCopy(rawptr<i32[min max]>[4] source, rawmutptr<i32[min max]>[4] destination) {
+unsafe fn bool TryCopy(rawptr<i32[min max]>[4] source, rawmutptr<i32[min max]>[4] destination) {
     if disjoint(source[0, 4], destination[0, 4]) {
         for willexit independent (stack mut i32[0 4] index = 0; index < 4; index += 1) {
             *(&destination[index]) = *(&source[index]);
@@ -38,7 +38,7 @@ fn bool TryCopy(rawptr<i32[min max]>[4] source, rawmutptr<i32[min max]>[4] desti
     return false;
 }
 
-fn void Fill(rawmutptr<i32[min max]>[4] destination, i32[min max] value) {
+unsafe fn void Fill(rawmutptr<i32[min max]>[4] destination, i32[min max] value) {
     for willexit independent (stack mut i32[0 4] index = 0; index < 4; index += 1) {
         *(&destination[index]) = value + (i32[min max])index;
     }
@@ -46,7 +46,7 @@ fn void Fill(rawmutptr<i32[min max]>[4] destination, i32[min max] value) {
     return;
 }
 
-fn void Transform(
+unsafe fn void Transform(
     rawptr<i32[min max]>[4] source,
     rawmutptr<i32[min max]>[4] destination)
     where disjoint(source[0, 4], destination[0, 4]) {
@@ -57,7 +57,7 @@ fn void Transform(
     return;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack mut i32[min max][5] values = { 1, 2, 3, 4, 5 };
     stack mut i32[min max][4] scratch = { 0, 0, 0, 0 };
     stack mut i32[min max][4] output = { 0, 0, 0, 0 };

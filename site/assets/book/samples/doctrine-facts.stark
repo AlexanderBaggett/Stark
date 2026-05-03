@@ -10,7 +10,7 @@ doctrine ScoreRules {
     }
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     if (!ScoreRules.IsPassing(ScoreRules.PerfectScore())) {
         return 1;
     }

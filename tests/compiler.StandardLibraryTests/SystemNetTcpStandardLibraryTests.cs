@@ -289,8 +289,8 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
 
-        Assert.Contains("@TcpClient_Read(", llvm, StringComparison.Ordinal);
-        Assert.Contains("@TcpClient_Write(", llvm, StringComparison.Ordinal);
+        Assert.Contains("@TcpClient_Read__", llvm, StringComparison.Ordinal);
+        Assert.Contains("@TcpClient_Write__", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef %System_Net_NetStatus @TcpClient_Shutdown(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef %System_Net_NetStatus @TcpClient_Close(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef %System_Net_NetStatus @TcpListener_Close(", llvm, StringComparison.Ordinal);

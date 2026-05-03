@@ -1,149 +1,20 @@
-module System.Memory
-
-public enum MemoryError {
-    OutOfMemory,
-}
-
-public enum MemoryStatus {
-    Ok,
-    Err(MemoryError),
-}
+import System.Memory
+import System.Memory
+module Benchmarks.Allocator.MemoryDynamicReserveGrowth
 
 const Iterations = 800;
 const Chunks = 32;
 
-fn bool Ok(MemoryStatus status) {
+unsafe fn bool Ok(System.Memory.MemoryStatus status) {
     switch (status) {
-        case MemoryStatus.Err(var error):
+        case System.Memory.MemoryStatus.Err(var error):
             return false;
-        case MemoryStatus.Ok:
+        case System.Memory.MemoryStatus.Ok:
             return true;
     }
 }
 
-public fn MemoryStatus AppendBytes(
-    mut borrow dynamic i8[-128 127] storage,
-    borrow i8[-128 127][] source,
-    i64[0 max] count) {
-    if (count == 0) {
-        return MemoryStatus.Ok;
-    }
-
-    stack i8[-128 127][] initialized = storage[0, storage.Length];
-    if disjoint(source, initialized) {
-        if (!storage.TryReserve(count)) {
-            return MemoryStatus.Err(MemoryError.OutOfMemory);
-        }
-
-        for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
-            init storage[storage.Length] = source[index];
-        }
-
-        return MemoryStatus.Ok;
-    }
-
-    stack mut dynamic i8[-128 127] snapshot = new();
-    if (!snapshot.TryReserve(count)) {
-        return MemoryStatus.Err(MemoryError.OutOfMemory);
-    }
-
-    for willexit (stack mut i64[0 max] snapshotIndex = 0; snapshotIndex < count; snapshotIndex += 1) {
-        init snapshot[snapshot.Length] = source[snapshotIndex];
-    }
-
-    stack i8[-128 127][] snapshotView = snapshot[0, snapshot.Length];
-    if (!storage.TryReserve(count)) {
-        return MemoryStatus.Err(MemoryError.OutOfMemory);
-    }
-
-    for willexit (stack mut i64[0 max] copyIndex = 0; copyIndex < count; copyIndex += 1) {
-        init storage[storage.Length] = snapshotView[copyIndex];
-    }
-
-    return MemoryStatus.Ok;
-}
-
-public fn MemoryStatus AppendFillBytes(
-    mut borrow dynamic i8[-128 127] storage,
-    i8[-128 127] value,
-    i64[0 max] count) {
-    if (count == 0) {
-        return MemoryStatus.Ok;
-    }
-
-    if (!storage.TryReserve(count)) {
-        return MemoryStatus.Err(MemoryError.OutOfMemory);
-    }
-
-    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
-        init storage[storage.Length] = value;
-    }
-
-    return MemoryStatus.Ok;
-}
-
-public fn MemoryStatus AppendCodePoints(
-    mut borrow dynamic i32[-2147483648 2147483647] storage,
-    borrow i32[-2147483648 2147483647][] source,
-    i64[0 max] count) {
-    if (count == 0) {
-        return MemoryStatus.Ok;
-    }
-
-    stack i32[-2147483648 2147483647][] initialized = storage[0, storage.Length];
-    if disjoint(source, initialized) {
-        if (!storage.TryReserve(count)) {
-            return MemoryStatus.Err(MemoryError.OutOfMemory);
-        }
-
-        for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
-            init storage[storage.Length] = source[index];
-        }
-
-        return MemoryStatus.Ok;
-    }
-
-    stack mut dynamic i32[-2147483648 2147483647] snapshot = new();
-    if (!snapshot.TryReserve(count)) {
-        return MemoryStatus.Err(MemoryError.OutOfMemory);
-    }
-
-    for willexit (stack mut i64[0 max] snapshotIndex = 0; snapshotIndex < count; snapshotIndex += 1) {
-        init snapshot[snapshot.Length] = source[snapshotIndex];
-    }
-
-    stack i32[-2147483648 2147483647][] snapshotView = snapshot[0, snapshot.Length];
-    if (!storage.TryReserve(count)) {
-        return MemoryStatus.Err(MemoryError.OutOfMemory);
-    }
-
-    for willexit (stack mut i64[0 max] copyIndex = 0; copyIndex < count; copyIndex += 1) {
-        init storage[storage.Length] = snapshotView[copyIndex];
-    }
-
-    return MemoryStatus.Ok;
-}
-
-public fn MemoryStatus AppendFillCodePoints(
-    mut borrow dynamic i32[-2147483648 2147483647] storage,
-    i32[-2147483648 2147483647] value,
-    i64[0 max] count) {
-    if (count == 0) {
-        return MemoryStatus.Ok;
-    }
-
-    if (!storage.TryReserve(count)) {
-        return MemoryStatus.Err(MemoryError.OutOfMemory);
-    }
-
-    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
-        init storage[storage.Length] = value;
-    }
-
-    return MemoryStatus.Ok;
-}
-
-fn i64[min max] SumBytes(borrow i8[-128 127][] values, i64[0 max] count) {
+unsafe fn i64[min max] SumBytes(borrow i8[-128 127][] values, i64[0 max] count) {
     stack mut i64[min max] checksum = count;
     for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
         checksum += (i64[min max])values[index];
@@ -152,7 +23,7 @@ fn i64[min max] SumBytes(borrow i8[-128 127][] values, i64[0 max] count) {
     return checksum;
 }
 
-fn i64[min max] SumCodePoints(borrow i32[-2147483648 2147483647][] values, i64[0 max] count) {
+unsafe fn i64[min max] SumCodePoints(borrow i32[-2147483648 2147483647][] values, i64[0 max] count) {
     stack mut i64[min max] checksum = count;
     for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
         checksum += (i64[min max])values[index];
@@ -161,7 +32,7 @@ fn i64[min max] SumCodePoints(borrow i32[-2147483648 2147483647][] values, i64[0
     return checksum;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack mut i64[min max] checksum = 0;
     stack mut i8[-128 127][16] byteSource = {
         1, 2, 3, 4,
@@ -182,20 +53,22 @@ export ffi fn i32[min max] main() {
         stack mut dynamic i32[-2147483648 2147483647] codePoints = new();
 
         for willexit (stack mut i32[0 32] chunk = 0; chunk < Chunks; chunk += 1) {
-            if (!Ok(AppendBytes(bytes, byteSource, byteChunkLength))) {
-                return 1;
-            }
+            unsafe {
+                if (!Ok(System.Memory.AppendBytesDisjoint(bytes, byteSource, byteChunkLength))) {
+                    return 1;
+                }
 
-            if (!Ok(AppendCodePoints(codePoints, codePointSource, codePointChunkLength))) {
-                return 2;
+                if (!Ok(System.Memory.AppendCodePointsDisjoint(codePoints, codePointSource, codePointChunkLength))) {
+                    return 2;
+                }
             }
         }
 
-        if (!Ok(AppendFillBytes(bytes, 7, fillLength))) {
+        if (!Ok(System.Memory.AppendFillBytes(bytes, 7, fillLength))) {
             return 3;
         }
 
-        if (!Ok(AppendFillCodePoints(codePoints, 90, fillLength))) {
+        if (!Ok(System.Memory.AppendFillCodePoints(codePoints, 90, fillLength))) {
             return 4;
         }
 

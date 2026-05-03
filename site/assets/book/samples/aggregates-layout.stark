@@ -15,7 +15,7 @@ finite law i32[min max] CoordinateScore(Point point) {
     return point.X + point.Y;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack Rectangle rectangle = new Rectangle() {
         Width = 3,
         Height = 4

@@ -1,2 +1,2 @@
-export import System.Experimental.Runtime.Buffer
+export import System.Runtime.Buffer
 module System.Experimental.Runtime

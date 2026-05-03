@@ -1,0 +1,125 @@
+import System.FileSystem
+import System.IO.File
+import System.IO.Path
+import System.Text
+import System.IO
+import System.Memory
+module Benchmarks.IO.FileSystemPathTranscode
+
+const Iterations = 16;
+
+unsafe fn bool IOOk(System.IO.IOStatus status) {
+    switch (status) {
+        case System.IO.IOStatus.Ok:
+            return true;
+        case System.IO.IOStatus.Err(var error):
+            return false;
+    }
+}
+
+unsafe fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
+    switch (result) {
+        case System.IO.IOResult<bool>.Ok(var value):
+            return value;
+        case System.IO.IOResult<bool>.Err(var error):
+            return false;
+    }
+}
+
+unsafe fn i64[min max] PathLength(System.Memory.MemoryResult<System.Text.OwnedAscii> result) {
+    switch (result) {
+        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
+            return (i64[min max])value.Length();
+        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
+            return -1;
+    }
+}
+
+unsafe fn i64[min max] FirstEntryLength(System.FileSystem.DirectoryReadResult result) {
+    switch (result) {
+        case System.FileSystem.DirectoryReadResult.Entry(var entry):
+            return (i64[min max])entry.Name.Length();
+        case System.FileSystem.DirectoryReadResult.End:
+            return -1;
+        case System.FileSystem.DirectoryReadResult.Err(var error):
+            return -1;
+    }
+}
+
+export unsafe ffi fn i32[min max] main() {
+    stack mut i64[min max] checksum = 0;
+    System.IO.File.Delete("io-bench-root/renamed.txt");
+    System.IO.File.Delete("io-bench-root/child.txt");
+    System.FileSystem.DeleteDirectory("io-bench-root");
+
+    for willexit (stack mut i32[0 16] iteration = 0; iteration < Iterations; iteration += 1) {
+        if (!IOOk(System.FileSystem.CreateDirectory("io-bench-root"))) {
+            return 1;
+        }
+
+        stack System.Memory.MemoryResult<System.Text.OwnedAscii> joined =
+            System.IO.Path.Join("io-bench-root", "child.txt");
+        switch (joined) {
+            case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var joinError):
+                return 2;
+            case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var joinedPath):
+                checksum += (i64[min max])joinedPath.Length();
+                stack ascii childPath = joinedPath.View();
+                stack System.IO.IOResult<System.IO.File.File> opened =
+                    System.IO.File.Open(
+                        childPath,
+                        System.IO.File.FileMode.Write,
+                        System.Text.Encoding.UTF16,
+                        System.IO.File.FileBuffering.None);
+                switch (opened) {
+                    case System.IO.IOResult<System.IO.File.File>.Err(var openError):
+                        return 3;
+                    case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+                        stack mut System.IO.File.File writer = value;
+                        if (!IOOk(writer.WriteLine("child"))
+                            || !IOOk(writer.WriteLine((unicode)"wide"))
+                            || !IOOk(writer.Close())) {
+                            return 4;
+                        }
+                }
+
+                if (!BoolOrFalse(System.FileSystem.IsFile(childPath))) {
+                    return 5;
+                }
+        }
+
+        stack System.Memory.MemoryResult<System.Text.OwnedAscii> normalized =
+            System.IO.Path.NormalizeSeparators("io-bench-root//child.txt");
+        checksum += PathLength(normalized);
+
+        stack System.IO.IOResult<System.FileSystem.Directory> directoryResult =
+            System.FileSystem.OpenDirectory("io-bench-root");
+        switch (directoryResult) {
+            case System.IO.IOResult<System.FileSystem.Directory>.Err(var directoryError):
+                return 6;
+            case System.IO.IOResult<System.FileSystem.Directory>.Ok(var directoryValue):
+                stack mut System.FileSystem.Directory directory = directoryValue;
+                checksum += FirstEntryLength(directory.ReadNext());
+                if (!IOOk(directory.Close())) {
+                    return 7;
+                }
+        }
+
+        if (!IOOk(System.FileSystem.Move(
+            "io-bench-root/child.txt",
+            "io-bench-root/renamed.txt"))) {
+            return 8;
+        }
+
+        if (!IOOk(System.IO.File.Delete("io-bench-root/renamed.txt"))
+            || !IOOk(System.FileSystem.DeleteDirectory("io-bench-root"))) {
+            return 9;
+        }
+    }
+
+    if (checksum != 1296) {
+        return 10;
+    }
+
+    return 0;
+}

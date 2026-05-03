@@ -1,10 +1,13 @@
 import System.Console
+import System.Runtime.Buffer
+import System.Text
 import System.IO
+import System.Memory
 module Benchmarks.Console.ConsoleWrites
 
 const Iterations = 64;
 
-fn bool IOOk(System.IO.IOStatus status) {
+unsafe fn bool IOOk(System.IO.IOStatus status) {
     switch (status) {
         case System.IO.IOStatus.Ok:
             return true;
@@ -13,14 +16,39 @@ fn bool IOOk(System.IO.IOStatus status) {
     }
 }
 
-export ffi fn i32[min max] main() {
+unsafe fn bool MemoryOk(System.Memory.MemoryStatus status) {
+    switch (status) {
+        case System.Memory.MemoryStatus.Ok:
+            return true;
+        case System.Memory.MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+export unsafe ffi fn i32[min max] main() {
+    stack mut System.Text.OwnedAscii owned = new();
+    if (!MemoryOk(owned.AppendAscii(" line"))) {
+        return 1;
+    }
+
+    stack mut i8[min max][31] payload = {
+        98, 117, 102, 102, 101, 114, 32, 112,
+        97, 121, 108, 111, 97, 100, 32, 48,
+        49, 50, 51, 52, 53, 54, 55, 56,
+        57, 65, 66, 67, 68, 69, 70
+    };
+    stack mut System.Runtime.Buffer.FixedByteBuffer512 fixedBuffer = new();
+    if (!MemoryOk(fixedBuffer.WriteSlice(payload, 31))) {
+        return 2;
+    }
+
     for willexit (stack mut i32[0 64] iteration = 0; iteration < Iterations; iteration += 1) {
         if (!IOOk(System.Console.Write("small"))
-            || !IOOk(System.Console.WriteLine(" line"))
-            || !IOOk(System.Console.WriteLine((unicode)"wide α"))
-            || !IOOk(System.Console.WriteLine("buffer payload 0123456789ABCDEF"))
+            || !IOOk(System.Console.WriteLine(owned))
+            || !IOOk(System.Console.WriteLine((unicode)"wide a"))
+            || !IOOk(System.Console.WriteLine(fixedBuffer))
             || !IOOk(System.Console.WriteErrorLine("err"))) {
-            return 1;
+            return 3;
         }
     }
 

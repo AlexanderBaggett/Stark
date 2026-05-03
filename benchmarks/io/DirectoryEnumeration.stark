@@ -1,6 +1,7 @@
 import System.FileSystem
 import System.IO.File
 import System.Text
+import System.IO
 module Benchmarks.IO.DirectoryEnumeration
 
 const Entries = 128;
@@ -14,27 +15,39 @@ const TensIndex = 22;
 const OnesIndex = 23;
 const ExpectedChecksum = 212992;
 
-fn void WriteAsciiEntryPath(rawmutptr<i8[-128 127]> data, i32[0 119] index) {
+unsafe fn bool IOOk(System.IO.IOStatus status) {
+    switch (status) {
+        case System.IO.IOStatus.Ok:
+            return true;
+        case System.IO.IOStatus.Err(var error):
+            return false;
+    }
+}
+
+unsafe fn void WriteAsciiEntryPath(rawmutptr<i8[-128 127]> data, i32[0 119] index) {
     stack i32[-2147483648 2147483647] value = (i32[-2147483648 2147483647])index;
     *(&data[HundredsIndex]) = (i8[-128 127])(48 + ((value / 100) % 10));
     *(&data[TensIndex]) = (i8[-128 127])(48 + ((value / 10) % 10));
     *(&data[OnesIndex]) = (i8[-128 127])(48 + (value % 10));
 }
 
-fn void WriteUnicodeEntryPath(rawmutptr<i8[-128 127]> data, i32[0 7] index) {
+unsafe fn void WriteUnicodeEntryPath(rawmutptr<i8[-128 127]> data, i32[0 7] index) {
     *(&data[OnesIndex]) = (i8[-128 127])(48 + (i32[-2147483648 2147483647])index);
 }
 
-fn bool CreateEntry(ascii path) {
-    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenWrite(path);
-    if (handle == null) {
-        return false;
+unsafe fn bool CreateEntry(ascii path) {
+    stack System.IO.IOResult<System.IO.File.File> opened =
+        System.IO.File.Open(path, System.IO.File.FileMode.Write, System.IO.File.FileBuffering.None);
+    switch (opened) {
+        case System.IO.IOResult<System.IO.File.File>.Err(var openError):
+            return false;
+        case System.IO.IOResult<System.IO.File.File>.Ok(var fileValue):
+            stack mut System.IO.File.File file = fileValue;
+            return IOOk(file.Close());
     }
-
-    return System.IO.File.Close(handle) == 0;
 }
 
-fn void DeleteEntries() {
+unsafe fn void DeleteEntries() {
     stack mut i8[-128 127][32] pathStorage = {
         100, 105, 114, 45, 101, 110, 117, 109,
         45, 98, 101, 110, 99, 104, 47, 101,
@@ -72,9 +85,11 @@ fn void DeleteEntries() {
     System.FileSystem.DeleteDirectory(RootName);
 }
 
-fn bool CreateEntries() {
+unsafe fn bool CreateEntries() {
     DeleteEntries();
-    System.FileSystem.CreateDirectory(RootName);
+    if (!IOOk(System.FileSystem.CreateDirectory(RootName))) {
+        return false;
+    }
 
     stack mut i8[-128 127][32] pathStorage = {
         100, 105, 114, 45, 101, 110, 117, 109,
@@ -117,29 +132,29 @@ fn bool CreateEntries() {
     return true;
 }
 
-fn i64[-9223372036854775808 9223372036854775807] EntryLength(System.FileSystem.DirectoryReadResult result) {
+unsafe fn i64[-9223372036854775808 9223372036854775807] EntryLength(System.FileSystem.DirectoryReadInfoResult result) {
     switch (result) {
-        case System.FileSystem.DirectoryReadResult.Entry(var entry):
-            return entry.Name.Length;
-        case System.FileSystem.DirectoryReadResult.End:
+        case System.FileSystem.DirectoryReadInfoResult.Entry(var entry):
+            return (i64[-9223372036854775808 9223372036854775807])entry.NameLength;
+        case System.FileSystem.DirectoryReadInfoResult.End:
             return -1;
-        case System.FileSystem.DirectoryReadResult.Err(var error):
+        case System.FileSystem.DirectoryReadInfoResult.Err(var error):
             return -1;
     }
 }
 
-fn bool IsEnd(System.FileSystem.DirectoryReadResult result) {
+unsafe fn bool IsEnd(System.FileSystem.DirectoryReadInfoResult result) {
     switch (result) {
-        case System.FileSystem.DirectoryReadResult.Entry(var entry):
+        case System.FileSystem.DirectoryReadInfoResult.Entry(var entry):
             return false;
-        case System.FileSystem.DirectoryReadResult.End:
+        case System.FileSystem.DirectoryReadInfoResult.End:
             return true;
-        case System.FileSystem.DirectoryReadResult.Err(var error):
+        case System.FileSystem.DirectoryReadInfoResult.Err(var error):
             return false;
     }
 }
 
-fn i64[-9223372036854775808 9223372036854775807] EnumerateOnce() {
+unsafe fn i64[-9223372036854775808 9223372036854775807] EnumerateOnce() {
     stack System.IO.IOResult<System.FileSystem.Directory> opened = System.FileSystem.OpenDirectory(RootName);
     switch (opened) {
         case System.IO.IOResult<System.FileSystem.Directory>.Err(var openError):
@@ -150,7 +165,7 @@ fn i64[-9223372036854775808 9223372036854775807] EnumerateOnce() {
             stack mut i64[-9223372036854775808 9223372036854775807] count = 0;
 
             for willexit (stack mut i32[0 128] index = 0; index < Entries; index += 1) {
-                stack i64[-9223372036854775808 9223372036854775807] length = EntryLength(directory.ReadNext());
+                stack i64[-9223372036854775808 9223372036854775807] length = EntryLength(directory.ReadNextInfo());
                 if (length < 0) {
                     directory.Close();
                     return -1;
@@ -160,12 +175,12 @@ fn i64[-9223372036854775808 9223372036854775807] EnumerateOnce() {
                 count += 1;
             }
 
-            if (count != Entries || !IsEnd(directory.ReadNext())) {
+            if (count != Entries || !IsEnd(directory.ReadNextInfo())) {
                 directory.Close();
                 return -1;
             }
 
-            if (directory.Close() != System.IO.IOStatus.Ok) {
+            if (!IOOk(directory.Close())) {
                 return -1;
             }
 
@@ -173,7 +188,7 @@ fn i64[-9223372036854775808 9223372036854775807] EnumerateOnce() {
     }
 }
 
-export ffi fn i32[-2147483648 2147483647] main() {
+export unsafe ffi fn i32[-2147483648 2147483647] main() {
     if (!CreateEntries()) {
         DeleteEntries();
         return 1;

@@ -1,7 +1,7 @@
 import System.Process
 module Benchmarks.Micro.ExplicitArithmeticRangePruning
 
-finite law i64[min max] Score(i32[0 10] left, i32[0 5] right, i64[min max] salt) {
+unsafe finite law i64[min max] Score(i32[0 10] left, i32[0 5] right, i64[min max] salt) {
     stack i32[-2147483648 2147483647] saturated = left +| right;
     stack i32[-2147483648 2147483647] wrapped = left +% right;
 
@@ -16,7 +16,7 @@ finite law i64[min max] Score(i32[0 10] left, i32[0 5] right, i64[min max] salt)
     return (((i64[min max])saturated * 37) + ((i64[min max])wrapped * 17) + salt) % 1000003;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack mut i64[min max] total = (i64[min max])System.Process.CurrentId();
 
     for willexit (stack mut i32[0 200000] i = 0; i < 200000; i += 1) {

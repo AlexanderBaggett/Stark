@@ -53,7 +53,7 @@ fn bool ObjectStoreContainsDemoCommit() {
     }
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     if (!ObjectStoreContainsDemoCommit()) {
         return 1;
     }

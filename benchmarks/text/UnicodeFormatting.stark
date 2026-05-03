@@ -3,13 +3,13 @@ module Benchmarks.Text.UnicodeFormatting
 
 const Iterations = 50;
 
-fn i64[min max] UnicodeChecksum(borrow Unicode text) {
+unsafe fn i64[min max] UnicodeChecksum(borrow Unicode text) {
     return text.Length
         + (i64[min max])(*text.Data)
         + (i64[min max])(*(&text.Data[text.Length - 1]));
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack mut i32[-2147483648 2147483647][320] storage;
     stack mut Unicode text = new Unicode() {
         Data = &storage[0],

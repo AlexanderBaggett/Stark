@@ -65,7 +65,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Run() {
+            unsafe fn void Run() {
                 register mut i32[-2147483648 2147483647] value = 1;
                 stack rawmutptr<i32[-2147483648 2147483647]> pointer = &value;
                 return;
@@ -186,7 +186,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Use(rawptr<rawptr<i8[-128 127]>> value);
+            unsafe fn void Use(rawptr<rawptr<i8[-128 127]>> value);
             """);
 
         Assert.False(result.Succeeded);
@@ -200,7 +200,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            ffi fn void Use(rawptr<rawptr<i8[-128 127]>> value);
+            unsafe ffi fn void Use(rawptr<rawptr<i8[-128 127]>> value);
             """);
 
         Assert.True(result.Succeeded);
@@ -213,7 +213,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            public fn rawmutptr<i8[-128 127]> AllocateBytes(i64[0 9223372036854775807] byteCount);
+            public unsafe fn rawmutptr<i8[-128 127]> AllocateBytes(i64[0 9223372036854775807] byteCount);
             """);
 
         Assert.False(result.Succeeded);
@@ -227,7 +227,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            public fn void FreeBytes(rawmutptr<i8[-128 127]> pointer);
+            public unsafe fn void FreeBytes(rawmutptr<i8[-128 127]> pointer);
             """);
 
         Assert.False(result.Succeeded);
@@ -241,7 +241,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            internal fn rawmutptr<i8[-128 127]> AllocateBytes(i64[0 9223372036854775807] byteCount);
+            internal unsafe fn rawmutptr<i8[-128 127]> AllocateBytes(i64[0 9223372036854775807] byteCount);
             """);
 
         Assert.True(result.Succeeded);
@@ -254,7 +254,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            public ffi fn rawmutptr<i8[-128 127]> AllocateBytes(i64[0 9223372036854775807] byteCount);
+            public unsafe ffi fn rawmutptr<i8[-128 127]> AllocateBytes(i64[0 9223372036854775807] byteCount);
             """);
 
         Assert.True(result.Succeeded);
@@ -267,7 +267,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            public finite law rawptr<i8[-128 127]> Data(ascii source);
+            public unsafe finite law rawptr<i8[-128 127]> Data(ascii source);
             """);
 
         Assert.True(result.Succeeded);
@@ -942,9 +942,9 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            ffi fn void Accept(borrow i32[-2147483648 2147483647] value);
+            unsafe ffi fn void Accept(borrow i32[-2147483648 2147483647] value);
 
-            fn void Use(borrow i32[-2147483648 2147483647] value) {
+            unsafe fn void Use(borrow i32[-2147483648 2147483647] value) {
                 Accept(value);
                 return;
             }

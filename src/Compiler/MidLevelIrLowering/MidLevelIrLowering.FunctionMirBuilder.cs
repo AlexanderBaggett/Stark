@@ -427,8 +427,8 @@ internal sealed partial class MidLevelIrLowerer
             _importedConversionOrdinals = _importedTemplateSummary is { Conversions.Count: > 0 }
                 ? CollectTemplateConversionOrdinals(body)
                 : null;
-            _importedDirectCallOrdinals = _importedTemplateSummary is { DirectCalls.Count: > 0 }
-                ? CollectTemplateDirectCallOrdinals(body)
+            _importedDirectCallOrdinals = _importedTemplateSummary is { DirectCalls.Count: > 0 } directCallTemplateSummary
+                ? CollectTemplateDirectCallOrdinals(body, directCallTemplateSummary.DirectCalls)
                 : null;
             _importedFieldAccessOrdinals = _importedTemplateSummary is { FieldAccesses.Count: > 0 }
                 ? CollectTemplateFieldAccessOrdinals(body)
@@ -5585,7 +5585,7 @@ internal sealed partial class MidLevelIrLowerer
             destinationIndex = -1;
             countIndex = -1;
 
-            if (IsExperimentalMemoryFullInitSliceHelper(
+            if (IsMemoryFullInitSliceHelper(
                     signature,
                     "InitializeBytesDisjoint",
                     "InitializeBytes",
@@ -5597,7 +5597,7 @@ internal sealed partial class MidLevelIrLowerer
                 return true;
             }
 
-            if (IsExperimentalMemoryFullInitSliceHelper(
+            if (IsMemoryFullInitSliceHelper(
                     signature,
                     "InitializeBytesFromPointerDisjoint",
                     "InitializeCodePointsFromPointerDisjoint"))
@@ -5607,7 +5607,7 @@ internal sealed partial class MidLevelIrLowerer
                 return true;
             }
 
-            if (IsExperimentalMemoryFullInitSliceHelper(signature, "FillBytes", "FillCodePoints"))
+            if (IsMemoryFullInitSliceHelper(signature, "FillBytes", "FillCodePoints"))
             {
                 destinationIndex = 0;
                 countIndex = 2;
@@ -5617,7 +5617,7 @@ internal sealed partial class MidLevelIrLowerer
             return false;
         }
 
-        private bool IsExperimentalMemoryFullInitSliceHelper(
+        private bool IsMemoryFullInitSliceHelper(
             TypedFunctionSignature signature,
             params string[] helperNames)
         {
@@ -5625,9 +5625,8 @@ internal sealed partial class MidLevelIrLowerer
             {
                 foreach (var helperName in helperNames)
                 {
-                    var qualifiedHelperName = $"System.Experimental.Memory.{helperName}";
-                    if (string.Equals(candidate, qualifiedHelperName, StringComparison.Ordinal)
-                        || (string.Equals(CurrentModuleName, "System.Experimental.Memory", StringComparison.Ordinal)
+                    if (IsMemoryFullInitSliceHelperName(candidate, helperName)
+                        || (IsMemoryModule(CurrentModuleName)
                             && string.Equals(candidate, helperName, StringComparison.Ordinal)))
                     {
                         return true;
@@ -5636,6 +5635,16 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             return false;
+        }
+
+        private static bool IsMemoryFullInitSliceHelperName(string candidate, string helperName)
+        {
+            return string.Equals(candidate, $"System.Memory.{helperName}", StringComparison.Ordinal);
+        }
+
+        private static bool IsMemoryModule(string moduleName)
+        {
+            return string.Equals(moduleName, "System.Memory", StringComparison.Ordinal);
         }
 
         private static IEnumerable<string> EnumerateFunctionIdentityNames(TypedFunctionSignature signature)
@@ -5945,7 +5954,6 @@ internal sealed partial class MidLevelIrLowerer
             overloads = FilterDirectCallableTypeMemberFunctions(name, overloads);
             var candidates = overloads
                 .Where(static function => !function.IsGeneric)
-                .Where(static function => !function.IsUnsafe)
                 .Where(function => TypeCompatibilityFacts.AreFunctionPointerTypesAssignable(
                     targetType,
                     StarkTypeSymbols.FunctionPointer(
@@ -6260,8 +6268,12 @@ internal sealed partial class MidLevelIrLowerer
                 && directCallOrdinals.TryGetValue(arguments, out var directCallOrdinal)
                 && _importedTemplateDirectCalls.TryGetValue(directCallOrdinal, out var publishedSignature))
             {
-                signature = ApplyGenericSubstitution(publishedSignature);
-                return true;
+                var substitutedSignature = ApplyGenericSubstitution(publishedSignature);
+                if (PublishedDirectCallNameMatches(functionName, substitutedSignature))
+                {
+                    signature = substitutedSignature;
+                    return true;
+                }
             }
 
             if (_importedTemplateDirectCalls.Count > 0)

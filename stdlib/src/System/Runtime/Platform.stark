@@ -1,10 +1,12 @@
-import System.Runtime.Platform.Linux
+﻿import System.Runtime.Platform.Linux
 import System.Runtime.Platform.Windows
 module System.Runtime.Platform
 
 internal fn void ExitProcess(i32[-2147483648 2147483647] code) {
-    System.Runtime.Platform.Linux.ExitProcess(code);
-    return;
+    unsafe {
+        System.Runtime.Platform.Linux.ExitProcess(code);
+        return;
+    }
 }
 
 internal fn i32[-2147483648 2147483647] ProcessId() {
@@ -19,7 +21,7 @@ internal fn i32[-2147483648 2147483647] WriteStdoutUnicode(unicode text) {
     return System.Runtime.Platform.Linux.WriteStdoutUnicode(text);
 }
 
-internal fn i32[-2147483648 2147483647] WriteStdoutBytes(rawptr<i8[-128 127]>[length] data, i64[0 max] length) {
+internal unsafe fn i32[-2147483648 2147483647] WriteStdoutBytes(rawptr<i8[-128 127]>[length] data, i64[0 max] length) {
     return System.Runtime.Platform.Linux.WriteStdoutBytes(data, length);
 }
 
@@ -31,7 +33,7 @@ internal fn i32[-2147483648 2147483647] WriteStdoutUnicodeLine(unicode text) {
     return System.Runtime.Platform.Linux.WriteStdoutUnicodeLine(text);
 }
 
-internal fn i32[-2147483648 2147483647] WriteStdoutBytesLine(rawptr<i8[-128 127]>[length] data, i64[0 max] length) {
+internal unsafe fn i32[-2147483648 2147483647] WriteStdoutBytesLine(rawptr<i8[-128 127]>[length] data, i64[0 max] length) {
     return System.Runtime.Platform.Linux.WriteStdoutBytesLine(data, length);
 }
 
@@ -43,7 +45,7 @@ internal fn i32[-2147483648 2147483647] WriteStderrUnicode(unicode text) {
     return System.Runtime.Platform.Linux.WriteStderrUnicode(text);
 }
 
-internal fn i32[-2147483648 2147483647] WriteStderrBytes(rawptr<i8[-128 127]>[length] data, i64[0 max] length) {
+internal unsafe fn i32[-2147483648 2147483647] WriteStderrBytes(rawptr<i8[-128 127]>[length] data, i64[0 max] length) {
     return System.Runtime.Platform.Linux.WriteStderrBytes(data, length);
 }
 
@@ -55,24 +57,24 @@ internal fn i32[-2147483648 2147483647] WriteStderrUnicodeLine(unicode text) {
     return System.Runtime.Platform.Linux.WriteStderrUnicodeLine(text);
 }
 
-internal fn i32[-2147483648 2147483647] WriteStderrBytesLine(rawptr<i8[-128 127]>[length] data, i64[0 max] length) {
+internal unsafe fn i32[-2147483648 2147483647] WriteStderrBytesLine(rawptr<i8[-128 127]>[length] data, i64[0 max] length) {
     return System.Runtime.Platform.Linux.WriteStderrBytesLine(data, length);
 }
 
-internal fn rawptr<i8[-128 127]> OpenStdin() {
+internal unsafe fn rawptr<i8[-128 127]> OpenStdin() {
     return System.Runtime.Platform.Linux.OpenStdin();
 }
 
-internal fn void CloseStdin(rawptr<i8[-128 127]> handle) {
+internal unsafe fn void CloseStdin(rawptr<i8[-128 127]> handle) {
     System.Runtime.Platform.Linux.CloseStdin(handle);
     return;
 }
 
-internal fn i64[-9223372036854775808 9223372036854775807] ReadStdin(rawmutptr<i8[-128 127]>[capacity] buffer, i64[0 max] capacity) {
+internal unsafe fn i64[-9223372036854775808 9223372036854775807] ReadStdin(rawmutptr<i8[-128 127]>[capacity] buffer, i64[0 max] capacity) {
     return System.Runtime.Platform.Linux.ReadStdin(buffer, capacity);
 }
 
-internal fn i32[-2147483648 2147483647] WriteAscii(rawptr<i8[-128 127]> handle, ascii text) {
+internal unsafe fn i32[-2147483648 2147483647] WriteAscii(rawptr<i8[-128 127]> handle, ascii text) {
     return System.Runtime.Platform.Linux.WriteAscii(handle, text);
 }
 
@@ -92,63 +94,63 @@ internal finite law bool IsDirectorySeparator(ascii value) {
     return System.Runtime.Platform.Linux.IsDirectorySeparator(value);
 }
 
-internal fn bool IsTerminal(rawptr<i8[-128 127]> handle) {
+internal unsafe fn bool IsTerminal(rawptr<i8[-128 127]> handle) {
     return System.Runtime.Platform.Linux.IsTerminal(handle);
 }
 
-internal fn i32[-2147483648 2147483647] WriteUnicode(rawptr<i8[-128 127]> handle, unicode text) {
+internal unsafe fn i32[-2147483648 2147483647] WriteUnicode(rawptr<i8[-128 127]> handle, unicode text) {
     return System.Runtime.Platform.Linux.WriteUnicode(handle, text);
 }
 
-internal fn rawptr<i8[-128 127]> OpenFileRead(ascii path) {
+internal unsafe fn rawptr<i8[-128 127]> OpenFileRead(ascii path) {
     return System.Runtime.Platform.Linux.OpenFileRead(path);
 }
 
-internal fn rawptr<i8[-128 127]> OpenFileWrite(ascii path) {
+internal unsafe fn rawptr<i8[-128 127]> OpenFileWrite(ascii path) {
     return System.Runtime.Platform.Linux.OpenFileWrite(path);
 }
 
-internal fn rawptr<i8[-128 127]> OpenFileAppend(ascii path) {
+internal unsafe fn rawptr<i8[-128 127]> OpenFileAppend(ascii path) {
     return System.Runtime.Platform.Linux.OpenFileAppend(path);
 }
 
-internal fn rawptr<i8[-128 127]> OpenFileReadWrite(ascii path) {
+internal unsafe fn rawptr<i8[-128 127]> OpenFileReadWrite(ascii path) {
     return System.Runtime.Platform.Linux.OpenFileReadWrite(path);
 }
 
-internal fn i32[-2147483648 2147483647] CloseFile(rawptr<i8[-128 127]> handle) {
+internal unsafe fn i32[-2147483648 2147483647] CloseFile(rawptr<i8[-128 127]> handle) {
     return System.Runtime.Platform.Linux.CloseFile(handle);
 }
 
-internal fn i32[-2147483648 2147483647] FlushFile(rawptr<i8[-128 127]> handle) {
+internal unsafe fn i32[-2147483648 2147483647] FlushFile(rawptr<i8[-128 127]> handle) {
     return System.Runtime.Platform.Linux.FlushFile(handle);
 }
 
-internal fn i64[-9223372036854775808 9223372036854775807] ReadFile(rawptr<i8[-128 127]> buffer, i64[-9223372036854775808 9223372036854775807] size, i64[-9223372036854775808 9223372036854775807] count, rawptr<i8[-128 127]> handle) {
+internal unsafe fn i64[-9223372036854775808 9223372036854775807] ReadFile(rawptr<i8[-128 127]> buffer, i64[-9223372036854775808 9223372036854775807] size, i64[-9223372036854775808 9223372036854775807] count, rawptr<i8[-128 127]> handle) {
     return System.Runtime.Platform.Linux.ReadFile(buffer, size, count, handle);
 }
 
-internal fn i64[-9223372036854775808 9223372036854775807] WriteFile(rawptr<i8[-128 127]> buffer, i64[-9223372036854775808 9223372036854775807] size, i64[-9223372036854775808 9223372036854775807] count, rawptr<i8[-128 127]> handle) {
+internal unsafe fn i64[-9223372036854775808 9223372036854775807] WriteFile(rawptr<i8[-128 127]> buffer, i64[-9223372036854775808 9223372036854775807] size, i64[-9223372036854775808 9223372036854775807] count, rawptr<i8[-128 127]> handle) {
     return System.Runtime.Platform.Linux.WriteFile(buffer, size, count, handle);
 }
 
-internal fn i64[-9223372036854775808 9223372036854775807] ReadFileBytes(rawmutptr<i8[-128 127]>[length] buffer, i64[0 max] length, rawptr<i8[-128 127]> handle) {
+internal unsafe fn i64[-9223372036854775808 9223372036854775807] ReadFileBytes(rawmutptr<i8[-128 127]>[length] buffer, i64[0 max] length, rawptr<i8[-128 127]> handle) {
     return System.Runtime.Platform.Linux.ReadFileBytes(buffer, length, handle);
 }
 
-internal fn i64[-9223372036854775808 9223372036854775807] WriteFileBytes(rawptr<i8[-128 127]>[length] buffer, i64[0 max] length, rawptr<i8[-128 127]> handle) {
+internal unsafe fn i64[-9223372036854775808 9223372036854775807] WriteFileBytes(rawptr<i8[-128 127]>[length] buffer, i64[0 max] length, rawptr<i8[-128 127]> handle) {
     return System.Runtime.Platform.Linux.WriteFileBytes(buffer, length, handle);
 }
 
-internal fn i64[-9223372036854775808 9223372036854775807] ReadFileBytesFast(rawmutptr<i8[-128 127]>[length] buffer, i64[0 max] length, rawptr<i8[-128 127]> handle) {
+internal unsafe fn i64[-9223372036854775808 9223372036854775807] ReadFileBytesFast(rawmutptr<i8[-128 127]>[length] buffer, i64[0 max] length, rawptr<i8[-128 127]> handle) {
     return System.Runtime.Platform.Linux.ReadFileBytes(buffer, length, handle);
 }
 
-internal fn i64[-9223372036854775808 9223372036854775807] WriteFileBytesFast(rawptr<i8[-128 127]>[length] buffer, i64[0 max] length, rawptr<i8[-128 127]> handle) {
+internal unsafe fn i64[-9223372036854775808 9223372036854775807] WriteFileBytesFast(rawptr<i8[-128 127]>[length] buffer, i64[0 max] length, rawptr<i8[-128 127]> handle) {
     return System.Runtime.Platform.Linux.WriteFileBytes(buffer, length, handle);
 }
 
-internal fn i64[-9223372036854775808 9223372036854775807] SeekFile(rawptr<i8[-128 127]> handle, i64[-9223372036854775808 9223372036854775807] offset, i32[-2147483648 2147483647] origin) {
+internal unsafe fn i64[-9223372036854775808 9223372036854775807] SeekFile(rawptr<i8[-128 127]> handle, i64[-9223372036854775808 9223372036854775807] offset, i32[-2147483648 2147483647] origin) {
     return System.Runtime.Platform.Linux.SeekFile(handle, offset, origin);
 }
 
@@ -184,17 +186,17 @@ internal fn i32[-2147483648 2147483647] DeleteDirectory(ascii path) {
     return System.Runtime.Platform.Linux.DeleteDirectory(path);
 }
 
-internal fn rawptr<i8[-128 127]> OpenDirectory(ascii path)
+internal unsafe fn rawptr<i8[-128 127]> OpenDirectory(ascii path)
 {
     return System.Runtime.Platform.Linux.OpenDirectory(path);
 }
 
-internal fn rawptr<i8[-128 127]> OpenDirectoryFast(ascii path)
+internal unsafe fn rawptr<i8[-128 127]> OpenDirectoryFast(ascii path)
 {
     return System.Runtime.Platform.Linux.OpenDirectory(path);
 }
 
-internal fn rawptr<i8[-128 127]> OpenDirectoryFastInto(
+internal unsafe fn rawptr<i8[-128 127]> OpenDirectoryFastInto(
     ascii path,
     rawmutptr<i8[-128 127]>[capacity] buffer,
     i64[0 max] capacity,
@@ -207,11 +209,11 @@ internal fn i64[0 max] DirectoryBufferCapacity() {
     return System.Runtime.Platform.Linux.DirectoryBufferCapacity();
 }
 
-internal fn i32[-2147483648 2147483647] CloseDirectory(rawptr<i8[-128 127]> handle) {
+internal unsafe fn i32[-2147483648 2147483647] CloseDirectory(rawptr<i8[-128 127]> handle) {
     return System.Runtime.Platform.Linux.CloseDirectory(handle);
 }
 
-internal fn i32[-2147483648 2147483647] ReadDirectoryEntry(
+internal unsafe fn i32[-2147483648 2147483647] ReadDirectoryEntry(
     rawptr<i8[-128 127]> handle,
     rawmutptr<i8[-128 127]>[capacity] buffer,
     i64[0 max] capacity,
@@ -223,7 +225,7 @@ internal fn i32[-2147483648 2147483647] ReadDirectoryEntry(
     return System.Runtime.Platform.Linux.ReadDirectoryEntry(handle, buffer, capacity, readPos, readLength, name, kind);
 }
 
-internal fn i32[-2147483648 2147483647] ReadDirectoryEntryInfo(
+internal unsafe fn i32[-2147483648 2147483647] ReadDirectoryEntryInfo(
     rawptr<i8[-128 127]> handle,
     rawmutptr<i8[-128 127]>[capacity] buffer,
     i64[0 max] capacity,
@@ -235,23 +237,23 @@ internal fn i32[-2147483648 2147483647] ReadDirectoryEntryInfo(
     return System.Runtime.Platform.Linux.ReadDirectoryEntryInfo(handle, buffer, capacity, readPos, readLength, nameLength, kind);
 }
 
-internal fn bool TryCurrentDirectory(rawmutptr<Ascii> destination) {
+internal unsafe fn bool TryCurrentDirectory(rawmutptr<Ascii> destination) {
     return System.Runtime.Platform.Linux.TryCurrentDirectory(destination);
 }
 
-internal fn rawptr<i8[-128 127]> StartThread(fnptr<fn i32[-2147483648 2147483647]()> entry) {
+internal unsafe fn rawptr<i8[-128 127]> StartThread(fnptr<fn i32[-2147483648 2147483647]()> entry) {
     return System.Runtime.Platform.Linux.StartThread(entry);
 }
 
-internal fn i32[-2147483648 2147483647] JoinThread(rawptr<i8[-128 127]> handle, rawmutptr<i32[-2147483648 2147483647]> exitCode) {
+internal unsafe fn i32[-2147483648 2147483647] JoinThread(rawptr<i8[-128 127]> handle, rawmutptr<i32[-2147483648 2147483647]> exitCode) {
     return System.Runtime.Platform.Linux.JoinThread(handle, exitCode);
 }
 
-internal fn i32[-2147483648 2147483647] DetachThread(rawptr<i8[-128 127]> handle) {
+internal unsafe fn i32[-2147483648 2147483647] DetachThread(rawptr<i8[-128 127]> handle) {
     return System.Runtime.Platform.Linux.DetachThread(handle);
 }
 
-internal fn rawptr<i8[-128 127]> ConnectTcpIPv4(
+internal unsafe fn rawptr<i8[-128 127]> ConnectTcpIPv4(
     u8[0 255] a,
     u8[0 255] b,
     u8[0 255] c,
@@ -262,7 +264,7 @@ internal fn rawptr<i8[-128 127]> ConnectTcpIPv4(
     return System.Runtime.Platform.Linux.ConnectTcpIPv4(a, b, c, d, port, status);
 }
 
-internal fn rawptr<i8[-128 127]> ListenTcpIPv4(
+internal unsafe fn rawptr<i8[-128 127]> ListenTcpIPv4(
     u8[0 255] a,
     u8[0 255] b,
     u8[0 255] c,
@@ -273,7 +275,7 @@ internal fn rawptr<i8[-128 127]> ListenTcpIPv4(
     return System.Runtime.Platform.Linux.ListenTcpIPv4(a, b, c, d, port, status);
 }
 
-internal fn i64[-9223372036854775808 9223372036854775807] ReadSocket(
+internal unsafe fn i64[-9223372036854775808 9223372036854775807] ReadSocket(
     rawptr<i8[-128 127]> handle,
     rawmutptr<i8[-128 127]>[capacity] buffer,
     i64[0 max] capacity)
@@ -281,7 +283,7 @@ internal fn i64[-9223372036854775808 9223372036854775807] ReadSocket(
     return System.Runtime.Platform.Linux.ReadSocket(handle, buffer, capacity);
 }
 
-internal fn i64[-9223372036854775808 9223372036854775807] WriteSocket(
+internal unsafe fn i64[-9223372036854775808 9223372036854775807] WriteSocket(
     rawptr<i8[-128 127]> handle,
     rawptr<i8[-128 127]>[length] buffer,
     i64[0 max] length)
@@ -289,7 +291,7 @@ internal fn i64[-9223372036854775808 9223372036854775807] WriteSocket(
     return System.Runtime.Platform.Linux.WriteSocket(handle, buffer, length);
 }
 
-internal fn i64[-9223372036854775808 9223372036854775807] ReadSocketVector2(
+internal unsafe fn i64[-9223372036854775808 9223372036854775807] ReadSocketVector2(
     rawptr<i8[-128 127]> handle,
     rawmutptr<i8[-128 127]>[firstCapacity] firstBuffer,
     i64[0 max] firstCapacity,
@@ -299,7 +301,7 @@ internal fn i64[-9223372036854775808 9223372036854775807] ReadSocketVector2(
     return System.Runtime.Platform.Linux.ReadSocketVector2(handle, firstBuffer, firstCapacity, secondBuffer, secondCapacity);
 }
 
-internal fn i64[-9223372036854775808 9223372036854775807] WriteSocketVector2(
+internal unsafe fn i64[-9223372036854775808 9223372036854775807] WriteSocketVector2(
     rawptr<i8[-128 127]> handle,
     rawptr<i8[-128 127]>[firstLength] firstBuffer,
     i64[0 max] firstLength,
@@ -309,18 +311,18 @@ internal fn i64[-9223372036854775808 9223372036854775807] WriteSocketVector2(
     return System.Runtime.Platform.Linux.WriteSocketVector2(handle, firstBuffer, firstLength, secondBuffer, secondLength);
 }
 
-internal fn rawptr<i8[-128 127]> AcceptSocket(
+internal unsafe fn rawptr<i8[-128 127]> AcceptSocket(
     rawptr<i8[-128 127]> handle,
     rawmutptr<i32[-2147483648 2147483647]> status)
 {
     return System.Runtime.Platform.Linux.AcceptSocket(handle, status);
 }
 
-internal fn i32[-2147483648 2147483647] ShutdownSocket(rawptr<i8[-128 127]> handle, i32[-2147483648 2147483647] how) {
+internal unsafe fn i32[-2147483648 2147483647] ShutdownSocket(rawptr<i8[-128 127]> handle, i32[-2147483648 2147483647] how) {
     return System.Runtime.Platform.Linux.ShutdownSocket(handle, how);
 }
 
-internal fn i32[-2147483648 2147483647] CloseSocket(rawptr<i8[-128 127]> handle) {
+internal unsafe fn i32[-2147483648 2147483647] CloseSocket(rawptr<i8[-128 127]> handle) {
     return System.Runtime.Platform.Linux.CloseSocket(handle);
 }
 
@@ -334,18 +336,18 @@ internal fn void SleepThreadMilliseconds(i64[0 max] milliseconds) {
     return;
 }
 
-internal fn i32[-2147483648 2147483647] WaitReadable(rawptr<i8[-128 127]> handle, i32[-2147483648 2147483647] timeoutMilliseconds) {
+internal unsafe fn i32[-2147483648 2147483647] WaitReadable(rawptr<i8[-128 127]> handle, i32[-2147483648 2147483647] timeoutMilliseconds) {
     return System.Runtime.Platform.Linux.WaitReadable(handle, timeoutMilliseconds);
 }
 
-internal fn i32[-2147483648 2147483647] WaitWritable(rawptr<i8[-128 127]> handle, i32[-2147483648 2147483647] timeoutMilliseconds) {
+internal unsafe fn i32[-2147483648 2147483647] WaitWritable(rawptr<i8[-128 127]> handle, i32[-2147483648 2147483647] timeoutMilliseconds) {
     return System.Runtime.Platform.Linux.WaitWritable(handle, timeoutMilliseconds);
 }
 
-internal fn i32[-2147483648 2147483647] FutexWait(rawptr<i32[-2147483648 2147483647]> address, i32[-2147483648 2147483647] expected) {
+internal unsafe fn i32[-2147483648 2147483647] FutexWait(rawptr<i32[-2147483648 2147483647]> address, i32[-2147483648 2147483647] expected) {
     return System.Runtime.Platform.Linux.FutexWait(address, expected);
 }
 
-internal fn i32[-2147483648 2147483647] FutexWake(rawptr<i32[-2147483648 2147483647]> address, i32[-2147483648 2147483647] count) {
+internal unsafe fn i32[-2147483648 2147483647] FutexWake(rawptr<i32[-2147483648 2147483647]> address, i32[-2147483648 2147483647] count) {
     return System.Runtime.Platform.Linux.FutexWake(address, count);
 }

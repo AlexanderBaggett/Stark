@@ -17,7 +17,7 @@ finite law i32[min max] Score(Token token) {
     }
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     if (Score(Token.End) != 0) {
         return 1;
     }

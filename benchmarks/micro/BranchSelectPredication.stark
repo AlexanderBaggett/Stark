@@ -1,7 +1,7 @@
 import System.Process
 module Benchmarks.Micro.BranchSelectPredication
 
-noinline finite law i64[min max] Choose(bool flag, i64[min max] left, i64[min max] right) {
+noinline unsafe finite law i64[min max] Choose(bool flag, i64[min max] left, i64[min max] right) {
     if (flag) {
         return left;
     }
@@ -9,7 +9,7 @@ noinline finite law i64[min max] Choose(bool flag, i64[min max] left, i64[min ma
     return right;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack i64[min max] seed = (i64[min max])System.Process.CurrentId();
     stack mut i64[min max] total = seed & 1023;
 

@@ -16,7 +16,7 @@ fn bool WriteDemoCommitObject() {
     return file.Close() == 0;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     if (!WriteDemoCommitObject()) {
         return 1;
     }

@@ -179,97 +179,12 @@ benchmark_label_fields() {
   local benchmark_id="$1"
   local language="$2"
 
-  local remainder="${benchmark_id#benchmarks/}"
-  local category="${remainder%%/*}"
-  local stem="${benchmark_id##*/}"
-  local prefix=""
-  if [[ "${stem}" == Experimental* ]]; then
-    prefix="Experimental"
-    stem="${stem#Experimental}"
-  fi
-
-  if [[ "${benchmark_id}" != benchmarks/collections/* ]]; then
-    local subsystem=""
-    case "${category}" in
-      allocator)
-        subsystem="Memory"
-        ;;
-      console)
-        subsystem="Console"
-        ;;
-      io)
-        subsystem="IO"
-        ;;
-      network)
-        subsystem="Network"
-        ;;
-      runtime)
-        subsystem="Runtime"
-        ;;
-      text)
-        subsystem="Text"
-        ;;
-    esac
-
-    if [[ -z "${subsystem}" ]]; then
-      printf '%s,%s\n' "${benchmark_id}" "${language}"
-      return
-    fi
-
-    local language_label="${language}"
-    if [[ "${language}" == "stark" ]]; then
-      if [[ "${prefix}" == "Experimental" ]]; then
-        language_label="stark-experimental"
-      fi
-    fi
-
-    printf 'benchmarks/%s/%s,%s\n' "${category}" "${stem}" "${language_label}"
-    return
-  fi
-
-  local collection=""
-  local scenario="${stem}"
-  if [[ "${stem}" == LinkedList* ]]; then
-    collection="LinkedList"
-    scenario="${stem#LinkedList}"
-  elif [[ "${stem}" == Dictionary* ]]; then
-    collection="Dictionary"
-    scenario="${stem#Dictionary}"
-  elif [[ "${stem}" == Queue* ]]; then
-    collection="Queue"
-    scenario="${stem#Queue}"
-  elif [[ "${stem}" == Stack* ]]; then
-    collection="Stack"
-    scenario="${stem#Stack}"
-  elif [[ "${stem}" == List* ]]; then
-    collection="List"
-    scenario="${stem#List}"
-  fi
-
-  if [[ -z "${collection}" ]]; then
-    printf '%s,%s\n' "${benchmark_id}" "${language}"
-    return
-  fi
-
-  if [[ -z "${scenario}" ]]; then
-    scenario="Default"
-  fi
-
-  local language_label="${language}"
-  if [[ "${language}" == "stark" ]]; then
-    if [[ "${prefix}" == "Experimental" ]]; then
-      language_label="stark-experimental"
-    fi
-  fi
-
-  printf 'benchmarks/collections/%s%s,%s\n' "${collection}" "${scenario}" "${language_label}"
+  printf '%s,%s\n' "${benchmark_id}" "${language}"
 }
 
 benchmark_group_for_id() {
   local benchmark_id="$1"
-  local label_fields
-  label_fields="$(benchmark_label_fields "${benchmark_id}" "stark")"
-  printf '%s\n' "${label_fields%%,*}"
+  printf '%s\n' "${benchmark_id}"
 }
 
 ns_to_us() {

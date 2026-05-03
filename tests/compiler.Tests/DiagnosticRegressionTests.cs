@@ -11,7 +11,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack i32[-2147483648 2147483647] value = 1
             }
             """);
@@ -27,7 +27,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn ascii Run() {
+            unsafe fn ascii Run() {
                 return "\q";
             }
             """);
@@ -43,7 +43,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn ascii Run() {
+            unsafe fn ascii Run() {
                 return 'ab';
             }
             """);
@@ -60,7 +60,7 @@ public sealed class DiagnosticRegressionTests
             import Demo
             module Demo
 
-            fn void Run() {
+            unsafe fn void Run() {
                 return;
             }
             """);
@@ -80,7 +80,7 @@ public sealed class DiagnosticRegressionTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 stack Box box = new Box() { Value = 1 };
                 return box.Missing;
             }
@@ -97,7 +97,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            law i32[-2147483648 2147483647] Read(out i32[-2147483648 2147483647] value) {
+            unsafe law i32[-2147483648 2147483647] Read(out i32[-2147483648 2147483647] value) {
                 return 0;
             }
             """);
@@ -119,7 +119,7 @@ public sealed class DiagnosticRegressionTests
 
             static Box Current = new Box() { Value = 1 };
 
-            fn Box Take() {
+            unsafe fn Box Take() {
                 return Current;
             }
             """);
@@ -137,7 +137,7 @@ public sealed class DiagnosticRegressionTests
 
             static i32[-2147483648 2147483647] Answer = 42;
 
-            fn void Run() {
+            unsafe fn void Run() {
                 Answer = 7;
                 return;
             }
@@ -160,7 +160,7 @@ public sealed class DiagnosticRegressionTests
 
             const Box Current = new Box() { Value = 1 };
 
-            fn void Run() {
+            unsafe fn void Run() {
                 Current.Value = 2;
                 return;
             }
@@ -215,7 +215,7 @@ public sealed class DiagnosticRegressionTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run(Box box) {
+            unsafe fn i32[-2147483648 2147483647] Run(Box box) {
                 switch (box) {
                     case Box capture:
                         return 1;
@@ -237,7 +237,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                 switch (value) {
                     case var capture:
                     case 1:
@@ -259,7 +259,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(bool value) {
+            unsafe fn i32[-2147483648 2147483647] Run(bool value) {
                 switch (value) {
                     case true:
                         return 1;
@@ -283,7 +283,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Run() {
+            unsafe fn void Run() {
                 break;
             }
             """);
@@ -299,7 +299,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Run() {
+            unsafe fn void Run() {
                 continue;
             }
             """);
@@ -319,7 +319,7 @@ public sealed class DiagnosticRegressionTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn void Run(borrow Box left, borrow Box right) {
+            unsafe fn void Run(borrow Box left, borrow Box right) {
                 if disjoint(left, right) {
                     return;
                 }
@@ -339,11 +339,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
+            unsafe fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
                 return;
             }
 
-            fn void Run(rawmutptr<i32[-2147483648 2147483647]> ptr) {
+            unsafe fn void Run(rawmutptr<i32[-2147483648 2147483647]> ptr) {
                 Touch(ptr, ptr);
                 return;
             }
@@ -360,7 +360,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Touch(disjoint i32[-2147483648 2147483647] value) {
+            unsafe fn void Touch(disjoint i32[-2147483648 2147483647] value) {
                 return;
             }
             """);
@@ -376,12 +376,12 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Touch(rawmutptr<i32[-2147483648 2147483647]> left, rawmutptr<i32[-2147483648 2147483647]> right)
+            unsafe fn void Touch(rawmutptr<i32[-2147483648 2147483647]> left, rawmutptr<i32[-2147483648 2147483647]> right)
                 where disjoint(left, right) {
                 return;
             }
 
-            fn void Run(rawmutptr<i32[-2147483648 2147483647]> ptr) {
+            unsafe fn void Run(rawmutptr<i32[-2147483648 2147483647]> ptr) {
                 Touch(ptr, (ptr));
                 return;
             }
@@ -398,7 +398,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Touch(i32[-2147483648 2147483647] value, rawmutptr<i32[-2147483648 2147483647]> ptr)
+            unsafe fn void Touch(i32[-2147483648 2147483647] value, rawmutptr<i32[-2147483648 2147483647]> ptr)
                 where disjoint(value, ptr) {
                 return;
             }
@@ -409,49 +409,47 @@ public sealed class DiagnosticRegressionTests
     }
 
     [Fact]
-    public void DisjointParameterCallsRejectUnprovenDistinctRawPointerArguments()
+    public void UnsafeFunctionDisjointParameterCallsAllowProgrammerProvenRawPointerArguments()
     {
         var result = Compile(
             """
             module Demo
 
-            fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
+            unsafe fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
                 return;
             }
 
-            fn void Run(rawmutptr<i32[-2147483648 2147483647]> maybeLeft, rawmutptr<i32[-2147483648 2147483647]> maybeRight) {
+            unsafe fn void Run(rawmutptr<i32[-2147483648 2147483647]> maybeLeft, rawmutptr<i32[-2147483648 2147483647]> maybeRight) {
                 Touch(maybeLeft, maybeRight);
                 return;
             }
             """);
 
-        Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK3030", "violates disjoint parameter contract", "left", "right", "maybeLeft", "maybeRight");
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
 
     [Fact]
-    public void DisjointParameterCallsRejectUnrootedSafeArguments()
+    public void UnsafeFunctionDisjointParameterCallsAllowProgrammerProvenUnrootedArguments()
     {
         var result = Compile(
             """
             module Demo
 
-            fn rawmutptr<i32[-2147483648 2147483647]> Identity(rawmutptr<i32[-2147483648 2147483647]> ptr) {
+            unsafe fn rawmutptr<i32[-2147483648 2147483647]> Identity(rawmutptr<i32[-2147483648 2147483647]> ptr) {
                 return ptr;
             }
 
-            fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
+            unsafe fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
                 return;
             }
 
-            fn void Run(rawmutptr<i32[-2147483648 2147483647]> maybeLeft, rawmutptr<i32[-2147483648 2147483647]> maybeRight) {
+            unsafe fn void Run(rawmutptr<i32[-2147483648 2147483647]> maybeLeft, rawmutptr<i32[-2147483648 2147483647]> maybeRight) {
                 Touch(Identity(maybeLeft), maybeRight);
                 return;
             }
             """);
 
-        Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK3030", "statically identifiable memory root", "left", "right");
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
 
     [Fact]
@@ -461,11 +459,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
+            unsafe fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
                 return;
             }
 
-            fn void Run(rawmutptr<i32[-2147483648 2147483647]> maybeLeft, rawmutptr<i32[-2147483648 2147483647]> maybeRight) {
+            unsafe fn void Run(rawmutptr<i32[-2147483648 2147483647]> maybeLeft, rawmutptr<i32[-2147483648 2147483647]> maybeRight) {
                 unsafe {
                     Touch(maybeLeft, maybeRight);
                 }
@@ -484,15 +482,15 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn rawmutptr<i32[-2147483648 2147483647]> Identity(rawmutptr<i32[-2147483648 2147483647]> ptr) {
+            unsafe fn rawmutptr<i32[-2147483648 2147483647]> Identity(rawmutptr<i32[-2147483648 2147483647]> ptr) {
                 return ptr;
             }
 
-            fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
+            unsafe fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
                 return;
             }
 
-            fn void Run(rawmutptr<i32[-2147483648 2147483647]> maybeLeft, rawmutptr<i32[-2147483648 2147483647]> maybeRight) {
+            unsafe fn void Run(rawmutptr<i32[-2147483648 2147483647]> maybeLeft, rawmutptr<i32[-2147483648 2147483647]> maybeRight) {
                 unsafe {
                     Touch(Identity(maybeLeft), Identity(maybeRight));
                 }
@@ -511,11 +509,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
+            unsafe fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
                 return;
             }
 
-            fn void Run(rawmutptr<i32[-2147483648 2147483647]> left, rawmutptr<i32[-2147483648 2147483647]> right)
+            unsafe fn void Run(rawmutptr<i32[-2147483648 2147483647]> left, rawmutptr<i32[-2147483648 2147483647]> right)
                 where disjoint(left, right) {
                 Touch(left, right);
                 return;
@@ -536,13 +534,13 @@ public sealed class DiagnosticRegressionTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn void Touch(disjoint borrow mut Box left, disjoint borrow mut Box right) {
+            unsafe fn void Touch(disjoint borrow mut Box left, disjoint borrow mut Box right) {
                 left.Value = 1;
                 right.Value = 2;
                 return;
             }
 
-            fn void Run(borrow mut Box left, borrow mut Box right) {
+            unsafe fn void Run(borrow mut Box left, borrow mut Box right) {
                 Touch(left, right);
                 return;
             }
@@ -562,13 +560,13 @@ public sealed class DiagnosticRegressionTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn void Touch(disjoint out Box left, disjoint out Box right) {
+            unsafe fn void Touch(disjoint out Box left, disjoint out Box right) {
                 left = new Box() { Value = 1 };
                 right = new Box() { Value = 2 };
                 return;
             }
 
-            fn void Run(out Box left, out Box right) {
+            unsafe fn void Run(out Box left, out Box right) {
                 Touch(left, right);
                 return;
             }
@@ -588,13 +586,13 @@ public sealed class DiagnosticRegressionTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn void Touch(disjoint out Box left, disjoint out Box right) {
+            unsafe fn void Touch(disjoint out Box left, disjoint out Box right) {
                 left = new Box() { Value = 1 };
                 right = new Box() { Value = 2 };
                 return;
             }
 
-            fn void Run(out Box value) {
+            unsafe fn void Run(out Box value) {
                 Touch(value, value);
                 return;
             }
@@ -611,11 +609,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Touch(disjoint borrow i32[-2147483648 2147483647][] left, disjoint borrow i32[-2147483648 2147483647][] right) {
+            unsafe fn void Touch(disjoint borrow i32[-2147483648 2147483647][] left, disjoint borrow i32[-2147483648 2147483647][] right) {
                 return;
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack i32[-2147483648 2147483647][2] leftValues = { 1, 2 };
                 stack i32[-2147483648 2147483647][2] rightValues = { 3, 4 };
                 stack i32[-2147483648 2147483647][] leftView = leftValues;
@@ -635,11 +633,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Touch(disjoint borrow i32[-2147483648 2147483647][] left, disjoint borrow i32[-2147483648 2147483647][] right) {
+            unsafe fn void Touch(disjoint borrow i32[-2147483648 2147483647][] left, disjoint borrow i32[-2147483648 2147483647][] right) {
                 return;
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack i32[-2147483648 2147483647][2] values = { 1, 2 };
                 stack i32[-2147483648 2147483647][] view = values;
                 Touch(view, values);
@@ -658,11 +656,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Touch(disjoint ascii left, disjoint ascii right) {
+            unsafe fn void Touch(disjoint ascii left, disjoint ascii right) {
                 return;
             }
 
-            fn void Run(ascii text) {
+            unsafe fn void Run(ascii text) {
                 stack ascii left = text[0, 2];
                 stack ascii right = text[2, 2];
                 Touch(left, right);
@@ -680,11 +678,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Touch(disjoint ascii left, disjoint ascii right) {
+            unsafe fn void Touch(disjoint ascii left, disjoint ascii right) {
                 return;
             }
 
-            fn void Run(ascii text, i32[0 1] leftStart, i32[4 5] rightStart) {
+            unsafe fn void Run(ascii text, i32[0 1] leftStart, i32[4 5] rightStart) {
                 stack ascii left = text[leftStart, 2];
                 stack ascii right = text[rightStart, 2];
                 Touch(left, right);
@@ -702,11 +700,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Touch(disjoint ascii left, disjoint ascii right) {
+            unsafe fn void Touch(disjoint ascii left, disjoint ascii right) {
                 return;
             }
 
-            fn void Run(ascii text) {
+            unsafe fn void Run(ascii text) {
                 Touch(text[0, 3], text[2, 1]);
                 return;
             }
@@ -723,11 +721,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Touch(disjoint ascii left, disjoint ascii right) {
+            unsafe fn void Touch(disjoint ascii left, disjoint ascii right) {
                 return;
             }
 
-            fn void Run(ascii text, i32[0 2] leftStart, i32[4 5] rightStart) {
+            unsafe fn void Run(ascii text, i32[0 2] leftStart, i32[4 5] rightStart) {
                 stack ascii left = text[leftStart, 3];
                 stack ascii right = text[rightStart, 1];
                 Touch(left, right);
@@ -822,11 +820,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
+            unsafe fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
                 return;
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack mut i32[-2147483648 2147483647] left = 1;
                 stack mut i32[-2147483648 2147483647] right = 2;
                 Touch(&left, &right);
@@ -849,11 +847,11 @@ public sealed class DiagnosticRegressionTests
                 i32[-2147483648 2147483647] Right;
             }
 
-            fn void Touch(disjoint rawmutptr<Pair> whole, disjoint rawmutptr<i32[-2147483648 2147483647]> field) {
+            unsafe fn void Touch(disjoint rawmutptr<Pair> whole, disjoint rawmutptr<i32[-2147483648 2147483647]> field) {
                 return;
             }
 
-            fn void Run(borrow mut Pair pair) {
+            unsafe fn void Run(borrow mut Pair pair) {
                 Touch(&pair, &pair.Left);
                 return;
             }
@@ -875,11 +873,11 @@ public sealed class DiagnosticRegressionTests
                 i32[-2147483648 2147483647] Right;
             }
 
-            fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
+            unsafe fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
                 return;
             }
 
-            fn void Run(borrow mut Pair pair) {
+            unsafe fn void Run(borrow mut Pair pair) {
                 Touch(&pair.Left, &pair.Right);
                 return;
             }
@@ -895,11 +893,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
+            unsafe fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
                 return;
             }
 
-            fn void Run(i32[0 2] leftIndex, i32[0 2] rightIndex) {
+            unsafe fn void Run(i32[0 2] leftIndex, i32[0 2] rightIndex) {
                 stack mut i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
                 Touch(&values[leftIndex], &values[rightIndex]);
                 return;
@@ -917,11 +915,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
+            unsafe fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
                 return;
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack mut i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
                 Touch(&values[0], &values[1]);
                 return;
@@ -938,11 +936,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
+            unsafe fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
                 return;
             }
 
-            fn void Run(i32[0 1] leftIndex, i32[2 3] rightIndex) {
+            unsafe fn void Run(i32[0 1] leftIndex, i32[2 3] rightIndex) {
                 stack mut i32[-2147483648 2147483647][4] values = { 1, 2, 3, 4 };
                 Touch(&values[leftIndex], &values[rightIndex]);
                 return;
@@ -959,11 +957,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
+            unsafe fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
                 return;
             }
 
-            fn void Run(i32[0 2] leftIndex, i32[2 3] rightIndex) {
+            unsafe fn void Run(i32[0 2] leftIndex, i32[2 3] rightIndex) {
                 stack mut i32[-2147483648 2147483647][4] values = { 1, 2, 3, 4 };
                 Touch(&values[leftIndex], &values[rightIndex]);
                 return;
@@ -981,11 +979,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
+            unsafe fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
                 return;
             }
 
-            fn void Run(i32[0 2] leftIndex, i32[0 2] rightIndex) {
+            unsafe fn void Run(i32[0 2] leftIndex, i32[0 2] rightIndex) {
                 stack mut i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
                 if disjoint(&values[leftIndex], &values[rightIndex]) {
                     Touch(&values[leftIndex], &values[rightIndex]);
@@ -1005,11 +1003,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Touch(disjoint ascii left, disjoint ascii right) {
+            unsafe fn void Touch(disjoint ascii left, disjoint ascii right) {
                 return;
             }
 
-            fn void Run(ascii text, i32[0 3] leftStart, i32[0 3] rightStart) {
+            unsafe fn void Run(ascii text, i32[0 3] leftStart, i32[0 3] rightStart) {
                 stack ascii left = text[leftStart, 2];
                 stack ascii right = text[rightStart, 2];
                 if disjoint(left, right) {
@@ -1030,13 +1028,13 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Touch(
+            unsafe fn void Touch(
                 disjoint borrow mut i32[-2147483648 2147483647][] left,
                 disjoint borrow i32[-2147483648 2147483647][] right) {
                 return;
             }
 
-            fn void Run(
+            unsafe fn void Run(
                 rawmutptr<i32[-2147483648 2147483647]>[count] left,
                 rawptr<i32[-2147483648 2147483647]>[count] right,
                 i32[1 10] count) {
@@ -1066,11 +1064,11 @@ public sealed class DiagnosticRegressionTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
+            unsafe fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
                 return;
             }
 
-            fn void Run(i32[0 2] leftIndex, i32[0 2] rightIndex) {
+            unsafe fn void Run(i32[0 2] leftIndex, i32[0 2] rightIndex) {
                 stack mut Cell[3] cells = {
                     new Cell() { Value = 1 },
                     new Cell() { Value = 2 },
@@ -1094,11 +1092,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
+            unsafe fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
                 return;
             }
 
-            fn void Run(i32[0 2] leftIndex, i32[0 2] rightIndex) {
+            unsafe fn void Run(i32[0 2] leftIndex, i32[0 2] rightIndex) {
                 stack mut i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
                 if disjoint(&values[leftIndex], &values[rightIndex]) {
                     return;
@@ -1121,7 +1119,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn i32[0 10] WhileRun() {
+            unsafe fn i32[0 10] WhileRun() {
                 stack mut i32[0 10] value = 0;
                 while willexit independent (value < 4) {
                     const bool shouldStep = true;
@@ -1136,7 +1134,7 @@ public sealed class DiagnosticRegressionTests
                 return value;
             }
 
-            fn i32[0 10] ForRun() {
+            unsafe fn i32[0 10] ForRun() {
                 stack mut i32[0 10] value = 0;
                 for willexit independent (stack mut i32[0 10] index = 0; index < 4; index += 1) {
                     register i32[0 10] copy = index;
@@ -1157,7 +1155,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Add(
+            unsafe fn void Add(
                 disjoint borrow i32[-2147483648 2147483647][] left,
                 disjoint borrow i32[-2147483648 2147483647][] right,
                 disjoint borrow mut i32[-2147483648 2147483647][] output,
@@ -1180,7 +1178,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void SelectPositive(
+            unsafe fn void SelectPositive(
                 disjoint borrow i32[-2147483648 2147483647][] left,
                 disjoint borrow i32[-2147483648 2147483647][] right,
                 disjoint borrow mut i32[-2147483648 2147483647][] output,
@@ -1211,7 +1209,7 @@ public sealed class DiagnosticRegressionTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn void Copy(
+            unsafe fn void Copy(
                 disjoint borrow Cell[] input,
                 disjoint borrow mut Cell[] output,
                 i32[0 10] count) {
@@ -1233,7 +1231,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Copy(
+            unsafe fn void Copy(
                 disjoint rawptr<i32[-2147483648 2147483647]>[count] input,
                 disjoint rawmutptr<i32[-2147483648 2147483647]>[count] output,
                 i32[0 10] count)
@@ -1256,7 +1254,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Copy(
+            unsafe fn void Copy(
                 rawptr<i32[-2147483648 2147483647]>[count] input,
                 rawmutptr<i32[-2147483648 2147483647]>[count] output,
                 i32[0 10] count) {
@@ -1280,7 +1278,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Copy(
+            unsafe fn void Copy(
                 rawptr<i32[-2147483648 2147483647]>[count] input,
                 rawmutptr<i32[-2147483648 2147483647]>[count] output,
                 i32[0 10] count,
@@ -1305,11 +1303,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Read(rawptr<i32[-2147483648 2147483647]>[4] input) {
+            unsafe fn void Read(rawptr<i32[-2147483648 2147483647]>[4] input) {
                 return;
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 Read(null);
                 return;
             }
@@ -1326,11 +1324,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Read(rawptr<i32[-2147483648 2147483647]>[0] input) {
+            unsafe fn void Read(rawptr<i32[-2147483648 2147483647]>[0] input) {
                 return;
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 Read(null);
                 return;
             }
@@ -1346,11 +1344,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Read(rawptr<i32[-2147483648 2147483647]>[4] input) {
+            unsafe fn void Read(rawptr<i32[-2147483648 2147483647]>[4] input) {
                 return;
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack mut i32[-2147483648 2147483647][5] values = { 1, 2, 3, 4, 5 };
                 Read(&values[1]);
                 return;
@@ -1367,11 +1365,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Read(rawptr<i32[-2147483648 2147483647]>[count] input, i32[0 10] count) {
+            unsafe fn void Read(rawptr<i32[-2147483648 2147483647]>[count] input, i32[0 10] count) {
                 return;
             }
 
-            fn void Forward(rawptr<i32[-2147483648 2147483647]>[count] input, i32[0 10] count) {
+            unsafe fn void Forward(rawptr<i32[-2147483648 2147483647]>[count] input, i32[0 10] count) {
                 Read(input, count);
                 return;
             }
@@ -1387,11 +1385,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Read(rawptr<i32[-2147483648 2147483647]>[count] input, i32[0 10] count) {
+            unsafe fn void Read(rawptr<i32[-2147483648 2147483647]>[count] input, i32[0 10] count) {
                 return;
             }
 
-            fn void Forward(rawptr<i32[-2147483648 2147483647]>[count] input, i32[0 10] count) {
+            unsafe fn void Forward(rawptr<i32[-2147483648 2147483647]>[count] input, i32[0 10] count) {
                 stack rawptr<i32[-2147483648 2147483647]> localPointer = input;
                 Read(localPointer, count);
                 return;
@@ -1408,11 +1406,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Read(rawptr<i32[-2147483648 2147483647]>[4] input) {
+            unsafe fn void Read(rawptr<i32[-2147483648 2147483647]>[4] input) {
                 return;
             }
 
-            fn void Forward(rawptr<i32[-2147483648 2147483647]>[count] input, i32[6 10] count) {
+            unsafe fn void Forward(rawptr<i32[-2147483648 2147483647]>[count] input, i32[6 10] count) {
                 Read(&input[2]);
                 return;
             }
@@ -1428,11 +1426,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Read(rawptr<i32[-2147483648 2147483647]>[4] input) {
+            unsafe fn void Read(rawptr<i32[-2147483648 2147483647]>[4] input) {
                 return;
             }
 
-            fn void Forward(rawptr<i32[-2147483648 2147483647]>[count] input, i32[5 10] count) {
+            unsafe fn void Forward(rawptr<i32[-2147483648 2147483647]>[count] input, i32[5 10] count) {
                 unsafe {
                     stack i32[-2147483648 2147483647][] view = slice(input, count);
                     Read(&view[1]);
@@ -1452,11 +1450,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Read(rawptr<i32[-2147483648 2147483647]>[4] input) {
+            unsafe fn void Read(rawptr<i32[-2147483648 2147483647]>[4] input) {
                 return;
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack mut i32[-2147483648 2147483647][5] values = { 1, 2, 3, 4, 5 };
                 Read(&values[3]);
                 return;
@@ -1468,21 +1466,20 @@ public sealed class DiagnosticRegressionTests
     }
 
     [Fact]
-    public void RawSliceConstructionRequiresUnsafeContext()
+    public void RawSliceConstructionInsideUnsafeFunctionCompiles()
     {
         var result = Compile(
             """
             module Demo
 
-            fn void Run(rawmutptr<i32[-2147483648 2147483647]>[count] pointer, i32[0 10] count) {
-                stack mut i32[-2147483648 2147483647][] view = slice(pointer, count);
+            unsafe fn void Run(rawmutptr<i32[-2147483648 2147483647]>[count] pointer, i32[0 10] count) {
+                stack mut mut i32[-2147483648 2147483647][] view = slice(pointer, count);
                 view[0] = 1;
                 return;
             }
             """);
 
-        Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK3024", "Unsafe raw slice construction", "requires an unsafe context");
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
 
     [Fact]
@@ -1492,7 +1489,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Read(rawptr<i32[-2147483648 2147483647]>[count] pointer, i32[0 10] count) {
+            unsafe fn i32[-2147483648 2147483647] Read(rawptr<i32[-2147483648 2147483647]>[count] pointer, i32[0 10] count) {
                 unsafe {
                     return slice(pointer, count)[0];
                 }
@@ -1511,7 +1508,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Run(rawptr<i32[-2147483648 2147483647]>[count] pointer, i32[-1 10] count) {
+            unsafe fn void Run(rawptr<i32[-2147483648 2147483647]>[count] pointer, i32[-1 10] count) {
                 return;
             }
             """);
@@ -1527,7 +1524,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn bool Check(
+            unsafe fn bool Check(
                 rawptr<i32[-2147483648 2147483647]>[count] left,
                 rawptr<i32[-2147483648 2147483647]>[count] right,
                 i32[-1 10] start,
@@ -1551,7 +1548,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Run(rawptr<i32[-2147483648 2147483647]> pointer, i32[-1 10] count) {
+            unsafe fn void Run(rawptr<i32[-2147483648 2147483647]> pointer, i32[-1 10] count) {
                 unsafe {
                     stack i32[-2147483648 2147483647][] view = slice(pointer, count);
                 }
@@ -1571,7 +1568,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Run() {
+            unsafe fn void Run() {
                 unsafe {
                     stack i32[-2147483648 2147483647][] view = slice((rawptr<i32[-2147483648 2147483647]>)null, 1);
                 }
@@ -1591,7 +1588,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Run() {
+            unsafe fn void Run() {
                 unsafe {
                     stack i32[-2147483648 2147483647][] view = slice((rawptr<i32[-2147483648 2147483647]>)null, 0);
                 }
@@ -1610,11 +1607,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn rawptr<i32[-2147483648 2147483647]> Identity(rawptr<i32[-2147483648 2147483647]> pointer) {
+            unsafe fn rawptr<i32[-2147483648 2147483647]> Identity(rawptr<i32[-2147483648 2147483647]> pointer) {
                 return pointer;
             }
 
-            fn void Run(rawptr<i32[-2147483648 2147483647]> pointer, i32[0 10] count) {
+            unsafe fn void Run(rawptr<i32[-2147483648 2147483647]> pointer, i32[0 10] count) {
                 unsafe {
                     stack i32[-2147483648 2147483647][] view = slice(Identity(pointer), count);
                 }
@@ -1634,7 +1631,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Run(rawptr<i32[-2147483648 2147483647]>[count] pointer, i32[0 10] count) {
+            unsafe fn void Run(rawptr<i32[-2147483648 2147483647]>[count] pointer, i32[0 10] count) {
                 unsafe {
                     stack mut mut i32[-2147483648 2147483647][] view = slice(pointer, count);
                 }
@@ -1654,11 +1651,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            finite law i32[-2147483648 2147483647] Scale(i32[-2147483648 2147483647] value) {
+            unsafe finite law i32[-2147483648 2147483647] Scale(i32[-2147483648 2147483647] value) {
                 return value * 2;
             }
 
-            fn void ScaleAll(
+            unsafe fn void ScaleAll(
                 disjoint borrow i32[-2147483648 2147483647][] input,
                 disjoint borrow mut i32[-2147483648 2147483647][] output,
                 i32[0 10] count) {
@@ -1680,7 +1677,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Add(
+            unsafe fn void Add(
                 borrow i32[-2147483648 2147483647][] input,
                 borrow mut i32[-2147483648 2147483647][] output,
                 i32[0 10] count) {
@@ -1703,7 +1700,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Copy(
+            unsafe fn void Copy(
                 disjoint borrow i32[-2147483648 2147483647][] input,
                 disjoint borrow mut i32[-2147483648 2147483647][] output,
                 i32[0 10] count,
@@ -1727,7 +1724,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Copy(
+            unsafe fn void Copy(
                 disjoint borrow i32[-2147483648 2147483647][] input,
                 disjoint borrow mut i32[-2147483648 2147483647][] output,
                 i32[0 10] count) {
@@ -1751,11 +1748,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Scale(i32[-2147483648 2147483647] value) {
+            unsafe fn i32[-2147483648 2147483647] Scale(i32[-2147483648 2147483647] value) {
                 return value * 2;
             }
 
-            fn void ScaleAll(
+            unsafe fn void ScaleAll(
                 disjoint borrow i32[-2147483648 2147483647][] input,
                 disjoint borrow mut i32[-2147483648 2147483647][] output,
                 i32[0 10] count) {
@@ -1778,7 +1775,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Run() {
+            unsafe fn void Run() {
                 while willexit independent (false) {
                     stack mut i32[-2147483648 2147483647][2] values = { 1, 2 };
                 }
@@ -1798,7 +1795,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Copy(
+            unsafe fn void Copy(
                 disjoint borrow i32[-2147483648 2147483647][] input,
                 disjoint borrow mut i32[-2147483648 2147483647][] output,
                 i32[0 10] count) {
@@ -1822,7 +1819,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Copy(
+            unsafe fn void Copy(
                 disjoint borrow i32[-2147483648 2147483647][] input,
                 disjoint borrow mut i32[-2147483648 2147483647][] output,
                 i32[0 10] count) {
@@ -1848,7 +1845,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Copy(
+            unsafe fn void Copy(
                 disjoint borrow i32[-2147483648 2147483647][] input,
                 disjoint borrow mut i32[-2147483648 2147483647][] output,
                 i32[0 10] count) {
@@ -1875,7 +1872,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            fn void Run(rawmutptr<i32[-2147483648 2147483647]> ptr) {
+            unsafe fn void Run(rawmutptr<i32[-2147483648 2147483647]> ptr) {
                 while willexit independent (false) {
                     *ptr = 1;
                 }

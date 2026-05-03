@@ -1,6 +1,6 @@
 import System
-import System.Net
 import System.Net.Tcp
+import System.Net
 import System.Process
 module Benchmarks.Network.TcpScatterGatherLoopback
 
@@ -10,11 +10,11 @@ const ChunkBytes = 4096;
 const Iterations = 256;
 const ExpectedBytes = 1048576;
 
-fn System.Net.IPv4Endpoint LoopbackEndpoint(i32[0 63] attempt) {
-    stack i32[-2147483648 2147483647] processId = System.Process.CurrentId();
-    stack mut i32[0 2147483647] positiveProcessId = 0;
+unsafe fn System.Net.IPv4Endpoint LoopbackEndpoint(i32[0 63] attempt) {
+    stack i32[min max] processId = System.Process.CurrentId();
+    stack mut i32[0 max] positiveProcessId = 0;
     if (processId > 0) {
-        positiveProcessId = (i32[0 2147483647])processId;
+        positiveProcessId = (i32[0 max])processId;
     }
 
     stack u16[0 65535] port = (u16[0 65535])(41000 + (positiveProcessId % 20000) + attempt);
@@ -29,20 +29,26 @@ fn System.Net.IPv4Endpoint LoopbackEndpoint(i32[0 63] attempt) {
     };
 }
 
-fn bool WriteExact(mut borrow System.Net.Tcp.TcpClient client, borrow i8[-128 127][] source, i64[0 max] expected) {
-    stack System.Net.NetResult<i64[0 max]> written = client.Write(source);
+unsafe fn bool WriteVectorExact(
+    mut borrow System.Net.Tcp.TcpClient client,
+    borrow i8[-128 127][] firstSource,
+    borrow i8[-128 127][] secondSource) {
+    stack System.Net.NetResult<i64[0 max]> written = client.WriteVectored(firstSource, secondSource);
     switch (written) {
         case System.Net.NetResult<i64[0 max]>.Err(var writeError):
             return false;
         case System.Net.NetResult<i64[0 max]>.Ok(var writtenBytes):
-            return writtenBytes == expected;
+            return writtenBytes == ChunkBytes;
     }
 }
 
-fn bool ReadExact(mut borrow System.Net.Tcp.TcpClient server, mut borrow i8[-128 127][] destination, i64[0 max] expected) {
+unsafe fn bool ReadVectorExact(
+    mut borrow System.Net.Tcp.TcpClient server,
+    mut borrow i8[-128 127][] firstDestination,
+    mut borrow i8[-128 127][] secondDestination) {
     stack mut i64[0 max] readTotal = 0;
-    while willexit (readTotal < expected) {
-        stack System.Net.NetResult<i64[0 max]> read = server.Read(destination);
+    while willexit (readTotal < ChunkBytes) {
+        stack System.Net.NetResult<i64[0 max]> read = server.ReadVectored(firstDestination, secondDestination);
         switch (read) {
             case System.Net.NetResult<i64[0 max]>.Err(var readError):
                 return false;
@@ -58,7 +64,7 @@ fn bool ReadExact(mut borrow System.Net.Tcp.TcpClient server, mut borrow i8[-128
     return true;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack mut i8[-128 127][1536] writeFirst = { 0 };
     stack mut i8[-128 127][2560] writeSecond = { 0 };
     stack mut i8[-128 127][1536] readFirst = { 0 };
@@ -100,28 +106,16 @@ export ffi fn i32[min max] main() {
                                 stack mut i64[0 max] totalRead = 0;
 
                                 for willexit (stack mut i32[0 256] iteration = 0; iteration < Iterations; iteration += 1) {
-                                    if (!WriteExact(client, writeFirstView, FirstChunkBytes)) {
+                                    if (!WriteVectorExact(client, writeFirstView, writeSecondView)) {
                                         server.Close();
                                         client.Close();
                                         return 4;
                                     }
 
-                                    if (!WriteExact(client, writeSecondView, SecondChunkBytes)) {
+                                    if (!ReadVectorExact(server, readFirstView, readSecondView)) {
                                         server.Close();
                                         client.Close();
                                         return 5;
-                                    }
-
-                                    if (!ReadExact(server, readFirstView, FirstChunkBytes)) {
-                                        server.Close();
-                                        client.Close();
-                                        return 6;
-                                    }
-
-                                    if (!ReadExact(server, readSecondView, SecondChunkBytes)) {
-                                        server.Close();
-                                        client.Close();
-                                        return 7;
                                     }
 
                                     totalRead += ChunkBytes;
@@ -132,7 +126,7 @@ export ffi fn i32[min max] main() {
                                 server.Close();
 
                                 if (totalRead != ExpectedBytes) {
-                                    return 8;
+                                    return 6;
                                 }
 
                                 return 0;

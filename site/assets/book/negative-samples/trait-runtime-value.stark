@@ -8,7 +8,7 @@ struct Holder {
     Comparable Rules;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack Comparable local = new Comparable();
     return 0;
 }

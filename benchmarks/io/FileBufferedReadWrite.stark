@@ -1,13 +1,13 @@
-import System.Experimental.IO.File
-import System.Experimental.Runtime.Buffer
+import System.IO.File
+import System.Runtime.Buffer
 import System.IO
 import System.Memory
-module Benchmarks.IO.ExperimentalFileBufferedReadWrite
+module Benchmarks.IO.FileBufferedReadWrite
 
 const Iterations = 64;
 const Chunks = 33;
 
-fn bool IOOk(System.IO.IOStatus status) {
+unsafe fn bool IOOk(System.IO.IOStatus status) {
     switch (status) {
         case System.IO.IOStatus.Ok:
             return true;
@@ -16,7 +16,7 @@ fn bool IOOk(System.IO.IOStatus status) {
     }
 }
 
-fn bool MemoryOk(System.Memory.MemoryStatus status) {
+unsafe fn bool MemoryOk(System.Memory.MemoryStatus status) {
     switch (status) {
         case System.Memory.MemoryStatus.Ok:
             return true;
@@ -25,7 +25,7 @@ fn bool MemoryOk(System.Memory.MemoryStatus status) {
     }
 }
 
-fn i64[min max] CountOrNegative(System.IO.IOResult<i64[0 max]> result) {
+unsafe fn i64[min max] CountOrNegative(System.IO.IOResult<i64[0 max]> result) {
     switch (result) {
         case System.IO.IOResult<i64[0 max]>.Ok(var value):
             return (i64[min max])value;
@@ -34,7 +34,7 @@ fn i64[min max] CountOrNegative(System.IO.IOResult<i64[0 max]> result) {
     }
 }
 
-fn i64[min max] SumBytes(borrow i8[-128 127][] values, i64[0 max] count) {
+unsafe fn i64[min max] SumBytes(borrow i8[-128 127][] values, i64[0 max] count) {
     stack mut i64[min max] checksum = 0;
     for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
         checksum += (i64[min max])values[index];
@@ -43,7 +43,7 @@ fn i64[min max] SumBytes(borrow i8[-128 127][] values, i64[0 max] count) {
     return checksum;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack mut i64[min max] checksum = 0;
     stack mut i8[-128 127][32] source = {
         1, 2, 3, 4, 5, 6, 7, 8,
@@ -58,26 +58,26 @@ export ffi fn i32[min max] main() {
         0, 0, 0, 0, 0, 0, 0, 0
     };
 
-    System.Experimental.IO.File.Delete("experimental-buffered-rw.tmp");
+    System.IO.File.Delete("buffered-rw.tmp");
 
     for willexit (stack mut i32[0 64] iteration = 0; iteration < Iterations; iteration += 1) {
-        stack System.IO.IOResult<System.Experimental.IO.File.File> opened =
-            System.Experimental.IO.File.Open(
-                "experimental-buffered-rw.tmp",
-                System.Experimental.IO.File.FileMode.Write,
-                System.Experimental.IO.File.FileBuffering.Full);
+        stack System.IO.IOResult<System.IO.File.File> opened =
+            System.IO.File.Open(
+                "buffered-rw.tmp",
+                System.IO.File.FileMode.Write,
+                System.IO.File.FileBuffering.Full);
         switch (opened) {
-            case System.IO.IOResult<System.Experimental.IO.File.File>.Err(var error):
+            case System.IO.IOResult<System.IO.File.File>.Err(var error):
                 return 1;
-            case System.IO.IOResult<System.Experimental.IO.File.File>.Ok(var value):
-                stack mut System.Experimental.IO.File.File writer = value;
+            case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+                stack mut System.IO.File.File writer = value;
                 for willexit (stack mut i32[0 32] chunk = 0; chunk < 32; chunk += 1) {
                     if (CountOrNegative(writer.Write(source)) != 32) {
                         return 2;
                     }
                 }
 
-                stack mut System.Experimental.Runtime.Buffer.DynamicByteBuffer tail = new();
+                stack mut System.Runtime.Buffer.DynamicByteBuffer tail = new();
                 if (!MemoryOk(tail.WriteSlice(source, 32))) {
                     return 3;
                 }
@@ -87,14 +87,14 @@ export ffi fn i32[min max] main() {
                 }
         }
 
-        stack System.IO.IOResult<System.Experimental.IO.File.File> readOpened =
-            System.Experimental.IO.File.Open("experimental-buffered-rw.tmp", System.Experimental.IO.File.FileMode.Read);
+        stack System.IO.IOResult<System.IO.File.File> readOpened =
+            System.IO.File.Open("buffered-rw.tmp", System.IO.File.FileMode.Read);
         switch (readOpened) {
-            case System.IO.IOResult<System.Experimental.IO.File.File>.Err(var readError):
+            case System.IO.IOResult<System.IO.File.File>.Err(var readError):
                 return 5;
-            case System.IO.IOResult<System.Experimental.IO.File.File>.Ok(var readValue):
-                stack mut System.Experimental.IO.File.File reader = readValue;
-                if (CountOrNegative(reader.Seek(0, System.Experimental.IO.File.SeekOrigin.Begin)) != 0) {
+            case System.IO.IOResult<System.IO.File.File>.Ok(var readValue):
+                stack mut System.IO.File.File reader = readValue;
+                if (CountOrNegative(reader.Seek(0, System.IO.File.SeekOrigin.Begin)) != 0) {
                     return 6;
                 }
 
@@ -111,7 +111,7 @@ export ffi fn i32[min max] main() {
                 }
         }
 
-        if (!IOOk(System.Experimental.IO.File.Delete("experimental-buffered-rw.tmp"))) {
+        if (!IOOk(System.IO.File.Delete("buffered-rw.tmp"))) {
             return 9;
         }
     }

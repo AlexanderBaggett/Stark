@@ -93,12 +93,6 @@ function Get-BenchmarkVariantDescriptor {
         return $null
     }
 
-    $prefix = ""
-    if ($stem.StartsWith("Experimental", [StringComparison]::Ordinal)) {
-        $prefix = "Experimental"
-        $stem = $stem.Substring("Experimental".Length)
-    }
-
     if ($category -ne "collections") {
         $subsystem = switch ($category) {
             "allocator" { "Memory" }
@@ -115,7 +109,6 @@ function Get-BenchmarkVariantDescriptor {
         }
 
         return [PSCustomObject]@{
-            Prefix = $prefix
             BenchmarkGroup = "benchmarks/$category/$stem"
         }
     }
@@ -153,7 +146,6 @@ function Get-BenchmarkVariantDescriptor {
 
     $canonicalStem = "$collection$scenario"
     return [PSCustomObject]@{
-        Prefix = $prefix
         BenchmarkGroup = "benchmarks/collections/$canonicalStem"
     }
 }
@@ -172,16 +164,9 @@ function Get-BenchmarkLabel {
         }
     }
 
-    $languageLabel = $Language
-    if ($Language -eq "stark") {
-        if ($descriptor.Prefix -eq "Experimental") {
-            $languageLabel = "stark-experimental"
-        }
-    }
-
     return [PSCustomObject]@{
         BenchmarkGroup = $descriptor.BenchmarkGroup
-        Language = $languageLabel
+        Language = $Language
     }
 }
 
@@ -1147,7 +1132,7 @@ try {
             RelativePath = $relativePath
             BenchmarkId = $benchmarkId
             BenchmarkGroup = $label.BenchmarkGroup
-            VariantOrder = if ($stem.StartsWith("Experimental", [StringComparison]::Ordinal)) { 1 } else { 0 }
+            VariantOrder = 0
         }
     } | Sort-Object BenchmarkGroup, VariantOrder, RelativePath)
 

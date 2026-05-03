@@ -896,6 +896,95 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void RawPointerSignaturesRequireUnsafeFunctions()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Touch(rawptr<i32[-2147483648 2147483647]> pointer);
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3024"
+                && diagnostic.Message.Contains("uses raw pointer types and must be declared 'unsafe'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void RawPointerLocalOperationsRequireUnsafeContext()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run() {
+                stack mut i32[-2147483648 2147483647] value = 1;
+                stack rawmutptr<i32[-2147483648 2147483647]> pointer = &value;
+                *pointer = 2;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3024"
+                && diagnostic.Message.Contains("local raw pointer declarations", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3024"
+                && diagnostic.Message.Contains("Raw pointer address-of operator", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3024"
+                && diagnostic.Message.Contains("Raw pointer dereference operator", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void UnsafeBlocksPermitRawPointerLocalOperations()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[-2147483648 2147483647] Run() {
+                stack mut i32[-2147483648 2147483647] value = 1;
+                unsafe {
+                    stack rawmutptr<i32[-2147483648 2147483647]> pointer = &value;
+                    *pointer = 2;
+                }
+
+                return value;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void FfiDeclarationsRequireUnsafeModifier()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            ffi fn void NativeCall();
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3024"
+                && diagnostic.Message.Contains("FFI and assembly function 'NativeCall' must be declared 'unsafe'", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void UnsafeFunctionItemsDoNotPromoteToOrdinaryFunctionPointers()
     {
         var outsideUnsafe = Compile(
@@ -940,14 +1029,10 @@ public sealed class TypeCheckingTests
             """,
             new CompilerOptions(StopAfterPassId: "type-check"));
 
-        Assert.False(insideUnsafe.Succeeded);
-        Assert.Contains(
-            insideUnsafe.Diagnostics,
-            static diagnostic => diagnostic.Code == "STK3024"
-                && diagnostic.Message.Contains("does not carry an unsafe requirement", StringComparison.Ordinal));
+        Assert.True(insideUnsafe.Succeeded, string.Join(", ", insideUnsafe.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         Assert.True(insideUnsafe.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? insideUnsafeModel));
         Assert.NotNull(insideUnsafeModel);
-        Assert.Empty(insideUnsafeModel.AddressTakenFunctions);
+        Assert.Single(insideUnsafeModel.AddressTakenFunctions);
     }
 
     [Fact]
@@ -1604,7 +1689,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            finite law i32[-2147483648 2147483647] Run(i64[-9223372036854775808 9223372036854775807] bits, ascii text) {
+            unsafe finite law i32[-2147483648 2147483647] Run(i64[-9223372036854775808 9223372036854775807] bits, ascii text) {
                 stack mut i32[-2147483648 2147483647] value = 7;
                 stack rawmutptr<i32[-2147483648 2147483647]> ptr = &value;
                 stack rawptr<i32[-2147483648 2147483647]> readonlyPtr = (rawptr<i32[-2147483648 2147483647]>)ptr;
@@ -1758,8 +1843,8 @@ public sealed class TypeCheckingTests
             module System.Text
 
             public finite law ascii AsciiView(Ascii source);
-            public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
-            public fn bool TryFormatI32Ascii(rawmutptr<Ascii> destination, i32[-2147483648 2147483647] value);
+            public unsafe fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+            public unsafe fn bool TryFormatI32Ascii(rawmutptr<Ascii> destination, i32[-2147483648 2147483647] value);
 
             fn Ascii Label(i32[-2147483648 2147483647] score) {
                 stack Ascii label[64] = $"Score: {score}";
@@ -1780,8 +1865,8 @@ public sealed class TypeCheckingTests
 
             public finite law ascii AsciiView(Ascii source);
             public finite law unicode UnicodeView(Unicode source);
-            public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
-            public fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
+            public unsafe fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+            public unsafe fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
 
             fn Ascii JoinAscii(Ascii left, ascii right) {
                 stack Ascii combined[64] = left + right;
@@ -1933,7 +2018,7 @@ public sealed class TypeCheckingTests
                 rawmutptr<i32[-2147483648 2147483647]> Ptr;
             }
 
-            finite law void Run(frozen Box box, frozen PtrBox ptrBox) {
+            unsafe finite law void Run(frozen Box box, frozen PtrBox ptrBox) {
                 stack rawptr<frozen i32[-2147483648 2147483647]> valuePtr = &box.Value;
                 stack rawptr<frozen i32[-2147483648 2147483647]> readonlyPtr = ptrBox.Ptr;
                 stack bool same = *valuePtr == *readonlyPtr;
@@ -1957,7 +2042,7 @@ public sealed class TypeCheckingTests
                 rawmutptr<i32[-2147483648 2147483647]> Ptr;
             }
 
-            fn void Inspect(const PtrBox box, const rawmutptr<i32[-2147483648 2147483647]> ptr) {
+            unsafe fn void Inspect(const PtrBox box, const rawmutptr<i32[-2147483648 2147483647]> ptr) {
                 stack rawptr<frozen i32[-2147483648 2147483647]> fieldPtr = box.Ptr;
                 stack rawptr<frozen i32[-2147483648 2147483647]> directPtr = ptr;
                 stack i32[-2147483648 2147483647] value = *ptr;
@@ -2004,11 +2089,11 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Inspect(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
+            unsafe fn void Inspect(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
                 return;
             }
 
-            fn void Forward(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
+            unsafe fn void Forward(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
                 stack rawptr<frozen i32[-2147483648 2147483647]> local = ptr;
                 Inspect(local);
                 return;
@@ -2030,7 +2115,7 @@ public sealed class TypeCheckingTests
                 return;
             }
 
-            fn void Forward(
+            unsafe fn void Forward(
                 const rawmutptr<i32[-2147483648 2147483647]>[count] pointer,
                 i32[1 10] count) {
                 unsafe {
@@ -2346,7 +2431,7 @@ public sealed class TypeCheckingTests
 
             record Pair<A, B>(A First, B Second) { }
 
-            fn i32[-2147483648 2147483647] Read(rawptr<Pair<i32[-2147483648 2147483647], bool>> ptr) {
+            unsafe fn i32[-2147483648 2147483647] Read(rawptr<Pair<i32[-2147483648 2147483647], bool>> ptr) {
                 if ((*ptr).Second) {
                     return (*ptr).First;
                 }
@@ -2659,7 +2744,7 @@ public sealed class TypeCheckingTests
 
             alias Ptr<T> = rawptr<T>;
 
-            fn i32[-2147483648 2147483647] Read(Ptr<i32[-2147483648 2147483647]> value) {
+            unsafe fn i32[-2147483648 2147483647] Read(Ptr<i32[-2147483648 2147483647]> value) {
                 return *value;
             }
             """,

@@ -1,7 +1,7 @@
-import System.Process
+﻿import System.Process
 module Benchmarks.Micro.Arithmetic
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack i64[min max] seed = (i64[min max])System.Process.CurrentId();
     stack mut i64[min max] total = seed % 97;
 

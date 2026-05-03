@@ -1,11 +1,11 @@
 module FfiExample
 
-ffi fn i32[min max] abs(i32[min max] value);
+unsafe ffi fn i32[min max] abs(i32[min max] value);
 
 fn i32[min max] DistanceFromZero(i32[min max] value) {
     return abs(value);
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     return DistanceFromZero(-7);
 }

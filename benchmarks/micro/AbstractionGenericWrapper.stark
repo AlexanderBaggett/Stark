@@ -1,19 +1,19 @@
 import System.Process
 module Benchmarks.Micro.AbstractionGenericWrapper
 
-finite law T Identity<T>(T value) {
+unsafe finite law T Identity<T>(T value) {
     return value;
 }
 
-finite law i64[min max] MixCore(i64[min max] value, i64[min max] salt) {
+unsafe finite law i64[min max] MixCore(i64[min max] value, i64[min max] salt) {
     return (((value * 31) + salt) ^ (value >> 3)) % 1000003;
 }
 
-finite law i64[min max] Mix<T>(i64[min max] value, i64[min max] salt, T tag) {
+unsafe finite law i64[min max] Mix<T>(i64[min max] value, i64[min max] salt, T tag) {
     return MixCore(Identity(value), Identity(salt));
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack mut i64[min max] total = (i64[min max])System.Process.CurrentId();
 
     for willexit (stack mut i32[0 200000] i = 0; i < 200000; i += 1) {

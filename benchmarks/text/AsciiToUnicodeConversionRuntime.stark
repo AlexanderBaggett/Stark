@@ -1,12 +1,12 @@
-import System
+﻿import System
 module Benchmarks.Text.AsciiToUnicodeConversionRuntime
 
-ffi fn i64[0 max] strlen(rawptr<i8[-128 127]> text);
+unsafe ffi fn i64[0 max] strlen(rawptr<i8[-128 127]> text);
 
 const Iterations = 50000;
 const Capacity = 512;
 
-export ffi fn i32[min max] main(i32[min max] argc, rawmutptr<rawmutptr<i8[-128 127]>> argv) {
+export unsafe ffi fn i32[min max] main(i32[min max] argc, rawmutptr<rawmutptr<i8[-128 127]>> argv) {
     if (argc <= 0 || argv == null) {
         return 1;
     }

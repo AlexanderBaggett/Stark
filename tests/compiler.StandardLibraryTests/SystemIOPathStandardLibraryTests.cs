@@ -1,4 +1,4 @@
-using Stark.Compiler;
+﻿using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
@@ -13,8 +13,8 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(
                 """
-                import System.Experimental.IO.Path
-                import System.Experimental.Text
+                import System.IO.Path
+                import System.Text
                 import System.Memory
                 module Demo
 
@@ -28,13 +28,13 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 }
 
                 fn i64[0 max] BuildAndInspect() {
-                    stack mut System.Experimental.Text.OwnedAscii path = new();
-                    if (!Ok(System.Experimental.IO.Path.TryJoin(path, "alpha/", "/beta.txt"))) {
+                    stack mut System.Text.OwnedAscii path = new();
+                    if (!Ok(System.IO.Path.TryJoin(path, "alpha/", "/beta.txt"))) {
                         return 0;
                     }
 
                     stack ascii view = path.View();
-                    stack System.Experimental.IO.Path.PathFacts facts = System.Experimental.IO.Path.GetFacts(view);
+                    stack System.IO.Path.PathFacts facts = System.IO.Path.GetFacts(view);
                     return (i64[0 max])(path.Length()
                         + facts.ExtensionLength()
                         + facts.BaseNameLength()
@@ -63,7 +63,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var modulePath = Path.Combine(sourceRoot, "System", "Experimental", "IO", "Path.stark");
+        var modulePath = Path.Combine(sourceRoot, "System", "IO", "Path.stark");
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(File.ReadAllText(modulePath), modulePath),
             new CompilerOptions(
@@ -101,16 +101,16 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("@TryJoinPointerRanges", tryJoinBody, StringComparison.Ordinal);
         Assert.Contains("@TryJoinPointerRanges", tryJoinConstBody, StringComparison.Ordinal);
         Assert.True(
-            CountOccurrences(tryJoinPointerRangesBody, "@System_Experimental_Memory_InitializeBytesFromPointerDisjoint") >= 2,
+            CountOccurrences(tryJoinPointerRangesBody, "@__stark_inline_clone_System_Memory_InitializeBytesFromPointerDisjoint") >= 2,
             "Expected TryJoin pointer core to copy left and right path ranges through explicit tail-region pointer initialization helpers.");
-        Assert.DoesNotContain("@System_Experimental_Text_OwnedAscii_AppendAscii", tryJoinConstBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("@System_Experimental_Text_OwnedAscii_AppendAscii", tryNormalizeConstBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Text_OwnedAscii_AppendAscii", tryJoinConstBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Text_OwnedAscii_AppendAscii", tryNormalizeConstBody, StringComparison.Ordinal);
         Assert.Contains("@AppendNormalizedSeparatorsCore", tryNormalizeBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@AppendNormalizedSeparators(", tryNormalizeBody, StringComparison.Ordinal);
         Assert.DoesNotContain("slot_snapshot", tryJoinConstBody, StringComparison.Ordinal);
         Assert.DoesNotContain("slot_snapshot", tryNormalizeConstBody, StringComparison.Ordinal);
-        Assert.Contains("@System_Experimental_Text_AsciiLength", getConstFactsBody, StringComparison.Ordinal);
-        Assert.Contains("@System_Experimental_Text_AsciiData", getConstFactsBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Text_AsciiLength", getConstFactsBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Text_AsciiData", getConstFactsBody, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -122,8 +122,8 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(
                 """
-                import System.Experimental.IO.Path
-                import System.Experimental.Text
+                import System.IO.Path
+                import System.Text
                 import System.Memory
                 module Demo
 
@@ -185,27 +185,27 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool IsOwnedJoinedPath(System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii> result) {
+                fn bool IsOwnedJoinedPath(System.Memory.MemoryResult<System.Text.OwnedAscii> result) {
                     switch (result) {
-                        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Ok(var value):
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
                             return value.Length() == 14 && IsJoinedPath(value.View());
-                        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Err(var error):
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
                             return false;
                     }
                 }
 
-                fn bool IsOwnedNormalizedPath(System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii> result) {
+                fn bool IsOwnedNormalizedPath(System.Memory.MemoryResult<System.Text.OwnedAscii> result) {
                     switch (result) {
-                        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Ok(var value):
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
                             return value.Length() == 20 && IsNormalizedPath(value.View());
-                        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Err(var error):
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
                             return false;
                     }
                 }
 
                 fn bool Probe() {
-                    stack mut System.Experimental.Text.OwnedAscii joined = new();
-                    if (!Ok(System.Experimental.IO.Path.TryJoin(joined, "alpha/", "/beta.txt"))) {
+                    stack mut System.Text.OwnedAscii joined = new();
+                    if (!Ok(System.IO.Path.TryJoin(joined, "alpha/", "/beta.txt"))) {
                         return false;
                     }
 
@@ -214,7 +214,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         return false;
                     }
 
-                    stack System.Experimental.IO.Path.PathFacts facts = System.Experimental.IO.Path.GetFacts(joinedView);
+                    stack System.IO.Path.PathFacts facts = System.IO.Path.GetFacts(joinedView);
                     if (!IsTextExtension(facts.Extension()) || !IsBetaBaseName(facts.BaseName()) || !IsAlphaDirectory(facts.DirectoryName())) {
                         return false;
                     }
@@ -223,34 +223,34 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         return false;
                     }
 
-                    stack mut System.Experimental.Text.OwnedAscii normalized = new();
-                    if (!Ok(System.Experimental.IO.Path.TryNormalizeSeparators(normalized, "alpha//beta///gamma.txt"))) {
+                    stack mut System.Text.OwnedAscii normalized = new();
+                    if (!Ok(System.IO.Path.TryNormalizeSeparators(normalized, "alpha//beta///gamma.txt"))) {
                         return false;
                     }
 
-                    stack System.Experimental.IO.Path.PathFacts constFacts = System.Experimental.IO.Path.GetConstFacts("alpha/beta.txt");
+                    stack System.IO.Path.PathFacts constFacts = System.IO.Path.GetConstFacts("alpha/beta.txt");
                     if (!IsTextExtension(constFacts.Extension())
-                        || !IsBetaBaseName(System.Experimental.IO.Path.BaseNameConst("alpha/beta.txt"))
-                        || !IsAlphaDirectory(System.Experimental.IO.Path.DirectoryNameConst("alpha/beta.txt"))) {
+                        || !IsBetaBaseName(System.IO.Path.BaseNameConst("alpha/beta.txt"))
+                        || !IsAlphaDirectory(System.IO.Path.DirectoryNameConst("alpha/beta.txt"))) {
                         return false;
                     }
 
-                    stack mut System.Experimental.Text.OwnedAscii constJoined = new();
-                    if (!Ok(System.Experimental.IO.Path.TryJoinConst(constJoined, ConstLeft, ConstRight)) || !IsJoinedPath(constJoined.View())) {
+                    stack mut System.Text.OwnedAscii constJoined = new();
+                    if (!Ok(System.IO.Path.TryJoinConst(constJoined, ConstLeft, ConstRight)) || !IsJoinedPath(constJoined.View())) {
                         return false;
                     }
 
-                    stack mut System.Experimental.Text.OwnedAscii constNormalized = new();
-                    if (!Ok(System.Experimental.IO.Path.TryNormalizeSeparatorsConst(constNormalized, ConstNormalizedSource)) || !IsNormalizedPath(constNormalized.View())) {
+                    stack mut System.Text.OwnedAscii constNormalized = new();
+                    if (!Ok(System.IO.Path.TryNormalizeSeparatorsConst(constNormalized, ConstNormalizedSource)) || !IsNormalizedPath(constNormalized.View())) {
                         return false;
                     }
 
                     return IsNormalizedPath(normalized.View())
-                        && IsOwnedJoinedPath(System.Experimental.IO.Path.Join("alpha", "beta.txt"))
-                        && IsOwnedJoinedPath(System.Experimental.IO.Path.JoinConst(ConstLeft, ConstRight))
-                        && IsOwnedJoinedPath(System.Experimental.IO.Path.Join("alpha/", "/beta.txt"))
-                        && IsOwnedNormalizedPath(System.Experimental.IO.Path.NormalizeSeparators("alpha//beta///gamma.txt"))
-                        && IsOwnedNormalizedPath(System.Experimental.IO.Path.NormalizeSeparatorsConst(ConstNormalizedSource));
+                        && IsOwnedJoinedPath(System.IO.Path.Join("alpha", "beta.txt"))
+                        && IsOwnedJoinedPath(System.IO.Path.JoinConst(ConstLeft, ConstRight))
+                        && IsOwnedJoinedPath(System.IO.Path.Join("alpha/", "/beta.txt"))
+                        && IsOwnedNormalizedPath(System.IO.Path.NormalizeSeparators("alpha//beta///gamma.txt"))
+                        && IsOwnedNormalizedPath(System.IO.Path.NormalizeSeparatorsConst(ConstNormalizedSource));
                 }
                 """,
                 appPath),
@@ -284,8 +284,8 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
             await File.WriteAllTextAsync(
                 appPath,
                 """
-                import System.Experimental.IO.Path
-                import System.Experimental.Text
+                import System.IO.Path
+                import System.Text
                 import System.Memory
                 module App
 
@@ -303,12 +303,12 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 }
 
                 finite law i8[-128 127] UnitAt(ascii value, i64[0 max] index) {
-                    stack rawptr<i8[-128 127]> data = System.Experimental.Text.AsciiData(value);
+                    stack rawptr<i8[-128 127]> data = System.Text.AsciiData(value);
                     return *(&data[index]);
                 }
 
                 finite law i8[-128 127] SeparatorUnit() {
-                    return UnitAt(System.Experimental.IO.Path.DirectorySeparator(), 0);
+                    return UnitAt(System.IO.Path.DirectorySeparator(), 0);
                 }
 
                 finite law bool IsSeparatorUnit(i8[-128 127] value) {
@@ -316,8 +316,8 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         return true;
                     }
 
-                    stack ascii alternate = System.Experimental.IO.Path.AlternateDirectorySeparator();
-                    if (System.Experimental.Text.AsciiLength(alternate) <= 0) {
+                    stack ascii alternate = System.IO.Path.AlternateDirectorySeparator();
+                    if (System.Text.AsciiLength(alternate) <= 0) {
                         return false;
                     }
 
@@ -325,7 +325,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 }
 
                 fn bool IsJoinedPath(ascii value) {
-                    if (System.Experimental.Text.AsciiLength(value) != 14) {
+                    if (System.Text.AsciiLength(value) != 14) {
                         return false;
                     }
 
@@ -338,7 +338,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 }
 
                 fn bool IsNormalizedPath(ascii value) {
-                    if (System.Experimental.Text.AsciiLength(value) != 20) {
+                    if (System.Text.AsciiLength(value) != 20) {
                         return false;
                     }
 
@@ -404,11 +404,11 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 }
 
                 fn bool IsEmpty(ascii value) {
-                    return System.Experimental.Text.AsciiLength(value) == 0;
+                    return System.Text.AsciiLength(value) == 0;
                 }
 
                 fn bool CheckFacts() {
-                    stack System.Experimental.IO.Path.PathFacts facts = System.Experimental.IO.Path.GetFacts("alpha/beta.txt");
+                    stack System.IO.Path.PathFacts facts = System.IO.Path.GetFacts("alpha/beta.txt");
                     if (facts.PathLength() != 14
                         || facts.ExtensionLength() != 4
                         || facts.BaseNameLength() != 4
@@ -419,43 +419,43 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         return false;
                     }
 
-                    stack System.Experimental.IO.Path.PathFacts constFacts = System.Experimental.IO.Path.GetConstFacts("alpha/beta.txt");
+                    stack System.IO.Path.PathFacts constFacts = System.IO.Path.GetConstFacts("alpha/beta.txt");
                     if (constFacts.PathLength() != 14
                         || constFacts.ExtensionLength() != 4
                         || constFacts.BaseNameLength() != 4
                         || constFacts.DirectoryNameLength() != 5
-                        || !IsTextExtension(System.Experimental.IO.Path.ExtensionConst("alpha/beta.txt"))
-                        || !IsBetaBaseName(System.Experimental.IO.Path.BaseNameConst("alpha/beta.txt"))
-                        || !IsAlphaDirectory(System.Experimental.IO.Path.DirectoryNameConst("alpha/beta.txt"))) {
+                        || !IsTextExtension(System.IO.Path.ExtensionConst("alpha/beta.txt"))
+                        || !IsBetaBaseName(System.IO.Path.BaseNameConst("alpha/beta.txt"))
+                        || !IsAlphaDirectory(System.IO.Path.DirectoryNameConst("alpha/beta.txt"))) {
                         return false;
                     }
 
-                    stack System.Experimental.IO.Path.PathFacts archive = System.Experimental.IO.Path.GetFacts("archive.tar.gz");
+                    stack System.IO.Path.PathFacts archive = System.IO.Path.GetFacts("archive.tar.gz");
                     if (!IsGzExtension(archive.Extension()) || !IsArchiveBaseName(archive.BaseName()) || archive.DirectoryNameLength() != 0) {
                         return false;
                     }
 
-                    stack System.Experimental.IO.Path.PathFacts hidden = System.Experimental.IO.Path.GetFacts("alpha/.hidden");
+                    stack System.IO.Path.PathFacts hidden = System.IO.Path.GetFacts("alpha/.hidden");
                     if (!IsEmpty(hidden.Extension()) || !IsHiddenBaseName(hidden.BaseName()) || !IsAlphaDirectory(hidden.DirectoryName())) {
                         return false;
                     }
 
-                    stack System.Experimental.IO.Path.PathFacts root = System.Experimental.IO.Path.GetFacts("/");
+                    stack System.IO.Path.PathFacts root = System.IO.Path.GetFacts("/");
                     return root.PathLength() == 1
                         && root.DirectoryNameLength() == 1
                         && root.BaseNameLength() == 0
-                        && IsEmpty(System.Experimental.IO.Path.GetFacts("").BaseName())
-                        && IsEmpty(System.Experimental.IO.Path.Extension(".gitignore"))
-                        && IsHiddenBaseName(System.Experimental.IO.Path.BaseName("alpha/.hidden"));
+                        && IsEmpty(System.IO.Path.GetFacts("").BaseName())
+                        && IsEmpty(System.IO.Path.Extension(".gitignore"))
+                        && IsHiddenBaseName(System.IO.Path.BaseName("alpha/.hidden"));
                 }
 
                 fn i32[min max] CheckJoinAndNormalize() {
-                    stack mut System.Experimental.Text.OwnedAscii joined = new();
-                    if (!Ok(System.Experimental.IO.Path.TryJoin(joined, "alpha/", "/beta.txt"))) {
+                    stack mut System.Text.OwnedAscii joined = new();
+                    if (!Ok(System.IO.Path.TryJoin(joined, "alpha/", "/beta.txt"))) {
                         return 1;
                     }
 
-                    if (System.Experimental.Text.AsciiLength(joined.View()) != 14) {
+                    if (System.Text.AsciiLength(joined.View()) != 14) {
                         return 7;
                     }
 
@@ -467,58 +467,58 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         return 9;
                     }
 
-                    stack mut System.Experimental.Text.OwnedAscii normalized = new();
-                    if (!Ok(System.Experimental.IO.Path.TryNormalizeSeparators(normalized, "alpha//beta///gamma.txt")) || !IsNormalizedPath(normalized.View())) {
+                    stack mut System.Text.OwnedAscii normalized = new();
+                    if (!Ok(System.IO.Path.TryNormalizeSeparators(normalized, "alpha//beta///gamma.txt")) || !IsNormalizedPath(normalized.View())) {
                         return 2;
                     }
 
-                    stack mut System.Experimental.Text.OwnedAscii constJoined = new();
-                    if (!Ok(System.Experimental.IO.Path.TryJoinConst(constJoined, ConstLeft, ConstRight)) || !IsJoinedPath(constJoined.View())) {
+                    stack mut System.Text.OwnedAscii constJoined = new();
+                    if (!Ok(System.IO.Path.TryJoinConst(constJoined, ConstLeft, ConstRight)) || !IsJoinedPath(constJoined.View())) {
                         return 10;
                     }
 
-                    stack mut System.Experimental.Text.OwnedAscii constNormalized = new();
-                    if (!Ok(System.Experimental.IO.Path.TryNormalizeSeparatorsConst(constNormalized, ConstNormalizedSource)) || !IsNormalizedPath(constNormalized.View())) {
+                    stack mut System.Text.OwnedAscii constNormalized = new();
+                    if (!Ok(System.IO.Path.TryNormalizeSeparatorsConst(constNormalized, ConstNormalizedSource)) || !IsNormalizedPath(constNormalized.View())) {
                         return 11;
                     }
 
-                    stack System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii> ownedJoin = System.Experimental.IO.Path.Join("alpha", "beta.txt");
+                    stack System.Memory.MemoryResult<System.Text.OwnedAscii> ownedJoin = System.IO.Path.Join("alpha", "beta.txt");
                     switch (ownedJoin) {
-                        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Ok(var ownedJoinValue):
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var ownedJoinValue):
                             if (!IsJoinedPath(ownedJoinValue.View())) {
                                 return 3;
                             }
-                        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Err(var ownedJoinError):
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var ownedJoinError):
                             return 4;
                     }
 
-                    stack System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii> ownedConstJoin = System.Experimental.IO.Path.JoinConst(ConstLeft, ConstRight);
+                    stack System.Memory.MemoryResult<System.Text.OwnedAscii> ownedConstJoin = System.IO.Path.JoinConst(ConstLeft, ConstRight);
                     switch (ownedConstJoin) {
-                        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Ok(var ownedConstJoinValue):
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var ownedConstJoinValue):
                             if (!IsJoinedPath(ownedConstJoinValue.View())) {
                                 return 12;
                             }
-                        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Err(var ownedConstJoinError):
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var ownedConstJoinError):
                             return 13;
                     }
 
-                    stack System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii> ownedNormalize = System.Experimental.IO.Path.NormalizeSeparators("alpha//beta///gamma.txt");
+                    stack System.Memory.MemoryResult<System.Text.OwnedAscii> ownedNormalize = System.IO.Path.NormalizeSeparators("alpha//beta///gamma.txt");
                     switch (ownedNormalize) {
-                        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Ok(var ownedNormalizeValue):
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var ownedNormalizeValue):
                             if (!IsNormalizedPath(ownedNormalizeValue.View())) {
                                 return 5;
                             }
-                        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Err(var ownedNormalizeError):
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var ownedNormalizeError):
                             return 6;
                     }
 
-                    stack System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii> ownedConstNormalize = System.Experimental.IO.Path.NormalizeSeparatorsConst(ConstNormalizedSource);
+                    stack System.Memory.MemoryResult<System.Text.OwnedAscii> ownedConstNormalize = System.IO.Path.NormalizeSeparatorsConst(ConstNormalizedSource);
                     switch (ownedConstNormalize) {
-                        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Ok(var ownedConstNormalizeValue):
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var ownedConstNormalizeValue):
                             if (!IsNormalizedPath(ownedConstNormalizeValue.View())) {
                                 return 14;
                             }
-                        case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Err(var ownedConstNormalizeError):
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var ownedConstNormalizeError):
                             return 15;
                     }
 
@@ -526,39 +526,39 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 }
 
                 fn bool CheckSelfViewAliases() {
-                    stack mut System.Experimental.Text.OwnedAscii selfJoin = new();
+                    stack mut System.Text.OwnedAscii selfJoin = new();
                     if (!Ok(selfJoin.AppendAscii("alpha"))) {
                         return false;
                     }
 
                     stack ascii sameView = selfJoin.View();
-                    if (!Ok(System.Experimental.IO.Path.TryJoin(selfJoin, sameView, sameView))) {
+                    if (!Ok(System.IO.Path.TryJoin(selfJoin, sameView, sameView))) {
                         return false;
                     }
 
-                    if (System.Experimental.Text.AsciiLength(selfJoin.View()) != 11
+                    if (System.Text.AsciiLength(selfJoin.View()) != 11
                         || UnitAt(selfJoin.View(), 5) != SeparatorUnit()
                         || UnitAt(selfJoin.View(), 6) != (i8[-128 127])97) {
                         return false;
                     }
 
-                    stack mut System.Experimental.Text.OwnedAscii rightAlias = new();
+                    stack mut System.Text.OwnedAscii rightAlias = new();
                     if (!Ok(rightAlias.AppendAscii("beta.txt"))) {
                         return false;
                     }
 
                     stack ascii rightView = rightAlias.View();
-                    if (!Ok(System.Experimental.IO.Path.TryJoin(rightAlias, "alpha", rightView)) || !IsJoinedPath(rightAlias.View())) {
+                    if (!Ok(System.IO.Path.TryJoin(rightAlias, "alpha", rightView)) || !IsJoinedPath(rightAlias.View())) {
                         return false;
                     }
 
-                    stack mut System.Experimental.Text.OwnedAscii normalizeAlias = new();
+                    stack mut System.Text.OwnedAscii normalizeAlias = new();
                     if (!Ok(normalizeAlias.AppendAscii("alpha//beta///gamma.txt"))) {
                         return false;
                     }
 
                     stack ascii normalizeView = normalizeAlias.View();
-                    return Ok(System.Experimental.IO.Path.TryNormalizeSeparators(normalizeAlias, normalizeView))
+                    return Ok(System.IO.Path.TryNormalizeSeparators(normalizeAlias, normalizeView))
                         && IsNormalizedPath(normalizeAlias.View());
                 }
 
@@ -569,13 +569,13 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         Length = (i64[min max])((2**63) - 1),
                         Capacity = (i64[min max])((2**63) - 1)
                     };
-                    stack mut System.Experimental.Text.OwnedAscii destination = new();
-                    stack ascii hugeView = System.Experimental.Text.AsciiView(huge);
-                    if (System.Experimental.Text.AsciiLength(hugeView) == 0) {
+                    stack mut System.Text.OwnedAscii destination = new();
+                    stack ascii hugeView = System.Text.AsciiView(huge);
+                    if (System.Text.AsciiLength(hugeView) == 0) {
                         return 1;
                     }
 
-                    stack System.Memory.MemoryStatus status = System.Experimental.IO.Path.TryNormalizeSeparators(destination, hugeView);
+                    stack System.Memory.MemoryStatus status = System.IO.Path.TryNormalizeSeparators(destination, hugeView);
                     if (Ok(status)) {
                         return 2;
                     }
@@ -587,7 +587,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     return 0;
                 }
 
-                export ffi fn i32[min max] main() {
+                export unsafe ffi fn i32[min max] main() {
                     if (!CheckFacts()) {
                         return 1;
                     }
@@ -684,7 +684,34 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 import System
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                fn bool StatusOk(System.IO.IOStatus status) {
+                    switch (status) {
+                        case System.IO.IOStatus.Ok:
+                            return true;
+                        case System.IO.IOStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
+                    switch (result) {
+                        case System.IO.IOResult<bool>.Ok(var value):
+                            return value;
+                        case System.IO.IOResult<bool>.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
+                    switch (result) {
+                        case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+                            return value;
+                        case System.IO.IOResult<System.IO.File.File>.Err(var error):
+                            return new();
+                    }
+                }
+
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
                     stack mut i8[-128 127][256] buffer = { {{zeroBytes}} };
                     stack mut Ascii owned = new Ascii() {
                         Data = &buffer[0],
@@ -845,7 +872,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
                     stack mut i8[-128 127][64] buffer = { {{zeroBytes}} };
                     stack mut Ascii joined = new Ascii() {
                         Data = &buffer[0],
@@ -1008,7 +1035,6 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
         var libraryPath = Path.Combine(packageDirectory, "System.lib");
         var appPath = Path.Combine(appDirectory, "App.stark");
         var outputPath = Path.Combine(appDirectory, "app.exe");
-        var currentDirectoryZeros = string.Join(", ", Enumerable.Repeat("0", 512));
 
         try
         {
@@ -1029,13 +1055,44 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 import System
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
-                    stack mut i8[-128 127][512] cwdStorage = { {{currentDirectoryZeros}} };
-                    stack mut Ascii cwd = new Ascii() {
-                        Data = &cwdStorage[0],
-                        Length = 0,
-                        Capacity = 512
-                    };
+                fn bool StatusOk(System.IO.IOStatus status) {
+                    switch (status) {
+                        case System.IO.IOStatus.Ok:
+                            return true;
+                        case System.IO.IOStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
+                    switch (result) {
+                        case System.IO.IOResult<bool>.Ok(var value):
+                            return value;
+                        case System.IO.IOResult<bool>.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn bool MemoryOk(System.Memory.MemoryStatus status) {
+                    switch (status) {
+                        case System.Memory.MemoryStatus.Ok:
+                            return true;
+                        case System.Memory.MemoryStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
+                    switch (result) {
+                        case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+                            return value;
+                        case System.IO.IOResult<System.IO.File.File>.Err(var error):
+                            return new();
+                    }
+                }
+
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                    stack mut System.Text.OwnedAscii cwd = new();
                     stack mut i8[-128 127][12] ownedNameBytes = { 111, 119, 110, 101, 100, 45, -50, -79, 46, 116, 120, 116 };
                     stack mut Ascii ownedName = new Ascii() {
                         Data = &ownedNameBytes[0],
@@ -1055,7 +1112,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         Capacity = 13
                     };
 
-                    if (!System.IO.Path.CurrentDirectory(&cwd)) {
+                    if (!MemoryOk(System.IO.Path.CurrentDirectory(cwd))) {
                         return 1;
                     }
 
@@ -1064,14 +1121,14 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         return 2;
                     }
 
-                    System.IO.File.WriteLine(cwdHandle, System.Text.AsciiView(cwd));
+                    System.IO.File.WriteLine(cwdHandle, cwd.View());
                     if (System.IO.File.Close(cwdHandle) != 0) {
                         return 3;
                     }
 
-                    stack mut System.IO.File.File file = System.IO.File.Open(System.Text.AsciiView(ownedName), System.IO.File.FileMode.Write, System.IO.File.FileBuffering.Line);
+                    stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open(System.Text.AsciiView(ownedName), System.IO.File.FileMode.Write, System.IO.File.FileBuffering.Line));
                     file.WriteLine((unicode)"Owned");
-                    if (file.Close() != 0) {
+                    if (!StatusOk(file.Close())) {
                         return 4;
                     }
 
@@ -1080,7 +1137,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         Length = 12,
                         Capacity = 12
                     };
-                    if (!System.IO.File.Exists(System.Text.AsciiView(ownedName))) {
+                    if (!BoolOrFalse(System.IO.File.Exists(System.Text.AsciiView(ownedName)))) {
                         return 5;
                     }
 
@@ -1094,7 +1151,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         Length = 14,
                         Capacity = 14
                     };
-                    if (System.IO.File.Move(System.Text.AsciiView(ownedName), System.Text.AsciiView(renamedName)) != 0) {
+                    if (!StatusOk(System.IO.File.Move(System.Text.AsciiView(ownedName), System.Text.AsciiView(renamedName)))) {
                         return 6;
                     }
 
@@ -1103,7 +1160,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         Length = 14,
                         Capacity = 14
                     };
-                    if (!System.IO.File.Exists(System.Text.AsciiView(renamedName))) {
+                    if (!BoolOrFalse(System.IO.File.Exists(System.Text.AsciiView(renamedName)))) {
                         return 7;
                     }
 
@@ -1122,7 +1179,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         Length = 13,
                         Capacity = 13
                     };
-                    if (System.IO.File.Delete(System.Text.AsciiView(deleteName)) != 0) {
+                    if (!StatusOk(System.IO.File.Delete(System.Text.AsciiView(deleteName)))) {
                         return 10;
                     }
 
@@ -1131,7 +1188,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         Length = 13,
                         Capacity = 13
                     };
-                    if (System.IO.File.Exists(System.Text.AsciiView(deleteName))) {
+                    if (BoolOrFalse(System.IO.File.Exists(System.Text.AsciiView(deleteName)))) {
                         return 11;
                     }
 
@@ -1221,17 +1278,18 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
 
             var isDirectorySeparatorBody = ExtractDefinedFunctionText(
                 llvm,
-                "define internal dso_local fastcc noundef i1 @__stark_law_clone_System_Runtime_Platform_Windows_IsDirectorySeparator(",
-                "Expected staged Windows path build to emit the Windows separator law clone.");
+                "define fastcc noundef i1 @IsDirectorySeparatorUnit(",
+                "Expected staged Windows path build to emit the path separator unit helper.");
             Assert.Contains("icmp eq i8", isDirectorySeparatorBody, StringComparison.Ordinal);
-            Assert.Contains(", 47", isDirectorySeparatorBody, StringComparison.Ordinal);
-            Assert.Contains(", 92", isDirectorySeparatorBody, StringComparison.Ordinal);
+            Assert.Contains("@DirectorySeparatorUnit(", isDirectorySeparatorBody, StringComparison.Ordinal);
+            Assert.Contains("@.str.1", isDirectorySeparatorBody, StringComparison.Ordinal);
 
             var tryJoinBody = ExtractDefinedFunctionText(
                 llvm,
-                "define fastcc noundef i1 @TryJoin(",
+                "define fastcc noundef %System_Memory_MemoryStatus @TryJoin(",
                 "Expected TryJoin definition in staged Windows path module.");
-            Assert.Contains("call fastcc i1 @IsDirectorySeparatorUnit(", tryJoinBody, StringComparison.Ordinal);
+            Assert.Contains("icmp eq i8", tryJoinBody, StringComparison.Ordinal);
+            Assert.DoesNotContain("@System_Runtime_Platform_Windows_IsDirectorySeparator(", tryJoinBody, StringComparison.Ordinal);
         }
         finally
         {
@@ -1259,3 +1317,4 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
         return count;
     }
 }
+

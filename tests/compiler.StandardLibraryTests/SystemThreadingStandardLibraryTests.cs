@@ -1,4 +1,4 @@
-using Stark.Compiler;
+﻿using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
@@ -69,7 +69,7 @@ public sealed class SystemThreadingStandardLibraryTests : StandardLibraryTestSui
                     }
                 }
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
                     stack ThreadEntry entry = Worker;
                     Thread.Yield();
                     Thread.SleepMilliseconds(0);
@@ -372,3 +372,4 @@ public sealed class SystemThreadingStandardLibraryTests : StandardLibraryTestSui
         Assert.DoesNotContain("@pthread_detach(", llvm, StringComparison.Ordinal);
     }
 }
+

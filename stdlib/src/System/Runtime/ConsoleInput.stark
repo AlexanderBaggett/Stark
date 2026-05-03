@@ -1,4 +1,4 @@
-import System.IO.File
+﻿import System.IO.File
 module System.Runtime.ConsoleInput
 
 const ConsoleInputUnicodeCapacity = 8192;
@@ -36,27 +36,31 @@ fn i32[-2147483648 2147483647] UnsignedByte(i8[-128 127] value) {
 }
 
 fn bool IsUtf8ContinuationByte(i8[-128 127] value) {
-    stack i32[-2147483648 2147483647] unit = UnsignedByte(value);
-    return 128 <= unit && unit <= 191;
+    unsafe {
+        stack i32[-2147483648 2147483647] unit = UnsignedByte(value);
+        return 128 <= unit && unit <= 191;
+    }
 }
 
 fn i32[-2147483648 2147483647] NormalizeUnicodeCodePoint(i32[-2147483648 2147483647] codePoint) {
-    if (codePoint < 0) {
-        return 65533;
-    }
+    unsafe {
+        if (codePoint < 0) {
+            return 65533;
+        }
 
-    if (55296 <= codePoint && codePoint <= 57343) {
-        return 65533;
-    }
+        if (55296 <= codePoint && codePoint <= 57343) {
+            return 65533;
+        }
 
-    if (codePoint > 1114111) {
-        return 65533;
-    }
+        if (codePoint > 1114111) {
+            return 65533;
+        }
 
-    return codePoint;
+        return codePoint;
+    }
 }
 
-fn bool TryDecodeUtf8CodePoint(rawptr<i8[-128 127]> data, i64[-9223372036854775808 9223372036854775807] length, rawmutptr<i64[-9223372036854775808 9223372036854775807]> index, rawmutptr<i32[-2147483648 2147483647]> codePoint) {
+unsafe fn bool TryDecodeUtf8CodePoint(rawptr<i8[-128 127]> data, i64[-9223372036854775808 9223372036854775807] length, rawmutptr<i64[-9223372036854775808 9223372036854775807]> index, rawmutptr<i32[-2147483648 2147483647]> codePoint) {
     if (data == null || index == null || codePoint == null) {
         return false;
     }
@@ -154,27 +158,29 @@ fn bool TryDecodeUtf8CodePoint(rawptr<i8[-128 127]> data, i64[-92233720368547758
 }
 
 fn i64[-9223372036854775808 9223372036854775807] Utf8ExpectedByteCount(i8[-128 127] firstByte) {
-    stack i32[-2147483648 2147483647] first = UnsignedByte(firstByte);
-    if (first <= 127) {
-        return 1;
-    }
+    unsafe {
+        stack i32[-2147483648 2147483647] first = UnsignedByte(firstByte);
+        if (first <= 127) {
+            return 1;
+        }
 
-    if (194 <= first && first <= 223) {
-        return 2;
-    }
+        if (194 <= first && first <= 223) {
+            return 2;
+        }
 
-    if (224 <= first && first <= 239) {
-        return 3;
-    }
+        if (224 <= first && first <= 239) {
+            return 3;
+        }
 
-    if (240 <= first && first <= 244) {
-        return 4;
-    }
+        if (240 <= first && first <= 244) {
+            return 4;
+        }
 
-    return 0;
+        return 0;
+    }
 }
 
-fn bool TryReadInputByte(rawmutptr<i8[-128 127]> destination) {
+unsafe fn bool TryReadInputByte(rawmutptr<i8[-128 127]> destination) {
     if (destination == null) {
         return false;
     }
@@ -189,7 +195,7 @@ fn bool TryReadInputByte(rawmutptr<i8[-128 127]> destination) {
     return readCount == 1;
 }
 
-fn i64[-9223372036854775808 9223372036854775807] DecodeUtf8BytesToUnicode(rawptr<i8[-128 127]> data, i64[-9223372036854775808 9223372036854775807] length, rawmutptr<i32[-2147483648 2147483647]> destination, i64[-9223372036854775808 9223372036854775807] capacity) {
+unsafe fn i64[-9223372036854775808 9223372036854775807] DecodeUtf8BytesToUnicode(rawptr<i8[-128 127]> data, i64[-9223372036854775808 9223372036854775807] length, rawmutptr<i32[-2147483648 2147483647]> destination, i64[-9223372036854775808 9223372036854775807] capacity) {
     if (destination == null || capacity <= 0 || length <= 0) {
         return 0;
     }
@@ -211,90 +217,98 @@ fn i64[-9223372036854775808 9223372036854775807] DecodeUtf8BytesToUnicode(rawptr
 }
 
 fn Unicode BuildConsoleReadLineResult(i64[-9223372036854775808 9223372036854775807] length) {
-    return new Unicode() {
-        Data = &ConsoleReadLineStorage.Storage[0],
-        Length = length,
-        Capacity = ConsoleInputUnicodeCapacity
-    };
+    unsafe {
+        return new Unicode() {
+            Data = &ConsoleReadLineStorage.Storage[0],
+            Length = length,
+            Capacity = ConsoleInputUnicodeCapacity
+        };
+    }
 }
 
 fn Unicode BuildConsoleReadUnitResult(i32[-2147483648 2147483647] codePoint, i64[-9223372036854775808 9223372036854775807] length) {
-    if (length > 0) {
-        ConsoleReadUnitStorage.Storage[0] = NormalizeUnicodeCodePoint(codePoint);
-    }
+    unsafe {
+        if (length > 0) {
+            ConsoleReadUnitStorage.Storage[0] = NormalizeUnicodeCodePoint(codePoint);
+        }
 
-    return new Unicode() {
-        Data = &ConsoleReadUnitStorage.Storage[0],
-        Length = length,
-        Capacity = 1
-    };
+        return new Unicode() {
+            Data = &ConsoleReadUnitStorage.Storage[0],
+            Length = length,
+            Capacity = 1
+        };
+    }
 }
 
 internal fn Unicode ReadLineUnicode() {
-    stack mut ConsoleByteStorage lineBytes = new ConsoleByteStorage();
-    stack mut ConsoleSingleByteStorage nextByte = new ConsoleSingleByteStorage();
-    stack mut i64[-9223372036854775808 9223372036854775807] byteLength = 0;
+    unsafe {
+        stack mut ConsoleByteStorage lineBytes = new ConsoleByteStorage();
+        stack mut ConsoleSingleByteStorage nextByte = new ConsoleSingleByteStorage();
+        stack mut i64[-9223372036854775808 9223372036854775807] byteLength = 0;
 
-    while willexit (byteLength < ConsoleInputByteCapacity) {
-        if (!TryReadInputByte(&nextByte.Storage[0])) {
-            break;
-        }
-
-        if (nextByte.Storage[0] == (i8[-128 127])10) {
-            if (byteLength > 0 && lineBytes.Storage[byteLength - 1] == (i8[-128 127])13) {
-                byteLength -= 1;
+        while willexit (byteLength < ConsoleInputByteCapacity) {
+            if (!TryReadInputByte(&nextByte.Storage[0])) {
+                break;
             }
 
-            break;
+            if (nextByte.Storage[0] == (i8[-128 127])10) {
+                if (byteLength > 0 && lineBytes.Storage[byteLength - 1] == (i8[-128 127])13) {
+                    byteLength -= 1;
+                }
+
+                break;
+            }
+
+            lineBytes.Storage[byteLength] = nextByte.Storage[0];
+            byteLength += 1;
         }
 
-        lineBytes.Storage[byteLength] = nextByte.Storage[0];
-        byteLength += 1;
-    }
+        stack mut rawptr<i8[-128 127]> lineData = null;
+        if (byteLength > 0) {
+            lineData = &lineBytes.Storage[0];
+        }
 
-    stack mut rawptr<i8[-128 127]> lineData = null;
-    if (byteLength > 0) {
-        lineData = &lineBytes.Storage[0];
+        stack i64[-9223372036854775808 9223372036854775807] lineLength = DecodeUtf8BytesToUnicode(
+            lineData,
+            byteLength,
+            &ConsoleReadLineStorage.Storage[0],
+            ConsoleInputUnicodeCapacity);
+        return BuildConsoleReadLineResult(lineLength);
     }
-
-    stack i64[-9223372036854775808 9223372036854775807] lineLength = DecodeUtf8BytesToUnicode(
-        lineData,
-        byteLength,
-        &ConsoleReadLineStorage.Storage[0],
-        ConsoleInputUnicodeCapacity);
-    return BuildConsoleReadLineResult(lineLength);
 }
 
 internal fn Unicode ReadUnicode() {
-    stack mut ConsoleCodePointByteStorage utf8Bytes = new ConsoleCodePointByteStorage();
-    if (!TryReadInputByte(&utf8Bytes.Storage[0])) {
-        return BuildConsoleReadUnitResult(0, 0);
-    }
+    unsafe {
+        stack mut ConsoleCodePointByteStorage utf8Bytes = new ConsoleCodePointByteStorage();
+        if (!TryReadInputByte(&utf8Bytes.Storage[0])) {
+            return BuildConsoleReadUnitResult(0, 0);
+        }
 
-    stack i64[-9223372036854775808 9223372036854775807] expectedLength = Utf8ExpectedByteCount(utf8Bytes.Storage[0]);
-    if (expectedLength <= 0) {
-        return BuildConsoleReadUnitResult(65533, 1);
-    }
-
-    if (expectedLength == 1) {
-        return BuildConsoleReadUnitResult(UnsignedByte(utf8Bytes.Storage[0]), 1);
-    }
-
-    stack mut i64[-9223372036854775808 9223372036854775807] index = 1;
-    while willexit (index < expectedLength) {
-        if (!TryReadInputByte(&utf8Bytes.Storage[index])) {
+        stack i64[-9223372036854775808 9223372036854775807] expectedLength = Utf8ExpectedByteCount(utf8Bytes.Storage[0]);
+        if (expectedLength <= 0) {
             return BuildConsoleReadUnitResult(65533, 1);
         }
 
-        index += 1;
-    }
+        if (expectedLength == 1) {
+            return BuildConsoleReadUnitResult(UnsignedByte(utf8Bytes.Storage[0]), 1);
+        }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] consumed = 0;
-    stack mut i32[-2147483648 2147483647] codePoint = 65533;
-    if (TryDecodeUtf8CodePoint(&utf8Bytes.Storage[0], expectedLength, &consumed, &codePoint)
-        && consumed == expectedLength) {
-        return BuildConsoleReadUnitResult(codePoint, 1);
-    }
+        stack mut i64[-9223372036854775808 9223372036854775807] index = 1;
+        while willexit (index < expectedLength) {
+            if (!TryReadInputByte(&utf8Bytes.Storage[index])) {
+                return BuildConsoleReadUnitResult(65533, 1);
+            }
 
-    return BuildConsoleReadUnitResult(65533, 1);
+            index += 1;
+        }
+
+        stack mut i64[-9223372036854775808 9223372036854775807] consumed = 0;
+        stack mut i32[-2147483648 2147483647] codePoint = 65533;
+        if (TryDecodeUtf8CodePoint(&utf8Bytes.Storage[0], expectedLength, &consumed, &codePoint)
+            && consumed == expectedLength) {
+            return BuildConsoleReadUnitResult(codePoint, 1);
+        }
+
+        return BuildConsoleReadUnitResult(65533, 1);
+    }
 }

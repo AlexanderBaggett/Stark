@@ -1009,10 +1009,14 @@ fragment HexDigit
     : [0-9a-fA-F]
     ;
 
+// Line comments are trivia, including C#-style XML documentation comments
+// written with three leading slashes.
 LINE_COMMENT
     : '//' ~[\r\n]* -> skip
     ;
 
+// Block comments are trivia, including C#-style XML documentation comments
+// written with a doubled leading asterisk. Block comments do not nest.
 BLOCK_COMMENT
     : '/*' .*? '*/' -> skip
     ;

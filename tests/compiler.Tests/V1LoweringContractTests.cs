@@ -11,7 +11,7 @@ public sealed class V1LoweringContractTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 return left + right;
             }
             """);
@@ -30,15 +30,15 @@ public sealed class V1LoweringContractTests
             """
             module Demo
 
-            fn ascii Echo(ascii text) {
+            unsafe fn ascii Echo(ascii text) {
                 return text;
             }
 
-            fn unicode Wide(unicode text) {
+            unsafe fn unicode Wide(unicode text) {
                 return text;
             }
 
-            fn i32[-2147483648 2147483647] Read(i32[-2147483648 2147483647][] view, i32[-2147483648 2147483647] index) {
+            unsafe fn i32[-2147483648 2147483647] Read(i32[-2147483648 2147483647][] view, i32[-2147483648 2147483647] index) {
                 return view[index];
             }
             """);
@@ -60,9 +60,9 @@ public sealed class V1LoweringContractTests
             """
             module Demo
 
-            ffi fn i32[-2147483648 2147483647] puts(ascii text);
+            unsafe ffi fn i32[-2147483648 2147483647] puts(ascii text);
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 puts("Hello");
                 return 0;
             }
@@ -89,7 +89,7 @@ public sealed class V1LoweringContractTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn void Inspect(borrow Pair pair) {
+            unsafe fn void Inspect(borrow Pair pair) {
                 return;
             }
             """);
@@ -113,7 +113,7 @@ public sealed class V1LoweringContractTests
                 i64[-9223372036854775808 9223372036854775807] Right;
             }
 
-            fn Pair Step(Pair value) {
+            unsafe fn Pair Step(Pair value) {
                 return value;
             }
             """);
@@ -140,7 +140,7 @@ public sealed class V1LoweringContractTests
                 i64[-9223372036854775808 9223372036854775807] C;
             }
 
-            fn Big Step(Big value) {
+            unsafe fn Big Step(Big value) {
                 return value;
             }
             """);
@@ -160,11 +160,11 @@ public sealed class V1LoweringContractTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Read4(i32[-2147483648 2147483647][4] values) {
+            unsafe fn i32[-2147483648 2147483647] Read4(i32[-2147483648 2147483647][4] values) {
                 return values[0];
             }
 
-            fn i32[-2147483648 2147483647] Read5(i32[-2147483648 2147483647][5] values) {
+            unsafe fn i32[-2147483648 2147483647] Read5(i32[-2147483648 2147483647][5] values) {
                 return values[0];
             }
             """);

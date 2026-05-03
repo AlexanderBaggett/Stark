@@ -36,7 +36,7 @@ finite law bool EndpointShapeWorks() {
     return !closed.IsOpen() && endpoint.Port == 8080;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     if (!EndpointShapeWorks()) {
         return 1;
     }

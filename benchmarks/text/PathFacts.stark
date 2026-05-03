@@ -1,7 +1,7 @@
-import System
+import System.IO.Path
 module Benchmarks.Text.PathFacts
 
-fn i64[min max] AddFacts(ascii path) {
+unsafe fn i64[min max] AddFacts(ascii path) {
     stack System.IO.Path.PathFacts facts = System.IO.Path.GetFacts(path);
     return facts.PathLength()
         + facts.ExtensionLength()
@@ -9,7 +9,7 @@ fn i64[min max] AddFacts(ascii path) {
         + facts.DirectoryNameLength();
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack mut i64[min max] checksum = 0;
 
     for willexit (stack mut i32[0 5000] i = 0; i < 5000; i += 1) {

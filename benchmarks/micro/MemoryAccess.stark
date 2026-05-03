@@ -1,7 +1,7 @@
-import System.Process
+﻿import System.Process
 module Benchmarks.Micro.MemoryAccess
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack i64[min max] seed = (i64[min max])(System.Process.CurrentId() % 31);
     stack mut i64[min max][16] values = {
         1, 2, 3, 4,

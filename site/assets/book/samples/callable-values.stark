@@ -8,7 +8,7 @@ fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] valu
     return op(value);
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack fnptr<fn i32[min max](i32[min max], i32[min max])> add = Add;
     stack fnptr<fn i32[min max](i32[min max])> increment =
         (i32[min max] value) => value + 1;

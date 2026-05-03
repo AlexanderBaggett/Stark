@@ -1,7 +1,7 @@
 import System.Process
 module Benchmarks.Micro.FactDrivenBranchPruning
 
-finite law i64[min max] Score(i32[0 10] value, i64[min max] salt) {
+unsafe finite law i64[min max] Score(i32[0 10] value, i64[min max] salt) {
     if (value < 20) {
         return (((i64[min max])value * 37) + salt) % 1000003;
     }
@@ -9,7 +9,7 @@ finite law i64[min max] Score(i32[0 10] value, i64[min max] salt) {
     return salt - 1000;
 }
 
-finite law i64[min max] SwitchScore(i32[10 12] value, i64[min max] salt) {
+unsafe finite law i64[min max] SwitchScore(i32[10 12] value, i64[min max] salt) {
     stack i32[-2147483648 2147483647] widened = (i32[-2147483648 2147483647])value;
     switch (widened) {
         case 10:
@@ -23,7 +23,7 @@ finite law i64[min max] SwitchScore(i32[10 12] value, i64[min max] salt) {
     }
 }
 
-finite law i64[min max] NestedScore(i32[0 20] value, i64[min max] salt) {
+unsafe finite law i64[min max] NestedScore(i32[0 20] value, i64[min max] salt) {
     if (value < 10) {
         if (value >= 10) {
             return salt - 10000;
@@ -35,7 +35,7 @@ finite law i64[min max] NestedScore(i32[0 20] value, i64[min max] salt) {
     return salt + (i64[min max])value;
 }
 
-finite law i64[min max] ModuloScore(i32[0 100] value, i64[min max] salt) {
+unsafe finite law i64[min max] ModuloScore(i32[0 100] value, i64[min max] salt) {
     stack i32[min max] slot = value % 8;
     if (slot >= 8) {
         return salt - 4000;
@@ -44,7 +44,7 @@ finite law i64[min max] ModuloScore(i32[0 100] value, i64[min max] salt) {
     return salt + (i64[min max])slot;
 }
 
-finite law i64[min max] DivideScore(i32[0 100] value, i64[min max] salt) {
+unsafe finite law i64[min max] DivideScore(i32[0 100] value, i64[min max] salt) {
     stack i32[min max] bucket = value / 10;
     if (bucket > 10) {
         return salt - 5000;
@@ -53,7 +53,7 @@ finite law i64[min max] DivideScore(i32[0 100] value, i64[min max] salt) {
     return salt + (i64[min max])bucket;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack mut i64[min max] total = (i64[min max])System.Process.CurrentId();
 
     for willexit (stack mut i32[0 200000] i = 0; i < 200000; i += 1) {

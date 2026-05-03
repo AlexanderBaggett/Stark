@@ -16,7 +16,7 @@ public sealed partial class MidLevelIrLoweringTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 stack mut Box box = new Box() { Value = 1 };
                 box.Value = 2;
                 return box.Value;
@@ -43,7 +43,7 @@ public sealed partial class MidLevelIrLoweringTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 stack mut Box box = new Box() { Value = 1 };
                 box.Value += 2;
                 return box.Value;
@@ -69,7 +69,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 stack i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
                 return values[1];
             }
@@ -95,7 +95,7 @@ public sealed partial class MidLevelIrLoweringTests
                 i32[-2147483648 2147483647][3] Values;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 stack Box box = new Box() { Values = { 1, 2 } };
                 return box.Values[2];
             }
@@ -118,7 +118,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 stack mut i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
                 values[1] = 9;
                 return values[1];
@@ -141,7 +141,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
+            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
                 stack i32[-2147483648 2147483647][3] values = { 4, 7, 9 };
                 stack i32[-2147483648 2147483647][] view = values;
                 return view[index];
@@ -166,7 +166,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn ascii Run(ascii text, i32[-2147483648 2147483647] start, i32[-2147483648 2147483647] length) {
+            unsafe fn ascii Run(ascii text, i32[-2147483648 2147483647] start, i32[-2147483648 2147483647] length) {
                 return text[start, length];
             }
             """);
@@ -195,11 +195,11 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn ascii SliceAscii(ascii text) {
+            unsafe fn ascii SliceAscii(ascii text) {
                 return text[];
             }
 
-            fn unicode SliceUnicode(unicode text) {
+            unsafe fn unicode SliceUnicode(unicode text) {
                 return text[];
             }
             """);
@@ -227,11 +227,11 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn ascii PickAscii(ascii text, i32[-2147483648 2147483647] index) {
+            unsafe fn ascii PickAscii(ascii text, i32[-2147483648 2147483647] index) {
                 return text[index];
             }
 
-            fn unicode PickUnicode(unicode text, i32[-2147483648 2147483647] index) {
+            unsafe fn unicode PickUnicode(unicode text, i32[-2147483648 2147483647] index) {
                 return text[index];
             }
             """);
@@ -263,7 +263,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
+            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
                 stack mut i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
                 values[index] = 9;
                 return values[index];
@@ -289,7 +289,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647][3] values, i32[-2147483648 2147483647] index) {
+            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647][3] values, i32[-2147483648 2147483647] index) {
                 return values[index];
             }
             """);
@@ -319,7 +319,7 @@ public sealed partial class MidLevelIrLoweringTests
                 Cell[2] Cells;
             }
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
+            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
                 stack mut Holder holder = new Holder() {
                     Cells = { new Cell() { Value = 1 }, new Cell() { Value = 2 } }
                 };
@@ -350,7 +350,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(mut i32[-2147483648 2147483647][] view, i32[-2147483648 2147483647] index) {
+            unsafe fn i32[-2147483648 2147483647] Run(mut i32[-2147483648 2147483647][] view, i32[-2147483648 2147483647] index) {
                 view[index] = 9;
                 return view[index];
             }
@@ -381,13 +381,13 @@ public sealed partial class MidLevelIrLoweringTests
                 Cell[2] Cells;
             }
 
-            fn Holder Make() {
+            unsafe fn Holder Make() {
                 return new Holder() {
                     Cells = { new Cell() { Value = 3 }, new Cell() { Value = 5 } }
                 };
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 return Make().Cells[1].Value;
             }
             """);
@@ -414,7 +414,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i64[-9223372036854775808 9223372036854775807] bits) {
+            unsafe fn i32[-2147483648 2147483647] Run(i64[-9223372036854775808 9223372036854775807] bits) {
                 stack mut i32[-2147483648 2147483647] value = 1;
                 stack rawmutptr<i32[-2147483648 2147483647]> ptr = &value;
                 stack rawptr<i32[-2147483648 2147483647]> readonlyPtr = (rawptr<i32[-2147483648 2147483647]>)ptr;
@@ -457,7 +457,7 @@ public sealed partial class MidLevelIrLoweringTests
 
             static mut i32[-2147483648 2147483647] Counter = 0;
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] input) {
+            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] input) {
                 stack mut Box box = new Box() { Value = 1 };
                 *(&(box.Value)) = input;
                 Counter = *(&(box.Value));
@@ -491,7 +491,7 @@ public sealed partial class MidLevelIrLoweringTests
                 i64[-9223372036854775808 9223372036854775807] WritePos;
             }
 
-            fn i32[-2147483648 2147483647] Touch(rawmutptr<Buffer> buffer, i64[-9223372036854775808 9223372036854775807] index, i8[-128 127] value) {
+            unsafe fn i32[-2147483648 2147483647] Touch(rawmutptr<Buffer> buffer, i64[-9223372036854775808 9223372036854775807] index, i8[-128 127] value) {
                 *(&(*buffer).Storage[index]) = value;
                 return (i32[-2147483648 2147483647])*(&(*buffer).Storage[index]);
             }
@@ -522,11 +522,11 @@ public sealed partial class MidLevelIrLoweringTests
             static i32[-2147483648 2147483647] Counter = 0;
             static Box Current = new Box() { Value = 5 };
 
-            fn rawptr<i32[-2147483648 2147483647]> CounterPtr() {
+            unsafe fn rawptr<i32[-2147483648 2147483647]> CounterPtr() {
                 return &Counter;
             }
 
-            fn rawptr<i32[-2147483648 2147483647]> FieldPtr() {
+            unsafe fn rawptr<i32[-2147483648 2147483647]> FieldPtr() {
                 return &(Current.Value);
             }
             """);
@@ -574,11 +574,11 @@ public sealed partial class MidLevelIrLoweringTests
 
             const Box Current = new Box() { Value = 5 };
 
-            fn rawptr<frozen Box> BoxPtr() {
+            unsafe fn rawptr<frozen Box> BoxPtr() {
                 return &Current;
             }
 
-            fn rawptr<frozen i32[-2147483648 2147483647]> FieldPtr() {
+            unsafe fn rawptr<frozen i32[-2147483648 2147483647]> FieldPtr() {
                 return &(Current.Value);
             }
             """);
@@ -626,7 +626,7 @@ public sealed partial class MidLevelIrLoweringTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn rawptr<frozen i32[-2147483648 2147483647]> FieldPtr(const Box box) {
+            unsafe fn rawptr<frozen i32[-2147483648 2147483647]> FieldPtr(const Box box) {
                 return &(box.Value);
             }
             """);
@@ -668,7 +668,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn rawptr<frozen i32[-2147483648 2147483647]> Forward(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
+            unsafe fn rawptr<frozen i32[-2147483648 2147483647]> Forward(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
                 stack rawptr<frozen i32[-2147483648 2147483647]> local = ptr;
                 return local;
             }
@@ -688,7 +688,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn rawptr<frozen i32[-2147483648 2147483647]> FirstPtr(frozen i32[-2147483648 2147483647][] view) {
+            unsafe fn rawptr<frozen i32[-2147483648 2147483647]> FirstPtr(frozen i32[-2147483648 2147483647][] view) {
                 return &(view[0]);
             }
             """);

@@ -1,9 +1,9 @@
-import System.Experimental.IO.Path
-import System.Experimental.Text
+import System.IO.Path
+import System.Text
 import System.Memory
-module Benchmarks.Text.ExperimentalPathNormalize
+module Benchmarks.Text.PathNormalize
 
-fn bool Ok(System.Memory.MemoryStatus status) {
+unsafe fn bool Ok(System.Memory.MemoryStatus status) {
     switch (status) {
         case System.Memory.MemoryStatus.Ok:
             return true;
@@ -12,8 +12,8 @@ fn bool Ok(System.Memory.MemoryStatus status) {
     }
 }
 
-export ffi fn i32[min max] main() {
-    stack mut System.Experimental.Text.OwnedAscii output = new();
+export unsafe ffi fn i32[min max] main() {
+    stack mut System.Text.OwnedAscii output = new();
     if (!Ok(output.Reserve(64))) {
         return 1;
     }
@@ -21,13 +21,13 @@ export ffi fn i32[min max] main() {
     stack mut i64[min max] checksum = 0;
 
     for willexit (stack mut i32[0 5000] i = 0; i < 5000; i += 1) {
-        if (!Ok(System.Experimental.IO.Path.TryNormalizeSeparators(output, "alpha//beta///gamma.txt"))) {
+        if (!Ok(System.IO.Path.TryNormalizeSeparators(output, "alpha//beta///gamma.txt"))) {
             return 2;
         }
 
         checksum += (i64[min max])output.Length();
 
-        if (!Ok(System.Experimental.IO.Path.TryNormalizeSeparators(output, "alpha///beta.txt"))) {
+        if (!Ok(System.IO.Path.TryNormalizeSeparators(output, "alpha///beta.txt"))) {
             return 3;
         }
 

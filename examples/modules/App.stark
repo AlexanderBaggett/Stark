@@ -2,7 +2,7 @@ import Geometry
 import Units
 module App
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack Geometry.Rectangle areaRectangle = new Geometry.Rectangle() {
         Width = Units.Six(),
         Height = Units.Seven()

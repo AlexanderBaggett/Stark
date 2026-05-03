@@ -1,7 +1,8 @@
-import System
+import System.Collections
+import System.Memory
 module Benchmarks.Collections.LinkedListBuildClear
 
-finite law bool Ok(MemoryStatus status) {
+unsafe finite law bool Ok(MemoryStatus status) {
     switch (status) {
         case MemoryStatus.Ok:
             return true;
@@ -10,8 +11,8 @@ finite law bool Ok(MemoryStatus status) {
     }
 }
 
-export ffi fn i32[min max] main() {
-    stack mut LinkedList<i32[0 max]> values = new();
+export unsafe ffi fn i32[min max] main() {
+    stack mut System.Collections.LinkedList<i32[0 max]> values = new();
 
     for willexit (stack mut i32[0 4096] i = 0; i < 4096; i += 1) {
         if (!Ok(values.AddLast(i))) {

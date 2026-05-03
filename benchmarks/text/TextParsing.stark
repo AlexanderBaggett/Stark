@@ -3,7 +3,7 @@ module Benchmarks.Text.TextParsing
 
 const Iterations = 50;
 
-fn bool ExpectBool(System.Text.TextResult<bool> result, bool expected) {
+unsafe fn bool ExpectBool(System.Text.TextResult<bool> result, bool expected) {
     switch (result) {
         case System.Text.TextResult<bool>.Ok(var value):
             return value == expected;
@@ -12,7 +12,7 @@ fn bool ExpectBool(System.Text.TextResult<bool> result, bool expected) {
     }
 }
 
-fn bool ExpectI64(System.Text.TextResult<i64[min max]> result, i64[min max] expected) {
+unsafe fn bool ExpectI64(System.Text.TextResult<i64[min max]> result, i64[min max] expected) {
     switch (result) {
         case System.Text.TextResult<i64[min max]>.Ok(var value):
             return value == expected;
@@ -21,7 +21,7 @@ fn bool ExpectI64(System.Text.TextResult<i64[min max]> result, i64[min max] expe
     }
 }
 
-fn bool ExpectU64(System.Text.TextResult<u64[0 max]> result, u64[0 max] expected) {
+unsafe fn bool ExpectU64(System.Text.TextResult<u64[0 max]> result, u64[0 max] expected) {
     switch (result) {
         case System.Text.TextResult<u64[0 max]>.Ok(var value):
             return value == expected;
@@ -30,7 +30,7 @@ fn bool ExpectU64(System.Text.TextResult<u64[0 max]> result, u64[0 max] expected
     }
 }
 
-fn bool ExpectI1024(System.Text.TextResult<i1024[min max]> result, i1024[min max] expected) {
+unsafe fn bool ExpectI1024(System.Text.TextResult<i1024[min max]> result, i1024[min max] expected) {
     switch (result) {
         case System.Text.TextResult<i1024[min max]>.Ok(var value):
             return value == expected;
@@ -39,7 +39,7 @@ fn bool ExpectI1024(System.Text.TextResult<i1024[min max]> result, i1024[min max
     }
 }
 
-fn bool ExpectU1024(System.Text.TextResult<u1024[0 max]> result, u1024[0 max] expected) {
+unsafe fn bool ExpectU1024(System.Text.TextResult<u1024[0 max]> result, u1024[0 max] expected) {
     switch (result) {
         case System.Text.TextResult<u1024[0 max]>.Ok(var value):
             return value == expected;
@@ -48,7 +48,7 @@ fn bool ExpectU1024(System.Text.TextResult<u1024[0 max]> result, u1024[0 max] ex
     }
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack mut i64[min max] checksum = 0;
 
     for willexit (stack mut i32[0 50] i = 0; i < Iterations; i += 1) {

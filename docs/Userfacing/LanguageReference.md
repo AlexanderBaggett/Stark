@@ -43,6 +43,32 @@ Rules:
 * `export import` is the only re export form
 * importing a module makes its visible top level declarations available by final name, so `import System.Collections` allows `List<T>` instead of `System.Collections.List<T>`
 
+### 2.1 Comments
+
+Comments are source trivia. They are ignored before parsing, type checking, and lowering, so commented-out Stark code has no semantic or generated-code effect.
+
+Supported forms:
+
+* line comments: `// comment text`
+* block comments: `/* comment text */`
+* C# style XML documentation line comments: `/// <summary>...</summary>`
+* C# style XML documentation block comments: `/** <summary>...</summary> */`
+
+Block comments do not nest.
+
+```stark
+module Demo
+
+/// <summary>Returns the fixed answer.</summary>
+finite law i32[0 max] Run() {
+    // stack i32[0 max] ignored = 99;
+    /*
+    return ignored;
+    */
+    return 42;
+}
+```
+
 ## 3. Top Level Declarations
 
 The top level declaration categories:
@@ -1387,7 +1413,7 @@ Outside that boundary:
 Foreign C APIs that use variadic arguments may be declared with `ffi varargs`:
 
 ```stark
-public ffi varargs fn i32 printf(ascii format);
+public unsafe ffi varargs fn i32 printf(ascii format);
 ```
 
 `varargs` is only valid on `ffi` declarations that end with `;`. Stark functions do not define C style variadic bodies.
@@ -1402,9 +1428,9 @@ The fixed parameters are checked normally. Extra call arguments are allowed afte
 Stark does not hide C's default argument promotions. If a C variadic function expects a floating point value, pass `f64`; cast `f32` to `f64` yourself. If a value is smaller than 32 bits, cast it to an explicit `i32` or `u32` first.
 
 ```stark
-public ffi varargs fn i32 printf(ascii format);
+public unsafe ffi varargs fn i32 printf(ascii format);
 
-fn i32 PrintScore(i32[min max] score) {
+unsafe fn i32 PrintScore(i32[min max] score) {
     return printf("Score: %d\n", score);
 }
 ```
@@ -1417,7 +1443,7 @@ Unsafe code may perform only operations that are explicitly gated as unsafe. Own
 
 Dynamic sparse-slot proofs are one such unsafe operation. The proof asserts that a particular dynamic storage slot is initialized even though the compiler cannot derive that fact from the dense `0..Length` prefix. The compiler does not export that assertion into later safe code.
 
-The unsafe forms:
+Use `unsafe fn` for functions whose contract depends on caller-proven raw memory or ABI invariants. Use an `unsafe { ... }` block when a safe API has a small audited implementation boundary:
 
 ```stark
 unsafe fn rawmutptr<T> FromAddress<T>(i64[0 max] address);
@@ -1429,6 +1455,19 @@ fn void UseAddress(i64[0 max] address) {
 }
 ```
 
+The following require an unsafe context:
+
+* declaring a function with `rawptr` or `rawmutptr` in its signature
+* declaring FFI or assembly functions
+* declaring local raw pointer variables
+* using `&` to form a raw address
+* using `*` to dereference a raw pointer
+* converting to or from raw pointer types, including pointer/integer conversions
+* constructing raw slices with `slice(pointer, count)`
+* calling unsafe functions
+* erasing unsafe function items to ordinary `fnptr` values for callback ABI use
+* using unsafe capture modes such as `capture(unsafe addr value)`
+
 Unsafe operation markers may also appear at the operation that crosses the proof boundary:
 
 ```stark
@@ -1437,9 +1476,9 @@ RegisterCallback(capture(unsafe addr token) () => {
 });
 ```
 
-FFI imports that expose raw platform obligations should be declared as unsafe or wrapped behind a safe Stark API. The standard library should keep unsafe raw and FFI operations inside small implementation boundaries and expose ordinary result and status based safe APIs where possible.
+FFI imports and assembly declarations must be declared `unsafe`. Raw pointers should normally be avoided outside FFI, OS/platform, allocator/runtime, and tightly audited implementation code. Prefer borrows, slices, `dynamic` storage, owned handle types, or platform wrappers for ordinary APIs.
 
-Unsafe requirements are not erased by ordinary callable values. Until Stark has an explicit unsafe function pointer type, an `unsafe fn` may be called only directly from an unsafe context and may not be stored in an ordinary `fnptr`.
+Unsafe function items can be promoted to ordinary `fnptr` values only inside an unsafe context. This is intended for ABI callback registration where the platform API stores a plain function pointer. After erasure, the programmer owns the proof that the callback is invoked only under the unsafe function's documented invariants.
 
 ## 14. Runtime Surface
 
@@ -1450,7 +1489,7 @@ The runtime contract:
 * recoverable errors are represented as ordinary values
 * panic, assert, and failure paths are unrecoverable and do not unwind
 * unrecoverable failure terminates execution through a trap or abort style path
-* the canonical hosted entrypoint is `export ffi fn i32 main()`
+* the canonical hosted entrypoint is `export unsafe ffi fn i32 main()`
 * normal process termination happens by returning from `main`
 * foreign unwinding into or through Stark code is unsupported
 

@@ -20,8 +20,8 @@ public sealed class ParserSmokeTests
             module Demo.Api
 
             public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right);
-            internal inline hot fn void Trace(rawptr<i8[-128 127]> message);
-            export ffi fn void Send(rawmutptr<i8[-128 127]> buffer);
+            internal inline hot unsafe fn void Trace(rawptr<i8[-128 127]> message);
+            export unsafe ffi fn void Send(rawmutptr<i8[-128 127]> buffer);
             """
         },
         {
@@ -29,7 +29,7 @@ public sealed class ParserSmokeTests
             """
             module System.Syscall
 
-            public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall3(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3)
+            public unsafe ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall3(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3)
                 in("rax") number,
                 in("rdi") arg1,
                 in("rsi") arg2,
@@ -111,7 +111,7 @@ public sealed class ParserSmokeTests
             internal static rawptr<i8[-128 127]> Buffer = null;
             export static i32[0 255] Limit = 255;
 
-            public finite void Accept(
+            public unsafe finite void Accept(
                 borrow i8[-128 127][] input,
                 frozen ascii name,
                 shared i32[0 10] state,
@@ -282,7 +282,7 @@ public sealed class ParserSmokeTests
 
             static i32[-2147483648 2147483647] Counter = 0;
 
-            fn i32[-2147483648 2147483647] Run(rawmutptr<i32[-2147483648 2147483647]> input, i64[-9223372036854775808 9223372036854775807] bits) {
+            unsafe fn i32[-2147483648 2147483647] Run(rawmutptr<i32[-2147483648 2147483647]> input, i64[-9223372036854775808 9223372036854775807] bits) {
                 stack mut Box box = new Box() { Value = 1 };
                 *(&(box.Value)) = (i32[-2147483648 2147483647])bits;
                 stack rawptr<i32[-2147483648 2147483647]> ptrAlias = (rawptr<i32[-2147483648 2147483647]>)input;

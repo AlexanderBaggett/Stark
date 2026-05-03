@@ -24,129 +24,133 @@ Completion rules:
         compatibility shim is explicitly needed for one release.
   - [ ] Update imports in examples, tests, benchmarks, and docs.
   - [ ] Preserve benchmark names and only report the language as `stark`.
-  - [ ] Remove `stark-experimental` benchmark variants after promotion.
+  - [x] Remove `stark-experimental` benchmark variants after promotion.
   - [ ] Run the full compiler, standard library, integration, and benchmark
         suites on Windows and Linux before closing this task.
 
 ### Module Promotion Checklist
 
-- [ ] `System`
-  - [ ] Replace re-exports with promoted experimental modules.
-  - [ ] Remove experimental namespace aliases once consumers are updated.
-  - [ ] Verify package image manifests contain only canonical modules.
-- [ ] `System.BitOperations`
-  - [ ] Confirm whether no experimental replacement is needed.
-  - [ ] Audit APIs against the new range and unsafe rules.
-  - [ ] Keep or port the module into the promoted standard library.
-- [ ] `System.Collections`
-  - [ ] Promote `System.Experimental.Collections`.
-  - [ ] Update collection tests and benchmarks.
-  - [ ] Verify list, stack, queue, linked list, and dictionary performance.
-- [ ] `System.Console`
-  - [ ] Promote `System.Experimental.Console`.
-  - [ ] Preserve redirected output behavior.
-  - [ ] Verify Windows console and Linux terminal behavior.
-- [ ] `System.FileSystem`
-  - [ ] Promote `System.Experimental.FileSystem`.
-  - [ ] Preserve directory enumeration correctness and performance.
-  - [ ] Verify first-entry, empty-directory, Unicode, long-name, and close paths.
-- [ ] `System.IO`
-  - [ ] Promote `System.Experimental.IO`.
-  - [ ] Update all dependent imports.
-  - [ ] Verify `IOStatus` and `IOResult<T>` behavior remains source-compatible.
-- [ ] `System.IO.File`
-  - [ ] Promote `System.Experimental.IO.File`.
-  - [ ] Verify buffered and unbuffered read/write paths.
-  - [ ] Verify ordinary close no longer performs durable flush work.
-- [ ] `System.IO.Path`
-  - [ ] Promote `System.Experimental.IO.Path`.
-  - [ ] Verify Windows, Linux, and future macOS path separators and normalization.
-  - [ ] Keep Unicode and long-path behavior covered by tests.
-- [ ] `System.Math`
-  - [ ] Confirm whether no experimental replacement is needed.
-  - [ ] Audit APIs against range notation and integer-width rules.
-  - [ ] Keep or port the module into the promoted standard library.
-- [ ] `System.Memory`
-  - [ ] Promote `System.Experimental.Memory`.
+- [x] Replacement and namespace promotion.
+  - [x] Promote `System.Experimental.Memory` into canonical `System.Memory`;
+        keep the allocator ABI while exposing dynamic reserve, append, copy,
+        move, fill, and disjoint helpers.
+  - [x] Promote experimental implementations into canonical namespaces:
+        `System.Collections`, `System.Console`, `System.FileSystem`,
+        `System.IO`, `System.IO.File`, `System.IO.Path`, `System.Net`,
+        `System.Net.Tcp`, `System.Runtime.Buffer`, and `System.Text`.
+  - [x] Promote runtime and platform dispatch changes required by the
+        experimental modules: `System.Runtime`, `System.Runtime.Platform`,
+        `System.Runtime.Platform.Linux`, and `System.Runtime.Platform.Windows`.
+  - [x] Confirm and keep or port modules with no experimental replacement:
+        `System.BitOperations`, `System.Math`, `System.Process`,
+        `System.Runtime.ConsoleInput`, `System.Syscall`, and
+        `System.Threading`.
+  - [x] Update `System` re-exports and public surface wiring after promoted
+        modules land.
+
+- [x] Standard library dependency rewiring.
+  - [x] Update promoted experimental callers of memory helpers:
+        `System.Experimental.Text`, `System.Experimental.Runtime.Buffer`, and
+        `System.Experimental.IO.Path` now call canonical `System.Memory`.
+  - [x] Replace all `System.Experimental.*` imports inside the standard library
+        with canonical `System.*` imports after each promoted batch lands.
+  - [x] Preserve source-compatible result and status types where needed, such as
+        `IOStatus`, `IOResult<T>`, `MemoryStatus`, and `MemoryResult<T>`.
+  - [x] Keep OS-specific APIs internal to platform/runtime modules.
+  - [x] Preserve compiler-known runtime helper names or update compiler
+        recognition at the same time as namespace promotion.
+
+- [ ] Test and package updates.
+  - [x] Add canonical `System.Memory` helper lowering, packaging, and executable
+        coverage.
+  - [x] Update text, runtime buffer, and path tests that consume promoted
+        `System.Memory` helpers.
+  - [x] Update source, executable, lowering, package-image, and integration
+        tests for collections, console, filesystem, IO, net, runtime buffer,
+        text, and platform batches.
+  - [x] Verify package image manifests contain only canonical modules.
+  - [x] Confirm no temporary compatibility shim is intentionally kept for this
+        batch, so no shim-specific tests are required.
+  - [ ] Run the full compiler, standard library, integration, and benchmark test
+        suites on Windows and Linux before closing the promotion.
+
+- [ ] Benchmark consolidation and experimental benchmark deletion.
+  - [x] Replace canonical memory benchmarks with promoted helper-based
+        implementations.
+  - [x] Delete temporary memory experimental benchmarks:
+        `ExperimentalMemoryCopyFill.stark` and
+        `ExperimentalMemoryDynamicReserveGrowth.stark`.
+  - [x] Preserve canonical benchmark names and report promoted Stark rows as
+        language `stark`, not `stark-experimental`.
+  - [x] Delete remaining experimental benchmark variants after their canonical
+        standard-library modules are promoted.
+  - [x] Update benchmark harness gates so promoted modules no longer require
+        matching `Experimental*.stark` files.
+  - [ ] Re-run focused benchmark smoke tests for each promoted batch against C
+        and Rust.
+  - [ ] Re-run the full benchmark suite after the promotion is complete.
+
+- [ ] Behavioral and performance verification.
+  - [x] Verify canonical `System.Memory` helper lowering keeps memcpy, memmove,
+        memset, dynamic length commits, Windows heap declarations, and package
+        attributes intact.
+  - [x] Re-run focused `MemoryCopyFill` and `MemoryDynamicReserveGrowth`
+        benchmark smoke tests against C and Rust.
   - [ ] Verify allocator attributes, realloc behavior, bucket reuse, and dynamic
-        memory primitives.
-  - [ ] Re-run allocator benchmarks against C and Rust.
-- [ ] `System.Net`
-  - [ ] Promote `System.Experimental.Net`.
-  - [ ] Verify socket startup and shutdown behavior on each OS.
-  - [ ] Keep raw socket handles behind safe owned abstractions.
-- [ ] `System.Net.Tcp`
-  - [ ] Promote `System.Experimental.Net.Tcp`.
-  - [ ] Verify scalar and vectored TCP paths.
-  - [ ] Re-run loopback throughput benchmarks.
-- [ ] `System.Process`
-  - [ ] Confirm whether no experimental replacement is needed.
-  - [ ] Audit process exit and process ID APIs against promoted runtime platform
-        boundaries.
-  - [ ] Keep or port the module into the promoted standard library.
-- [ ] `System.Runtime`
-  - [ ] Promote `System.Experimental.Runtime` where applicable.
-  - [ ] Preserve runtime helper imports and compiler-known symbols.
-  - [ ] Verify package image behavior.
-- [ ] `System.Runtime.Buffer`
-  - [ ] Promote `System.Experimental.Runtime.Buffer`.
-  - [ ] Verify fixed and dynamic buffer behavior.
-  - [ ] Re-run runtime buffer benchmarks.
-- [ ] `System.Runtime.ConsoleInput`
-  - [ ] Confirm whether no experimental replacement is needed.
-  - [ ] Audit raw input buffers and platform calls.
-  - [ ] Keep or port the module into the promoted standard library.
-- [ ] `System.Runtime.Platform`
-  - [ ] Promote dispatch surface changes required by experimental modules.
-  - [ ] Keep OS-specific APIs internal.
-  - [ ] Verify Linux, Windows, and macOS dispatch parity.
-- [ ] `System.Runtime.Platform.Linux`
-  - [ ] Preserve Linux behavior while accepting promoted API signatures.
-  - [ ] Verify syscall wrappers and file, directory, console, memory, thread,
-        and socket paths.
-- [ ] `System.Runtime.Platform.Windows`
-  - [ ] Preserve Windows behavior while accepting promoted API signatures.
-  - [ ] Verify Kernel32, NtDll, Winsock, console, file, directory, memory,
-        thread, and socket paths.
-- [ ] `System.Syscall`
-  - [ ] Confirm whether no experimental replacement is needed.
-  - [ ] Keep syscall APIs isolated to platform/runtime internals where possible.
-  - [ ] Verify user-facing code does not need raw syscall handles.
-- [ ] `System.Text`
-  - [ ] Promote `System.Experimental.Text`.
-  - [ ] Verify owned text, views, append, format, copy, and Unicode paths.
-  - [ ] Re-run text benchmarks.
-- [ ] `System.Threading`
-  - [ ] Confirm whether no experimental replacement is needed.
-  - [ ] Audit thread entry, join, detach, yield, and sleep APIs against unsafe and
-        raw-pointer rules.
-  - [ ] Keep or port the module into the promoted standard library.
+        memory primitives in the full allocator suite.
+  - [ ] Verify collection performance for list, stack, queue, linked list, and
+        dictionary workloads.
+  - [ ] Verify console redirected output, Windows console, and Linux terminal
+        behavior.
+  - [ ] Verify filesystem and IO behavior: buffered and unbuffered read/write,
+        ordinary close without durable flush, directory enumeration correctness,
+        Unicode, long-name, first-entry, empty-directory, and close paths.
+  - [ ] Verify path behavior across Windows, Linux, and future macOS separators
+        and normalization.
+  - [ ] Verify networking behavior: socket startup/shutdown, scalar TCP paths,
+        vectored TCP paths, and loopback throughput.
+  - [ ] Verify runtime buffer fixed and dynamic behavior and benchmarks.
+  - [ ] Verify text behavior: owned text, views, append, format, copy, Unicode,
+        and path-related formatting.
+  - [ ] Verify platform parity for Linux, Windows, and macOS dispatch surfaces.
+
+- [ ] Cleanup and final removal.
+  - [x] Delete `System.Experimental.Memory` after canonical `System.Memory`
+        consumers and tests were updated.
+  - [ ] Remove remaining `System.Experimental.*` public surface unless a
+        compatibility shim is explicitly approved for one release.
+  - [ ] Remove experimental namespace aliases after all consumers are canonical.
+  - [ ] Remove temporary migration tests, docs, and benchmark gates that only
+        existed to compare stable and experimental implementations.
+  - [ ] Audit promoted modules against the new unsafe, raw-pointer, and range
+        rules before release.
 
 ## 2. Require `unsafe` For Raw Pointer Use
 
-- [ ] Enforce an `unsafe` requirement for raw pointer use.
-  - [ ] Define every operation that requires `unsafe`:
+- [x] Enforce an `unsafe` requirement for raw pointer use.
+  - [x] Define every operation that requires `unsafe`:
         `rawptr`, `rawmutptr`, dereference, pointer arithmetic, pointer casts,
         bounded raw pointer region construction, `null`, and raw FFI handles.
-  - [ ] Decide whether raw pointer type names in declarations require `unsafe`
+  - [x] Decide whether raw pointer type names in declarations require `unsafe`
         or whether only construction, dereference, and mutation require it.
-  - [ ] Update grammar and syntax model if `unsafe` blocks/functions are not
+  - [x] Update grammar and syntax model if `unsafe` blocks/functions are not
         already represented everywhere needed.
-  - [ ] Add semantic validation diagnostics for raw pointer use outside unsafe
+  - [x] Add semantic validation diagnostics for raw pointer use outside unsafe
         contexts.
-  - [ ] Require explicit unsafe context at FFI and platform boundaries.
-  - [ ] Add diagnostics that explain the safe alternatives: borrow, slice,
+  - [x] Require explicit unsafe context at FFI and platform boundaries.
+  - [x] Add diagnostics that explain the safe alternatives: borrow, slice,
         dynamic, owned handle, or platform wrapper.
-  - [ ] Add parser, semantic, ownership, lowering, and codegen tests.
-  - [ ] Update language reference, book, and style guide.
+  - [x] Add parser, semantic, ownership, lowering, and codegen tests.
+  - [x] Update language reference.
+  - [ ] Update book and style guide.
 
 ## 3. Remove Unnecessary Raw Pointers From The Standard Library
 
 - [ ] Disallow unnecessary raw pointer use in the standard library.
-  - [ ] Define allowed raw pointer zones: FFI declarations, OS platform modules,
+  - [x] Define allowed raw pointer zones: FFI declarations, OS platform modules,
         runtime allocation hooks, compiler-known ABI helpers, and carefully
         audited unsafe internals.
-  - [ ] Prefer `dynamic`, slices, borrowed values, fixed buffers, and owned
+  - [x] Prefer `dynamic`, slices, borrowed values, fixed buffers, and owned
         handles everywhere else.
   - [ ] Add standard library audit tests that fail on unexpected raw pointer
         usage outside allowlisted files or functions.
@@ -206,16 +210,16 @@ Completion rules:
 - [ ] `System.Threading`
   - [ ] Hide thread handles behind owned thread types.
 
-## 4. Enforce Integer Range Issues As Compile-Time Errors
+## 4. Enforce Integer Range Issues As Compile-Time Errors, using singed integers with postive only range as compile time error, suggest use of unsigned integer instead.
 
 - [ ] Make invalid or unnecessarily wide integer range declarations compile-time
       errors.
   - [ ] Define the exact rule for oversized storage ranges. Example:
         `i64[0 128]` should be rejected when a narrower integer type can express
         the declared range and no ABI, pointer-size, or platform reason is
-        documented.
+        documented. use new `platform` keyword if required by abi contract to allow you to use a type you don't need to.
   - [ ] Add an escape hatch or annotation only for ABI/platform cases that truly
-        require a specific width.
+        require a specific width. use new `platform` keyword if required by abi contract to allow you to use a type you don't need to.
   - [ ] Reject impossible ranges, inverted ranges, endpoints outside the base
         integer type, and endpoints that force unnecessary storage width.
   - [ ] Emit diagnostics that suggest the smallest valid integer type in the error message.
@@ -347,13 +351,15 @@ Completion rules:
 - [ ] Chapter 25: Stark's Performance Model
 - [ ] Chapter 26: Memory Layout, ABI, and Interop Expectations
 - [ ] Chapter 27: Integer, Floating-Point, and Overflow Policy
-- [ ] Chapter 28: Reading Stark Diagnostics
-- [ ] Chapter 29: Looking at Generated IR
-- [ ] Chapter 30: Project: Command-Line Text Tool
-- [ ] Chapter 31: Project: Multi-Module Package
-- [ ] Chapter 32: Project: File Processing Utility
-- [ ] Chapter 33: Project: Native-Backed Package
-- [ ] Chapter 34: Project: Performance Case Study
+- [ ] Chapter 28: Performance Tuning, Independent loops, inline, disjoint params, const params, 
+- [ ] Chapter 29: Unsafe stark and rawpointers
+- [ ] Chapter 30: Reading Stark Diagnostics
+- [ ] Chapter 31: Looking at Generated IR
+- [ ] Chapter 32: Project: Command-Line Text Tool
+- [ ] Chapter 33: Project: Multi-Module Package
+- [ ] Chapter 34: Project: File Processing Utility
+- [ ] Chapter 35: Project: Native-Backed Package
+- [ ] Chapter 36: Project: Performance Case Study
 - [ ] Appendices
   - [ ] Keywords and reserved words
   - [ ] Operators and symbols

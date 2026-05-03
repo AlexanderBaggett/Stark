@@ -1,12 +1,12 @@
-using Stark.Compiler;
+﻿using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
 public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : StandardLibraryTestSuite
 {
     private const string ExperimentalFileProgram = """
-        import System.Experimental.IO.File
-        import System.Experimental.Runtime.Buffer
+        import System.IO.File
+        import System.Runtime.Buffer
         import System.IO
         import System.Memory
         module App
@@ -47,29 +47,29 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
             }
         }
 
-        fn bool FileOpenFailed(System.IO.IOResult<System.Experimental.IO.File.File> result) {
+        fn bool FileOpenFailed(System.IO.IOResult<System.IO.File.File> result) {
             switch (result) {
-                case System.IO.IOResult<System.Experimental.IO.File.File>.Ok(var value):
+                case System.IO.IOResult<System.IO.File.File>.Ok(var value):
                     return false;
-                case System.IO.IOResult<System.Experimental.IO.File.File>.Err(var error):
+                case System.IO.IOResult<System.IO.File.File>.Err(var error):
                     return true;
             }
         }
 
-        export ffi fn i32[min max] main() {
+        export unsafe ffi fn i32[min max] main() {
             stack mut i8[-128 127][3] source = { 65, 66, 67 };
-            stack System.IO.IOResult<System.Experimental.IO.File.File> opened =
-                System.Experimental.IO.File.Open("experimental-file.txt", System.Experimental.IO.File.FileMode.Write, System.Experimental.IO.File.FileBuffering.None);
+            stack System.IO.IOResult<System.IO.File.File> opened =
+                System.IO.File.Open("experimental-file.txt", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.None);
             switch (opened) {
-                case System.IO.IOResult<System.Experimental.IO.File.File>.Err(var error):
+                case System.IO.IOResult<System.IO.File.File>.Err(var error):
                     return 1;
-                case System.IO.IOResult<System.Experimental.IO.File.File>.Ok(var value):
-                    stack mut System.Experimental.IO.File.File writer = value;
+                case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+                    stack mut System.IO.File.File writer = value;
                     if (CountOrNegative(writer.Write(source)) != 3) {
                         return 2;
                     }
 
-                    stack mut System.Experimental.Runtime.Buffer.DynamicByteBuffer extra = new();
+                    stack mut System.Runtime.Buffer.DynamicByteBuffer extra = new();
                     if (!MemoryOk(extra.WriteSlice(source, 3))) {
                         return 3;
                     }
@@ -78,7 +78,7 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
                         return 4;
                     }
 
-                    stack mut System.Experimental.Runtime.Buffer.FixedByteBuffer512 fixedSource = new();
+                    stack mut System.Runtime.Buffer.FixedByteBuffer512 fixedSource = new();
                     if (!MemoryOk(fixedSource.WriteSlice(source, 3))) {
                         return 5;
                     }
@@ -96,23 +96,23 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
                     }
             }
 
-            if (!BoolOrFalse(System.Experimental.IO.File.Exists("experimental-file.txt"))) {
+            if (!BoolOrFalse(System.IO.File.Exists("experimental-file.txt"))) {
                 return 9;
             }
 
-            if (!FileOpenFailed(System.Experimental.IO.File.Open("missing-experimental-file.txt", System.Experimental.IO.File.FileMode.Read))) {
+            if (!FileOpenFailed(System.IO.File.Open("missing-experimental-file.txt", System.IO.File.FileMode.Read))) {
                 return 10;
             }
 
             stack mut i8[-128 127][4] destination = { 0, 0, 0, 0 };
-            stack System.IO.IOResult<System.Experimental.IO.File.File> readerResult =
-                System.Experimental.IO.File.Open("experimental-file.txt", System.Experimental.IO.File.FileMode.Read);
+            stack System.IO.IOResult<System.IO.File.File> readerResult =
+                System.IO.File.Open("experimental-file.txt", System.IO.File.FileMode.Read);
             switch (readerResult) {
-                case System.IO.IOResult<System.Experimental.IO.File.File>.Err(var readError):
+                case System.IO.IOResult<System.IO.File.File>.Err(var readError):
                     return 11;
-                case System.IO.IOResult<System.Experimental.IO.File.File>.Ok(var readValue):
-                    stack mut System.Experimental.IO.File.File reader = readValue;
-                    if (CountOrNegative(reader.Seek(3, System.Experimental.IO.File.SeekOrigin.Begin)) != 3) {
+                case System.IO.IOResult<System.IO.File.File>.Ok(var readValue):
+                    stack mut System.IO.File.File reader = readValue;
+                    if (CountOrNegative(reader.Seek(3, System.IO.File.SeekOrigin.Begin)) != 3) {
                         return 12;
                     }
 
@@ -120,11 +120,11 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
                         return 13;
                     }
 
-                    if (CountOrNegative(reader.Seek(0, System.Experimental.IO.File.SeekOrigin.Begin)) != 0) {
+                    if (CountOrNegative(reader.Seek(0, System.IO.File.SeekOrigin.Begin)) != 0) {
                         return 14;
                     }
 
-                    stack mut System.Experimental.Runtime.Buffer.FixedByteBuffer512 readBuffer = new();
+                    stack mut System.Runtime.Buffer.FixedByteBuffer512 readBuffer = new();
                     if (!MemoryOk(readBuffer.WriteFill(0, 0))) {
                         return 15;
                     }
@@ -150,15 +150,15 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
                 return 17;
             }
 
-            if (!StatusOk(System.Experimental.IO.File.Move("experimental-file.txt", "experimental-file-renamed.txt"))) {
+            if (!StatusOk(System.IO.File.Move("experimental-file.txt", "experimental-file-renamed.txt"))) {
                 return 18;
             }
 
-            if (!BoolOrFalse(System.Experimental.IO.File.Exists("experimental-file-renamed.txt"))) {
+            if (!BoolOrFalse(System.IO.File.Exists("experimental-file-renamed.txt"))) {
                 return 19;
             }
 
-            if (!StatusOk(System.Experimental.IO.File.Delete("experimental-file-renamed.txt"))) {
+            if (!StatusOk(System.IO.File.Delete("experimental-file-renamed.txt"))) {
                 return 20;
             }
 
@@ -167,10 +167,10 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
         """;
 
     private const string ExperimentalFileSystemProgram = """
-        import System.Experimental.FileSystem
-        import System.Experimental.IO.File
-        import System.Experimental.IO.Path
-        import System.Experimental.Text
+        import System.FileSystem
+        import System.IO.File
+        import System.IO.Path
+        import System.Text
         import System.IO
         import System.Memory
         module App
@@ -227,13 +227,13 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
                 Length = (i64[min max])((2**63) - 1),
                 Capacity = (i64[min max])((2**63) - 1)
             };
-            stack mut System.Experimental.Text.OwnedAscii destination = new();
-            stack ascii hugeView = System.Experimental.Text.AsciiView(huge);
-            if (System.Experimental.Text.AsciiLength(hugeView) == 0) {
+            stack mut System.Text.OwnedAscii destination = new();
+            stack ascii hugeView = System.Text.AsciiView(huge);
+            if (System.Text.AsciiLength(hugeView) == 0) {
                 return 1;
             }
 
-            if (!MemoryTooLarge(System.Experimental.IO.Path.TryNormalizeSeparators(destination, hugeView))) {
+            if (!MemoryTooLarge(System.IO.Path.TryNormalizeSeparators(destination, hugeView))) {
                 return 2;
             }
 
@@ -244,7 +244,7 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
             return 0;
         }
 
-        fn bool IsChildName(mut borrow System.Experimental.FileSystem.FileSystemEntry entry) {
+        fn bool IsChildName(mut borrow System.FileSystem.FileSystemEntry entry) {
             if (entry.Name.Length() != 9) {
                 return false;
             }
@@ -261,21 +261,21 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
                 && view[8] == 116;
         }
 
-        fn bool IsChildEntry(System.Experimental.FileSystem.DirectoryReadResult result) {
+        fn bool IsChildEntry(System.FileSystem.DirectoryReadResult result) {
             switch (result) {
-                case System.Experimental.FileSystem.DirectoryReadResult.End:
+                case System.FileSystem.DirectoryReadResult.End:
                     return false;
-                case System.Experimental.FileSystem.DirectoryReadResult.Err(var error):
+                case System.FileSystem.DirectoryReadResult.Err(var error):
                     return false;
-                case System.Experimental.FileSystem.DirectoryReadResult.Entry(var entry):
-                    stack mut System.Experimental.FileSystem.FileSystemEntry mutableEntry = entry;
+                case System.FileSystem.DirectoryReadResult.Entry(var entry):
+                    stack mut System.FileSystem.FileSystemEntry mutableEntry = entry;
                     return IsChildName(mutableEntry);
             }
         }
 
-        export ffi fn i32[min max] main() {
-            stack mut System.Experimental.Text.OwnedAscii currentDirectory = new();
-            if (!MemoryOk(System.Experimental.IO.Path.CurrentDirectory(currentDirectory))
+        export unsafe ffi fn i32[min max] main() {
+            stack mut System.Text.OwnedAscii currentDirectory = new();
+            if (!MemoryOk(System.IO.Path.CurrentDirectory(currentDirectory))
                 || currentDirectory.Length() == 0) {
                 return 20;
             }
@@ -285,37 +285,37 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
                 return 30 + tooLarge;
             }
 
-            if (!StatusOk(System.Experimental.FileSystem.CreateDirectory("experimental-fs-root"))) {
+            if (!StatusOk(System.FileSystem.CreateDirectory("experimental-fs-root"))) {
                 return 1;
             }
 
-            stack System.IO.IOResult<System.Experimental.IO.File.File> opened =
-                System.Experimental.IO.File.Open("experimental-fs-root/child.txt", System.Experimental.IO.File.FileMode.Write);
+            stack System.IO.IOResult<System.IO.File.File> opened =
+                System.IO.File.Open("experimental-fs-root/child.txt", System.IO.File.FileMode.Write);
             switch (opened) {
-                case System.IO.IOResult<System.Experimental.IO.File.File>.Err(var error):
+                case System.IO.IOResult<System.IO.File.File>.Err(var error):
                     return 2;
-                case System.IO.IOResult<System.Experimental.IO.File.File>.Ok(var value):
-                    stack mut System.Experimental.IO.File.File writer = value;
+                case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+                    stack mut System.IO.File.File writer = value;
                     if (!StatusOk(writer.WriteLine("child")) || !StatusOk(writer.Close())) {
                         return 3;
                     }
             }
 
-            if (!BoolOrFalse(System.Experimental.FileSystem.IsDirectory("experimental-fs-root"))) {
+            if (!BoolOrFalse(System.FileSystem.IsDirectory("experimental-fs-root"))) {
                 return 4;
             }
 
-            if (!BoolOrFalse(System.Experimental.FileSystem.IsFile("experimental-fs-root/child.txt"))) {
+            if (!BoolOrFalse(System.FileSystem.IsFile("experimental-fs-root/child.txt"))) {
                 return 5;
             }
 
-            stack System.IO.IOResult<System.Experimental.FileSystem.Directory> directoryResult =
-                System.Experimental.FileSystem.OpenDirectory("experimental-fs-root");
+            stack System.IO.IOResult<System.FileSystem.Directory> directoryResult =
+                System.FileSystem.OpenDirectory("experimental-fs-root");
             switch (directoryResult) {
-                case System.IO.IOResult<System.Experimental.FileSystem.Directory>.Err(var directoryError):
+                case System.IO.IOResult<System.FileSystem.Directory>.Err(var directoryError):
                     return 6;
-                case System.IO.IOResult<System.Experimental.FileSystem.Directory>.Ok(var directoryValue):
-                    stack mut System.Experimental.FileSystem.Directory directory = directoryValue;
+                case System.IO.IOResult<System.FileSystem.Directory>.Ok(var directoryValue):
+                    stack mut System.FileSystem.Directory directory = directoryValue;
                     if (!IsChildEntry(directory.ReadNext())) {
                         return 7;
                     }
@@ -325,11 +325,11 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
                     }
             }
 
-            if (!StatusOk(System.Experimental.IO.File.Delete("experimental-fs-root/child.txt"))) {
+            if (!StatusOk(System.IO.File.Delete("experimental-fs-root/child.txt"))) {
                 return 9;
             }
 
-            if (!StatusOk(System.Experimental.FileSystem.DeleteDirectory("experimental-fs-root"))) {
+            if (!StatusOk(System.FileSystem.DeleteDirectory("experimental-fs-root"))) {
                 return 10;
             }
 
@@ -346,42 +346,42 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(
                 """
-                import System.Experimental.FileSystem
-                import System.Experimental.IO
-                import System.Experimental.IO.File
-                import System.Experimental.IO.Path
-                import System.Experimental.Text
+                import System.FileSystem
+                import System.IO
+                import System.IO.File
+                import System.IO.Path
+                import System.Text
                 import System.IO
                 import System.Memory
                 module Demo
 
                 fn System.IO.IOResult<i64[0 max]> WriteBytes(
-                    mut borrow System.Experimental.IO.File.File file,
+                    mut borrow System.IO.File.File file,
                     borrow i8[-128 127][] source) {
                     return file.Write(source);
                 }
 
-                fn System.IO.IOStatus SyncFile(mut borrow System.Experimental.IO.File.File file) {
+                fn System.IO.IOStatus SyncFile(mut borrow System.IO.File.File file) {
                     return file.SyncAll();
                 }
 
-                fn System.IO.IOResult<System.Experimental.FileSystem.Directory> OpenDir(ascii path) {
-                    return System.Experimental.FileSystem.OpenDirectory(path);
+                fn System.IO.IOResult<System.FileSystem.Directory> OpenDir(ascii path) {
+                    return System.FileSystem.OpenDirectory(path);
                 }
 
-                fn System.Experimental.FileSystem.DirectoryReadResult ReadOne(
-                    mut borrow System.Experimental.FileSystem.Directory directory) {
+                fn System.FileSystem.DirectoryReadResult ReadOne(
+                    mut borrow System.FileSystem.Directory directory) {
                     return directory.ReadNext();
                 }
 
-                fn System.Experimental.FileSystem.DirectoryReadInfoResult ReadOneInfo(
-                    mut borrow System.Experimental.FileSystem.Directory directory) {
+                fn System.FileSystem.DirectoryReadInfoResult ReadOneInfo(
+                    mut borrow System.FileSystem.Directory directory) {
                     return directory.ReadNextInfo();
                 }
 
                 fn System.Memory.MemoryStatus CurrentDir(
-                    mut borrow System.Experimental.Text.OwnedAscii destination) {
-                    return System.Experimental.IO.Path.CurrentDirectory(destination);
+                    mut borrow System.Text.OwnedAscii destination) {
+                    return System.IO.Path.CurrentDirectory(destination);
                 }
                 """,
                 appPath),
@@ -395,12 +395,12 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
         Assert.Contains("ReadDirectoryEntry", llvm, StringComparison.Ordinal);
         Assert.Contains("ReadDirectoryEntryInfo", llvm, StringComparison.Ordinal);
         Assert.Contains("OpenDirectoryFastInto", llvm, StringComparison.Ordinal);
-        Assert.Contains("System_Experimental_FileSystem_Directory_ReadNextInfo", llvm, StringComparison.Ordinal);
+        Assert.Contains("System_FileSystem_Directory_ReadNextInfo", llvm, StringComparison.Ordinal);
         Assert.Contains("ReadFileBytes", llvm, StringComparison.Ordinal);
         Assert.Contains("WriteFileBytes", llvm, StringComparison.Ordinal);
         Assert.Contains("ReadFileBytesFast", llvm, StringComparison.Ordinal);
         Assert.Contains("WriteFileBytesFast", llvm, StringComparison.Ordinal);
-        Assert.DoesNotContain("System_FileSystem_", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("System_Experimental_FileSystem_", llvm, StringComparison.Ordinal);
 
         var platformSource = File.ReadAllText(Path.Combine(sourceRoot, "System", "Runtime", "Platform.stark"));
         Assert.Contains("rawmutptr<i8[-128 127]>[capacity] buffer", platformSource, StringComparison.Ordinal);
@@ -473,3 +473,4 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
         }
     }
 }
+

@@ -1,7 +1,7 @@
-import System.Process
+﻿import System.Process
 module Benchmarks.Micro.IndependentRawPointerRegions
 
-fn void Copy(
+unsafe fn void Copy(
     disjoint rawptr<i64[min max]>[32] input,
     disjoint rawmutptr<i64[min max]>[32] output)
     where disjoint(input[0, 32], output[0, 32]) {
@@ -12,7 +12,7 @@ fn void Copy(
     return;
 }
 
-fn void CopyWithScalarWork(
+unsafe fn void CopyWithScalarWork(
     disjoint rawptr<i64[min max]>[32] input,
     disjoint rawmutptr<i64[min max]>[32] output)
     where disjoint(input[0, 32], output[0, 32]) {
@@ -26,7 +26,7 @@ fn void CopyWithScalarWork(
     return;
 }
 
-fn void OverlapSafeCopyWithScalarWork(
+unsafe fn void OverlapSafeCopyWithScalarWork(
     rawptr<i64[min max]>[4] input,
     rawmutptr<i64[min max]>[4] output) {
     stack mut i64[min max][4] temporary = { 0, 0, 0, 0 };
@@ -43,7 +43,7 @@ fn void OverlapSafeCopyWithScalarWork(
     return;
 }
 
-fn void Fill(rawmutptr<i64[min max]>[32] output, i64[min max] value) {
+unsafe fn void Fill(rawmutptr<i64[min max]>[32] output, i64[min max] value) {
     for willexit independent (stack mut i32[0 32] index = 0; index < 32; index += 1) {
         *(&output[index]) = value + (i64[min max])index;
     }
@@ -51,7 +51,7 @@ fn void Fill(rawmutptr<i64[min max]>[32] output, i64[min max] value) {
     return;
 }
 
-fn void FillBytesWithScalarWork(rawmutptr<i8[min max]>[32] output, i8[min max] value) {
+unsafe fn void FillBytesWithScalarWork(rawmutptr<i8[min max]>[32] output, i8[min max] value) {
     stack i32[0 32] before = 32;
 
     for willexit independent (stack mut i32[0 32] index = 0; index < 32; index += 1) {
@@ -62,7 +62,7 @@ fn void FillBytesWithScalarWork(rawmutptr<i8[min max]>[32] output, i8[min max] v
     return;
 }
 
-fn void Transform(
+unsafe fn void Transform(
     disjoint rawptr<i64[min max]>[32] input,
     disjoint rawmutptr<i64[min max]>[32] output)
     where disjoint(input[0, 32], output[0, 32]) {
@@ -73,7 +73,7 @@ fn void Transform(
     return;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack mut i64[min max][32] input = {
         1, 2, 3, 4, 5, 6, 7, 8,
         9, 10, 11, 12, 13, 14, 15, 16,

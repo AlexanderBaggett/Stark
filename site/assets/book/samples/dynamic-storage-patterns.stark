@@ -64,7 +64,7 @@ fn retborrow u8[0 255][] ViewBytes(borrow ByteBuffer self) {
     return self.Bytes[0, self.Bytes.Length];
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack mut IntList values = new();
     PushInt(values, 10);
     PushInt(values, 32);

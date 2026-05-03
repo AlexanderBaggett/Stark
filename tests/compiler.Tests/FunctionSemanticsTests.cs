@@ -15,11 +15,11 @@ public sealed class FunctionSemanticsTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 return left + right;
             }
 
-            fn void Touch(borrow mut Box box) {
+            unsafe fn void Touch(borrow mut Box box) {
                 box.Value = 1;
                 return;
             }
@@ -47,7 +47,7 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Count() {
+            unsafe fn i32[-2147483648 2147483647] Count() {
                 stack mut i32[-2147483648 2147483647] value = 0;
 
                 while willexit (value < 3) {
@@ -75,7 +75,7 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            law i32[-2147483648 2147483647] Bad(fnptr<fn i32[-2147483648 2147483647]()> op) {
+            unsafe law i32[-2147483648 2147483647] Bad(fnptr<fn i32[-2147483648 2147483647]()> op) {
                 return op();
             }
             """);
@@ -94,15 +94,15 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            finite i32[-2147483648 2147483647] UseFinite(fnptr<finite i32[-2147483648 2147483647]()> op) {
+            unsafe finite i32[-2147483648 2147483647] UseFinite(fnptr<finite i32[-2147483648 2147483647]()> op) {
                 return op();
             }
 
-            law i32[-2147483648 2147483647] UseLaw(fnptr<law i32[-2147483648 2147483647]()> op) {
+            unsafe law i32[-2147483648 2147483647] UseLaw(fnptr<law i32[-2147483648 2147483647]()> op) {
                 return op();
             }
 
-            finite law i32[-2147483648 2147483647] UseStrict(fnptr<finite law i32[-2147483648 2147483647]()> op) {
+            unsafe finite law i32[-2147483648 2147483647] UseStrict(fnptr<finite law i32[-2147483648 2147483647]()> op) {
                 return op();
             }
             """);
@@ -123,11 +123,11 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Pure() {
+            unsafe fn i32[-2147483648 2147483647] Pure() {
                 return 1;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 stack fnptr<law i32[-2147483648 2147483647]()> op = () => Pure();
                 return op();
             }
@@ -151,11 +151,11 @@ public sealed class FunctionSemanticsTests
 
             static i32[-2147483648 2147483647] Counter = 1;
 
-            fn i32[-2147483648 2147483647] Impure() {
+            unsafe fn i32[-2147483648 2147483647] Impure() {
                 return Counter;
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack fnptr<law i32[-2147483648 2147483647]()> op = () => Impure();
                 return;
             }
@@ -180,7 +180,7 @@ public sealed class FunctionSemanticsTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn retborrow Box Echo(retborrow Box value) {
+            unsafe fn retborrow Box Echo(retborrow Box value) {
                 return value;
             }
             """);
@@ -214,7 +214,7 @@ public sealed class FunctionSemanticsTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn void Inspect(borrow Pair pair) {
+            unsafe fn void Inspect(borrow Pair pair) {
                 return;
             }
             """);
@@ -241,13 +241,13 @@ public sealed class FunctionSemanticsTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn void TouchPrefix(disjoint borrow mut Box left, disjoint borrow mut Box right) {
+            unsafe fn void TouchPrefix(disjoint borrow mut Box left, disjoint borrow mut Box right) {
                 left.Value = 1;
                 right.Value = 2;
                 return;
             }
 
-            fn void TouchWhere(borrow mut Box left, borrow mut Box right) where disjoint(left, right) {
+            unsafe fn void TouchWhere(borrow mut Box left, borrow mut Box right) where disjoint(left, right) {
                 left.Value = 1;
                 right.Value = 2;
                 return;
@@ -274,7 +274,7 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            fn void Inspect(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
+            unsafe fn void Inspect(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
                 return;
             }
             """);
@@ -299,12 +299,12 @@ public sealed class FunctionSemanticsTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn void Touch(borrow mut Box box) {
+            unsafe fn void Touch(borrow mut Box box) {
                 box.Value = 1;
                 return;
             }
 
-            fn void Outer(borrow mut Box box) {
+            unsafe fn void Outer(borrow mut Box box) {
                 Touch(box);
                 return;
             }
@@ -341,11 +341,11 @@ public sealed class FunctionSemanticsTests
 
             static mut i32[-2147483648 2147483647] Counter = 0;
 
-            fn i32[-2147483648 2147483647] ReadGlobal() {
+            unsafe fn i32[-2147483648 2147483647] ReadGlobal() {
                 return Counter;
             }
 
-            fn void TouchArg(borrow mut Box box) {
+            unsafe fn void TouchArg(borrow mut Box box) {
                 box.Value = 1;
                 return;
             }
@@ -386,9 +386,9 @@ public sealed class FunctionSemanticsTests
                 Allocator Allocator;
             }
 
-            internal fn Allocation Allocate(Allocator allocator, i64[0 max] byteLength, i64[1 max] alignment);
-            internal fn Allocation Reallocate(Allocation allocation, i64[0 max] byteLength, i64[1 max] alignment);
-            internal fn void Free(Allocation allocation);
+            internal unsafe fn Allocation Allocate(Allocator allocator, i64[0 max] byteLength, i64[1 max] alignment);
+            internal unsafe fn Allocation Reallocate(Allocation allocation, i64[0 max] byteLength, i64[1 max] alignment);
+            internal unsafe fn void Free(Allocation allocation);
             """);
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
@@ -411,11 +411,11 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            fn bool Reserve(mut borrow dynamic i32[0 max] values) {
+            unsafe fn bool Reserve(mut borrow dynamic i32[0 max] values) {
                 return values.TryReserve(8);
             }
 
-            fn bool Append(mut borrow dynamic i32[0 max] values) {
+            unsafe fn bool Append(mut borrow dynamic i32[0 max] values) {
                 if (!values.TryReserve(1)) {
                     return false;
                 }
@@ -449,11 +449,11 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 return left + right;
             }
 
-            law i32[-2147483648 2147483647] Use() {
+            unsafe law i32[-2147483648 2147483647] Use() {
                 return Add(1, 2);
             }
             """);
@@ -468,11 +468,11 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Step(i32[-2147483648 2147483647] value) {
+            unsafe fn i32[-2147483648 2147483647] Step(i32[-2147483648 2147483647] value) {
                 return value + 1;
             }
 
-            finite i32[-2147483648 2147483647] Use(i32[-2147483648 2147483647] value) {
+            unsafe finite i32[-2147483648 2147483647] Use(i32[-2147483648 2147483647] value) {
                 return Step(value);
             }
             """);
@@ -489,7 +489,7 @@ public sealed class FunctionSemanticsTests
             import System.Text
             module Demo
 
-            finite law System.Memory.MemoryResult<System.Text.OwnedAscii> Bad(System.Memory.MemoryResult<System.Text.OwnedAscii> result) {
+            unsafe finite law System.Memory.MemoryResult<System.Text.OwnedAscii> Bad(System.Memory.MemoryResult<System.Text.OwnedAscii> result) {
                 return "Score: " + result;
             }
             """,
@@ -522,7 +522,7 @@ public sealed class FunctionSemanticsTests
                             ascii Text;
                         }
 
-                        public fn System.Memory.MemoryResult<OwnedAscii> ConcatAscii(ascii left, i64[0 max] leftLength, System.Memory.MemoryResult<OwnedAscii> right);
+                        public unsafe fn System.Memory.MemoryResult<OwnedAscii> ConcatAscii(ascii left, i64[0 max] leftLength, System.Memory.MemoryResult<OwnedAscii> right);
                         """,
                         "/virtual/System.Text.stark"
                     )
@@ -540,12 +540,12 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            law void Touch(mut i32[-2147483648 2147483647][] view) {
+            unsafe law void Touch(mut i32[-2147483648 2147483647][] view) {
                 view[0] = 1;
                 return;
             }
 
-            law void Outer(mut i32[-2147483648 2147483647][] view) {
+            unsafe law void Outer(mut i32[-2147483648 2147483647][] view) {
                 Touch(view);
                 return;
             }
@@ -564,16 +564,16 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             struct Allocator {
-                static finite law Allocator Default() {
+                static unsafe finite law Allocator Default() {
                     return new();
                 }
 
-                finite law bool IsDefault(borrow Allocator self) {
+                unsafe finite law bool IsDefault(borrow Allocator self) {
                     return true;
                 }
             }
 
-            fn Allocator UseDefault() {
+            unsafe fn Allocator UseDefault() {
                 return Allocator.Default();
             }
             """);
@@ -600,12 +600,12 @@ public sealed class FunctionSemanticsTests
             struct Box {
                 i32[min max] Value;
 
-                finite law i32[min max] Read(borrow Box self) {
+                unsafe finite law i32[min max] Read(borrow Box self) {
                     return self.Value;
                 }
             }
 
-            fn i32[min max] Read(Box box) {
+            unsafe fn i32[min max] Read(Box box) {
                 return Box.Read(box);
             }
             """);
@@ -622,12 +622,12 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             struct Utility {
-                static finite law i32[min max] Value() {
+                static unsafe finite law i32[min max] Value() {
                     return 1;
                 }
             }
 
-            fn i32[min max] Read(Utility utility) {
+            unsafe fn i32[min max] Read(Utility utility) {
                 return utility.Value();
             }
             """);
@@ -643,7 +643,7 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            static fn void Bad() {
+            static unsafe fn void Bad() {
                 return;
             }
             """);
@@ -661,16 +661,16 @@ public sealed class FunctionSemanticsTests
 
             static mut i32[min max] Counter = 0;
 
-            law i32[min max] ReadGlobal() {
+            unsafe law i32[min max] ReadGlobal() {
                 return Counter;
             }
 
-            law void Allocate() {
+            unsafe law void Allocate() {
                 heap i32[min max] value = 0;
                 return;
             }
 
-            law void WriteGlobal() {
+            unsafe law void WriteGlobal() {
                 Counter = 1;
                 return;
             }
@@ -690,15 +690,15 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             export struct Api {
-                fn void SourceVisible() {
+                unsafe fn void SourceVisible() {
                     return;
                 }
 
-                internal fn void RuntimeOnly() {
+                internal unsafe fn void RuntimeOnly() {
                     return;
                 }
 
-                export fn void AbiVisible() {
+                export unsafe fn void AbiVisible() {
                     return;
                 }
             }
@@ -721,7 +721,7 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             internal struct Hidden {
-                public fn void Leak() {
+                public unsafe fn void Leak() {
                     return;
                 }
             }
@@ -739,7 +739,7 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             public struct Api {
-                export fn void AbiVisible() {
+                export unsafe fn void AbiVisible() {
                     return;
                 }
             }

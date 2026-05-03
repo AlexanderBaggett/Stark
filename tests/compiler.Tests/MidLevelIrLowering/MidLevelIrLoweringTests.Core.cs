@@ -20,11 +20,11 @@ public sealed partial class MidLevelIrLoweringTests
                 Err(Error),
             }
 
-            fn Result<bool> Ok() {
+            unsafe fn Result<bool> Ok() {
                 return Result<bool>.Ok(true);
             }
 
-            fn Result<bool> Bad() {
+            unsafe fn Result<bool> Bad() {
                 return Result<bool>.Err(Error.Unknown(-1));
             }
             """,
@@ -43,7 +43,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law i32[-2147483648 2147483647] Run() {
+            unsafe finite law i32[-2147483648 2147483647] Run() {
                 if (true) {
                     return 1;
                 } else {
@@ -71,7 +71,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law void Run() {
+            unsafe finite law void Run() {
                 while willexit (true) {
                     break;
                 }
@@ -96,7 +96,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law void Run() {
+            unsafe finite law void Run() {
                 for willexit (stack mut i32[-2147483648 2147483647] i = 0; i < 4; i = i + 1) {
                     continue;
                 }
@@ -127,7 +127,7 @@ public sealed partial class MidLevelIrLoweringTests
                 Move { X: i32[-2147483648 2147483647], Y: i32[-2147483648 2147483647] },
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 stack Token a = Token.End;
                 stack Token b = Token.Integer(5);
                 stack Token c = Token.Move { X: 1, Y: 2 };
@@ -153,11 +153,11 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Next() {
+            unsafe fn i32[-2147483648 2147483647] Next() {
                 return 1;
             }
 
-            fn bool Run() {
+            unsafe fn bool Run() {
                 return 0 < Next() < 3;
             }
             """);
@@ -181,7 +181,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn bool Run(bool left, bool right, bool fallback) {
+            unsafe fn bool Run(bool left, bool right, bool fallback) {
                 return left || right || fallback;
             }
             """);
@@ -202,7 +202,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(bool flag) {
+            unsafe fn i32[-2147483648 2147483647] Run(bool flag) {
                 return flag ? 1 : 2;
             }
             """);
@@ -224,12 +224,12 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn void Reset(rawmutptr<i32[-2147483648 2147483647]> value, i32[-2147483648 2147483647] next) {
+            unsafe fn void Reset(rawmutptr<i32[-2147483648 2147483647]> value, i32[-2147483648 2147483647] next) {
                 *value = next;
                 return;
             }
 
-            fn void Run(bool flag, rawmutptr<i32[-2147483648 2147483647]> left, rawmutptr<i32[-2147483648 2147483647]> right) {
+            unsafe fn void Run(bool flag, rawmutptr<i32[-2147483648 2147483647]> left, rawmutptr<i32[-2147483648 2147483647]> right) {
                 flag ? Reset(left, 7) : Reset(right, 9);
                 return;
             }
@@ -256,7 +256,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 stack mut i32[-2147483648 2147483647] value = 1;
                 value = value + 1;
                 return value;
@@ -289,7 +289,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 return left ^ right;
             }
             """);
@@ -311,7 +311,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 stack mut i32[-2147483648 2147483647] value = 6;
                 value ^= 3;
                 return value;
@@ -335,7 +335,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right, i32[-2147483648 2147483647] mask) {
+            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right, i32[-2147483648 2147483647] mask) {
                 return left | middle ^ right & mask << 1 >> 1;
             }
             """);
@@ -368,7 +368,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 stack mut i32[-2147483648 2147483647] wrapped = left;
                 wrapped +%= right;
                 stack i32[-2147483648 2147483647] wrapProduct = -%wrapped *% 2;
@@ -407,7 +407,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law f32 Run(f32 left, f32 right) {
+            unsafe finite law f32 Run(f32 left, f32 right) {
                 return left ** right;
             }
             """);
@@ -429,7 +429,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
                 return left ** right;
             }
             """);
@@ -480,11 +480,11 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law ascii AsciiChar() {
+            unsafe finite law ascii AsciiChar() {
                 return 'a';
             }
 
-            finite law unicode UnicodeChar() {
+            unsafe finite law unicode UnicodeChar() {
                 return (unicode)'\u03B1';
             }
             """);
@@ -511,7 +511,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law unicode Run() {
+            unsafe finite law unicode Run() {
                 return (unicode)"Hello";
             }
             """);
@@ -543,7 +543,7 @@ public sealed partial class MidLevelIrLoweringTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 stack Box box = new Box() { Value = 41 };
                 return box.Value;
             }
@@ -567,15 +567,15 @@ public sealed partial class MidLevelIrLoweringTests
 
             record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
 
-            fn i32[-2147483648 2147483647] First() {
+            unsafe fn i32[-2147483648 2147483647] First() {
                 return 1;
             }
 
-            fn i32[-2147483648 2147483647] Second() {
+            unsafe fn i32[-2147483648 2147483647] Second() {
                 return 2;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 stack Pair pair = new Pair(First(), Second());
                 return pair.Right;
             }
@@ -612,15 +612,15 @@ public sealed partial class MidLevelIrLoweringTests
                 i32[-2147483648 2147483647] Right;
             }
 
-            fn i32[-2147483648 2147483647] First() {
+            unsafe fn i32[-2147483648 2147483647] First() {
                 return 1;
             }
 
-            fn i32[-2147483648 2147483647] Override() {
+            unsafe fn i32[-2147483648 2147483647] Override() {
                 return 4;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 stack Pair pair = new Pair(First()) { Right = Override() };
                 return pair.Right;
             }
@@ -662,19 +662,19 @@ public sealed partial class MidLevelIrLoweringTests
                 Inner Node;
             }
 
-            fn i32[-2147483648 2147483647] MakeScore() {
+            unsafe fn i32[-2147483648 2147483647] MakeScore() {
                 return 9;
             }
 
-            fn i32[-2147483648 2147483647] MakeLeft() {
+            unsafe fn i32[-2147483648 2147483647] MakeLeft() {
                 return 4;
             }
 
-            fn i32[-2147483648 2147483647] MakeRight() {
+            unsafe fn i32[-2147483648 2147483647] MakeRight() {
                 return 7;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 stack Outer outer = new Outer() {
                     Score = MakeScore(),
                     Node = { Pair = { MakeLeft(), MakeRight() } }
@@ -707,20 +707,20 @@ public sealed partial class MidLevelIrLoweringTests
             module Demo
 
             struct Box {
-                fn i32[-2147483648 2147483647] Pick(Box box, i32[-2147483648 2147483647] value) {
+                unsafe fn i32[-2147483648 2147483647] Pick(Box box, i32[-2147483648 2147483647] value) {
                     return value;
                 }
             }
 
-            fn Box Make() {
+            unsafe fn Box Make() {
                 return new Box();
             }
 
-            fn i32[-2147483648 2147483647] Next() {
+            unsafe fn i32[-2147483648 2147483647] Next() {
                 return 7;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 return Make().Pick(Next());
             }
             """);
@@ -748,11 +748,11 @@ public sealed partial class MidLevelIrLoweringTests
                 i32[min max] Value;
             }
 
-            fn Box Make(i32[min max] value) {
+            unsafe fn Box Make(i32[min max] value) {
                 return new() { Value = value };
             }
 
-            fn i32[min max] Run(i32[min max] value) {
+            unsafe fn i32[min max] Run(i32[min max] value) {
                 stack mut Box box = new() { Value = value };
                 box = new() { Value = value + 1 };
                 return box.Value + Make(value).Value;
@@ -785,7 +785,7 @@ public sealed partial class MidLevelIrLoweringTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 register Box box = new Box() { Value = 7 };
                 return box.Value;
             }
@@ -814,7 +814,7 @@ public sealed partial class MidLevelIrLoweringTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 heap Box box = new Box() { Value = 7 };
                 return box.Value;
             }

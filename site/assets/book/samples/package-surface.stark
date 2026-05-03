@@ -13,7 +13,7 @@ public finite law i32[min max] Area(Rectangle rectangle) {
     return Multiply(rectangle.Width, rectangle.Height);
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack Rectangle rectangle = new Rectangle() {
         Width = 6,
         Height = 7

@@ -140,7 +140,7 @@ public sealed class ParserConformanceTests
             """
             module Types
 
-            fn void Accept(
+            unsafe fn void Accept(
                 borrow rawptr<i8[-128 127]>[] buffers,
                 shared Matrix<Vector<i32[-2147483648 2147483647][4]>> table,
                 out i32[-2147483648 2147483647][4][2] lanes,
@@ -177,7 +177,7 @@ public sealed class ParserConformanceTests
             """
             module Memory
 
-            fn void Copy(
+            unsafe fn void Copy(
                 disjoint rawptr<i32[min max]> source,
                 disjoint rawmutptr<i32[min max]> destination)
                 where disjoint(source, destination) {
@@ -300,7 +300,7 @@ public sealed class ParserConformanceTests
             """
             module Interop
 
-            export ffi fn rawptr<rawmutptr<i8[-128 127]>> Transform(rawptr<rawptr<i8[-128 127]>> input);
+            export unsafe ffi fn rawptr<rawmutptr<i8[-128 127]>> Transform(rawptr<rawptr<i8[-128 127]>> input);
             """
         },
         {
@@ -528,7 +528,7 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            fn void Run(rawptr<i32[-2147483648 2147483647] value) {
+            unsafe fn void Run(rawptr<i32[-2147483648 2147483647] value) {
                 return;
             }
             """

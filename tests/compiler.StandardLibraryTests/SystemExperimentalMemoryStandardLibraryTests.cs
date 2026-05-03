@@ -1,11 +1,10 @@
-using Stark.Compiler;
+﻿using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
-public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibraryTestSuite
+public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTestSuite
 {
-    private const string ExperimentalMemoryProgram = """
-        import System.Experimental.Memory
+    private const string MemoryProgram = """
         import System.Memory
         module App
 
@@ -50,15 +49,15 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
             return values[0] == 67 && values[1] == 68 && values[2] == 69 && values[3] == 70;
         }
 
-        export ffi fn i32[min max] main() {
-            if (!System.Experimental.Memory.SupportsDynamicAllocator(Allocator.Default())) {
+        export unsafe ffi fn i32[min max] main() {
+            if (!System.Memory.SupportsDynamicAllocator(Allocator.Default())) {
                 return 1;
             }
 
             stack Allocator customAllocator = new Allocator() {
                 Kind = 1
             };
-            if (System.Experimental.Memory.SupportsDynamicAllocator(customAllocator)) {
+            if (System.Memory.SupportsDynamicAllocator(customAllocator)) {
                 return 2;
             }
 
@@ -67,7 +66,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
             stack i64[0 max] two = 2;
             stack i64[0 max] four = 4;
             stack i64[0 max] eight = 8;
-            if (!Ok(System.Experimental.Memory.ReserveBytes(bytes, eight))) {
+            if (!Ok(System.Memory.ReserveBytes(bytes, eight))) {
                 return 3;
             }
 
@@ -79,7 +78,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                 return 21;
             }
 
-            if (!Ok(System.Experimental.Memory.AppendBytes(bytes, sourceBytes, four))) {
+            if (!Ok(System.Memory.AppendBytes(bytes, sourceBytes, four))) {
                 return 4;
             }
 
@@ -87,7 +86,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                 return 5;
             }
 
-            if (!Ok(System.Experimental.Memory.AppendFillBytes(bytes, 9, four))) {
+            if (!Ok(System.Memory.AppendFillBytes(bytes, 9, four))) {
                 return 6;
             }
 
@@ -95,7 +94,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                 return 7;
             }
 
-            if (!Ok(System.Experimental.Memory.FillInitializedBytes(bytes[0, two], 7, two))) {
+            if (!Ok(System.Memory.FillInitializedBytes(bytes[0, two], 7, two))) {
                 return 8;
             }
 
@@ -104,7 +103,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
             }
 
             stack i64[0 max] aliasedByteCount = bytes.Length;
-            if (!Ok(System.Experimental.Memory.AppendBytes(bytes, bytes[0, aliasedByteCount], aliasedByteCount))) {
+            if (!Ok(System.Memory.AppendBytes(bytes, bytes[0, aliasedByteCount], aliasedByteCount))) {
                 return 10;
             }
 
@@ -115,7 +114,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
 
             stack mut dynamic i32[-2147483648 2147483647] codePoints = new();
             stack mut i32[-2147483648 2147483647][4] sourceCodePoints = { 65, 66, 67, 68 };
-            if (!Ok(System.Experimental.Memory.ReserveCodePoints(codePoints, eight))) {
+            if (!Ok(System.Memory.ReserveCodePoints(codePoints, eight))) {
                 return 13;
             }
 
@@ -127,11 +126,11 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                 return 23;
             }
 
-            if (!Ok(System.Experimental.Memory.AppendCodePoints(codePoints, sourceCodePoints, four))) {
+            if (!Ok(System.Memory.AppendCodePoints(codePoints, sourceCodePoints, four))) {
                 return 14;
             }
 
-            if (!Ok(System.Experimental.Memory.AppendFillCodePoints(codePoints, 90, four))) {
+            if (!Ok(System.Memory.AppendFillCodePoints(codePoints, 90, four))) {
                 return 15;
             }
 
@@ -140,7 +139,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
             }
 
             stack i64[0 max] aliasedCodePointCount = codePoints.Length;
-            if (!Ok(System.Experimental.Memory.AppendCodePoints(codePoints, codePoints[0, aliasedCodePointCount], aliasedCodePointCount))) {
+            if (!Ok(System.Memory.AppendCodePoints(codePoints, codePoints[0, aliasedCodePointCount], aliasedCodePointCount))) {
                 return 17;
             }
 
@@ -150,7 +149,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
             }
 
             stack mut dynamic i8[-128 127] byteMoveBuffer = new();
-            if (!Ok(System.Experimental.Memory.ReserveBytes(byteMoveBuffer, eight))) {
+            if (!Ok(System.Memory.ReserveBytes(byteMoveBuffer, eight))) {
                 return 24;
             }
 
@@ -158,7 +157,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                 init byteMoveBuffer[byteMoveBuffer.Length] = (i8[-128 127])(byteMoveIndex + 1);
             }
 
-            if (!Ok(System.Experimental.Memory.CopyBytes(byteMoveBuffer[0, four], byteMoveBuffer[two, four], four))) {
+            if (!Ok(System.Memory.CopyBytes(byteMoveBuffer[0, four], byteMoveBuffer[two, four], four))) {
                 return 25;
             }
 
@@ -167,7 +166,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
             }
 
             stack mut dynamic i8[-128 127] byteMoveOnlyBuffer = new();
-            if (!Ok(System.Experimental.Memory.ReserveBytes(byteMoveOnlyBuffer, eight))) {
+            if (!Ok(System.Memory.ReserveBytes(byteMoveOnlyBuffer, eight))) {
                 return 27;
             }
 
@@ -175,7 +174,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                 init byteMoveOnlyBuffer[byteMoveOnlyBuffer.Length] = (i8[-128 127])(byteMoveOnlyIndex + 1);
             }
 
-            if (!Ok(System.Experimental.Memory.MoveBytes(byteMoveOnlyBuffer[two, four], byteMoveOnlyBuffer[0, four], four))) {
+            if (!Ok(System.Memory.MoveBytes(byteMoveOnlyBuffer[two, four], byteMoveOnlyBuffer[0, four], four))) {
                 return 27;
             }
 
@@ -184,7 +183,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
             }
 
             stack mut dynamic i32[-2147483648 2147483647] codePointMoveBuffer = new();
-            if (!Ok(System.Experimental.Memory.ReserveCodePoints(codePointMoveBuffer, eight))) {
+            if (!Ok(System.Memory.ReserveCodePoints(codePointMoveBuffer, eight))) {
                 return 29;
             }
 
@@ -193,7 +192,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                     (i32[-2147483648 2147483647])(65 + codePointMoveIndex);
             }
 
-            if (!Ok(System.Experimental.Memory.CopyCodePoints(codePointMoveBuffer[0, four], codePointMoveBuffer[two, four], four))) {
+            if (!Ok(System.Memory.CopyCodePoints(codePointMoveBuffer[0, four], codePointMoveBuffer[two, four], four))) {
                 return 30;
             }
 
@@ -202,7 +201,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
             }
 
             stack mut dynamic i32[-2147483648 2147483647] codePointMoveOnlyBuffer = new();
-            if (!Ok(System.Experimental.Memory.ReserveCodePoints(codePointMoveOnlyBuffer, eight))) {
+            if (!Ok(System.Memory.ReserveCodePoints(codePointMoveOnlyBuffer, eight))) {
                 return 32;
             }
 
@@ -211,7 +210,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                     (i32[-2147483648 2147483647])(65 + codePointMoveOnlyIndex);
             }
 
-            if (!Ok(System.Experimental.Memory.MoveCodePoints(codePointMoveOnlyBuffer[two, four], codePointMoveOnlyBuffer[0, four], four))) {
+            if (!Ok(System.Memory.MoveCodePoints(codePointMoveOnlyBuffer[two, four], codePointMoveOnlyBuffer[0, four], four))) {
                 return 32;
             }
 
@@ -223,8 +222,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
         }
         """;
 
-    private const string ExperimentalMemoryCopyProgram = """
-        import System.Experimental.Memory
+    private const string MemoryCopyProgram = """
         import System.Memory
         module CopyApp
 
@@ -255,7 +253,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
             return checksum;
         }
 
-        export ffi fn i32[min max] main() {
+        export unsafe ffi fn i32[min max] main() {
             stack i64[0 max] count = 32;
             stack mut i8[-128 127][32] byteSource = {
                 3, 3, 3, 3, 3, 3, 3, 3,
@@ -282,22 +280,22 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                 0, 0, 0, 0, 0, 0, 0, 0
             };
 
-            if (!Ok(System.Experimental.Memory.CopyBytesDisjoint(byteSource, byteDestination, count))) {
+            if (!Ok(System.Memory.CopyBytesDisjoint(byteSource, byteDestination, count))) {
                 return 1;
             }
 
             stack mut i64[min max] checksum = SumBytes(byteDestination, count);
-            if (!Ok(System.Experimental.Memory.FillInitializedBytes(byteDestination, 7, count))) {
+            if (!Ok(System.Memory.FillInitializedBytes(byteDestination, 7, count))) {
                 return 2;
             }
             checksum += SumBytes(byteDestination, count);
 
-            if (!Ok(System.Experimental.Memory.CopyCodePointsDisjoint(codePointSource, codePointDestination, count))) {
+            if (!Ok(System.Memory.CopyCodePointsDisjoint(codePointSource, codePointDestination, count))) {
                 return 3;
             }
             checksum += SumCodePoints(codePointDestination, count);
 
-            if (!Ok(System.Experimental.Memory.FillInitializedCodePoints(codePointDestination, 90, count))) {
+            if (!Ok(System.Memory.FillInitializedCodePoints(codePointDestination, 90, count))) {
                 return 4;
             }
             checksum += SumCodePoints(codePointDestination, count);
@@ -310,8 +308,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
         }
         """;
 
-    private const string ExperimentalMemoryMoveProgram = """
-        import System.Experimental.Memory
+    private const string MemoryMoveProgram = """
         import System.Memory
         module MoveApp
 
@@ -359,11 +356,11 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                 return 1;
             }
 
-            if (!Ok(System.Experimental.Memory.CopyBytes(copyThenMove[zero, four], copyThenMove[two, four], four))) {
+            if (!Ok(System.Memory.CopyBytes(copyThenMove[zero, four], copyThenMove[two, four], four))) {
                 return 2;
             }
 
-            if (!Ok(System.Experimental.Memory.MoveBytes(copyThenMove[two, four], copyThenMove[zero, four], four))) {
+            if (!Ok(System.Memory.MoveBytes(copyThenMove[two, four], copyThenMove[zero, four], four))) {
                 return 3;
             }
 
@@ -377,7 +374,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                 return 5;
             }
 
-            if (!Ok(System.Experimental.Memory.MoveBytes(forwardOverlap[two, four], forwardOverlap[zero, four], four))) {
+            if (!Ok(System.Memory.MoveBytes(forwardOverlap[two, four], forwardOverlap[zero, four], four))) {
                 return 6;
             }
 
@@ -391,7 +388,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                 return 8;
             }
 
-            if (!Ok(System.Experimental.Memory.MoveBytes(backwardOverlap[zero, four], backwardOverlap[two, four], four))) {
+            if (!Ok(System.Memory.MoveBytes(backwardOverlap[zero, four], backwardOverlap[two, four], four))) {
                 return 9;
             }
 
@@ -405,7 +402,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                 return 11;
             }
 
-            if (!Ok(System.Experimental.Memory.MoveBytes(sameRange[zero, four], sameRange[zero, four], four))) {
+            if (!Ok(System.Memory.MoveBytes(sameRange[zero, four], sameRange[zero, four], four))) {
                 return 12;
             }
 
@@ -419,7 +416,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                 return 14;
             }
 
-            if (!Ok(System.Experimental.Memory.MoveBytes(disjointMove[zero, two], disjointMove[four, two], two))) {
+            if (!Ok(System.Memory.MoveBytes(disjointMove[zero, two], disjointMove[four, two], two))) {
                 return 15;
             }
 
@@ -433,7 +430,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                 return 17;
             }
 
-            if (!Ok(System.Experimental.Memory.MoveBytes(zeroMove[zero, zero], zeroMove[two, zero], zero))) {
+            if (!Ok(System.Memory.MoveBytes(zeroMove[zero, zero], zeroMove[two, zero], zero))) {
                 return 18;
             }
 
@@ -456,11 +453,11 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                 return 1;
             }
 
-            if (!Ok(System.Experimental.Memory.CopyCodePoints(copyThenMove[zero, four], copyThenMove[two, four], four))) {
+            if (!Ok(System.Memory.CopyCodePoints(copyThenMove[zero, four], copyThenMove[two, four], four))) {
                 return 2;
             }
 
-            if (!Ok(System.Experimental.Memory.MoveCodePoints(copyThenMove[two, four], copyThenMove[zero, four], four))) {
+            if (!Ok(System.Memory.MoveCodePoints(copyThenMove[two, four], copyThenMove[zero, four], four))) {
                 return 3;
             }
 
@@ -474,7 +471,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                 return 5;
             }
 
-            if (!Ok(System.Experimental.Memory.MoveCodePoints(forwardOverlap[two, four], forwardOverlap[zero, four], four))) {
+            if (!Ok(System.Memory.MoveCodePoints(forwardOverlap[two, four], forwardOverlap[zero, four], four))) {
                 return 6;
             }
 
@@ -488,7 +485,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                 return 8;
             }
 
-            if (!Ok(System.Experimental.Memory.MoveCodePoints(backwardOverlap[zero, four], backwardOverlap[two, four], four))) {
+            if (!Ok(System.Memory.MoveCodePoints(backwardOverlap[zero, four], backwardOverlap[two, four], four))) {
                 return 9;
             }
 
@@ -502,7 +499,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                 return 11;
             }
 
-            if (!Ok(System.Experimental.Memory.MoveCodePoints(sameRange[zero, four], sameRange[zero, four], four))) {
+            if (!Ok(System.Memory.MoveCodePoints(sameRange[zero, four], sameRange[zero, four], four))) {
                 return 12;
             }
 
@@ -516,7 +513,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                 return 14;
             }
 
-            if (!Ok(System.Experimental.Memory.MoveCodePoints(disjointMove[zero, two], disjointMove[four, two], two))) {
+            if (!Ok(System.Memory.MoveCodePoints(disjointMove[zero, two], disjointMove[four, two], two))) {
                 return 15;
             }
 
@@ -530,7 +527,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                 return 17;
             }
 
-            if (!Ok(System.Experimental.Memory.MoveCodePoints(zeroMove[zero, zero], zeroMove[two, zero], zero))) {
+            if (!Ok(System.Memory.MoveCodePoints(zeroMove[zero, zero], zeroMove[two, zero], zero))) {
                 return 18;
             }
 
@@ -542,7 +539,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
             return 0;
         }
 
-        export ffi fn i32[min max] main() {
+        export unsafe ffi fn i32[min max] main() {
             stack i32[min max] byteStatus = CheckByteMoves();
             if (byteStatus != 0) {
                 return byteStatus;
@@ -557,8 +554,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
         }
         """;
 
-    private const string ExperimentalMemoryAppendDisjointProgram = """
-        import System.Experimental.Memory
+    private const string MemoryAppendDisjointProgram = """
         import System.Memory
         module AppendDisjointApp
 
@@ -571,12 +567,12 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
             }
         }
 
-        export ffi fn i32[min max] main() {
+        export unsafe ffi fn i32[min max] main() {
             stack i64[0 max] four = 4;
             stack mut i8[-128 127][4] byteSource = { 1, 2, 3, 4 };
             stack mut dynamic i8[-128 127] bytes = new();
             unsafe {
-                if (!Ok(System.Experimental.Memory.AppendBytesDisjoint(bytes, byteSource, four))) {
+                if (!Ok(System.Memory.AppendBytesDisjoint(bytes, byteSource, four))) {
                     return 1;
                 }
             }
@@ -593,7 +589,7 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
             stack mut i32[-2147483648 2147483647][4] codePointSource = { 65, 66, 67, 68 };
             stack mut dynamic i32[-2147483648 2147483647] codePoints = new();
             unsafe {
-                if (!Ok(System.Experimental.Memory.AppendCodePointsDisjoint(codePoints, codePointSource, four))) {
+                if (!Ok(System.Memory.AppendCodePointsDisjoint(codePoints, codePointSource, four))) {
                     return 4;
                 }
             }
@@ -612,15 +608,14 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
         """;
 
     [Fact]
-    public void StdLibSourceExperimentalMemorySurfaceCompilesAndLowersIntrinsics()
+    public void StdLibSourceMemorySurfaceCompilesAndLowersIntrinsics()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibExperimentalMemorySurface.stark");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibMemorySurface.stark");
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(
                 """
-                import System.Experimental.Memory
                 import System.Memory
                 module Demo
 
@@ -628,39 +623,39 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                     disjoint borrow i8[-128 127][] source,
                     disjoint init i8[-128 127][] destination,
                     i64[0 max] count) {
-                    return System.Experimental.Memory.InitializeBytesDisjoint(source, destination, count);
+                    return System.Memory.InitializeBytesDisjoint(source, destination, count);
                 }
 
                 fn MemoryStatus FillBytes(init i8[-128 127][] destination, i64[0 max] count) {
-                    return System.Experimental.Memory.FillBytes(destination, 1, count);
+                    return System.Memory.FillBytes(destination, 1, count);
                 }
 
                 fn MemoryStatus AppendBytes(
                     borrow mut dynamic i8[-128 127] destination,
                     borrow i8[-128 127][] source,
                     i64[0 max] count) {
-                    return System.Experimental.Memory.AppendBytes(destination, source, count);
+                    return System.Memory.AppendBytes(destination, source, count);
                 }
 
                 fn MemoryStatus AppendBytesDisjoint(
                     disjoint mut borrow dynamic i8[-128 127] destination,
                     disjoint borrow i8[-128 127][] source,
                     i64[0 max] count) {
-                    return System.Experimental.Memory.AppendBytesDisjoint(destination, source, count);
+                    return System.Memory.AppendBytesDisjoint(destination, source, count);
                 }
 
                 fn MemoryStatus CopyCodePoints(
                     disjoint borrow i32[-2147483648 2147483647][] source,
                     disjoint borrow mut i32[-2147483648 2147483647][] destination,
                     i64[0 max] count) {
-                    return System.Experimental.Memory.CopyCodePointsDisjoint(source, destination, count);
+                    return System.Memory.CopyCodePointsDisjoint(source, destination, count);
                 }
 
                 fn MemoryStatus MoveBytes(
                     borrow i8[-128 127][] source,
                     borrow mut i8[-128 127][] destination,
                     i64[0 max] count) {
-                    return System.Experimental.Memory.MoveBytes(source, destination, count);
+                    return System.Memory.MoveBytes(source, destination, count);
                 }
                 """,
                 appPath),
@@ -671,20 +666,20 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
 
-        Assert.Contains("System_Experimental_Memory_InitializeBytesDisjoint", llvm, StringComparison.Ordinal);
-        Assert.Contains("System_Experimental_Memory_FillBytes", llvm, StringComparison.Ordinal);
-        Assert.Contains("System_Experimental_Memory_AppendBytesDisjoint", llvm, StringComparison.Ordinal);
-        Assert.Contains("System_Experimental_Memory_CopyCodePointsDisjoint", llvm, StringComparison.Ordinal);
-        Assert.Contains("System_Experimental_Memory_MoveBytes", llvm, StringComparison.Ordinal);
+        Assert.Contains("System_Memory_InitializeBytesDisjoint", llvm, StringComparison.Ordinal);
+        Assert.Contains("System_Memory_FillBytes", llvm, StringComparison.Ordinal);
+        Assert.Contains("System_Memory_AppendBytesDisjoint", llvm, StringComparison.Ordinal);
+        Assert.Contains("System_Memory_CopyCodePointsDisjoint", llvm, StringComparison.Ordinal);
+        Assert.Contains("System_Memory_MoveBytes", llvm, StringComparison.Ordinal);
         Assert.Contains("@llvm.memcpy.p0.p0.i64", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void StdLibSourceExperimentalMemoryModuleLowersRuntimeDisjointAppendFastPaths()
+    public void StdLibSourceMemoryModuleLowersRuntimeDisjointAppendFastPaths()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var modulePath = Path.Combine(sourceRoot, "System", "Experimental", "Memory.stark");
+        var modulePath = Path.Combine(sourceRoot, "System", "Memory.stark");
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(File.ReadAllText(modulePath), modulePath),
             new CompilerOptions(
@@ -731,11 +726,11 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
     }
 
     [Fact]
-    public void StdLibSourceExperimentalMemoryModuleLowersHotByteTailAppendsToIntrinsics()
+    public void StdLibSourceMemoryModuleLowersHotByteTailAppendsToIntrinsics()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var modulePath = Path.Combine(sourceRoot, "System", "Experimental", "Memory.stark");
+        var modulePath = Path.Combine(sourceRoot, "System", "Memory.stark");
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(File.ReadAllText(modulePath), modulePath),
             new CompilerOptions(
@@ -748,9 +743,9 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
         var appendBytesDisjointBody = ExtractLlvmFunctionBody(llvm, "@AppendBytesDisjoint(");
         var appendCodePointsDisjointBody = ExtractLlvmFunctionBody(llvm, "@AppendCodePointsDisjoint(");
         var appendFillBytesBody = ExtractLlvmFunctionBody(llvm, "@AppendFillBytes(");
-        var initializeBytesDisjointBody = ExtractLlvmFunctionBody(llvm, "define fastcc noundef %System_Memory_MemoryStatus @InitializeBytesDisjoint(");
-        var initializeCodePointsDisjointBody = ExtractLlvmFunctionBody(llvm, "define fastcc noundef %System_Memory_MemoryStatus @InitializeCodePointsDisjoint(");
-        var fillBytesBody = ExtractLlvmFunctionBody(llvm, "define fastcc noundef %System_Memory_MemoryStatus @FillBytes(");
+        var initializeBytesDisjointBody = ExtractLlvmFunctionBody(llvm, "define fastcc noundef %MemoryStatus @InitializeBytesDisjoint(");
+        var initializeCodePointsDisjointBody = ExtractLlvmFunctionBody(llvm, "define fastcc noundef %MemoryStatus @InitializeCodePointsDisjoint(");
+        var fillBytesBody = ExtractLlvmFunctionBody(llvm, "define fastcc noundef %MemoryStatus @FillBytes(");
 
         Assert.Contains("@InitializeBytesDisjoint", appendBytesDisjointBody, StringComparison.Ordinal);
         Assert.Contains("@InitializeCodePointsDisjoint", appendCodePointsDisjointBody, StringComparison.Ordinal);
@@ -764,16 +759,16 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
     }
 
     [Fact]
-    public async Task PackagedExperimentalMemoryHelpersPreserveImportedAttributes()
+    public async Task PackagedMemoryHelpersPreserveImportedAttributes()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var modulePath = Path.Combine(sourceRoot, "System", "Experimental", "Memory.stark");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-experimental-memory-package-");
+        var modulePath = Path.Combine(sourceRoot, "System", "Memory.stark");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-memory-package-");
         var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
         Directory.CreateDirectory(packageDirectory);
 
-        var libraryFileName = OperatingSystem.IsWindows() ? "ExperimentalMemory.lib" : "libExperimentalMemory.a";
+        var libraryFileName = OperatingSystem.IsWindows() ? "SystemMemory.lib" : "libSystemMemory.a";
         var manifestPath = Path.Combine(packageDirectory, Path.GetFileNameWithoutExtension(libraryFileName) + ".starkpkg.json");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var llvmPath = Path.Combine(tempDirectory.FullName, "App.ll");
@@ -793,7 +788,6 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
             await File.WriteAllTextAsync(
                 appPath,
                 """
-                import System.Experimental.Memory
                 import System.Memory
                 module App
 
@@ -801,14 +795,14 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
                     disjoint borrow i8[-128 127][] source,
                     disjoint init i8[-128 127][] destination,
                     i64[0 max] count) {
-                    return System.Experimental.Memory.InitializeBytesDisjoint(source, destination, count);
+                    return System.Memory.InitializeBytesDisjoint(source, destination, count);
                 }
 
                 fn System.Memory.MemoryStatus UseFill(
                     init i8[-128 127][] destination,
                     i8[-128 127] value,
                     i64[0 max] count) {
-                    return System.Experimental.Memory.FillBytes(destination, value, count);
+                    return System.Memory.FillBytes(destination, value, count);
                 }
                 """);
 
@@ -823,8 +817,8 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
             Assert.True(llvmExitCode == 0, llvmStdout + Environment.NewLine + llvmStderr);
             var llvm = await File.ReadAllTextAsync(llvmPath);
 
-            var copyDeclaration = ExtractLlvmDeclaration(llvm, "@System_Experimental_Memory_InitializeBytesDisjoint(");
-            var fillDeclaration = ExtractLlvmDeclaration(llvm, "@System_Experimental_Memory_FillBytes(");
+            var copyDeclaration = ExtractLlvmDeclaration(llvm, "@System_Memory_InitializeBytesDisjoint(");
+            var fillDeclaration = ExtractLlvmDeclaration(llvm, "@System_Memory_FillBytes(");
 
             var sourceResult = DefaultCompilerPipeline.Create().Run(
                 new CompilationInput(File.ReadAllText(modulePath), modulePath),
@@ -837,10 +831,10 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
             var sourceLlvm = sourceResult.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
             var copyDefinition = ExtractLlvmFunctionBody(
                 sourceLlvm,
-                "define fastcc noundef %System_Memory_MemoryStatus @InitializeBytesDisjoint(");
+                "define fastcc noundef %MemoryStatus @InitializeBytesDisjoint(");
             var fillDefinition = ExtractLlvmFunctionBody(
                 sourceLlvm,
-                "define fastcc noundef %System_Memory_MemoryStatus @FillBytes(");
+                "define fastcc noundef %MemoryStatus @FillBytes(");
 
             string[] copyAttributes = ["readonly nocapture", "noalias nocapture", "nounwind willreturn mustprogress", "alwaysinline"];
             string[] fillAttributes = ["noalias nocapture", "memory(write, argmem: readwrite)", "nounwind willreturn mustprogress", "alwaysinline"];
@@ -863,27 +857,27 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
     }
 
     [Fact]
-    public async Task SourceStdLibExperimentalMemoryExecutableRuns()
+    public async Task SourceStdLibMemoryExecutableRuns()
     {
-        await AssertSourceExecutableRunsAsync(ExperimentalMemoryProgram, "stark-stdlib-experimental-memory-");
+        await AssertSourceExecutableRunsAsync(MemoryProgram, "stark-stdlib-memory-");
     }
 
     [Fact]
-    public async Task SourceStdLibExperimentalMemoryCopyExecutableRuns()
+    public async Task SourceStdLibMemoryCopyExecutableRuns()
     {
-        await AssertSourceExecutableRunsAsync(ExperimentalMemoryCopyProgram, "stark-stdlib-experimental-memory-copy-");
+        await AssertSourceExecutableRunsAsync(MemoryCopyProgram, "stark-stdlib-memory-copy-");
     }
 
     [Fact]
-    public async Task SourceStdLibExperimentalMemoryMoveExecutableRuns()
+    public async Task SourceStdLibMemoryMoveExecutableRuns()
     {
-        await AssertSourceExecutableRunsAsync(ExperimentalMemoryMoveProgram, "stark-stdlib-experimental-memory-move-");
+        await AssertSourceExecutableRunsAsync(MemoryMoveProgram, "stark-stdlib-memory-move-");
     }
 
     [Fact]
-    public async Task SourceStdLibExperimentalMemoryAppendDisjointExecutableRuns()
+    public async Task SourceStdLibMemoryAppendDisjointExecutableRuns()
     {
-        await AssertSourceExecutableRunsAsync(ExperimentalMemoryAppendDisjointProgram, "stark-stdlib-experimental-memory-append-disjoint-");
+        await AssertSourceExecutableRunsAsync(MemoryAppendDisjointProgram, "stark-stdlib-memory-append-disjoint-");
     }
 
     private async Task AssertSourceExecutableRunsAsync(string source, string tempPrefix)
@@ -987,3 +981,4 @@ public sealed class SystemExperimentalMemoryStandardLibraryTests : StandardLibra
         return llvm[start..end];
     }
 }
+

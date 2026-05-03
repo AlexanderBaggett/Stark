@@ -411,6 +411,102 @@ internal sealed partial class MidLevelIrLowerer(
         }
     }
 
+    private static IReadOnlyDictionary<StarkParser.ArgumentListContext, int> CollectTemplateDirectCallOrdinals(
+        ParserRuleContext body,
+        IReadOnlyList<ImportedTemplateDirectCallSummary> directCalls)
+    {
+        var ordinals = new Dictionary<StarkParser.ArgumentListContext, int>();
+        var orderedCalls = directCalls.OrderBy(static call => call.Ordinal).ToArray();
+        var nextCallIndex = 0;
+        Collect(body);
+        return ordinals;
+
+        void Collect(Antlr4.Runtime.Tree.IParseTree current)
+        {
+            if (current is StarkParser.PostfixExpressionContext postfixExpression
+                && postfixExpression.postfixPart().Length > 0
+                && postfixExpression.postfixPart()[0].argumentList() is { } argumentList
+                && TryFindCompatibleImportedDirectCallOrdinal(
+                    postfixExpression,
+                    orderedCalls,
+                    ref nextCallIndex,
+                    out var ordinal))
+            {
+                ordinals[argumentList] = ordinal;
+            }
+
+            for (var index = 0; index < current.ChildCount; index++)
+            {
+                Collect(current.GetChild(index));
+            }
+        }
+    }
+
+    private static bool TryFindCompatibleImportedDirectCallOrdinal(
+        StarkParser.PostfixExpressionContext expression,
+        IReadOnlyList<ImportedTemplateDirectCallSummary> orderedCalls,
+        ref int nextCallIndex,
+        out int ordinal)
+    {
+        for (var index = nextCallIndex; index < orderedCalls.Count; index++)
+        {
+            var call = orderedCalls[index];
+            if (!IsPublishedDirectCallCompatible(expression, call.Signature))
+            {
+                continue;
+            }
+
+            nextCallIndex = index + 1;
+            ordinal = call.Ordinal;
+            return true;
+        }
+
+        ordinal = -1;
+        return false;
+    }
+
+    private static bool IsPublishedDirectCallCompatible(
+        StarkParser.PostfixExpressionContext expression,
+        TypedFunctionSignature signature)
+    {
+        var calleeText = expression.primaryExpression()?.GetText();
+        return string.IsNullOrWhiteSpace(calleeText)
+            || IsPublishedCallNameCompatible(calleeText!, signature.SourceName)
+            || IsPublishedCallNameCompatible(calleeText!, signature.TemplateName)
+            || IsPublishedCallNameCompatible(calleeText!, signature.Name);
+    }
+
+    private static bool IsPublishedCallNameCompatible(string callText, string? publishedName)
+    {
+        if (string.IsNullOrWhiteSpace(publishedName))
+        {
+            return false;
+        }
+
+        var normalizedCall = NormalizePublishedCallName(callText);
+        var normalizedPublished = NormalizePublishedCallName(publishedName);
+        return string.Equals(normalizedCall, normalizedPublished, StringComparison.Ordinal)
+            || normalizedPublished.EndsWith($".{normalizedCall}", StringComparison.Ordinal);
+    }
+
+    private static string NormalizePublishedCallName(string name)
+    {
+        var normalized = name.Trim();
+        var genericMarker = normalized.IndexOf("#(", StringComparison.Ordinal);
+        if (genericMarker >= 0)
+        {
+            normalized = normalized[..genericMarker];
+        }
+
+        var genericTypeMarker = normalized.IndexOf('<');
+        if (genericTypeMarker >= 0)
+        {
+            normalized = normalized[..genericTypeMarker];
+        }
+
+        return normalized;
+    }
+
     private static IReadOnlyDictionary<StarkParser.UnaryExpressionContext, int> CollectTemplateConversionOrdinals(
         ParserRuleContext body)
     {

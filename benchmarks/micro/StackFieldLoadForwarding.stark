@@ -3,7 +3,7 @@ module Benchmarks.Micro.StackFieldLoadForwarding
 
 record Pair(i64[min max] Left, i64[min max] Right) { }
 
-finite law i64[min max] Accumulate(i64[min max] seed, i64[min max] salt) {
+unsafe finite law i64[min max] Accumulate(i64[min max] seed, i64[min max] salt) {
     stack mut Pair pair = new Pair(seed, salt);
     pair.Left = pair.Left + pair.Right;
     stack i64[min max] first = pair.Left;
@@ -11,7 +11,7 @@ finite law i64[min max] Accumulate(i64[min max] seed, i64[min max] salt) {
     return pair.Left + first + pair.Right;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack mut i64[min max] total = (i64[min max])System.Process.CurrentId();
 
     for willexit (stack mut i32[0 200000] i = 0; i < 200000; i += 1) {

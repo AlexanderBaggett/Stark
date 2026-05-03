@@ -1,4 +1,4 @@
-using Stark.Compiler;
+﻿using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
@@ -135,7 +135,7 @@ public sealed class SystemFileSystemStandardLibraryTests : StandardLibraryTestSu
                     }
                 }
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
                     if (!IsOk(System.FileSystem.CreateDirectory("fs-root"))) {
                         return 1;
                     }
@@ -174,7 +174,7 @@ public sealed class SystemFileSystemStandardLibraryTests : StandardLibraryTestSu
                         return 9;
                     }
 
-                    if (System.IO.File.Delete("fs-root/child.txt") != 0) {
+                    if (!IsOk(System.IO.File.Delete("fs-root/child.txt"))) {
                         return 10;
                     }
 
@@ -237,3 +237,4 @@ public sealed class SystemFileSystemStandardLibraryTests : StandardLibraryTestSu
         }
     }
 }
+

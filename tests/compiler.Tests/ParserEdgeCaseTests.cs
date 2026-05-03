@@ -11,7 +11,7 @@ public sealed class ParserEdgeCaseTests
             """
             module Types
 
-            fn Matrix<Vector<rawptr<i8[-128 127]>>> Project(
+            unsafe fn Matrix<Vector<rawptr<i8[-128 127]>>> Project(
                 Matrix<Vector<rawptr<i8[-128 127]>>> table,
                 i32[-10 10][] ranges)
             {
@@ -74,7 +74,7 @@ public sealed class ParserEdgeCaseTests
             """
             module Ranges
 
-            fn rawptr<Vector<i32[-2147483648 2147483647]>> Make(
+            unsafe fn rawptr<Vector<i32[-2147483648 2147483647]>> Make(
                 rawptr<Vector<i32[-10 10]>> input)
             {
                 return input;
@@ -104,7 +104,7 @@ public sealed class ParserEdgeCaseTests
             """
             module Demo
 
-            fn void Run(rawptr<rawmutptr<i8[-128 127]> value) {
+            unsafe fn void Run(rawptr<rawmutptr<i8[-128 127]> value) {
                 return;
             }
             """

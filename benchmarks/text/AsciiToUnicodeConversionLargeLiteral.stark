@@ -1,7 +1,7 @@
-import System
+﻿import System
 module Benchmarks.Text.AsciiToUnicodeConversionLargeLiteral
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack mut i32[-2147483648 2147483647][80] unicodeBuffer = {
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,

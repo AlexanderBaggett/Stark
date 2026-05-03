@@ -113,13 +113,13 @@ internal static partial class PackageImageBuilder
                 StringComparer.Ordinal);
 
         return DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel)
-            .Where(static function => GenericTemplatePublicationPolicy.HasPublishedApiVisibility(function.Visibility) && function.HasBody)
+            .Where(static function => function.HasBody)
             .Select(function =>
             {
                 var qualifiedResolvedName = $"{module.SyntaxModel.ModuleName}.{function.Name}";
                 var lookupName = LookupName(module.SyntaxModel.ModuleName, module.Reference.IsRoot, function.Name);
                 if (!typeModel.Functions.TryGetValue(lookupName, out var functionSignature)
-                    || !GenericTemplatePublicationPolicy.ShouldPublishTypedTemplateBody(function, functionSignature))
+                    || !functionSignature.IsGeneric)
                 {
                     return null;
                 }
@@ -138,22 +138,24 @@ internal static partial class PackageImageBuilder
                 fieldAccessesByFunction.TryGetValue(lookupName, out var fieldAccesses);
                 memberCallsByFunction.TryGetValue(lookupName, out var memberCalls);
 
-                var typedBody = BuildPublishedTypedTemplateBody(
-                    module,
-                    functionSignature.ReturnType,
-                    function.Body,
-                    typeModel.NamedTypes,
-                    literalsByLocation,
-                    objectCreations,
-                    enumConstructors,
-                    enumCalls,
-                    enumValues,
-                    enumPatterns,
-                    aggregatePatterns,
-                    localDeclarations,
-                    conversions,
-                    directCalls,
-                    memberCalls);
+                var typedBody = functionSignature.ReturnType.BorrowKind == StarkBorrowKind.RetBorrow
+                    ? null
+                    : BuildPublishedTypedTemplateBody(
+                        module,
+                        functionSignature.ReturnType,
+                        function.Body,
+                        typeModel.NamedTypes,
+                        literalsByLocation,
+                        objectCreations,
+                        enumConstructors,
+                        enumCalls,
+                        enumValues,
+                        enumPatterns,
+                        aggregatePatterns,
+                        localDeclarations,
+                        conversions,
+                        directCalls,
+                        memberCalls);
 
                 return new StarkPackageFunctionTemplateManifest(
                     QualifiedResolvedName: qualifiedResolvedName,

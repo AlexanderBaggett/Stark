@@ -13,7 +13,7 @@ public sealed partial class MidLevelIrLoweringTests
 
             static mut i32[-2147483648 2147483647] Counter = 0;
 
-            fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[-2147483648 2147483647] value) {
                 Counter = Counter + value;
                 return;
             }
@@ -26,7 +26,7 @@ public sealed partial class MidLevelIrLoweringTests
                 }
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack Buffer box = new Buffer() { Value = 4 };
                 return;
             }
@@ -56,7 +56,7 @@ public sealed partial class MidLevelIrLoweringTests
 
             static mut i32[-2147483648 2147483647] Counter = 0;
 
-            fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[-2147483648 2147483647] value) {
                 Counter = Counter + value;
                 return;
             }
@@ -69,7 +69,7 @@ public sealed partial class MidLevelIrLoweringTests
                 }
             }
 
-            fn void Run(bool fail) {
+            unsafe fn void Run(bool fail) {
                 stack Buffer box = new Buffer() { Value = 4 };
                 if (fail) {
                     return;
@@ -98,7 +98,7 @@ public sealed partial class MidLevelIrLoweringTests
 
             static mut i32[-2147483648 2147483647] Counter = 0;
 
-            fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[-2147483648 2147483647] value) {
                 Counter = Counter + value;
                 return;
             }
@@ -111,7 +111,7 @@ public sealed partial class MidLevelIrLoweringTests
                 }
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack mut Buffer box = new Buffer() { Value = 1 };
                 box = new Buffer() { Value = 7 };
                 return;
@@ -146,7 +146,7 @@ public sealed partial class MidLevelIrLoweringTests
 
             static mut i32[-2147483648 2147483647] Counter = 0;
 
-            fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[-2147483648 2147483647] value) {
                 Counter = Counter + value;
                 return;
             }
@@ -159,7 +159,7 @@ public sealed partial class MidLevelIrLoweringTests
                 }
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack mut dynamic Token values = new(2);
                 init values[0] = new Token() { Value = 1 };
                 init values[1] = new Token() { Value = 2 };
@@ -187,7 +187,7 @@ public sealed partial class MidLevelIrLoweringTests
 
             static mut i32[-2147483648 2147483647] Counter = 0;
 
-            fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[-2147483648 2147483647] value) {
                 Counter = Counter + value;
                 return;
             }
@@ -205,7 +205,7 @@ public sealed partial class MidLevelIrLoweringTests
                 Occupied(Resource),
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack Slot slot = Slot.Occupied(new Resource() { Value = 7 });
                 switch (slot) {
                     case Slot.Occupied(var payload):
@@ -236,7 +236,7 @@ public sealed partial class MidLevelIrLoweringTests
 
             static mut i32[-2147483648 2147483647] Counter = 0;
 
-            fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[-2147483648 2147483647] value) {
                 Counter = Counter + value;
                 return;
             }
@@ -252,7 +252,7 @@ public sealed partial class MidLevelIrLoweringTests
             record Box(Resource Item) {
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack Resource owned = new Resource() { Value = 5 };
                 stack Box box = new Box(owned);
                 return;
@@ -278,7 +278,7 @@ public sealed partial class MidLevelIrLoweringTests
 
             static mut i32[-2147483648 2147483647] Counter = 0;
 
-            fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[-2147483648 2147483647] value) {
                 Counter = Counter + value;
                 return;
             }
@@ -299,7 +299,7 @@ public sealed partial class MidLevelIrLoweringTests
                 }
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack Resource owned = new Resource() { Value = 5 };
                 stack Box box = new Box(owned);
                 return;
@@ -325,7 +325,7 @@ public sealed partial class MidLevelIrLoweringTests
 
             static mut i32[-2147483648 2147483647] Counter = 0;
 
-            fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[-2147483648 2147483647] value) {
                 Counter = Counter + value;
                 return;
             }
@@ -338,7 +338,7 @@ public sealed partial class MidLevelIrLoweringTests
                 }
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack Resource first = new Resource() { Value = 1 };
                 stack Resource second = new Resource() { Value = 2 };
                 stack Resource[2] resources = { first, second };
@@ -365,7 +365,7 @@ public sealed partial class MidLevelIrLoweringTests
 
             static mut i32[-2147483648 2147483647] Counter = 0;
 
-            fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[-2147483648 2147483647] value) {
                 Counter = Counter + value;
                 return;
             }
@@ -378,7 +378,7 @@ public sealed partial class MidLevelIrLoweringTests
                 }
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack Resource first = new Resource() { Value = 1 };
                 stack Resource second = new Resource() { Value = 2 };
                 heap Resource[2] resources = { first, second };
@@ -411,7 +411,7 @@ public sealed partial class MidLevelIrLoweringTests
             import Lib
             module Demo
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack Lib.Buffer box = new Lib.Buffer() { Value = 4 };
                 return;
             }
@@ -424,7 +424,7 @@ public sealed partial class MidLevelIrLoweringTests
                         """
                         module Lib
 
-                        fn void Bump(i32[-2147483648 2147483647] value) {
+                        unsafe fn void Bump(i32[-2147483648 2147483647] value) {
                             return;
                         }
 
@@ -458,7 +458,7 @@ public sealed partial class MidLevelIrLoweringTests
 
             static mut i32[-2147483648 2147483647] Counter = 0;
 
-            fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[-2147483648 2147483647] value) {
                 Counter = Counter + value;
                 return;
             }
@@ -476,7 +476,7 @@ public sealed partial class MidLevelIrLoweringTests
                 Text(Resource),
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack Token token = Token.Text(new Resource() { Value = 4 });
                 return;
             }

@@ -1,7 +1,8 @@
-import System
+import System.Collections
+import System.Memory
 module Benchmarks.Collections.DictionaryLookup
 
-finite law bool Ok(MemoryStatus status) {
+unsafe finite law bool Ok(MemoryStatus status) {
     switch (status) {
         case MemoryStatus.Ok:
             return true;
@@ -10,8 +11,8 @@ finite law bool Ok(MemoryStatus status) {
     }
 }
 
-export ffi fn i32[min max] main() {
-    stack mut Dictionary<i32[0 max], i32[0 max]> values = new();
+export unsafe ffi fn i32[min max] main() {
+    stack mut System.Collections.Dictionary<i32[0 max], i32[0 max]> values = new();
     if (!Ok(values.Reserve(2048))) {
         return 1;
     }

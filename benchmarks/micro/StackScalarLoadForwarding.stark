@@ -1,7 +1,7 @@
 import System.Process
 module Benchmarks.Micro.StackScalarLoadForwarding
 
-finite law i64[min max] Accumulate(i64[min max] seed, i64[min max] salt) {
+unsafe finite law i64[min max] Accumulate(i64[min max] seed, i64[min max] salt) {
     stack mut i64[min max] local = seed;
     local = local + salt;
     stack i64[min max] first = local;
@@ -9,7 +9,7 @@ finite law i64[min max] Accumulate(i64[min max] seed, i64[min max] salt) {
     return local + first;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack mut i64[min max] total = (i64[min max])System.Process.CurrentId();
 
     for willexit (stack mut i32[0 200000] i = 0; i < 200000; i += 1) {

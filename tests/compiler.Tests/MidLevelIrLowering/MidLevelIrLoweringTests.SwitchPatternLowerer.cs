@@ -11,7 +11,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+            unsafe finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                 switch (value) {
                     case 1:
                         return 10;
@@ -39,7 +39,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                 stack mut i32[-2147483648 2147483647] result = 0;
                 switch (value) {
                     case 1:
@@ -84,7 +84,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, bool allow) {
+            unsafe finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, bool allow) {
                 switch (value) {
                     case 1 when allow:
                         return 10;
@@ -109,7 +109,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, bool allow) {
+            unsafe finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, bool allow) {
                 switch (value) {
                     case _ when allow:
                         return 10;
@@ -134,7 +134,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, bool allow) {
+            unsafe finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, bool allow) {
                 switch (value) {
                     case 1:
                     case _ when allow:
@@ -162,7 +162,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, bool allow) {
+            unsafe finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, bool allow) {
                 switch (value) {
                     case 1:
                     case 2 when allow:
@@ -190,7 +190,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, bool allow) {
+            unsafe finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, bool allow) {
                 switch (value) {
                     case var capture when allow:
                         return capture;
@@ -232,7 +232,7 @@ public sealed partial class MidLevelIrLoweringTests
 
             record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
 
-            finite law i32[-2147483648 2147483647] Run(Pair value) {
+            unsafe finite law i32[-2147483648 2147483647] Run(Pair value) {
                 switch (value) {
                     case Pair(1, var right):
                         return right;
@@ -273,7 +273,7 @@ public sealed partial class MidLevelIrLoweringTests
 
             record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
 
-            finite law i32[-2147483648 2147483647] Run(Pair value) {
+            unsafe finite law i32[-2147483648 2147483647] Run(Pair value) {
                 switch (value) {
                     case Pair capture:
                         return capture.Right;
@@ -306,7 +306,7 @@ public sealed partial class MidLevelIrLoweringTests
             record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
             record Outer(Pair Values, i32[-2147483648 2147483647] Tail) { }
 
-            finite law i32[-2147483648 2147483647] Run(Outer value) {
+            unsafe finite law i32[-2147483648 2147483647] Run(Outer value) {
                 switch (value) {
                     case Outer(Pair capture, var tail):
                         return tail;
@@ -341,7 +341,7 @@ public sealed partial class MidLevelIrLoweringTests
                 Pair(i32[-2147483648 2147483647], i32[-2147483648 2147483647]),
             }
 
-            fn i32[-2147483648 2147483647] Run(Token value) {
+            unsafe fn i32[-2147483648 2147483647] Run(Token value) {
                 switch (value) {
                     case Token.Pair capture:
                         return 1;
@@ -376,7 +376,7 @@ public sealed partial class MidLevelIrLoweringTests
             record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
             record Outer(Pair Values, i32[-2147483648 2147483647] Tail) { }
 
-            finite law i32[-2147483648 2147483647] Run(Outer value) {
+            unsafe finite law i32[-2147483648 2147483647] Run(Outer value) {
                 switch (value) {
                     case Outer(Pair(1, var right), var tail):
                         return right + tail;
@@ -422,7 +422,7 @@ public sealed partial class MidLevelIrLoweringTests
                 Move { X: i32[-2147483648 2147483647], Y: i32[-2147483648 2147483647] },
             }
 
-            fn i32[-2147483648 2147483647] Run(Token token) {
+            unsafe fn i32[-2147483648 2147483647] Run(Token token) {
                 switch (token) {
                     case Token.End:
                         return 0;
@@ -458,11 +458,11 @@ public sealed partial class MidLevelIrLoweringTests
                 Err(i32[-2147483648 2147483647]),
             }
 
-            fn Status Next() {
+            unsafe fn Status Next() {
                 return Status.Ok;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 switch (Next()) {
                     case Status.Ok:
                         return 1;
@@ -488,7 +488,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(ascii value, bool allow) {
+            unsafe fn i32[-2147483648 2147483647] Run(ascii value, bool allow) {
                 switch (value) {
                     case "ab":
                         return 1;
@@ -522,7 +522,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(ascii value) {
+            unsafe fn i32[-2147483648 2147483647] Run(ascii value) {
                 switch (value) {
                     case "":
                         return 0;
@@ -568,7 +568,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(unicode value) {
+            unsafe fn i32[-2147483648 2147483647] Run(unicode value) {
                 switch (value) {
                     case "\u03c0":
                         return 1;
@@ -594,7 +594,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(f32 value, bool allow) {
+            unsafe fn i32[-2147483648 2147483647] Run(f32 value, bool allow) {
                 switch (value) {
                     case 1.5:
                         return 1;
@@ -621,7 +621,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(rawptr<i32[-2147483648 2147483647]> value) {
+            unsafe fn i32[-2147483648 2147483647] Run(rawptr<i32[-2147483648 2147483647]> value) {
                 switch (value) {
                     case null:
                         return 1;
@@ -650,7 +650,7 @@ public sealed partial class MidLevelIrLoweringTests
 
             record Label(ascii Tag, unicode Word) { }
 
-            fn i32[-2147483648 2147483647] Run(Label value) {
+            unsafe fn i32[-2147483648 2147483647] Run(Label value) {
                 switch (value) {
                     case Label("ab", var word):
                         return word == (unicode)"cat" ? 7 : 3;
@@ -684,7 +684,7 @@ public sealed partial class MidLevelIrLoweringTests
                 Text { Tag: ascii, Word: unicode },
             }
 
-            fn i32[-2147483648 2147483647] Run(Token value) {
+            unsafe fn i32[-2147483648 2147483647] Run(Token value) {
                 switch (value) {
                     case Token.Text { Tag: "ab", Word: var word }:
                         return word == (unicode)"cat" ? 7 : 3;

@@ -781,6 +781,15 @@ public static class DefaultCompilerPipeline
                     static entry => entry.Key,
                     static entry => entry.Value,
                     StringComparer.Ordinal);
+            var availableFunctionSignatures = new Dictionary<string, TypedFunctionSignature>(
+                typeModel.Functions,
+                StringComparer.Ordinal);
+            foreach (var signature in loadedModules.ImportedModules
+                         .Where(static module => module.PackageImageFacts is { FunctionSignatures.Count: > 0 })
+                         .SelectMany(static module => module.PackageImageFacts!.FunctionSignatures))
+            {
+                availableFunctionSignatures.TryAdd(signature.Key, signature.Value);
+            }
 
             foreach (var trigger in typeModel.InstantiationTriggers)
             {
@@ -802,7 +811,7 @@ public static class DefaultCompilerPipeline
             {
                 var trigger = pending.Dequeue();
                 var enclosingTemplateName = trigger.Signature.TemplateName ?? trigger.FunctionName;
-                if (!typeModel.Functions.TryGetValue(enclosingTemplateName, out var enclosingTemplateSignature))
+                if (!availableFunctionSignatures.TryGetValue(enclosingTemplateName, out var enclosingTemplateSignature))
                 {
                     continue;
                 }
@@ -815,6 +824,7 @@ public static class DefaultCompilerPipeline
                         substitution,
                         trigger.Location,
                         typeModel,
+                        availableFunctionSignatures,
                         seen,
                         expanded,
                         pending);
@@ -823,6 +833,7 @@ public static class DefaultCompilerPipeline
                         substitution,
                         trigger.Location,
                         typeModel,
+                        availableFunctionSignatures,
                         seen,
                         expanded,
                         pending);
@@ -831,6 +842,7 @@ public static class DefaultCompilerPipeline
                         substitution,
                         trigger.Location,
                         typeModel,
+                        availableFunctionSignatures,
                         seen,
                         expanded,
                         pending);
@@ -1095,13 +1107,14 @@ public static class DefaultCompilerPipeline
             IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
             SourceLocation location,
             TypeCheckModel typeModel,
+            IReadOnlyDictionary<string, TypedFunctionSignature> availableFunctionSignatures,
             ISet<string> seen,
             ICollection<FunctionInstantiationTriggerRecord> expanded,
             Queue<FunctionInstantiationTriggerRecord> pending)
         {
             foreach (var deferredTrigger in importedTemplate.DeferredInstantiations)
             {
-                if (!typeModel.Functions.TryGetValue(deferredTrigger.CalleeTemplateName, out var calleeTemplateSignature))
+                if (!availableFunctionSignatures.TryGetValue(deferredTrigger.CalleeTemplateName, out var calleeTemplateSignature))
                 {
                     continue;
                 }
@@ -1123,6 +1136,7 @@ public static class DefaultCompilerPipeline
             IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
             SourceLocation location,
             TypeCheckModel typeModel,
+            IReadOnlyDictionary<string, TypedFunctionSignature> availableFunctionSignatures,
             ISet<string> seen,
             ICollection<FunctionInstantiationTriggerRecord> expanded,
             Queue<FunctionInstantiationTriggerRecord> pending)
@@ -1131,7 +1145,7 @@ public static class DefaultCompilerPipeline
             {
                 if (callSignature.TemplateName is not { } calleeTemplateName
                     || callSignature.TypeArguments is not { Count: > 0 } openTypeArguments
-                    || !typeModel.Functions.TryGetValue(calleeTemplateName, out var calleeTemplateSignature))
+                    || !availableFunctionSignatures.TryGetValue(calleeTemplateName, out var calleeTemplateSignature))
                 {
                     continue;
                 }
@@ -2061,7 +2075,9 @@ public static class DefaultCompilerPipeline
                 selectionOrder.Add(FunctionSpecializationStrategy.LawCallerSpecializedClone);
             }
 
-            if (function.CodeSizeHeuristic != MonomorphizationCodeSizeHeuristic.DeclarationOnly)
+            if (function.CodeSizeHeuristic != MonomorphizationCodeSizeHeuristic.DeclarationOnly
+                && (function.CodeSizeHeuristic != MonomorphizationCodeSizeHeuristic.ReduceCodeSize
+                    || ShouldEmitOwnedConcreteBodyForImportedPackageTemplate(function, rootModuleName)))
             {
                 selectionOrder.Add(FunctionSpecializationStrategy.OwnedConcreteBody);
             }
@@ -2148,6 +2164,14 @@ public static class DefaultCompilerPipeline
                 || (!string.Equals(function.DeclaringModuleName, rootModuleName, StringComparison.Ordinal)
                     && (function.IsDeclaringModuleSourceBacked
                         || importedAbiFallbacks.Contains(function.TemplateName)));
+        }
+
+        private static bool ShouldEmitOwnedConcreteBodyForImportedPackageTemplate(
+            MonomorphizedFunctionPlan function,
+            string rootModuleName)
+        {
+            return !function.IsDeclaringModuleSourceBacked
+                && string.Equals(function.OwnerModuleName, rootModuleName, StringComparison.Ordinal);
         }
 
         private static bool HaveConflictingPriority(

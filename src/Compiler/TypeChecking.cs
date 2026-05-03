@@ -668,10 +668,20 @@ internal sealed class TypeChecker
                 {
                     var returnType = ResolveReturnType(functionSyntax.ReturnType, genericParameters, module.SyntaxModel.ModuleName);
                     ValidateRuntimeValueType(returnType, functionSyntax.ReturnType, $"the return type of function '{localName}'");
+                    var isUnsafe = functionSyntax.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "unsafe", StringComparison.Ordinal));
                     var isFfi = functionSyntax.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "ffi", StringComparison.Ordinal));
                     var isVarargs = functionSyntax.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "varargs", StringComparison.Ordinal));
                     var isAbiBoundary = isFfi
                         || declarationModel.Visibility == StarkVisibility.Export;
+                    var isAsm = declarationModel.Function?.Asm is not null;
+                    if ((isFfi || isAsm) && !isUnsafe)
+                    {
+                        ReportError(
+                            "STK3024",
+                            $"FFI and assembly function '{localName}' must be declared 'unsafe' because callers cross a raw platform or ABI boundary.",
+                            functionSyntax.DeclarationContext);
+                    }
+
                     if (isAbiBoundary)
                     {
                         ValidateAbiTypeDoesNotDependOnEnum(returnType, functionSyntax.ReturnType, $"the return type of function '{localName}'");
@@ -688,6 +698,14 @@ internal sealed class TypeChecker
                         }
 
                         parameters.Add(CreateTypedParameterSymbol(parameter, parameterType, rawPointerElementCountExpression));
+                    }
+
+                    if (!isUnsafe && (ContainsRawPointer(returnType) || parameters.Any(static parameter => ContainsRawPointer(parameter.Type))))
+                    {
+                        ReportError(
+                            "STK3024",
+                            $"Function '{localName}' uses raw pointer types and must be declared 'unsafe'. Prefer borrow, slice, dynamic storage, owned handles, or a platform wrapper for safe APIs.",
+                            functionSyntax.DeclarationContext);
                     }
 
                     ValidateParameterContractPrefixes(functionSyntax.ParameterList.parameter());
@@ -709,7 +727,7 @@ internal sealed class TypeChecker
                         GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray(),
                         IsStatic: functionSyntax.IsStatic,
                         Kind: functionSyntax.DeclaredKind,
-                        IsUnsafe: functionSyntax.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "unsafe", StringComparison.Ordinal)),
+                        IsUnsafe: isUnsafe,
                         IsVarargs: isVarargs,
                         BackendOptimizationMode: declarationModel.Function?.BackendOptimizationMode ?? ModuleBackendOptimizationMode.Default,
                         DisjointParameterGroups: declarationModel.Function?.DisjointGroups);
@@ -1745,6 +1763,7 @@ internal sealed class TypeChecker
                 }
 
                 var hasImportedTemplateSummary = _importedFunctionTemplates.TryGetValue(signature.Name, out var importedTemplateSummary);
+                var useImportedTemplateSummary = importedTemplateSummary?.TypedBody is not null;
                 if (functionSyntax.Body.block() is not { } block)
                 {
                     if (!module.Reference.IsRoot
@@ -1799,36 +1818,47 @@ internal sealed class TypeChecker
                 {
                     _unsafeDepth++;
                 }
-                _currentImportedTemplateObjectCreations = hasImportedTemplateSummary ? importedTemplateSummary!.ObjectCreations : null;
-                _currentImportedTemplateObjectCreationOrdinals = hasImportedTemplateSummary && importedTemplateSummary!.ObjectCreations.Count > 0
+                _currentImportedTemplateObjectCreations = useImportedTemplateSummary ? importedTemplateSummary!.ObjectCreations : null;
+                _currentImportedTemplateObjectCreationOrdinals = useImportedTemplateSummary && importedTemplateSummary!.ObjectCreations.Count > 0
                     ? CollectTrackedObjectCreationOrdinals(block)
                     : null;
-                _currentImportedTemplateEnumConstructors = importedTemplateSummary?.EnumConstructors.ToDictionary(
+                _currentImportedTemplateEnumConstructors = useImportedTemplateSummary
+                    ? importedTemplateSummary!.EnumConstructors.ToDictionary(
                     static enumConstructor => enumConstructor.Ordinal,
-                    static enumConstructor => enumConstructor);
-                _currentImportedTemplateEnumConstructorOrdinals = importedTemplateSummary is { EnumConstructors.Count: > 0 }
+                    static enumConstructor => enumConstructor)
+                    : null;
+                _currentImportedTemplateEnumConstructorOrdinals = useImportedTemplateSummary && importedTemplateSummary!.EnumConstructors.Count > 0
                     ? CollectTemplateEnumConstructorOrdinals(block)
                     : null;
-                _currentImportedTemplateEnumCalls = importedTemplateSummary?.EnumCalls.ToDictionary(
+                _currentImportedTemplateEnumCalls = useImportedTemplateSummary
+                    ? importedTemplateSummary!.EnumCalls.ToDictionary(
                     static enumCall => enumCall.Ordinal,
-                    static enumCall => enumCall);
-                _currentImportedTemplateEnumCallOrdinals = importedTemplateSummary is { EnumCalls.Count: > 0 }
+                    static enumCall => enumCall)
+                    : null;
+                _currentImportedTemplateEnumCallOrdinals = useImportedTemplateSummary && importedTemplateSummary!.EnumCalls.Count > 0
                     ? CollectTemplateDirectCallOrdinals(block)
                     : null;
-                _currentImportedTemplateEnumValues = importedTemplateSummary?.EnumValues.ToDictionary(
+                _currentImportedTemplateEnumValues = useImportedTemplateSummary
+                    ? importedTemplateSummary!.EnumValues.ToDictionary(
                     static enumValue => enumValue.Ordinal,
-                    static enumValue => enumValue);
-                _currentImportedTemplateEnumValueOrdinals = importedTemplateSummary is { EnumValues.Count: > 0 }
+                    static enumValue => enumValue)
+                    : null;
+                _currentImportedTemplateEnumValueOrdinals = useImportedTemplateSummary && importedTemplateSummary!.EnumValues.Count > 0
                     ? CollectTemplateEnumValueOrdinals(block)
                     : null;
-                _currentImportedTemplateEnumPatterns = importedTemplateSummary?.EnumPatterns.ToDictionary(
+                _currentImportedTemplateEnumPatterns = useImportedTemplateSummary
+                    ? importedTemplateSummary!.EnumPatterns.ToDictionary(
                     static enumPattern => enumPattern.Ordinal,
-                    static enumPattern => enumPattern);
-                _currentImportedTemplateAggregatePatterns = importedTemplateSummary?.AggregatePatterns.ToDictionary(
+                    static enumPattern => enumPattern)
+                    : null;
+                _currentImportedTemplateAggregatePatterns = useImportedTemplateSummary
+                    ? importedTemplateSummary!.AggregatePatterns.ToDictionary(
                     static aggregatePattern => aggregatePattern.Ordinal,
-                    static aggregatePattern => aggregatePattern);
-                _currentImportedTemplateEnumPatternOrdinals = importedTemplateSummary is { EnumPatterns.Count: > 0 }
-                    || importedTemplateSummary is { AggregatePatterns.Count: > 0 }
+                    static aggregatePattern => aggregatePattern)
+                    : null;
+                _currentImportedTemplateEnumPatternOrdinals = useImportedTemplateSummary
+                    && (importedTemplateSummary!.EnumPatterns.Count > 0
+                        || importedTemplateSummary.AggregatePatterns.Count > 0)
                     ? CollectTemplateEnumPatternOrdinals(block)
                     : null;
                 // Local declaration facts are keyed to the source coordinates that were
@@ -1836,30 +1866,36 @@ internal sealed class TypeChecker
                 // are parsed from the package image surface, so those coordinates can
                 // point at unrelated declarations. Explicit source types are safer here.
                 _currentImportedTemplateLocalDeclarations = null;
-                _currentImportedTemplateConversions = hasImportedTemplateSummary
+                _currentImportedTemplateConversions = useImportedTemplateSummary
                     ? importedTemplateSummary!.Conversions.ToDictionary(
                         static conversion => conversion.Ordinal,
                         static conversion => conversion.TargetType)
                     : null;
-                _currentImportedTemplateConversionOrdinals = hasImportedTemplateSummary && importedTemplateSummary!.Conversions.Count > 0
+                _currentImportedTemplateConversionOrdinals = useImportedTemplateSummary && importedTemplateSummary!.Conversions.Count > 0
                     ? CollectTemplateConversionOrdinals(block)
                     : null;
-                _currentImportedTemplateDirectCalls = importedTemplateSummary?.DirectCalls.ToDictionary(
+                _currentImportedTemplateDirectCalls = useImportedTemplateSummary
+                    ? importedTemplateSummary!.DirectCalls.ToDictionary(
                     static call => call.Ordinal,
-                    static call => call.Signature);
-                _currentImportedTemplateDirectCallOrdinals = importedTemplateSummary is { DirectCalls.Count: > 0 }
-                    ? CollectTemplateDirectCallOrdinals(block)
+                    static call => call.Signature)
                     : null;
-                _currentImportedTemplateFieldAccesses = importedTemplateSummary?.FieldAccesses.ToDictionary(
+                _currentImportedTemplateDirectCallOrdinals = useImportedTemplateSummary && importedTemplateSummary!.DirectCalls.Count > 0
+                    ? CollectTemplateDirectCallOrdinals(block, importedTemplateSummary.DirectCalls)
+                    : null;
+                _currentImportedTemplateFieldAccesses = useImportedTemplateSummary
+                    ? importedTemplateSummary!.FieldAccesses.ToDictionary(
                     static access => access.Ordinal,
-                    static access => access);
-                _currentImportedTemplateFieldAccessOrdinals = importedTemplateSummary is { FieldAccesses.Count: > 0 }
+                    static access => access)
+                    : null;
+                _currentImportedTemplateFieldAccessOrdinals = useImportedTemplateSummary && importedTemplateSummary!.FieldAccesses.Count > 0
                     ? CollectTemplateFieldAccessOrdinals(block)
                     : null;
-                _currentImportedTemplateMemberCalls = importedTemplateSummary?.MemberCalls.ToDictionary(
+                _currentImportedTemplateMemberCalls = useImportedTemplateSummary
+                    ? importedTemplateSummary!.MemberCalls.ToDictionary(
                     static call => call.Ordinal,
-                    static call => call.Signature);
-                _currentImportedTemplateMemberCallOrdinals = importedTemplateSummary is { MemberCalls.Count: > 0 }
+                    static call => call.Signature)
+                    : null;
+                _currentImportedTemplateMemberCallOrdinals = useImportedTemplateSummary && importedTemplateSummary!.MemberCalls.Count > 0
                     ? CollectTemplateMemberCallOrdinals(block)
                     : null;
 
@@ -1945,6 +1981,7 @@ internal sealed class TypeChecker
                     localDeclarationContext: localConstant);
                 if (recordedDeclarationType is null)
                 {
+                    RequireUnsafeForRawPointerType(declaredType, "local raw pointer declarations", localConstant.type_() ?? (ParserRuleContext)declarator);
                     RecordLocalDeclarationType(TemplateLocalDeclarationFacts.ConstantKind, declaredType, localConstant);
                     recordedDeclarationType = declaredType;
                 }
@@ -5060,6 +5097,7 @@ internal sealed class TypeChecker
             ResolveLocalDeclarationType(declarationKind, declarationContext, typeContext),
             typeContext,
             "a local variable type");
+        RequireUnsafeForRawPointerType(declaredType, "local raw pointer declarations", typeContext);
         RecordLocalDeclarationType(declarationKind, declaredType, declarationContext);
         var storageClass = GetLocalDeclarationStorageClass(declarationContext);
 
@@ -5944,6 +5982,7 @@ internal sealed class TypeChecker
 
     private bool TryGetPublishedTemplateDirectCallBinding(
         StarkParser.PostfixExpressionContext expression,
+        StarkTypeSymbol? expectedType,
         out ExpressionBinding binding)
     {
         binding = default!;
@@ -5953,12 +5992,18 @@ internal sealed class TypeChecker
             || expression.postfixPart()[0].argumentList() is not { } firstArgumentList
             || _currentImportedTemplateDirectCallOrdinals is not { } directCallOrdinals
             || !directCallOrdinals.TryGetValue(firstArgumentList, out var directCallOrdinal)
-            || !_currentImportedTemplateDirectCalls.TryGetValue(directCallOrdinal, out var publishedSignature))
+            || !_currentImportedTemplateDirectCalls.TryGetValue(directCallOrdinal, out var publishedSignature)
+            || !IsPublishedDirectCallCompatible(expression, publishedSignature))
         {
             return false;
         }
 
         var resolvedSignature = CacheFunctionInstantiation(publishedSignature);
+        if (expectedType is not null && !TypeCompatibilityFacts.CanAssign(expectedType, resolvedSignature.ReturnType))
+        {
+            return false;
+        }
+
         binding = new ExpressionBinding(
             resolvedSignature.ReturnType,
             NamedType: ResolveNamedTypeSymbol(resolvedSignature.ReturnType),
@@ -6014,7 +6059,9 @@ internal sealed class TypeChecker
 
     private bool TryGetPublishedTemplateMemberCallBinding(
         ExpressionBinding receiver,
+        string memberName,
         StarkParser.ArgumentListContext arguments,
+        StarkTypeSymbol? expectedType,
         out ExpressionBinding binding)
     {
         binding = default!;
@@ -6023,12 +6070,18 @@ internal sealed class TypeChecker
             || _currentImportedTemplateMemberCalls is not { Count: > 0 }
             || _currentImportedTemplateMemberCallOrdinals is not { } memberCallOrdinals
             || !memberCallOrdinals.TryGetValue(arguments, out var memberCallOrdinal)
-            || !_currentImportedTemplateMemberCalls.TryGetValue(memberCallOrdinal, out var publishedSignature))
+            || !_currentImportedTemplateMemberCalls.TryGetValue(memberCallOrdinal, out var publishedSignature)
+            || !IsPublishedMemberCallCompatible(memberName, publishedSignature))
         {
             return false;
         }
 
         var resolvedSignature = CacheFunctionInstantiation(publishedSignature);
+        if (expectedType is not null && !TypeCompatibilityFacts.CanAssign(expectedType, resolvedSignature.ReturnType))
+        {
+            return false;
+        }
+
         binding = new ExpressionBinding(
             resolvedSignature.ReturnType,
             NamedType: ResolveNamedTypeSymbol(resolvedSignature.ReturnType),
@@ -6036,6 +6089,75 @@ internal sealed class TypeChecker
             DiagnosticName: $"method '{resolvedSignature.DisplaySourceName}'",
             Receiver: receiver);
         return true;
+    }
+
+    private static bool IsPublishedDirectCallCompatible(
+        StarkParser.PostfixExpressionContext expression,
+        TypedFunctionSignature signature)
+    {
+        var calleeText = expression.primaryExpression()?.GetText();
+        return string.IsNullOrWhiteSpace(calleeText)
+            || IsPublishedCallNameCompatible(calleeText!, signature.SourceName)
+            || IsPublishedCallNameCompatible(calleeText!, signature.TemplateName)
+            || IsPublishedCallNameCompatible(calleeText!, signature.Name);
+    }
+
+    private static bool IsPublishedMemberCallCompatible(string memberName, TypedFunctionSignature signature)
+    {
+        return IsPublishedMemberNameCompatible(memberName, signature.SourceName)
+            || IsPublishedMemberNameCompatible(memberName, signature.TemplateName)
+            || IsPublishedMemberNameCompatible(memberName, signature.Name);
+    }
+
+    private static bool IsPublishedCallNameCompatible(string callText, string? publishedName)
+    {
+        if (string.IsNullOrWhiteSpace(publishedName))
+        {
+            return false;
+        }
+
+        var normalizedCall = NormalizePublishedCallName(callText);
+        var normalizedPublished = NormalizePublishedCallName(publishedName);
+        return string.Equals(normalizedCall, normalizedPublished, StringComparison.Ordinal)
+            || normalizedPublished.EndsWith($".{normalizedCall}", StringComparison.Ordinal);
+    }
+
+    private static bool IsPublishedMemberNameCompatible(string memberName, string? publishedName)
+    {
+        if (string.IsNullOrWhiteSpace(publishedName))
+        {
+            return false;
+        }
+
+        return string.Equals(
+            NormalizePublishedCallName(memberName),
+            GetPublishedCallLastSegment(publishedName),
+            StringComparison.Ordinal);
+    }
+
+    private static string GetPublishedCallLastSegment(string name)
+    {
+        var normalized = NormalizePublishedCallName(name);
+        var lastDot = normalized.LastIndexOf('.');
+        return lastDot < 0 ? normalized : normalized[(lastDot + 1)..];
+    }
+
+    private static string NormalizePublishedCallName(string name)
+    {
+        var normalized = name.Trim();
+        var genericMarker = normalized.IndexOf("#(", StringComparison.Ordinal);
+        if (genericMarker >= 0)
+        {
+            normalized = normalized[..genericMarker];
+        }
+
+        var genericTypeMarker = normalized.IndexOf('<');
+        if (genericTypeMarker >= 0)
+        {
+            normalized = normalized[..genericTypeMarker];
+        }
+
+        return normalized;
     }
 
     private void RecordDirectCall(
@@ -6127,6 +6249,60 @@ internal sealed class TypeChecker
                 Collect(current.GetChild(index));
             }
         }
+    }
+
+    private static IReadOnlyDictionary<StarkParser.ArgumentListContext, int> CollectTemplateDirectCallOrdinals(
+        ParserRuleContext body,
+        IReadOnlyList<ImportedTemplateDirectCallSummary> directCalls)
+    {
+        var ordinals = new Dictionary<StarkParser.ArgumentListContext, int>();
+        var orderedCalls = directCalls.OrderBy(static call => call.Ordinal).ToArray();
+        var nextCallIndex = 0;
+        Collect(body);
+        return ordinals;
+
+        void Collect(Antlr4.Runtime.Tree.IParseTree current)
+        {
+            if (current is StarkParser.PostfixExpressionContext postfixExpression
+                && postfixExpression.postfixPart().Length > 0
+                && postfixExpression.postfixPart()[0].argumentList() is { } argumentList
+                && TryFindCompatibleImportedDirectCallOrdinal(
+                    postfixExpression,
+                    orderedCalls,
+                    ref nextCallIndex,
+                    out var ordinal))
+            {
+                ordinals[argumentList] = ordinal;
+            }
+
+            for (var index = 0; index < current.ChildCount; index++)
+            {
+                Collect(current.GetChild(index));
+            }
+        }
+    }
+
+    private static bool TryFindCompatibleImportedDirectCallOrdinal(
+        StarkParser.PostfixExpressionContext expression,
+        IReadOnlyList<ImportedTemplateDirectCallSummary> orderedCalls,
+        ref int nextCallIndex,
+        out int ordinal)
+    {
+        for (var index = nextCallIndex; index < orderedCalls.Count; index++)
+        {
+            var call = orderedCalls[index];
+            if (!IsPublishedDirectCallCompatible(expression, call.Signature))
+            {
+                continue;
+            }
+
+            nextCallIndex = index + 1;
+            ordinal = call.Ordinal;
+            return true;
+        }
+
+        ordinal = -1;
+        return false;
     }
 
     private static IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int> CollectTemplateEnumConstructorOrdinals(
@@ -6849,6 +7025,13 @@ internal sealed class TypeChecker
                     conversionType,
                     _currentFunctionGenericParameters,
                     _currentFunctionModuleName);
+            if (IsRawPointerConversion(targetType, convertedOperand.Type))
+            {
+                RequireUnsafeContext(
+                    $"Raw pointer conversion from '{convertedOperand.Type.DisplayName}' to '{targetType.DisplayName}'",
+                    expression);
+            }
+
             EnsureExplicitConversionCompatible(targetType, convertedOperand, expression);
             RecordConversion(targetType, expression);
             if (convertedOperand.TextLiteral is not null
@@ -6951,7 +7134,7 @@ internal sealed class TypeChecker
             var requiresCallableTarget = postfixParts.Any(static part => part.argumentList() is not null);
             binding = TryGetPublishedTemplateEnumCallBinding(expression, out var publishedEnumCall)
                 ? publishedEnumCall
-                : TryGetPublishedTemplateDirectCallBinding(expression, out var publishedBinding)
+                : TryGetPublishedTemplateDirectCallBinding(expression, expectedType, out var publishedBinding)
                 ? publishedBinding
                 : EvaluatePrimaryExpression(
                     expression.primaryExpression(),
@@ -7003,7 +7186,7 @@ internal sealed class TypeChecker
 
             if (index + 1 < postfixParts.Length
                 && postfixParts[index + 1].argumentList() is { } publishedMemberArguments
-                && TryGetPublishedTemplateMemberCallBinding(binding, publishedMemberArguments, out var publishedMemberCall))
+                && TryGetPublishedTemplateMemberCallBinding(binding, postfixPart.Identifier().GetText(), publishedMemberArguments, expectedType, out var publishedMemberCall))
             {
                 binding = publishedMemberCall;
                 continue;
@@ -8161,7 +8344,7 @@ internal sealed class TypeChecker
                 continue;
             }
 
-            if (_unsafeDepth != 0 || countMax <= BigInteger.Zero)
+            if (countMax <= BigInteger.Zero)
             {
                 continue;
             }
@@ -8177,8 +8360,14 @@ internal sealed class TypeChecker
                     scope,
                     requestedCountExpression,
                     countMax,
+                    out var isProvablyTooShort,
                     out var reason))
             {
+                if (_unsafeDepth != 0 && !isProvablyTooShort)
+                {
+                    continue;
+                }
+
                 ReportError(
                     "STK3029",
                     $"Call to '{displayFunctionName}' passes argument {argumentIndex + 1} to bounded raw pointer parameter '{parameter.Name}', but safe code must prove the argument is valid for {countMax.ToString(CultureInfo.InvariantCulture)} contiguous element(s). {reason}",
@@ -8221,8 +8410,10 @@ internal sealed class TypeChecker
         Scope scope,
         string? requestedCountExpression,
         BigInteger requestedCountMax,
+        out bool isProvablyTooShort,
         out string reason)
     {
+        isProvablyTooShort = false;
         reason = string.Empty;
         if (argument.MemoryRootKey is not { Length: > 0 } rootKey
             || !TryParseMemoryRootPath(rootKey, out var path)
@@ -8240,6 +8431,7 @@ internal sealed class TypeChecker
                 return true;
             }
 
+            isProvablyTooShort = true;
             reason = $"The fixed-array root '{path.BaseName}' only proves {fixedArrayRemaining.ToString(CultureInfo.InvariantCulture)} remaining contiguous element(s).";
             return false;
         }
@@ -9845,14 +10037,23 @@ internal sealed class TypeChecker
 
     private ExpressionBinding ApplyDynamicMemberAccess(ExpressionBinding target, string memberName, ParserRuleContext context)
     {
-        if (!string.Equals(memberName, "Length", StringComparison.Ordinal)
-            && !string.Equals(memberName, "Capacity", StringComparison.Ordinal))
+        int fieldIndex;
+        if (string.Equals(memberName, "Length", StringComparison.Ordinal))
+        {
+            fieldIndex = 1;
+        }
+        else if (string.Equals(memberName, "Capacity", StringComparison.Ordinal))
+        {
+            fieldIndex = 2;
+        }
+        else
         {
             ReportError("STK3005", $"Type '{target.Type.DisplayName}' does not contain a field named '{memberName}'.", context);
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
 
         var memberType = NonNegativeI64Type;
+        RecordFieldAccess(memberName, fieldIndex, memberType, context);
         return new ExpressionBinding(
             memberType,
             IsAssignable: false,
@@ -10226,7 +10427,7 @@ internal sealed class TypeChecker
             .Where(function => TypeCompatibilityFacts.AreFunctionPointerTypesAssignable(targetType, FunctionPointerTypeForSignature(function)))
             .ToArray();
         var candidates = matchingCandidates
-            .Where(static function => !function.IsUnsafe)
+            .Where(function => !function.IsUnsafe || _unsafeDepth != 0)
             .ToArray();
 
         if (candidates.Length == 1)
@@ -11727,6 +11928,8 @@ internal sealed class TypeChecker
 
     private ExpressionBinding EnsureAddressOfUnary(ExpressionBinding operand, ParserRuleContext context)
     {
+        RequireUnsafeContext("Raw pointer address-of operator '&'", context);
+
         if (!operand.IsAddressable)
         {
             ReportError("STK3002", "Operator '&' requires an addressable value.", context);
@@ -11748,6 +11951,8 @@ internal sealed class TypeChecker
 
     private ExpressionBinding EnsureDereferenceUnary(ExpressionBinding operand, ParserRuleContext context)
     {
+        RequireUnsafeContext("Raw pointer dereference operator '*'", context);
+
         if (operand.Type.Kind != StarkTypeKind.RawPointer || operand.Type.ElementType is null)
         {
             ReportError("STK3002", "Operator '*' requires a raw pointer operand.", context);
@@ -12314,6 +12519,44 @@ internal sealed class TypeChecker
             "STK3002",
             $"Explicit conversion from '{source.Type.DisplayName}' to '{targetType.DisplayName}' is not supported.",
             context);
+    }
+
+    private void RequireUnsafeForRawPointerType(StarkTypeSymbol type, string subject, ParserRuleContext context)
+    {
+        if (!ContainsRawPointer(type))
+        {
+            return;
+        }
+
+        RequireUnsafeContext($"{subject} using '{type.DisplayName}'", context);
+    }
+
+    private void RequireUnsafeContext(string subject, ParserRuleContext context)
+    {
+        if (_unsafeDepth != 0)
+        {
+            return;
+        }
+
+        ReportError(
+            "STK3024",
+            $"{subject} requires an unsafe context. Wrap the operation in `unsafe {{ ... }}` or move it into an `unsafe fn`; prefer borrow, slice, dynamic storage, owned handles, or a platform wrapper when a raw pointer is not required.",
+            context);
+    }
+
+    private static bool IsRawPointerConversion(StarkTypeSymbol targetType, StarkTypeSymbol sourceType)
+    {
+        return targetType.Kind == StarkTypeKind.RawPointer
+            || sourceType.Kind == StarkTypeKind.RawPointer;
+    }
+
+    private static bool ContainsRawPointer(StarkTypeSymbol type)
+    {
+        return type.Kind == StarkTypeKind.RawPointer
+            || type.ElementType is not null && ContainsRawPointer(type.ElementType)
+            || type.FunctionPointerParameterTypes is { Count: > 0 } && type.FunctionPointerParameterTypes.Any(ContainsRawPointer)
+            || type.FunctionPointerReturnType is not null && ContainsRawPointer(type.FunctionPointerReturnType)
+            || type.TypeArguments is { Count: > 0 } && type.TypeArguments.Any(ContainsRawPointer);
     }
 
     private static string GetExplicitConversionHint(StarkTypeSymbol target, StarkTypeSymbol source)

@@ -13,9 +13,9 @@ public sealed class SystemExperimentalNetTcpStandardLibraryTests : StandardLibra
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(
                 """
-                import System.Experimental.Net
-                import System.Experimental.Net.Tcp
-                import System.Experimental.Runtime.Buffer
+                import System.Net
+                import System.Net.Tcp
+                import System.Runtime.Buffer
                 import System.Net
                 module Demo
 
@@ -37,22 +37,22 @@ public sealed class SystemExperimentalNetTcpStandardLibraryTests : StandardLibra
                     }
                 }
 
-                fn bool ClientFailed(System.Net.NetResult<System.Experimental.Net.Tcp.TcpClient> result) {
+                fn bool ClientFailed(System.Net.NetResult<System.Net.Tcp.TcpClient> result) {
                     switch (result) {
-                        case System.Net.NetResult<System.Experimental.Net.Tcp.TcpClient>.Ok(var value):
+                        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Ok(var value):
                             return false;
-                        case System.Net.NetResult<System.Experimental.Net.Tcp.TcpClient>.Err(var error):
+                        case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var error):
                             return true;
                     }
                 }
 
                 fn i32[min max] RunClosedSurface() {
-                    stack mut System.Experimental.Net.Tcp.TcpClient client = new();
+                    stack mut System.Net.Tcp.TcpClient client = new();
                     stack mut i8[-128 127][4] rawBuffer = { 1, 2, 3, 4 };
                     stack mut i8[-128 127][2] rawFirst = { 1, 2 };
                     stack mut i8[-128 127][2] rawSecond = { 3, 4 };
-                    stack mut System.Experimental.Runtime.Buffer.FixedByteBuffer512 fixedBuffer = new();
-                    stack mut System.Experimental.Runtime.Buffer.DynamicByteBuffer dynamicBuffer = new();
+                    stack mut System.Runtime.Buffer.FixedByteBuffer512 fixedBuffer = new();
+                    stack mut System.Runtime.Buffer.DynamicByteBuffer dynamicBuffer = new();
 
                     if (client.IsOpen()) {
                         return 1;
@@ -90,7 +90,7 @@ public sealed class SystemExperimentalNetTcpStandardLibraryTests : StandardLibra
                         return 9;
                     }
 
-                    if (StatusOk(client.Shutdown(System.Experimental.Net.Tcp.TcpShutdown.Both))) {
+                    if (StatusOk(client.Shutdown(System.Net.Tcp.TcpShutdown.Both))) {
                         return 10;
                     }
 
@@ -98,7 +98,7 @@ public sealed class SystemExperimentalNetTcpStandardLibraryTests : StandardLibra
                         return 11;
                     }
 
-                    stack mut System.Experimental.Net.Tcp.TcpListener listener = new();
+                    stack mut System.Net.Tcp.TcpListener listener = new();
                     if (listener.IsOpen()) {
                         return 12;
                     }
@@ -126,15 +126,15 @@ public sealed class SystemExperimentalNetTcpStandardLibraryTests : StandardLibra
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
 
-        Assert.Contains("System_Experimental_Net_Tcp", llvm, StringComparison.Ordinal);
-        Assert.Contains("System_Experimental_Runtime_Buffer_FixedByteBuffer512_WriteFill", llvm, StringComparison.Ordinal);
+        Assert.Contains("System_Net_Tcp", llvm, StringComparison.Ordinal);
+        Assert.Contains("System_Runtime_Buffer_FixedByteBuffer512_WriteFill", llvm, StringComparison.Ordinal);
         Assert.Contains("System_Runtime_Platform_ReadSocket", llvm, StringComparison.Ordinal);
         Assert.Contains("System_Runtime_Platform_WriteSocket", llvm, StringComparison.Ordinal);
         Assert.Contains("System_Runtime_Platform_ReadSocketVector2", llvm, StringComparison.Ordinal);
         Assert.Contains("System_Runtime_Platform_WriteSocketVector2", llvm, StringComparison.Ordinal);
         Assert.Contains("System_Runtime_Platform_WaitReadable", llvm, StringComparison.Ordinal);
         Assert.Contains("System_Runtime_Platform_WaitWritable", llvm, StringComparison.Ordinal);
-        Assert.DoesNotContain("System_Net_Tcp", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("System_Experimental_Net_Tcp", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -142,7 +142,7 @@ public sealed class SystemExperimentalNetTcpStandardLibraryTests : StandardLibra
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var modulePath = Path.Combine(sourceRoot, "System", "Experimental", "Net", "Tcp.stark");
+        var modulePath = Path.Combine(sourceRoot, "System", "Net", "Tcp.stark");
         var platformPath = Path.Combine(sourceRoot, "System", "Runtime", "Platform.stark");
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(File.ReadAllText(modulePath), modulePath),
@@ -154,10 +154,10 @@ public sealed class SystemExperimentalNetTcpStandardLibraryTests : StandardLibra
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
 
-        var fixed512Read = ExtractLlvmFunctionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Experimental_Runtime_Buffer_FixedByteBuffer512_(");
-        var fixed4096Read = ExtractLlvmFunctionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Experimental_Runtime_Buffer_FixedByteBuffer4096_(");
-        var fixed8192Read = ExtractLlvmFunctionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Experimental_Runtime_Buffer_FixedByteBuffer8192_(");
-        var dynamicRead = ExtractLlvmFunctionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Experimental_Runtime_Buffer_DynamicByteBuffer_i64_0max__(");
+        var fixed512Read = ExtractLlvmFunctionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_FixedByteBuffer512_(");
+        var fixed4096Read = ExtractLlvmFunctionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_FixedByteBuffer4096_(");
+        var fixed8192Read = ExtractLlvmFunctionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_FixedByteBuffer8192_(");
+        var dynamicRead = ExtractLlvmFunctionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_DynamicByteBuffer_i64_0max__(");
         var fixedReads = string.Join(Environment.NewLine, [fixed512Read, fixed4096Read, fixed8192Read]);
 
         Assert.Contains("ptr noundef nonnull noalias nocapture dereferenceable(528) align 8 %arg_destination", fixed512Read, StringComparison.Ordinal);
