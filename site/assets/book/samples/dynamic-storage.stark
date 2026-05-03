@@ -1,0 +1,21 @@
+module Book.DynamicStorage
+
+struct IntBuffer {
+    dynamic i32[0 max] Items;
+}
+
+fn void Push(mut borrow IntBuffer self, i32[0 max] value) {
+    if (self.Items.Length == self.Items.Capacity) {
+        self.Items.Reserve(1);
+    }
+
+    init self.Items[self.Items.Length] = value;
+}
+
+fn i32[0 max] Pop(mut borrow IntBuffer self) {
+    return self.Items.MoveLast();
+}
+
+fn retborrow i32[0 max][] View(borrow IntBuffer self) {
+    return self.Items[0, self.Items.Length];
+}

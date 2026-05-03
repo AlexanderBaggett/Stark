@@ -12,6 +12,7 @@ internal sealed class LlvmIrEmitter
     private const string UnicodeStringTypeName = "stark_unicode";
     private const int AggregateScalarizationThresholdBytes = 16;
     private const int AggregateMemcpyThresholdBytes = 32;
+    private const int AggregateInlineMemcpyThresholdBytes = 256;
 
     private readonly CompilationInput _input;
     private readonly ParseResult _parseResult;
@@ -42,6 +43,7 @@ internal sealed class LlvmIrEmitter
     private readonly IReadOnlyDictionary<string, string> _specializationTemplateNames;
     private readonly IReadOnlyDictionary<string, SourceLocation> _functionLocations;
     private readonly IReadOnlyDictionary<string, ImportedLawClonePlan> _closedWorldImportedLawClones;
+    private readonly IReadOnlyDictionary<string, ImportedInlineBodyPlan> _closedWorldImportedInlineBodies;
     private readonly IReadOnlySet<string> _referencedImportedFunctions;
     private readonly bool _isOptimizedBuild;
     private readonly DebugMetadataEmitter _debugInfo;
@@ -144,7 +146,11 @@ internal sealed class LlvmIrEmitter
         _specializationTemplateNames = BuildSpecializationTemplateNames(specializationCodegenStrategy);
         _functionLocations = BuildFunctionLocationMap(loadedModules, input.FilePath);
         _closedWorldImportedLawClones = BuildClosedWorldImportedLawClones();
-        _referencedImportedFunctions = CollectReferencedImportedFunctions(ssa, _closedWorldImportedLawClones.Values);
+        _closedWorldImportedInlineBodies = BuildClosedWorldImportedInlineBodies();
+        _referencedImportedFunctions = CollectReferencedImportedFunctions(
+            ssa,
+            _closedWorldImportedLawClones.Values,
+            _closedWorldImportedInlineBodies.Values);
         _debugInfo = new DebugMetadataEmitter(
             input.FilePath ?? $"{syntaxModel.ModuleName}.stark",
             _isOptimizedBuild,
@@ -381,6 +387,25 @@ internal sealed class LlvmIrEmitter
             builder.AppendLine();
         }
 
+        foreach (var clone in _closedWorldImportedInlineBodies.Values.OrderBy(static clone => clone.FunctionName, StringComparer.Ordinal))
+        {
+            var parameterEffects = GetParameterEffects(clone.FunctionName, hasBody: true);
+            var memoryEffects = GetFunctionMemoryEffects(clone.FunctionName, hasBody: true);
+            builder.AppendLine($"; closed-world imported inline body: {clone.FunctionName}");
+            EmitFunctionDefinition(
+                builder,
+                internalize: true,
+                availableExternally: false,
+                clone.Signature,
+                clone.AbiSignature,
+                clone.Effects,
+                memoryEffects,
+                clone.SsaFunction,
+                parameterEffects,
+                resolveCallAbi);
+            builder.AppendLine();
+        }
+
         foreach (var abiFunction in _abiModel.Functions.Values
                      .Where(function => !handledFunctionNames.Contains(function.Name)
                                         )
@@ -445,7 +470,8 @@ internal sealed class LlvmIrEmitter
 
     private static IReadOnlySet<string> CollectReferencedImportedFunctions(
         SsaIrModule ssa,
-        IEnumerable<ImportedLawClonePlan> importedLawClones)
+        IEnumerable<ImportedLawClonePlan> importedLawClones,
+        IEnumerable<ImportedInlineBodyPlan> importedInlineBodies)
     {
         var referencedFunctions = new HashSet<string>(StringComparer.Ordinal);
 
@@ -455,6 +481,11 @@ internal sealed class LlvmIrEmitter
         }
 
         foreach (var clone in importedLawClones)
+        {
+            CollectReferencedFunctions(clone.SsaFunction, referencedFunctions);
+        }
+
+        foreach (var clone in importedInlineBodies)
         {
             CollectReferencedFunctions(clone.SsaFunction, referencedFunctions);
         }
@@ -554,6 +585,11 @@ internal sealed class LlvmIrEmitter
                 && FunctionKindFacts.IsLaw(callerEffects.Kind))
             {
                 return clone.AbiSignature;
+            }
+
+            if (_closedWorldImportedInlineBodies.TryGetValue(functionName, out var inlineBody))
+            {
+                return inlineBody.AbiSignature;
             }
 
             return _allAbiFunctions.TryGetValue(functionName, out var abiFunction)
@@ -680,6 +716,18 @@ internal sealed class LlvmIrEmitter
             _enumLayoutModel,
             _closedWorldModel,
             _specializationCodegenStrategy,
+            _allFunctionEffects,
+            _allFunctionSignatures);
+    }
+
+    private IReadOnlyDictionary<string, ImportedInlineBodyPlan> BuildClosedWorldImportedInlineBodies()
+    {
+        return LlvmSpecializationEmissionPlanner.BuildClosedWorldImportedInlineBodies(
+            _loadedModules,
+            _ssa,
+            _syntaxModel,
+            _typeModel,
+            _enumLayoutModel,
             _allFunctionEffects,
             _allFunctionSignatures);
     }
@@ -883,6 +931,13 @@ internal sealed class LlvmIrEmitter
             SsaInsertFieldRValue insertField => [insertField.Target, insertField.Value],
             SsaExtractIndexRValue extractIndex => [extractIndex.Target],
             SsaInsertIndexRValue insertIndex => [insertIndex.Target, insertIndex.Value],
+            SsaDynamicStorageAllocationRValue allocation => [allocation.Capacity],
+            SsaDynamicStorageFreeRValue free => [free.Storage],
+            SsaDynamicStorageReserveRValue reserve => [reserve.StorageAddress, reserve.AdditionalCapacity],
+            SsaDynamicStorageTryReserveRValue reserve => [reserve.StorageAddress, reserve.AdditionalCapacity],
+            SsaDynamicStorageTryReserveCapacityRValue reserve => [reserve.StorageAddress, reserve.TargetCapacity],
+            SsaDynamicStorageMoveLastRValue moveLast => [moveLast.StorageAddress],
+            SsaDynamicStorageMoveAtRValue moveAt => [moveAt.StorageAddress, moveAt.Index],
             SsaLoadSliceElementRValue loadSlice => [loadSlice.Slice, loadSlice.Index],
             SsaTextSliceRValue textSlice => [textSlice.TextValue, textSlice.Start, textSlice.Length],
             SsaFieldAddressRValue fieldAddress => [fieldAddress.Address],
@@ -1085,7 +1140,9 @@ internal sealed class LlvmIrEmitter
             .SelectMany(static function => function.Blocks)
             .SelectMany(static block => block.Instructions)
             .OfType<SsaCopyMemoryInstruction>()
-            .Any(copy => TryGetConcreteTypeLayout(copy.CopyType) is { } layout && layout.SizeBytes > AggregateMemcpyThresholdBytes)
+            .Any(copy => TryGetConcreteTypeLayout(copy.CopyType) is { } layout
+                && layout.SizeBytes > AggregateMemcpyThresholdBytes
+                && layout.SizeBytes <= AggregateInlineMemcpyThresholdBytes)
             || UsesBuiltinMemcpyInlineIntrinsic();
     }
 
@@ -1100,7 +1157,35 @@ internal sealed class LlvmIrEmitter
             && _ssa.Functions.Any(function => LlvmFunctionBodyEmitter.MayEmitOptimizedRawPointerMemcpyIntrinsic(
                 function,
                 TryGetConcreteTypeLayout,
-                GetParameterEffects(function.Name, hasBody: true)));
+                GetParameterEffects(function.Name, hasBody: true)))
+            || UsesLargeAggregateMemcpyIntrinsic();
+    }
+
+    private bool UsesLargeAggregateMemcpyIntrinsic()
+    {
+        return _ssa.Functions
+            .SelectMany(static function => function.Blocks)
+            .SelectMany(static block => block.Instructions)
+            .Any(UsesLargeAggregateMemcpyIntrinsic);
+    }
+
+    private bool UsesLargeAggregateMemcpyIntrinsic(SsaInstruction instruction)
+    {
+        return instruction switch
+        {
+            SsaCopyMemoryInstruction { CopyType: var type } => IsLargeAggregateMemcpyType(type),
+            SsaStoreLocalInstruction { LocalType: var type, Value: not SsaZeroInitializerValue } => IsLargeAggregateMemcpyType(type),
+            SsaStoreIndirectInstruction { ValueType: var type, Value: not SsaZeroInitializerValue } => IsLargeAggregateMemcpyType(type),
+            _ => false
+        };
+    }
+
+    private bool IsLargeAggregateMemcpyType(StarkTypeSymbol type)
+    {
+        var normalizedType = NormalizeAggregateType(type);
+        return TryGetConcreteTypeLayout(normalizedType) is { } layout
+            && layout.SizeBytes > AggregateInlineMemcpyThresholdBytes
+            && normalizedType.Kind is StarkTypeKind.FixedArray or StarkTypeKind.Named;
     }
 
     private bool UsesMemmoveIntrinsic()
@@ -1174,13 +1259,7 @@ internal sealed class LlvmIrEmitter
 
     private bool ShouldUseInlineAggregateZeroFill(StarkTypeSymbol valueType)
     {
-        var normalizedType = valueType with
-        {
-            BorrowKind = StarkBorrowKind.None,
-            AccessKind = StarkAccessKind.None,
-            InitializationKind = StarkInitializationKind.None,
-            IsMutableView = false
-        };
+        var normalizedType = NormalizeAggregateType(valueType);
 
         if (TryGetConcreteTypeLayout(normalizedType) is not { } layout
             || layout.SizeBytes <= AggregateScalarizationThresholdBytes)
@@ -1189,6 +1268,17 @@ internal sealed class LlvmIrEmitter
         }
 
         return normalizedType.Kind is StarkTypeKind.FixedArray or StarkTypeKind.Named;
+    }
+
+    private static StarkTypeSymbol NormalizeAggregateType(StarkTypeSymbol type)
+    {
+        return type with
+        {
+            BorrowKind = StarkBorrowKind.None,
+            AccessKind = StarkAccessKind.None,
+            InitializationKind = StarkInitializationKind.None,
+            IsMutableView = false
+        };
     }
 
     private void EmitFunctionDefinition(
@@ -1205,7 +1295,8 @@ internal sealed class LlvmIrEmitter
         MonomorphizationLinkageKind? specializationLinkage = null)
     {
         var functionBuilder = new StringBuilder();
-        var effectiveMemoryEffects = AdjustDefinitionMemoryEffectsForAbiLowering(memoryEffects, ssaFunction, resolveCallAbi);
+        var effectiveEffects = AdjustDefinitionEffectsForBody(effects, ssaFunction);
+        var effectiveMemoryEffects = AdjustDefinitionMemoryEffectsForBodyAndAbiLowering(memoryEffects, ssaFunction, resolveCallAbi);
         var debugFunction = TryCreateDebugFunctionContext(function, abiFunction, ssaFunction);
         var valueFacts = TryGetSsaValueFacts(ssaFunction);
         functionBuilder.AppendLine(AppendFunctionDebugScope(
@@ -1214,7 +1305,7 @@ internal sealed class LlvmIrEmitter
                 availableExternally,
                 function,
                 abiFunction,
-                effects,
+                effectiveEffects,
                 effectiveMemoryEffects,
                 parameterEffects,
                 specializationLinkage,
@@ -1361,12 +1452,28 @@ internal sealed class LlvmIrEmitter
         return new SourceLocation(filePath, line, column);
     }
 
-    private FunctionMemoryEffectSummary? AdjustDefinitionMemoryEffectsForAbiLowering(
+    private static FunctionEffectProfile AdjustDefinitionEffectsForBody(
+        FunctionEffectProfile effects,
+        SsaFunction ssaFunction)
+    {
+        return ContainsDynamicStorageAllocatorAccess(ssaFunction)
+            ? effects with
+            {
+                Kind = StarkFunctionKind.Fn,
+                IsPure = false,
+                NoSync = false,
+                NoFree = false
+            }
+            : effects;
+    }
+
+    private FunctionMemoryEffectSummary? AdjustDefinitionMemoryEffectsForBodyAndAbiLowering(
         FunctionMemoryEffectSummary? memoryEffects,
         SsaFunction ssaFunction,
         Func<string, string, AbiFunctionSignature?> resolveCallAbi)
     {
-        if (!RequiresSyntheticStackTemporaries(ssaFunction, resolveCallAbi))
+        if (!RequiresSyntheticStackTemporaries(ssaFunction, resolveCallAbi)
+            && !ContainsDynamicStorageAllocatorAccess(ssaFunction))
         {
             return memoryEffects;
         }
@@ -1380,6 +1487,14 @@ internal sealed class LlvmIrEmitter
             ReadsOtherMemory = true,
             WritesOtherMemory = true
         };
+    }
+
+    private static bool ContainsDynamicStorageAllocatorAccess(SsaFunction ssaFunction)
+    {
+        return ssaFunction.Blocks
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaValueInstruction>()
+            .Any(static instruction => instruction.Value is SsaDynamicStorageAllocationRValue or SsaDynamicStorageFreeRValue or SsaDynamicStorageReserveRValue or SsaDynamicStorageTryReserveRValue or SsaDynamicStorageTryReserveCapacityRValue or SsaDynamicStorageMoveLastRValue or SsaDynamicStorageMoveAtRValue);
     }
 
     private static bool RequiresSyntheticStackTemporaries(
@@ -1721,6 +1836,7 @@ internal sealed class LlvmIrEmitter
             StarkTypeKind.FunctionPointer => "ptr",
             StarkTypeKind.FixedArray when type.ElementType is not null && type.FixedLength is int fixedLength => $"[{fixedLength} x {MapType(type.ElementType)}]",
             StarkTypeKind.Slice => "{ ptr, i64 }",
+            StarkTypeKind.Dynamic => "{ ptr, i64, i64 }",
             StarkTypeKind.Ascii => $"%{AsciiStringTypeName}",
             StarkTypeKind.Unicode => $"%{UnicodeStringTypeName}",
             StarkTypeKind.Named when type.NamedType is not null

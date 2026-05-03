@@ -15,10 +15,22 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private const string HeapAllocateHelperName = "__stark_heap_alloc";
     private const string HeapFreeHelperName = "__stark_heap_free";
     private const string RuntimeAllocateHelperName = "__stark_runtime_alloc";
+    private const string RuntimeTryAllocateHelperName = "__stark_runtime_try_alloc";
     private const string RuntimeReallocateHelperName = "__stark_runtime_realloc";
+    private const string RuntimeTryReallocateHelperName = "__stark_runtime_try_realloc";
     private const string RuntimeFreeHelperName = "__stark_runtime_free";
+    private const string DynamicStorageAllocateHelperName = "__stark_dynamic_alloc";
+    private const string DynamicStorageReserveHelperName = "__stark_dynamic_reserve";
+    private const string DynamicStorageTryReserveHelperName = "__stark_dynamic_try_reserve";
+    private const string DynamicStorageTryReserveCapacityHelperName = "__stark_dynamic_try_reserve_capacity";
+    private const string DynamicStorageMoveLastPointerHelperName = "__stark_dynamic_move_last_ptr";
+    private const string DynamicStorageMoveAtToOutHelperName = "__stark_dynamic_move_at_to_out";
     private const string OsAllocateHelperName = "__stark_os_allocate";
+    private const string OsReallocateHelperName = "__stark_os_reallocate";
     private const string OsFreeHelperName = "__stark_os_free";
+    private const string HeapAllocatorFamilyAttribute = "\"alloc-family\"=\"__stark_heap_alloc\"";
+    private const string RuntimeAllocatorFamilyAttribute = "\"alloc-family\"=\"__stark_runtime_alloc\"";
+    private const string OsAllocatorFamilyAttribute = "\"alloc-family\"=\"__stark_os_allocate\"";
     private const string RuntimeAllocatorLockName = "__stark_alloc_lock";
     private const string RuntimeAllocatorLockAcquireHelperName = "__stark_alloc_lock_acquire";
     private const string RuntimeAllocatorLockReleaseHelperName = "__stark_alloc_lock_release";
@@ -108,7 +120,9 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         var usesSystemMemoryReallocate = systemMemoryBuiltins.Contains(SystemMemoryBuiltinKind.Reallocate);
         var usesSystemMemoryFree = systemMemoryBuiltins.Contains(SystemMemoryBuiltinKind.Free);
         var usesSystemMemoryTrap = usesSystemMemoryAllocate || usesSystemMemoryReallocate;
+        var usesDynamicStorageAllocator = UsesDynamicStorageAllocator();
         var usesRuntimeAllocator = _usesHeapAllocator()
+            || usesDynamicStorageAllocator
             || string.Equals(CurrentModuleName, "System.Memory", StringComparison.Ordinal)
             || usesSystemMemoryAllocate
             || usesSystemMemoryReallocate
@@ -168,8 +182,9 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         if (usesRuntimeAllocator && IsWindowsTarget())
         {
             declarations.Add("declare ptr @GetProcessHeap() nounwind");
-            declarations.Add($"declare ptr @HeapAlloc(ptr, i32, {AllocatorSizeType}) nounwind");
-            declarations.Add("declare i32 @HeapFree(ptr, i32, ptr) nounwind");
+            declarations.Add($"declare noalias noundef ptr @HeapAlloc(ptr, i32, {AllocatorSizeType} noundef) allocsize(2) allockind(\"alloc,uninitialized\") {OsAllocatorFamilyAttribute} nounwind");
+            declarations.Add($"declare noundef ptr @HeapReAlloc(ptr, i32, ptr, {AllocatorSizeType} noundef) allocsize(3) allockind(\"realloc\") {OsAllocatorFamilyAttribute} nounwind");
+            declarations.Add($"declare i32 @HeapFree(ptr, i32, ptr) allockind(\"free\") {OsAllocatorFamilyAttribute} nounwind");
         }
 
         if (usesRuntimeAllocator
@@ -185,7 +200,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             declarations.Add("declare void @llvm.memset.p0.i64(ptr nocapture writeonly, i8, i64, i1 immarg)");
         }
 
-        if (_usesMemmoveIntrinsic())
+        if (usesRuntimeAllocator || _usesMemmoveIntrinsic())
         {
             declarations.Add("declare void @llvm.memmove.p0.p0.i64(ptr nocapture writeonly, ptr nocapture readonly, i64, i1 immarg)");
         }
@@ -223,6 +238,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         var usesSystemMemoryAllocator = systemMemoryBuiltins.Contains(SystemMemoryBuiltinKind.Allocate)
             || systemMemoryBuiltins.Contains(SystemMemoryBuiltinKind.Reallocate)
             || systemMemoryBuiltins.Contains(SystemMemoryBuiltinKind.Free);
+        var usesDynamicStorageAllocator = UsesDynamicStorageAllocator();
 
         foreach (var textType in CollectTextEqualityTypes())
         {
@@ -277,7 +293,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             EmitHeapFreeHelperDefinition(builder);
             builder.AppendLine();
         }
-        else if (CurrentModuleName == "System.Memory" || usesSystemMemoryAllocator)
+        else if (usesDynamicStorageAllocator || CurrentModuleName == "System.Memory" || usesSystemMemoryAllocator)
         {
             EmitTrapHelperDefinition(builder, OutOfMemoryTrapHelperName);
             builder.AppendLine();
@@ -299,7 +315,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private void EmitHeapAllocateHelperDefinition(StringBuilder builder)
     {
         builder.AppendLine(
-            $"define internal dso_local noalias nonnull noundef ptr @{HeapAllocateHelperName}({AllocatorSizeType} noundef %size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") nounwind {{");
+            $"define internal dso_local noalias nonnull noundef ptr @{HeapAllocateHelperName}({AllocatorSizeType} noundef %size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") {HeapAllocatorFamilyAttribute} nounwind {{");
         builder.AppendLine("entry:");
         builder.AppendLine($"  %raw = call noalias nonnull noundef ptr @{RuntimeAllocateHelperName}({AllocatorSizeType} noundef %size, {AllocatorSizeType} noundef %alignment)");
         builder.AppendLine("  ret ptr %raw");
@@ -308,7 +324,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
 
     private void EmitHeapFreeHelperDefinition(StringBuilder builder)
     {
-        builder.AppendLine($"define internal dso_local void @{HeapFreeHelperName}(ptr %ptr) unnamed_addr nounwind {{");
+        builder.AppendLine($"define internal dso_local void @{HeapFreeHelperName}(ptr %ptr) unnamed_addr allockind(\"free\") {HeapAllocatorFamilyAttribute} nounwind {{");
         builder.AppendLine("entry:");
         builder.AppendLine($"  call void @{RuntimeFreeHelperName}(ptr %ptr)");
         builder.AppendLine("  ret void");
@@ -323,13 +339,335 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine();
         EmitRuntimeAllocateHelperDefinition(builder);
         builder.AppendLine();
+        EmitRuntimeTryAllocateHelperDefinition(builder);
+        builder.AppendLine();
         EmitRuntimeReallocateHelperDefinition(builder);
+        builder.AppendLine();
+        EmitRuntimeTryReallocateHelperDefinition(builder);
         builder.AppendLine();
         EmitRuntimeFreeHelperDefinition(builder);
         builder.AppendLine();
+        EmitDynamicStorageHelperDefinitions(builder);
+        builder.AppendLine();
         EmitOsAllocateHelperDefinition(builder);
         builder.AppendLine();
+        if (IsWindowsTarget())
+        {
+            EmitOsReallocateHelperDefinition(builder);
+            builder.AppendLine();
+        }
+
         EmitOsFreeHelperDefinition(builder);
+    }
+
+    private void EmitDynamicStorageHelperDefinitions(StringBuilder builder)
+    {
+        EmitDynamicStorageAllocateHelperDefinition(builder);
+        builder.AppendLine();
+        EmitDynamicStorageReserveHelperDefinition(builder);
+        builder.AppendLine();
+        EmitDynamicStorageTryReserveHelperDefinition(builder);
+        builder.AppendLine();
+        EmitDynamicStorageTryReserveCapacityHelperDefinition(builder);
+        builder.AppendLine();
+        EmitDynamicStorageMoveLastPointerHelperDefinition(builder);
+        builder.AppendLine();
+        EmitDynamicStorageMoveAtToOutHelperDefinition(builder);
+    }
+
+    private void EmitDynamicStorageAllocateHelperDefinition(StringBuilder builder)
+    {
+        var capacityAllocator = AllocatorSizeType == "i64"
+            ? "%capacity"
+            : "%capacity_size";
+
+        builder.AppendLine(
+            $"define weak_odr hidden {{ ptr, i64, i64 }} @{DynamicStorageAllocateHelperName}(i64 noundef %capacity, {AllocatorSizeType} noundef %element_size, {AllocatorSizeType} noundef allocalign %alignment, i64 noundef %max_count) unnamed_addr nounwind {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine("  %is_zero = icmp eq i64 %capacity, 0");
+        builder.AppendLine("  br i1 %is_zero, label %zero, label %check");
+        builder.AppendLine();
+        builder.AppendLine("zero:");
+        builder.AppendLine("  br label %done");
+        builder.AppendLine();
+        builder.AppendLine("check:");
+        builder.AppendLine("  %too_large = icmp ugt i64 %capacity, %max_count");
+        builder.AppendLine("  br i1 %too_large, label %overflow, label %allocate");
+        builder.AppendLine();
+        builder.AppendLine("overflow:");
+        builder.AppendLine("  call void @llvm.trap()");
+        builder.AppendLine("  unreachable");
+        builder.AppendLine();
+        builder.AppendLine("allocate:");
+        if (AllocatorSizeType != "i64")
+        {
+            builder.AppendLine($"  {capacityAllocator} = trunc i64 %capacity to {AllocatorSizeType}");
+        }
+
+        builder.AppendLine($"  %byte_length = mul {AllocatorSizeType} {capacityAllocator}, %element_size");
+        builder.AppendLine($"  %ptr = call noalias nonnull noundef ptr @{RuntimeAllocateHelperName}({AllocatorSizeType} noundef %byte_length, {AllocatorSizeType} noundef %alignment)");
+        builder.AppendLine("  %with_ptr = insertvalue { ptr, i64, i64 } zeroinitializer, ptr %ptr, 0");
+        builder.AppendLine("  %with_length = insertvalue { ptr, i64, i64 } %with_ptr, i64 0, 1");
+        builder.AppendLine("  %value = insertvalue { ptr, i64, i64 } %with_length, i64 %capacity, 2");
+        builder.AppendLine("  br label %done");
+        builder.AppendLine();
+        builder.AppendLine("done:");
+        builder.AppendLine("  %result = phi { ptr, i64, i64 } [ zeroinitializer, %zero ], [ %value, %allocate ]");
+        builder.AppendLine("  ret { ptr, i64, i64 } %result");
+        builder.AppendLine("}");
+    }
+
+    private void EmitDynamicStorageReserveHelperDefinition(StringBuilder builder)
+    {
+        var oldAllocatorCount = AllocatorSizeType == "i64"
+            ? "%capacity"
+            : "%old_count";
+        var newAllocatorCount = AllocatorSizeType == "i64"
+            ? "%new_capacity"
+            : "%new_count";
+
+        builder.AppendLine(
+            $"define weak_odr hidden void @{DynamicStorageReserveHelperName}(ptr nocapture %storage, i64 noundef %additional, {AllocatorSizeType} noundef %element_size, {AllocatorSizeType} noundef allocalign %alignment, i64 noundef %max_count) unnamed_addr nounwind {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine("  %current = load { ptr, i64, i64 }, ptr %storage");
+        builder.AppendLine("  %ptr = extractvalue { ptr, i64, i64 } %current, 0");
+        builder.AppendLine("  %length = extractvalue { ptr, i64, i64 } %current, 1");
+        builder.AppendLine("  %capacity = extractvalue { ptr, i64, i64 } %current, 2");
+        builder.AppendLine("  %needed = add i64 %length, %additional");
+        builder.AppendLine("  %needed_overflow = icmp ult i64 %needed, %length");
+        builder.AppendLine("  br i1 %needed_overflow, label %overflow, label %check");
+        builder.AppendLine();
+        builder.AppendLine("overflow:");
+        builder.AppendLine("  call void @llvm.trap()");
+        builder.AppendLine("  unreachable");
+        builder.AppendLine();
+        builder.AppendLine("check:");
+        builder.AppendLine("  %enough = icmp ule i64 %needed, %capacity");
+        builder.AppendLine("  br i1 %enough, label %done, label %grow");
+        builder.AppendLine();
+        builder.AppendLine("grow:");
+        builder.AppendLine("  %doubled = shl i64 %capacity, 1");
+        builder.AppendLine("  %can_double = icmp ule i64 %capacity, 9223372036854775807");
+        builder.AppendLine("  %doubled_or_max = select i1 %can_double, i64 %doubled, i64 -1");
+        builder.AppendLine("  %capacity_small = icmp ult i64 %capacity, 2");
+        builder.AppendLine("  %minimum = select i1 %capacity_small, i64 4, i64 %doubled_or_max");
+        builder.AppendLine("  %needed_larger = icmp ugt i64 %needed, %minimum");
+        builder.AppendLine("  %new_capacity = select i1 %needed_larger, i64 %needed, i64 %minimum");
+        builder.AppendLine("  %too_large = icmp ugt i64 %new_capacity, %max_count");
+        builder.AppendLine("  br i1 %too_large, label %overflow, label %realloc");
+        builder.AppendLine();
+        builder.AppendLine("realloc:");
+        if (AllocatorSizeType != "i64")
+        {
+            builder.AppendLine($"  {oldAllocatorCount} = trunc i64 %capacity to {AllocatorSizeType}");
+            builder.AppendLine($"  {newAllocatorCount} = trunc i64 %new_capacity to {AllocatorSizeType}");
+        }
+
+        builder.AppendLine($"  %old_bytes = mul {AllocatorSizeType} {oldAllocatorCount}, %element_size");
+        builder.AppendLine($"  %new_bytes = mul {AllocatorSizeType} {newAllocatorCount}, %element_size");
+        builder.AppendLine($"  %new_ptr = call nonnull noundef ptr @{RuntimeReallocateHelperName}(ptr %ptr, {AllocatorSizeType} noundef %old_bytes, {AllocatorSizeType} noundef %new_bytes, {AllocatorSizeType} noundef %alignment)");
+        builder.AppendLine("  %with_ptr = insertvalue { ptr, i64, i64 } %current, ptr %new_ptr, 0");
+        builder.AppendLine("  %updated = insertvalue { ptr, i64, i64 } %with_ptr, i64 %new_capacity, 2");
+        builder.AppendLine("  store { ptr, i64, i64 } %updated, ptr %storage");
+        builder.AppendLine("  br label %done");
+        builder.AppendLine();
+        builder.AppendLine("done:");
+        builder.AppendLine("  ret void");
+        builder.AppendLine("}");
+    }
+
+    private void EmitDynamicStorageTryReserveHelperDefinition(StringBuilder builder)
+    {
+        var oldAllocatorCount = AllocatorSizeType == "i64"
+            ? "%capacity"
+            : "%old_count";
+        var newAllocatorCount = AllocatorSizeType == "i64"
+            ? "%new_capacity"
+            : "%new_count";
+
+        builder.AppendLine(
+            $"define weak_odr hidden i1 @{DynamicStorageTryReserveHelperName}(ptr nocapture %storage, i64 noundef %additional, {AllocatorSizeType} noundef %element_size, {AllocatorSizeType} noundef allocalign %alignment, i64 noundef %max_count) unnamed_addr nounwind {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine("  %current = load { ptr, i64, i64 }, ptr %storage");
+        builder.AppendLine("  %ptr = extractvalue { ptr, i64, i64 } %current, 0");
+        builder.AppendLine("  %length = extractvalue { ptr, i64, i64 } %current, 1");
+        builder.AppendLine("  %capacity = extractvalue { ptr, i64, i64 } %current, 2");
+        builder.AppendLine("  %needed = add i64 %length, %additional");
+        builder.AppendLine("  %needed_overflow = icmp ult i64 %needed, %length");
+        builder.AppendLine("  br i1 %needed_overflow, label %failed, label %check");
+        builder.AppendLine();
+        builder.AppendLine("check:");
+        builder.AppendLine("  %enough = icmp ule i64 %needed, %capacity");
+        builder.AppendLine("  br i1 %enough, label %succeeded, label %grow");
+        builder.AppendLine();
+        builder.AppendLine("grow:");
+        builder.AppendLine("  %doubled = shl i64 %capacity, 1");
+        builder.AppendLine("  %can_double = icmp ule i64 %capacity, 9223372036854775807");
+        builder.AppendLine("  %doubled_or_max = select i1 %can_double, i64 %doubled, i64 -1");
+        builder.AppendLine("  %capacity_small = icmp ult i64 %capacity, 2");
+        builder.AppendLine("  %minimum = select i1 %capacity_small, i64 4, i64 %doubled_or_max");
+        builder.AppendLine("  %needed_larger = icmp ugt i64 %needed, %minimum");
+        builder.AppendLine("  %new_capacity = select i1 %needed_larger, i64 %needed, i64 %minimum");
+        builder.AppendLine("  %too_large = icmp ugt i64 %new_capacity, %max_count");
+        builder.AppendLine("  br i1 %too_large, label %failed, label %realloc");
+        builder.AppendLine();
+        builder.AppendLine("realloc:");
+        if (AllocatorSizeType != "i64")
+        {
+            builder.AppendLine($"  {oldAllocatorCount} = trunc i64 %capacity to {AllocatorSizeType}");
+            builder.AppendLine($"  {newAllocatorCount} = trunc i64 %new_capacity to {AllocatorSizeType}");
+        }
+
+        builder.AppendLine($"  %old_bytes = mul {AllocatorSizeType} {oldAllocatorCount}, %element_size");
+        builder.AppendLine($"  %new_bytes = mul {AllocatorSizeType} {newAllocatorCount}, %element_size");
+        builder.AppendLine($"  %new_ptr = call ptr @{RuntimeTryReallocateHelperName}(ptr %ptr, {AllocatorSizeType} noundef %old_bytes, {AllocatorSizeType} noundef %new_bytes, {AllocatorSizeType} noundef %alignment)");
+        builder.AppendLine("  %new_ptr_is_null = icmp eq ptr %new_ptr, null");
+        builder.AppendLine("  br i1 %new_ptr_is_null, label %failed, label %update");
+        builder.AppendLine();
+        builder.AppendLine("update:");
+        builder.AppendLine("  %with_ptr = insertvalue { ptr, i64, i64 } %current, ptr %new_ptr, 0");
+        builder.AppendLine("  %updated = insertvalue { ptr, i64, i64 } %with_ptr, i64 %new_capacity, 2");
+        builder.AppendLine("  store { ptr, i64, i64 } %updated, ptr %storage");
+        builder.AppendLine("  br label %succeeded");
+        builder.AppendLine();
+        builder.AppendLine("failed:");
+        builder.AppendLine("  ret i1 false");
+        builder.AppendLine();
+        builder.AppendLine("succeeded:");
+        builder.AppendLine("  ret i1 true");
+        builder.AppendLine("}");
+    }
+
+    private void EmitDynamicStorageTryReserveCapacityHelperDefinition(StringBuilder builder)
+    {
+        var oldAllocatorCount = AllocatorSizeType == "i64"
+            ? "%capacity"
+            : "%old_count";
+        var targetAllocatorCount = AllocatorSizeType == "i64"
+            ? "%target_capacity"
+            : "%target_count";
+
+        builder.AppendLine(
+            $"define weak_odr hidden i1 @{DynamicStorageTryReserveCapacityHelperName}(ptr nocapture %storage, i64 noundef %target_capacity, {AllocatorSizeType} noundef %element_size, {AllocatorSizeType} noundef allocalign %alignment, i64 noundef %max_count) unnamed_addr nounwind {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine("  %current = load { ptr, i64, i64 }, ptr %storage");
+        builder.AppendLine("  %ptr = extractvalue { ptr, i64, i64 } %current, 0");
+        builder.AppendLine("  %capacity = extractvalue { ptr, i64, i64 } %current, 2");
+        builder.AppendLine("  %enough = icmp ule i64 %target_capacity, %capacity");
+        builder.AppendLine("  br i1 %enough, label %succeeded, label %grow");
+        builder.AppendLine();
+        builder.AppendLine("grow:");
+        builder.AppendLine("  %too_large = icmp ugt i64 %target_capacity, %max_count");
+        builder.AppendLine("  br i1 %too_large, label %failed, label %realloc");
+        builder.AppendLine();
+        builder.AppendLine("realloc:");
+        if (AllocatorSizeType != "i64")
+        {
+            builder.AppendLine($"  {oldAllocatorCount} = trunc i64 %capacity to {AllocatorSizeType}");
+            builder.AppendLine($"  {targetAllocatorCount} = trunc i64 %target_capacity to {AllocatorSizeType}");
+        }
+
+        builder.AppendLine($"  %old_bytes = mul {AllocatorSizeType} {oldAllocatorCount}, %element_size");
+        builder.AppendLine($"  %new_bytes = mul {AllocatorSizeType} {targetAllocatorCount}, %element_size");
+        builder.AppendLine($"  %new_ptr = call ptr @{RuntimeTryReallocateHelperName}(ptr %ptr, {AllocatorSizeType} noundef %old_bytes, {AllocatorSizeType} noundef %new_bytes, {AllocatorSizeType} noundef %alignment)");
+        builder.AppendLine("  %new_ptr_is_null = icmp eq ptr %new_ptr, null");
+        builder.AppendLine("  br i1 %new_ptr_is_null, label %failed, label %update");
+        builder.AppendLine();
+        builder.AppendLine("update:");
+        builder.AppendLine("  %with_ptr = insertvalue { ptr, i64, i64 } %current, ptr %new_ptr, 0");
+        builder.AppendLine("  %updated = insertvalue { ptr, i64, i64 } %with_ptr, i64 %target_capacity, 2");
+        builder.AppendLine("  store { ptr, i64, i64 } %updated, ptr %storage");
+        builder.AppendLine("  br label %succeeded");
+        builder.AppendLine();
+        builder.AppendLine("failed:");
+        builder.AppendLine("  ret i1 false");
+        builder.AppendLine();
+        builder.AppendLine("succeeded:");
+        builder.AppendLine("  ret i1 true");
+        builder.AppendLine("}");
+    }
+
+    private void EmitDynamicStorageMoveLastPointerHelperDefinition(StringBuilder builder)
+    {
+        builder.AppendLine(
+            $"define weak_odr hidden nonnull ptr @{DynamicStorageMoveLastPointerHelperName}(ptr nocapture %storage, i64 noundef %element_size) unnamed_addr nounwind {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine("  %current = load { ptr, i64, i64 }, ptr %storage");
+        builder.AppendLine("  %length = extractvalue { ptr, i64, i64 } %current, 1");
+        builder.AppendLine("  %is_empty = icmp eq i64 %length, 0");
+        builder.AppendLine("  br i1 %is_empty, label %empty, label %move");
+        builder.AppendLine();
+        builder.AppendLine("empty:");
+        builder.AppendLine("  call void @llvm.trap()");
+        builder.AppendLine("  unreachable");
+        builder.AppendLine();
+        builder.AppendLine("move:");
+        builder.AppendLine("  %new_length = sub i64 %length, 1");
+        builder.AppendLine("  %ptr = extractvalue { ptr, i64, i64 } %current, 0");
+        builder.AppendLine("  %byte_offset = mul i64 %new_length, %element_size");
+        builder.AppendLine("  %element_ptr = getelementptr i8, ptr %ptr, i64 %byte_offset");
+        builder.AppendLine("  %updated = insertvalue { ptr, i64, i64 } %current, i64 %new_length, 1");
+        builder.AppendLine("  store { ptr, i64, i64 } %updated, ptr %storage");
+        builder.AppendLine("  ret ptr %element_ptr");
+        builder.AppendLine("}");
+    }
+
+    private void EmitDynamicStorageMoveAtToOutHelperDefinition(StringBuilder builder)
+    {
+        builder.AppendLine(
+            $"define weak_odr hidden void @{DynamicStorageMoveAtToOutHelperName}(ptr nocapture %storage, i64 noundef %index, ptr nocapture writeonly %out, i64 noundef %element_size) unnamed_addr nounwind {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine("  %current = load { ptr, i64, i64 }, ptr %storage");
+        builder.AppendLine("  %length = extractvalue { ptr, i64, i64 } %current, 1");
+        builder.AppendLine("  %in_bounds = icmp ult i64 %index, %length");
+        builder.AppendLine("  br i1 %in_bounds, label %move, label %bad_index");
+        builder.AppendLine();
+        builder.AppendLine("bad_index:");
+        builder.AppendLine("  call void @llvm.trap()");
+        builder.AppendLine("  unreachable");
+        builder.AppendLine();
+        builder.AppendLine("move:");
+        builder.AppendLine("  %ptr = extractvalue { ptr, i64, i64 } %current, 0");
+        builder.AppendLine("  %byte_offset = mul i64 %index, %element_size");
+        builder.AppendLine("  %element_ptr = getelementptr i8, ptr %ptr, i64 %byte_offset");
+        builder.AppendLine("  call void @llvm.memcpy.p0.p0.i64(ptr %out, ptr %element_ptr, i64 %element_size, i1 false)");
+        builder.AppendLine("  %new_length = sub i64 %length, 1");
+        builder.AppendLine("  %has_tail = icmp ult i64 %index, %new_length");
+        builder.AppendLine("  br i1 %has_tail, label %shift, label %update");
+        builder.AppendLine();
+        builder.AppendLine("shift:");
+        builder.AppendLine("  %next_index = add i64 %index, 1");
+        builder.AppendLine("  %source_offset = mul i64 %next_index, %element_size");
+        builder.AppendLine("  %source_ptr = getelementptr i8, ptr %ptr, i64 %source_offset");
+        builder.AppendLine("  %tail_count = sub i64 %new_length, %index");
+        builder.AppendLine("  %tail_bytes = mul i64 %tail_count, %element_size");
+        builder.AppendLine("  call void @llvm.memmove.p0.p0.i64(ptr %element_ptr, ptr %source_ptr, i64 %tail_bytes, i1 false)");
+        builder.AppendLine("  br label %update");
+        builder.AppendLine();
+        builder.AppendLine("update:");
+        builder.AppendLine("  %updated = insertvalue { ptr, i64, i64 } %current, i64 %new_length, 1");
+        builder.AppendLine("  store { ptr, i64, i64 } %updated, ptr %storage");
+        builder.AppendLine("  ret void");
+        builder.AppendLine("}");
+    }
+
+    private bool UsesDynamicStorageAllocator()
+    {
+        foreach (var function in _enumerateSsaFunctions())
+        {
+            foreach (var block in function.Blocks)
+            {
+                foreach (var instruction in block.Instructions)
+                {
+                    if (instruction is SsaValueInstruction { Value: SsaDynamicStorageAllocationRValue or SsaDynamicStorageFreeRValue or SsaDynamicStorageReserveRValue or SsaDynamicStorageTryReserveRValue or SsaDynamicStorageTryReserveCapacityRValue or SsaDynamicStorageMoveLastRValue or SsaDynamicStorageMoveAtRValue })
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
     }
 
     private void EmitRuntimeAllocatorGlobalDefinitions(StringBuilder builder)
@@ -370,15 +708,31 @@ internal sealed class LlvmBuiltinAndHelperEmitter
 
     private void EmitRuntimeAllocateHelperDefinition(StringBuilder builder)
     {
+        EmitRuntimeAllocateHelperDefinition(builder, RuntimeAllocateHelperName, trapsOnFailure: true);
+    }
+
+    private void EmitRuntimeTryAllocateHelperDefinition(StringBuilder builder)
+    {
+        EmitRuntimeAllocateHelperDefinition(builder, RuntimeTryAllocateHelperName, trapsOnFailure: false);
+    }
+
+    private void EmitRuntimeAllocateHelperDefinition(
+        StringBuilder builder,
+        string helperName,
+        bool trapsOnFailure)
+    {
         var pointerSizeBytes = GetTargetPointerSizeBytes();
         var bucketAlignmentBytes = GetRuntimeAllocatorBucketAlignmentBytes(pointerSizeBytes);
         var headerBytes = GetRuntimeAllocationHeaderBytes(pointerSizeBytes);
         var bucketSizeSlotOffset = pointerSizeBytes + GetAllocatorSizeBytes();
         var largestBucketSize = RuntimeAllocatorBucketSizes[^1];
         var allocationFailureProfile = _context.GetMetadataTupleRef(["!\"branch_weights\"", "i32 1", "i32 2000"]);
+        var returnAttributes = trapsOnFailure
+            ? "noalias nonnull noundef ptr"
+            : "noalias noundef ptr";
 
         builder.AppendLine(
-            $"define weak_odr hidden noalias nonnull noundef ptr @{RuntimeAllocateHelperName}({AllocatorSizeType} noundef %size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") nounwind {{");
+            $"define weak_odr hidden {returnAttributes} @{helperName}({AllocatorSizeType} noundef %size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") {RuntimeAllocatorFamilyAttribute} nounwind {{");
         builder.AppendLine("entry:");
         builder.AppendLine($"  %size_is_zero = icmp eq {AllocatorSizeType} %size, 0");
         builder.AppendLine($"  %requested_size = select i1 %size_is_zero, {AllocatorSizeType} 1, {AllocatorSizeType} %size");
@@ -459,13 +813,21 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("  br i1 %size_overflow, label %oom, label %allocate_os");
         builder.AppendLine();
         builder.AppendLine("allocate_os:");
-        builder.AppendLine($"  %base = call ptr @{OsAllocateHelperName}({AllocatorSizeType} noundef %total)");
+        builder.AppendLine($"  %base = call noalias noundef ptr @{OsAllocateHelperName}({AllocatorSizeType} noundef %total)");
         builder.AppendLine("  %is_null = icmp eq ptr %base, null");
         builder.AppendLine($"  br i1 %is_null, label %oom, label %ok, !prof {allocationFailureProfile}");
         builder.AppendLine();
         builder.AppendLine("oom:");
-        builder.AppendLine($"  call coldcc void @{OutOfMemoryTrapHelperName}()");
-        builder.AppendLine("  unreachable");
+        if (trapsOnFailure)
+        {
+            builder.AppendLine($"  call coldcc void @{OutOfMemoryTrapHelperName}()");
+            builder.AppendLine("  unreachable");
+        }
+        else
+        {
+            builder.AppendLine("  ret ptr null");
+        }
+
         builder.AppendLine();
         builder.AppendLine("ok:");
         builder.AppendLine($"  %base_int = ptrtoint ptr %base to {AllocatorSizeType}");
@@ -503,7 +865,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         var negativeAlignment = -bucketAlignmentBytes;
 
         builder.AppendLine($"bucket_{bucketSize}_refill:");
-        builder.AppendLine($"  %bucket_{bucketSize}_slab_base = call ptr @{OsAllocateHelperName}({AllocatorSizeType} noundef {slabTotalBytes})");
+        builder.AppendLine($"  %bucket_{bucketSize}_slab_base = call noalias noundef ptr @{OsAllocateHelperName}({AllocatorSizeType} noundef {slabTotalBytes})");
         builder.AppendLine($"  %bucket_{bucketSize}_slab_is_null = icmp eq ptr %bucket_{bucketSize}_slab_base, null");
         builder.AppendLine($"  br i1 %bucket_{bucketSize}_slab_is_null, label %oom, label %bucket_{bucketSize}_slab_ok, !prof {allocationFailureProfile}");
         builder.AppendLine();
@@ -584,9 +946,13 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         var copyLengthI64 = AllocatorSizeType == "i64"
             ? copyLength
             : "%copy_length_i64";
+        var allocationFailureProfile = _context.GetMetadataTupleRef(["!\"branch_weights\"", "i32 1", "i32 2000"]);
+        var nonBucketLabel = IsWindowsTarget()
+            ? "os_realloc_check"
+            : "fallback";
 
         builder.AppendLine(
-            $"define weak_odr hidden nonnull noundef ptr @{RuntimeReallocateHelperName}(ptr %old_ptr, {AllocatorSizeType} noundef %old_size, {AllocatorSizeType} noundef %new_size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(2) allockind(\"realloc,aligned\") nounwind {{");
+            $"define weak_odr hidden nonnull noundef ptr @{RuntimeReallocateHelperName}(ptr %old_ptr, {AllocatorSizeType} noundef %old_size, {AllocatorSizeType} noundef %new_size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(2) allockind(\"realloc,aligned\") {RuntimeAllocatorFamilyAttribute} nounwind {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  %old_is_null = icmp eq ptr %old_ptr, null");
         builder.AppendLine("  br i1 %old_is_null, label %allocate_only, label %check_alignment");
@@ -608,7 +974,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine($"  %realloc_bucket_size_slot = getelementptr i8, ptr %realloc_header, i64 {bucketSizeSlotOffset}");
         builder.AppendLine($"  %realloc_bucket_size = load {AllocatorSizeType}, ptr %realloc_bucket_size_slot, align {pointerSizeBytes}");
         builder.AppendLine($"  %realloc_old_is_bucket = icmp ne {AllocatorSizeType} %realloc_bucket_size, 0");
-        builder.AppendLine("  br i1 %realloc_old_is_bucket, label %try_bucket_reuse, label %fallback");
+        builder.AppendLine($"  br i1 %realloc_old_is_bucket, label %try_bucket_reuse, label %{nonBucketLabel}");
         builder.AppendLine();
         builder.AppendLine("try_bucket_reuse:");
         builder.AppendLine($"  %realloc_bucket_size_fits = icmp ule {AllocatorSizeType} %new_size, %realloc_bucket_size");
@@ -619,6 +985,17 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("reuse_old:");
         builder.AppendLine("  ret ptr %old_ptr");
         builder.AppendLine();
+        if (IsWindowsTarget())
+        {
+            EmitRuntimeWindowsOsReallocateFastPath(
+                builder,
+                pointerSizeBytes,
+                headerBytes,
+                bucketSizeSlotOffset,
+                allocationFailureProfile);
+            builder.AppendLine();
+        }
+
         builder.AppendLine("fallback:");
         builder.AppendLine($"  %new_ptr = call noalias nonnull noundef ptr @{RuntimeAllocateHelperName}({AllocatorSizeType} noundef %new_size, {AllocatorSizeType} noundef %realloc_effective_alignment)");
         builder.AppendLine($"  %copy_uses_old = icmp ult {AllocatorSizeType} %old_size, %new_size");
@@ -638,6 +1015,127 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("}");
     }
 
+    private void EmitRuntimeTryReallocateHelperDefinition(StringBuilder builder)
+    {
+        var pointerSizeBytes = GetTargetPointerSizeBytes();
+        var bucketAlignmentBytes = GetRuntimeAllocatorBucketAlignmentBytes(pointerSizeBytes);
+        var headerBytes = GetRuntimeAllocationHeaderBytes(pointerSizeBytes);
+        var bucketSizeSlotOffset = pointerSizeBytes + GetAllocatorSizeBytes();
+        var copyLength = "%copy_length";
+        var copyLengthI64 = AllocatorSizeType == "i64"
+            ? copyLength
+            : "%copy_length_i64";
+        var allocationFailureProfile = _context.GetMetadataTupleRef(["!\"branch_weights\"", "i32 1", "i32 2000"]);
+        var nonBucketLabel = IsWindowsTarget()
+            ? "os_realloc_check"
+            : "fallback";
+
+        builder.AppendLine(
+            $"define weak_odr hidden ptr @{RuntimeTryReallocateHelperName}(ptr %old_ptr, {AllocatorSizeType} noundef %old_size, {AllocatorSizeType} noundef %new_size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(2) allockind(\"realloc,aligned\") {RuntimeAllocatorFamilyAttribute} nounwind {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine("  %old_is_null = icmp eq ptr %old_ptr, null");
+        builder.AppendLine("  br i1 %old_is_null, label %allocate_only, label %check_alignment");
+        builder.AppendLine();
+        builder.AppendLine("allocate_only:");
+        builder.AppendLine($"  %allocated = call noalias noundef ptr @{RuntimeTryAllocateHelperName}({AllocatorSizeType} noundef %new_size, {AllocatorSizeType} noundef %alignment)");
+        builder.AppendLine("  ret ptr %allocated");
+        builder.AppendLine();
+        builder.AppendLine("check_alignment:");
+        builder.AppendLine($"  %realloc_alignment_too_small = icmp ult {AllocatorSizeType} %alignment, {pointerSizeBytes}");
+        builder.AppendLine($"  %realloc_effective_alignment = select i1 %realloc_alignment_too_small, {AllocatorSizeType} {pointerSizeBytes}, {AllocatorSizeType} %alignment");
+        builder.AppendLine($"  %realloc_alignment_minus_one = sub {AllocatorSizeType} %realloc_effective_alignment, 1");
+        builder.AppendLine($"  %realloc_alignment_power_check = and {AllocatorSizeType} %realloc_effective_alignment, %realloc_alignment_minus_one");
+        builder.AppendLine($"  %realloc_alignment_not_power_of_two = icmp ne {AllocatorSizeType} %realloc_alignment_power_check, 0");
+        builder.AppendLine("  br i1 %realloc_alignment_not_power_of_two, label %failed, label %classify_old");
+        builder.AppendLine();
+        builder.AppendLine("classify_old:");
+        builder.AppendLine($"  %realloc_header = getelementptr i8, ptr %old_ptr, i64 -{headerBytes}");
+        builder.AppendLine($"  %realloc_bucket_size_slot = getelementptr i8, ptr %realloc_header, i64 {bucketSizeSlotOffset}");
+        builder.AppendLine($"  %realloc_bucket_size = load {AllocatorSizeType}, ptr %realloc_bucket_size_slot, align {pointerSizeBytes}");
+        builder.AppendLine($"  %realloc_old_is_bucket = icmp ne {AllocatorSizeType} %realloc_bucket_size, 0");
+        builder.AppendLine($"  br i1 %realloc_old_is_bucket, label %try_bucket_reuse, label %{nonBucketLabel}");
+        builder.AppendLine();
+        builder.AppendLine("try_bucket_reuse:");
+        builder.AppendLine($"  %realloc_bucket_size_fits = icmp ule {AllocatorSizeType} %new_size, %realloc_bucket_size");
+        builder.AppendLine($"  %realloc_bucket_alignment_fits = icmp ule {AllocatorSizeType} %realloc_effective_alignment, {bucketAlignmentBytes}");
+        builder.AppendLine("  %realloc_bucket_can_reuse = and i1 %realloc_bucket_size_fits, %realloc_bucket_alignment_fits");
+        builder.AppendLine("  br i1 %realloc_bucket_can_reuse, label %reuse_old, label %fallback");
+        builder.AppendLine();
+        builder.AppendLine("reuse_old:");
+        builder.AppendLine("  ret ptr %old_ptr");
+        builder.AppendLine();
+        if (IsWindowsTarget())
+        {
+            EmitRuntimeWindowsOsReallocateFastPath(
+                builder,
+                pointerSizeBytes,
+                headerBytes,
+                bucketSizeSlotOffset,
+                allocationFailureProfile);
+            builder.AppendLine();
+        }
+
+        builder.AppendLine("fallback:");
+        builder.AppendLine($"  %new_ptr = call noalias noundef ptr @{RuntimeTryAllocateHelperName}({AllocatorSizeType} noundef %new_size, {AllocatorSizeType} noundef %realloc_effective_alignment)");
+        builder.AppendLine("  %new_ptr_is_null = icmp eq ptr %new_ptr, null");
+        builder.AppendLine("  br i1 %new_ptr_is_null, label %failed, label %copy");
+        builder.AppendLine();
+        builder.AppendLine("copy:");
+        builder.AppendLine($"  %copy_uses_old = icmp ult {AllocatorSizeType} %old_size, %new_size");
+        builder.AppendLine($"  {copyLength} = select i1 %copy_uses_old, {AllocatorSizeType} %old_size, {AllocatorSizeType} %new_size");
+        if (AllocatorSizeType != "i64")
+        {
+            builder.AppendLine($"  {copyLengthI64} = zext {AllocatorSizeType} {copyLength} to i64");
+        }
+
+        builder.AppendLine($"  call void @llvm.memcpy.p0.p0.i64(ptr align {pointerSizeBytes} %new_ptr, ptr align {pointerSizeBytes} %old_ptr, i64 {copyLengthI64}, i1 false)");
+        builder.AppendLine($"  call void @{RuntimeFreeHelperName}(ptr %old_ptr)");
+        builder.AppendLine("  ret ptr %new_ptr");
+        builder.AppendLine();
+        builder.AppendLine("failed:");
+        builder.AppendLine("  ret ptr null");
+        builder.AppendLine("}");
+    }
+
+    private void EmitRuntimeWindowsOsReallocateFastPath(
+        StringBuilder builder,
+        int pointerSizeBytes,
+        int headerBytes,
+        int bucketSizeSlotOffset,
+        string allocationFailureProfile)
+    {
+        builder.AppendLine("os_realloc_check:");
+        builder.AppendLine($"  %realloc_base = load ptr, ptr %realloc_header, align {pointerSizeBytes}");
+        builder.AppendLine("  %realloc_header_is_base = icmp eq ptr %realloc_base, %realloc_header");
+        builder.AppendLine($"  %realloc_os_alignment_ok = icmp ule {AllocatorSizeType} %realloc_effective_alignment, {pointerSizeBytes}");
+        builder.AppendLine("  %realloc_can_os_realloc = and i1 %realloc_header_is_base, %realloc_os_alignment_ok");
+        builder.AppendLine("  br i1 %realloc_can_os_realloc, label %try_os_reallocate, label %fallback");
+        builder.AppendLine();
+        builder.AppendLine("try_os_reallocate:");
+        builder.AppendLine($"  %os_realloc_size_is_zero = icmp eq {AllocatorSizeType} %new_size, 0");
+        builder.AppendLine($"  %os_realloc_requested_size = select i1 %os_realloc_size_is_zero, {AllocatorSizeType} 1, {AllocatorSizeType} %new_size");
+        builder.AppendLine($"  %os_with_header = add {AllocatorSizeType} %os_realloc_requested_size, {headerBytes}");
+        builder.AppendLine($"  %os_overflow_header = icmp ult {AllocatorSizeType} %os_with_header, %os_realloc_requested_size");
+        builder.AppendLine($"  %os_total = add {AllocatorSizeType} %os_with_header, %realloc_effective_alignment");
+        builder.AppendLine($"  %os_overflow_alignment = icmp ult {AllocatorSizeType} %os_total, %os_with_header");
+        builder.AppendLine("  %os_size_overflow = or i1 %os_overflow_header, %os_overflow_alignment");
+        builder.AppendLine("  br i1 %os_size_overflow, label %fallback, label %call_os_reallocate");
+        builder.AppendLine();
+        builder.AppendLine("call_os_reallocate:");
+        builder.AppendLine($"  %os_realloc_base = call noundef ptr @{OsReallocateHelperName}(ptr %realloc_base, {AllocatorSizeType} noundef %os_total)");
+        builder.AppendLine("  %os_realloc_failed = icmp eq ptr %os_realloc_base, null");
+        builder.AppendLine($"  br i1 %os_realloc_failed, label %fallback, label %os_reallocated, !prof {allocationFailureProfile}");
+        builder.AppendLine();
+        builder.AppendLine("os_reallocated:");
+        builder.AppendLine($"  store ptr %os_realloc_base, ptr %os_realloc_base, align {pointerSizeBytes}");
+        builder.AppendLine($"  %os_length_slot = getelementptr i8, ptr %os_realloc_base, i64 {pointerSizeBytes}");
+        builder.AppendLine($"  store {AllocatorSizeType} %os_total, ptr %os_length_slot, align {pointerSizeBytes}");
+        builder.AppendLine($"  %os_bucket_size_slot = getelementptr i8, ptr %os_realloc_base, i64 {bucketSizeSlotOffset}");
+        builder.AppendLine($"  store {AllocatorSizeType} 0, ptr %os_bucket_size_slot, align {pointerSizeBytes}");
+        builder.AppendLine($"  %os_realloc_ptr = getelementptr i8, ptr %os_realloc_base, i64 {headerBytes}");
+        builder.AppendLine("  ret ptr %os_realloc_ptr");
+    }
+
     private void EmitRuntimeFreeHelperDefinition(StringBuilder builder)
     {
         var pointerSizeBytes = GetTargetPointerSizeBytes();
@@ -645,7 +1143,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         var headerBytes = GetRuntimeAllocationHeaderBytes(pointerSizeBytes);
         var bucketSizeSlotOffset = pointerSizeBytes + GetAllocatorSizeBytes();
 
-        builder.AppendLine($"define weak_odr hidden void @{RuntimeFreeHelperName}(ptr %ptr) unnamed_addr nounwind {{");
+        builder.AppendLine($"define weak_odr hidden void @{RuntimeFreeHelperName}(ptr %ptr) unnamed_addr allockind(\"free\") {RuntimeAllocatorFamilyAttribute} nounwind {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  %is_null = icmp eq ptr %ptr, null");
         builder.AppendLine("  br i1 %is_null, label %done, label %free");
@@ -697,10 +1195,10 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     {
         if (IsWindowsTarget())
         {
-            builder.AppendLine($"define internal dso_local ptr @{OsAllocateHelperName}({AllocatorSizeType} noundef %size) unnamed_addr nounwind {{");
+            builder.AppendLine($"define internal dso_local noalias noundef ptr @{OsAllocateHelperName}({AllocatorSizeType} noundef %size) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized\") {OsAllocatorFamilyAttribute} nounwind {{");
             builder.AppendLine("entry:");
             builder.AppendLine("  %heap = call ptr @GetProcessHeap()");
-            builder.AppendLine($"  %ptr = call ptr @HeapAlloc(ptr %heap, i32 0, {AllocatorSizeType} %size)");
+            builder.AppendLine($"  %ptr = call noalias noundef ptr @HeapAlloc(ptr %heap, i32 0, {AllocatorSizeType} noundef %size)");
             builder.AppendLine("  ret ptr %ptr");
             builder.AppendLine("}");
             return;
@@ -715,11 +1213,21 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         EmitUnsupportedOsAllocateHelperDefinition(builder);
     }
 
+    private void EmitOsReallocateHelperDefinition(StringBuilder builder)
+    {
+        builder.AppendLine($"define internal dso_local noundef ptr @{OsReallocateHelperName}(ptr %ptr, {AllocatorSizeType} noundef %size) unnamed_addr allocsize(1) allockind(\"realloc\") {OsAllocatorFamilyAttribute} nounwind {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine("  %heap = call ptr @GetProcessHeap()");
+        builder.AppendLine($"  %next = call noundef ptr @HeapReAlloc(ptr %heap, i32 0, ptr %ptr, {AllocatorSizeType} noundef %size)");
+        builder.AppendLine("  ret ptr %next");
+        builder.AppendLine("}");
+    }
+
     private void EmitOsFreeHelperDefinition(StringBuilder builder)
     {
         if (IsWindowsTarget())
         {
-            builder.AppendLine($"define internal dso_local void @{OsFreeHelperName}(ptr %ptr, {AllocatorSizeType} noundef %size) unnamed_addr nounwind {{");
+            builder.AppendLine($"define internal dso_local void @{OsFreeHelperName}(ptr %ptr, {AllocatorSizeType} noundef %size) unnamed_addr allockind(\"free\") {OsAllocatorFamilyAttribute} nounwind {{");
             builder.AppendLine("entry:");
             builder.AppendLine("  %heap = call ptr @GetProcessHeap()");
             builder.AppendLine("  %ignored = call i32 @HeapFree(ptr %heap, i32 0, ptr %ptr)");
@@ -745,7 +1253,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             return;
         }
 
-        builder.AppendLine($"define internal dso_local ptr @{OsAllocateHelperName}({AllocatorSizeType} noundef %size) unnamed_addr nounwind {{");
+        builder.AppendLine($"define internal dso_local noalias noundef ptr @{OsAllocateHelperName}({AllocatorSizeType} noundef %size) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized\") {OsAllocatorFamilyAttribute} nounwind {{");
         builder.AppendLine("entry:");
         var sizeValue = syscallSpec.ValueBitWidth == 64
             ? MaterializeAllocatorSizeAsI64(builder, "%size", "size64")
@@ -776,7 +1284,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             return;
         }
 
-        builder.AppendLine($"define internal dso_local void @{OsFreeHelperName}(ptr %ptr, {AllocatorSizeType} noundef %size) unnamed_addr nounwind {{");
+        builder.AppendLine($"define internal dso_local void @{OsFreeHelperName}(ptr %ptr, {AllocatorSizeType} noundef %size) unnamed_addr allockind(\"free\") {OsAllocatorFamilyAttribute} nounwind {{");
         builder.AppendLine("entry:");
         builder.AppendLine($"  %ptr_int = ptrtoint ptr %ptr to {syscallSpec.ValueType}");
         var sizeValue = syscallSpec.ValueBitWidth == 64
@@ -1783,6 +2291,12 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         return normalizedType.Kind switch
         {
             StarkTypeKind.FixedArray when normalizedType.ElementType is not null => normalizedType.ElementType,
+            StarkTypeKind.Dynamic when normalizedType.ElementType is not null && index == 0
+                => StarkTypeSymbols.RawPointer(normalizedType.ElementType, isMutable: true),
+            StarkTypeKind.Dynamic when index == 1
+                => StarkTypeSymbols.Integer(64),
+            StarkTypeKind.Dynamic when index == 2
+                => StarkTypeSymbols.Integer(64),
             StarkTypeKind.Named when ResolveNamedTypeSymbol(normalizedType) is { } namedType
                                        && TryGetScalarizableNamedAggregateFields(namedType, out var orderedFields)
                                        && index >= 0
@@ -3206,6 +3720,16 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             : throw new InvalidOperationException($"System.Text ASCII-to-Unicode conversion builtin '{abiFunction.Name}' requires a raw pointer destination to a Unicode aggregate.");
         var viewLlvmType = MapType(sourceParameter.SourceType);
         var destinationPointer = $"%{EscapeIdentifier(destinationParameter.LlvmName)}";
+        var fastLoopAccessGroupRef = _context.GetSelfReferentialMetadataRef(
+            $"loop-access-group:{abiFunction.SymbolName}:ascii-to-unicode-fast",
+            _ => "distinct !{}");
+        var fastLoopAccessGroupSuffix = $", !llvm.access.group {fastLoopAccessGroupRef}";
+        var mustProgressRef = _context.GetMetadataTupleRef(["!\"llvm.loop.mustprogress\""]);
+        var parallelAccessRef = _context.GetMetadataTupleRef(["!\"llvm.loop.parallel_accesses\"", fastLoopAccessGroupRef]);
+        var fastLoopRef = _context.GetSelfReferentialMetadataRef(
+            $"loop:{abiFunction.SymbolName}:ascii-to-unicode-fast",
+            selfRef => $"distinct !{{{selfRef}, {mustProgressRef}, {parallelAccessRef}}}");
+        var fastLoopMetadataSuffix = $", !llvm.loop {fastLoopRef}";
 
         builder.AppendLine("entry:");
         var sourceValue = MaterializeAggregateBuiltinParameterValue(builder, sourceParameter, "convert_source_view");
@@ -3237,22 +3761,32 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("  ret i1 false");
         builder.AppendLine("convert_fast_entry:");
         builder.AppendLine("  %convert_fits_as_unicode = icmp sle i64 %convert_source_length, %convert_capacity");
-        builder.AppendLine("  br i1 %convert_fits_as_unicode, label %convert_fast_loop, label %convert_fallback_entry");
+        builder.AppendLine("  br i1 %convert_fits_as_unicode, label %convert_fast_disjoint_check, label %convert_fallback_entry");
+        builder.AppendLine("convert_fast_disjoint_check:");
+        builder.AppendLine("  %convert_fast_source_empty = icmp eq i64 %convert_source_length, 0");
+        builder.AppendLine("  br i1 %convert_fast_source_empty, label %convert_fast_loop, label %convert_fast_disjoint_nonempty");
+        builder.AppendLine("convert_fast_disjoint_nonempty:");
+        builder.AppendLine("  %convert_fast_source_end = getelementptr i8, ptr %convert_source_data, i64 %convert_source_length");
+        builder.AppendLine("  %convert_fast_dest_end = getelementptr i32, ptr %convert_data, i64 %convert_source_length");
+        builder.AppendLine("  %convert_fast_source_before_dest = icmp ule ptr %convert_fast_source_end, %convert_data");
+        builder.AppendLine("  %convert_fast_dest_before_source = icmp ule ptr %convert_fast_dest_end, %convert_source_data");
+        builder.AppendLine("  %convert_fast_disjoint = or i1 %convert_fast_source_before_dest, %convert_fast_dest_before_source");
+        builder.AppendLine("  br i1 %convert_fast_disjoint, label %convert_fast_loop, label %convert_fail");
         builder.AppendLine("convert_fast_loop:");
-        builder.AppendLine("  %convert_fast_index = phi i64 [ 0, %convert_fast_entry ], [ %convert_fast_next, %convert_fast_store ]");
+        builder.AppendLine("  %convert_fast_index = phi i64 [ 0, %convert_fast_disjoint_check ], [ 0, %convert_fast_disjoint_nonempty ], [ %convert_fast_next, %convert_fast_store ]");
         builder.AppendLine("  %convert_fast_done = icmp eq i64 %convert_fast_index, %convert_source_length");
         builder.AppendLine("  br i1 %convert_fast_done, label %convert_success_source_length, label %convert_fast_load");
         builder.AppendLine("convert_fast_load:");
         builder.AppendLine("  %convert_fast_source_ptr = getelementptr i8, ptr %convert_source_data, i64 %convert_fast_index");
-        builder.AppendLine("  %convert_fast_unit = load i8, ptr %convert_fast_source_ptr");
+        builder.AppendLine($"  %convert_fast_unit = load i8, ptr %convert_fast_source_ptr{fastLoopAccessGroupSuffix}");
         builder.AppendLine("  %convert_fast_non_ascii = icmp slt i8 %convert_fast_unit, 0");
         builder.AppendLine("  br i1 %convert_fast_non_ascii, label %convert_fallback_entry, label %convert_fast_store");
         builder.AppendLine("convert_fast_store:");
         builder.AppendLine("  %convert_fast_dest_ptr = getelementptr i32, ptr %convert_data, i64 %convert_fast_index");
         builder.AppendLine("  %convert_fast_wide = zext i8 %convert_fast_unit to i32");
-        builder.AppendLine("  store i32 %convert_fast_wide, ptr %convert_fast_dest_ptr");
+        builder.AppendLine($"  store i32 %convert_fast_wide, ptr %convert_fast_dest_ptr{fastLoopAccessGroupSuffix}");
         builder.AppendLine("  %convert_fast_next = add i64 %convert_fast_index, 1");
-        builder.AppendLine("  br label %convert_fast_loop");
+        builder.AppendLine($"  br label %convert_fast_loop{fastLoopMetadataSuffix}");
         builder.AppendLine("convert_success_source_length:");
         builder.AppendLine("  store i64 %convert_source_length, ptr %convert_length_addr");
         builder.AppendLine("  ret i1 true");
@@ -3684,13 +4218,20 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         string sourceName;
         if (functionName.Contains('.', StringComparison.Ordinal))
         {
-            const string prefix = "System.Text.";
-            if (!functionName.StartsWith(prefix, StringComparison.Ordinal))
+            const string systemTextPrefix = "System.Text.";
+            const string experimentalTextPrefix = "System.Experimental.Text.";
+            if (functionName.StartsWith(systemTextPrefix, StringComparison.Ordinal))
+            {
+                sourceName = functionName[systemTextPrefix.Length..];
+            }
+            else if (functionName.StartsWith(experimentalTextPrefix, StringComparison.Ordinal))
+            {
+                sourceName = functionName[experimentalTextPrefix.Length..];
+            }
+            else
             {
                 return false;
             }
-
-            sourceName = functionName[prefix.Length..];
         }
         else
         {
@@ -3727,6 +4268,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private static bool IsSystemTextBuiltinHostModule(string moduleName)
     {
         return string.Equals(moduleName, "System.Text", StringComparison.Ordinal)
+            || string.Equals(moduleName, "System.Experimental.Text", StringComparison.Ordinal)
             || string.Equals(moduleName, "System.Runtime.Platform.Linux", StringComparison.Ordinal)
             || string.Equals(moduleName, "System.Runtime.Platform.Windows", StringComparison.Ordinal);
     }

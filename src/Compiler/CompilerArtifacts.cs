@@ -876,6 +876,7 @@ public enum StarkTypeKind
     RawPointer,
     FixedArray,
     Slice,
+    Dynamic,
     FunctionPointer,
     Named,
     Null
@@ -956,6 +957,9 @@ public static class StarkTypeSymbols
 
     public static StarkTypeSymbol Slice(StarkTypeSymbol elementType) =>
         new(StarkTypeKind.Slice, $"{elementType.DisplayName}[]", ElementType: elementType);
+
+    public static StarkTypeSymbol Dynamic(StarkTypeSymbol elementType) =>
+        new(StarkTypeKind.Dynamic, $"dynamic {elementType.DisplayName}", ElementType: elementType);
 
     public static StarkTypeSymbol FunctionPointer(
         StarkFunctionKind functionKind,
@@ -1221,6 +1225,7 @@ public static class StarkTypeSymbols
             StarkTypeKind.RawPointer when type.ElementType is not null => RawPointer(type.ElementType, type.IsMutablePointer),
             StarkTypeKind.FixedArray when type.ElementType is not null => FixedArray(type.ElementType, type.FixedLength),
             StarkTypeKind.Slice when type.ElementType is not null => Slice(type.ElementType),
+            StarkTypeKind.Dynamic when type.ElementType is not null => Dynamic(type.ElementType),
             StarkTypeKind.FunctionPointer when type.FunctionPointerKind is { } functionKind
                                                && type.FunctionPointerReturnType is { } returnType
                                                && type.FunctionPointerParameterTypes is { } parameterTypes
@@ -1963,6 +1968,8 @@ internal static class ConcreteTypeLayoutHelper
                 TryGetPointerLayout(),
             StarkTypeKind.Slice or StarkTypeKind.Ascii or StarkTypeKind.Unicode =>
                 TryGetViewLayout(),
+            StarkTypeKind.Dynamic =>
+                TryGetDynamicStorageLayout(),
             StarkTypeKind.FixedArray when concreteType.ElementType is not null && concreteType.FixedLength is int fixedLength =>
                 TryGetFixedArrayLayout(concreteType.ElementType, fixedLength, namedTypes, enumLayouts, publishedConcreteLayouts, activeNamedTypes),
             StarkTypeKind.Named when concreteType.NamedType is not null
@@ -2138,6 +2145,19 @@ internal static class ConcreteTypeLayoutHelper
         var lengthLayout = TryGetScalarLayout(8) ?? throw new InvalidOperationException("i64 layout must be available.");
         var alignmentBytes = Math.Max(pointerLayout.AlignmentBytes, lengthLayout.AlignmentBytes);
         var sizeBytes = AlignTo(pointerLayout.SizeBytes, lengthLayout.AlignmentBytes);
+        sizeBytes = checked(sizeBytes + lengthLayout.SizeBytes);
+        sizeBytes = AlignTo(sizeBytes, alignmentBytes);
+        return new ConcreteTypeLayout(sizeBytes, alignmentBytes);
+    }
+
+    private static ConcreteTypeLayout TryGetDynamicStorageLayout()
+    {
+        var pointerLayout = TryGetPointerLayout();
+        var lengthLayout = TryGetScalarLayout(8) ?? throw new InvalidOperationException("i64 layout must be available.");
+        var alignmentBytes = Math.Max(pointerLayout.AlignmentBytes, lengthLayout.AlignmentBytes);
+        var sizeBytes = AlignTo(pointerLayout.SizeBytes, lengthLayout.AlignmentBytes);
+        sizeBytes = checked(sizeBytes + lengthLayout.SizeBytes);
+        sizeBytes = AlignTo(sizeBytes, lengthLayout.AlignmentBytes);
         sizeBytes = checked(sizeBytes + lengthLayout.SizeBytes);
         sizeBytes = AlignTo(sizeBytes, alignmentBytes);
         return new ConcreteTypeLayout(sizeBytes, alignmentBytes);
@@ -2422,8 +2442,14 @@ public sealed record MidLevelIrCallRValue(
     string Text,
     IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
     StarkTypeSymbol? SourceReturnType = null,
-    IReadOnlyList<MidLevelIrOperand?>? IndirectArgumentAddresses = null)
+    IReadOnlyList<MidLevelIrOperand?>? IndirectArgumentAddresses = null,
+    IReadOnlyList<MidLevelIrDynamicStorageLengthCommit>? PostCallDynamicLengthCommits = null)
     : MidLevelIrRValue(Type, Text);
+
+public sealed record MidLevelIrDynamicStorageLengthCommit(
+    MidLevelIrOperand StorageAddress,
+    StarkTypeSymbol StorageType,
+    MidLevelIrOperand InitializedLength);
 
 public sealed record MidLevelIrIndirectCallRValue(
     MidLevelIrOperand Target,
@@ -2481,6 +2507,53 @@ public sealed record MidLevelIrMakeSliceFromLocalRValue(
 public sealed record MidLevelIrMakeSliceFromPointerRValue(
     MidLevelIrOperand Pointer,
     MidLevelIrOperand Length,
+    StarkTypeSymbol Type,
+    string Text)
+    : MidLevelIrRValue(Type, Text);
+
+public sealed record MidLevelIrDynamicStorageAllocationRValue(
+    MidLevelIrOperand Capacity,
+    StarkTypeSymbol Type,
+    string Text)
+    : MidLevelIrRValue(Type, Text);
+
+public sealed record MidLevelIrDynamicStorageFreeRValue(
+    MidLevelIrOperand Storage,
+    string Text)
+    : MidLevelIrRValue(StarkTypeSymbols.Void, Text);
+
+public sealed record MidLevelIrDynamicStorageReserveRValue(
+    MidLevelIrOperand StorageAddress,
+    StarkTypeSymbol StorageType,
+    MidLevelIrOperand AdditionalCapacity,
+    string Text)
+    : MidLevelIrRValue(StarkTypeSymbols.Void, Text);
+
+public sealed record MidLevelIrDynamicStorageTryReserveRValue(
+    MidLevelIrOperand StorageAddress,
+    StarkTypeSymbol StorageType,
+    MidLevelIrOperand AdditionalCapacity,
+    string Text)
+    : MidLevelIrRValue(StarkTypeSymbols.Bool, Text);
+
+public sealed record MidLevelIrDynamicStorageTryReserveCapacityRValue(
+    MidLevelIrOperand StorageAddress,
+    StarkTypeSymbol StorageType,
+    MidLevelIrOperand TargetCapacity,
+    string Text)
+    : MidLevelIrRValue(StarkTypeSymbols.Bool, Text);
+
+public sealed record MidLevelIrDynamicStorageMoveLastRValue(
+    MidLevelIrOperand StorageAddress,
+    StarkTypeSymbol StorageType,
+    StarkTypeSymbol Type,
+    string Text)
+    : MidLevelIrRValue(Type, Text);
+
+public sealed record MidLevelIrDynamicStorageMoveAtRValue(
+    MidLevelIrOperand StorageAddress,
+    StarkTypeSymbol StorageType,
+    MidLevelIrOperand Index,
     StarkTypeSymbol Type,
     string Text)
     : MidLevelIrRValue(Type, Text);
@@ -2776,6 +2849,53 @@ public sealed record SsaMakeSliceFromLocalRValue(
 public sealed record SsaMakeSliceFromPointerRValue(
     SsaValue Pointer,
     SsaValue Length,
+    StarkTypeSymbol Type,
+    string Text)
+    : SsaRValue(Type, Text);
+
+public sealed record SsaDynamicStorageAllocationRValue(
+    SsaValue Capacity,
+    StarkTypeSymbol Type,
+    string Text)
+    : SsaRValue(Type, Text);
+
+public sealed record SsaDynamicStorageFreeRValue(
+    SsaValue Storage,
+    string Text)
+    : SsaRValue(StarkTypeSymbols.Void, Text);
+
+public sealed record SsaDynamicStorageReserveRValue(
+    SsaValue StorageAddress,
+    StarkTypeSymbol StorageType,
+    SsaValue AdditionalCapacity,
+    string Text)
+    : SsaRValue(StarkTypeSymbols.Void, Text);
+
+public sealed record SsaDynamicStorageTryReserveRValue(
+    SsaValue StorageAddress,
+    StarkTypeSymbol StorageType,
+    SsaValue AdditionalCapacity,
+    string Text)
+    : SsaRValue(StarkTypeSymbols.Bool, Text);
+
+public sealed record SsaDynamicStorageTryReserveCapacityRValue(
+    SsaValue StorageAddress,
+    StarkTypeSymbol StorageType,
+    SsaValue TargetCapacity,
+    string Text)
+    : SsaRValue(StarkTypeSymbols.Bool, Text);
+
+public sealed record SsaDynamicStorageMoveLastRValue(
+    SsaValue StorageAddress,
+    StarkTypeSymbol StorageType,
+    StarkTypeSymbol Type,
+    string Text)
+    : SsaRValue(Type, Text);
+
+public sealed record SsaDynamicStorageMoveAtRValue(
+    SsaValue StorageAddress,
+    StarkTypeSymbol StorageType,
+    SsaValue Index,
     StarkTypeSymbol Type,
     string Text)
     : SsaRValue(Type, Text);

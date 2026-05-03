@@ -175,6 +175,103 @@ emit_row() {
   printf '%s\n' "$1" >> "${results_file}"
 }
 
+benchmark_label_fields() {
+  local benchmark_id="$1"
+  local language="$2"
+
+  local remainder="${benchmark_id#benchmarks/}"
+  local category="${remainder%%/*}"
+  local stem="${benchmark_id##*/}"
+  local prefix=""
+  if [[ "${stem}" == Experimental* ]]; then
+    prefix="Experimental"
+    stem="${stem#Experimental}"
+  fi
+
+  if [[ "${benchmark_id}" != benchmarks/collections/* ]]; then
+    local subsystem=""
+    case "${category}" in
+      allocator)
+        subsystem="Memory"
+        ;;
+      console)
+        subsystem="Console"
+        ;;
+      io)
+        subsystem="IO"
+        ;;
+      network)
+        subsystem="Network"
+        ;;
+      runtime)
+        subsystem="Runtime"
+        ;;
+      text)
+        subsystem="Text"
+        ;;
+    esac
+
+    if [[ -z "${subsystem}" ]]; then
+      printf '%s,%s\n' "${benchmark_id}" "${language}"
+      return
+    fi
+
+    local language_label="${language}"
+    if [[ "${language}" == "stark" ]]; then
+      if [[ "${prefix}" == "Experimental" ]]; then
+        language_label="stark-experimental"
+      fi
+    fi
+
+    printf 'benchmarks/%s/%s,%s\n' "${category}" "${stem}" "${language_label}"
+    return
+  fi
+
+  local collection=""
+  local scenario="${stem}"
+  if [[ "${stem}" == LinkedList* ]]; then
+    collection="LinkedList"
+    scenario="${stem#LinkedList}"
+  elif [[ "${stem}" == Dictionary* ]]; then
+    collection="Dictionary"
+    scenario="${stem#Dictionary}"
+  elif [[ "${stem}" == Queue* ]]; then
+    collection="Queue"
+    scenario="${stem#Queue}"
+  elif [[ "${stem}" == Stack* ]]; then
+    collection="Stack"
+    scenario="${stem#Stack}"
+  elif [[ "${stem}" == List* ]]; then
+    collection="List"
+    scenario="${stem#List}"
+  fi
+
+  if [[ -z "${collection}" ]]; then
+    printf '%s,%s\n' "${benchmark_id}" "${language}"
+    return
+  fi
+
+  if [[ -z "${scenario}" ]]; then
+    scenario="Default"
+  fi
+
+  local language_label="${language}"
+  if [[ "${language}" == "stark" ]]; then
+    if [[ "${prefix}" == "Experimental" ]]; then
+      language_label="stark-experimental"
+    fi
+  fi
+
+  printf 'benchmarks/collections/%s%s,%s\n' "${collection}" "${scenario}" "${language_label}"
+}
+
+benchmark_group_for_id() {
+  local benchmark_id="$1"
+  local label_fields
+  label_fields="$(benchmark_label_fields "${benchmark_id}" "stark")"
+  printf '%s\n' "${label_fields%%,*}"
+}
+
 ns_to_us() {
   local ns="$1"
   printf '%s\n' "$(((ns + 500) / 1000))"
@@ -397,7 +494,9 @@ time_executable() {
     }
   }')"
   binary_bytes="$(file_size_bytes "${output_path}")"
-  emit_row "$(printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s' "${benchmark_id}" "${language}" "${runs}" "${compile_us}" "${llvm_object_us}" "${link_us}" "${toolchain_us}" "${binary_bytes}" "${min_us}" "${avg_us}" "${max_us}" "${runtime_spread_pct}" "${peak_rss_kib}")"
+  local label_fields
+  label_fields="$(benchmark_label_fields "${benchmark_id}" "${language}")"
+  emit_row "$(printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s' "${label_fields}" "${runs}" "${compile_us}" "${llvm_object_us}" "${link_us}" "${toolchain_us}" "${binary_bytes}" "${min_us}" "${avg_us}" "${max_us}" "${runtime_spread_pct}" "${peak_rss_kib}")"
 }
 
 compile_and_time_stark() {
@@ -474,9 +573,16 @@ echo "Machine metadata: ${machine_file}" >&2
 
 mapfile -t benchmarks < <(find "${bench_root}" -type f -name '*.stark' | sort)
 if [[ -n "${filter}" ]]; then
+  normalized_filter="${filter//\\//}"
   filtered=()
   for benchmark in "${benchmarks[@]}"; do
-    if [[ "${benchmark}" == *"${filter}"* ]]; then
+    rel_path="${benchmark#"${repo_root}/"}"
+    benchmark_id="${rel_path%.stark}"
+    benchmark_group="$(benchmark_group_for_id "${benchmark_id}")"
+    if [[ "${benchmark}" == *"${filter}"* ||
+          "${rel_path}" == *"${normalized_filter}"* ||
+          "${benchmark_id}" == *"${normalized_filter}"* ||
+          "${benchmark_group}" == *"${normalized_filter}"* ]]; then
       filtered+=("${benchmark}")
     fi
   done
@@ -500,6 +606,7 @@ fi
 
 emit_row 'benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib'
 
+declare -A timed_native_benchmarks=()
 for source_path in "${benchmarks[@]}"; do
   rel_path="${source_path#"${repo_root}/"}"
   if grep -q '^// stark-bench: compile-only' "${source_path}"; then
@@ -510,9 +617,11 @@ for source_path in "${benchmarks[@]}"; do
   safe_name="${rel_path//\//_}"
   safe_name="${safe_name%.stark}"
   benchmark_id="${rel_path%.stark}"
+  benchmark_group="$(benchmark_group_for_id "${benchmark_id}")"
+  native_safe_name="${benchmark_group//\//_}"
   stark_output_path="${tmp_dir}/${safe_name}-stark"
-  c_output_path="${tmp_dir}/${safe_name}-c"
-  rust_output_path="${tmp_dir}/${safe_name}-rust"
+  c_output_path="${tmp_dir}/${native_safe_name}-c"
+  rust_output_path="${tmp_dir}/${native_safe_name}-rust"
   if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* || "${OSTYPE:-}" == win32* ]]; then
     stark_output_path="${stark_output_path}.exe"
     c_output_path="${c_output_path}.exe"
@@ -523,29 +632,33 @@ for source_path in "${benchmarks[@]}"; do
     compile_and_time_stark "${source_path}" "${benchmark_id}" "${stark_output_path}"
   fi
 
-  if language_enabled c; then
-    c_source_path="${source_path%.stark}.c"
+  c_benchmark_key="c|${benchmark_group}"
+  if language_enabled c && [[ -z "${timed_native_benchmarks[${c_benchmark_key}]+x}" ]]; then
+    timed_native_benchmarks["${c_benchmark_key}"]=1
+    c_source_path="${repo_root}/${benchmark_group}.c"
     if [[ ! -f "${c_source_path}" ]]; then
-      echo "Missing C benchmark counterpart for ${rel_path}: ${c_source_path#${repo_root}/}" >&2
+      echo "Missing C benchmark counterpart for group ${benchmark_group}: ${c_source_path#${repo_root}/}" >&2
       exit 1
     fi
-    compile_and_time_c "${c_source_path}" "${benchmark_id}" "${c_output_path}"
+    compile_and_time_c "${c_source_path}" "${benchmark_group}" "${c_output_path}"
   fi
 
-  if language_enabled rust; then
-    rust_source_path="${source_path%.stark}.rs"
+  rust_benchmark_key="rust|${benchmark_group}"
+  if language_enabled rust && [[ -z "${timed_native_benchmarks[${rust_benchmark_key}]+x}" ]]; then
+    timed_native_benchmarks["${rust_benchmark_key}"]=1
+    rust_source_path="${repo_root}/${benchmark_group}.rs"
     if [[ ! -f "${rust_source_path}" ]]; then
-      echo "Missing Rust benchmark counterpart for ${rel_path}: ${rust_source_path#${repo_root}/}" >&2
+      echo "Missing Rust benchmark counterpart for group ${benchmark_group}: ${rust_source_path#${repo_root}/}" >&2
       exit 1
     fi
-    compile_and_time_rust "${rust_source_path}" "${benchmark_id}" "${rust_output_path}"
+    compile_and_time_rust "${rust_source_path}" "${benchmark_group}" "${rust_output_path}"
 
     shopt -s nullglob
-    rust_variant_paths=("${source_path%.stark}".rust-*.rs)
+    rust_variant_paths=("${repo_root}/${benchmark_group}".rust-*.rs)
     shopt -u nullglob
     for rust_variant_path in "${rust_variant_paths[@]}"; do
       rust_variant_name="$(basename "${rust_variant_path}")"
-      rust_variant_name="${rust_variant_name#"$(basename "${source_path%.stark}").rust-"}"
+      rust_variant_name="${rust_variant_name#"$(basename "${benchmark_group}").rust-"}"
       rust_variant_name="${rust_variant_name%.rs}"
       if [[ "${rust_variant_name}" == *","* ]]; then
         echo "Rust benchmark variant names must not contain commas: ${rust_variant_path#${repo_root}/}" >&2
@@ -553,14 +666,14 @@ for source_path in "${benchmarks[@]}"; do
       fi
 
       rust_variant_safe_name="$(printf '%s' "${rust_variant_name}" | tr -c 'A-Za-z0-9_' '_')"
-      rust_variant_output_path="${tmp_dir}/${safe_name}-rust-${rust_variant_safe_name}"
+      rust_variant_output_path="${tmp_dir}/${native_safe_name}-rust-${rust_variant_safe_name}"
       if [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* || "${OSTYPE:-}" == win32* ]]; then
         rust_variant_output_path="${rust_variant_output_path}.exe"
       fi
 
       compile_and_time_rust \
         "${rust_variant_path}" \
-        "${benchmark_id}" \
+        "${benchmark_group}" \
         "${rust_variant_output_path}" \
         "rust-${rust_variant_name}"
     done

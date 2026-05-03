@@ -1,0 +1,145 @@
+import System
+import System.Net
+import System.Net.Tcp
+import System.Process
+module Benchmarks.Network.TcpScatterGatherLoopback
+
+const FirstChunkBytes = 1536;
+const SecondChunkBytes = 2560;
+const ChunkBytes = 4096;
+const Iterations = 256;
+const ExpectedBytes = 1048576;
+
+fn System.Net.IPv4Endpoint LoopbackEndpoint(i32[0 63] attempt) {
+    stack i32[-2147483648 2147483647] processId = System.Process.CurrentId();
+    stack mut i32[0 2147483647] positiveProcessId = 0;
+    if (processId > 0) {
+        positiveProcessId = (i32[0 2147483647])processId;
+    }
+
+    stack u16[0 65535] port = (u16[0 65535])(41000 + (positiveProcessId % 20000) + attempt);
+    return new System.Net.IPv4Endpoint() {
+        Address = new System.Net.IPv4Address() {
+            A = 127,
+            B = 0,
+            C = 0,
+            D = 1
+        },
+        Port = port
+    };
+}
+
+fn bool WriteExact(mut borrow System.Net.Tcp.TcpClient client, borrow i8[-128 127][] source, i64[0 max] expected) {
+    stack System.Net.NetResult<i64[0 max]> written = client.Write(source);
+    switch (written) {
+        case System.Net.NetResult<i64[0 max]>.Err(var writeError):
+            return false;
+        case System.Net.NetResult<i64[0 max]>.Ok(var writtenBytes):
+            return writtenBytes == expected;
+    }
+}
+
+fn bool ReadExact(mut borrow System.Net.Tcp.TcpClient server, mut borrow i8[-128 127][] destination, i64[0 max] expected) {
+    stack mut i64[0 max] readTotal = 0;
+    while willexit (readTotal < expected) {
+        stack System.Net.NetResult<i64[0 max]> read = server.Read(destination);
+        switch (read) {
+            case System.Net.NetResult<i64[0 max]>.Err(var readError):
+                return false;
+            case System.Net.NetResult<i64[0 max]>.Ok(var readBytes):
+                if (readBytes == 0) {
+                    return false;
+                }
+
+                readTotal += readBytes;
+        }
+    }
+
+    return true;
+}
+
+export ffi fn i32[min max] main() {
+    stack mut i8[-128 127][1536] writeFirst = { 0 };
+    stack mut i8[-128 127][2560] writeSecond = { 0 };
+    stack mut i8[-128 127][1536] readFirst = { 0 };
+    stack mut i8[-128 127][2560] readSecond = { 0 };
+    stack i8[-128 127][] writeFirstView = writeFirst;
+    stack i8[-128 127][] writeSecondView = writeSecond;
+    stack mut i8[-128 127][] readFirstView = readFirst;
+    stack mut i8[-128 127][] readSecondView = readSecond;
+
+    stack mut i32[0 63] attempt = 0;
+    while willexit (attempt < 64) {
+        stack System.Net.IPv4Endpoint endpoint = LoopbackEndpoint(attempt);
+        stack System.Net.NetResult<System.Net.Tcp.TcpListener> listening =
+            System.Net.Tcp.TcpListener.Listen(endpoint);
+
+        switch (listening) {
+            case System.Net.NetResult<System.Net.Tcp.TcpListener>.Err(var listenError):
+                attempt += 1;
+            case System.Net.NetResult<System.Net.Tcp.TcpListener>.Ok(var listenerValue):
+                stack mut System.Net.Tcp.TcpListener listener = listenerValue;
+                stack System.Net.NetResult<System.Net.Tcp.TcpClient> connected =
+                    System.Net.Tcp.TcpClient.Connect(LoopbackEndpoint(attempt));
+
+                switch (connected) {
+                    case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var connectError):
+                        listener.Close();
+                        return 2;
+                    case System.Net.NetResult<System.Net.Tcp.TcpClient>.Ok(var clientValue):
+                        stack mut System.Net.Tcp.TcpClient client = clientValue;
+                        stack System.Net.NetResult<System.Net.Tcp.TcpClient> accepted = listener.Accept();
+                        listener.Close();
+
+                        switch (accepted) {
+                            case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var acceptError):
+                                client.Close();
+                                return 3;
+                            case System.Net.NetResult<System.Net.Tcp.TcpClient>.Ok(var serverValue):
+                                stack mut System.Net.Tcp.TcpClient server = serverValue;
+                                stack mut i64[0 max] totalRead = 0;
+
+                                for willexit (stack mut i32[0 256] iteration = 0; iteration < Iterations; iteration += 1) {
+                                    if (!WriteExact(client, writeFirstView, FirstChunkBytes)) {
+                                        server.Close();
+                                        client.Close();
+                                        return 4;
+                                    }
+
+                                    if (!WriteExact(client, writeSecondView, SecondChunkBytes)) {
+                                        server.Close();
+                                        client.Close();
+                                        return 5;
+                                    }
+
+                                    if (!ReadExact(server, readFirstView, FirstChunkBytes)) {
+                                        server.Close();
+                                        client.Close();
+                                        return 6;
+                                    }
+
+                                    if (!ReadExact(server, readSecondView, SecondChunkBytes)) {
+                                        server.Close();
+                                        client.Close();
+                                        return 7;
+                                    }
+
+                                    totalRead += ChunkBytes;
+                                }
+
+                                client.Shutdown(System.Net.Tcp.TcpShutdown.Send);
+                                client.Close();
+                                server.Close();
+
+                                if (totalRead != ExpectedBytes) {
+                                    return 8;
+                                }
+
+                                return 0;
+                        }
+                }
+        }
+    }
+
+    return 1;
+}

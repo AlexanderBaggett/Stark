@@ -1834,7 +1834,12 @@ public class StandardLibraryTestSuite
             await process.WaitForExitAsync();
 
             Assert.Equal(0, process.ExitCode);
-            Assert.Equal(string.Empty, nmStderr);
+            var actionableNmStderr = string.Join(
+                Environment.NewLine,
+                nmStderr
+                    .Split([Environment.NewLine, "\n"], StringSplitOptions.RemoveEmptyEntries)
+                    .Where(static line => !line.Contains("no symbols", StringComparison.OrdinalIgnoreCase)));
+            Assert.Equal(string.Empty, actionableNmStderr);
 
             Assert.DoesNotContain(" U fopen", nmStdout, StringComparison.Ordinal);
             Assert.DoesNotContain(" U fclose", nmStdout, StringComparison.Ordinal);

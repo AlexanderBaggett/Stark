@@ -907,7 +907,14 @@ internal sealed class SsaCleanupOptimizer
 
     private static bool IsMemoryBarrier(SsaRValue value)
     {
-        return value is SsaCallRValue;
+        return value is SsaCallRValue
+            or SsaDynamicStorageAllocationRValue
+            or SsaDynamicStorageFreeRValue
+            or SsaDynamicStorageReserveRValue
+            or SsaDynamicStorageTryReserveRValue
+            or SsaDynamicStorageTryReserveCapacityRValue
+            or SsaDynamicStorageMoveLastRValue
+            or SsaDynamicStorageMoveAtRValue;
     }
 
     private static SsaFunction ApplyReplacements(
@@ -2240,7 +2247,14 @@ internal sealed class SsaCleanupOptimizer
 
     private static bool IsPureRemovableInstruction(SsaRValue value)
     {
-        return value is not SsaCallRValue;
+        return value is not SsaCallRValue
+            and not SsaDynamicStorageAllocationRValue
+            and not SsaDynamicStorageFreeRValue
+            and not SsaDynamicStorageReserveRValue
+            and not SsaDynamicStorageTryReserveRValue
+            and not SsaDynamicStorageTryReserveCapacityRValue
+            and not SsaDynamicStorageMoveLastRValue
+            and not SsaDynamicStorageMoveAtRValue;
     }
 
     private static SsaFunction RemoveUnusedLocalStorage(SsaFunction function)
@@ -2414,6 +2428,14 @@ internal sealed class SsaCleanupOptimizer
             SsaInsertFieldRValue insertField => [insertField.Target, insertField.Value],
             SsaExtractIndexRValue extractIndex => [extractIndex.Target],
             SsaInsertIndexRValue insertIndex => [insertIndex.Target, insertIndex.Value],
+            SsaMakeSliceFromPointerRValue makeSlice => [makeSlice.Pointer, makeSlice.Length],
+            SsaDynamicStorageAllocationRValue allocation => [allocation.Capacity],
+            SsaDynamicStorageFreeRValue free => [free.Storage],
+            SsaDynamicStorageReserveRValue reserve => [reserve.StorageAddress, reserve.AdditionalCapacity],
+            SsaDynamicStorageTryReserveRValue reserve => [reserve.StorageAddress, reserve.AdditionalCapacity],
+            SsaDynamicStorageTryReserveCapacityRValue reserve => [reserve.StorageAddress, reserve.TargetCapacity],
+            SsaDynamicStorageMoveLastRValue moveLast => [moveLast.StorageAddress],
+            SsaDynamicStorageMoveAtRValue moveAt => [moveAt.StorageAddress, moveAt.Index],
             SsaLoadSliceElementRValue loadSlice => [loadSlice.Slice, loadSlice.Index],
             SsaTextSliceRValue textSlice => [textSlice.TextValue, textSlice.Start, textSlice.Length],
             SsaFieldAddressRValue fieldAddress => [fieldAddress.Address],
@@ -3098,6 +3120,44 @@ internal sealed class SsaCleanupOptimizer
                 insertIndex.Type,
                 insertIndex.Text),
             SsaMakeSliceFromLocalRValue makeSlice => makeSlice,
+            SsaMakeSliceFromPointerRValue makeSlice => new SsaMakeSliceFromPointerRValue(
+                RewriteValue(makeSlice.Pointer, replacements),
+                RewriteValue(makeSlice.Length, replacements),
+                makeSlice.Type,
+                makeSlice.Text),
+            SsaDynamicStorageAllocationRValue allocation => new SsaDynamicStorageAllocationRValue(
+                RewriteValue(allocation.Capacity, replacements),
+                allocation.Type,
+                allocation.Text),
+            SsaDynamicStorageFreeRValue free => new SsaDynamicStorageFreeRValue(
+                RewriteValue(free.Storage, replacements),
+                free.Text),
+            SsaDynamicStorageReserveRValue reserve => new SsaDynamicStorageReserveRValue(
+                RewriteValue(reserve.StorageAddress, replacements),
+                reserve.StorageType,
+                RewriteValue(reserve.AdditionalCapacity, replacements),
+                reserve.Text),
+            SsaDynamicStorageTryReserveRValue reserve => new SsaDynamicStorageTryReserveRValue(
+                RewriteValue(reserve.StorageAddress, replacements),
+                reserve.StorageType,
+                RewriteValue(reserve.AdditionalCapacity, replacements),
+                reserve.Text),
+            SsaDynamicStorageTryReserveCapacityRValue reserve => new SsaDynamicStorageTryReserveCapacityRValue(
+                RewriteValue(reserve.StorageAddress, replacements),
+                reserve.StorageType,
+                RewriteValue(reserve.TargetCapacity, replacements),
+                reserve.Text),
+            SsaDynamicStorageMoveLastRValue moveLast => new SsaDynamicStorageMoveLastRValue(
+                RewriteValue(moveLast.StorageAddress, replacements),
+                moveLast.StorageType,
+                moveLast.Type,
+                moveLast.Text),
+            SsaDynamicStorageMoveAtRValue moveAt => new SsaDynamicStorageMoveAtRValue(
+                RewriteValue(moveAt.StorageAddress, replacements),
+                moveAt.StorageType,
+                RewriteValue(moveAt.Index, replacements),
+                moveAt.Type,
+                moveAt.Text),
             SsaLoadSliceElementRValue loadSlice => new SsaLoadSliceElementRValue(
                 RewriteValue(loadSlice.Slice, replacements),
                 RewriteValue(loadSlice.Index, replacements),
@@ -4647,6 +4707,43 @@ internal sealed class SsaAliasAwareMemoryOptimizer
             {
                 Target = RewriteValue(insertIndex.Target, replacements),
                 Value = RewriteValue(insertIndex.Value, replacements)
+            },
+            SsaMakeSliceFromPointerRValue makeSlice => makeSlice with
+            {
+                Pointer = RewriteValue(makeSlice.Pointer, replacements),
+                Length = RewriteValue(makeSlice.Length, replacements)
+            },
+            SsaDynamicStorageAllocationRValue allocation => allocation with
+            {
+                Capacity = RewriteValue(allocation.Capacity, replacements)
+            },
+            SsaDynamicStorageFreeRValue free => free with
+            {
+                Storage = RewriteValue(free.Storage, replacements)
+            },
+            SsaDynamicStorageReserveRValue reserve => reserve with
+            {
+                StorageAddress = RewriteValue(reserve.StorageAddress, replacements),
+                AdditionalCapacity = RewriteValue(reserve.AdditionalCapacity, replacements)
+            },
+            SsaDynamicStorageTryReserveRValue reserve => reserve with
+            {
+                StorageAddress = RewriteValue(reserve.StorageAddress, replacements),
+                AdditionalCapacity = RewriteValue(reserve.AdditionalCapacity, replacements)
+            },
+            SsaDynamicStorageTryReserveCapacityRValue reserve => reserve with
+            {
+                StorageAddress = RewriteValue(reserve.StorageAddress, replacements),
+                TargetCapacity = RewriteValue(reserve.TargetCapacity, replacements)
+            },
+            SsaDynamicStorageMoveLastRValue moveLast => moveLast with
+            {
+                StorageAddress = RewriteValue(moveLast.StorageAddress, replacements)
+            },
+            SsaDynamicStorageMoveAtRValue moveAt => moveAt with
+            {
+                StorageAddress = RewriteValue(moveAt.StorageAddress, replacements),
+                Index = RewriteValue(moveAt.Index, replacements)
             },
             SsaLoadSliceElementRValue loadSlice => loadSlice with
             {
@@ -10621,6 +10718,43 @@ internal sealed class SsaDirectCallInliner
                 Target = RewriteValue(insertIndex.Target, replacements),
                 Value = RewriteValue(insertIndex.Value, replacements)
             },
+            SsaMakeSliceFromPointerRValue makeSlice => makeSlice with
+            {
+                Pointer = RewriteValue(makeSlice.Pointer, replacements),
+                Length = RewriteValue(makeSlice.Length, replacements)
+            },
+            SsaDynamicStorageAllocationRValue allocation => allocation with
+            {
+                Capacity = RewriteValue(allocation.Capacity, replacements)
+            },
+            SsaDynamicStorageFreeRValue free => free with
+            {
+                Storage = RewriteValue(free.Storage, replacements)
+            },
+            SsaDynamicStorageReserveRValue reserve => reserve with
+            {
+                StorageAddress = RewriteValue(reserve.StorageAddress, replacements),
+                AdditionalCapacity = RewriteValue(reserve.AdditionalCapacity, replacements)
+            },
+            SsaDynamicStorageTryReserveRValue reserve => reserve with
+            {
+                StorageAddress = RewriteValue(reserve.StorageAddress, replacements),
+                AdditionalCapacity = RewriteValue(reserve.AdditionalCapacity, replacements)
+            },
+            SsaDynamicStorageTryReserveCapacityRValue reserve => reserve with
+            {
+                StorageAddress = RewriteValue(reserve.StorageAddress, replacements),
+                TargetCapacity = RewriteValue(reserve.TargetCapacity, replacements)
+            },
+            SsaDynamicStorageMoveLastRValue moveLast => moveLast with
+            {
+                StorageAddress = RewriteValue(moveLast.StorageAddress, replacements)
+            },
+            SsaDynamicStorageMoveAtRValue moveAt => moveAt with
+            {
+                StorageAddress = RewriteValue(moveAt.StorageAddress, replacements),
+                Index = RewriteValue(moveAt.Index, replacements)
+            },
             SsaLoadSliceElementRValue loadSlice => loadSlice with
             {
                 Slice = RewriteValue(loadSlice.Slice, replacements),
@@ -11982,6 +12116,44 @@ internal sealed class SsaConstantPropagator
                 insertIndex.Type,
                 insertIndex.Text),
             SsaMakeSliceFromLocalRValue makeSlice => makeSlice,
+            SsaMakeSliceFromPointerRValue makeSlice => new SsaMakeSliceFromPointerRValue(
+                RewriteValue(makeSlice.Pointer, replacements),
+                RewriteValue(makeSlice.Length, replacements),
+                makeSlice.Type,
+                makeSlice.Text),
+            SsaDynamicStorageAllocationRValue allocation => new SsaDynamicStorageAllocationRValue(
+                RewriteValue(allocation.Capacity, replacements),
+                allocation.Type,
+                allocation.Text),
+            SsaDynamicStorageFreeRValue free => new SsaDynamicStorageFreeRValue(
+                RewriteValue(free.Storage, replacements),
+                free.Text),
+            SsaDynamicStorageReserveRValue reserve => new SsaDynamicStorageReserveRValue(
+                RewriteValue(reserve.StorageAddress, replacements),
+                reserve.StorageType,
+                RewriteValue(reserve.AdditionalCapacity, replacements),
+                reserve.Text),
+            SsaDynamicStorageTryReserveRValue reserve => new SsaDynamicStorageTryReserveRValue(
+                RewriteValue(reserve.StorageAddress, replacements),
+                reserve.StorageType,
+                RewriteValue(reserve.AdditionalCapacity, replacements),
+                reserve.Text),
+            SsaDynamicStorageTryReserveCapacityRValue reserve => new SsaDynamicStorageTryReserveCapacityRValue(
+                RewriteValue(reserve.StorageAddress, replacements),
+                reserve.StorageType,
+                RewriteValue(reserve.TargetCapacity, replacements),
+                reserve.Text),
+            SsaDynamicStorageMoveLastRValue moveLast => new SsaDynamicStorageMoveLastRValue(
+                RewriteValue(moveLast.StorageAddress, replacements),
+                moveLast.StorageType,
+                moveLast.Type,
+                moveLast.Text),
+            SsaDynamicStorageMoveAtRValue moveAt => new SsaDynamicStorageMoveAtRValue(
+                RewriteValue(moveAt.StorageAddress, replacements),
+                moveAt.StorageType,
+                RewriteValue(moveAt.Index, replacements),
+                moveAt.Type,
+                moveAt.Text),
             SsaLoadSliceElementRValue loadSlice => new SsaLoadSliceElementRValue(
                 RewriteValue(loadSlice.Slice, replacements),
                 RewriteValue(loadSlice.Index, replacements),

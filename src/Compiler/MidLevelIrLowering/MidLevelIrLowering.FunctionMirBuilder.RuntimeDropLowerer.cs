@@ -101,6 +101,7 @@ internal sealed partial class MidLevelIrLowerer
 
         private bool RequiresRuntimeDropCore(StarkTypeSymbol type, HashSet<string> visiting)
         {
+            type = ApplyGenericSubstitution(type);
             if (type.BorrowKind != StarkBorrowKind.None)
             {
                 return false;
@@ -110,6 +111,11 @@ internal sealed partial class MidLevelIrLowerer
             {
                 return type.ElementType is not null
                     && RequiresRuntimeDropCore(type.ElementType, visiting);
+            }
+
+            if (type.Kind == StarkTypeKind.Dynamic)
+            {
+                return true;
             }
 
             if (type.Kind != StarkTypeKind.Named || type.NamedType is null)
@@ -135,7 +141,8 @@ internal sealed partial class MidLevelIrLowerer
                     {
                         foreach (var field in variant.Fields)
                         {
-                            if (RequiresRuntimeDropCore(field.Type, visiting))
+                            var fieldType = ApplyRuntimeDropGenericSubstitution(field.Type, type);
+                            if (RequiresRuntimeDropCore(fieldType, visiting))
                             {
                                 return true;
                             }
@@ -153,7 +160,8 @@ internal sealed partial class MidLevelIrLowerer
 
                 foreach (var field in namedType.OrderedFields)
                 {
-                    if (RequiresRuntimeDropCore(field.Type, visiting))
+                    var fieldType = ApplyRuntimeDropGenericSubstitution(field.Type, type);
+                    if (RequiresRuntimeDropCore(fieldType, visiting))
                     {
                         return true;
                     }
@@ -198,6 +206,45 @@ internal sealed partial class MidLevelIrLowerer
             return _enumLayoutModel.Layouts.TryGetValue(key, out layout!);
         }
 
+        private StarkTypeSymbol ApplyRuntimeDropGenericSubstitution(StarkTypeSymbol type, StarkTypeSymbol ownerType)
+        {
+            var substitution = BuildRuntimeDropGenericSubstitution(ownerType);
+            return substitution is { Count: > 0 }
+                ? FunctionOverloadFacts.SubstituteType(type, substitution)
+                : ApplyGenericSubstitution(type);
+        }
+
+        private IReadOnlyDictionary<string, StarkTypeSymbol>? BuildRuntimeDropGenericSubstitution(StarkTypeSymbol ownerType)
+        {
+            Dictionary<string, StarkTypeSymbol>? substitution = _activeGenericTypeSubstitution is { Count: > 0 }
+                ? new Dictionary<string, StarkTypeSymbol>(_activeGenericTypeSubstitution, StringComparer.Ordinal)
+                : null;
+            var concreteOwnerType = substitution is { Count: > 0 }
+                ? FunctionOverloadFacts.SubstituteType(ownerType, substitution)
+                : ownerType;
+
+            if (concreteOwnerType.NamedType is null
+                || concreteOwnerType.TypeArguments is not { Count: > 0 } typeArguments)
+            {
+                return substitution;
+            }
+
+            var baseTypeName = StarkTypeSymbols.GetGenericBaseName(concreteOwnerType.NamedType);
+            if (!_typeModel.NamedTypes.TryGetValue(baseTypeName, out var template)
+                || template.GenericParams.Count == 0)
+            {
+                return substitution;
+            }
+
+            substitution ??= new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+            for (var index = 0; index < template.GenericParams.Count && index < typeArguments.Count; index++)
+            {
+                substitution[template.GenericParams[index]] = typeArguments[index];
+            }
+
+            return substitution;
+        }
+
         private void EmitRuntimeDropFromNamedValueCore(string name, StarkTypeSymbol type)
         {
             var source = ResolveNamedOperand(name);
@@ -211,8 +258,23 @@ internal sealed partial class MidLevelIrLowerer
 
         private void EmitRuntimeDropFromOperandCore(MidLevelIrOperand operand, StarkTypeSymbol type)
         {
+            type = ApplyGenericSubstitution(type);
             if (!RequiresRuntimeDropCore(type))
             {
+                return;
+            }
+
+            if (type.Kind == StarkTypeKind.Dynamic)
+            {
+                if (type.ElementType is { } elementType)
+                {
+                    EmitDynamicStorageElementDropsCore(operand, type, elementType);
+                }
+
+                Emit(
+                    MidLevelIrStatementKind.Evaluate,
+                    $"drop {operand.Text}",
+                    value: new MidLevelIrDynamicStorageFreeRValue(operand, $"drop {operand.Text}"));
                 return;
             }
 
@@ -242,11 +304,81 @@ internal sealed partial class MidLevelIrLowerer
             EmitStructFieldDropsCore(temporary, type, new HashSet<string>(StringComparer.Ordinal));
         }
 
+        private void EmitDynamicStorageElementDropsCore(
+            MidLevelIrOperand storage,
+            StarkTypeSymbol storageType,
+            StarkTypeSymbol elementType)
+        {
+            if (!RequiresRuntimeDropCore(elementType))
+            {
+                return;
+            }
+
+            var dataPointerType = StarkTypeSymbols.RawPointer(elementType, isMutable: true);
+            var dataPointer = LowerKnownFieldAccess(storage, "Data", 0, dataPointerType, "Data");
+            var length = LowerKnownFieldAccess(storage, "Length", 1, NonNegativeI64Type, "Length");
+            var index = CreateTemporaryLocal(NonNegativeI64Type, "dynamic_drop_index");
+            EmitOperandAssignment(index, length, length.Text);
+
+            var conditionBlock = CreateBlock("dynamic_drop_cond");
+            var bodyBlock = CreateBlock("dynamic_drop_body");
+            var exitBlock = CreateBlock("dynamic_drop_exit");
+
+            EnsureGoto(conditionBlock.Id);
+
+            CurrentBlock = conditionBlock;
+            var hasElement = EmitRequiredTemporary(
+                new MidLevelIrBinaryRValue(
+                    MidLevelIrBinaryOperator.GreaterThan,
+                    index,
+                    new MidLevelIrIntegerConstantOperand(BigInteger.Zero, NonNegativeI64Type),
+                    StarkTypeSymbols.Bool,
+                    $"{index.Text} > 0"),
+                "cmp");
+            CurrentBlock.Terminator = new MidLevelIrTerminator(
+                MidLevelIrTerminatorKind.Branch,
+                [bodyBlock.Id, exitBlock.Id],
+                ConditionText: $"{storage.Text}.Length > 0",
+                Condition: hasElement);
+
+            CurrentBlock = bodyBlock;
+            var nextIndex = EmitRequiredTemporary(
+                new MidLevelIrBinaryRValue(
+                    MidLevelIrBinaryOperator.Subtract,
+                    index,
+                    new MidLevelIrIntegerConstantOperand(BigInteger.One, NonNegativeI64Type),
+                    NonNegativeI64Type,
+                    $"{index.Text} - 1"),
+                "dynamic_drop_index");
+            EmitOperandAssignment(index, nextIndex, nextIndex.Text);
+
+            var elementAddress = EmitRequiredTemporary(
+                new MidLevelIrElementAddressRValue(
+                    dataPointer,
+                    elementType,
+                    index,
+                    ConstantIndex: null,
+                    AddressType(elementType, isMutable: true),
+                    $"{storage.Text}[{index.Text}]"),
+                "addr");
+            var elementValue = EmitRequiredTemporary(
+                new MidLevelIrLoadIndirectRValue(
+                    elementAddress,
+                    elementType,
+                    $"{storage.Text}[{index.Text}]"),
+                "drop");
+            EmitRuntimeDropFromOperandCore(elementValue, elementType);
+            EnsureGoto(conditionBlock.Id);
+
+            CurrentBlock = exitBlock;
+        }
+
         private void EmitStructFieldDropsCore(
             MidLevelIrLocalOperand aggregate,
             StarkTypeSymbol type,
             HashSet<string> visiting)
         {
+            type = ApplyGenericSubstitution(type);
             if (type.Kind != StarkTypeKind.Named
                 || type.NamedType is null
                 || !_typeModel.NamedTypes.TryGetValue(type.NamedType, out var namedType)
@@ -259,13 +391,14 @@ internal sealed partial class MidLevelIrLowerer
             for (var index = namedType.OrderedFields.Count - 1; index >= 0; index--)
             {
                 var field = namedType.OrderedFields[index];
-                if (!RequiresRuntimeDropCore(field.Type))
+                var fieldType = ApplyRuntimeDropGenericSubstitution(field.Type, type);
+                if (!RequiresRuntimeDropCore(fieldType))
                 {
                     continue;
                 }
 
-                var fieldValue = LowerKnownFieldAccess(aggregate, field.Name, index, field.Type, field.Name);
-                EmitRuntimeDropFromOperandCore(fieldValue, field.Type);
+                var fieldValue = LowerKnownFieldAccess(aggregate, field.Name, index, fieldType, field.Name);
+                EmitRuntimeDropFromOperandCore(fieldValue, fieldType);
             }
 
             visiting.Remove(type.NamedType);
@@ -300,6 +433,7 @@ internal sealed partial class MidLevelIrLowerer
             EnumLayoutSymbol layout,
             HashSet<string> visiting)
         {
+            type = ApplyGenericSubstitution(type);
             if (!visiting.Add(layout.EnumName))
             {
                 return;
@@ -311,7 +445,9 @@ internal sealed partial class MidLevelIrLowerer
                     .Select(variant => (
                         Variant: variant,
                         Fields: variant.Fields
-                            .Where(field => RequiresRuntimeDropCore(field.Type, visiting))
+                            .Where(field => RequiresRuntimeDropCore(
+                                ApplyRuntimeDropGenericSubstitution(field.Type, type),
+                                visiting))
                             .ToArray()))
                     .Where(static item => item.Fields.Length > 0)
                     .OrderBy(static item => item.Variant.TagValue)
@@ -352,14 +488,15 @@ internal sealed partial class MidLevelIrLowerer
                     for (var fieldIndex = fields.Length - 1; fieldIndex >= 0; fieldIndex--)
                     {
                         var field = fields[fieldIndex];
+                        var fieldType = ApplyRuntimeDropGenericSubstitution(field.Type, type);
                         var displayName = field.SourceFieldName ?? $"[{field.SourcePosition}]";
                         var fieldValue = LowerKnownFieldAccess(
                             aggregate,
                             field.StorageFieldName,
                             field.StorageFieldIndex,
-                            field.Type,
+                            fieldType,
                             displayName);
-                        EmitRuntimeDropFromOperandCore(fieldValue, field.Type);
+                        EmitRuntimeDropFromOperandCore(fieldValue, fieldType);
                     }
 
                     EnsureGoto(joinBlock.Id);
@@ -457,6 +594,11 @@ internal sealed partial class MidLevelIrLowerer
                     targetType: assignment.TargetType,
                     value: new MidLevelIrUseRValue(assignment.ResultValue),
                     address: assignment.Address);
+                if (assignment.DynamicLengthUpdate is not null)
+                {
+                    EmitDynamicStorageLengthUpdateCore(assignment.DynamicLengthUpdate, assignment.Text);
+                }
+
                 RecordMoveFromOperandCore(assignment.ResultValue, assignment.TargetType);
                 return;
             }
@@ -469,6 +611,74 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             RecordMoveFromOperandCore(assignment.ResultValue, assignment.TargetType);
+        }
+
+        private void EmitDynamicStorageLengthUpdateCore(DynamicStorageLengthUpdate update, string text)
+        {
+            var lengthType = NonNegativeI64Type;
+            var lengthAddress = EmitTemporary(
+                new MidLevelIrFieldAddressRValue(
+                    update.StorageAddress,
+                    update.StorageType,
+                    "Length",
+                    1,
+                    AddressType(lengthType, isMutable: true),
+                    $"{update.StorageAddress.Text}.Length"),
+                "addr");
+            if (lengthAddress is null)
+            {
+                MarkUnsupported(reason: "Dynamic storage initialization could not address the owner length.");
+                return;
+            }
+
+            var index = CoerceOperand(update.InitializedIndex, lengthType) ?? update.InitializedIndex;
+            var initializedLength = EmitTemporary(
+                new MidLevelIrBinaryRValue(
+                    MidLevelIrBinaryOperator.Add,
+                    index,
+                    new MidLevelIrIntegerConstantOperand(BigInteger.One, lengthType),
+                    lengthType,
+                    $"{update.InitializedIndex.Text} + 1"),
+                "dynamic_len");
+            if (initializedLength is null)
+            {
+                MarkUnsupported(reason: "Dynamic storage initialization could not compute the initialized length.");
+                return;
+            }
+
+            EmitDynamicStorageLengthCommitCore(
+                new MidLevelIrDynamicStorageLengthCommit(
+                    update.StorageAddress,
+                    update.StorageType,
+                    initializedLength),
+                text);
+        }
+
+        private void EmitDynamicStorageLengthCommitCore(MidLevelIrDynamicStorageLengthCommit commit, string text)
+        {
+            var lengthType = NonNegativeI64Type;
+            var lengthAddress = EmitTemporary(
+                new MidLevelIrFieldAddressRValue(
+                    commit.StorageAddress,
+                    commit.StorageType,
+                    "Length",
+                    1,
+                    AddressType(lengthType, isMutable: true),
+                    $"{commit.StorageAddress.Text}.Length"),
+                "addr");
+            if (lengthAddress is null)
+            {
+                MarkUnsupported(reason: "Dynamic storage initialization could not address the owner length.");
+                return;
+            }
+
+            var initializedLength = CoerceOperand(commit.InitializedLength, lengthType) ?? commit.InitializedLength;
+            Emit(
+                MidLevelIrStatementKind.StoreIndirect,
+                $"{text}: length",
+                targetType: lengthType,
+                value: new MidLevelIrUseRValue(initializedLength),
+                address: lengthAddress);
         }
 
         private sealed class RuntimeDropLowerer

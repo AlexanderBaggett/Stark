@@ -51,6 +51,7 @@ site/static/book/stark-book.md
 site/static/reference/
 tools/hugo/hugo
 benchmarks/results/
+benchmarks/codegen/
 
 # OS noise
 .DS_Store

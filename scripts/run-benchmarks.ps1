@@ -1,10 +1,14 @@
 param(
     [int]$Runs = $(if ($env:STARK_BENCH_RUNS) { [int]$env:STARK_BENCH_RUNS } else { 20 }),
     [string]$Filter = $env:STARK_BENCH_FILTER,
+    [string]$Subset = $env:STARK_BENCH_SUBSET,
     [string]$Target = $env:STARK_TARGET,
     [string]$ExtraCompilerArgs = $env:STARK_COMPILER_ARGS,
     [string]$Languages = $(if ($env:STARK_BENCH_LANGUAGES) { $env:STARK_BENCH_LANGUAGES } else { "stark,c,rust" }),
     [string]$CaptureRss = $(if ($env:STARK_BENCH_CAPTURE_RSS) { $env:STARK_BENCH_CAPTURE_RSS } else { "0" }),
+    [string]$RuntimeOnly = $(if ($env:STARK_BENCH_RUNTIME_ONLY) { $env:STARK_BENCH_RUNTIME_ONLY } else { "0" }),
+    [string]$KeepBinaries = $(if ($env:STARK_BENCH_KEEP_BINARIES) { $env:STARK_BENCH_KEEP_BINARIES } else { "0" }),
+    [string]$BinaryDir = $env:STARK_BENCH_BINARY_DIR,
     [string]$CCompiler = $(if ($env:STARK_BENCH_C_COMPILER) { $env:STARK_BENCH_C_COMPILER } else { "clang" }),
     [string]$RustCompiler = $(if ($env:STARK_BENCH_RUST_COMPILER) { $env:STARK_BENCH_RUST_COMPILER } else { "rustc" }),
     [string]$OutputDir = $env:STARK_BENCH_OUTPUT_DIR,
@@ -73,6 +77,122 @@ function ConvertTo-SafeName {
     param([string]$Name)
 
     return ($Name -replace '[\\/]', '_') -replace '\.stark$', ''
+}
+
+function Get-BenchmarkVariantDescriptor {
+    param([string]$BenchmarkId)
+
+    $parts = $BenchmarkId -split "/"
+    if ($parts.Length -lt 3 -or $parts[0] -ne "benchmarks") {
+        return $null
+    }
+
+    $category = $parts[1]
+    $stem = [IO.Path]::GetFileName($BenchmarkId)
+    if ([string]::IsNullOrWhiteSpace($stem)) {
+        return $null
+    }
+
+    $prefix = ""
+    if ($stem.StartsWith("Experimental", [StringComparison]::Ordinal)) {
+        $prefix = "Experimental"
+        $stem = $stem.Substring("Experimental".Length)
+    }
+
+    if ($category -ne "collections") {
+        $subsystem = switch ($category) {
+            "allocator" { "Memory" }
+            "console" { "Console" }
+            "io" { "IO" }
+            "network" { "Network" }
+            "runtime" { "Runtime" }
+            "text" { "Text" }
+            default { "" }
+        }
+
+        if ([string]::IsNullOrWhiteSpace($subsystem)) {
+            return $null
+        }
+
+        return [PSCustomObject]@{
+            Prefix = $prefix
+            BenchmarkGroup = "benchmarks/$category/$stem"
+        }
+    }
+
+    $collection = ""
+    $scenario = $stem
+    if ($stem.StartsWith("LinkedList", [StringComparison]::Ordinal)) {
+        $collection = "LinkedList"
+        $scenario = $stem.Substring("LinkedList".Length)
+    }
+    elseif ($stem.StartsWith("Dictionary", [StringComparison]::Ordinal)) {
+        $collection = "Dictionary"
+        $scenario = $stem.Substring("Dictionary".Length)
+    }
+    elseif ($stem.StartsWith("Queue", [StringComparison]::Ordinal)) {
+        $collection = "Queue"
+        $scenario = $stem.Substring("Queue".Length)
+    }
+    elseif ($stem.StartsWith("Stack", [StringComparison]::Ordinal)) {
+        $collection = "Stack"
+        $scenario = $stem.Substring("Stack".Length)
+    }
+    elseif ($stem.StartsWith("List", [StringComparison]::Ordinal)) {
+        $collection = "List"
+        $scenario = $stem.Substring("List".Length)
+    }
+
+    if ([string]::IsNullOrWhiteSpace($collection)) {
+        return $null
+    }
+
+    if ([string]::IsNullOrWhiteSpace($scenario)) {
+        $scenario = "Default"
+    }
+
+    $canonicalStem = "$collection$scenario"
+    return [PSCustomObject]@{
+        Prefix = $prefix
+        BenchmarkGroup = "benchmarks/collections/$canonicalStem"
+    }
+}
+
+function Get-BenchmarkLabel {
+    param(
+        [string]$BenchmarkId,
+        [string]$Language
+    )
+
+    $descriptor = Get-BenchmarkVariantDescriptor $BenchmarkId
+    if ($null -eq $descriptor) {
+        return [PSCustomObject]@{
+            BenchmarkGroup = $BenchmarkId
+            Language = $Language
+        }
+    }
+
+    $languageLabel = $Language
+    if ($Language -eq "stark") {
+        if ($descriptor.Prefix -eq "Experimental") {
+            $languageLabel = "stark-experimental"
+        }
+    }
+
+    return [PSCustomObject]@{
+        BenchmarkGroup = $descriptor.BenchmarkGroup
+        Language = $languageLabel
+    }
+}
+
+function Get-BenchmarkSourcePath {
+    param(
+        [string]$BenchmarkId,
+        [string]$Extension
+    )
+
+    $relativePath = ($BenchmarkId -replace '/', [IO.Path]::DirectorySeparatorChar) + $Extension
+    return Join-Path $repoRoot $relativePath
 }
 
 function Split-ArgumentString {
@@ -183,6 +303,63 @@ function Test-BenchmarkDirective {
     return [bool](Select-String -LiteralPath $Path -Pattern "^\s*//\s*stark-bench:\s*$escapedDirective(?:\s|$)" -Quiet)
 }
 
+function Get-BenchmarkSubsetFilters {
+    param([string]$Name)
+
+    if ([string]::IsNullOrWhiteSpace($Name)) {
+        return @()
+    }
+
+    $normalized = $Name.Trim().ToLowerInvariant()
+    switch ($normalized) {
+        "allocator" { return @("benchmarks/allocator/") }
+        "windows-allocator" { return @("benchmarks/allocator/") }
+        "console" { return @("benchmarks/console/") }
+        "windows-console" { return @("benchmarks/console/") }
+        "directory" { return @("DirectoryEnumeration") }
+        "windows-directory" { return @("DirectoryEnumeration") }
+        "file" { return @("benchmarks/io/File") }
+        "windows-file" { return @("benchmarks/io/File") }
+        "socket" { return @("benchmarks/network/Tcp") }
+        "network" { return @("benchmarks/network/Tcp") }
+        "windows-socket" { return @("benchmarks/network/Tcp") }
+        "windows-network" { return @("benchmarks/network/Tcp") }
+        "windows-io" { return @("benchmarks/io/File", "DirectoryEnumeration") }
+        "windows-core" { return @("benchmarks/allocator/", "benchmarks/console/", "benchmarks/io/File", "DirectoryEnumeration", "benchmarks/network/Tcp") }
+        default {
+            throw "Unknown benchmark subset '$Name'. Expected allocator, console, directory, file, socket, network, windows-io, or windows-core."
+        }
+    }
+}
+
+function Test-BenchmarkMatchesAnyFilter {
+    param(
+        [string]$RelativePath,
+        [string]$BenchmarkId,
+        [string]$BenchmarkGroup,
+        [string[]]$Filters
+    )
+
+    if ($Filters.Count -eq 0) {
+        return $true
+    }
+
+    foreach ($filterValue in $Filters) {
+        if ([string]::IsNullOrWhiteSpace($filterValue)) {
+            continue
+        }
+
+        $normalizedFilter = $filterValue -replace '\\', '/'
+        if ($RelativePath -like "*$normalizedFilter*" -or
+            $BenchmarkId -like "*$normalizedFilter*" -or
+            $BenchmarkGroup -like "*$normalizedFilter*") {
+            return $true
+        }
+    }
+
+    return $false
+}
+
 function Assert-CommandExists {
     param(
         [string]$Name,
@@ -220,6 +397,55 @@ function Get-FirstCommandLine {
     return "unknown"
 }
 
+function Join-ProcessArguments {
+    param([string[]]$Arguments)
+
+    $quoted = New-Object System.Collections.Generic.List[string]
+    foreach ($argument in @($Arguments)) {
+        if ($null -eq $argument) {
+            $argument = ""
+        }
+
+        if ($argument.Length -gt 0 -and $argument -notmatch '[\s"]') {
+            $quoted.Add($argument)
+            continue
+        }
+
+        $builder = New-Object System.Text.StringBuilder
+        [void]$builder.Append('"')
+        $backslashes = 0
+        foreach ($character in $argument.ToCharArray()) {
+            if ($character -eq '\') {
+                $backslashes += 1
+                continue
+            }
+
+            if ($character -eq '"') {
+                [void]$builder.Append(('\' * (($backslashes * 2) + 1)))
+                [void]$builder.Append('"')
+                $backslashes = 0
+                continue
+            }
+
+            if ($backslashes -gt 0) {
+                [void]$builder.Append(('\' * $backslashes))
+                $backslashes = 0
+            }
+
+            [void]$builder.Append($character)
+        }
+
+        if ($backslashes -gt 0) {
+            [void]$builder.Append(('\' * ($backslashes * 2)))
+        }
+
+        [void]$builder.Append('"')
+        $quoted.Add($builder.ToString())
+    }
+
+    return $quoted -join " "
+}
+
 function Invoke-Native {
     param(
         [string]$FilePath,
@@ -228,7 +454,42 @@ function Invoke-Native {
     )
 
     if ($SuppressOutput) {
-        & $FilePath @Arguments *> $null
+        $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $startInfo.FileName = $FilePath
+        $argumentListProperty = [System.Diagnostics.ProcessStartInfo].GetProperty("ArgumentList")
+        if ($null -ne $argumentListProperty) {
+            foreach ($argument in @($Arguments)) {
+                [void]$startInfo.ArgumentList.Add($argument)
+            }
+        }
+        else {
+            $startInfo.Arguments = Join-ProcessArguments $Arguments
+        }
+
+        $startInfo.UseShellExecute = $false
+        $startInfo.RedirectStandardOutput = $true
+        $startInfo.RedirectStandardError = $true
+        $startInfo.CreateNoWindow = $true
+
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $startInfo
+        if (!$process.Start()) {
+            throw "Unable to start command: $FilePath"
+        }
+
+        $stdoutTask = $process.StandardOutput.ReadToEndAsync()
+        $stderrTask = $process.StandardError.ReadToEndAsync()
+        $process.WaitForExit()
+        $stdoutTask.Wait()
+        $stderrTask.Wait()
+        $exitCode = $process.ExitCode
+        $process.Dispose()
+
+        if ($exitCode -ne 0) {
+            throw "Command failed with exit code $exitCode`: $FilePath $($Arguments -join ' ')"
+        }
+
+        return
     }
     else {
         & $FilePath @Arguments
@@ -290,6 +551,72 @@ function Get-ElapsedMicroseconds {
     return Convert-NanosecondsToMicroseconds $nanoseconds
 }
 
+function Get-MedianMicroseconds {
+    param([long[]]$Values)
+
+    if ($Values.Count -eq 0) {
+        return 0
+    }
+
+    $sorted = @($Values | Sort-Object)
+    $middle = [int]($sorted.Count / 2)
+    if (($sorted.Count % 2) -eq 1) {
+        return [long]$sorted[$middle]
+    }
+
+    return [long](($sorted[$middle - 1] + $sorted[$middle]) / 2)
+}
+
+function Get-FileSizeBytes {
+    param([string]$Path)
+
+    if (!(Test-Path -LiteralPath $Path)) {
+        return 0
+    }
+
+    return (Get-Item -LiteralPath $Path).Length
+}
+
+function Get-RuntimeSpreadPercent {
+    param(
+        [long]$MinMicroseconds,
+        [long]$AverageMicroseconds,
+        [long]$MaxMicroseconds
+    )
+
+    if ($AverageMicroseconds -le 0) {
+        return "0.000000"
+    }
+
+    $spread = (($MaxMicroseconds - $MinMicroseconds) * 100.0) / $AverageMicroseconds
+    return $spread.ToString("0.000000", [Globalization.CultureInfo]::InvariantCulture)
+}
+
+function Read-MetricValue {
+    param(
+        [string]$Path,
+        [string]$Name
+    )
+
+    if (!(Test-Path -LiteralPath $Path)) {
+        return 0
+    }
+
+    $prefix = "$Name="
+    foreach ($line in Get-Content -LiteralPath $Path) {
+        if ($line.StartsWith($prefix, [StringComparison]::Ordinal)) {
+            [long]$value = 0
+            if ([long]::TryParse($line.Substring($prefix.Length), [ref]$value)) {
+                return $value
+            }
+
+            return 0
+        }
+    }
+
+    return 0
+}
+
 function Emit-Row {
     param([string]$Row)
 
@@ -297,7 +624,7 @@ function Emit-Row {
     Add-Content -Path $script:ResultsFile -Value $Row
 }
 
-function Add-CRelativeAverageRatios {
+function Add-CRelativeRuntimeRatios {
     param([string]$Path)
 
     $lines = @(Get-Content -LiteralPath $Path)
@@ -308,19 +635,22 @@ function Add-CRelativeAverageRatios {
     $header = @($lines[0].Split(","))
     $benchmarkIndex = [Array]::IndexOf($header, "benchmark")
     $languageIndex = [Array]::IndexOf($header, "language")
+    $medianIndex = [Array]::IndexOf($header, "median_us")
     $avgIndex = [Array]::IndexOf($header, "avg_us")
-    if ($benchmarkIndex -lt 0 -or $languageIndex -lt 0 -or $avgIndex -lt 0) {
-        throw "Benchmark CSV must contain benchmark, language, and avg_us columns."
+    if ($benchmarkIndex -lt 0 -or $languageIndex -lt 0 -or $medianIndex -lt 0 -or $avgIndex -lt 0) {
+        throw "Benchmark CSV must contain benchmark, language, median_us, and avg_us columns."
     }
 
+    $medianRatioIndex = [Array]::IndexOf($header, "c_median_ratio")
     $ratioIndex = [Array]::IndexOf($header, "c_avg_ratio")
     $keptIndexes = New-Object System.Collections.Generic.List[int]
     for ($index = 0; $index -lt $header.Count; $index++) {
-        if ($index -ne $ratioIndex) {
+        if ($index -ne $ratioIndex -and $index -ne $medianRatioIndex) {
             $keptIndexes.Add($index)
         }
     }
 
+    $cMedians = @{}
     $cAverages = @{}
     $rows = New-Object System.Collections.Generic.List[object[]]
     for ($lineIndex = 1; $lineIndex -lt $lines.Count; $lineIndex++) {
@@ -331,20 +661,27 @@ function Add-CRelativeAverageRatios {
         $fields = @($lines[$lineIndex].Split(","))
         $rows.Add($fields)
 
-        if ($fields.Count -le [Math]::Max($languageIndex, $avgIndex)) {
+        if ($fields.Count -le [Math]::Max($languageIndex, [Math]::Max($medianIndex, $avgIndex))) {
             continue
         }
 
+        [double]$median = 0
         [double]$avg = 0
-        if ($fields[$languageIndex] -eq "c" -and
-            [double]::TryParse($fields[$avgIndex], [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$avg) -and
-            $avg -gt 0) {
-            $cAverages[$fields[$benchmarkIndex]] = $avg
+        if ($fields[$languageIndex] -eq "c") {
+            if ([double]::TryParse($fields[$medianIndex], [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$median) -and
+                $median -gt 0) {
+                $cMedians[$fields[$benchmarkIndex]] = $median
+            }
+
+            if ([double]::TryParse($fields[$avgIndex], [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$avg) -and
+                $avg -gt 0) {
+                $cAverages[$fields[$benchmarkIndex]] = $avg
+            }
         }
     }
 
     $output = New-Object System.Collections.Generic.List[string]
-    $output.Add((($keptIndexes | ForEach-Object { $header[$_] }) + @("c_avg_ratio")) -join ",")
+    $output.Add((($keptIndexes | ForEach-Object { $header[$_] }) + @("c_median_ratio", "c_avg_ratio")) -join ",")
 
     foreach ($fields in $rows) {
         $keptFields = $keptIndexes | ForEach-Object {
@@ -356,18 +693,59 @@ function Add-CRelativeAverageRatios {
             }
         }
 
-        $ratio = ""
+        $medianRatio = ""
+        $avgRatio = ""
+        [double]$rowMedian = 0
         [double]$rowAvg = 0
-        if ($fields.Count -gt [Math]::Max($benchmarkIndex, $avgIndex) -and
-            $cAverages.ContainsKey($fields[$benchmarkIndex]) -and
-            [double]::TryParse($fields[$avgIndex], [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$rowAvg)) {
-            $ratio = ($rowAvg / [double]$cAverages[$fields[$benchmarkIndex]]).ToString("0.000000", [Globalization.CultureInfo]::InvariantCulture)
+        [double]$baselineMedian = 0
+        [double]$baselineAvg = 0
+        if ($fields.Count -gt $benchmarkIndex) {
+            if ($cMedians.ContainsKey($fields[$benchmarkIndex])) {
+                $baselineMedian = [double]$cMedians[$fields[$benchmarkIndex]]
+            }
+
+            if ($cAverages.ContainsKey($fields[$benchmarkIndex])) {
+                $baselineAvg = [double]$cAverages[$fields[$benchmarkIndex]]
+            }
         }
 
-        $output.Add(($keptFields + @($ratio)) -join ",")
+        if ($fields.Count -gt [Math]::Max($benchmarkIndex, $medianIndex) -and
+            $baselineMedian -gt 0 -and
+            [double]::TryParse($fields[$medianIndex], [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$rowMedian)) {
+            $medianRatio = ($rowMedian / $baselineMedian).ToString("0.000000", [Globalization.CultureInfo]::InvariantCulture)
+        }
+
+        if ($fields.Count -gt [Math]::Max($benchmarkIndex, $avgIndex) -and
+            $baselineAvg -gt 0 -and
+            [double]::TryParse($fields[$avgIndex], [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$rowAvg)) {
+            $avgRatio = ($rowAvg / $baselineAvg).ToString("0.000000", [Globalization.CultureInfo]::InvariantCulture)
+        }
+
+        $output.Add(($keptFields + @($medianRatio, $avgRatio)) -join ",")
     }
 
     Set-Content -LiteralPath $Path -Value $output
+}
+
+function Complete-ResultsFile {
+    param([string]$Reason)
+
+    if (!(Test-Path -LiteralPath $ResultsFile)) {
+        return
+    }
+
+    $firstLine = Get-Content -LiteralPath $ResultsFile -TotalCount 1
+    if ([string]::IsNullOrWhiteSpace($firstLine) -or !$firstLine.StartsWith("benchmark,")) {
+        return
+    }
+
+    try {
+        Add-CRelativeRuntimeRatios $ResultsFile
+        Write-Status "Added c_median_ratio and c_avg_ratio columns using same-benchmark C runtime baselines$Reason."
+    }
+    catch {
+        Write-Status "Unable to add C runtime ratio columns$Reason`: $($_.Exception.Message)"
+    }
 }
 
 function Write-Status {
@@ -473,11 +851,17 @@ function Write-MachineMetadata {
         "stark_runs=$Runs",
         "timing_unit=microseconds",
         "stark_filter=$(if ([string]::IsNullOrWhiteSpace($Filter)) { '<none>' } else { $Filter })",
+        "benchmark_subset=$(if ([string]::IsNullOrWhiteSpace($Subset)) { '<none>' } else { $Subset })",
         "benchmark_languages=$Languages",
         "benchmark_capture_rss=$(if ($script:captureRss) { '1' } else { '0' })",
+        "benchmark_runtime_only=$(if ($script:runtimeOnly -eq $true) { '1' } else { '0' })",
+        "benchmark_keep_binaries=$(if ($script:keepBinaries -eq $true) { '1' } else { '0' })",
+        "benchmark_binary_dir=$(if ([string]::IsNullOrWhiteSpace($BinaryDir)) { '<temp>' } else { $BinaryDir })",
         "benchmark_peak_rss_unit=KiB",
         "benchmark_peak_rss_source=Process.PeakWorkingSet64 captured after each benchmark process exits when STARK_BENCH_CAPTURE_RSS=1; 0 when disabled",
-        "benchmark_ratio_column=c_avg_ratio avg_us divided by same-benchmark C avg_us",
+        "benchmark_median_column=median_us median of timed runs",
+        "benchmark_ratio_column=c_median_ratio median_us divided by same-benchmark C median_us; c_avg_ratio is retained for outlier diagnostics",
+        "benchmark_compile_columns=compile_us total benchmark build wall time; llvm_object_us/link_us/toolchain_us from Stark --toolchain-metrics when available",
         "stark_target=$(if ([string]::IsNullOrWhiteSpace($Target)) { 'host-default' } else { $Target })",
         "stark_flags=--emit-exe -O3",
         "stark_compiler_args=$(if ([string]::IsNullOrWhiteSpace($ExtraCompilerArgs)) { '<none>' } else { $ExtraCompilerArgs })",
@@ -496,6 +880,9 @@ function Time-Executable {
         [string]$BenchmarkId,
         [string]$Language,
         [long]$CompileMicroseconds,
+        [long]$LlvmObjectMicroseconds,
+        [long]$LinkMicroseconds,
+        [long]$ToolchainMicroseconds,
         [string]$OutputPath
     )
 
@@ -510,6 +897,7 @@ function Time-Executable {
     [long]$totalMicroseconds = 0
     [long]$minMicroseconds = 0
     [long]$maxMicroseconds = 0
+    $runMicroseconds = New-Object System.Collections.Generic.List[long]
 
     for ($run = 1; $run -le $Runs; $run++) {
         $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
@@ -523,6 +911,7 @@ function Time-Executable {
         $stopwatch.Stop()
         $elapsedMicroseconds = Get-ElapsedMicroseconds $stopwatch
         $totalMicroseconds += $elapsedMicroseconds
+        $runMicroseconds.Add($elapsedMicroseconds)
 
         if ($runPeakRssKiB -gt $peakRssKiB) {
             $peakRssKiB = $runPeakRssKiB
@@ -538,7 +927,23 @@ function Time-Executable {
     }
 
     $avgMicroseconds = [long]($totalMicroseconds / $Runs)
-    Emit-Row "$BenchmarkId,$Language,$Runs,$CompileMicroseconds,$minMicroseconds,$avgMicroseconds,$maxMicroseconds,$peakRssKiB"
+    $medianMicroseconds = Get-MedianMicroseconds $runMicroseconds.ToArray()
+    $runtimeSpreadPercent = Get-RuntimeSpreadPercent $minMicroseconds $avgMicroseconds $maxMicroseconds
+    $binaryBytes = Get-FileSizeBytes $OutputPath
+    $label = Get-BenchmarkLabel $BenchmarkId $Language
+    Emit-Row "$($label.BenchmarkGroup),$($label.Language),$Runs,$CompileMicroseconds,$LlvmObjectMicroseconds,$LinkMicroseconds,$ToolchainMicroseconds,$binaryBytes,$minMicroseconds,$medianMicroseconds,$avgMicroseconds,$maxMicroseconds,$runtimeSpreadPercent,$peakRssKiB"
+}
+
+function Assert-RuntimeOnlyExecutable {
+    param(
+        [string]$Path,
+        [string]$BenchmarkId,
+        [string]$Language
+    )
+
+    if (!(Test-Path -LiteralPath $Path)) {
+        throw "Runtime-only benchmark mode expected an existing $Language executable for $BenchmarkId at $Path."
+    }
 }
 
 function Compile-AndTimeStark {
@@ -548,6 +953,13 @@ function Compile-AndTimeStark {
         [string]$OutputPath
     )
 
+    if ($script:runtimeOnly -eq $true) {
+        Assert-RuntimeOnlyExecutable $OutputPath $BenchmarkId "stark"
+        Time-Executable $BenchmarkId "stark" 0 0 0 0 $OutputPath
+        return
+    }
+
+    $metricsPath = "$OutputPath.metrics"
     $arguments = @(
         "run",
         "--project",
@@ -559,7 +971,9 @@ function Compile-AndTimeStark {
         "-I",
         $stdlibRoot,
         "-o",
-        $OutputPath
+        $OutputPath,
+        "--toolchain-metrics",
+        $metricsPath
     )
     $arguments += $script:compilerArgs
 
@@ -567,7 +981,14 @@ function Compile-AndTimeStark {
     Invoke-Native "dotnet" $arguments -SuppressOutput
     $stopwatch.Stop()
 
-    Time-Executable $BenchmarkId "stark" (Get-ElapsedMicroseconds $stopwatch) $OutputPath
+    Time-Executable `
+        $BenchmarkId `
+        "stark" `
+        (Get-ElapsedMicroseconds $stopwatch) `
+        (Read-MetricValue $metricsPath "llvm_object_us") `
+        (Read-MetricValue $metricsPath "link_us") `
+        (Read-MetricValue $metricsPath "toolchain_us") `
+        $OutputPath
 }
 
 function Compile-AndTimeC {
@@ -577,12 +998,18 @@ function Compile-AndTimeC {
         [string]$OutputPath
     )
 
+    if ($script:runtimeOnly -eq $true) {
+        Assert-RuntimeOnlyExecutable $OutputPath $BenchmarkId "c"
+        Time-Executable $BenchmarkId "c" 0 0 0 0 $OutputPath
+        return
+    }
+
     $arguments = @($SourcePath) + $cFlags + @("-o", $OutputPath)
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     Invoke-Native $CCompiler $arguments -SuppressOutput
     $stopwatch.Stop()
 
-    Time-Executable $BenchmarkId "c" (Get-ElapsedMicroseconds $stopwatch) $OutputPath
+    Time-Executable $BenchmarkId "c" (Get-ElapsedMicroseconds $stopwatch) 0 0 0 $OutputPath
 }
 
 function ConvertTo-RustCrateName {
@@ -604,16 +1031,24 @@ function Compile-AndTimeRust {
         [string]$Language = "rust"
     )
 
+    if ($script:runtimeOnly -eq $true) {
+        Assert-RuntimeOnlyExecutable $OutputPath $BenchmarkId $Language
+        Time-Executable $BenchmarkId $Language 0 0 0 0 $OutputPath
+        return
+    }
+
     $arguments = @("--crate-name", (ConvertTo-RustCrateName $SourcePath), $SourcePath) + $rustFlags + @("-o", $OutputPath)
     $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
     Invoke-Native $RustCompiler $arguments -SuppressOutput
     $stopwatch.Stop()
 
-    Time-Executable $BenchmarkId $Language (Get-ElapsedMicroseconds $stopwatch) $OutputPath
+    Time-Executable $BenchmarkId $Language (Get-ElapsedMicroseconds $stopwatch) 0 0 0 $OutputPath
 }
 
 $script:selectedLanguages = @()
-$script:captureRss = ConvertTo-BenchmarkBoolean $CaptureRss "STARK_BENCH_CAPTURE_RSS"
+$script:captureRss = [bool](ConvertTo-BenchmarkBoolean $CaptureRss "STARK_BENCH_CAPTURE_RSS")
+$script:runtimeOnly = [bool](ConvertTo-BenchmarkBoolean $RuntimeOnly "STARK_BENCH_RUNTIME_ONLY")
+$script:keepBinaries = [bool](ConvertTo-BenchmarkBoolean $KeepBinaries "STARK_BENCH_KEEP_BINARIES")
 foreach ($language in $Languages.Split(",")) {
     $normalized = $language.Trim().ToLowerInvariant()
     if ([string]::IsNullOrWhiteSpace($normalized)) {
@@ -629,6 +1064,10 @@ foreach ($language in $Languages.Split(",")) {
 
 if ($script:selectedLanguages.Length -eq 0) {
     throw "At least one benchmark language must be selected."
+}
+
+if ($script:runtimeOnly -eq $true -and [string]::IsNullOrWhiteSpace($BinaryDir)) {
+    throw "STARK_BENCH_RUNTIME_ONLY requires STARK_BENCH_BINARY_DIR so the harness can reuse existing executables."
 }
 
 if (Test-LanguageEnabled "c") {
@@ -652,7 +1091,12 @@ Ensure-Directory (Split-Path -Parent $ResultsFile)
 Ensure-Directory (Split-Path -Parent $MachineFile)
 [IO.File]::WriteAllText($ResultsFile, "")
 
-$tmpDir = Join-Path ([IO.Path]::GetTempPath()) "stark-bench-$([Guid]::NewGuid().ToString('N'))"
+$tmpDir = if ([string]::IsNullOrWhiteSpace($BinaryDir)) {
+    Join-Path ([IO.Path]::GetTempPath()) "stark-bench-$([Guid]::NewGuid().ToString('N'))"
+}
+else {
+    [IO.Path]::GetFullPath($BinaryDir)
+}
 Ensure-Directory $tmpDir
 
 $script:compilerArgs = @()
@@ -661,6 +1105,7 @@ if (![string]::IsNullOrWhiteSpace($Target)) {
 }
 
 $script:compilerArgs += Split-ArgumentString $ExtraCompilerArgs
+$script:benchmarkRunnerExitCode = 0
 
 try {
     Write-MachineMetadata $MachineFile
@@ -670,19 +1115,53 @@ try {
     $benchmarks = Get-ChildItem -Path $benchRoot -Recurse -Filter "*.stark" -File |
         Sort-Object FullName
 
-    if (![string]::IsNullOrWhiteSpace($Filter)) {
-        $benchmarks = $benchmarks | Where-Object { $_.FullName -like "*$Filter*" }
+    $subsetFilters = @(Get-BenchmarkSubsetFilters $Subset)
+    if (![string]::IsNullOrWhiteSpace($Filter) -or $subsetFilters.Count -gt 0) {
+        $manualFilters = @()
+        if (![string]::IsNullOrWhiteSpace($Filter)) {
+            $manualFilters = @($Filter)
+        }
+
+        $benchmarks = $benchmarks | Where-Object {
+            $relativePath = ConvertTo-DisplayPath (Get-RelativePath $repoRoot $_.FullName)
+            $benchmarkId = $relativePath -replace '\.stark$', ''
+            $benchmarkGroup = (Get-BenchmarkLabel $benchmarkId "stark").BenchmarkGroup
+            (Test-BenchmarkMatchesAnyFilter $relativePath $benchmarkId $benchmarkGroup $manualFilters) -and
+                (Test-BenchmarkMatchesAnyFilter $relativePath $benchmarkId $benchmarkGroup $subsetFilters)
+        }
     }
 
     if ($null -eq $benchmarks -or @($benchmarks).Count -eq 0) {
         throw "No benchmark sources matched."
     }
 
-    Emit-Row "benchmark,language,runs,compile_us,min_us,avg_us,max_us,peak_rss_kib"
-
-    foreach ($benchmark in @($benchmarks)) {
-        $sourcePath = $benchmark.FullName
+    $benchmarkEntries = @($benchmarks | ForEach-Object {
+        $sourcePath = $_.FullName
         $relativePath = ConvertTo-DisplayPath (Get-RelativePath $repoRoot $sourcePath)
+        $benchmarkId = $relativePath -replace '\.stark$', ''
+        $label = Get-BenchmarkLabel $benchmarkId "stark"
+        $stem = [IO.Path]::GetFileNameWithoutExtension($sourcePath)
+
+        [PSCustomObject]@{
+            SourcePath = $sourcePath
+            RelativePath = $relativePath
+            BenchmarkId = $benchmarkId
+            BenchmarkGroup = $label.BenchmarkGroup
+            VariantOrder = if ($stem.StartsWith("Experimental", [StringComparison]::Ordinal)) { 1 } else { 0 }
+        }
+    } | Sort-Object BenchmarkGroup, VariantOrder, RelativePath)
+
+    $lastBenchmarkPathByGroup = @{}
+    foreach ($entry in $benchmarkEntries) {
+        $lastBenchmarkPathByGroup[$entry.BenchmarkGroup] = $entry.RelativePath
+    }
+
+    Emit-Row "benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,median_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib"
+
+    $timedNativeBenchmarks = @{}
+    foreach ($entry in $benchmarkEntries) {
+        $sourcePath = $entry.SourcePath
+        $relativePath = $entry.RelativePath
 
         if (Test-BenchmarkDirective $sourcePath "compile-only") {
             Write-Status "Skipping compile-only benchmark $relativePath; compiler tests still validate it lowers successfully."
@@ -690,62 +1169,78 @@ try {
         }
 
         $safeName = ConvertTo-SafeName $relativePath
-        $benchmarkId = $relativePath -replace '\.stark$', ''
-        $sourceStem = $sourcePath.Substring(0, $sourcePath.Length - ".stark".Length)
+        $benchmarkId = $entry.BenchmarkId
+        $benchmarkGroup = $entry.BenchmarkGroup
+        $nativeSafeName = ConvertTo-SafeName $benchmarkGroup
+        $runNativeForGroup = $lastBenchmarkPathByGroup[$benchmarkGroup] -eq $relativePath
 
         $starkOutputPath = Join-Path $tmpDir "$safeName-stark.exe"
-        $cOutputPath = Join-Path $tmpDir "$safeName-c.exe"
-        $rustOutputPath = Join-Path $tmpDir "$safeName-rust.exe"
+        $cOutputPath = Join-Path $tmpDir "$nativeSafeName-c.exe"
+        $rustOutputPath = Join-Path $tmpDir "$nativeSafeName-rust.exe"
 
         if (Test-LanguageEnabled "stark") {
             Compile-AndTimeStark $sourcePath $benchmarkId $starkOutputPath
         }
 
-        if (Test-LanguageEnabled "c") {
-            $cSourcePath = "$sourceStem.c"
+        $cBenchmarkKey = "c|$benchmarkGroup"
+        if ($runNativeForGroup -and (Test-LanguageEnabled "c") -and !$timedNativeBenchmarks.ContainsKey($cBenchmarkKey)) {
+            $timedNativeBenchmarks[$cBenchmarkKey] = $true
+            $cSourcePath = Get-BenchmarkSourcePath $benchmarkGroup ".c"
             if (!(Test-Path -LiteralPath $cSourcePath)) {
-                throw "Missing C benchmark counterpart for $relativePath`: $(ConvertTo-DisplayPath (Get-RelativePath $repoRoot $cSourcePath))"
+                throw "Missing C benchmark counterpart for group $benchmarkGroup`: $(ConvertTo-DisplayPath (Get-RelativePath $repoRoot $cSourcePath))"
             }
 
             if ((Test-WindowsHost) -and (Test-BenchmarkDirective $cSourcePath "skip-c-windows")) {
                 $cRelativePath = ConvertTo-DisplayPath (Get-RelativePath $repoRoot $cSourcePath)
-                Write-Status "Skipping C benchmark $benchmarkId on Windows; $cRelativePath is marked // stark-bench: skip-c-windows."
+                Write-Status "Skipping C benchmark group $benchmarkGroup on Windows; $cRelativePath is marked // stark-bench: skip-c-windows."
             }
             else {
-                Compile-AndTimeC $cSourcePath $benchmarkId $cOutputPath
+                Compile-AndTimeC $cSourcePath $benchmarkGroup $cOutputPath
             }
         }
 
-        if (Test-LanguageEnabled "rust") {
-            $rustSourcePath = "$sourceStem.rs"
+        $rustBenchmarkKey = "rust|$benchmarkGroup"
+        if ($runNativeForGroup -and (Test-LanguageEnabled "rust") -and !$timedNativeBenchmarks.ContainsKey($rustBenchmarkKey)) {
+            $timedNativeBenchmarks[$rustBenchmarkKey] = $true
+            $rustSourcePath = Get-BenchmarkSourcePath $benchmarkGroup ".rs"
             if (!(Test-Path -LiteralPath $rustSourcePath)) {
-                throw "Missing Rust benchmark counterpart for $relativePath`: $(ConvertTo-DisplayPath (Get-RelativePath $repoRoot $rustSourcePath))"
+                throw "Missing Rust benchmark counterpart for group $benchmarkGroup`: $(ConvertTo-DisplayPath (Get-RelativePath $repoRoot $rustSourcePath))"
             }
 
-            Compile-AndTimeRust $rustSourcePath $benchmarkId $rustOutputPath
+            Compile-AndTimeRust $rustSourcePath $benchmarkGroup $rustOutputPath
 
-            $rustVariantPaths = Get-ChildItem -Path "$sourceStem.rust-*.rs" -File -ErrorAction SilentlyContinue |
+            $rustSourceStem = $rustSourcePath.Substring(0, $rustSourcePath.Length - ".rs".Length)
+            $rustVariantPaths = Get-ChildItem -Path "$rustSourceStem.rust-*.rs" -File -ErrorAction SilentlyContinue |
                 Sort-Object FullName
             foreach ($rustVariantPath in @($rustVariantPaths)) {
                 $rustVariantName = [IO.Path]::GetFileName($rustVariantPath.FullName)
-                $rustVariantName = $rustVariantName.Substring(([IO.Path]::GetFileName($sourceStem) + ".rust-").Length)
+                $rustVariantName = $rustVariantName.Substring(([IO.Path]::GetFileName($rustSourceStem) + ".rust-").Length)
                 $rustVariantName = $rustVariantName.Substring(0, $rustVariantName.Length - ".rs".Length)
                 if ($rustVariantName.Contains(",")) {
                     throw "Rust benchmark variant names must not contain commas: $(ConvertTo-DisplayPath (Get-RelativePath $repoRoot $rustVariantPath.FullName))"
                 }
 
                 $rustVariantSafeName = $rustVariantName -replace '[^A-Za-z0-9_]', '_'
-                $rustVariantOutputPath = Join-Path $tmpDir "$safeName-rust-$rustVariantSafeName.exe"
-                Compile-AndTimeRust $rustVariantPath.FullName $benchmarkId $rustVariantOutputPath "rust-$rustVariantName"
+                $rustVariantOutputPath = Join-Path $tmpDir "$nativeSafeName-rust-$rustVariantSafeName.exe"
+                Compile-AndTimeRust $rustVariantPath.FullName $benchmarkGroup $rustVariantOutputPath "rust-$rustVariantName"
             }
         }
     }
 
-    Add-CRelativeAverageRatios $ResultsFile
-    Write-Status "Added c_avg_ratio column using same-benchmark C avg_us baselines."
+    Add-CRelativeRuntimeRatios $ResultsFile
+    Write-Status "Added c_median_ratio and c_avg_ratio columns using same-benchmark C runtime baselines."
+}
+catch {
+    Complete-ResultsFile " before exiting after failure"
+    Write-Status $_.Exception.Message
+    $script:benchmarkRunnerExitCode = 1
 }
 finally {
-    if (Test-Path -LiteralPath $tmpDir) {
+    if ($script:keepBinaries -ne $true -and $script:runtimeOnly -ne $true -and [string]::IsNullOrWhiteSpace($BinaryDir) -and (Test-Path -LiteralPath $tmpDir)) {
         Remove-Item -LiteralPath $tmpDir -Recurse -Force
     }
+}
+
+if ($script:benchmarkRunnerExitCode -ne 0) {
+    exit $script:benchmarkRunnerExitCode
 }

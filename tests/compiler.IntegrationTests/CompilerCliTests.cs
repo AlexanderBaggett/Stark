@@ -940,6 +940,87 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
+    public async Task EmitObjectModeKeepsLlvmPassesForImportedInlineBodyClones()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-imported-inline-llvm-passes-");
+        var libPath = Path.Combine(tempDirectory.FullName, "Lib.stark");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, "app.o");
+        var clangLogPath = Path.Combine(tempDirectory.FullName, "clang.log");
+        _ = await CreateUnixCaptureClangAsync(tempDirectory.FullName, clangLogPath);
+        var originalPath = Environment.GetEnvironmentVariable("PATH");
+
+        try
+        {
+            Environment.SetEnvironmentVariable("PATH", $"{tempDirectory.FullName}{Path.PathSeparator}{originalPath}");
+            await File.WriteAllTextAsync(
+                libPath,
+                """
+                module Lib
+
+                public inline finite i32[0 102] SelectOrAdd(i32[0 100] value, bool add) {
+                    if (add) {
+                        return value + 1;
+                    }
+
+                    return value + 2;
+                }
+                """);
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import Lib
+                module App
+
+                fn i32[0 102] Run(i32[0 100] value, bool add) {
+                    return Lib.SelectOrAdd(value, add);
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [
+                    appPath,
+                    "--emit-obj",
+                    "-O3",
+                    "-I", tempDirectory.FullName,
+                    "-o", outputPath
+                ],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted object file:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var clangLog = await File.ReadAllTextAsync(clangLogPath);
+            Assert.Contains("-O3", clangLog, StringComparison.Ordinal);
+            Assert.DoesNotContain("-disable-llvm-passes", clangLog, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", originalPath);
+
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public async Task CheckModeResolvesSourceImportsFromConfiguredSearchPath()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-search-source-");

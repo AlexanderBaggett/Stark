@@ -6,8 +6,641 @@ public sealed class SystemTextStandardLibraryTests
 {
     private readonly StandardLibraryTestSuite _suite = new();
 
+    private const string ExperimentalTextProgram = """
+        import System.Experimental.Text
+        import System.Memory
+        module ExperimentalTextParity
+
+        const ascii ConstAsciiSuffix = "Const";
+        const ascii ConstUnicodeAsciiSuffix = " AZ";
+
+        fn bool Ok(System.Memory.MemoryStatus status) {
+            switch (status) {
+                case System.Memory.MemoryStatus.Ok:
+                    return true;
+                case System.Memory.MemoryStatus.Err(var error):
+                    return false;
+            }
+        }
+
+        fn bool TooLargeStatus(System.Memory.MemoryStatus status) {
+            switch (status) {
+                case System.Memory.MemoryStatus.Ok:
+                    return false;
+                case System.Memory.MemoryStatus.Err(var error):
+                    switch (error) {
+                        case System.Memory.MemoryError.OutOfMemory:
+                            return false;
+                        case System.Memory.MemoryError.TooLarge:
+                            return true;
+                        case System.Memory.MemoryError.InvalidLayout:
+                            return false;
+                    }
+            }
+        }
+
+        fn bool TooLargeAsciiResult(System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii> result) {
+            switch (result) {
+                case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Ok(var value):
+                    return false;
+                case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Err(var error):
+                    switch (error) {
+                        case System.Memory.MemoryError.OutOfMemory:
+                            return false;
+                        case System.Memory.MemoryError.TooLarge:
+                            return true;
+                        case System.Memory.MemoryError.InvalidLayout:
+                            return false;
+                    }
+            }
+        }
+
+        fn bool ReadParsedBool(System.Experimental.Text.TextResult<bool> result, bool expected) {
+            switch (result) {
+                case System.Experimental.Text.TextResult<bool>.Ok(var value):
+                    return value == expected;
+                case System.Experimental.Text.TextResult<bool>.Err(var error):
+                    return false;
+            }
+        }
+
+        fn bool IsInvalidBool(System.Experimental.Text.TextResult<bool> result) {
+            switch (result) {
+                case System.Experimental.Text.TextResult<bool>.Ok(var value):
+                    return false;
+                case System.Experimental.Text.TextResult<bool>.Err(var error):
+                    switch (error) {
+                        case System.Experimental.Text.TextError.InvalidFormat:
+                            return true;
+                        case System.Experimental.Text.TextError.Overflow:
+                            return false;
+                    }
+            }
+        }
+
+        fn System.Experimental.Text.Encoding ReadParsedEncoding(System.Experimental.Text.TextResult<System.Experimental.Text.Encoding> result) {
+            switch (result) {
+                case System.Experimental.Text.TextResult<System.Experimental.Text.Encoding>.Ok(var value):
+                    return value;
+                case System.Experimental.Text.TextResult<System.Experimental.Text.Encoding>.Err(var error):
+                    return System.Experimental.Text.Encoding.Binary;
+            }
+        }
+
+        fn bool IsInvalidEncoding(System.Experimental.Text.TextResult<System.Experimental.Text.Encoding> result) {
+            switch (result) {
+                case System.Experimental.Text.TextResult<System.Experimental.Text.Encoding>.Ok(var value):
+                    return false;
+                case System.Experimental.Text.TextResult<System.Experimental.Text.Encoding>.Err(var error):
+                    switch (error) {
+                        case System.Experimental.Text.TextError.InvalidFormat:
+                            return true;
+                        case System.Experimental.Text.TextError.Overflow:
+                            return false;
+                    }
+            }
+        }
+
+        fn System.Experimental.Text.TextError ReadParsedTextError(System.Experimental.Text.TextResult<System.Experimental.Text.TextError> result) {
+            switch (result) {
+                case System.Experimental.Text.TextResult<System.Experimental.Text.TextError>.Ok(var value):
+                    return value;
+                case System.Experimental.Text.TextResult<System.Experimental.Text.TextError>.Err(var error):
+                    return System.Experimental.Text.TextError.InvalidFormat;
+            }
+        }
+
+        fn i64[-9223372036854775808 9223372036854775807] ReadParsedI64(
+            System.Experimental.Text.TextResult<i64[-9223372036854775808 9223372036854775807]> result,
+            i64[-9223372036854775808 9223372036854775807] fallback) {
+            switch (result) {
+                case System.Experimental.Text.TextResult<i64[-9223372036854775808 9223372036854775807]>.Ok(var value):
+                    return value;
+                case System.Experimental.Text.TextResult<i64[-9223372036854775808 9223372036854775807]>.Err(var error):
+                    return fallback;
+            }
+        }
+
+        fn u64[0 max] ReadParsedU64(System.Experimental.Text.TextResult<u64[0 max]> result, u64[0 max] fallback) {
+            switch (result) {
+                case System.Experimental.Text.TextResult<u64[0 max]>.Ok(var value):
+                    return value;
+                case System.Experimental.Text.TextResult<u64[0 max]>.Err(var error):
+                    return fallback;
+            }
+        }
+
+        fn i96[min max] ReadParsedI96(System.Experimental.Text.TextResult<i96[min max]> result, i96[min max] fallback) {
+            switch (result) {
+                case System.Experimental.Text.TextResult<i96[min max]>.Ok(var value):
+                    return value;
+                case System.Experimental.Text.TextResult<i96[min max]>.Err(var error):
+                    return fallback;
+            }
+        }
+
+        fn u96[0 max] ReadParsedU96(System.Experimental.Text.TextResult<u96[0 max]> result, u96[0 max] fallback) {
+            switch (result) {
+                case System.Experimental.Text.TextResult<u96[0 max]>.Ok(var value):
+                    return value;
+                case System.Experimental.Text.TextResult<u96[0 max]>.Err(var error):
+                    return fallback;
+            }
+        }
+
+        fn bool IsOverflowI8(System.Experimental.Text.TextResult<i8[-128 127]> result) {
+            switch (result) {
+                case System.Experimental.Text.TextResult<i8[-128 127]>.Ok(var value):
+                    return false;
+                case System.Experimental.Text.TextResult<i8[-128 127]>.Err(var error):
+                    switch (error) {
+                        case System.Experimental.Text.TextError.InvalidFormat:
+                            return false;
+                        case System.Experimental.Text.TextError.Overflow:
+                            return true;
+                    }
+            }
+        }
+
+        fn bool IsOverflowU32(System.Experimental.Text.TextResult<u32[0 max]> result) {
+            switch (result) {
+                case System.Experimental.Text.TextResult<u32[0 max]>.Ok(var value):
+                    return false;
+                case System.Experimental.Text.TextResult<u32[0 max]>.Err(var error):
+                    switch (error) {
+                        case System.Experimental.Text.TextError.InvalidFormat:
+                            return false;
+                        case System.Experimental.Text.TextError.Overflow:
+                            return true;
+                    }
+            }
+        }
+
+        fn bool OwnedAsciiLength(System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii> result, i64[0 max] expected) {
+            switch (result) {
+                case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Ok(var value):
+                    return value.Length() == expected;
+                case System.Memory.MemoryResult<System.Experimental.Text.OwnedAscii>.Err(var error):
+                    return false;
+            }
+        }
+
+        fn bool OwnedUnicodeLength(System.Memory.MemoryResult<System.Experimental.Text.OwnedUnicode> result, i64[0 max] expected) {
+            switch (result) {
+                case System.Memory.MemoryResult<System.Experimental.Text.OwnedUnicode>.Ok(var value):
+                    return value.Length() == expected;
+                case System.Memory.MemoryResult<System.Experimental.Text.OwnedUnicode>.Err(var error):
+                    return false;
+            }
+        }
+
+        fn bool AsciiOwnedMatches(
+            mut borrow System.Experimental.Text.OwnedAscii text,
+            i64[0 max] expectedLength,
+            i8[-128 127] expectedFirst,
+            i8[-128 127] expectedLast) {
+            stack i8[-128 127][] view = text.AsSlice();
+            if (text.Length() != expectedLength) {
+                return false;
+            }
+
+            return view[0] == expectedFirst && view[(i64[0 max])(expectedLength - 1)] == expectedLast;
+        }
+
+        fn bool UnicodeOwnedMatches(
+            mut borrow System.Experimental.Text.OwnedUnicode text,
+            i64[0 max] expectedLength,
+            i32[-2147483648 2147483647] expectedFirst,
+            i32[-2147483648 2147483647] expectedLast) {
+            stack i32[-2147483648 2147483647][] view = text.AsSlice();
+            if (text.Length() != expectedLength) {
+                return false;
+            }
+
+            return view[0] == expectedFirst && view[(i64[0 max])(expectedLength - 1)] == expectedLast;
+        }
+
+        fn bool ProbeOwnedAscii() {
+            stack mut System.Experimental.Text.OwnedAscii text = new();
+            if (!Ok(text.Reserve(16)) || !Ok(text.AppendAscii("Score: ")) || !Ok(text.AppendI64(-42)) || !Ok(text.AppendByte((i8[-128 127])33))) {
+                return false;
+            }
+
+            if (text.Length() != 11 || text.Capacity() < 16) {
+                return false;
+            }
+
+            stack i8[-128 127][] view = text.AsSlice();
+            if (view[0] != (i8[-128 127])83 || view[10] != (i8[-128 127])33) {
+                return false;
+            }
+
+            stack ascii aliasView = text.View();
+            if (!Ok(text.AppendAscii(aliasView)) || text.Length() != 22) {
+                return false;
+            }
+
+            stack i8[-128 127][] aliased = text.AsSlice();
+            if (aliased[11] != (i8[-128 127])83 || aliased[21] != (i8[-128 127])33) {
+                return false;
+            }
+
+            if (!Ok(text.AppendConstAscii(ConstAsciiSuffix)) || text.Length() != 27) {
+                return false;
+            }
+
+            return text.AsSlice()[22] == (i8[-128 127])67 && text.AsSlice()[26] == (i8[-128 127])116;
+        }
+
+        fn bool ProbeOwnedUnicode() {
+            stack mut System.Experimental.Text.OwnedUnicode text = new();
+            if (!Ok(text.Reserve(16)) || !Ok(text.AppendUnicode((unicode)"Value: ")) || !Ok(text.AppendI64(100))) {
+                return false;
+            }
+
+            if (text.Length() != 10 || text.Capacity() < 16) {
+                return false;
+            }
+
+            stack i32[-2147483648 2147483647][] view = text.AsSlice();
+            if (view[0] != 86 || view[9] != 48) {
+                return false;
+            }
+
+            stack mut System.Experimental.Text.OwnedUnicode suffix = new();
+            if (!Ok(suffix.AppendAscii(" AZ")) || !Ok(text.AppendSlice(suffix.AsSlice(), suffix.Length()))) {
+                return false;
+            }
+
+            stack i32[-2147483648 2147483647][] appended = text.AsSlice();
+            if (text.Length() != 13 || appended[10] != 32 || appended[12] != 90) {
+                return false;
+            }
+
+            stack unicode aliasView = text.View();
+            if (!Ok(text.AppendUnicode(aliasView)) || text.Length() != 26) {
+                return false;
+            }
+
+            stack i32[-2147483648 2147483647][] aliased = text.AsSlice();
+            if (aliased[13] != 86 || aliased[25] != 90) {
+                return false;
+            }
+
+            if (!Ok(text.AppendConstUnicode((unicode)" ok")) || text.Length() != 29) {
+                return false;
+            }
+
+            if (!Ok(text.AppendConstAscii(ConstUnicodeAsciiSuffix)) || text.Length() != 32) {
+                return false;
+            }
+
+            stack i32[-2147483648 2147483647][] constAppended = text.AsSlice();
+            return constAppended[26] == 32 && constAppended[31] == 90;
+        }
+
+        export ffi fn i32[min max] main() {
+            if (!ProbeOwnedAscii()) {
+                return 1;
+            }
+
+            if (!ProbeOwnedUnicode()) {
+                return 2;
+            }
+
+            stack mut System.Experimental.Text.OwnedAscii asciiValue = new();
+            if (!Ok(asciiValue.AppendI64((i32[-2147483648 2147483647])-2147483648))
+                || !AsciiOwnedMatches(asciiValue, 11, (i8[-128 127])45, (i8[-128 127])56)) {
+                return 3;
+            }
+
+            stack mut System.Experimental.Text.OwnedAscii unsignedAscii = new();
+            if (!Ok(unsignedAscii.AppendU64((u64[0 max])18446744073709551615))
+                || !AsciiOwnedMatches(unsignedAscii, 20, (i8[-128 127])49, (i8[-128 127])53)) {
+                return 4;
+            }
+
+            stack mut System.Experimental.Text.OwnedUnicode unicodeValue = new();
+            if (!Ok(unicodeValue.AppendBool(false))
+                || !UnicodeOwnedMatches(unicodeValue, 5, 102, 101)) {
+                return 5;
+            }
+
+            stack mut System.Experimental.Text.OwnedUnicode converted = new();
+            if (!Ok(converted.AppendAscii("AZ"))
+                || !UnicodeOwnedMatches(converted, 2, 65, 90)) {
+                return 6;
+            }
+
+            if (!ReadParsedBool(System.Experimental.Text.ParseBoolAscii("true"), true)
+                || !ReadParsedBool(System.Experimental.Text.ParseBoolUnicode((unicode)"false"), false)
+                || !IsInvalidBool(System.Experimental.Text.ParseBoolAscii("True"))) {
+                return 7;
+            }
+
+            if (ReadParsedEncoding(System.Experimental.Text.ParseEncodingAscii("UTF16")) != System.Experimental.Text.Encoding.UTF16
+                || ReadParsedEncoding(System.Experimental.Text.ParseEncodingUnicode((unicode)"UTF32")) != System.Experimental.Text.Encoding.UTF32
+                || !IsInvalidEncoding(System.Experimental.Text.ParseEncodingAscii("utf8"))) {
+                return 8;
+            }
+
+            if (ReadParsedTextError(System.Experimental.Text.ParseTextErrorAscii("Overflow")) != System.Experimental.Text.TextError.Overflow
+                || ReadParsedTextError(System.Experimental.Text.ParseTextErrorUnicode((unicode)"InvalidFormat")) != System.Experimental.Text.TextError.InvalidFormat) {
+                return 9;
+            }
+
+            if (ReadParsedI64(System.Experimental.Text.ParseI64Ascii("-9223372036854775808"), 0) != -(2**63)
+                || ReadParsedU64(System.Experimental.Text.ParseU64Unicode((unicode)"18446744073709551615"), 0) != (u64[0 max])((2**64) - 1)
+                || IsOverflowI8(System.Experimental.Text.ParseI8Ascii("-129")) == false
+                || IsOverflowU32(System.Experimental.Text.ParseU32Unicode((unicode)"4294967296")) == false) {
+                return 10;
+            }
+
+            if (ReadParsedI96(System.Experimental.Text.ParseI96Ascii("-39614081257132168796771975168"), 0) != -(2**95)
+                || ReadParsedU96(System.Experimental.Text.ParseU96Unicode((unicode)"79228162514264337593543950335"), 0) != (u96[0 max])((2**96) - 1)) {
+                return 11;
+            }
+
+            stack mut i8[-128 127][320] asciiStorage;
+            stack mut Ascii formattedAscii = new Ascii() {
+                Data = &asciiStorage[0],
+                Length = 0,
+                Capacity = 320
+            };
+            if (!System.Experimental.Text.TryFormatEncodingAscii(&formattedAscii, System.Experimental.Text.Encoding.UTF8)
+                || formattedAscii.Length != 4
+                || !System.Experimental.Text.TryFormatI1024Ascii(&formattedAscii, -(2**1023))
+                || formattedAscii.Length != 309) {
+                return 12;
+            }
+
+            stack mut i32[-2147483648 2147483647][320] unicodeStorage;
+            stack mut Unicode formattedUnicode = new Unicode() {
+                Data = &unicodeStorage[0],
+                Length = 0,
+                Capacity = 320
+            };
+            if (!System.Experimental.Text.TryFormatTextErrorUnicode(&formattedUnicode, System.Experimental.Text.TextError.Overflow)
+                || formattedUnicode.Length != 8
+                || !System.Experimental.Text.TryFormatU1024Unicode(&formattedUnicode, (u1024[0 max])((2**1024) - 1))
+                || formattedUnicode.Length != 309
+                || *(&formattedUnicode.Data[0]) != 49
+                || *(&formattedUnicode.Data[308]) != 53
+                || !System.Experimental.Text.TryFormatI1024Unicode(&formattedUnicode, -(2**1023))
+                || formattedUnicode.Length != 309
+                || *(&formattedUnicode.Data[0]) != 45
+                || *(&formattedUnicode.Data[308]) != 56
+                || !System.Experimental.Text.TryFormatI128Unicode(&formattedUnicode, -(2**127))
+                || formattedUnicode.Length != 40
+                || *(&formattedUnicode.Data[0]) != 45
+                || *(&formattedUnicode.Data[39]) != 56
+                || !System.Experimental.Text.TryFormatU128Unicode(&formattedUnicode, (u128[0 max])((2**128) - 1))
+                || formattedUnicode.Length != 39
+                || *(&formattedUnicode.Data[0]) != 51
+                || *(&formattedUnicode.Data[38]) != 53
+                || !System.Experimental.Text.TryFormatI1024Unicode(&formattedUnicode, (i1024[min max])0)
+                || formattedUnicode.Length != 1
+                || *(&formattedUnicode.Data[0]) != 48
+                || !System.Experimental.Text.TryFormatU1024Unicode(&formattedUnicode, (u1024[0 max])(10**300))
+                || formattedUnicode.Length != 301
+                || *(&formattedUnicode.Data[0]) != 49
+                || *(&formattedUnicode.Data[300]) != 48) {
+                return 13;
+            }
+
+            if (!OwnedAsciiLength(System.Experimental.Text.ToAscii((i32[-2147483648 2147483647])-2147483648), 11)
+                || !OwnedAsciiLength(System.Experimental.Text.ToAscii(System.Experimental.Text.Encoding.Binary), 6)
+                || !OwnedUnicodeLength(System.Experimental.Text.ToUnicode((u96[0 max])((2**96) - 1)), 29)
+                || !OwnedUnicodeLength(System.Experimental.Text.ToUnicode(System.Experimental.Text.TextError.Overflow), 8)) {
+                return 14;
+            }
+
+            stack mut Unicode unicodeBuffer = new Unicode() {
+                Data = &unicodeStorage[0],
+                Length = 0,
+                Capacity = 320
+            };
+            if (!System.Experimental.Text.TryConvertAsciiToUnicode(&unicodeBuffer, "caf\u00E9")
+                || unicodeBuffer.Length != 4
+                || *(&unicodeBuffer.Data[3]) != 233) {
+                return 15;
+            }
+
+            stack mut System.Experimental.Text.OwnedAscii tooLarge = new();
+            if (!Ok(tooLarge.AppendByte((i8[-128 127])65))
+                || !TooLargeStatus(tooLarge.Reserve((i64[0 max])((2**63) - 1)))
+                || !TooLargeAsciiResult(System.Experimental.Text.ConcatAscii("x", (i64[0 max])((2**63) - 1), System.Experimental.Text.ToAscii((i32[-2147483648 2147483647])1)))) {
+                return 16;
+            }
+
+            return 0;
+        }
+        """;
+
     [Fact]
     public void StdLibSourceTextBuiltinsAndPathHelperSurfaceCompile() => _suite.StdLibSourceTextBuiltinsAndPathHelperSurfaceCompile();
+
+    [Fact]
+    public void StdLibSourceExperimentalTextLowersThroughDynamicStorage()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibExperimentalTextLowering.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System.Experimental.Text
+                import System.Memory
+                module Demo
+
+                fn bool Ok(System.Memory.MemoryStatus status) {
+                    switch (status) {
+                        case System.Memory.MemoryStatus.Ok:
+                            return true;
+                        case System.Memory.MemoryStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn i64[0 max] GrowAndRead() {
+                    stack mut System.Experimental.Text.OwnedAscii text = new();
+                    if (!Ok(text.Reserve(8)) || !Ok(text.AppendAscii("abc")) || !Ok(text.AppendI64(42))) {
+                        return 0;
+                    }
+
+                    stack i8[-128 127][] view = text.AsSlice();
+                    return (i64[0 max])view[4];
+                }
+                """,
+                appPath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                StopAfterPassId: "emit-llvm",
+                OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+        Assert.NotNull(llvm);
+        Assert.DoesNotContain("; LLVM body emission fallback", llvm.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("@malloc(", llvm.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("@realloc(", llvm.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("@free(", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("@__stark_runtime_try_realloc", llvm.Text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceExperimentalTextAppendsUseTailRegionMemoryHelpers()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var modulePath = Path.Combine(sourceRoot, "System", "Experimental", "Text.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(File.ReadAllText(modulePath), modulePath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                EmitLlvmIr: true,
+                OptimizationLevel: CompilerOptimizationLevel.O3));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+        var asciiSliceBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @OwnedAscii_AppendSlice(",
+            "Expected OwnedAscii.AppendSlice to lower as a defined function.");
+        var asciiLiteralBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @OwnedAscii_AppendAscii(",
+            "Expected OwnedAscii.AppendAscii to lower as a defined function.");
+        var unicodeSliceBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @OwnedUnicode_AppendSlice(",
+            "Expected OwnedUnicode.AppendSlice to lower as a defined function.");
+        var unicodeLiteralBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @OwnedUnicode_AppendUnicode(",
+            "Expected OwnedUnicode.AppendUnicode to lower as a defined function.");
+        var asciiSliceDisjointBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @OwnedAscii_AppendSliceDisjoint(",
+            "Expected OwnedAscii.AppendSliceDisjoint to lower as a defined function.");
+        var asciiLiteralDisjointBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @OwnedAscii_AppendAsciiDisjoint(",
+            "Expected OwnedAscii.AppendAsciiDisjoint to lower as a defined function.");
+        var asciiConstBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @OwnedAscii_AppendConstAscii(",
+            "Expected OwnedAscii.AppendConstAscii to lower as a defined function.");
+        var asciiConstDisjointBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @OwnedAscii_AppendConstAsciiDisjoint(",
+            "Expected OwnedAscii.AppendConstAsciiDisjoint to lower as a defined function.");
+        var unicodeSliceDisjointBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @OwnedUnicode_AppendSliceDisjoint(",
+            "Expected OwnedUnicode.AppendSliceDisjoint to lower as a defined function.");
+        var unicodeLiteralDisjointBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @OwnedUnicode_AppendUnicodeDisjoint(",
+            "Expected OwnedUnicode.AppendUnicodeDisjoint to lower as a defined function.");
+        var unicodeConstBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @OwnedUnicode_AppendConstUnicode(",
+            "Expected OwnedUnicode.AppendConstUnicode to lower as a defined function.");
+        var unicodeConstDisjointBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Memory_MemoryStatus @OwnedUnicode_AppendConstUnicodeDisjoint(",
+            "Expected OwnedUnicode.AppendConstUnicodeDisjoint to lower as a defined function.");
+
+        Assert.Contains("@OwnedAscii_AppendSliceDisjoint", asciiSliceBody, StringComparison.Ordinal);
+        Assert.Contains("@OwnedAscii_AppendAsciiDisjoint", asciiLiteralBody, StringComparison.Ordinal);
+        Assert.Contains("@OwnedAscii_AppendConstAsciiDisjoint", asciiConstBody, StringComparison.Ordinal);
+        Assert.Contains("@OwnedUnicode_AppendSliceDisjoint", unicodeSliceBody, StringComparison.Ordinal);
+        Assert.Contains("@OwnedUnicode_AppendUnicodeDisjoint", unicodeLiteralBody, StringComparison.Ordinal);
+        Assert.Contains("@OwnedUnicode_AppendConstUnicodeDisjoint", unicodeConstBody, StringComparison.Ordinal);
+
+        Assert.Contains("@System_Experimental_Memory_InitializeBytesDisjoint", asciiSliceDisjointBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Experimental_Memory_InitializeBytesFromPointerDisjoint", asciiLiteralDisjointBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Experimental_Memory_InitializeBytesFromPointerDisjoint", asciiConstDisjointBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Experimental_Memory_InitializeCodePointsDisjoint", unicodeSliceDisjointBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Experimental_Memory_InitializeCodePointsFromPointerDisjoint", unicodeLiteralDisjointBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Experimental_Memory_InitializeCodePointsFromPointerDisjoint", unicodeConstDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("slot_snapshot", asciiSliceDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("slot_snapshot", asciiLiteralDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("slot_snapshot", asciiConstDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("slot_snapshot", unicodeSliceDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("slot_snapshot", unicodeLiteralDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("slot_snapshot", unicodeConstDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("icmp ule ptr", asciiSliceDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("icmp ule ptr", asciiLiteralDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("icmp ule ptr", asciiConstDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("icmp ule ptr", unicodeSliceDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("icmp ule ptr", unicodeLiteralDisjointBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("icmp ule ptr", unicodeConstDisjointBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceExperimentalWideUnicodeIntegerFormattingWritesUnicodeDirectly()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var modulePath = Path.Combine(sourceRoot, "System", "Experimental", "Text.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(File.ReadAllText(modulePath), modulePath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                EmitLlvmIr: true,
+                OptimizationLevel: CompilerOptimizationLevel.O3));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+        var i1024Body = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i1 @TryFormatI1024Unicode(",
+            "Expected TryFormatI1024Unicode to lower as a defined function.");
+        var u1024Body = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i1 @TryFormatU1024Unicode(",
+            "Expected TryFormatU1024Unicode to lower as a defined function.");
+        var i128Body = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i1 @TryFormatI128Unicode(",
+            "Expected TryFormatI128Unicode to lower as a defined function.");
+        var u128Body = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i1 @TryFormatU128Unicode(",
+            "Expected TryFormatU128Unicode to lower as a defined function.");
+
+        Assert.Contains("@TryFormatSignedU1024Unicode", i1024Body, StringComparison.Ordinal);
+        Assert.Contains("@TryFormatSignedU1024Unicode", u1024Body, StringComparison.Ordinal);
+        Assert.Contains("@TryFormatSignedU128Unicode", i128Body, StringComparison.Ordinal);
+        Assert.Contains("@TryFormatSignedU128Unicode", u128Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("@TryFormatI1024Ascii", i1024Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("@TryFormatU1024Ascii", u1024Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("@TryFormatI128Ascii", i128Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("@TryFormatU128Ascii", u128Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("@TryConvertAsciiToUnicode", i1024Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("@TryConvertAsciiToUnicode", u1024Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("@TryConvertAsciiToUnicode", i128Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("@TryConvertAsciiToUnicode", u128Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("alloca [309 x i8]", u1024Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("alloca [39 x i8]", u128Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceExperimentalTextEncodingHelpersUseBoundedRawPointerRegions()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var modulePath = Path.Combine(repositoryRoot, "stdlib", "src", "System", "Experimental", "Text.stark");
+        var source = File.ReadAllText(modulePath);
+
+        Assert.Contains("rawptr<i8[-128 127]>[length] data", source, StringComparison.Ordinal);
+        Assert.Contains("rawmutptr<i8[-128 127]>[capacity] destination", source, StringComparison.Ordinal);
+        Assert.Contains("rawmutptr<i16[-32768 32767]>[capacity] destination", source, StringComparison.Ordinal);
+        Assert.Contains("rawptr<i16[-32768 32767]>[sourceLength] source", source, StringComparison.Ordinal);
+        Assert.Contains("where disjoint(source, destination[0, capacity])", source, StringComparison.Ordinal);
+        Assert.Contains("decoded = TryDecodeUtf8CodePoint", source, StringComparison.Ordinal);
+    }
 
     [Fact]
     public async Task PackagedStdLibTryFormatSurfaceCanBeConsumedWithoutSource()
@@ -385,6 +1018,65 @@ public sealed class SystemTextStandardLibraryTests
                 new CompilerOptions(ModuleResolver: new FileSystemModuleResolver(packageDirectory)));
 
             Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task SourceStdLibExperimentalTextExecutableRuns()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-experimental-text-");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(appPath, ExperimentalTextProgram);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(exitCode == 0, stdout + Environment.NewLine + stderr);
+            Assert.True(File.Exists(outputPath));
+
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = outputPath,
+                WorkingDirectory = tempDirectory.FullName,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+
+            Assert.NotNull(process);
+            await process!.WaitForExitAsync();
+
+            Assert.Equal(0, process.ExitCode);
+            Assert.Equal(string.Empty, await process.StandardOutput.ReadToEndAsync());
+            Assert.Equal(string.Empty, await process.StandardError.ReadToEndAsync());
         }
         finally
         {
@@ -1424,5 +2116,34 @@ public sealed class SystemTextStandardLibraryTests
         }
 
         throw new InvalidOperationException("Unable to locate the Stark repository root for stdlib integration tests.");
+    }
+
+    private static string ExtractDefinedFunctionText(string llvm, string signaturePrefix, string missingMessage)
+    {
+        var functionStart = llvm.IndexOf(signaturePrefix, StringComparison.Ordinal);
+        Assert.True(functionStart >= 0, missingMessage);
+
+        var bodyStart = llvm.IndexOf('{', functionStart);
+        Assert.True(bodyStart > functionStart, $"Expected '{signaturePrefix}' to include a function body.");
+
+        var depth = 0;
+        for (var index = bodyStart; index < llvm.Length; index++)
+        {
+            var current = llvm[index];
+            if (current == '{')
+            {
+                depth++;
+            }
+            else if (current == '}')
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    return llvm.Substring(functionStart, index - functionStart + 1);
+                }
+            }
+        }
+
+        throw new Xunit.Sdk.XunitException($"Expected '{signaturePrefix}' body to terminate in emitted LLVM.");
     }
 }

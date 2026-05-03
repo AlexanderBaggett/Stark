@@ -192,18 +192,29 @@ internal sealed partial class MidLevelIrLowerer
                 DefaultTarget: resolvedDefaultTarget,
                 BranchWeights: CreateSwitchBranchWeights(switchStatement.weightSpecifier(), switchCases.Count));
 
+            var switchEntryDropStates = SnapshotRuntimeDropStates();
+            var exitDropStates = new List<IReadOnlyDictionary<string, bool>>();
+            if (resolvedDefaultTarget == exitBlock.Id)
+            {
+                exitDropStates.Add(switchEntryDropStates);
+            }
+
             _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
             try
             {
                 foreach (var section in sections)
                 {
+                    RestoreRuntimeDropStates(switchEntryDropStates);
                     CurrentBlock = section.Block;
-                    foreach (var nested in section.Section.statement())
-                    {
-                        LowerStatement(nested);
-                    }
+                    LowerSwitchSectionStatements(section.Section, section.Labels, switchValue.Type);
+                    var sectionFallsThrough = !CurrentBlock.HasTerminator;
+                    var sectionDropStates = SnapshotRuntimeDropStates();
 
                     EnsureGoto(exitBlock.Id);
+                    if (sectionFallsThrough)
+                    {
+                        exitDropStates.Add(sectionDropStates);
+                    }
                 }
             }
             finally
@@ -211,6 +222,7 @@ internal sealed partial class MidLevelIrLowerer
                 _breakTargets.Pop();
             }
 
+            RestoreRuntimeDropStates(MergeRuntimeDropStates(exitDropStates, switchEntryDropStates));
             CurrentBlock = exitBlock;
             return true;
         }
@@ -324,18 +336,29 @@ internal sealed partial class MidLevelIrLowerer
                 }
             }
 
+            var switchEntryDropStates = SnapshotRuntimeDropStates();
+            var exitDropStates = new List<IReadOnlyDictionary<string, bool>>();
+            if (defaultTarget == exitBlock.Id)
+            {
+                exitDropStates.Add(switchEntryDropStates);
+            }
+
             _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
             try
             {
                 foreach (var section in sections)
                 {
+                    RestoreRuntimeDropStates(switchEntryDropStates);
                     CurrentBlock = section.Block;
-                    foreach (var nested in section.Section.statement())
-                    {
-                        LowerStatement(nested);
-                    }
+                    LowerSwitchSectionStatements(section.Section, [], switchValue.Type);
+                    var sectionFallsThrough = !CurrentBlock.HasTerminator;
+                    var sectionDropStates = SnapshotRuntimeDropStates();
 
                     EnsureGoto(exitBlock.Id);
+                    if (sectionFallsThrough)
+                    {
+                        exitDropStates.Add(sectionDropStates);
+                    }
                 }
             }
             finally
@@ -343,6 +366,7 @@ internal sealed partial class MidLevelIrLowerer
                 _breakTargets.Pop();
             }
 
+            RestoreRuntimeDropStates(MergeRuntimeDropStates(exitDropStates, switchEntryDropStates));
             CurrentBlock = exitBlock;
             return true;
         }
@@ -379,6 +403,8 @@ internal sealed partial class MidLevelIrLowerer
                 return false;
             }
 
+            var switchEntryDropStates = SnapshotRuntimeDropStates();
+            var bodyEntryDropStates = new Dictionary<int, Dictionary<string, bool>>();
             if (sections.Length == 0)
             {
                 CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [defaultTarget]);
@@ -391,6 +417,7 @@ internal sealed partial class MidLevelIrLowerer
 
                 for (var index = 0; index < sections.Length; index++)
                 {
+                    RestoreRuntimeDropStates(switchEntryDropStates);
                     CurrentBlock = sections[index].EntryBlock;
                     var nextSectionTarget = index + 1 < sections.Length ? sections[index + 1].EntryBlock.Id : defaultTarget;
 
@@ -404,7 +431,15 @@ internal sealed partial class MidLevelIrLowerer
                     {
                         return false;
                     }
+
+                    bodyEntryDropStates[sections[index].BodyBlock.Id] = SnapshotRuntimeDropStates();
                 }
+            }
+
+            var exitDropStates = new List<IReadOnlyDictionary<string, bool>>();
+            if (defaultTarget == exitBlock.Id)
+            {
+                exitDropStates.Add(switchEntryDropStates);
             }
 
             _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
@@ -412,13 +447,20 @@ internal sealed partial class MidLevelIrLowerer
             {
                 foreach (var section in sections)
                 {
+                    RestoreRuntimeDropStates(
+                        bodyEntryDropStates.TryGetValue(section.BodyBlock.Id, out var bodyEntryDropState)
+                            ? bodyEntryDropState
+                            : switchEntryDropStates);
                     CurrentBlock = section.BodyBlock;
-                    foreach (var nested in section.Section.statement())
-                    {
-                        LowerStatement(nested);
-                    }
+                    LowerSwitchSectionStatements(section.Section, section.Labels, switchValue.Type);
+                    var sectionFallsThrough = !CurrentBlock.HasTerminator;
+                    var sectionDropStates = SnapshotRuntimeDropStates();
 
                     EnsureGoto(exitBlock.Id);
+                    if (sectionFallsThrough)
+                    {
+                        exitDropStates.Add(sectionDropStates);
+                    }
                 }
             }
             finally
@@ -426,8 +468,90 @@ internal sealed partial class MidLevelIrLowerer
                 _breakTargets.Pop();
             }
 
+            RestoreRuntimeDropStates(MergeRuntimeDropStates(exitDropStates, switchEntryDropStates));
             CurrentBlock = exitBlock;
             return true;
+        }
+
+        private void LowerSwitchSectionStatements(
+            StarkParser.SwitchSectionContext section,
+            IReadOnlyList<LowerableSwitchLabel> labels,
+            StarkTypeSymbol switchType)
+        {
+            _scopes.Push(new ScopeFrame());
+            TrackSwitchSectionCaptureLocals(labels, switchType);
+            _compileTimeConstantState.PushScope();
+
+            try
+            {
+                foreach (var nested in section.statement())
+                {
+                    LowerStatement(nested);
+                }
+            }
+            finally
+            {
+                _compileTimeConstantState.PopScope();
+            }
+
+            var scope = _scopes.Pop();
+            EmitStorageDead(scope);
+            RestoreScopedNameAliases(scope);
+        }
+
+        private void TrackSwitchSectionCaptureLocals(IReadOnlyList<LowerableSwitchLabel> labels, StarkTypeSymbol switchType)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var label in labels)
+            {
+                if (label.CaptureName is { } captureName)
+                {
+                    TrackSwitchSectionCaptureLocal(captureName, switchType, seen);
+                }
+
+                if (label.AggregatePattern is { } aggregatePattern)
+                {
+                    TrackAggregatePatternCaptureLocals(aggregatePattern, switchType, seen);
+                }
+            }
+        }
+
+        private void TrackAggregatePatternCaptureLocals(
+            LowerableAggregatePattern aggregatePattern,
+            StarkTypeSymbol aggregateValueType,
+            HashSet<string> seen)
+        {
+            if (aggregatePattern.WholeCaptureName is { } wholeCaptureName)
+            {
+                TrackSwitchSectionCaptureLocal(wholeCaptureName, aggregateValueType, seen);
+            }
+
+            foreach (var fieldPattern in aggregatePattern.FieldPatterns)
+            {
+                if (fieldPattern.Kind == AggregatePatternFieldKind.Capture && fieldPattern.CaptureName is not null)
+                {
+                    TrackSwitchSectionCaptureLocal(fieldPattern.CaptureName, fieldPattern.FieldType, seen);
+                    continue;
+                }
+
+                if (fieldPattern.Kind == AggregatePatternFieldKind.Nested && fieldPattern.NestedPattern is not null)
+                {
+                    TrackAggregatePatternCaptureLocals(fieldPattern.NestedPattern, fieldPattern.FieldType, seen);
+                }
+            }
+        }
+
+        private void TrackSwitchSectionCaptureLocal(string name, StarkTypeSymbol type, HashSet<string> seen)
+        {
+            if (!seen.Add(name))
+            {
+                return;
+            }
+
+            var trackedType = _localsByName.TryGetValue(name, out var local)
+                ? local.Type
+                : type;
+            TrackDeclaredLocal(name, trackedType);
         }
 
         private bool EmitSwitchSectionDecisionCore(
@@ -1238,6 +1362,7 @@ internal sealed partial class MidLevelIrLowerer
                 }
 
                 RegisterLocal(captureName, switchType, storageClass: "match", isMutable: false, isConstant: false);
+                InitializeRuntimeDropState(captureName, switchType, isActive: false);
             }
 
             return true;
@@ -1253,6 +1378,7 @@ internal sealed partial class MidLevelIrLowerer
                 }
 
                 RegisterLocal(wholeCaptureName, aggregateValueType, storageClass: "match", isMutable: false, isConstant: false);
+                InitializeRuntimeDropState(wholeCaptureName, aggregateValueType, isActive: false);
             }
 
             foreach (var fieldPattern in aggregatePattern.FieldPatterns)
@@ -1267,6 +1393,7 @@ internal sealed partial class MidLevelIrLowerer
                     }
 
                     RegisterLocal(fieldPattern.CaptureName, fieldPattern.FieldType, storageClass: "match", isMutable: false, isConstant: false);
+                    InitializeRuntimeDropState(fieldPattern.CaptureName, fieldPattern.FieldType, isActive: false);
                     continue;
                 }
 
@@ -1401,7 +1528,10 @@ internal sealed partial class MidLevelIrLowerer
                 var fieldValue = LowerKnownFieldAccess(switchValue, fieldPattern.StorageFieldName, fieldPattern.FieldIndex, fieldPattern.FieldType, fieldPattern.FieldName);
                 if (fieldPattern.Kind == AggregatePatternFieldKind.Capture)
                 {
-                    bindings.Add(new PendingSwitchBinding(fieldPattern.CaptureName!, fieldValue));
+                    bindings.Add(new PendingSwitchBinding(
+                        fieldPattern.CaptureName!,
+                        fieldValue,
+                        RequiresRuntimeDrop(fieldPattern.FieldType) ? switchValue : null));
                     CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [nextTarget]);
                     continue;
                 }
@@ -1464,7 +1594,13 @@ internal sealed partial class MidLevelIrLowerer
             foreach (var binding in bindings)
             {
                 var capture = new MidLevelIrLocalOperand(binding.Name, binding.Source.Type);
+                Emit(MidLevelIrStatementKind.StorageLive, binding.Name, binding.Name, binding.Source.Type);
                 EmitOperandAssignment(capture, binding.Source, binding.Source.Text);
+                SetRuntimeDropState(binding.Name, isActive: true);
+                if (binding.RuntimeMoveSource is not null)
+                {
+                    RecordMoveFromOperand(binding.RuntimeMoveSource, binding.RuntimeMoveSource.Type);
+                }
             }
 
             if (guardExpression is null && importedGuardExpression is null)

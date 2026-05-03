@@ -329,7 +329,7 @@ internal sealed class LlvmGlobalInitializerPlanner
             StarkTypeKind.Float => "0.0",
             StarkTypeKind.Bool => "false",
             StarkTypeKind.RawPointer or StarkTypeKind.FunctionPointer => "null",
-            StarkTypeKind.Ascii or StarkTypeKind.Unicode or StarkTypeKind.FixedArray or StarkTypeKind.Slice or StarkTypeKind.Named => "zeroinitializer",
+            StarkTypeKind.Ascii or StarkTypeKind.Unicode or StarkTypeKind.FixedArray or StarkTypeKind.Slice or StarkTypeKind.Dynamic or StarkTypeKind.Named => "zeroinitializer",
             _ => "zeroinitializer"
         };
     }

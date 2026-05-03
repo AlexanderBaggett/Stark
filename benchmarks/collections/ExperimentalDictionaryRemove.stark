@@ -1,0 +1,40 @@
+import System.Experimental.Collections
+import System.Memory
+module Benchmarks.Collections.ExperimentalDictionaryRemove
+
+finite law bool Ok(MemoryStatus status) {
+    switch (status) {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+export ffi fn i32[min max] main() {
+    stack mut System.Experimental.Collections.Dictionary<i32[0 max], i32[0 max]> values = new();
+    if (!Ok(values.Reserve(4096))) {
+        return 1;
+    }
+
+    for willexit (stack mut i32[0 4096] i = 0; i < 4096; i += 1) {
+        if (!Ok(values.Set(i, i))) {
+            return 2;
+        }
+    }
+
+    stack mut i64[min max] checksum = 0;
+    for willexit (stack mut i32[0 4096] i = 0; i < 4096; i += 1) {
+        if (!values.Remove(i)) {
+            return 3;
+        }
+
+        checksum += (i64[min max])i;
+    }
+
+    if (!values.IsEmpty() || values.Count() != 0) {
+        return 4;
+    }
+
+    return checksum == 8386560 ? 0 : 5;
+}

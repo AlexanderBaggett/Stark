@@ -92,6 +92,14 @@ internal static class TypeCompatibilityFacts
                 && CanAssign(target.ElementType, source.ElementType);
         }
 
+        if (target.Kind == StarkTypeKind.Dynamic && source.Kind == StarkTypeKind.Dynamic)
+        {
+            return target.ElementType is not null
+                && source.ElementType is not null
+                && CanAssign(target.ElementType, source.ElementType)
+                && CanAssign(source.ElementType, target.ElementType);
+        }
+
         return target.Kind == StarkTypeKind.Named
             && source.Kind == StarkTypeKind.Named
             && string.Equals(target.NamedType, source.NamedType, StringComparison.Ordinal);

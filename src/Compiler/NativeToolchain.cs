@@ -299,7 +299,7 @@ internal static class NativeToolchain
 
             AppendOptimizationArgument(startInfo.ArgumentList, optimizationLevel);
             AppendCompileLtoArguments(startInfo.ArgumentList, compileOnly && enableLto);
-            AppendStarkLlvmIrCompileStabilityArguments(startInfo.ArgumentList, optimizationLevel, compileOnly && enableLto);
+            AppendStarkLlvmIrCompileStabilityArguments(startInfo.ArgumentList, llvmIr, optimizationLevel, compileOnly && enableLto);
             AppendTargetCodegenArguments(startInfo.ArgumentList, targetInfo, compileOnly);
             startInfo.ArgumentList.Add(llvmPath);
             startInfo.ArgumentList.Add("-o");
@@ -598,10 +598,13 @@ internal static class NativeToolchain
 
     private static void AppendStarkLlvmIrCompileStabilityArguments(
         ICollection<string> arguments,
+        string llvmIr,
         CompilerOptimizationLevel optimizationLevel,
         bool enableLto)
     {
-        if (optimizationLevel == CompilerOptimizationLevel.O0 || enableLto)
+        if (optimizationLevel == CompilerOptimizationLevel.O0
+            || enableLto
+            || RequiresNormalLlvmPassesForImportedInlineBodies(llvmIr))
         {
             return;
         }
@@ -614,6 +617,13 @@ internal static class NativeToolchain
         // passes there can produce incorrect cross-module optimization.
         arguments.Add("-Xclang");
         arguments.Add("-disable-llvm-passes");
+    }
+
+    private static bool RequiresNormalLlvmPassesForImportedInlineBodies(string llvmIr)
+    {
+        // Imported inline body clones intentionally hand loop-heavy inlining to
+        // LLVM; without the always-inliner pass they remain ordinary calls.
+        return llvmIr.Contains("__stark_inline_clone_", StringComparison.Ordinal);
     }
 
     private static void AppendCompileLtoArguments(ICollection<string> arguments, bool enableLto)

@@ -202,7 +202,9 @@ internal sealed class StarkTypeResolver
             return StarkTypeSymbols.Named(qualifiedName);
         }
 
-        if (_namedTypes.ContainsKey(qualifiedName))
+        if (!qualifiedName.Contains('.', StringComparison.Ordinal)
+            && string.Equals(currentModuleName, _moduleGraph.RootModuleName, StringComparison.Ordinal)
+            && _namedTypes.ContainsKey(qualifiedName))
         {
             return StarkTypeSymbols.Named(qualifiedName);
         }
@@ -234,6 +236,11 @@ internal sealed class StarkTypeResolver
             }
         }
 
+        if (_namedTypes.ContainsKey(qualifiedName))
+        {
+            return StarkTypeSymbols.Named(qualifiedName);
+        }
+
         if (TryResolveTypeAlias(qualifiedName, currentModuleName, token, typeArguments: null, out var aliasType))
         {
             return aliasType;
@@ -256,6 +263,12 @@ internal sealed class StarkTypeResolver
 
     private StarkTypeSymbol ResolveNonArrayType(StarkParser.NonArrayTypeContext type, ISet<string>? genericParameters, string? currentModuleName)
     {
+        if (type.dynamicType() is { } dynamicType)
+        {
+            var elementType = ResolveType(dynamicType.type_(), genericParameters, currentModuleName);
+            return StarkTypeSymbols.Dynamic(elementType);
+        }
+
         if (type.rawPointerType() is { } rawPointerType)
         {
             var elementType = ResolveType(rawPointerType.type_(), genericParameters, currentModuleName);
@@ -1088,6 +1101,7 @@ internal sealed class StarkTypeResolver
                 StarkTypeKind.FixedArray => StarkTypeSymbols.FixedArray(substitutedElement, coreType.FixedLength),
                 StarkTypeKind.Slice => StarkTypeSymbols.Slice(substitutedElement),
                 StarkTypeKind.RawPointer => StarkTypeSymbols.RawPointer(substitutedElement, coreType.IsMutablePointer),
+                StarkTypeKind.Dynamic => StarkTypeSymbols.Dynamic(substitutedElement),
                 _ => coreType
             };
         }

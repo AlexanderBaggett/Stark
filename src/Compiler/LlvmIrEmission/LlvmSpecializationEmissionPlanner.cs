@@ -9,6 +9,13 @@ internal sealed record ImportedLawClonePlan(
     FunctionEffectProfile Effects,
     SsaFunction SsaFunction);
 
+internal sealed record ImportedInlineBodyPlan(
+    string FunctionName,
+    TypedFunctionSignature Signature,
+    AbiFunctionSignature AbiSignature,
+    FunctionEffectProfile Effects,
+    SsaFunction SsaFunction);
+
 internal delegate IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? ResolveParameterEffectsDelegate(string functionName, bool hasBody);
 internal delegate FunctionMemoryEffectSummary? ResolveFunctionMemoryEffectsDelegate(string functionName, bool hasBody);
 internal delegate string BuildLlvmDeclarationSignatureDelegate(
@@ -356,6 +363,97 @@ internal static class LlvmSpecializationEmissionPlanner
         }
     }
 
+    public static IReadOnlyDictionary<string, ImportedInlineBodyPlan> BuildClosedWorldImportedInlineBodies(
+        LoadedModuleSet loadedModules,
+        SsaIrModule ssa,
+        SyntaxModel syntaxModel,
+        TypeCheckModel typeModel,
+        EnumLayoutModel enumLayoutModel,
+        IReadOnlyDictionary<string, FunctionEffectProfile> allFunctionEffects,
+        IReadOnlyDictionary<string, TypedFunctionSignature> allFunctionSignatures)
+    {
+        var importedDeclarations = CollectSourceBackedImportedFunctionDeclarations(loadedModules);
+        if (importedDeclarations.Count == 0)
+        {
+            return new Dictionary<string, ImportedInlineBodyPlan>(StringComparer.Ordinal);
+        }
+
+        var ssaByName = ssa.Functions.ToDictionary(static function => function.Name, StringComparer.Ordinal);
+        var callsByFunction = CollectCallsByFunction(ssa);
+        var recursiveImportedInlineFunctions = FindRecursiveFunctions(
+            callsByFunction,
+            functionName => IsPotentialImportedInlineBody(functionName, importedDeclarations, allFunctionEffects));
+        var rootFunctions = syntaxModel.Declarations
+            .Where(static declaration => declaration.Function is not null)
+            .Select(declaration => FunctionOverloadFacts.GetResolvedLocalName(syntaxModel, declaration))
+            .ToArray();
+        var clones = new Dictionary<string, ImportedInlineBodyPlan>(StringComparer.Ordinal);
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var pending = new Queue<string>();
+
+        foreach (var rootFunction in rootFunctions)
+        {
+            if (!callsByFunction.TryGetValue(rootFunction, out var callees))
+            {
+                continue;
+            }
+
+            foreach (var callee in callees)
+            {
+                EnqueueIfEligible(callee);
+            }
+        }
+
+        while (pending.Count != 0)
+        {
+            var functionName = pending.Dequeue();
+            if (clones.ContainsKey(functionName)
+                || !ssaByName.TryGetValue(functionName, out var ssaFunction)
+                || !allFunctionSignatures.TryGetValue(functionName, out var signature)
+                || !allFunctionEffects.TryGetValue(functionName, out var effects))
+            {
+                continue;
+            }
+
+            var cloneAbi = BuildSyntheticAbiSignature(
+                signature,
+                GetImportedInlineBodySymbolName(functionName),
+                isFfi: false,
+                typeModel.NamedTypes,
+                enumLayoutModel.Layouts);
+            clones[functionName] = new ImportedInlineBodyPlan(functionName, signature, cloneAbi, effects, ssaFunction);
+
+            if (!callsByFunction.TryGetValue(functionName, out var importedCallees))
+            {
+                continue;
+            }
+
+            foreach (var callee in importedCallees)
+            {
+                EnqueueIfEligible(callee);
+            }
+        }
+
+        return clones;
+
+        void EnqueueIfEligible(string functionName)
+        {
+            if (!visited.Add(functionName)
+                || !IsImportedInlineBodyEligible(
+                    functionName,
+                    importedDeclarations,
+                    ssaByName,
+                    recursiveImportedInlineFunctions,
+                    allFunctionEffects,
+                    allFunctionSignatures))
+            {
+                return;
+            }
+
+            pending.Enqueue(functionName);
+        }
+    }
+
     public static void LogSpecializationCodegenStrategies(
         CompilerLogBag? logs,
         SpecializationCodegenStrategyModel? specializationCodegenStrategy)
@@ -489,6 +587,32 @@ internal static class LlvmSpecializationEmissionPlanner
         return declarations;
     }
 
+    private static Dictionary<string, TopLevelDeclarationModel> CollectSourceBackedImportedFunctionDeclarations(LoadedModuleSet loadedModules)
+    {
+        var declarations = new Dictionary<string, TopLevelDeclarationModel>(StringComparer.Ordinal);
+
+        foreach (var module in loadedModules.ImportedModules.Where(IsSourceBackedImportedModule))
+        {
+            foreach (var declaration in module.SyntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
+            {
+                var qualifiedName = FunctionOverloadFacts.QualifyResolvedName(
+                    module,
+                    FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration));
+                declarations[qualifiedName] = declaration;
+            }
+        }
+
+        return declarations;
+    }
+
+    private static bool IsSourceBackedImportedModule(LoadedModuleDocument module)
+    {
+        return !module.Reference.IsRoot
+            && !module.Reference.IsExternal
+            && module.Reference.ManifestPath is null
+            && module.Reference.LibraryPath is null;
+    }
+
     private static FunctionEffectProfile BuildLawCloneEffectProfile(
         string functionName,
         IReadOnlyDictionary<string, FunctionEffectProfile> allFunctionEffects)
@@ -531,6 +655,40 @@ internal static class LlvmSpecializationEmissionPlanner
             && ssaByName.TryGetValue(functionName, out var ssaFunction)
             && ssaFunction.HasBody
             && IsClosedWorldLawCloneEnabled(functionName, closedWorldModel)
+            && ssaFunction.SupportsDirectCodeGeneration;
+    }
+
+    private static bool IsPotentialImportedInlineBody(
+        string functionName,
+        IReadOnlyDictionary<string, TopLevelDeclarationModel> importedDeclarations,
+        IReadOnlyDictionary<string, FunctionEffectProfile> allFunctionEffects)
+    {
+        return importedDeclarations.TryGetValue(functionName, out var declaration)
+            && declaration.Function is { HasBody: true } function
+            && function.BackendOptimizationMode != ModuleBackendOptimizationMode.Opaque
+            && !function.Modifiers.IsFfi
+            && !function.Modifiers.IsCold
+            && function.Modifiers.InlinePreference != InlinePreference.NoInline
+            && allFunctionEffects.TryGetValue(functionName, out var effects)
+            && effects.BackendOptimizationMode != ModuleBackendOptimizationMode.Opaque
+            && !effects.IsFfi
+            && !effects.IsCold
+            && effects.InlinePreference == InlinePreference.Inline;
+    }
+
+    private static bool IsImportedInlineBodyEligible(
+        string functionName,
+        IReadOnlyDictionary<string, TopLevelDeclarationModel> importedDeclarations,
+        IReadOnlyDictionary<string, SsaFunction> ssaByName,
+        ISet<string> recursiveImportedInlineFunctions,
+        IReadOnlyDictionary<string, FunctionEffectProfile> allFunctionEffects,
+        IReadOnlyDictionary<string, TypedFunctionSignature> allFunctionSignatures)
+    {
+        return IsPotentialImportedInlineBody(functionName, importedDeclarations, allFunctionEffects)
+            && !recursiveImportedInlineFunctions.Contains(functionName)
+            && allFunctionSignatures.ContainsKey(functionName)
+            && ssaByName.TryGetValue(functionName, out var ssaFunction)
+            && ssaFunction.HasBody
             && ssaFunction.SupportsDirectCodeGeneration;
     }
 
@@ -660,6 +818,11 @@ internal static class LlvmSpecializationEmissionPlanner
     private static string GetImportedLawCloneSymbolName(string functionName)
     {
         return $"__stark_law_clone_{functionName}";
+    }
+
+    private static string GetImportedInlineBodySymbolName(string functionName)
+    {
+        return $"__stark_inline_clone_{functionName}";
     }
 
     private enum VisitState

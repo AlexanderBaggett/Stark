@@ -357,7 +357,11 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("call i64 @LinuxSyscall3Integers(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i64 @LinuxSyscall3HandleBuffer(", llvm, StringComparison.Ordinal);
         Assert.Contains("call fastcc void @WriteTcpIPv4Sockaddr(", llvm, StringComparison.Ordinal);
-        Assert.Contains("call fastcc i32 @CloseSocket(", llvm, StringComparison.Ordinal);
+        var connectBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef ptr @ConnectTcpIPv4(",
+            "Expected Linux ConnectTcpIPv4 definition.");
+        Assert.Contains("call fastcc i32 @CloseFile(", connectBody, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -435,7 +439,11 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("call i64 @LinuxSyscall2HandleInteger(", llvm, StringComparison.Ordinal);
         Assert.Contains("@LinuxBindSyscallNumber", llvm, StringComparison.Ordinal);
         Assert.Contains("@LinuxListenSyscallNumber", llvm, StringComparison.Ordinal);
-        Assert.Contains("call fastcc i32 @CloseSocket(", llvm, StringComparison.Ordinal);
+        var listenBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef ptr @ListenTcpIPv4(",
+            "Expected Linux ListenTcpIPv4 definition.");
+        Assert.Contains("call fastcc i32 @CloseFile(", listenBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@bind(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@listen(", llvm, StringComparison.Ordinal);
     }
@@ -492,6 +500,7 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
 
         Assert.Contains("declare i32 @WSAStartup(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @WSAGetLastError(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @InitOnceExecuteOnce(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare ptr @WSASocketW(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @connect(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @bind(", llvm, StringComparison.Ordinal);
@@ -499,18 +508,26 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("declare ptr @accept(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @recv(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @send(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @WSARecv(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @WSASend(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @shutdown(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @closesocket(", llvm, StringComparison.Ordinal);
 
+        Assert.Contains("%WinSocketBuffer = type { i32, ptr }", llvm, StringComparison.Ordinal);
+        Assert.Contains("%WinInitOnce = type { ptr }", llvm, StringComparison.Ordinal);
+        Assert.Contains("@WinSockInitOnce = global %WinInitOnce { ptr null }", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef ptr @ConnectTcpIPv4(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef ptr @ListenTcpIPv4(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef ptr @AcceptSocket(", llvm, StringComparison.Ordinal);
         Assert.Matches(@"define fastcc noundef(?: range\([^)]*\))? i64 @ReadSocket\(", llvm);
         Assert.Matches(@"define fastcc noundef(?: range\([^)]*\))? i64 @WriteSocket\(", llvm);
+        Assert.Matches(@"define fastcc noundef(?: range\([^)]*\))? i64 @ReadSocketVector2\(", llvm);
+        Assert.Matches(@"define fastcc noundef(?: range\([^)]*\))? i64 @WriteSocketVector2\(", llvm);
         Assert.Contains("define fastcc noundef i32 @ShutdownSocket(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @CloseSocket(", llvm, StringComparison.Ordinal);
 
         Assert.Contains("call i32 @WSAStartup(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @InitOnceExecuteOnce(", llvm, StringComparison.Ordinal);
         Assert.Contains("call ptr @WSASocketW(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @connect(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @bind(", llvm, StringComparison.Ordinal);
@@ -518,6 +535,8 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("call ptr @accept(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @recv(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @send(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @WSARecv(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i32 @WSASend(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @shutdown(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @closesocket(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@LinuxSyscall", llvm, StringComparison.Ordinal);

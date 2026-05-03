@@ -288,6 +288,7 @@ internal sealed class DebugMetadataEmitter
             StarkTypeKind.RawPointer or StarkTypeKind.FunctionPointer => CreatePointerTypeRef(type),
             StarkTypeKind.FixedArray => CreateFixedArrayTypeRef(type),
             StarkTypeKind.Slice => CreateOpaqueCompositeTypeRef(type.DisplayName, type),
+            StarkTypeKind.Dynamic => CreateOpaqueCompositeTypeRef(type.DisplayName, type),
             StarkTypeKind.Ascii => CreateOpaqueCompositeTypeRef(type.DisplayName, type),
             StarkTypeKind.Unicode => CreateOpaqueCompositeTypeRef(type.DisplayName, type),
             StarkTypeKind.Named => CreateOpaqueCompositeTypeRef(type.DisplayName, type),

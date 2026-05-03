@@ -21,7 +21,7 @@ internal sealed class SemanticValidator
     private readonly StarkTypeResolver _typeResolver;
     private readonly Dictionary<string, TopLevelDeclarationModel> _syntaxDeclarations;
     private readonly Dictionary<string, DeclaredFunctionSyntax> _functionDeclarations;
-    private readonly IReadOnlyDictionary<ObjectCreationKey, TypedConstructorShape?> _objectCreationConstructors;
+    private readonly IReadOnlyDictionary<ObjectCreationKey, ObjectCreationTypingRecord> _objectCreations;
     private readonly Dictionary<string, FunctionValidationBuilder> _summaries = new(StringComparer.Ordinal);
     private ISet<string>? _currentFunctionGenericParameters;
     private string? _currentFunctionName;
@@ -56,9 +56,9 @@ internal sealed class SemanticValidator
             StringComparer.Ordinal);
         _functionDeclarations = DeclaredFunctionSyntaxCollector.Collect(parseResult, syntaxModel)
             .ToDictionary(static declaration => declaration.Name, StringComparer.Ordinal);
-        _objectCreationConstructors = typeModel.ObjectCreations
+        _objectCreations = typeModel.ObjectCreations
             .GroupBy(static record => new ObjectCreationKey(record.ExpressionText, record.Location.Line, record.Location.Column))
-            .ToDictionary(static group => group.Key, static group => group.Last().Constructor);
+            .ToDictionary(static group => group.Key, static group => group.Last());
     }
 
     public SemanticValidationModel Validate()
@@ -951,6 +951,10 @@ internal sealed class SemanticValidator
             if (expectedType is not null)
             {
                 ValidateRegisterStorageBackedUse(value, expectedType, expression);
+                if (expectedType.Kind == StarkTypeKind.Dynamic)
+                {
+                    RecordDynamicStorageRuntimeEffects(function, effects, summary, expression);
+                }
             }
 
             return HasConstProvenance(value);
@@ -1083,6 +1087,43 @@ internal sealed class SemanticValidator
         bool allowFunctionReference,
         ExpressionObservation observation)
     {
+        if (expression.INIT() is not null
+            && expression.ASSIGN() is not null
+            && expression.assignmentOperator() is null)
+        {
+            var initLeft = EvaluateUnaryExpression(
+                expression.unaryExpression(),
+                scope,
+                function,
+                effects,
+                summary,
+                allowFunctionReference: true,
+                ExpressionObservation.WriteTarget);
+            var initType = StarkTypeSymbols.WithQualifiers(initLeft.Type, initializationKind: StarkInitializationKind.Init);
+            var initTarget = initLeft with { Type = initType, IsAssignable = true };
+            _ = EvaluateAssignmentExpression(
+                expression.assignmentExpression(),
+                scope,
+                function,
+                effects,
+                summary,
+                allowFunctionReference: false,
+                ExpressionObservation.Read);
+
+            RecordObservedMemoryWrite(initTarget, summary);
+            if (IsVisibleMemoryWrite(initTarget))
+            {
+                summary.DisqualifyLaw();
+
+                if (effects.IsPure)
+                {
+                    EffectError(summary, "STK4104", $"Law '{function.Name}' cannot perform externally visible writes.", expression.unaryExpression());
+                }
+            }
+
+            return new ValidationValue(initTarget.Type);
+        }
+
         if (expression.conditionalExpression() is { } conditionalExpression)
         {
             return EvaluateConditionalExpression(conditionalExpression, scope, function, effects, summary, allowFunctionReference, observation);
@@ -1548,6 +1589,20 @@ internal sealed class SemanticValidator
             return CreateConvertedValidationValue(targetType, operand, expression);
         }
 
+        if (expression.INIT() is not null && expression.unaryOperator() is null)
+        {
+            var operand = EvaluateUnaryExpression(expression.unaryExpression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.WriteTarget);
+            return operand with
+            {
+                Type = StarkTypeSymbols.WithQualifiers(
+                    operand.Type,
+                    initializationKind: StarkInitializationKind.Init,
+                    isMutableView: operand.Type.Kind == StarkTypeKind.Slice || operand.Type.IsMutableView),
+                IsAssignable = true,
+                IsAddressMutable = true
+            };
+        }
+
         var op = expression.unaryOperator()?.GetText() ?? expression.GetChild(0).GetText();
 
         if (op == "&")
@@ -1602,8 +1657,10 @@ internal sealed class SemanticValidator
         var requiresCallableTarget = expression.postfixPart().Any(static part => part.argumentList() is not null);
         var binding = EvaluatePrimaryExpression(expression.primaryExpression(), scope, function, effects, summary, allowFunctionReference || requiresCallableTarget, observation);
 
-        foreach (var postfixPart in expression.postfixPart())
+        var postfixParts = expression.postfixPart();
+        for (var index = 0; index < postfixParts.Length; index++)
         {
+            var postfixPart = postfixParts[index];
             if (postfixPart.argumentList() is { } argumentList)
             {
                 binding = InvokeCall(binding, argumentList, scope, function, effects, summary);
@@ -1620,6 +1677,15 @@ internal sealed class SemanticValidator
                 continue;
             }
 
+            if (index + 1 < postfixParts.Length
+                && postfixParts[index + 1].argumentList() is { } memberArguments
+                && TryEvaluateDynamicStorageMemberCall(binding, postfixPart.Identifier().GetText(), memberArguments, scope, function, effects, summary, out var dynamicMemberCall))
+            {
+                binding = dynamicMemberCall;
+                index++;
+                continue;
+            }
+
             binding = ApplyMemberAccess(binding, postfixPart.Identifier().GetText());
         }
 
@@ -1629,6 +1695,89 @@ internal sealed class SemanticValidator
         }
 
         return binding;
+    }
+
+    private bool TryEvaluateDynamicStorageMemberCall(
+        ValidationValue receiver,
+        string memberName,
+        StarkParser.ArgumentListContext arguments,
+        ValidationScope scope,
+        FunctionDeclarationModel function,
+        FunctionEffectProfile effects,
+        FunctionValidationBuilder summary,
+        out ValidationValue result)
+    {
+        result = null!;
+        if (receiver.Type.Kind != StarkTypeKind.Dynamic)
+        {
+            return false;
+        }
+
+        var isReserve = string.Equals(memberName, "Reserve", StringComparison.Ordinal);
+        var isTryReserve = string.Equals(memberName, "TryReserve", StringComparison.Ordinal);
+        var isTryReserveCapacity = string.Equals(memberName, "TryReserveCapacity", StringComparison.Ordinal);
+        if (!isReserve && !isTryReserve && !isTryReserveCapacity)
+        {
+            if (!string.Equals(memberName, "MoveLast", StringComparison.Ordinal)
+                && !string.Equals(memberName, "MoveAt", StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            foreach (var argument in arguments.argument())
+            {
+                EvaluateExpression(
+                    argument.expression(),
+                    scope,
+                    function,
+                    effects,
+                    summary,
+                    allowFunctionReference: false,
+                    ExpressionObservation.Read);
+            }
+
+            RecordObservedMemoryRead(receiver, summary);
+            RecordObservedMemoryWrite(receiver, summary);
+            RecordDynamicStorageMutationEffects(function, effects, summary, arguments);
+            result = new ValidationValue(
+                receiver.Type.ElementType ?? StarkTypeSymbols.Error,
+                NamedType: ResolveNamedTypeSymbol(receiver.Type.ElementType ?? StarkTypeSymbols.Error));
+            return true;
+        }
+
+        foreach (var argument in arguments.argument())
+        {
+            EvaluateExpression(
+                argument.expression(),
+                scope,
+                function,
+                effects,
+                summary,
+                allowFunctionReference: false,
+                ExpressionObservation.Read);
+        }
+
+        RecordObservedMemoryRead(receiver, summary);
+        RecordObservedMemoryWrite(receiver, summary);
+        RecordDynamicStorageRuntimeEffects(function, effects, summary, arguments);
+        result = new ValidationValue(isReserve ? StarkTypeSymbols.Void : StarkTypeSymbols.Bool);
+        return true;
+    }
+
+    private void RecordDynamicStorageMutationEffects(
+        FunctionDeclarationModel function,
+        FunctionEffectProfile effects,
+        FunctionValidationBuilder summary,
+        ParserRuleContext context)
+    {
+        summary.DisqualifyLaw();
+        summary.MarkOtherMemoryRead();
+        summary.MarkOtherMemoryWrite();
+
+        if (effects.IsPure)
+        {
+            EffectError(summary, "STK4104", $"Law '{function.Name}' cannot mutate dynamic storage.", context);
+        }
     }
 
     private ValidationValue EvaluatePrimaryExpression(
@@ -1811,7 +1960,9 @@ internal sealed class SemanticValidator
     {
         var createdType = expression.type_() is { } explicitType
             ? ResolveType(explicitType)
-            : StarkTypeSymbols.Error;
+            : TryGetObjectCreationTyping(expression, out var objectCreationTyping)
+                ? objectCreationTyping.CreatedType
+                : StarkTypeSymbols.Error;
 
         if (expression.argumentList() is { } argumentList)
         {
@@ -1829,7 +1980,28 @@ internal sealed class SemanticValidator
             }
         }
 
+        if (createdType.Kind == StarkTypeKind.Dynamic)
+        {
+            RecordDynamicStorageRuntimeEffects(function, effects, summary, expression);
+        }
+
         return new ValidationValue(createdType, NamedType: ResolveNamedTypeSymbol(createdType));
+    }
+
+    private void RecordDynamicStorageRuntimeEffects(
+        FunctionDeclarationModel function,
+        FunctionEffectProfile effects,
+        FunctionValidationBuilder summary,
+        ParserRuleContext context)
+    {
+        summary.DisqualifyLaw();
+        summary.MarkOtherMemoryRead();
+        summary.MarkOtherMemoryWrite();
+
+        if (effects.IsPure)
+        {
+            EffectError(summary, "STK4104", $"Law '{function.Name}' cannot allocate or free dynamic storage.", context);
+        }
     }
 
     private ValidationValue EvaluateEnumConstructorExpression(
@@ -2393,7 +2565,101 @@ internal sealed class SemanticValidator
             BuildPendingCallArguments(target, argumentValues, receiverOffset, explicitParameterCount),
             arguments.Start));
 
-        return new ValidationValue(target.Function.ReturnType, NamedType: ResolveNamedTypeSymbol(target.Function.ReturnType));
+        return BuildCallReturnValue(target, argumentValues, receiverOffset, explicitParameterCount);
+    }
+
+    private ValidationValue BuildCallReturnValue(
+        ValidationValue target,
+        IReadOnlyList<ValidationValue> argumentValues,
+        int receiverOffset,
+        int explicitParameterCount)
+    {
+        if (target.Function is null)
+        {
+            return new ValidationValue(StarkTypeSymbols.Error);
+        }
+
+        var returnType = target.Function.ReturnType;
+        if (returnType.BorrowKind == StarkBorrowKind.None)
+        {
+            return new ValidationValue(returnType, NamedType: ResolveNamedTypeSymbol(returnType));
+        }
+
+        var returnedRoot = TryInferBorrowedCallReturnRoot(
+            target,
+            argumentValues,
+            receiverOffset,
+            explicitParameterCount);
+        if (returnedRoot is null)
+        {
+            return new ValidationValue(returnType, NamedType: ResolveNamedTypeSymbol(returnType));
+        }
+
+        var source = returnedRoot.Value;
+        var isAddressMutable = CanMutateReturnedBorrow(returnType, source.Value);
+        return new ValidationValue(
+            returnType,
+            IsAssignable: isAddressMutable && returnType.ElementType is null,
+            RootSymbol: source.Value.RootSymbol,
+            NamedType: ResolveNamedTypeSymbol(returnType),
+            IsIndirectStorageAccess: true,
+            IsAddressMutable: isAddressMutable,
+            UsesFrozenProjectionSemantics: UsesFrozenProjectionSemantics(source.Value)
+                || returnType.AccessKind == StarkAccessKind.Frozen,
+            HasConstProvenance: HasConstProvenance(source.Value));
+    }
+
+    private static (int ParameterIndex, ValidationValue Value)? TryInferBorrowedCallReturnRoot(
+        ValidationValue target,
+        IReadOnlyList<ValidationValue> argumentValues,
+        int receiverOffset,
+        int explicitParameterCount)
+    {
+        if (target.Function is null)
+        {
+            return null;
+        }
+
+        if (target.Receiver is { RootSymbol: not null } receiver
+            && target.Function.Parameters.Count != 0
+            && CanAliasCalleeParameterMemory(target.Function.Parameters[0].Type))
+        {
+            return (0, receiver);
+        }
+
+        (int ParameterIndex, ValidationValue Value)? candidate = null;
+        for (var index = 0; index < Math.Min(explicitParameterCount, argumentValues.Count); index++)
+        {
+            var parameterIndex = index + receiverOffset;
+            if (argumentValues[index].RootSymbol is null
+                || parameterIndex >= target.Function.Parameters.Count
+                || !CanAliasCalleeParameterMemory(target.Function.Parameters[parameterIndex].Type))
+            {
+                continue;
+            }
+
+            if (candidate is not null)
+            {
+                return null;
+            }
+
+            candidate = (parameterIndex, argumentValues[index]);
+        }
+
+        return candidate;
+    }
+
+    private static bool CanMutateReturnedBorrow(StarkTypeSymbol returnType, ValidationValue source)
+    {
+        if (returnType.AccessKind == StarkAccessKind.Frozen)
+        {
+            return false;
+        }
+
+        return source.IsAddressMutable
+            && (returnType.IsMutableView
+                || returnType.IsMutablePointer
+                || returnType.InitializationKind != StarkInitializationKind.None);
     }
 
     private void ValidatePendingCallArguments(
@@ -2513,6 +2779,35 @@ internal sealed class SemanticValidator
         FunctionEffectProfile effects,
         FunctionValidationBuilder summary)
     {
+        if (target.Type.Kind == StarkTypeKind.Dynamic && target.Type.ElementType is not null)
+        {
+            var indexExpressions = indexes.expression();
+            foreach (var indexExpression in indexExpressions)
+            {
+                EvaluateExpression(indexExpression, scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
+            }
+
+            var elementType = UsesFrozenProjectionSemantics(target)
+                ? StarkTypeSymbols.FreezeReachableView(target.Type.ElementType)
+                : ProjectFrozenView(target.Type, target.Type.ElementType);
+            var isAddressMutable = target.IsAddressMutable
+                && target.Type.AccessKind != StarkAccessKind.Frozen
+                && elementType.AccessKind != StarkAccessKind.Frozen;
+            var resultType = indexExpressions.Length == 2
+                ? StarkTypeSymbols.ApplyQualifiers(StarkTypeSymbols.Slice(elementType), isMutableView: isAddressMutable)
+                : elementType;
+            return new ValidationValue(
+                resultType,
+                IsAssignable: indexExpressions.Length == 1 && isAddressMutable,
+                RootSymbol: target.RootSymbol,
+                NamedType: ResolveNamedTypeSymbol(resultType),
+                IsIndirectStorageAccess: true,
+                IsAddressMutable: isAddressMutable,
+                UsesFrozenProjectionSemantics: UsesFrozenProjectionSemantics(target)
+                    || elementType.AccessKind == StarkAccessKind.Frozen,
+                HasConstProvenance: HasConstProvenance(target));
+        }
+
         if (target.Type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode)
         {
             foreach (var indexExpression in indexes.expression())
@@ -2650,6 +2945,24 @@ internal sealed class SemanticValidator
         if (TryApplyValueTextConversionMemberAccess(target, memberName, out var valueTextConversion))
         {
             return valueTextConversion;
+        }
+
+        if (target.Type.Kind == StarkTypeKind.Dynamic)
+        {
+            if (string.Equals(memberName, "Length", StringComparison.Ordinal)
+                || string.Equals(memberName, "Capacity", StringComparison.Ordinal))
+            {
+                return new ValidationValue(
+                    NonNegativeI64Type,
+                    RootSymbol: target.RootSymbol,
+                    NamedType: ResolveNamedTypeSymbol(NonNegativeI64Type),
+                    IsIndirectStorageAccess: true,
+                    IsAddressMutable: false,
+                    UsesFrozenProjectionSemantics: UsesFrozenProjectionSemantics(target),
+                    HasConstProvenance: HasConstProvenance(target));
+            }
+
+            return new ValidationValue(StarkTypeSymbols.Error);
         }
 
         var namedType = target.NamedType ?? ResolveNamedTypeSymbol(target.Type);
@@ -3038,7 +3351,8 @@ internal sealed class SemanticValidator
             return;
         }
 
-        if (value.RootSymbol.Origin == SymbolOrigin.Parameter && value.IsIndirectStorageAccess)
+        if (value.RootSymbol.Origin == SymbolOrigin.Parameter
+            && (value.IsIndirectStorageAccess || value.Type.Kind == StarkTypeKind.Dynamic))
         {
             summary.MarkParameterRead(value.RootSymbol.Name);
             return;
@@ -3057,7 +3371,8 @@ internal sealed class SemanticValidator
             return;
         }
 
-        if (value.RootSymbol.Origin == SymbolOrigin.Parameter && value.IsIndirectStorageAccess)
+        if (value.RootSymbol.Origin == SymbolOrigin.Parameter
+            && (value.IsIndirectStorageAccess || value.Type.Kind == StarkTypeKind.Dynamic))
         {
             summary.MarkParameterWrite(value.RootSymbol.Name);
             return;
@@ -3425,11 +3740,22 @@ internal sealed class SemanticValidator
 
     private void ValidateTypeUsage(StarkTypeSymbol type, TypeUsage usage, ParserRuleContext context, bool isFfiBoundary)
     {
-        if ((usage is TypeUsage.Global or TypeUsage.Local) && type.InitializationKind != StarkInitializationKind.None)
+        if (usage == TypeUsage.Global && type.InitializationKind != StarkInitializationKind.None)
         {
             _context.Diagnostics.Error(
                 "STK4004",
-                $"'{type.InitializationKind.ToString().ToLowerInvariant()}' types are only valid on function parameters.",
+                $"'{type.InitializationKind.ToString().ToLowerInvariant()}' types are not valid for global storage.",
+                "semantic-validate",
+                Location(context.Start));
+        }
+
+        if (usage == TypeUsage.Local
+            && type.InitializationKind != StarkInitializationKind.None
+            && type.Kind != StarkTypeKind.Slice)
+        {
+            _context.Diagnostics.Error(
+                "STK4004",
+                $"Local '{type.InitializationKind.ToString().ToLowerInvariant()}' views must be slice views such as '{type.InitializationKind.ToString().ToLowerInvariant()} T[]'.",
                 "semantic-validate",
                 Location(context.Start));
         }
@@ -3468,6 +3794,72 @@ internal sealed class SemanticValidator
                 $"Type '{type.DisplayName}' depends on compile-time-only {DescribeCompileTimeOnlyKind(dependencyKind)} '{dependencyName}', which is not allowed in {DescribeTypeUsage(usage)}. {DescribeNoDynamicDispatchPolicy()}",
                 "semantic-validate",
                 Location(context.Start));
+        }
+
+    }
+
+    private bool RequiresRuntimeDrop(StarkTypeSymbol type, ISet<string> activeNamedTypes)
+    {
+        if (type.BorrowKind != StarkBorrowKind.None
+            || type.InitializationKind != StarkInitializationKind.None)
+        {
+            return false;
+        }
+
+        if (type.Kind == StarkTypeKind.Dynamic)
+        {
+            return true;
+        }
+
+        if (type.Kind == StarkTypeKind.FixedArray && type.ElementType is not null)
+        {
+            return RequiresRuntimeDrop(type.ElementType, activeNamedTypes);
+        }
+
+        if (type.Kind != StarkTypeKind.Named
+            || type.NamedType is null
+            || !_typeModel.NamedTypes.TryGetValue(type.NamedType, out var namedType))
+        {
+            return false;
+        }
+
+        if (_syntaxDeclarations.TryGetValue(type.NamedType, out var declaration)
+            && declaration.Destructor is not null)
+        {
+            return true;
+        }
+
+        if (!activeNamedTypes.Add(namedType.Name))
+        {
+            return false;
+        }
+
+        try
+        {
+            foreach (var field in namedType.OrderedFields)
+            {
+                if (RequiresRuntimeDrop(field.Type, activeNamedTypes))
+                {
+                    return true;
+                }
+            }
+
+            foreach (var variant in namedType.Variants)
+            {
+                foreach (var field in variant.Fields)
+                {
+                    if (RequiresRuntimeDrop(field.Type, activeNamedTypes))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+        finally
+        {
+            activeNamedTypes.Remove(namedType.Name);
         }
     }
 
@@ -3754,12 +4146,26 @@ internal sealed class SemanticValidator
         StarkParser.ObjectCreationExpressionContext objectCreation,
         out TypedConstructorShape? constructor)
     {
-        return _objectCreationConstructors.TryGetValue(
+        if (TryGetObjectCreationTyping(objectCreation, out var typing))
+        {
+            constructor = typing.Constructor;
+            return true;
+        }
+
+        constructor = null;
+        return false;
+    }
+
+    private bool TryGetObjectCreationTyping(
+        StarkParser.ObjectCreationExpressionContext objectCreation,
+        out ObjectCreationTypingRecord typing)
+    {
+        return _objectCreations.TryGetValue(
             new ObjectCreationKey(
                 objectCreation.GetText(),
                 objectCreation.Start.Line,
                 objectCreation.Start.Column + 1),
-            out constructor);
+            out typing!);
     }
 
     private bool CanMaterializeFrozenConstObjectInitializer(
@@ -4358,6 +4764,7 @@ internal sealed class SemanticValidator
             StarkTypeKind.RawPointer => true,
             StarkTypeKind.FixedArray => true,
             StarkTypeKind.Slice => true,
+            StarkTypeKind.Dynamic => true,
             StarkTypeKind.Ascii => true,
             StarkTypeKind.Unicode => true,
             StarkTypeKind.Named => true,
@@ -4429,8 +4836,11 @@ internal sealed class SemanticValidator
         bool hasBody)
     {
         var isAliasing = CanAliasCalleeParameterMemory(parameter.Type);
-        var writes = parameter.Type.InitializationKind != StarkInitializationKind.None;
-        var reads = isAliasing && !writes;
+        var guaranteedReadOnly = parameter.IsConst || DeriveGuaranteedReadOnly(parameter.Type);
+        var guaranteedWriteOnly = parameter.Type.InitializationKind != StarkInitializationKind.None;
+        var reads = isAliasing && !guaranteedWriteOnly;
+        var writes = guaranteedWriteOnly
+            || (!hasBody && isAliasing && !guaranteedReadOnly);
         var captureKind = ParameterCaptureKind.None;
 
         if (parameter.Type.BorrowKind == StarkBorrowKind.StoreBorrow)

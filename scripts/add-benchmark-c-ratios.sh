@@ -6,7 +6,7 @@ usage() {
 Usage: scripts/add-benchmark-c-ratios.sh <results.csv>
 
 Adds or refreshes a c_avg_ratio column in a benchmark CSV. The ratio is based on
-avg_us for each benchmark group:
+avg_us for each benchmark id:
 
   row c_avg_ratio = row avg_us / same-benchmark C avg_us
 
@@ -107,8 +107,13 @@ FNR == 1 {
 
 {
   ratio = ""
-  if (($benchmark_col in c_avg) && c_avg[$benchmark_col] > 0 && $avg_col != "") {
-    ratio = sprintf("%.6f", ($avg_col + 0) / c_avg[$benchmark_col])
+  baseline = 0
+  if (($benchmark_col in c_avg) && c_avg[$benchmark_col] > 0) {
+    baseline = c_avg[$benchmark_col]
+  }
+
+  if (baseline > 0 && $avg_col != "") {
+    ratio = sprintf("%.6f", ($avg_col + 0) / baseline)
   }
 
   print_row_with_ratio(ratio)

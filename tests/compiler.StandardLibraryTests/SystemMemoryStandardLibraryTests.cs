@@ -47,17 +47,183 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
 
         Assert.Contains("declare ptr @GetProcessHeap() nounwind", llvm, StringComparison.Ordinal);
-        Assert.Contains("declare ptr @HeapAlloc(ptr, i32, i64) nounwind", llvm, StringComparison.Ordinal);
-        Assert.Contains("declare i32 @HeapFree(ptr, i32, ptr) nounwind", llvm, StringComparison.Ordinal);
-        Assert.Contains("define internal dso_local ptr @__stark_os_allocate(i64 noundef %size) unnamed_addr nounwind", llvm, StringComparison.Ordinal);
-        Assert.Contains("call ptr @HeapAlloc(ptr %heap, i32 0, i64 %size)", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare noalias noundef ptr @HeapAlloc(ptr, i32, i64 noundef) allocsize(2) allockind(\"alloc,uninitialized\") \"alloc-family\"=\"__stark_os_allocate\" nounwind", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare noundef ptr @HeapReAlloc(ptr, i32, ptr, i64 noundef) allocsize(3) allockind(\"realloc\") \"alloc-family\"=\"__stark_os_allocate\" nounwind", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @HeapFree(ptr, i32, ptr) allockind(\"free\") \"alloc-family\"=\"__stark_os_allocate\" nounwind", llvm, StringComparison.Ordinal);
+        Assert.Contains("define internal dso_local noalias noundef ptr @__stark_os_allocate(i64 noundef %size) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized\") \"alloc-family\"=\"__stark_os_allocate\" nounwind", llvm, StringComparison.Ordinal);
+        Assert.Contains("define internal dso_local noundef ptr @__stark_os_reallocate(ptr %ptr, i64 noundef %size) unnamed_addr allocsize(1) allockind(\"realloc\") \"alloc-family\"=\"__stark_os_allocate\" nounwind", llvm, StringComparison.Ordinal);
+        Assert.Contains("call noalias noundef ptr @HeapAlloc(ptr %heap, i32 0, i64 noundef %size)", llvm, StringComparison.Ordinal);
+        Assert.Contains("call noundef ptr @HeapReAlloc(ptr %heap, i32 0, ptr %ptr, i64 noundef %size)", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @HeapFree(ptr %heap, i32 0, ptr %ptr)", llvm, StringComparison.Ordinal);
+        Assert.Contains("os_realloc_check:", llvm, StringComparison.Ordinal);
+        Assert.Contains("br i1 %realloc_can_os_realloc, label %try_os_reallocate, label %fallback", llvm, StringComparison.Ordinal);
+        Assert.Contains("br i1 %os_realloc_failed, label %fallback, label %os_reallocated", llvm, StringComparison.Ordinal);
         Assert.Contains("@__stark_alloc_bucket_16 = weak_odr hidden thread_local global ptr null, align 8", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("thread_local(localexec)", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@malloc(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@realloc(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@free(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("asm sideeffect \"syscall\"", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task SourceWindowsMemoryReallocateExecutablePreservesContentsAcrossHeapAndFallbackPaths()
+    {
+        if (!OperatingSystem.IsWindows()
+            || !NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-memory-windows-realloc-");
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, "App.exe");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                module System.Memory
+
+                public struct Allocator {
+                    u8[0 127] Kind;
+
+                    static finite law Allocator Default() {
+                        return new Allocator() {
+                            Kind = 0
+                        };
+                    }
+                }
+
+                internal struct Allocation {
+                    rawmutptr<i8[-128 127]> Pointer;
+                    i64[0 max] ByteLength;
+                    i64[1 max] Alignment;
+                    Allocator Allocator;
+                }
+
+                internal fn Allocation Allocate(Allocator allocator, i64[0 max] byteLength, i64[1 max] alignment);
+                internal fn Allocation Reallocate(Allocation allocation, i64[0 max] byteLength, i64[1 max] alignment);
+                internal fn void Free(Allocation allocation);
+
+                fn void Fill(borrow Allocation allocation, i64[0 max] count, i8[-128 127] value) {
+                    stack rawmutptr<i8[-128 127]> data = allocation.Pointer;
+                    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+                        *(&data[index]) = value;
+                    }
+                }
+
+                fn bool AllEqual(borrow Allocation allocation, i64[0 max] count, i8[-128 127] value) {
+                    stack rawmutptr<i8[-128 127]> data = allocation.Pointer;
+                    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+                        if (*(&data[index]) != value) {
+                            return false;
+                        }
+                    }
+
+                    return true;
+                }
+
+                export ffi fn i32[-2147483648 2147483647] main() {
+                    stack mut Allocation large = Allocate(Allocator.Default(), 5000, 8);
+                    if (large.Pointer == null) {
+                        return 1;
+                    }
+
+                    Fill(large, 5000, 3);
+                    large = Reallocate(large, 9000, 8);
+                    if (large.Pointer == null || !AllEqual(large, 5000, 3)) {
+                        return 2;
+                    }
+
+                    large = Reallocate(large, 4097, 8);
+                    if (large.Pointer == null || !AllEqual(large, 4097, 3)) {
+                        return 3;
+                    }
+
+                    large = Reallocate(large, 4097, 8);
+                    if (large.Pointer == null || !AllEqual(large, 4097, 3)) {
+                        return 4;
+                    }
+
+                    Free(large);
+
+                    stack mut Allocation bucket = Allocate(Allocator.Default(), 16, 8);
+                    if (bucket.Pointer == null) {
+                        return 5;
+                    }
+
+                    Fill(bucket, 16, 11);
+                    bucket = Reallocate(bucket, 12, 8);
+                    if (bucket.Pointer == null || !AllEqual(bucket, 12, 11)) {
+                        return 6;
+                    }
+
+                    bucket = Reallocate(bucket, 8, 8);
+                    if (bucket.Pointer == null || !AllEqual(bucket, 8, 11)) {
+                        return 7;
+                    }
+
+                    Free(bucket);
+
+                    stack mut Allocation bucketFallback = Allocate(Allocator.Default(), 16, 8);
+                    if (bucketFallback.Pointer == null) {
+                        return 8;
+                    }
+
+                    Fill(bucketFallback, 16, 21);
+                    bucketFallback = Reallocate(bucketFallback, 5000, 8);
+                    if (bucketFallback.Pointer == null || !AllEqual(bucketFallback, 16, 21)) {
+                        return 9;
+                    }
+
+                    Free(bucketFallback);
+
+                    stack mut Allocation overAligned = Allocate(Allocator.Default(), 512, 64);
+                    if (overAligned.Pointer == null) {
+                        return 10;
+                    }
+
+                    Fill(overAligned, 512, 31);
+                    overAligned = Reallocate(overAligned, 1024, 64);
+                    if (overAligned.Pointer == null || !AllEqual(overAligned, 512, 31)) {
+                        return 11;
+                    }
+
+                    Free(overAligned);
+                    return 0;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(exitCode == 0, stdout + Environment.NewLine + stderr);
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var execution = await RunProcessWithUtf8StdinAsync(outputPath, tempDirectory.FullName, string.Empty);
+            Assert.Equal(0, execution.ExitCode);
+            Assert.Equal(string.Empty, execution.Stdout);
+            Assert.Equal(string.Empty, execution.Stderr);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
     }
 
     [Fact]

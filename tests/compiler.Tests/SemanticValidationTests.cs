@@ -374,6 +374,112 @@ public sealed class SemanticValidationTests
     }
 
     [Fact]
+    public void LawsCannotAllocateDynamicStorage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            law dynamic i32[0 max] Make() {
+                return new(4);
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4104");
+    }
+
+    [Fact]
+    public void LawsCannotReserveDynamicStorage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            law void Grow() {
+                stack mut dynamic i32[0 max] values = new();
+                values.Reserve(4);
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4104");
+    }
+
+    [Fact]
+    public void LawsCannotTryReserveDynamicStorage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            law bool Grow() {
+                stack mut dynamic i32[0 max] values = new();
+                return values.TryReserve(4);
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4104");
+    }
+
+    [Fact]
+    public void LawsCannotMoveLastFromDynamicStorage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            law i32[0 max] Pop(mut borrow dynamic i32[0 max] values) {
+                return values.MoveLast();
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4104");
+    }
+
+    [Fact]
+    public void LawsCannotMoveAtFromDynamicStorage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            law i32[0 max] Remove(mut borrow dynamic i32[0 max] values) {
+                return values.MoveAt(0);
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4104");
+    }
+
+    [Fact]
+    public void DynamicStorageAllowsConcreteDestructibleElementTypes()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Token {
+                i32[-2147483648 2147483647] Value;
+
+                drop {
+                    ;
+                }
+            }
+
+            fn void Run() {
+                stack mut dynamic Token values = new(4);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
     public void LawsCannotCallNonLawFunctions()
     {
         var result = Compile(

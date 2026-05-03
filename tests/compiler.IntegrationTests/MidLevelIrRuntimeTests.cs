@@ -1021,6 +1021,62 @@ public sealed class MidLevelIrRuntimeTests
     }
 
     [Fact]
+    public async Task SwitchPatternCaptureDropsMovedEnumPayloadAtRuntime()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var exitCode = await CompileAndRunExitCodeAsync(
+            """
+            module Demo
+
+            static mut i32[-2147483648 2147483647] Counter = 0;
+
+            fn void Bump(i32[-2147483648 2147483647] value) {
+                Counter = Counter + value;
+                return;
+            }
+
+            struct Resource {
+                i32[-2147483648 2147483647] Value;
+
+                drop {
+                    Bump(self.Value);
+                }
+            }
+
+            enum Result<T> {
+                Missing,
+                Removed(T),
+            }
+
+            fn Result<Resource> Make() {
+                return Result<Resource>.Removed(new Resource() { Value = 3 });
+            }
+
+            export ffi fn i32[-2147483648 2147483647] main() {
+                {
+                    stack Result<Resource> result = Make();
+                    switch (result) {
+                        case Result<Resource>.Missing:
+                            return 1;
+                        case Result<Resource>.Removed(var removed):
+                            if (Counter != 0 || removed.Value != 3) {
+                                return 2;
+                            }
+                    }
+                }
+
+                return Counter;
+            }
+            """);
+
+        Assert.Equal(3, exitCode);
+    }
+
+    [Fact]
     public async Task MutableBorrowReceiverCallsObserveSharedStateAtRuntime()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))

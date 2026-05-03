@@ -1,0 +1,129 @@
+module Benchmarks.Allocator.MemoryCopyFill
+
+const Iterations = 10000;
+
+fn i64[min max] SumBytes(borrow i8[-128 127][] values, i64[0 max] count) {
+    stack mut i64[min max] checksum = 0;
+    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        checksum += (i64[min max])values[index];
+    }
+
+    return checksum;
+}
+
+fn i64[min max] SumCodePoints(borrow i32[-2147483648 2147483647][] values, i64[0 max] count) {
+    stack mut i64[min max] checksum = 0;
+    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        checksum += (i64[min max])values[index];
+    }
+
+    return checksum;
+}
+
+export ffi fn i32[min max] main() {
+    stack i64[0 max] byteCount = 32;
+    stack i64[0 max] codePointCount = 32;
+    stack i64[0 max] moveCount = 16;
+    stack i64[0 max] moveDestinationStart = 8;
+    stack mut i8[-128 127][32] byteSource = {
+        3, 3, 3, 3, 3, 3, 3, 3,
+        3, 3, 3, 3, 3, 3, 3, 3,
+        3, 3, 3, 3, 3, 3, 3, 3,
+        3, 3, 3, 3, 3, 3, 3, 3
+    };
+    stack mut i8[-128 127][32] byteDestination = {
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+    };
+    stack mut dynamic i8[-128 127] byteMoveBuffer = new();
+    stack mut i32[-2147483648 2147483647][32] codePointSource = {
+        65, 65, 65, 65, 65, 65, 65, 65,
+        65, 65, 65, 65, 65, 65, 65, 65,
+        65, 65, 65, 65, 65, 65, 65, 65,
+        65, 65, 65, 65, 65, 65, 65, 65
+    };
+    stack mut i32[-2147483648 2147483647][32] codePointDestination = {
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+    };
+    stack mut dynamic i32[-2147483648 2147483647] codePointMoveBuffer = new();
+    stack mut i64[min max] checksum = 0;
+    if (!byteMoveBuffer.TryReserve(byteCount)) {
+        return 1;
+    }
+
+    if (!codePointMoveBuffer.TryReserve(codePointCount)) {
+        return 1;
+    }
+
+    for willexit (stack mut i64[0 max] initIndex = 0; initIndex < byteCount; initIndex += 1) {
+        init byteMoveBuffer[byteMoveBuffer.Length] = 0;
+        init codePointMoveBuffer[codePointMoveBuffer.Length] = 0;
+    }
+
+    for willexit (stack mut i32[0 10000] iteration = 0; iteration < Iterations; iteration += 1) {
+        for willexit (stack mut i64[0 max] byteCopyIndex = 0; byteCopyIndex < byteCount; byteCopyIndex += 1) {
+            byteDestination[byteCopyIndex] = byteSource[byteCopyIndex];
+        }
+
+        checksum += SumBytes(byteDestination, byteCount);
+
+        stack i8[-128 127] byteFill = (i8[-128 127])((iteration % 17) + 1);
+        for willexit independent (stack mut i64[0 max] byteFillIndex = 0; byteFillIndex < byteCount; byteFillIndex += 1) {
+            byteDestination[byteFillIndex] = byteFill;
+        }
+
+        checksum += SumBytes(byteDestination, byteCount);
+
+        for willexit (stack mut i64[0 max] codePointCopyIndex = 0; codePointCopyIndex < codePointCount; codePointCopyIndex += 1) {
+            codePointDestination[codePointCopyIndex] = codePointSource[codePointCopyIndex];
+        }
+
+        checksum += SumCodePoints(codePointDestination, codePointCount);
+
+        stack i32[-2147483648 2147483647] codePointFill = (i32[-2147483648 2147483647])(90 + (iteration % 11));
+        for willexit independent (stack mut i64[0 max] codePointFillIndex = 0; codePointFillIndex < codePointCount; codePointFillIndex += 1) {
+            codePointDestination[codePointFillIndex] = codePointFill;
+        }
+
+        checksum += SumCodePoints(codePointDestination, codePointCount);
+
+        stack i64[0 max] iteration64 = (i64[0 max])iteration;
+        for willexit (stack mut i64[0 max] setupIndex = 0; setupIndex < byteCount; setupIndex += 1) {
+            unsafe {
+                byteMoveBuffer[setupIndex] = (i8[-128 127])((setupIndex + iteration64) % 97);
+                codePointMoveBuffer[setupIndex] = (i32[-2147483648 2147483647])(65 + ((setupIndex + iteration64) % 17));
+            }
+        }
+
+        stack mut i64[0 max] byteMoveRemaining = moveCount;
+        while willexit (byteMoveRemaining > 0) {
+            byteMoveRemaining -= 1;
+            unsafe {
+                byteMoveBuffer[moveDestinationStart + byteMoveRemaining] = byteMoveBuffer[byteMoveRemaining];
+            }
+        }
+
+        checksum += SumBytes(byteMoveBuffer[0, byteMoveBuffer.Length], byteCount);
+
+        stack mut i64[0 max] codePointMoveRemaining = moveCount;
+        while willexit (codePointMoveRemaining > 0) {
+            codePointMoveRemaining -= 1;
+            unsafe {
+                codePointMoveBuffer[moveDestinationStart + codePointMoveRemaining] = codePointMoveBuffer[codePointMoveRemaining];
+            }
+        }
+
+        checksum += SumCodePoints(codePointMoveBuffer[0, codePointMoveBuffer.Length], codePointCount);
+    }
+
+    if (checksum != 93749676) {
+        return 8;
+    }
+
+    return 0;
+}

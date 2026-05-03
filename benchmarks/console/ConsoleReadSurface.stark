@@ -1,0 +1,22 @@
+// stark-bench: compile-only
+import System.Console
+import System.Text
+module Benchmarks.Console.ConsoleReadSurface
+
+fn Unicode ReadUnicodeLineStable() {
+    return System.Console.ReadLine();
+}
+
+fn Ascii ReadAsciiLineStable() {
+    return System.Console.ReadAsciiLine();
+}
+
+fn Unicode ReadUnitStable() {
+    return System.Console.Read();
+}
+
+fn void EchoStable() {
+    stack Unicode line = ReadUnicodeLineStable();
+    System.Console.WriteLine(System.Text.UnicodeView(line));
+    return;
+}

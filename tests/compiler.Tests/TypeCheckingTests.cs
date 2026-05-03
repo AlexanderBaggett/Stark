@@ -2999,6 +2999,237 @@ public sealed class TypeCheckingTests
                 && diagnostic.Message.Contains("i32", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void DynamicStorageCreationCapacityAndInitIndexTypeCheck()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i64[0 max] Run() {
+                stack mut dynamic i32[0 max] values = new(4);
+                values.Reserve(8);
+                init values[0] = 7;
+                return values.Length + values.Capacity;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void DynamicStorageTryReserveReturnsBool()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn bool Run() {
+                stack mut dynamic i32[0 max] values = new(4);
+                stack bool grew = values.TryReserve(8);
+                return grew;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void DynamicStorageTryReserveCapacityReturnsBool()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn bool Run() {
+                stack mut dynamic i32[0 max] values = new(4);
+                stack bool grew = values.TryReserveCapacity(8);
+                return grew;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void DynamicStorageReserveRequiresMutableOwnerAndNonNegativeAdditionalCapacity()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void ImmutableOwner() {
+                stack dynamic i32[0 max] values = new(4);
+                values.Reserve(8);
+            }
+
+            fn void NegativeAdditionalCapacity() {
+                stack mut dynamic i32[0 max] values = new(4);
+                values.Reserve(-1);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3007"
+                && diagnostic.Message.Contains("Cannot assign to immutable local 'values'", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("must be provably non-negative", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void DynamicStorageMoveLastReturnsElementType()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[0 max] Run() {
+                stack mut dynamic i32[0 max] values = new(1);
+                init values[0] = 42;
+                stack i32[0 max] moved = values.MoveLast();
+                return moved;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void DynamicStorageMoveAtReturnsElementType()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[0 max] Run() {
+                stack mut dynamic i32[0 max] values = new(2);
+                init values[0] = 10;
+                init values[1] = 20;
+                stack i32[0 max] moved = values.MoveAt(0);
+                return moved + values[0];
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void DynamicStorageMoveLastRequiresMutableOwnerAndNoArguments()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void ImmutableOwner() {
+                stack dynamic i32[0 max] values = new(1);
+                values.MoveLast();
+            }
+
+            fn void ExtraArgument() {
+                stack mut dynamic i32[0 max] values = new(1);
+                values.MoveLast(1);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3007"
+                && diagnostic.Message.Contains("Cannot assign to immutable local 'values'", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3009"
+                && diagnostic.Message.Contains("MoveLast expects no arguments", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void DynamicStorageSpareRangeCanBindInitSliceView()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run() {
+                stack mut dynamic i32[0 max] values = new(4);
+                stack init i32[0 max][] spare = init values[0, 4];
+                init spare[0] = 1;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void InitSliceElementsAreWriteOnlyUntilInitialized()
+    {
+        var good = Compile(
+            """
+            module Demo
+
+            fn void Fill(init i32[0 max][] destination, i32[0 max] value) {
+                init destination[0] = value;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(good.Succeeded, string.Join(", ", good.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+        var bad = Compile(
+            """
+            module Demo
+
+            fn i32[0 max] Read(init i32[0 max][] destination) {
+                return destination[0];
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(bad.Succeeded);
+        Assert.Contains(
+            bad.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("found 'init i32", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void TextLiteralsHaveConstProvenanceForConstParameters()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn bool AcceptAscii(const ascii value) {
+                return true;
+            }
+
+            fn bool AcceptUnicode(const unicode value) {
+                return true;
+            }
+
+            fn bool Run() {
+                return AcceptAscii("alpha")
+                    && AcceptAscii("al" + "pha")
+                    && AcceptAscii((ascii)"alpha")
+                    && AcceptUnicode((unicode)"alpha");
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
     private static void AssertIntegerRange(StarkTypeSymbol type, int bitWidth, BigInteger min, BigInteger max, bool isUnsigned = false)
     {
         Assert.Equal(StarkTypeKind.Integer, type.Kind);

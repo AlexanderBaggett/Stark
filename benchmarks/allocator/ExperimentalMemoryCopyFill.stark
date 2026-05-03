@@ -1,0 +1,132 @@
+import System.Experimental.Memory
+import System.Memory
+module Benchmarks.Allocator.ExperimentalMemoryCopyFill
+
+const Iterations = 10000;
+
+fn bool Ok(System.Memory.MemoryStatus status) {
+    switch (status) {
+        case System.Memory.MemoryStatus.Err(var error):
+            return false;
+        case System.Memory.MemoryStatus.Ok:
+            return true;
+    }
+}
+
+fn i64[min max] SumBytes(borrow i8[-128 127][] values, i64[0 max] count) {
+    stack mut i64[min max] checksum = 0;
+    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        checksum += (i64[min max])values[index];
+    }
+
+    return checksum;
+}
+
+fn i64[min max] SumCodePoints(borrow i32[-2147483648 2147483647][] values, i64[0 max] count) {
+    stack mut i64[min max] checksum = 0;
+    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        checksum += (i64[min max])values[index];
+    }
+
+    return checksum;
+}
+
+export ffi fn i32[min max] main() {
+    stack i64[0 max] byteCount = 32;
+    stack i64[0 (2 ** 61) - 1] codePointCount = 32;
+    stack i64[0 (2 ** 61) - 1] moveCount = 16;
+    stack i64[0 max] moveDestinationStart = 8;
+    stack mut i8[-128 127][32] byteSource = {
+        3, 3, 3, 3, 3, 3, 3, 3,
+        3, 3, 3, 3, 3, 3, 3, 3,
+        3, 3, 3, 3, 3, 3, 3, 3,
+        3, 3, 3, 3, 3, 3, 3, 3
+    };
+    stack mut i8[-128 127][32] byteDestination = {
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+    };
+    stack mut dynamic i8[-128 127] byteMoveBuffer = new();
+    stack mut i32[-2147483648 2147483647][32] codePointSource = {
+        65, 65, 65, 65, 65, 65, 65, 65,
+        65, 65, 65, 65, 65, 65, 65, 65,
+        65, 65, 65, 65, 65, 65, 65, 65,
+        65, 65, 65, 65, 65, 65, 65, 65
+    };
+    stack mut i32[-2147483648 2147483647][32] codePointDestination = {
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0
+    };
+    stack mut dynamic i32[-2147483648 2147483647] codePointMoveBuffer = new();
+    stack mut i64[min max] checksum = 0;
+    if (!Ok(System.Experimental.Memory.ReserveBytes(byteMoveBuffer, byteCount))) {
+        return 1;
+    }
+
+    if (!Ok(System.Experimental.Memory.ReserveCodePoints(codePointMoveBuffer, codePointCount))) {
+        return 1;
+    }
+
+    for willexit (stack mut i64[0 max] initIndex = 0; initIndex < byteCount; initIndex += 1) {
+        init byteMoveBuffer[byteMoveBuffer.Length] = 0;
+        init codePointMoveBuffer[codePointMoveBuffer.Length] = 0;
+    }
+
+    for willexit (stack mut i32[0 10000] iteration = 0; iteration < Iterations; iteration += 1) {
+        System.Experimental.Memory.CopyBytesDisjointInfallible(
+            byteSource,
+            byteDestination,
+            byteCount);
+
+        checksum += SumBytes(byteDestination, byteCount);
+
+        stack i8[-128 127] byteFill = (i8[-128 127])((iteration % 17) + 1);
+        System.Experimental.Memory.FillInitializedBytesInfallible(byteDestination, byteFill, byteCount);
+
+        checksum += SumBytes(byteDestination, byteCount);
+
+        System.Experimental.Memory.CopyCodePointsDisjointInfallible(
+            codePointSource,
+            codePointDestination,
+            codePointCount);
+
+        checksum += SumCodePoints(codePointDestination, codePointCount);
+
+        stack i32[-2147483648 2147483647] codePointFill = (i32[-2147483648 2147483647])(90 + (iteration % 11));
+        System.Experimental.Memory.FillInitializedCodePointsInfallible(codePointDestination, codePointFill, codePointCount);
+
+        checksum += SumCodePoints(codePointDestination, codePointCount);
+
+        stack i64[0 max] iteration64 = (i64[0 max])iteration;
+        for willexit (stack mut i64[0 max] setupIndex = 0; setupIndex < byteCount; setupIndex += 1) {
+            unsafe {
+                byteMoveBuffer[setupIndex] = (i8[-128 127])((setupIndex + iteration64) % 97);
+                codePointMoveBuffer[setupIndex] = (i32[-2147483648 2147483647])(65 + ((setupIndex + iteration64) % 17));
+            }
+        }
+
+        System.Experimental.Memory.MoveBytesInfallible(
+            byteMoveBuffer[0, moveCount],
+            byteMoveBuffer[moveDestinationStart, moveCount],
+            moveCount);
+
+        checksum += SumBytes(byteMoveBuffer[0, byteMoveBuffer.Length], byteCount);
+
+        System.Experimental.Memory.MoveCodePointsInfallible(
+            codePointMoveBuffer[0, moveCount],
+            codePointMoveBuffer[moveDestinationStart, moveCount],
+            moveCount);
+
+        checksum += SumCodePoints(codePointMoveBuffer[0, codePointMoveBuffer.Length], codePointCount);
+    }
+
+    if (checksum != 93749676) {
+        return 8;
+    }
+
+    return 0;
+}

@@ -6,18 +6,18 @@ finite law bool NameIsDemoCommit(Ascii name) {
         return false;
     }
 
-    stack rawptr<i8[min max]> data = name.Data;
-    return *(&data[0]) == (i8[min max])100
-        && *(&data[1]) == (i8[min max])101
-        && *(&data[2]) == (i8[min max])109
-        && *(&data[3]) == (i8[min max])111
-        && *(&data[4]) == (i8[min max])45
-        && *(&data[5]) == (i8[min max])99
-        && *(&data[6]) == (i8[min max])111
-        && *(&data[7]) == (i8[min max])109
-        && *(&data[8]) == (i8[min max])109
-        && *(&data[9]) == (i8[min max])105
-        && *(&data[10]) == (i8[min max])116;
+    stack ascii view = System.Text.AsciiView(name);
+    return view[0] == 'd'
+        && view[1] == 'e'
+        && view[2] == 'm'
+        && view[3] == 'o'
+        && view[4] == '-'
+        && view[5] == 'c'
+        && view[6] == 'o'
+        && view[7] == 'm'
+        && view[8] == 'm'
+        && view[9] == 'i'
+        && view[10] == 't';
 }
 
 finite law bool EntryIsDemoCommit(System.FileSystem.FileSystemEntry entry) {

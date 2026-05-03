@@ -31,10 +31,11 @@ and writes CSV rows:
 benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib,c_avg_ratio
 ```
 
-The Windows PowerShell runner currently writes:
+The Windows PowerShell runner records the same Stark compile/toolchain timing
+plus median runtime and writes CSV rows:
 
 ```text
-benchmark,language,runs,compile_us,min_us,avg_us,max_us,peak_rss_kib,c_avg_ratio
+benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,median_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib,c_median_ratio,c_avg_ratio
 ```
 
 Set `STARK_BENCH_CAPTURE_RSS=1` to capture peak RSS. On Linux, the Bash runner
@@ -44,12 +45,14 @@ runner records `Process.PeakWorkingSet64` after each benchmark process exits. A
 `0` value means peak RSS capture was disabled, unavailable on that host, or the
 Linux process exited before the sampler observed it.
 
-The `c_avg_ratio` column is calculated after the last benchmark finishes. It
-uses the average runtime for the same benchmark: `row avg_us / C avg_us`.
-The C row is `1.000000`; faster rows are below `1.0`, slower rows are above
-`1.0`. Rows without a same-benchmark C result leave the ratio blank. To add or
-refresh this column on an existing Linux/macOS result file without rerunning
-benchmarks:
+Ratio columns are calculated after the last benchmark finishes. The Windows
+PowerShell runner makes `c_median_ratio` the primary runtime comparison:
+`row median_us / C median_us`. It also keeps `c_avg_ratio` as an outlier
+diagnostic. The Bash runner currently records `c_avg_ratio` only:
+`row avg_us / C avg_us`. The C row is `1.000000`; faster rows are below `1.0`,
+slower rows are above `1.0`. Rows without a same-benchmark C result leave the
+ratio blank. To add or refresh the Bash `c_avg_ratio` column on an existing
+Linux/macOS result file without rerunning benchmarks:
 
 ```bash
 scripts/add-benchmark-c-ratios.sh benchmarks/results/results-file.csv
@@ -57,15 +60,22 @@ scripts/add-benchmark-c-ratios.sh benchmarks/results/results-file.csv
 
 The Bash runner also records `runtime_spread_pct`, calculated from one run's
 samples as `(max_us - min_us) / avg_us * 100`. Treat high spread as a warning
-that the average may not be stable enough for a performance conclusion.
+that the average may not be stable enough for a performance conclusion. On
+Windows, prefer `median_us` and `c_median_ratio` for standard-library runtime
+comparisons; use `avg_us`, `max_us`, and `runtime_spread_pct` to spot noisy
+runs.
 
-Each executable Stark benchmark must have same-stem C and Rust counterparts
-when those languages are selected. For example:
+Stable and experimental Stark variants share one canonical benchmark name in the
+CSV; the variant lives in the `language` column as either `stark` or
+`stark-experimental`. The `benchmark` column never includes implementation
+prefixes such as `Experimental`; C and Rust baselines are compiled once from the
+canonical scenario path. For example:
 
 ```text
-benchmarks/micro/Calls.stark
-benchmarks/micro/Calls.c
-benchmarks/micro/Calls.rs
+benchmarks/text/OwnedTextAllocation,stark
+benchmarks/text/OwnedTextAllocation,stark-experimental
+benchmarks/text/OwnedTextAllocation,c
+benchmarks/text/OwnedTextAllocation,rust
 ```
 
 Useful environment variables:
@@ -73,6 +83,9 @@ Useful environment variables:
 - `STARK_BENCH_RUNS`: measured executions per benchmark after one warmup run.
   Defaults to `20`. Set it lower for quick smoke runs.
 - `STARK_BENCH_FILTER`: substring filter matched against benchmark file paths.
+- `STARK_BENCH_SUBSET`: PowerShell runner shortcut for targeted Windows
+  investigations. Supported values are `allocator`, `console`, `directory`,
+  `file`, `socket`, `network`, `windows-io`, and `windows-core`.
 - `STARK_BENCH_LANGUAGES`: comma-separated language list. Defaults to
   `stark,c,rust`.
 - `STARK_BENCH_TIMEOUT_SECONDS`: per-executable warmup/run timeout. Defaults
@@ -89,6 +102,15 @@ Useful environment variables:
   Defaults to `benchmarks/results/`.
 - `STARK_BENCH_RESULTS_FILE`: explicit CSV output path.
 - `STARK_BENCH_MACHINE_FILE`: explicit machine metadata output path.
+- `STARK_BENCH_BINARY_DIR`: PowerShell runner directory for preserved
+  benchmark executables. Use it with `STARK_BENCH_KEEP_BINARIES=1` for the
+  compile pass, then with `STARK_BENCH_RUNTIME_ONLY=1` for repeated runtime
+  measurements that amortize compile, ThinLTO, and `lld-link` cost.
+- `STARK_BENCH_KEEP_BINARIES`: PowerShell runner flag that keeps compiled
+  executables in `STARK_BENCH_BINARY_DIR`.
+- `STARK_BENCH_RUNTIME_ONLY`: PowerShell runner flag that reuses existing
+  executables from `STARK_BENCH_BINARY_DIR` and reports compile/toolchain
+  fields as `0`.
 - `STARK_BENCH_BASELINE_FILE`: optional previous CSV to compare against after
   the run.
 - `STARK_BENCH_REQUIRE_BASELINE`: set to `1` to fail when a gate is configured
@@ -141,6 +163,14 @@ Windows PowerShell runner when C rows are enabled. Use this only for C baselines
 that are currently POSIX-specific; the Stark and Rust rows for the benchmark
 still run normally.
 
+For Windows standard-library investigations, keep linker cost separate from
+payload runtime. `compile_us` is total build wall time; Stark rows may also
+report `llvm_object_us`, `link_us`, and `toolchain_us` from compiler toolchain
+metrics. If `lld-link` or ThinLTO dominates the run, preserve binaries and use
+runtime-only mode before drawing conclusions about library code. Windows rows
+for benchmarks with `skip-c-windows` C counterparts intentionally have no C
+ratio until a Windows C baseline exists.
+
 Each run writes:
 
 - `results-<timestamp>.<unique>.csv`: benchmark path, measured runs, compile
@@ -180,14 +210,53 @@ The locked default flags are:
 - `allocator/HeapLocalBucketReuse.stark` exercises heap-local allocation and
   scope cleanup through the default allocator buckets. It includes an additional
   `rust-fixed-batch` baseline that stores `Box` allocations in a fixed
-  `Option<Box<_>>` batch instead of a `Vec`.
+  `Option<Box<_>>` batch instead of a `Vec`. A `stark-experimental` row runs
+  the same Stark heap-local workload for side-by-side reporting.
 - `allocator/SystemMemoryBucketReallocate.stark` exercises bucket-backed
-  `System.Memory.Reallocate` in-place reuse.
+  `System.Memory.Reallocate` in-place reuse. A `stark-experimental` row runs
+  the same allocator workload for side-by-side reporting.
 - `allocator/SystemMemoryFallbackReallocate.stark` exercises the conservative
   allocate-copy-free fallback when a reallocation no longer fits the old bucket.
+  A `stark-experimental` row runs the same allocator workload for side-by-side
+  reporting.
+- `allocator/MemoryDynamicReserveGrowth` compares regular Stark dynamic reserve,
+  append-copy, and append-fill code with the `System.Experimental.Memory`
+  helper row against natural C/Rust growable-buffer baselines.
+- `allocator/MemoryCopyFill` compares regular Stark byte/codepoint copy, fill,
+  and move code with the experimental safe helper row, including disjoint copy
+  kernels, initialized-fill kernels, and overlap-safe move work.
+- The `runtime/RuntimeBufferFixed` `stark-experimental` row exercises
+  `System.Experimental.Runtime.Buffer.FixedByteBuffer512` write/copy, fill,
+  read/advance, compact, and clear operations against natural C/Rust
+  fixed-capacity byte-buffer baselines.
+- The `runtime/RuntimeBufferDynamic` `stark-experimental` row exercises
+  `System.Experimental.Runtime.Buffer.DynamicByteBuffer` repeated growth,
+  slice writes, read advancement, compaction, and fill appends against natural
+  C/Rust growable byte-buffer baselines.
+- The `io/FileBufferedReadWrite` `stark-experimental` row exercises
+  `System.Experimental.IO.File` safe byte-slice reads/writes, dynamic-buffer
+  writes, fixed-buffer writes, seeks, flush/close, and file cleanup against
+  natural C/Rust buffered file baselines.
+- The `io/FileSystemPathTranscode` `stark-experimental` row exercises
+  `System.Experimental.FileSystem` directory create/open/read/delete flows,
+  `System.Experimental.IO.Path` join/normalize helpers, path-heavy file moves,
+  and UTF-16-style text writes against natural C/Rust filesystem baselines.
 - `collections/ListGrowth.stark`, `collections/StackGrowth.stark`, and
   `collections/QueueGrowth.stark` are executable growth benchmarks for the
   contiguous owned collections.
+- The `collections/ListGrowth` `stark-experimental` row exercises the
+  `System.Experimental.Collections.List<T>` comparison implementation through
+  its public API so it can be measured directly against the stable raw-pointer
+  list and the natural C/Rust baselines.
+- The `collections/ListIteration` `stark-experimental` row runs the same
+  push-and-indexed iteration workload through
+  `System.Experimental.Collections.List<T>`.
+- The `collections/StackGrowth` `stark-experimental` row does the same for
+  `System.Experimental.Collections.Stack<T>`, keeping the stack API in the
+  measured path instead of benchmarking only the underlying dynamic storage.
+- The `collections/QueueGrowth` `stark-experimental` row measures the same
+  queue growth workload through `System.Experimental.Collections.Queue<T>` with
+  the same natural C/Rust baselines as `QueueGrowth`.
 - `collections/ListIteration.stark`, `collections/LinkedListPush.stark`,
   `collections/LinkedListBuildClear.stark`, `collections/LinkedListPopOnly.stark`,
   `collections/LinkedListChurn.stark`, `collections/LinkedListReservedPush.stark`,
@@ -202,17 +271,42 @@ The locked default flags are:
   linked-list baselines rather than isolating post-reserve hot-loop cost.
   `DictionaryLookup` pre-reserves the Stark dictionary so setup matches the C
   fixed-capacity table and Rust `HashMap::with_capacity` baseline.
+- The `collections/LinkedListPush`, `collections/LinkedListBuildClear`,
+  `collections/LinkedListPopOnly`, `collections/LinkedListChurn`, and
+  `collections/LinkedListReservedPush` `stark-experimental` rows run the same
+  linked-list scenarios through `System.Experimental.Collections.LinkedList<T>`.
+  The C and Rust files are intentionally the same natural baselines as the
+  stable linked-list benchmarks so the Stark stable-vs-experimental comparison
+  changes only the Stark implementation under test.
 - `text/OwnedTextAllocation.stark` is an executable benchmark for allocation-
   visible owned `ToAscii`/`ToUnicode` conversion and literal-prefix
   concatenation through `System.Memory`.
+- The `text/OwnedTextAllocation` `stark-experimental` row runs the same
+  allocation-visible owned conversion and literal-prefix concatenation scenario
+  through `System.Experimental.Text`.
 - `text/OwnedPathAllocation.stark` is an executable benchmark for allocation-
   visible owned path joining plus path-view inspection helpers.
+- The `text/OwnedPathAllocation` `stark-experimental` row runs the same
+  allocation-visible path joining and inspection scenario through
+  `System.Experimental.IO.Path`.
+- `text/TextConcatCopy`, `text/IntegerFormatting`, `text/UnicodeFormatting`,
+  and `text/TextParsing` compare `stark` and `stark-experimental` text
+  copy/concat, fixed-buffer integer formatting, Unicode formatting, and parsing
+  paths with one C/Rust baseline per scenario.
+- `text/PathFacts` isolates single-pass path analysis and extension/base/
+  directory range reuse for stable and experimental path APIs.
+- `text/PathJoin`, `text/PathNormalize`, `text/PathQueries`, and
+  `text/PathRepeatedSmallOps` cover owned join, separator normalization,
+  extension/base/directory queries, and repeated small path operations across
+  the available stable and experimental rows.
 - `text/AsciiToUnicodeConversionTinyLiteral.stark` is an executable benchmark
   for tiny known-ASCII literals that should lower to direct scalar widening
   stores.
 - `text/AsciiToUnicodeConversion.stark` is an executable benchmark for the
   caller-buffer ASCII-to-Unicode conversion fast path on a medium known-ASCII
   literal.
+- The `text/AsciiToUnicodeConversion` `stark-experimental` row runs the same
+  medium literal conversion scenario through `System.Experimental.Text`.
 - `text/AsciiToUnicodeConversionLargeLiteral.stark` is an executable benchmark
   for larger known-ASCII literals that should lower through the UTF-32
   constant plus `llvm.memcpy` specialization path.
@@ -224,5 +318,14 @@ The locked default flags are:
   checks.
 - `text/TextPathCallerBuffer.stark` is a compile-only benchmark for the current
   caller-owned path buffer helpers and low-level text conversion helpers.
+- `console/ConsoleWrites` compares stable and experimental console small writes,
+  line writes, Unicode writes, stderr writes, and buffer-shaped output against
+  natural C/Rust output baselines.
+- `console/ConsoleReadSurface` compile-only sources cover stable and
+  experimental console read APIs, including experimental owned text decoding and
+  caller-provided fixed/dynamic byte buffers.
 - `network/TcpLoopbackThroughput.stark` is an executable loopback benchmark for
   the public `System.Net.Tcp` listener/client write-read path.
+- The `network/TcpLoopbackThroughput` `stark-experimental` row runs the same
+  loopback throughput scenario through `System.Experimental.Net.Tcp`, including
+  fixed runtime-buffer writes and reads, with equivalent C/Rust socket baselines.

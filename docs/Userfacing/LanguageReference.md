@@ -499,12 +499,89 @@ The aggregate and view forms:
 
 * fixed arrays: `T[N]`
 * slices: `T[]`
+* dynamic owned storage: `dynamic T`
 * named aggregates through `struct` and `record`
 * named variant families through `enum`
 
 Fixed arrays are owning aggregate values.
 
 Slices are non owning views. A slice does not materialize or own backing storage; it refers to storage established elsewhere.
+
+`dynamic T` is owned, dynamically sized, capacity-bearing storage for elements of `T`. A dynamic value owns its backing allocation, has a capacity, and may contain both initialized elements and spare uninitialized slots. Dynamic storage is the safe language primitive for growable collections, owned text builders, and other data structures that need `Vec`-style spare capacity without raw pointer storage.
+
+Dynamic storage is a value type, not a local storage class. The local or field that owns the dynamic header still uses ordinary placement such as `stack`, `heap`, or a struct field. The dynamic backing storage is managed by the dynamic value.
+
+```stark
+struct IntList {
+    dynamic i32[0 max] Items;
+}
+
+fn void Push(mut borrow IntList self, i32[0 max] value) {
+    if (self.Items.Length == self.Items.Capacity) {
+        self.Items.Reserve(1);
+    }
+
+    init self.Items[self.Items.Length] = value;
+}
+```
+
+`Length` is the initialized element count. `Capacity` is the number of element slots currently available in the backing allocation. `Reserve(additional)` ensures that at least `additional` spare slots exist after the initialized prefix. It preserves initialized elements, may grow the backing allocation, and traps on capacity overflow or allocation failure rather than returning a nullable raw pointer.
+
+`TryReserve(additional)` has the same growth contract, but returns `bool` instead of trapping for capacity overflow, target-size overflow, or allocation failure. It returns `true` when the existing capacity is already sufficient or the grow succeeds, and `false` when the dynamic value is left unchanged. Library APIs that report allocation status use `TryReserve` to keep failure explicit without exposing raw pointers.
+
+An `init` assignment into dynamic storage extends the dense initialized prefix. Direct element initialization targets the current tail, normally with `items.Length`; compile-time constant slots are accepted when the compiler can see the preceding slots were already initialized. Initialization views backed by dynamic storage are initialized in ascending slot order.
+
+Sparse initialized-slot proofs are explicit unsafe proof boundaries. Inside an `unsafe` block, code may assert that a dynamic slot or initialization-view slot is initialized even when the compiler cannot prove that fact from the visible dense prefix. The proof applies only inside that unsafe boundary; after a sparse proof, later safe code treats the dynamic initialized prefix as unknown until it re-establishes an ordinary dense-prefix proof.
+
+```stark
+fn i32[0 max] ReadOccupied(dynamic i32[0 max] values, i32[0 max] index) {
+    unsafe {
+        return values[index];
+    }
+}
+```
+
+`MoveLast()` moves the last initialized element out of dynamic storage, decrements `Length`, and leaves the former tail slot spare. It traps if `Length` is zero. This is the safe dense-prefix pop operation for dynamic storage; it keeps initialized elements as the contiguous range `0..Length`.
+
+`MoveAt(index)` moves the initialized element at `index`, shifts later initialized elements left by one slot, decrements `Length`, and leaves the old tail slot spare. It traps when `index >= Length`. This is the safe dense-prefix removal operation for queues, ordered buffers, and collection internals that need front or middle removal without spelling raw pointers.
+
+```stark
+fn i32[0 max] Pop(mut borrow IntList self) {
+    return self.Items.MoveLast();
+}
+
+fn i32[0 max] RemoveFirst(mut borrow IntList self) {
+    return self.Items.MoveAt(0);
+}
+```
+
+The initialized part of dynamic storage can be viewed as a normal slice:
+
+```stark
+fn retborrow i32[0 max][] AsSlice(borrow IntList self) {
+    return self.Items[0, self.Items.Length];
+}
+```
+
+The spare part can be viewed as an initialization destination:
+
+```stark
+fn bool AppendDefaults(mut borrow IntList self, i64[0 max] count) {
+    if (!self.Items.TryReserve(count)) {
+        return false;
+    }
+
+    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+        init self.Items[self.Items.Length] = 0;
+    }
+
+    return true;
+}
+```
+
+`dynamic T` has no implicit public raw pointer. Safe code accesses it through initialized element views, initialization views, tail moves, and explicit capacity operations.
+
+When a `dynamic T` owner is destroyed, Stark drops exactly the initialized prefix and then releases the backing allocation. Spare capacity is uninitialized memory and is skipped.
 
 ### 6.3 Type Qualifiers
 
@@ -523,6 +600,20 @@ The qualifiers:
 These are part of the type model, not local syntax sugar.
 
 `const` is valid on function parameters and means the parameter refers to a deeply immutable reachable object graph. Top-level `const` declarations use the same deep immutability contract for global objects.
+
+`init T` is a write-only initialization destination for a single `T`. `init T[]` is a write-only initialization destination for a contiguous region of `T` slots. Code may write to an `init` destination, but may not read its previous contents. Assigning with `init` constructs the value in that slot and marks it initialized for the surrounding control-flow proof.
+
+```stark
+fn void Fill(init i32[0 max][] destination, i32[0 max] value) {
+    for willexit independent (stack mut i64[0 max] index = 0; index < destination.Length; index += 1) {
+        init destination[index] = value;
+    }
+}
+```
+
+`MoveLast()` transfers the tail initialized value and marks that slot uninitialized by decreasing the dynamic length. Spare uninitialized slots are never read by safe code.
+
+Inside an `unsafe` sparse proof boundary, non-tail dynamic moves are permitted when the data structure's own invariants guarantee that the moved slot is initialized and that any hole is repaired, skipped by a valid sparse drop strategy, or otherwise never observed as initialized. Safe code cannot rely on that proof after the boundary.
 
 ### 6.4 Raw Pointers
 
@@ -831,6 +922,8 @@ The storage classes:
 `register` is a local only value style storage class. A `register` local has no stable source visible address: safe code may not take `&local`, form a slice view from it, or otherwise require something with an address. It is not a promise that a hardware register will be allocated; it is a request to keep the value in registers when possible. Use `stack` when a stable address is required.
 
 Function local `static` storage is reserved until Stark defines how static duration locals are initialized, identified, and torn down. Use a top level `static` global for global lifetime storage.
+
+`dynamic T` is not a storage class. It is an owned dynamic storage type. A declaration such as `stack mut dynamic i32[0 max] values = new();` places the dynamic owner/header in the stack local, while the dynamic value manages its own capacity-bearing backing storage.
 
 The standardized allocation backed storage classes:
 
@@ -1321,6 +1414,8 @@ fn i32 PrintScore(i32[min max] score) {
 Stark's unsafe model marks proof boundaries rather than disabling the language's ordinary safety rules.
 
 Unsafe code may perform only operations that are explicitly gated as unsafe. Ownership, initialization, range, type, and ordinary borrow validation still apply inside unsafe code.
+
+Dynamic sparse-slot proofs are one such unsafe operation. The proof asserts that a particular dynamic storage slot is initialized even though the compiler cannot derive that fact from the dense `0..Length` prefix. The compiler does not export that assertion into later safe code.
 
 The unsafe forms:
 

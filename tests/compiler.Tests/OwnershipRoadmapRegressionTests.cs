@@ -898,6 +898,243 @@ public sealed class OwnershipRoadmapRegressionTests
         AssertDiagnostic(result, "STK3002", "Assignment expects 'retborrow i32'", "found 'i32'");
     }
 
+    [Fact]
+    public void DynamicInitAssignmentsTrackDensePrefix()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[0 max] Run() {
+                stack mut dynamic i32[0 max] values = new(4);
+                init values[0] = 10;
+                init values[1] = 20;
+                return values[1];
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void DynamicInitAssignmentRejectsDensePrefixHole()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run() {
+                stack mut dynamic i32[0 max] values = new(4);
+                init values[1] = 20;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4205", "init assignment to dynamic storage 'values[1]'", "next spare slot");
+    }
+
+    [Fact]
+    public void DynamicAppendByLengthIsAcceptedForUnknownPrefix()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Buffer {
+                dynamic i32[0 max] Items;
+            }
+
+            fn void Push(mut borrow Buffer self, i32[0 max] value) {
+                init self.Items[self.Items.Length] = value;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void DynamicInitSliceAssignmentsTrackSequentialSlots()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[0 max] Run() {
+                stack mut dynamic i32[0 max] values = new(4);
+                stack init i32[0 max][] spare = init values[values.Length, 2];
+                init spare[0] = 10;
+                init spare[1] = 20;
+                return values[1];
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void DynamicInitSliceIndependentInductionLoopTracksRuntimeSlots()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i64[0 max] Run(i64[0 max] count) {
+                stack mut dynamic i64[0 max] values = new(8);
+                stack init i64[0 max][] spare = init values[values.Length, count];
+                for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
+                    init spare[index] = index;
+                }
+
+                return values.Length;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void DynamicInitSliceIndependentInductionLoopRejectsRepeatedSlotProof()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run(i64[0 max] count) {
+                stack mut dynamic i64[0 max] values = new(8);
+                stack init i64[0 max][] spare = init values[values.Length, count];
+                for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
+                    init spare[index] = index;
+                    init spare[index] = index;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4205", "repeats the same dynamic loop slot proof");
+    }
+
+    [Fact]
+    public void DynamicInitSliceRejectsOutOfOrderSlotInitialization()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run() {
+                stack mut dynamic i32[0 max] values = new(4);
+                stack init i32[0 max][] spare = init values[values.Length, 2];
+                init spare[1] = 20;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4205", "expected slot 0 but found slot 1");
+    }
+
+    [Fact]
+    public void DynamicNonTailMoveRequiresSparseSlotProof()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Token {
+                ascii Text;
+            }
+
+            fn void Run() {
+                stack mut dynamic Token values = new(2);
+                init values[0] = new Token() { Text = "a" };
+                stack Token token = values[0];
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4203", "Cannot move a non-tail dynamic storage slot", "sparse initialized-slot proof");
+    }
+
+    [Fact]
+    public void UnsafeDynamicSparseSlotProofAllowsReadInsideProofBoundary()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[0 max] Read(dynamic i32[0 max] values, i32[0 max] index) {
+                unsafe {
+                    return values[index];
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void UnsafeDynamicSparseInitProofAllowsUseInsideProofBoundaryOnly()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[0 max] Run() {
+                stack mut dynamic i32[0 max] values = new(4);
+                unsafe {
+                    init values[2] = 30;
+                    return values[2];
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void UnsafeDynamicSparseInitProofDoesNotLeakIntoSafeCode()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[0 max] Run() {
+                stack mut dynamic i32[0 max] values = new(4);
+                unsafe {
+                    init values[2] = 30;
+                }
+
+                return values[2];
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4205", "cannot read dynamic storage slot 'values[2]'", "proof");
+    }
+
+    [Fact]
+    public void UnsafeDynamicSparseProofAllowsNonTailMoveInsideProofBoundary()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Token {
+                ascii Text;
+            }
+
+            fn ascii Run() {
+                stack mut dynamic Token values = new(2);
+                init values[0] = new Token() { Text = "a" };
+                init values[1] = new Token() { Text = "b" };
+                unsafe {
+                    stack Token token = values[0];
+                    return token.Text;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
     private static CompilationResult Compile(string source)
     {
         return DefaultCompilerPipeline.Create().Run(new CompilationInput(source));

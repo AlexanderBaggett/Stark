@@ -423,6 +423,39 @@ internal sealed class SsaLowerer
                     LowerOperand(blockId, block, makeSlice.Length),
                     makeSlice.Type,
                     makeSlice.Text)),
+                MidLevelIrDynamicStorageAllocationRValue allocation => EmitValue(block, new SsaDynamicStorageAllocationRValue(
+                    LowerOperand(blockId, block, allocation.Capacity),
+                    allocation.Type,
+                    allocation.Text)),
+                MidLevelIrDynamicStorageFreeRValue free => EmitValue(block, new SsaDynamicStorageFreeRValue(
+                    LowerOperand(blockId, block, free.Storage),
+                    free.Text)),
+                MidLevelIrDynamicStorageReserveRValue reserve => EmitValue(block, new SsaDynamicStorageReserveRValue(
+                    LowerOperand(blockId, block, reserve.StorageAddress),
+                    reserve.StorageType,
+                    LowerOperand(blockId, block, reserve.AdditionalCapacity),
+                    reserve.Text)),
+                MidLevelIrDynamicStorageTryReserveRValue reserve => EmitValue(block, new SsaDynamicStorageTryReserveRValue(
+                    LowerOperand(blockId, block, reserve.StorageAddress),
+                    reserve.StorageType,
+                    LowerOperand(blockId, block, reserve.AdditionalCapacity),
+                    reserve.Text)),
+                MidLevelIrDynamicStorageTryReserveCapacityRValue reserve => EmitValue(block, new SsaDynamicStorageTryReserveCapacityRValue(
+                    LowerOperand(blockId, block, reserve.StorageAddress),
+                    reserve.StorageType,
+                    LowerOperand(blockId, block, reserve.TargetCapacity),
+                    reserve.Text)),
+                MidLevelIrDynamicStorageMoveLastRValue moveLast => EmitValue(block, new SsaDynamicStorageMoveLastRValue(
+                    LowerOperand(blockId, block, moveLast.StorageAddress),
+                    moveLast.StorageType,
+                    moveLast.Type,
+                    moveLast.Text)),
+                MidLevelIrDynamicStorageMoveAtRValue moveAt => EmitValue(block, new SsaDynamicStorageMoveAtRValue(
+                    LowerOperand(blockId, block, moveAt.StorageAddress),
+                    moveAt.StorageType,
+                    LowerOperand(blockId, block, moveAt.Index),
+                    moveAt.Type,
+                    moveAt.Text)),
                 MidLevelIrLoadSliceElementRValue loadSlice => EmitValue(block, new SsaLoadSliceElementRValue(
                     LowerOperand(blockId, block, loadSlice.Slice),
                     LowerOperand(blockId, block, loadSlice.Index),
@@ -822,7 +855,7 @@ internal sealed class SsaLowerer
                 && local.HasConstProvenance;
         }
 
-        private static bool UsesStackLifetime(string storageClass) => storageClass == "stack";
+        private static bool UsesStackLifetime(string storageClass) => storageClass is "stack" or "match";
 
         private void WriteVariable(int blockId, string name, SsaValue value)
         {
@@ -1495,6 +1528,39 @@ internal sealed class SsaLowerer
                     RewriteValue(makeSlice.Length, replacements),
                     makeSlice.Type,
                     makeSlice.Text),
+                SsaDynamicStorageAllocationRValue allocation => new SsaDynamicStorageAllocationRValue(
+                    RewriteValue(allocation.Capacity, replacements),
+                    allocation.Type,
+                    allocation.Text),
+                SsaDynamicStorageFreeRValue free => new SsaDynamicStorageFreeRValue(
+                    RewriteValue(free.Storage, replacements),
+                    free.Text),
+                SsaDynamicStorageReserveRValue reserve => new SsaDynamicStorageReserveRValue(
+                    RewriteValue(reserve.StorageAddress, replacements),
+                    reserve.StorageType,
+                    RewriteValue(reserve.AdditionalCapacity, replacements),
+                    reserve.Text),
+                SsaDynamicStorageTryReserveRValue reserve => new SsaDynamicStorageTryReserveRValue(
+                    RewriteValue(reserve.StorageAddress, replacements),
+                    reserve.StorageType,
+                    RewriteValue(reserve.AdditionalCapacity, replacements),
+                    reserve.Text),
+                SsaDynamicStorageTryReserveCapacityRValue reserve => new SsaDynamicStorageTryReserveCapacityRValue(
+                    RewriteValue(reserve.StorageAddress, replacements),
+                    reserve.StorageType,
+                    RewriteValue(reserve.TargetCapacity, replacements),
+                    reserve.Text),
+                SsaDynamicStorageMoveLastRValue moveLast => new SsaDynamicStorageMoveLastRValue(
+                    RewriteValue(moveLast.StorageAddress, replacements),
+                    moveLast.StorageType,
+                    moveLast.Type,
+                    moveLast.Text),
+                SsaDynamicStorageMoveAtRValue moveAt => new SsaDynamicStorageMoveAtRValue(
+                    RewriteValue(moveAt.StorageAddress, replacements),
+                    moveAt.StorageType,
+                    RewriteValue(moveAt.Index, replacements),
+                    moveAt.Type,
+                    moveAt.Text),
                 SsaLoadSliceElementRValue loadSlice => new SsaLoadSliceElementRValue(
                     RewriteValue(loadSlice.Slice, replacements),
                     RewriteValue(loadSlice.Index, replacements),

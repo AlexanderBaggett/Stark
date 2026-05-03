@@ -18,6 +18,7 @@ The book will center on:
 - modules, visibility, project manifests, and package images
 - native package metadata for FFI-backed libraries
 - memory separation, bounded raw pointer regions, and independent loop contracts
+- `dynamic T`, `init T`, and safe spare-capacity initialization
 - standard-library ownership patterns
 - reading diagnostics and inspecting generated IR
 

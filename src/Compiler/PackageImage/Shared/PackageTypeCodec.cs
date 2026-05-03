@@ -362,6 +362,7 @@ internal static partial class PackageImageLoader
             "rawpointer" => StarkTypeSymbols.RawPointer(BuildTypeSymbol(type.ElementType!, currentModuleName, localNamedTypes), type.IsMutablePointer),
             "fixedarray" => StarkTypeSymbols.FixedArray(BuildTypeSymbol(type.ElementType!, currentModuleName, localNamedTypes), type.FixedLength),
             "slice" => StarkTypeSymbols.Slice(BuildTypeSymbol(type.ElementType!, currentModuleName, localNamedTypes)),
+            "dynamic" => StarkTypeSymbols.Dynamic(BuildTypeSymbol(type.ElementType!, currentModuleName, localNamedTypes)),
             "functionpointer" when type.ReturnType is not null => StarkTypeSymbols.FunctionPointer(
                 ParsePackageFunctionKind(type.FunctionKind),
                 BuildTypeSymbol(type.ReturnType, currentModuleName, localNamedTypes),
@@ -444,6 +445,7 @@ internal static partial class PackageImageLoader
             "rawpointer" => $"{(type.IsMutablePointer ? "rawmutptr" : "rawptr")}<{RenderTypeReference(type.ElementType!)}>",
             "fixedarray" => $"{RenderTypeReference(type.ElementType!)}[{(type.FixedLength is { } fixedLength ? fixedLength.ToString() : "?")}]",
             "slice" => $"{RenderTypeReference(type.ElementType!)}[]",
+            "dynamic" => $"dynamic {RenderTypeReference(type.ElementType!)}",
             "functionpointer" => $"fnptr<{RenderTypeReferenceFunctionKind(type.FunctionKind)} {RenderTypeReference(type.ReturnType!)}({string.Join(", ", (type.ParameterTypes ?? []).Select(RenderTypeReference))})>",
             "named" when type.TypeArguments is { Count: > 0 } => $"{type.Name}<{string.Join(", ", type.TypeArguments.Select(RenderTypeReference))}>",
             "named" => type.Name ?? "<unnamed>",

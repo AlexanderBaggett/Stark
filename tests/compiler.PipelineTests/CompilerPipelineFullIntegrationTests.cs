@@ -38,7 +38,7 @@ public sealed class CompilerPipelineFullIntegrationTests
         Assert.NotNull(ssaModule);
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? optimizedSsaModule));
         Assert.NotNull(optimizedSsaModule);
-        Assert.Equal(30, result.Executions.Count(static execution => execution.Status == PassExecutionStatus.Executed));
+        Assert.Equal(32, result.Executions.Count(static execution => execution.Status == PassExecutionStatus.Executed));
         Assert.Contains(
             result.Logs,
             log => log.Severity == DiagnosticSeverity.Info

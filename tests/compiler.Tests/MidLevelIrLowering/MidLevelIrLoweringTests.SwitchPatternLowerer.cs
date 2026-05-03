@@ -205,15 +205,21 @@ public sealed partial class MidLevelIrLoweringTests
 
         Assert.True(function.SupportsDirectCodeGeneration);
         Assert.Contains(function.Locals, local => local.Name == "capture");
-        Assert.Contains(function.Blocks.SelectMany(static block => block.Statements), statement => statement.TargetName == "capture");
+        Assert.Contains(
+            function.Blocks.SelectMany(static block => block.Statements),
+            statement => statement.Kind == MidLevelIrStatementKind.Assign && statement.TargetName == "capture");
 
         var captureBlock = Assert.Single(
             function.Blocks,
-            static block => block.Statements.Any(static statement => statement.TargetName == "capture"));
+            static block => block.Statements.Any(static statement =>
+                statement.Kind == MidLevelIrStatementKind.Assign
+                && statement.TargetName == "capture"));
         Assert.Contains("switch_bind", captureBlock.Label, StringComparison.Ordinal);
         Assert.DoesNotContain(
             function.Blocks.Where(static block => block.Label.Contains("switch_test", StringComparison.Ordinal)),
-            static block => block.Statements.Any(static statement => statement.TargetName == "capture"));
+            static block => block.Statements.Any(static statement =>
+                statement.Kind == MidLevelIrStatementKind.Assign
+                && statement.TargetName == "capture"));
         Assert.Contains(function.Blocks, static block => block.Terminator.Kind == MidLevelIrTerminatorKind.Branch);
     }
 

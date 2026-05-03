@@ -48,6 +48,48 @@ public sealed partial class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void EarlyReturnBranchDropDoesNotSuppressFallthroughScopeDrop()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            static mut i32[-2147483648 2147483647] Counter = 0;
+
+            fn void Bump(i32[-2147483648 2147483647] value) {
+                Counter = Counter + value;
+                return;
+            }
+
+            struct Buffer {
+                i32[-2147483648 2147483647] Value;
+
+                drop {
+                    Bump(self.Value);
+                }
+            }
+
+            fn void Run(bool fail) {
+                stack Buffer box = new Buffer() { Value = 4 };
+                if (fail) {
+                    return;
+                }
+
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+        var dropCalls = function.Blocks
+            .SelectMany(static block => block.Statements)
+            .Count(static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+
+        Assert.Equal(2, dropCalls);
+    }
+
+    [Fact]
     public void ReassigningADestructibleLocalLowersTheOldDropBeforeOverwrite()
     {
         var result = Compile(
@@ -93,6 +135,96 @@ public sealed partial class MidLevelIrLoweringTests
         Assert.True(dropCalls.Length >= 2);
         Assert.True(dropCalls[0].index > boxAssignments[0].index);
         Assert.True(dropCalls[0].index < boxAssignments[1].index);
+    }
+
+    [Fact]
+    public void DynamicStorageDropsInitializedElementsBeforeFreeingBackingStorage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            static mut i32[-2147483648 2147483647] Counter = 0;
+
+            fn void Bump(i32[-2147483648 2147483647] value) {
+                Counter = Counter + value;
+                return;
+            }
+
+            struct Token {
+                i32[-2147483648 2147483647] Value;
+
+                drop {
+                    Bump(self.Value);
+                }
+            }
+
+            fn void Run() {
+                stack mut dynamic Token values = new(2);
+                init values[0] = new Token() { Value = 1 };
+                init values[1] = new Token() { Value = 2 };
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+        Assert.Contains(function.Blocks, static block => block.Label.Contains("dynamic_drop_cond", StringComparison.Ordinal));
+        Assert.Contains(function.Blocks, static block => block.Label.Contains("dynamic_drop_body", StringComparison.Ordinal));
+
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrDynamicStorageFreeRValue);
+    }
+
+    [Fact]
+    public void EnumPayloadCaptureDropsMovedPayloadOnlyOnce()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            static mut i32[-2147483648 2147483647] Counter = 0;
+
+            fn void Bump(i32[-2147483648 2147483647] value) {
+                Counter = Counter + value;
+                return;
+            }
+
+            struct Resource {
+                i32[-2147483648 2147483647] Value;
+
+                drop {
+                    Bump(self.Value);
+                }
+            }
+
+            enum Slot {
+                Free,
+                Occupied(Resource),
+            }
+
+            fn void Run() {
+                stack Slot slot = Slot.Occupied(new Resource() { Value = 7 });
+                switch (slot) {
+                    case Slot.Occupied(var payload):
+                        stack Resource value = payload;
+                    case Slot.Free:
+                }
+
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+        var bumpCalls = function.Blocks
+            .SelectMany(static block => block.Statements)
+            .Count(static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+
+        Assert.Equal(1, bumpCalls);
     }
 
     [Fact]

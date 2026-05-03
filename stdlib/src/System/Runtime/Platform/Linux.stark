@@ -159,7 +159,7 @@ internal ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] LinuxS
     "syscall"
 }
 
-internal ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall4StatAt(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, rawptr<i8[-128 127]> arg2, rawptr<i8[-128 127]> arg3, i64[-9223372036854775808 9223372036854775807] arg4)
+internal ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall4StatAt(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, rawptr<i8[-128 127]> arg2, rawmutptr<i8[-128 127]> arg3, i64[-9223372036854775808 9223372036854775807] arg4)
     in("rax") number,
     in("rdi") arg1,
     in("rsi") arg2,
@@ -321,7 +321,7 @@ internal ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] Linux
     "svc #0"
 }
 
-internal ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall4StatAt(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, rawptr<i8[-128 127]> arg2, rawptr<i8[-128 127]> arg3, i64[-9223372036854775808 9223372036854775807] arg4)
+internal ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall4StatAt(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, rawptr<i8[-128 127]> arg2, rawmutptr<i8[-128 127]> arg3, i64[-9223372036854775808 9223372036854775807] arg4)
     in("x8") number,
     in("x0") arg1,
     in("x1") arg2,
@@ -481,7 +481,7 @@ internal ffi asm(riscv64) fn i64[-9223372036854775808 9223372036854775807] Linux
     "ecall"
 }
 
-internal ffi asm(riscv64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall4StatAt(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, rawptr<i8[-128 127]> arg2, rawptr<i8[-128 127]> arg3, i64[-9223372036854775808 9223372036854775807] arg4)
+internal ffi asm(riscv64) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall4StatAt(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, rawptr<i8[-128 127]> arg2, rawmutptr<i8[-128 127]> arg3, i64[-9223372036854775808 9223372036854775807] arg4)
     in("a7") number,
     in("a0") arg1,
     in("a1") arg2,
@@ -641,7 +641,7 @@ internal ffi asm(x86) fn i64[-9223372036854775808 9223372036854775807] LinuxSysc
     "int $$0x80"
 }
 
-internal ffi asm(x86) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall4StatAt(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, rawptr<i8[-128 127]> arg2, rawptr<i8[-128 127]> arg3, i64[-9223372036854775808 9223372036854775807] arg4)
+internal ffi asm(x86) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall4StatAt(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, rawptr<i8[-128 127]> arg2, rawmutptr<i8[-128 127]> arg3, i64[-9223372036854775808 9223372036854775807] arg4)
     in("eax") number,
     in("ebx") arg1,
     in("ecx") arg2,
@@ -801,7 +801,7 @@ internal ffi asm(arm) fn i64[-9223372036854775808 9223372036854775807] LinuxSysc
     "svc #0"
 }
 
-internal ffi asm(arm) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall4StatAt(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, rawptr<i8[-128 127]> arg2, rawptr<i8[-128 127]> arg3, i64[-9223372036854775808 9223372036854775807] arg4)
+internal ffi asm(arm) fn i64[-9223372036854775808 9223372036854775807] LinuxSyscall4StatAt(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, rawptr<i8[-128 127]> arg2, rawmutptr<i8[-128 127]> arg3, i64[-9223372036854775808 9223372036854775807] arg4)
     in("r7") number,
     in("r0") arg1,
     in("r1") arg2,
@@ -1203,6 +1203,85 @@ internal fn i32[-2147483648 2147483647] WriteAsciiToHandle(rawptr<i8[-128 127]> 
     return 0;
 }
 
+internal fn i32[-2147483648 2147483647] WriteBufferToHandle(
+    rawptr<i8[-128 127]> handle,
+    rawptr<i8[-128 127]>[length] buffer,
+    i64[0 max] length) {
+    if (handle == null) {
+        return -1;
+    }
+
+    if (length == 0) {
+        return 0;
+    }
+
+    if (buffer == null) {
+        return -1;
+    }
+
+    stack mut i64[0 max] remaining = length;
+    stack mut i64[0 max] written = 0;
+    while willexit (remaining > 0) {
+        stack rawptr<i8[-128 127]> data = &buffer[written];
+        stack i64[-9223372036854775808 9223372036854775807] syscallResult =
+            LinuxSyscall3HandleBuffer(LinuxWriteSyscallNumber, handle, data, remaining);
+        if (syscallResult < 0) {
+            return (i32[-2147483648 2147483647])syscallResult;
+        }
+
+        if (syscallResult == 0) {
+            return -1;
+        }
+
+        stack i64[0 max] chunk = (i64[0 max])syscallResult;
+        written += chunk;
+        remaining -= chunk;
+    }
+
+    return 0;
+}
+
+internal fn i32[-2147483648 2147483647] WriteBufferLineToHandle(
+    rawptr<i8[-128 127]> handle,
+    rawptr<i8[-128 127]>[length] buffer,
+    i64[0 max] length) {
+    if (handle == null) {
+        return -1;
+    }
+
+    if (length > 0 && buffer == null) {
+        return -1;
+    }
+
+    if (length < 8192) {
+        stack mut System.Runtime.Buffer.ByteBuffer8192 lineBuffer = new System.Runtime.Buffer.ByteBuffer8192();
+        for willexit (stack mut i64[0 max] index = 0; index < length; index += 1) {
+            lineBuffer.Storage[index] = *(&buffer[index]);
+        }
+
+        lineBuffer.Storage[length] = (i8[-128 127])10;
+        stack mut i32[-2147483648 2147483647] lineStatus = 0;
+        unsafe {
+            lineStatus = WriteBufferToHandle(handle, &lineBuffer.Storage[0], (i64[0 max])(length + 1));
+        }
+
+        return lineStatus;
+    }
+
+    stack i32[-2147483648 2147483647] status = WriteBufferToHandle(handle, buffer, length);
+    if (status != 0) {
+        return status;
+    }
+
+    stack mut i8[-128 127][1] newline = { 10 };
+    stack mut i32[-2147483648 2147483647] newlineStatus = 0;
+    unsafe {
+        newlineStatus = WriteBufferToHandle(handle, &newline[0], 1);
+    }
+
+    return newlineStatus;
+}
+
 internal fn i32[-2147483648 2147483647] NormalizeUnicodeCodePoint(i32[-2147483648 2147483647] codePoint) {
     if (codePoint < 0) {
         return 65533;
@@ -1321,6 +1400,66 @@ internal fn i32[-2147483648 2147483647] WriteUnicodeToHandle(rawptr<i8[-128 127]
     return FlushEncodedWriteBuffer(handle, &utf8Buffer);
 }
 
+internal fn i32[-2147483648 2147483647] WriteAsciiLineToHandle(rawptr<i8[-128 127]> handle, ascii text) {
+    stack i64[-9223372036854775808 9223372036854775807] length = AsciiLength(text);
+    if (length < 0) {
+        return -1;
+    }
+
+    if (length == 0) {
+        return WriteBufferLineToHandle(handle, null, 0);
+    }
+
+    stack ascii view = text[0, length];
+    stack mut i32[-2147483648 2147483647] status = 0;
+    unsafe {
+        status = WriteBufferLineToHandle(handle, AsciiData(view), (i64[0 max])length);
+    }
+
+    return status;
+}
+
+internal fn i32[-2147483648 2147483647] WriteUnicodeLineToHandle(rawptr<i8[-128 127]> handle, unicode text) {
+    if (handle == null) {
+        return -1;
+    }
+
+    stack i64[-9223372036854775808 9223372036854775807] length = UnicodeLength(text);
+    if (length < 0) {
+        return -1;
+    }
+
+    stack mut System.Runtime.Buffer.ByteBuffer4096 utf8Buffer = new System.Runtime.Buffer.ByteBuffer4096();
+    stack mut i64[-9223372036854775808 9223372036854775807] index = 0;
+
+    while willexit (index < length) {
+        stack unicode unit = text[index, 1];
+        stack rawptr<i32[-2147483648 2147483647]> data = UnicodeData(unit);
+        stack i32[-2147483648 2147483647] codePoint = *data;
+        stack i64[-9223372036854775808 9223372036854775807] required = Utf8EncodedLength(codePoint);
+
+        if (utf8Buffer.Writable() < required) {
+            stack i32[-2147483648 2147483647] flushStatus = FlushEncodedWriteBuffer(handle, &utf8Buffer);
+            if (flushStatus != 0) {
+                return flushStatus;
+            }
+        }
+
+        AppendUtf8CodePoint(&utf8Buffer, codePoint);
+        index += 1;
+    }
+
+    if (utf8Buffer.Writable() < 1) {
+        stack i32[-2147483648 2147483647] flushStatus = FlushEncodedWriteBuffer(handle, &utf8Buffer);
+        if (flushStatus != 0) {
+            return flushStatus;
+        }
+    }
+
+    AppendUtf8CodePoint(&utf8Buffer, 10);
+    return FlushEncodedWriteBuffer(handle, &utf8Buffer);
+}
+
 internal fn i32[-2147483648 2147483647] WriteStdoutAscii(ascii text) {
     return WriteAsciiToHandle((rawptr<i8[-128 127]>)1, text);
 }
@@ -1329,12 +1468,44 @@ internal fn i32[-2147483648 2147483647] WriteStdoutUnicode(unicode text) {
     return WriteUnicodeToHandle((rawptr<i8[-128 127]>)1, text);
 }
 
+internal fn i32[-2147483648 2147483647] WriteStdoutBytes(rawptr<i8[-128 127]>[length] data, i64[0 max] length) {
+    return WriteBufferToHandle((rawptr<i8[-128 127]>)1, data, length);
+}
+
+internal fn i32[-2147483648 2147483647] WriteStdoutAsciiLine(ascii text) {
+    return WriteAsciiLineToHandle((rawptr<i8[-128 127]>)1, text);
+}
+
+internal fn i32[-2147483648 2147483647] WriteStdoutUnicodeLine(unicode text) {
+    return WriteUnicodeLineToHandle((rawptr<i8[-128 127]>)1, text);
+}
+
+internal fn i32[-2147483648 2147483647] WriteStdoutBytesLine(rawptr<i8[-128 127]>[length] data, i64[0 max] length) {
+    return WriteBufferLineToHandle((rawptr<i8[-128 127]>)1, data, length);
+}
+
 internal fn i32[-2147483648 2147483647] WriteStderrAscii(ascii text) {
     return WriteAsciiToHandle((rawptr<i8[-128 127]>)2, text);
 }
 
 internal fn i32[-2147483648 2147483647] WriteStderrUnicode(unicode text) {
     return WriteUnicodeToHandle((rawptr<i8[-128 127]>)2, text);
+}
+
+internal fn i32[-2147483648 2147483647] WriteStderrBytes(rawptr<i8[-128 127]>[length] data, i64[0 max] length) {
+    return WriteBufferToHandle((rawptr<i8[-128 127]>)2, data, length);
+}
+
+internal fn i32[-2147483648 2147483647] WriteStderrAsciiLine(ascii text) {
+    return WriteAsciiLineToHandle((rawptr<i8[-128 127]>)2, text);
+}
+
+internal fn i32[-2147483648 2147483647] WriteStderrUnicodeLine(unicode text) {
+    return WriteUnicodeLineToHandle((rawptr<i8[-128 127]>)2, text);
+}
+
+internal fn i32[-2147483648 2147483647] WriteStderrBytesLine(rawptr<i8[-128 127]>[length] data, i64[0 max] length) {
+    return WriteBufferLineToHandle((rawptr<i8[-128 127]>)2, data, length);
 }
 
 internal fn rawptr<i8[-128 127]> OpenStdin() {
@@ -1349,8 +1520,8 @@ internal fn void CloseStdin(rawptr<i8[-128 127]> handle) {
     return;
 }
 
-internal fn i64[-9223372036854775808 9223372036854775807] ReadStdin(rawmutptr<i8[-128 127]> buffer, i64[-9223372036854775808 9223372036854775807] capacity) {
-    if (buffer == null || capacity <= 0) {
+internal fn i64[-9223372036854775808 9223372036854775807] ReadStdin(rawmutptr<i8[-128 127]>[capacity] buffer, i64[0 max] capacity) {
+    if (buffer == null || capacity == 0) {
         return 0;
     }
 
@@ -1470,6 +1641,34 @@ internal fn i64[-9223372036854775808 9223372036854775807] WriteFile(rawptr<i8[-1
     }
 
     return syscallResult / size;
+}
+
+internal fn i64[-9223372036854775808 9223372036854775807] ReadFileBytes(rawmutptr<i8[-128 127]>[length] buffer, i64[0 max] length, rawptr<i8[-128 127]> handle) {
+    if (handle == null || buffer == null || length == 0) {
+        return 0;
+    }
+
+    stack i64[-9223372036854775808 9223372036854775807] syscallResult =
+        LinuxSyscall3HandleBuffer(LinuxReadSyscallNumber, handle, (rawptr<i8[-128 127]>)buffer, length);
+    if (syscallResult <= 0) {
+        return 0;
+    }
+
+    return syscallResult;
+}
+
+internal fn i64[-9223372036854775808 9223372036854775807] WriteFileBytes(rawptr<i8[-128 127]>[length] buffer, i64[0 max] length, rawptr<i8[-128 127]> handle) {
+    if (handle == null || buffer == null || length == 0) {
+        return 0;
+    }
+
+    stack i64[-9223372036854775808 9223372036854775807] syscallResult =
+        LinuxSyscall3HandleBuffer(LinuxWriteSyscallNumber, handle, buffer, length);
+    if (syscallResult <= 0) {
+        return 0;
+    }
+
+    return syscallResult;
 }
 
 internal fn i64[-9223372036854775808 9223372036854775807] SeekFile(rawptr<i8[-128 127]> handle, i64[-9223372036854775808 9223372036854775807] offset, i32[-2147483648 2147483647] origin) {
@@ -1636,6 +1835,23 @@ internal fn rawptr<i8[-128 127]> OpenDirectory(ascii path)
     return OpenFileWithFlags(path, LinuxOpenReadOnlyFlag | LinuxOpenDirectoryFlag | LinuxOpenCloseOnExecFlag, 0);
 }
 
+internal fn rawptr<i8[-128 127]> OpenDirectoryInto(
+    ascii path,
+    rawmutptr<i8[-128 127]>[capacity] buffer,
+    i64[0 max] capacity,
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> initialLength)
+{
+    if (initialLength != null) {
+        *initialLength = 0;
+    }
+
+    return OpenDirectory(path);
+}
+
+internal fn i64[0 max] DirectoryBufferCapacity() {
+    return 8192;
+}
+
 internal fn i32[-2147483648 2147483647] CloseDirectory(rawptr<i8[-128 127]> handle) {
     return CloseFile(handle);
 }
@@ -1776,7 +1992,7 @@ internal fn rawptr<i8[-128 127]> ListenTcpIPv4(
 
 internal fn i64[-9223372036854775808 9223372036854775807] ReadSocket(
     rawptr<i8[-128 127]> handle,
-    rawmutptr<i8[-128 127]> buffer,
+    rawmutptr<i8[-128 127]>[capacity] buffer,
     i64[0 max] capacity)
 {
     if (handle == null) {
@@ -1800,7 +2016,7 @@ internal fn i64[-9223372036854775808 9223372036854775807] ReadSocket(
 
 internal fn i64[-9223372036854775808 9223372036854775807] WriteSocket(
     rawptr<i8[-128 127]> handle,
-    rawptr<i8[-128 127]> buffer,
+    rawptr<i8[-128 127]>[length] buffer,
     i64[0 max] length)
 {
     if (handle == null) {
@@ -1820,6 +2036,44 @@ internal fn i64[-9223372036854775808 9223372036854775807] WriteSocket(
         handle,
         buffer,
         length);
+}
+
+internal fn i64[-9223372036854775808 9223372036854775807] ReadSocketVector2(
+    rawptr<i8[-128 127]> handle,
+    rawmutptr<i8[-128 127]>[firstCapacity] firstBuffer,
+    i64[0 max] firstCapacity,
+    rawmutptr<i8[-128 127]>[secondCapacity] secondBuffer,
+    i64[0 max] secondCapacity)
+{
+    if (firstCapacity > 0) {
+        return ReadSocket(handle, firstBuffer, firstCapacity);
+    }
+
+    return ReadSocket(handle, secondBuffer, secondCapacity);
+}
+
+internal fn i64[-9223372036854775808 9223372036854775807] WriteSocketVector2(
+    rawptr<i8[-128 127]> handle,
+    rawptr<i8[-128 127]>[firstLength] firstBuffer,
+    i64[0 max] firstLength,
+    rawptr<i8[-128 127]>[secondLength] secondBuffer,
+    i64[0 max] secondLength)
+{
+    if (firstLength == 0) {
+        return WriteSocket(handle, secondBuffer, secondLength);
+    }
+
+    stack i64[-9223372036854775808 9223372036854775807] first = WriteSocket(handle, firstBuffer, firstLength);
+    if (first < 0 || first < (i64[-9223372036854775808 9223372036854775807])firstLength || secondLength == 0) {
+        return first;
+    }
+
+    stack i64[-9223372036854775808 9223372036854775807] second = WriteSocket(handle, secondBuffer, secondLength);
+    if (second < 0) {
+        return second;
+    }
+
+    return first + second;
 }
 
 internal fn rawptr<i8[-128 127]> AcceptSocket(
@@ -1925,14 +2179,14 @@ internal fn i32[-2147483648 2147483647] DirectoryEntryKindFromLinuxType(i32[-214
 
 internal fn i32[-2147483648 2147483647] ReadDirectoryEntry(
     rawptr<i8[-128 127]> handle,
-    rawmutptr<i8[-128 127]> buffer,
-    i64[-9223372036854775808 9223372036854775807] capacity,
+    rawmutptr<i8[-128 127]>[capacity] buffer,
+    i64[0 max] capacity,
     rawmutptr<i64[-9223372036854775808 9223372036854775807]> readPos,
     rawmutptr<i64[-9223372036854775808 9223372036854775807]> readLength,
     rawmutptr<Ascii> name,
     rawmutptr<i32[-2147483648 2147483647]> kind)
 {
-    if (handle == null || buffer == null || capacity <= LinuxDirent64HeaderLength || readPos == null || readLength == null || name == null || kind == null) {
+    if (handle == null || buffer == null || capacity <= (i64[0 max])LinuxDirent64HeaderLength || readPos == null || readLength == null || name == null || kind == null) {
         return -1;
     }
 
@@ -2034,6 +2288,74 @@ internal fn i32[-2147483648 2147483647] ReadDirectoryEntry(
             Length = entryNameLength,
             Capacity = nameCapacity
         };
+        *kind = DirectoryEntryKindFromLinuxType(UnsignedByte(rawEntryType));
+        return 1;
+    }
+}
+
+internal fn i32[-2147483648 2147483647] ReadDirectoryEntryInfo(
+    rawptr<i8[-128 127]> handle,
+    rawmutptr<i8[-128 127]>[capacity] buffer,
+    i64[0 max] capacity,
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> readPos,
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> readLength,
+    rawmutptr<i64[-9223372036854775808 9223372036854775807]> nameLength,
+    rawmutptr<i32[-2147483648 2147483647]> kind)
+{
+    if (handle == null || buffer == null || capacity <= (i64[0 max])LinuxDirent64HeaderLength || readPos == null || readLength == null || nameLength == null || kind == null) {
+        return -1;
+    }
+
+    while willexit (true) {
+        if (*readPos >= *readLength) {
+            stack i64[-9223372036854775808 9223372036854775807] syscallResult = LinuxSyscall3HandleBuffer(
+                LinuxGetDents64SyscallNumber,
+                handle,
+                (rawptr<i8[-128 127]>)buffer,
+                capacity);
+            if (syscallResult < 0) {
+                *kind = (i32[-2147483648 2147483647])syscallResult;
+                *nameLength = -2;
+                return (i32[-2147483648 2147483647])syscallResult;
+            }
+
+            if (syscallResult == 0) {
+                *kind = 0;
+                *nameLength = -1;
+                return 0;
+            }
+
+            *readPos = 0;
+            *readLength = syscallResult;
+        }
+
+        stack i64[-9223372036854775808 9223372036854775807] current = *readPos;
+        if (current < 0 || current + LinuxDirent64HeaderLength > *readLength) {
+            *kind = -1;
+            *nameLength = -2;
+            return -1;
+        }
+
+        stack rawptr<i16[-32768 32767]> recordLengthPointer = (rawptr<i16[-32768 32767]>)(&buffer[current + LinuxDirent64RecordLengthOffset]);
+        stack i32[-2147483648 2147483647] recordLength = UnsignedShort(*recordLengthPointer);
+        if (recordLength <= LinuxDirent64HeaderLength || current + recordLength > *readLength) {
+            *kind = -1;
+            *nameLength = -2;
+            return -1;
+        }
+
+        stack rawptr<i8[-128 127]> entryNameData = (rawptr<i8[-128 127]>)(&buffer[current + LinuxDirent64HeaderLength]);
+        stack i64[-9223372036854775808 9223372036854775807] entryNameLength = LinuxDirectoryEntryNameLength(
+            entryNameData,
+            (i64[-9223372036854775808 9223372036854775807])recordLength - LinuxDirent64HeaderLength);
+        stack i8[-128 127] rawEntryType = *(&buffer[current + LinuxDirent64TypeOffset]);
+        *readPos = current + recordLength;
+
+        if (IsDotDirectoryEntry(entryNameData, entryNameLength)) {
+            continue;
+        }
+
+        *nameLength = entryNameLength;
         *kind = DirectoryEntryKindFromLinuxType(UnsignedByte(rawEntryType));
         return 1;
     }

@@ -28,6 +28,7 @@ public struct File {
     finite law bool IsOpen(File self);
     fn i32 Close(mut borrow File self);
     fn i32 Flush(mut borrow File self);
+    fn i32 SyncAll(mut borrow File self);
     fn i64 ReadBytes(mut borrow File self, rawptr<i8> buffer, i64 size, i64 count);
     fn i64 WriteBytes(mut borrow File self, rawptr<i8> buffer, i64 size, i64 count);
     fn i64 Seek(mut borrow File self, i64 offset, SeekOrigin origin);
@@ -56,6 +57,7 @@ public fn rawptr<i8> OpenAppend(ascii path);
 
 public fn i32 Close(rawptr<i8> handle);
 public fn i32 Flush(rawptr<i8> handle);
+public fn i32 SyncAll(rawptr<i8> handle);
 public fn i64 ReadBytes(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle);
 public fn i64 WriteBytes(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle);
 public fn i64 Seek(rawptr<i8> handle, i64 offset, SeekOrigin origin);
@@ -87,6 +89,7 @@ fn void WriteOwned() {
 - Raw-handle helpers remain available for compatibility and tests.
 - On Linux, open/read/write/close/seek/delete/move/exists now go through the internal syscall-backed file-descriptor boundary.
 - On Windows, seek uses `SetFilePointerEx` through the internal platform boundary.
+- `Flush` drains Stark userspace buffering only; `SyncAll` is the explicit durable-storage sync boundary.
 - `Exists` now uses the Linux `stat` boundary instead of probing with open/close.
 - Raw-handle text helpers support both `ascii` and `unicode`.
 - Owned file writes now support `None`, `Line`, and `Full` userspace buffering with an internal fixed-size buffer.
