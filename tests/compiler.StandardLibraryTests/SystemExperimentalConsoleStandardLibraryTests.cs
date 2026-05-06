@@ -1,4 +1,4 @@
-﻿using Stark.Compiler;
+using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
@@ -49,7 +49,7 @@ public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibr
                         return false;
                     }
 
-                    stack i8[-128 127][] slice = line.AsSlice();
+                    stack i8[min max][] slice = line.AsSlice();
                     return slice[0] == 97
                         && slice[1] == 108
                         && slice[2] == 112
@@ -68,7 +68,7 @@ public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibr
                         return false;
                     }
 
-                    stack i32[-2147483648 2147483647][] slice = line.AsSlice();
+                    stack i32[min max][] slice = line.AsSlice();
                     return slice[0] == 99
                         && slice[1] == 97
                         && slice[2] == 102
@@ -86,7 +86,7 @@ public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibr
                         return false;
                     }
 
-                    stack i32[-2147483648 2147483647][] slice = unit.AsSlice();
+                    stack i32[min max][] slice = unit.AsSlice();
                     return slice[0] == 90;
             }
         }
@@ -115,7 +115,7 @@ public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibr
                 return 1;
             }
 
-            stack mut i8[-128 127][3] bufferBytes = { 66, 85, 70 };
+            stack mut i8[min max][3] bufferBytes = { 66, 85, 70 };
             stack mut System.Runtime.Buffer.FixedByteBuffer512 fixedBuffer = new();
             if (!MemoryOk(fixedBuffer.WriteSlice(bufferBytes, 3))) {
                 return 2;
@@ -147,7 +147,7 @@ public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibr
                 return 7;
             }
 
-            stack i8[-128 127][] readBytes = dynamicBytes.ReadSlice();
+            stack i8[min max][] readBytes = dynamicBytes.ReadSlice();
             if (readBytes[0] != 49 || readBytes[1] != 50 || readBytes[2] != 51) {
                 return 8;
             }
@@ -184,7 +184,7 @@ public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibr
                     return System.Console.Write(buffer);
                 }
 
-                fn System.Memory.MemoryResult<i64[0 max]> ReadInto(
+                fn System.Memory.MemoryResult<u64[0 2 ** 63 - 1]> ReadInto(
                     mut borrow System.Runtime.Buffer.FixedByteBuffer8192 buffer) {
                     return System.Console.ReadBytes(buffer, 32);
                 }
@@ -256,9 +256,9 @@ public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibr
         Assert.DoesNotContain("@WriteError__ascii_", writeErrorLineAscii, StringComparison.Ordinal);
 
         var platformSource = File.ReadAllText(platformPath);
-        Assert.Contains("WriteStdoutBytes(rawptr<i8[-128 127]>[length] data, i64[0 max] length)", platformSource, StringComparison.Ordinal);
-        Assert.Contains("WriteStderrBytes(rawptr<i8[-128 127]>[length] data, i64[0 max] length)", platformSource, StringComparison.Ordinal);
-        Assert.Contains("ReadStdin(rawmutptr<i8[-128 127]>[capacity] buffer, i64[0 max] capacity)", platformSource, StringComparison.Ordinal);
+        Assert.Contains("WriteStdoutBytes(rawptr<i8[min max]>[length] data, u64[0 2 ** 63 - 1] length)", platformSource, StringComparison.Ordinal);
+        Assert.Contains("WriteStderrBytes(rawptr<i8[min max]>[length] data, u64[0 2 ** 63 - 1] length)", platformSource, StringComparison.Ordinal);
+        Assert.Contains("ReadStdin(rawmutptr<i8[min max]>[capacity] buffer, u64[0 2 ** 63 - 1] capacity)", platformSource, StringComparison.Ordinal);
     }
 
     [Fact]

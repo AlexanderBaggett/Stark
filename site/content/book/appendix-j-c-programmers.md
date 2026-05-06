@@ -15,7 +15,7 @@ execution, but safe Stark code deliberately removes many C hazards.
 
 - explicit integer widths
 - raw pointers for FFI and low-level code
-- `export ffi fn main` as the hosted entrypoint shape
+- `export unsafe ffi fn main` as the hosted entrypoint shape
 - status/result values instead of exceptions
 - direct native code generation through LLVM
 

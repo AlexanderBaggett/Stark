@@ -1,4 +1,4 @@
-﻿import System.Runtime.Buffer
+import System.Runtime.Buffer
 import System.Text
 import System.IO
 import System.Memory
@@ -35,7 +35,7 @@ fn i32[min max] UnsignedByte(i8[min max] value) {
     return (i32[min max])value;
 }
 
-fn i64[0 4] Utf8ExpectedByteCount(i8[min max] firstByte) {
+fn u8[0 4] Utf8ExpectedByteCount(i8[min max] firstByte) {
     unsafe {
         stack i32[min max] first = UnsignedByte(firstByte);
         if (first <= 127) {
@@ -381,11 +381,11 @@ public fn System.IO.IOStatus WriteErrorLine(borrow System.Runtime.Buffer.FixedBy
     return WriteErrorLine(source.ReadSlice());
 }
 
-public fn System.Memory.MemoryResult<i64[0 max]> ReadBytes(
+public fn System.Memory.MemoryResult<u64[0 2 ** 63 - 1]> ReadBytes(
     mut borrow System.Runtime.Buffer.DynamicByteBuffer destination,
-    i64[0 max] maxCount) {
+    u64[0 2 ** 63 - 1] maxCount) {
         unsafe {
-        stack mut i64[0 max] readCount = 0;
+        stack mut u64[0 2 ** 63 - 1] readCount = 0;
         while willexit (readCount < maxCount) {
             stack mut i8[min max] value = 0;
             if (!TryReadInputByte(value)) {
@@ -395,22 +395,22 @@ public fn System.Memory.MemoryResult<i64[0 max]> ReadBytes(
             stack System.Memory.MemoryStatus status = destination.WriteByte(value);
             switch (status) {
                 case System.Memory.MemoryStatus.Err(var error):
-                    return System.Memory.MemoryResult<i64[0 max]>.Err(error);
+                    return System.Memory.MemoryResult<u64[0 2 ** 63 - 1]>.Err(error);
                 case System.Memory.MemoryStatus.Ok:
             }
 
             readCount += 1;
         }
 
-        return System.Memory.MemoryResult<i64[0 max]>.Ok(readCount);
+        return System.Memory.MemoryResult<u64[0 2 ** 63 - 1]>.Ok(readCount);
         }
 }
 
-public fn System.Memory.MemoryResult<i64[0 max]> ReadBytes(
+public fn System.Memory.MemoryResult<u64[0 2 ** 63 - 1]> ReadBytes(
     mut borrow System.Runtime.Buffer.FixedByteBuffer512 destination,
-    i64[0 max] maxCount) {
+    u64[0 2 ** 63 - 1] maxCount) {
         unsafe {
-        stack mut i64[0 max] readCount = 0;
+        stack mut u64[0 2 ** 63 - 1] readCount = 0;
         while willexit (readCount < maxCount && destination.Writable() > 0) {
             stack mut i8[min max] value = 0;
             if (!TryReadInputByte(value)) {
@@ -420,22 +420,22 @@ public fn System.Memory.MemoryResult<i64[0 max]> ReadBytes(
             stack System.Memory.MemoryStatus status = destination.WriteByte(value);
             switch (status) {
                 case System.Memory.MemoryStatus.Err(var error):
-                    return System.Memory.MemoryResult<i64[0 max]>.Err(error);
+                    return System.Memory.MemoryResult<u64[0 2 ** 63 - 1]>.Err(error);
                 case System.Memory.MemoryStatus.Ok:
             }
 
             readCount += 1;
         }
 
-        return System.Memory.MemoryResult<i64[0 max]>.Ok(readCount);
+        return System.Memory.MemoryResult<u64[0 2 ** 63 - 1]>.Ok(readCount);
         }
 }
 
-public fn System.Memory.MemoryResult<i64[0 max]> ReadBytes(
+public fn System.Memory.MemoryResult<u64[0 2 ** 63 - 1]> ReadBytes(
     mut borrow System.Runtime.Buffer.FixedByteBuffer4096 destination,
-    i64[0 max] maxCount) {
+    u64[0 2 ** 63 - 1] maxCount) {
         unsafe {
-        stack mut i64[0 max] readCount = 0;
+        stack mut u64[0 2 ** 63 - 1] readCount = 0;
         while willexit (readCount < maxCount && destination.Writable() > 0) {
             stack mut i8[min max] value = 0;
             if (!TryReadInputByte(value)) {
@@ -445,22 +445,22 @@ public fn System.Memory.MemoryResult<i64[0 max]> ReadBytes(
             stack System.Memory.MemoryStatus status = destination.WriteByte(value);
             switch (status) {
                 case System.Memory.MemoryStatus.Err(var error):
-                    return System.Memory.MemoryResult<i64[0 max]>.Err(error);
+                    return System.Memory.MemoryResult<u64[0 2 ** 63 - 1]>.Err(error);
                 case System.Memory.MemoryStatus.Ok:
             }
 
             readCount += 1;
         }
 
-        return System.Memory.MemoryResult<i64[0 max]>.Ok(readCount);
+        return System.Memory.MemoryResult<u64[0 2 ** 63 - 1]>.Ok(readCount);
         }
 }
 
-public fn System.Memory.MemoryResult<i64[0 max]> ReadBytes(
+public fn System.Memory.MemoryResult<u64[0 2 ** 63 - 1]> ReadBytes(
     mut borrow System.Runtime.Buffer.FixedByteBuffer8192 destination,
-    i64[0 max] maxCount) {
+    u64[0 2 ** 63 - 1] maxCount) {
         unsafe {
-        stack mut i64[0 max] readCount = 0;
+        stack mut u64[0 2 ** 63 - 1] readCount = 0;
         while willexit (readCount < maxCount && destination.Writable() > 0) {
             stack mut i8[min max] value = 0;
             if (!TryReadInputByte(value)) {
@@ -470,14 +470,14 @@ public fn System.Memory.MemoryResult<i64[0 max]> ReadBytes(
             stack System.Memory.MemoryStatus status = destination.WriteByte(value);
             switch (status) {
                 case System.Memory.MemoryStatus.Err(var error):
-                    return System.Memory.MemoryResult<i64[0 max]>.Err(error);
+                    return System.Memory.MemoryResult<u64[0 2 ** 63 - 1]>.Err(error);
                 case System.Memory.MemoryStatus.Ok:
             }
 
             readCount += 1;
         }
 
-        return System.Memory.MemoryResult<i64[0 max]>.Ok(readCount);
+        return System.Memory.MemoryResult<u64[0 2 ** 63 - 1]>.Ok(readCount);
         }
 }
 
@@ -550,7 +550,7 @@ public fn System.Memory.MemoryResult<System.Text.OwnedUnicode> Read() {
             return DecodeAsciiBytes(bytes);
         }
 
-        stack i64[0 4] expectedLength = Utf8ExpectedByteCount(first);
+        stack u8[0 4] expectedLength = Utf8ExpectedByteCount(first);
         if (expectedLength == 0) {
             return ReplacementUnicodeResult();
         }
@@ -562,7 +562,7 @@ public fn System.Memory.MemoryResult<System.Text.OwnedUnicode> Read() {
             case System.Memory.MemoryStatus.Ok:
         }
 
-        stack mut i64[0 4] index = 1;
+        stack mut u8[0 4] index = 1;
         while willexit (index < expectedLength) {
             stack mut i8[min max] value = 0;
             if (!TryReadInputByte(value)) {

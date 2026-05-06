@@ -825,7 +825,7 @@ public sealed class PackageImageArchitectureTests
                     module Facade
 
                     public const Small = 80;
-                    public const Big = 2**16;
+                    public const Big = 2 ** 16;
                     public const Float64 = 80.0;
                     public const Float32 = 80.0f;
                     """,

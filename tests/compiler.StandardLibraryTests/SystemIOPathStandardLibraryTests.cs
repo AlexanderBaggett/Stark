@@ -1,4 +1,4 @@
-﻿using Stark.Compiler;
+using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
@@ -302,16 +302,16 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                finite law i8[-128 127] UnitAt(ascii value, i64[0 max] index) {
-                    stack rawptr<i8[-128 127]> data = System.Text.AsciiData(value);
+                finite law i8[min max] UnitAt(ascii value, i64[0 max] index) {
+                    stack rawptr<i8[min max]> data = System.Text.AsciiData(value);
                     return *(&data[index]);
                 }
 
-                finite law i8[-128 127] SeparatorUnit() {
+                finite law i8[min max] SeparatorUnit() {
                     return UnitAt(System.IO.Path.DirectorySeparator(), 0);
                 }
 
-                finite law bool IsSeparatorUnit(i8[-128 127] value) {
+                finite law bool IsSeparatorUnit(i8[min max] value) {
                     if (value == SeparatorUnit()) {
                         return true;
                     }
@@ -329,12 +329,12 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         return false;
                     }
 
-                    return UnitAt(value, 0) == (i8[-128 127])97
-                        && UnitAt(value, 4) == (i8[-128 127])97
+                    return UnitAt(value, 0) == (i8[min max])97
+                        && UnitAt(value, 4) == (i8[min max])97
                         && IsSeparatorUnit(UnitAt(value, 5))
-                        && UnitAt(value, 6) == (i8[-128 127])98
-                        && UnitAt(value, 10) == (i8[-128 127])46
-                        && UnitAt(value, 13) == (i8[-128 127])116;
+                        && UnitAt(value, 6) == (i8[min max])98
+                        && UnitAt(value, 10) == (i8[min max])46
+                        && UnitAt(value, 13) == (i8[min max])116;
                 }
 
                 fn bool IsNormalizedPath(ascii value) {
@@ -344,9 +344,9 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
 
                     return UnitAt(value, 5) == SeparatorUnit()
                         && UnitAt(value, 10) == SeparatorUnit()
-                        && UnitAt(value, 11) == (i8[-128 127])103
-                        && UnitAt(value, 16) == (i8[-128 127])46
-                        && UnitAt(value, 19) == (i8[-128 127])116;
+                        && UnitAt(value, 11) == (i8[min max])103
+                        && UnitAt(value, 16) == (i8[min max])46
+                        && UnitAt(value, 19) == (i8[min max])116;
                 }
 
                 fn bool IsTextExtension(ascii value) {
@@ -538,7 +538,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
 
                     if (System.Text.AsciiLength(selfJoin.View()) != 11
                         || UnitAt(selfJoin.View(), 5) != SeparatorUnit()
-                        || UnitAt(selfJoin.View(), 6) != (i8[-128 127])97) {
+                        || UnitAt(selfJoin.View(), 6) != (i8[min max])97) {
                         return false;
                     }
 
@@ -563,11 +563,11 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 }
 
                 fn i32[min max] CheckTooLargeNormalization() {
-                    stack mut i8[-128 127][1] storage = { 47 };
+                    stack mut i8[min max][1] storage = { 47 };
                     stack Ascii huge = new Ascii() {
                         Data = &storage[0],
-                        Length = (i64[min max])((2**63) - 1),
-                        Capacity = (i64[min max])((2**63) - 1)
+                        Length = (i64[min max])(2 ** 63 - 1),
+                        Capacity = (i64[min max])(2 ** 63 - 1)
                     };
                     stack mut System.Text.OwnedAscii destination = new();
                     stack ascii hugeView = System.Text.AsciiView(huge);
@@ -711,8 +711,8 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
-                    stack mut i8[-128 127][256] buffer = { {{zeroBytes}} };
+                export unsafe ffi fn i32[min max] main() {
+                    stack mut i8[min max][256] buffer = { {{zeroBytes}} };
                     stack mut Ascii owned = new Ascii() {
                         Data = &buffer[0],
                         Length = 0,
@@ -872,8 +872,8 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
-                    stack mut i8[-128 127][64] buffer = { {{zeroBytes}} };
+                export unsafe ffi fn i32[min max] main() {
+                    stack mut i8[min max][64] buffer = { {{zeroBytes}} };
                     stack mut Ascii joined = new Ascii() {
                         Data = &buffer[0],
                         Length = 0,
@@ -1091,21 +1091,21 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     stack mut System.Text.OwnedAscii cwd = new();
-                    stack mut i8[-128 127][12] ownedNameBytes = { 111, 119, 110, 101, 100, 45, -50, -79, 46, 116, 120, 116 };
+                    stack mut i8[min max][12] ownedNameBytes = { 111, 119, 110, 101, 100, 45, -50, -79, 46, 116, 120, 116 };
                     stack mut Ascii ownedName = new Ascii() {
                         Data = &ownedNameBytes[0],
                         Length = 12,
                         Capacity = 12
                     };
-                    stack mut i8[-128 127][14] renamedNameBytes = { 114, 101, 110, 97, 109, 101, 100, 45, -50, -78, 46, 116, 120, 116 };
+                    stack mut i8[min max][14] renamedNameBytes = { 114, 101, 110, 97, 109, 101, 100, 45, -50, -78, 46, 116, 120, 116 };
                     stack mut Ascii renamedName = new Ascii() {
                         Data = &renamedNameBytes[0],
                         Length = 14,
                         Capacity = 14
                     };
-                    stack mut i8[-128 127][13] deleteNameBytes = { 100, 101, 108, 101, 116, 101, 45, -50, -77, 46, 116, 120, 116 };
+                    stack mut i8[min max][13] deleteNameBytes = { 100, 101, 108, 101, 116, 101, 45, -50, -77, 46, 116, 120, 116 };
                     stack mut Ascii deleteName = new Ascii() {
                         Data = &deleteNameBytes[0],
                         Length = 13,
@@ -1116,7 +1116,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         return 1;
                     }
 
-                    stack rawptr<i8[-128 127]> cwdHandle = System.IO.File.OpenWrite("cwd.txt");
+                    stack rawptr<i8[min max]> cwdHandle = System.IO.File.OpenWrite("cwd.txt");
                     if (cwdHandle == null) {
                         return 2;
                     }
@@ -1164,7 +1164,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         return 7;
                     }
 
-                    stack rawptr<i8[-128 127]> deleteHandle = System.IO.File.OpenWrite(System.Text.AsciiView(deleteName));
+                    stack rawptr<i8[min max]> deleteHandle = System.IO.File.OpenWrite(System.Text.AsciiView(deleteName));
                     if (deleteHandle == null) {
                         return 8;
                     }

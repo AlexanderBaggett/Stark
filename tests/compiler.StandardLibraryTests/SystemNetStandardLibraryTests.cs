@@ -25,24 +25,24 @@ public sealed class SystemNetStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn i32[-2147483648 2147483647] ReadResult(System.Net.NetResult<i32[-2147483648 2147483647]> result) {
+                fn i32[min max] ReadResult(System.Net.NetResult<i32[min max]> result) {
                     switch (result) {
-                        case System.Net.NetResult<i32[-2147483648 2147483647]>.Ok(var value):
+                        case System.Net.NetResult<i32[min max]>.Ok(var value):
                             return value;
-                        case System.Net.NetResult<i32[-2147483648 2147483647]>.Err(var error):
+                        case System.Net.NetResult<i32[min max]>.Err(var error):
                             return 0;
                     }
                 }
 
-                fn u8[0 255] FirstOctet(System.Net.IPv4Endpoint endpoint) {
+                fn u8[0 max] FirstOctet(System.Net.IPv4Endpoint endpoint) {
                     return endpoint.Address.A;
                 }
 
-                fn u16[0 65535] EndpointPort(System.Net.IPv4Endpoint endpoint) {
+                fn u16[0 max] EndpointPort(System.Net.IPv4Endpoint endpoint) {
                     return endpoint.Port;
                 }
 
-                fn i32[-2147483648 2147483647] Run() {
+                fn i32[min max] Run() {
                     stack System.Net.IPv4Address address = new System.Net.IPv4Address() {
                         A = 127,
                         B = 0,
@@ -53,8 +53,8 @@ public sealed class SystemNetStandardLibraryTests : StandardLibraryTestSuite
                         Address = address,
                         Port = 8080
                     };
-                    stack System.Net.NetResult<i32[-2147483648 2147483647]> result =
-                        System.Net.NetResult<i32[-2147483648 2147483647]>.Ok(7);
+                    stack System.Net.NetResult<i32[min max]> result =
+                        System.Net.NetResult<i32[min max]>.Ok(7);
 
                     if (!StatusOk(System.Net.NetStatus.Ok)) {
                         return 1;
@@ -124,20 +124,20 @@ public sealed class SystemNetStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn i32[-2147483648 2147483647] ReadResult(System.Net.NetResult<i32[-2147483648 2147483647]> result) {
+                fn i32[min max] ReadResult(System.Net.NetResult<i32[min max]> result) {
                     switch (result) {
-                        case System.Net.NetResult<i32[-2147483648 2147483647]>.Ok(var value):
+                        case System.Net.NetResult<i32[min max]>.Ok(var value):
                             return value;
-                        case System.Net.NetResult<i32[-2147483648 2147483647]>.Err(var error):
+                        case System.Net.NetResult<i32[min max]>.Err(var error):
                             return 0;
                     }
                 }
 
-                fn u16[0 65535] EndpointPort(System.Net.IPv4Endpoint endpoint) {
+                fn u16[0 max] EndpointPort(System.Net.IPv4Endpoint endpoint) {
                     return endpoint.Port;
                 }
 
-                fn i32[-2147483648 2147483647] Run() {
+                fn i32[min max] Run() {
                     stack System.Net.IPv4Endpoint endpoint = new System.Net.IPv4Endpoint() {
                         Address = new System.Net.IPv4Address() {
                             A = 127,
@@ -147,8 +147,8 @@ public sealed class SystemNetStandardLibraryTests : StandardLibraryTestSuite
                         },
                         Port = 8080
                     };
-                    stack System.Net.NetResult<i32[-2147483648 2147483647]> result =
-                        System.Net.NetResult<i32[-2147483648 2147483647]>.Ok(11);
+                    stack System.Net.NetResult<i32[min max]> result =
+                        System.Net.NetResult<i32[min max]>.Ok(11);
 
                     if (!StatusOk(System.Net.NetStatus.Ok)) {
                         return 1;

@@ -1,4 +1,4 @@
-﻿using Stark.Compiler;
+using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
@@ -59,20 +59,20 @@ public class StandardLibraryTestSuite
                 import System
                 module Demo
 
-                fn i32[-2147483648 2147483647] ReadIo(System.IO.IOResult<i32[-2147483648 2147483647]> result) {
+                fn i32[min max] ReadIo(System.IO.IOResult<i32[min max]> result) {
                     switch (result) {
-                        case System.IO.IOResult<i32[-2147483648 2147483647]>.Ok(var value):
+                        case System.IO.IOResult<i32[min max]>.Ok(var value):
                             return value;
-                        case System.IO.IOResult<i32[-2147483648 2147483647]>.Err(var error):
+                        case System.IO.IOResult<i32[min max]>.Err(var error):
                             return 0;
                     }
                 }
 
-                fn i32[-2147483648 2147483647] ReadMemory(System.Memory.MemoryResult<i32[-2147483648 2147483647]> result) {
+                fn i32[min max] ReadMemory(System.Memory.MemoryResult<i32[min max]> result) {
                     switch (result) {
-                        case System.Memory.MemoryResult<i32[-2147483648 2147483647]>.Ok(var value):
+                        case System.Memory.MemoryResult<i32[min max]>.Ok(var value):
                             return value;
-                        case System.Memory.MemoryResult<i32[-2147483648 2147483647]>.Err(var error):
+                        case System.Memory.MemoryResult<i32[min max]>.Err(var error):
                             return 0;
                     }
                 }
@@ -122,11 +122,11 @@ public class StandardLibraryTestSuite
                 import System
                 module App
 
-                fn i32[-2147483648 2147483647] ReadIo(System.IO.IOResult<i32[-2147483648 2147483647]> result) {
+                fn i32[min max] ReadIo(System.IO.IOResult<i32[min max]> result) {
                     switch (result) {
-                        case System.IO.IOResult<i32[-2147483648 2147483647]>.Ok(var value):
+                        case System.IO.IOResult<i32[min max]>.Ok(var value):
                             return value;
-                        case System.IO.IOResult<i32[-2147483648 2147483647]>.Err(var error):
+                        case System.IO.IOResult<i32[min max]>.Err(var error):
                             return 0;
                     }
                 }
@@ -140,11 +140,11 @@ public class StandardLibraryTestSuite
                     }
                 }
 
-                fn i32[-2147483648 2147483647] ReadMemory(System.Memory.MemoryResult<i32[-2147483648 2147483647]> result) {
+                fn i32[min max] ReadMemory(System.Memory.MemoryResult<i32[min max]> result) {
                     switch (result) {
-                        case System.Memory.MemoryResult<i32[-2147483648 2147483647]>.Ok(var value):
+                        case System.Memory.MemoryResult<i32[min max]>.Ok(var value):
                             return value;
-                        case System.Memory.MemoryResult<i32[-2147483648 2147483647]>.Err(var error):
+                        case System.Memory.MemoryResult<i32[min max]>.Err(var error):
                             return 0;
                     }
                 }
@@ -158,11 +158,11 @@ public class StandardLibraryTestSuite
                     }
                 }
 
-                fn i32[-2147483648 2147483647] Run() {
-                    stack System.IO.IOResult<i32[-2147483648 2147483647]> ioResult =
-                        System.IO.IOResult<i32[-2147483648 2147483647]>.Ok(7);
-                    stack System.Memory.MemoryResult<i32[-2147483648 2147483647]> memoryResult =
-                        System.Memory.MemoryResult<i32[-2147483648 2147483647]>.Ok(11);
+                fn i32[min max] Run() {
+                    stack System.IO.IOResult<i32[min max]> ioResult =
+                        System.IO.IOResult<i32[min max]>.Ok(7);
+                    stack System.Memory.MemoryResult<i32[min max]> memoryResult =
+                        System.Memory.MemoryResult<i32[min max]>.Ok(11);
 
                     if (!IsIoOk(System.IO.IOStatus.Ok)) {
                         return 1;
@@ -495,7 +495,7 @@ public class StandardLibraryTestSuite
                 import System
                 module App
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     stack Unicode line = System.Console.ReadLine();
                     stack Ascii asciiLine = System.Console.ReadAsciiLine();
                     stack Unicode unit = System.Console.Read();
@@ -587,14 +587,14 @@ public class StandardLibraryTestSuite
                     }
                 }
 
-                unsafe fn i32[-2147483648 2147483647] Use() {
+                unsafe fn i32[min max] Use() {
                     stack mut System.Text.OwnedAscii owned = new();
                     stack mut System.Text.OwnedAscii joined = new();
 
-                    stack rawptr<i8[-128 127]> asciiData = System.Text.AsciiData("demo");
-                    stack i64[-9223372036854775808 9223372036854775807] asciiLength = System.Text.AsciiLength("demo");
-                    stack rawptr<i32[-2147483648 2147483647]> unicodeData = System.Text.UnicodeData((unicode)"demo");
-                    stack i64[-9223372036854775808 9223372036854775807] unicodeLength = System.Text.UnicodeLength((unicode)"demo");
+                    stack rawptr<i8[min max]> asciiData = System.Text.AsciiData("demo");
+                    stack i64[min max] asciiLength = System.Text.AsciiLength("demo");
+                    stack rawptr<i32[min max]> unicodeData = System.Text.UnicodeData((unicode)"demo");
+                    stack i64[min max] unicodeLength = System.Text.UnicodeLength((unicode)"demo");
                     stack bool status = MemoryOk(System.IO.Path.CurrentDirectory(owned));
                     stack bool joinedOk = MemoryOk(System.IO.Path.TryJoin(joined, "demo", "file.txt"));
                     stack ascii extension = System.IO.Path.Extension("demo/file.txt");
@@ -644,18 +644,18 @@ public class StandardLibraryTestSuite
                 import System.Memory
                 module Demo
 
-                unsafe fn i32[-2147483648 2147483647] Use() {
+                unsafe fn i32[min max] Use() {
                     stack mut System.Runtime.Buffer.FixedByteBuffer512 linear = new System.Runtime.Buffer.FixedByteBuffer512();
-                    stack rawmutptr<i8[-128 127]> writePtr = linear.WritePointer();
+                    stack rawmutptr<i8[min max]> writePtr = linear.WritePointer();
                     if (writePtr == null) {
                         return 1;
                     }
 
-                    *writePtr = (i8[-128 127])65;
+                    *writePtr = (i8[min max])65;
                     linear.AdvanceWrite(1);
 
-                    stack rawptr<i8[-128 127]> readPtr = linear.ReadPointer();
-                    if (readPtr == null || *readPtr != (i8[-128 127])65) {
+                    stack rawptr<i8[min max]> readPtr = linear.ReadPointer();
+                    if (readPtr == null || *readPtr != (i8[min max])65) {
                         return 2;
                     }
 
@@ -665,14 +665,14 @@ public class StandardLibraryTestSuite
                     }
 
                     stack mut System.Runtime.Buffer.DynamicByteBuffer buffer = new System.Runtime.Buffer.DynamicByteBuffer();
-                    stack mut i8[-128 127] value = 0;
-                    switch (buffer.WriteByte((i8[-128 127])66)) {
+                    stack mut i8[min max] value = 0;
+                    switch (buffer.WriteByte((i8[min max])66)) {
                         case System.Memory.MemoryStatus.Err(var writeError):
                             return 4;
                         case System.Memory.MemoryStatus.Ok:
                     }
 
-                    if (!buffer.TryReadByte(value) || value != (i8[-128 127])66) {
+                    if (!buffer.TryReadByte(value) || value != (i8[min max])66) {
                         return 5;
                     }
 
@@ -1073,8 +1073,8 @@ public class StandardLibraryTestSuite
                 import System
                 module App
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
-                    stack mut i8[-128 127][16] asciiBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                export unsafe ffi fn i32[min max] main() {
+                    stack mut i8[min max][16] asciiBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
                     stack mut Ascii ownedAscii = new Ascii() {
                         Data = &asciiBuffer[0],
@@ -1114,7 +1114,7 @@ public class StandardLibraryTestSuite
                         Capacity = ownedAscii.Capacity
                     };
 
-                    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenWrite("io-test.txt");
+                    stack rawptr<i8[min max]> handle = System.IO.File.OpenWrite("io-test.txt");
                     System.IO.File.WriteLine(handle, System.Text.AsciiView(fileAscii));
                     System.IO.File.Close(handle);
 
@@ -1210,23 +1210,23 @@ public class StandardLibraryTestSuite
                 import System
                 module App
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     stack f64 zero = 0.0;
                     stack f64 one = 1.0;
                     stack f64 two = 2.0;
                     stack f64 three = 3.0;
                     stack f64 eight = 8.0;
-                    stack i32[-2147483648 2147483647] oneI32 = 1;
-                    stack i32[-2147483648 2147483647] twoI32 = 2;
-                    stack i32[-2147483648 2147483647] threeI32 = 3;
-                    stack i32[-2147483648 2147483647] fourI32 = 4;
-                    stack i32[-2147483648 2147483647] thirtyOne = 31;
-                    stack i32[-2147483648 2147483647] minI32 = -2147483647 - 1;
-                    stack i64[-9223372036854775808 9223372036854775807] oneI64 = 1;
-                    stack i64[-9223372036854775808 9223372036854775807] twoI64 = 2;
-                    stack i64[-9223372036854775808 9223372036854775807] threeI64 = 3;
-                    stack i64[-9223372036854775808 9223372036854775807] fourI64 = 4;
-                    stack i64[-9223372036854775808 9223372036854775807] sixtyThree = 63;
+                    stack i32[min max] oneI32 = 1;
+                    stack i32[min max] twoI32 = 2;
+                    stack i32[min max] threeI32 = 3;
+                    stack i32[min max] fourI32 = 4;
+                    stack i32[min max] thirtyOne = 31;
+                    stack i32[min max] minI32 = -(2 ** 31);
+                    stack i64[min max] oneI64 = 1;
+                    stack i64[min max] twoI64 = 2;
+                    stack i64[min max] threeI64 = 3;
+                    stack i64[min max] fourI64 = 4;
+                    stack i64[min max] sixtyThree = 63;
 
                     if (System.Math.Sin(zero) != zero) {
                         return 1;
@@ -1460,7 +1460,7 @@ public class StandardLibraryTestSuite
                 import System
                 module App
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     stack f64 two = 2.0;
                     stack f64 three = 3.0;
                     stack f64 four = 4.0;
@@ -1574,7 +1574,7 @@ public class StandardLibraryTestSuite
                     }
                 }
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     if (!IsOk(System.Console.Write("Console"))) {
                         return 1;
                     }
@@ -1675,7 +1675,7 @@ public class StandardLibraryTestSuite
                 import System
                 module App
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     stack Unicode line = System.Console.ReadLine();
                     stack Ascii asciiLine = System.Console.ReadAsciiLine();
                     stack Unicode unit = System.Console.Read();
@@ -1769,12 +1769,12 @@ public class StandardLibraryTestSuite
                 import System.Runtime.Platform
                 module App
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
-                    if (System.Runtime.Platform.IsTerminal((rawptr<i8[-128 127]>)1)) {
+                export unsafe ffi fn i32[min max] main() {
+                    if (System.Runtime.Platform.IsTerminal((rawptr<i8[min max]>)1)) {
                         return 1;
                     }
 
-                    if (System.Runtime.Platform.IsTerminal((rawptr<i8[-128 127]>)2)) {
+                    if (System.Runtime.Platform.IsTerminal((rawptr<i8[min max]>)2)) {
                         return 2;
                     }
 
@@ -2056,7 +2056,7 @@ public class StandardLibraryTestSuite
                 import System.Syscall
                 module App
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     if (System.Syscall.Syscall0(39) <= 0) {
                         return 1;
                     }
@@ -2145,22 +2145,22 @@ public class StandardLibraryTestSuite
                     }
                 }
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     stack mut System.Runtime.Buffer.FixedByteBuffer512 linear = new System.Runtime.Buffer.FixedByteBuffer512();
                     if (linear.Capacity() != 512 || linear.Readable() != 0 || linear.Writable() != 512) {
                         return 1;
                     }
 
-                    stack rawmutptr<i8[-128 127]> writePtr = linear.WritePointer();
+                    stack rawmutptr<i8[min max]> writePtr = linear.WritePointer();
                     if (writePtr == null) {
                         return 2;
                     }
 
-                    *writePtr = (i8[-128 127])65;
+                    *writePtr = (i8[min max])65;
                     linear.AdvanceWrite(1);
 
-                    stack rawptr<i8[-128 127]> readPtr = linear.ReadPointer();
-                    if (readPtr == null || *readPtr != (i8[-128 127])65) {
+                    stack rawptr<i8[min max]> readPtr = linear.ReadPointer();
+                    if (readPtr == null || *readPtr != (i8[min max])65) {
                         return 3;
                     }
 
@@ -2170,26 +2170,26 @@ public class StandardLibraryTestSuite
                     }
 
                     stack mut System.Runtime.Buffer.DynamicByteBuffer buffer = new System.Runtime.Buffer.DynamicByteBuffer();
-                    stack mut i8[-128 127] value = 0;
+                    stack mut i8[min max] value = 0;
 
-                    if (!IsOk(buffer.WriteByte((i8[-128 127])66)) || !IsOk(buffer.WriteByte((i8[-128 127])67))) {
+                    if (!IsOk(buffer.WriteByte((i8[min max])66)) || !IsOk(buffer.WriteByte((i8[min max])67))) {
                         return 5;
                     }
 
-                    if (!buffer.TryReadByte(value) || value != (i8[-128 127])66) {
+                    if (!buffer.TryReadByte(value) || value != (i8[min max])66) {
                         return 6;
                     }
 
-                    if (!buffer.TryReadByte(value) || value != (i8[-128 127])67) {
+                    if (!buffer.TryReadByte(value) || value != (i8[min max])67) {
                         return 7;
                     }
 
-                    for willexit (stack mut i64[-9223372036854775808 9223372036854775807] i = 0; i < 1024; i += 1) {
-                        if (!IsOk(buffer.WriteByte((i8[-128 127])90))) {
+                    for willexit (stack mut i64[min max] i = 0; i < 1024; i += 1) {
+                        if (!IsOk(buffer.WriteByte((i8[min max])90))) {
                             return 8;
                         }
 
-                        if (!buffer.TryReadByte(value) || value != (i8[-128 127])90) {
+                        if (!buffer.TryReadByte(value) || value != (i8[min max])90) {
                             return 9;
                         }
                     }

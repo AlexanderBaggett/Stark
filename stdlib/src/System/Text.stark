@@ -1,4 +1,4 @@
-﻿import System.Math
+import System.Math
 import System.Memory
 module System.Text
 
@@ -21,41 +21,41 @@ public enum TextResult<T> {
 
 public finite law ascii AsciiView(Ascii source);
 public finite law unicode UnicodeView(Unicode source);
-public unsafe finite law rawptr<i8[-128 127]> AsciiData(ascii source);
-public finite law i64[-9223372036854775808 9223372036854775807] AsciiLength(ascii source);
-public unsafe finite law rawptr<i32[-2147483648 2147483647]> UnicodeData(unicode source);
-public finite law i64[-9223372036854775808 9223372036854775807] UnicodeLength(unicode source);
+public unsafe finite law rawptr<i8[min max]> AsciiData(ascii source);
+public finite law i64[min max] AsciiLength(ascii source);
+public unsafe finite law rawptr<i32[min max]> UnicodeData(unicode source);
+public finite law i64[min max] UnicodeLength(unicode source);
 
-internal fn i32[-2147483648 2147483647] UnsignedByte(i8[-128 127] value) {
+internal fn i32[min max] UnsignedByte(i8[min max] value) {
     if (value < 0) {
-        return ((i32[-2147483648 2147483647])value) + 256;
+        return ((i32[min max])value) + 256;
     }
 
-    return (i32[-2147483648 2147483647])value;
+    return (i32[min max])value;
 }
 
-internal fn bool IsUtf8ContinuationByte(i8[-128 127] value) {
+internal fn bool IsUtf8ContinuationByte(i8[min max] value) {
     unsafe {
-        stack i32[-2147483648 2147483647] unit = UnsignedByte(value);
+        stack i32[min max] unit = UnsignedByte(value);
         return 128 <= unit && unit <= 191;
     }
 }
 
 internal unsafe fn bool TryDecodeUtf8CodePoint(
-    rawptr<i8[-128 127]>[length] data,
-    i64[0 max] length,
-    rawmutptr<i64[-9223372036854775808 9223372036854775807]> index,
-    rawmutptr<i32[-2147483648 2147483647]> codePoint) {
+    rawptr<i8[min max]>[length] data,
+    u64[0 2 ** 63 - 1] length,
+    rawmutptr<i64[min max]> index,
+    rawmutptr<i32[min max]> codePoint) {
     if (data == null || index == null || codePoint == null) {
         return false;
     }
 
-    stack i64[-9223372036854775808 9223372036854775807] readIndex = *index;
+    stack i64[min max] readIndex = *index;
     if (readIndex < 0 || readIndex >= length) {
         return false;
     }
 
-    stack i32[-2147483648 2147483647] first = UnsignedByte(*(&data[readIndex]));
+    stack i32[min max] first = UnsignedByte(*(&data[readIndex]));
     if (first <= 127) {
         *index = readIndex + 1;
         *codePoint = first;
@@ -67,12 +67,12 @@ internal unsafe fn bool TryDecodeUtf8CodePoint(
             return false;
         }
 
-        stack i8[-128 127] secondRaw = *(&data[readIndex + 1]);
+        stack i8[min max] secondRaw = *(&data[readIndex + 1]);
         if (!IsUtf8ContinuationByte(secondRaw)) {
             return false;
         }
 
-        stack i32[-2147483648 2147483647] second = UnsignedByte(secondRaw);
+        stack i32[min max] second = UnsignedByte(secondRaw);
         *index = readIndex + 2;
         *codePoint = ((first & 31) << 6) | (second & 63);
         return true;
@@ -83,14 +83,14 @@ internal unsafe fn bool TryDecodeUtf8CodePoint(
             return false;
         }
 
-        stack i8[-128 127] secondRaw = *(&data[readIndex + 1]);
-        stack i8[-128 127] thirdRaw = *(&data[readIndex + 2]);
+        stack i8[min max] secondRaw = *(&data[readIndex + 1]);
+        stack i8[min max] thirdRaw = *(&data[readIndex + 2]);
         if (!IsUtf8ContinuationByte(secondRaw) || !IsUtf8ContinuationByte(thirdRaw)) {
             return false;
         }
 
-        stack i32[-2147483648 2147483647] second = UnsignedByte(secondRaw);
-        stack i32[-2147483648 2147483647] third = UnsignedByte(thirdRaw);
+        stack i32[min max] second = UnsignedByte(secondRaw);
+        stack i32[min max] third = UnsignedByte(thirdRaw);
         if (first == 224 && second < 160) {
             return false;
         }
@@ -111,18 +111,18 @@ internal unsafe fn bool TryDecodeUtf8CodePoint(
             return false;
         }
 
-        stack i8[-128 127] secondRaw = *(&data[readIndex + 1]);
-        stack i8[-128 127] thirdRaw = *(&data[readIndex + 2]);
-        stack i8[-128 127] fourthRaw = *(&data[readIndex + 3]);
+        stack i8[min max] secondRaw = *(&data[readIndex + 1]);
+        stack i8[min max] thirdRaw = *(&data[readIndex + 2]);
+        stack i8[min max] fourthRaw = *(&data[readIndex + 3]);
         if (!IsUtf8ContinuationByte(secondRaw)
             || !IsUtf8ContinuationByte(thirdRaw)
             || !IsUtf8ContinuationByte(fourthRaw)) {
             return false;
         }
 
-        stack i32[-2147483648 2147483647] second = UnsignedByte(secondRaw);
-        stack i32[-2147483648 2147483647] third = UnsignedByte(thirdRaw);
-        stack i32[-2147483648 2147483647] fourth = UnsignedByte(fourthRaw);
+        stack i32[min max] second = UnsignedByte(secondRaw);
+        stack i32[min max] third = UnsignedByte(thirdRaw);
+        stack i32[min max] fourth = UnsignedByte(fourthRaw);
         if (first == 240 && second < 144) {
             return false;
         }
@@ -142,13 +142,13 @@ internal unsafe fn bool TryDecodeUtf8CodePoint(
     return false;
 }
 
-internal finite law i64[1 20] DecimalLengthI64(i64[-9223372036854775808 9223372036854775807] value) {
-    if (value == -9223372036854775808) {
+internal finite law u8[1 20] DecimalLengthI64(i64[min max] value) {
+    if (value == -(2 ** 63)) {
         return 20;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] remaining = value;
-    stack mut i64[1 20] length = 1;
+    stack mut i64[min max] remaining = value;
+    stack mut u8[1 20] length = 1;
     if (remaining < 0) {
         length += 1;
         remaining = 0 - remaining;
@@ -162,9 +162,9 @@ internal finite law i64[1 20] DecimalLengthI64(i64[-9223372036854775808 92233720
     return length;
 }
 
-internal finite law i64[1 20] DecimalLengthU64(u64[0 max] value) {
+internal finite law u8[1 20] DecimalLengthU64(u64[0 max] value) {
     stack mut u64[0 max] remaining = value;
-    stack mut i64[1 20] length = 1;
+    stack mut u8[1 20] length = 1;
     while willexit (remaining >= (u64[0 max])10) {
         remaining = remaining / (u64[0 max])10;
         length += 1;
@@ -174,53 +174,53 @@ internal finite law i64[1 20] DecimalLengthU64(u64[0 max] value) {
 }
 
 internal fn void CopyAsciiSliceDisjoint(
-    disjoint borrow i8[-128 127][] source,
-    disjoint init i8[-128 127][] destination,
-    i64[0 max] count) {
-    for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
+    disjoint borrow i8[min max][] source,
+    disjoint init i8[min max][] destination,
+    u64[0 2 ** 63 - 1] count) {
+    for willexit independent (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
         init destination[index] = source[index];
     }
 }
 
 internal fn void CopyAsciiSliceOverlapSafe(
-    borrow i8[-128 127][] source,
-    init i8[-128 127][] destination,
-    i64[0 max] count) {
-    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+    borrow i8[min max][] source,
+    init i8[min max][] destination,
+    u64[0 2 ** 63 - 1] count) {
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
         init destination[index] = source[index];
     }
 }
 
 internal fn void CopyUnicodeSliceDisjoint(
-    disjoint borrow i32[-2147483648 2147483647][] source,
-    disjoint init i32[-2147483648 2147483647][] destination,
-    i64[0 max] count) {
-    for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
+    disjoint borrow i32[min max][] source,
+    disjoint init i32[min max][] destination,
+    u64[0 2 ** 63 - 1] count) {
+    for willexit independent (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
         init destination[index] = source[index];
     }
 }
 
 internal fn void CopyUnicodeSliceOverlapSafe(
-    borrow i32[-2147483648 2147483647][] source,
-    init i32[-2147483648 2147483647][] destination,
-    i64[0 max] count) {
-    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+    borrow i32[min max][] source,
+    init i32[min max][] destination,
+    u64[0 2 ** 63 - 1] count) {
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
         init destination[index] = source[index];
     }
 }
 
 public struct OwnedAscii {
-    internal dynamic i8[-128 127] Bytes;
+    internal dynamic i8[min max] Bytes;
 
     OwnedAscii() {
         self.Bytes = new();
     }
 
-    finite law i64[0 max] Length(borrow OwnedAscii self) {
+    finite law u64[0 2 ** 63 - 1] Length(borrow OwnedAscii self) {
         return self.Bytes.Length;
     }
 
-    finite law i64[0 max] Capacity(borrow OwnedAscii self) {
+    finite law u64[0 2 ** 63 - 1] Capacity(borrow OwnedAscii self) {
         return self.Bytes.Capacity;
     }
 
@@ -228,11 +228,11 @@ public struct OwnedAscii {
         return self.Bytes.Length == 0;
     }
 
-    finite retborrow i8[-128 127][] AsSlice(borrow OwnedAscii self) {
+    finite retborrow i8[min max][] AsSlice(borrow OwnedAscii self) {
         return self.Bytes[0, self.Bytes.Length];
     }
 
-    finite retborrow mut i8[-128 127][] AsMutableSlice(mut borrow OwnedAscii self) {
+    finite retborrow mut i8[min max][] AsMutableSlice(mut borrow OwnedAscii self) {
         return self.Bytes[0, self.Bytes.Length];
     }
 
@@ -251,8 +251,8 @@ public struct OwnedAscii {
         }
     }
 
-    fn System.Memory.MemoryStatus Reserve(mut borrow OwnedAscii self, i64[0 max] additional) {
-        if (additional > 9223372036854775807 - self.Bytes.Length) {
+    fn System.Memory.MemoryStatus Reserve(mut borrow OwnedAscii self, u64[0 2 ** 63 - 1] additional) {
+        if (additional > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) - self.Bytes.Length) {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
         }
 
@@ -263,7 +263,7 @@ public struct OwnedAscii {
         return System.Memory.MemoryStatus.Ok;
     }
 
-    fn System.Memory.MemoryStatus AppendByte(mut borrow OwnedAscii self, i8[-128 127] value) {
+    fn System.Memory.MemoryStatus AppendByte(mut borrow OwnedAscii self, i8[min max] value) {
         stack System.Memory.MemoryStatus status = self.Reserve(1);
         switch (status) {
             case System.Memory.MemoryStatus.Err(var error):
@@ -277,8 +277,8 @@ public struct OwnedAscii {
 
     internal inline fn System.Memory.MemoryStatus AppendSliceDisjoint(
         mut borrow OwnedAscii self,
-        disjoint borrow i8[-128 127][] source,
-        i64[0 max] count) {
+        disjoint borrow i8[min max][] source,
+        u64[0 2 ** 63 - 1] count) {
         if (count == 0) {
             return System.Memory.MemoryStatus.Ok;
         }
@@ -290,7 +290,7 @@ public struct OwnedAscii {
             case System.Memory.MemoryStatus.Ok:
         }
 
-        stack init i8[-128 127][] tail = init self.Bytes[self.Bytes.Length, count];
+        stack init i8[min max][] tail = init self.Bytes[self.Bytes.Length, count];
         unsafe {
             return System.Memory.InitializeBytesDisjoint(source, tail, count);
         }
@@ -300,17 +300,17 @@ public struct OwnedAscii {
         mut borrow OwnedAscii self,
         disjoint ascii source) {
             unsafe {
-            stack i64[-9223372036854775808 9223372036854775807] signedLength = AsciiLength(source);
+            stack i64[min max] signedLength = AsciiLength(source);
             if (signedLength < 0) {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
             }
 
-            stack i64[0 max] count = (i64[0 max])signedLength;
+            stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])signedLength;
             if (count == 0) {
                 return System.Memory.MemoryStatus.Ok;
             }
 
-            stack rawptr<i8[-128 127]> data = AsciiData(source);
+            stack rawptr<i8[min max]> data = AsciiData(source);
             if (data == null) {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
             }
@@ -322,7 +322,7 @@ public struct OwnedAscii {
                 case System.Memory.MemoryStatus.Ok:
             }
 
-            stack init i8[-128 127][] tail = init self.Bytes[self.Bytes.Length, count];
+            stack init i8[min max][] tail = init self.Bytes[self.Bytes.Length, count];
             unsafe {
                 return System.Memory.InitializeBytesFromPointerDisjoint(count, data, tail);
             }
@@ -333,17 +333,17 @@ public struct OwnedAscii {
         mut borrow OwnedAscii self,
         disjoint const ascii source) {
             unsafe {
-            stack i64[-9223372036854775808 9223372036854775807] signedLength = AsciiLength(source);
+            stack i64[min max] signedLength = AsciiLength(source);
             if (signedLength < 0) {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
             }
 
-            stack i64[0 max] count = (i64[0 max])signedLength;
+            stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])signedLength;
             if (count == 0) {
                 return System.Memory.MemoryStatus.Ok;
             }
 
-            stack rawptr<i8[-128 127]> data = AsciiData(source);
+            stack rawptr<i8[min max]> data = AsciiData(source);
             if (data == null) {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
             }
@@ -355,14 +355,14 @@ public struct OwnedAscii {
                 case System.Memory.MemoryStatus.Ok:
             }
 
-            stack init i8[-128 127][] tail = init self.Bytes[self.Bytes.Length, count];
+            stack init i8[min max][] tail = init self.Bytes[self.Bytes.Length, count];
             unsafe {
                 return System.Memory.InitializeBytesFromPointerDisjoint(count, data, tail);
             }
             }
     }
 
-    fn System.Memory.MemoryStatus AppendSlice(mut borrow OwnedAscii self, borrow i8[-128 127][] source, i64[0 max] count) {
+    fn System.Memory.MemoryStatus AppendSlice(mut borrow OwnedAscii self, borrow i8[min max][] source, u64[0 2 ** 63 - 1] count) {
         unsafe {
             if (count == 0) {
                 return System.Memory.MemoryStatus.Ok;
@@ -386,17 +386,17 @@ public struct OwnedAscii {
 
     fn System.Memory.MemoryStatus AppendConstAscii(mut borrow OwnedAscii self, const ascii source) {
         unsafe {
-            stack i64[-9223372036854775808 9223372036854775807] signedLength = AsciiLength(source);
+            stack i64[min max] signedLength = AsciiLength(source);
             if (signedLength < 0) {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
             }
 
-            stack i64[0 max] count = (i64[0 max])signedLength;
+            stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])signedLength;
             if (count == 0) {
                 return System.Memory.MemoryStatus.Ok;
             }
 
-            stack rawptr<i8[-128 127]> data = AsciiData(source);
+            stack rawptr<i8[min max]> data = AsciiData(source);
             if (data == null) {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
             }
@@ -419,17 +419,17 @@ public struct OwnedAscii {
 
     fn System.Memory.MemoryStatus AppendAscii(mut borrow OwnedAscii self, ascii source) {
         unsafe {
-            stack i64[-9223372036854775808 9223372036854775807] signedLength = AsciiLength(source);
+            stack i64[min max] signedLength = AsciiLength(source);
             if (signedLength < 0) {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
             }
 
-            stack i64[0 max] count = (i64[0 max])signedLength;
+            stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])signedLength;
             if (count == 0) {
                 return System.Memory.MemoryStatus.Ok;
             }
 
-            stack rawptr<i8[-128 127]> data = AsciiData(source);
+            stack rawptr<i8[min max]> data = AsciiData(source);
             if (data == null) {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
             }
@@ -458,12 +458,12 @@ public struct OwnedAscii {
         return self.AppendConstAsciiDisjoint("false");
     }
 
-    fn System.Memory.MemoryStatus AppendI64(mut borrow OwnedAscii self, i64[-9223372036854775808 9223372036854775807] value) {
-        if (value == -9223372036854775808) {
+    fn System.Memory.MemoryStatus AppendI64(mut borrow OwnedAscii self, i64[min max] value) {
+        if (value == -(2 ** 63)) {
             return self.AppendConstAsciiDisjoint("-9223372036854775808");
         }
 
-        stack i64[1 20] required = DecimalLengthI64(value);
+        stack u8[1 20] required = DecimalLengthI64(value);
         stack System.Memory.MemoryStatus status = self.Reserve(required);
         switch (status) {
             case System.Memory.MemoryStatus.Err(var error):
@@ -472,26 +472,26 @@ public struct OwnedAscii {
         }
 
         stack bool negative = value < 0;
-        stack mut i64[-9223372036854775808 9223372036854775807] magnitude = value;
+        stack mut i64[min max] magnitude = value;
         if (negative) {
-            init self.Bytes[self.Bytes.Length] = (i8[-128 127])45;
+            init self.Bytes[self.Bytes.Length] = (i8[min max])45;
             magnitude = 0 - value;
         }
 
-        stack mut i64[0 20] digitCount = required;
+        stack mut u8[0 20] digitCount = required;
         if (negative) {
             digitCount -= 1;
         }
 
-        stack mut i64[-9223372036854775808 9223372036854775807] divisor = 1;
-        for willexit (stack mut i64[1 20] index = 1; index < digitCount; index += 1) {
+        stack mut i64[min max] divisor = 1;
+        for willexit (stack mut u8[1 20] index = 1; index < digitCount; index += 1) {
             divisor *= 10;
         }
 
-        stack mut i64[-9223372036854775808 9223372036854775807] remaining = magnitude;
+        stack mut i64[min max] remaining = magnitude;
         while willexit (divisor > 0) {
-            stack i64[-9223372036854775808 9223372036854775807] digit = remaining / divisor;
-            init self.Bytes[self.Bytes.Length] = (i8[-128 127])(48 + digit);
+            stack i64[min max] digit = remaining / divisor;
+            init self.Bytes[self.Bytes.Length] = (i8[min max])(48 + digit);
             remaining = remaining % divisor;
             divisor = divisor / 10;
         }
@@ -500,7 +500,7 @@ public struct OwnedAscii {
     }
 
     fn System.Memory.MemoryStatus AppendU64(mut borrow OwnedAscii self, u64[0 max] value) {
-        stack i64[1 20] required = DecimalLengthU64(value);
+        stack u8[1 20] required = DecimalLengthU64(value);
         stack System.Memory.MemoryStatus status = self.Reserve(required);
         switch (status) {
             case System.Memory.MemoryStatus.Err(var error):
@@ -509,14 +509,14 @@ public struct OwnedAscii {
         }
 
         stack mut u64[0 max] divisor = (u64[0 max])1;
-        for willexit (stack mut i64[1 20] index = 1; index < required; index += 1) {
+        for willexit (stack mut u8[1 20] index = 1; index < required; index += 1) {
             divisor *= (u64[0 max])10;
         }
 
         stack mut u64[0 max] remaining = value;
         while willexit (divisor > (u64[0 max])0) {
-            stack u64[0 9] digit = (u64[0 9])(remaining / divisor);
-            init self.Bytes[self.Bytes.Length] = (i8[-128 127])(48 + (i64[-9223372036854775808 9223372036854775807])digit);
+            stack u8[0 9] digit = (u8[0 9])(remaining / divisor);
+            init self.Bytes[self.Bytes.Length] = (i8[min max])(48 + (i64[min max])digit);
             remaining = remaining % divisor;
             divisor = divisor / (u64[0 max])10;
         }
@@ -526,23 +526,23 @@ public struct OwnedAscii {
 
     fn void Clear(mut borrow OwnedAscii self) {
         while willexit (self.Bytes.Length > 0) {
-            stack i8[-128 127] value = self.Bytes.MoveLast();
+            stack i8[min max] value = self.Bytes.MoveLast();
         }
     }
 }
 
 public struct OwnedUnicode {
-    internal dynamic i32[-2147483648 2147483647] CodePoints;
+    internal dynamic i32[min max] CodePoints;
 
     OwnedUnicode() {
         self.CodePoints = new();
     }
 
-    finite law i64[0 max] Length(borrow OwnedUnicode self) {
+    finite law u64[0 2 ** 63 - 1] Length(borrow OwnedUnicode self) {
         return self.CodePoints.Length;
     }
 
-    finite law i64[0 max] Capacity(borrow OwnedUnicode self) {
+    finite law u64[0 2 ** 63 - 1] Capacity(borrow OwnedUnicode self) {
         return self.CodePoints.Capacity;
     }
 
@@ -550,11 +550,11 @@ public struct OwnedUnicode {
         return self.CodePoints.Length == 0;
     }
 
-    finite retborrow i32[-2147483648 2147483647][] AsSlice(borrow OwnedUnicode self) {
+    finite retborrow i32[min max][] AsSlice(borrow OwnedUnicode self) {
         return self.CodePoints[0, self.CodePoints.Length];
     }
 
-    finite retborrow mut i32[-2147483648 2147483647][] AsMutableSlice(mut borrow OwnedUnicode self) {
+    finite retborrow mut i32[min max][] AsMutableSlice(mut borrow OwnedUnicode self) {
         return self.CodePoints[0, self.CodePoints.Length];
     }
 
@@ -573,13 +573,13 @@ public struct OwnedUnicode {
         }
     }
 
-    fn System.Memory.MemoryStatus Reserve(mut borrow OwnedUnicode self, i64[0 max] additional) {
-        if (additional > 9223372036854775807 - self.CodePoints.Length) {
+    fn System.Memory.MemoryStatus Reserve(mut borrow OwnedUnicode self, u64[0 2 ** 63 - 1] additional) {
+        if (additional > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) - self.CodePoints.Length) {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
         }
 
-        stack i64[0 max] required = self.CodePoints.Length + additional;
-        if (required > 2305843009213693951) {
+        stack u64[0 2 ** 63 - 1] required = (u64[0 2 ** 63 - 1])(self.CodePoints.Length + additional);
+        if (required > (u64[0 2 ** 63 - 1])(2 ** 61 - 1)) {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
         }
 
@@ -590,7 +590,7 @@ public struct OwnedUnicode {
         return System.Memory.MemoryStatus.Ok;
     }
 
-    fn System.Memory.MemoryStatus AppendCodePoint(mut borrow OwnedUnicode self, i32[-2147483648 2147483647] value) {
+    fn System.Memory.MemoryStatus AppendCodePoint(mut borrow OwnedUnicode self, i32[min max] value) {
         stack System.Memory.MemoryStatus status = self.Reserve(1);
         switch (status) {
             case System.Memory.MemoryStatus.Err(var error):
@@ -604,17 +604,17 @@ public struct OwnedUnicode {
 
     internal inline fn System.Memory.MemoryStatus AppendSliceDisjoint(
         mut borrow OwnedUnicode self,
-        disjoint borrow i32[-2147483648 2147483647][] source,
-        i64[0 max] count) {
+        disjoint borrow i32[min max][] source,
+        u64[0 2 ** 63 - 1] count) {
         if (count == 0) {
             return System.Memory.MemoryStatus.Ok;
         }
 
-        if (count > ((2 ** 61) - 1)) {
+        if (count > (u64[0 2 ** 63 - 1])(2 ** 61 - 1)) {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
         }
 
-        stack i64[0 (2 ** 61) - 1] safeCount = (i64[0 (2 ** 61) - 1])count;
+        stack u64[0 2 ** 61 - 1] safeCount = (u64[0 2 ** 61 - 1])count;
         stack System.Memory.MemoryStatus status = self.Reserve(safeCount);
         switch (status) {
             case System.Memory.MemoryStatus.Err(var error):
@@ -622,7 +622,7 @@ public struct OwnedUnicode {
             case System.Memory.MemoryStatus.Ok:
         }
 
-        stack init i32[-2147483648 2147483647][] tail = init self.CodePoints[self.CodePoints.Length, safeCount];
+        stack init i32[min max][] tail = init self.CodePoints[self.CodePoints.Length, safeCount];
         unsafe {
             return System.Memory.InitializeCodePointsDisjoint(source, tail, safeCount);
         }
@@ -632,22 +632,22 @@ public struct OwnedUnicode {
         mut borrow OwnedUnicode self,
         disjoint unicode source) {
             unsafe {
-            stack i64[-9223372036854775808 9223372036854775807] signedLength = UnicodeLength(source);
+            stack i64[min max] signedLength = UnicodeLength(source);
             if (signedLength < 0) {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
             }
 
-            stack i64[0 max] count = (i64[0 max])signedLength;
+            stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])signedLength;
             if (count == 0) {
                 return System.Memory.MemoryStatus.Ok;
             }
 
-            if (count > ((2 ** 61) - 1)) {
+            if (count > (u64[0 2 ** 63 - 1])(2 ** 61 - 1)) {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
             }
 
-            stack i64[0 (2 ** 61) - 1] safeCount = (i64[0 (2 ** 61) - 1])count;
-            stack rawptr<i32[-2147483648 2147483647]> data = UnicodeData(source);
+            stack u64[0 2 ** 61 - 1] safeCount = (u64[0 2 ** 61 - 1])count;
+            stack rawptr<i32[min max]> data = UnicodeData(source);
             if (data == null) {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
             }
@@ -659,7 +659,7 @@ public struct OwnedUnicode {
                 case System.Memory.MemoryStatus.Ok:
             }
 
-            stack init i32[-2147483648 2147483647][] tail = init self.CodePoints[self.CodePoints.Length, safeCount];
+            stack init i32[min max][] tail = init self.CodePoints[self.CodePoints.Length, safeCount];
             unsafe {
                 return System.Memory.InitializeCodePointsFromPointerDisjoint(safeCount, data, tail);
             }
@@ -670,22 +670,22 @@ public struct OwnedUnicode {
         mut borrow OwnedUnicode self,
         disjoint const unicode source) {
             unsafe {
-            stack i64[-9223372036854775808 9223372036854775807] signedLength = UnicodeLength(source);
+            stack i64[min max] signedLength = UnicodeLength(source);
             if (signedLength < 0) {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
             }
 
-            stack i64[0 max] count = (i64[0 max])signedLength;
+            stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])signedLength;
             if (count == 0) {
                 return System.Memory.MemoryStatus.Ok;
             }
 
-            if (count > ((2 ** 61) - 1)) {
+            if (count > (u64[0 2 ** 63 - 1])(2 ** 61 - 1)) {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
             }
 
-            stack i64[0 (2 ** 61) - 1] safeCount = (i64[0 (2 ** 61) - 1])count;
-            stack rawptr<i32[-2147483648 2147483647]> data = UnicodeData(source);
+            stack u64[0 2 ** 61 - 1] safeCount = (u64[0 2 ** 61 - 1])count;
+            stack rawptr<i32[min max]> data = UnicodeData(source);
             if (data == null) {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
             }
@@ -697,24 +697,24 @@ public struct OwnedUnicode {
                 case System.Memory.MemoryStatus.Ok:
             }
 
-            stack init i32[-2147483648 2147483647][] tail = init self.CodePoints[self.CodePoints.Length, safeCount];
+            stack init i32[min max][] tail = init self.CodePoints[self.CodePoints.Length, safeCount];
             unsafe {
                 return System.Memory.InitializeCodePointsFromPointerDisjoint(safeCount, data, tail);
             }
             }
     }
 
-    fn System.Memory.MemoryStatus AppendSlice(mut borrow OwnedUnicode self, borrow i32[-2147483648 2147483647][] source, i64[0 max] count) {
+    fn System.Memory.MemoryStatus AppendSlice(mut borrow OwnedUnicode self, borrow i32[min max][] source, u64[0 2 ** 63 - 1] count) {
         unsafe {
             if (count == 0) {
                 return System.Memory.MemoryStatus.Ok;
             }
 
-            if (count > ((2 ** 61) - 1)) {
+            if (count > (u64[0 2 ** 63 - 1])(2 ** 61 - 1)) {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
             }
 
-            stack i64[0 (2 ** 61) - 1] safeCount = (i64[0 (2 ** 61) - 1])count;
+            stack u64[0 2 ** 61 - 1] safeCount = (u64[0 2 ** 61 - 1])count;
             if disjoint(source, self.CodePoints[0, self.CodePoints.Length]) {
                 return self.AppendSliceDisjoint(source, safeCount);
             }
@@ -733,22 +733,22 @@ public struct OwnedUnicode {
 
     fn System.Memory.MemoryStatus AppendConstUnicode(mut borrow OwnedUnicode self, const unicode source) {
         unsafe {
-            stack i64[-9223372036854775808 9223372036854775807] signedLength = UnicodeLength(source);
+            stack i64[min max] signedLength = UnicodeLength(source);
             if (signedLength < 0) {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
             }
 
-            stack i64[0 max] count = (i64[0 max])signedLength;
+            stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])signedLength;
             if (count == 0) {
                 return System.Memory.MemoryStatus.Ok;
             }
 
-            if (count > ((2 ** 61) - 1)) {
+            if (count > (u64[0 2 ** 63 - 1])(2 ** 61 - 1)) {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
             }
 
-            stack i64[0 (2 ** 61) - 1] safeCount = (i64[0 (2 ** 61) - 1])count;
-            stack rawptr<i32[-2147483648 2147483647]> data = UnicodeData(source);
+            stack u64[0 2 ** 61 - 1] safeCount = (u64[0 2 ** 61 - 1])count;
+            stack rawptr<i32[min max]> data = UnicodeData(source);
             if (data == null) {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
             }
@@ -771,22 +771,22 @@ public struct OwnedUnicode {
 
     fn System.Memory.MemoryStatus AppendUnicode(mut borrow OwnedUnicode self, unicode source) {
         unsafe {
-            stack i64[-9223372036854775808 9223372036854775807] signedLength = UnicodeLength(source);
+            stack i64[min max] signedLength = UnicodeLength(source);
             if (signedLength < 0) {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
             }
 
-            stack i64[0 max] count = (i64[0 max])signedLength;
+            stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])signedLength;
             if (count == 0) {
                 return System.Memory.MemoryStatus.Ok;
             }
 
-            if (count > ((2 ** 61) - 1)) {
+            if (count > (u64[0 2 ** 63 - 1])(2 ** 61 - 1)) {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
             }
 
-            stack i64[0 (2 ** 61) - 1] safeCount = (i64[0 (2 ** 61) - 1])count;
-            stack rawptr<i32[-2147483648 2147483647]> data = UnicodeData(source);
+            stack u64[0 2 ** 61 - 1] safeCount = (u64[0 2 ** 61 - 1])count;
+            stack rawptr<i32[min max]> data = UnicodeData(source);
             if (data == null) {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
             }
@@ -809,17 +809,17 @@ public struct OwnedUnicode {
 
     fn System.Memory.MemoryStatus AppendAscii(mut borrow OwnedUnicode self, ascii source) {
         unsafe {
-            stack i64[-9223372036854775808 9223372036854775807] signedLength = AsciiLength(source);
+            stack i64[min max] signedLength = AsciiLength(source);
             if (signedLength < 0) {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
             }
 
-            stack i64[0 max] byteLength = (i64[0 max])signedLength;
+            stack u64[0 2 ** 63 - 1] byteLength = (u64[0 2 ** 63 - 1])signedLength;
             if (byteLength == 0) {
                 return System.Memory.MemoryStatus.Ok;
             }
 
-            stack rawptr<i8[-128 127]> data = AsciiData(source);
+            stack rawptr<i8[min max]> data = AsciiData(source);
             if (data == null) {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
             }
@@ -831,10 +831,10 @@ public struct OwnedUnicode {
                 case System.Memory.MemoryStatus.Ok:
             }
 
-            stack mut i64[-9223372036854775808 9223372036854775807] readIndex = 0;
+            stack mut i64[min max] readIndex = 0;
             while willexit (readIndex < signedLength) {
-                stack i64[-9223372036854775808 9223372036854775807] start = readIndex;
-                stack mut i32[-2147483648 2147483647] codePoint = 65533;
+                stack i64[min max] start = readIndex;
+                stack mut i32[min max] codePoint = 65533;
                 stack mut bool decoded = false;
                 unsafe {
                     decoded = TryDecodeUtf8CodePoint(data, byteLength, &readIndex, &codePoint);
@@ -853,17 +853,17 @@ public struct OwnedUnicode {
 
     fn System.Memory.MemoryStatus AppendConstAscii(mut borrow OwnedUnicode self, const ascii source) {
         unsafe {
-            stack i64[-9223372036854775808 9223372036854775807] signedLength = AsciiLength(source);
+            stack i64[min max] signedLength = AsciiLength(source);
             if (signedLength < 0) {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
             }
 
-            stack i64[0 max] byteLength = (i64[0 max])signedLength;
+            stack u64[0 2 ** 63 - 1] byteLength = (u64[0 2 ** 63 - 1])signedLength;
             if (byteLength == 0) {
                 return System.Memory.MemoryStatus.Ok;
             }
 
-            stack rawptr<i8[-128 127]> data = AsciiData(source);
+            stack rawptr<i8[min max]> data = AsciiData(source);
             if (data == null) {
                 return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
             }
@@ -875,10 +875,10 @@ public struct OwnedUnicode {
                 case System.Memory.MemoryStatus.Ok:
             }
 
-            stack mut i64[-9223372036854775808 9223372036854775807] readIndex = 0;
+            stack mut i64[min max] readIndex = 0;
             while willexit (readIndex < signedLength) {
-                stack i64[-9223372036854775808 9223372036854775807] start = readIndex;
-                stack mut i32[-2147483648 2147483647] codePoint = 65533;
+                stack i64[min max] start = readIndex;
+                stack mut i32[min max] codePoint = 65533;
                 stack mut bool decoded = false;
                 unsafe {
                     decoded = TryDecodeUtf8CodePoint(data, byteLength, &readIndex, &codePoint);
@@ -903,12 +903,12 @@ public struct OwnedUnicode {
         return self.AppendConstUnicodeDisjoint((unicode)"false");
     }
 
-    fn System.Memory.MemoryStatus AppendI64(mut borrow OwnedUnicode self, i64[-9223372036854775808 9223372036854775807] value) {
-        if (value == -9223372036854775808) {
+    fn System.Memory.MemoryStatus AppendI64(mut borrow OwnedUnicode self, i64[min max] value) {
+        if (value == -(2 ** 63)) {
             return self.AppendConstUnicodeDisjoint((unicode)"-9223372036854775808");
         }
 
-        stack i64[1 20] required = DecimalLengthI64(value);
+        stack u8[1 20] required = DecimalLengthI64(value);
         stack System.Memory.MemoryStatus status = self.Reserve(required);
         switch (status) {
             case System.Memory.MemoryStatus.Err(var error):
@@ -917,26 +917,26 @@ public struct OwnedUnicode {
         }
 
         stack bool negative = value < 0;
-        stack mut i64[-9223372036854775808 9223372036854775807] magnitude = value;
+        stack mut i64[min max] magnitude = value;
         if (negative) {
             init self.CodePoints[self.CodePoints.Length] = 45;
             magnitude = 0 - value;
         }
 
-        stack mut i64[0 20] digitCount = required;
+        stack mut u8[0 20] digitCount = required;
         if (negative) {
             digitCount -= 1;
         }
 
-        stack mut i64[-9223372036854775808 9223372036854775807] divisor = 1;
-        for willexit (stack mut i64[1 20] index = 1; index < digitCount; index += 1) {
+        stack mut i64[min max] divisor = 1;
+        for willexit (stack mut u8[1 20] index = 1; index < digitCount; index += 1) {
             divisor *= 10;
         }
 
-        stack mut i64[-9223372036854775808 9223372036854775807] remaining = magnitude;
+        stack mut i64[min max] remaining = magnitude;
         while willexit (divisor > 0) {
-            stack i64[-9223372036854775808 9223372036854775807] digit = remaining / divisor;
-            init self.CodePoints[self.CodePoints.Length] = 48 + (i32[-2147483648 2147483647])digit;
+            stack i64[min max] digit = remaining / divisor;
+            init self.CodePoints[self.CodePoints.Length] = 48 + (i32[min max])digit;
             remaining = remaining % divisor;
             divisor = divisor / 10;
         }
@@ -945,7 +945,7 @@ public struct OwnedUnicode {
     }
 
     fn System.Memory.MemoryStatus AppendU64(mut borrow OwnedUnicode self, u64[0 max] value) {
-        stack i64[1 20] required = DecimalLengthU64(value);
+        stack u8[1 20] required = DecimalLengthU64(value);
         stack System.Memory.MemoryStatus status = self.Reserve(required);
         switch (status) {
             case System.Memory.MemoryStatus.Err(var error):
@@ -954,14 +954,14 @@ public struct OwnedUnicode {
         }
 
         stack mut u64[0 max] divisor = (u64[0 max])1;
-        for willexit (stack mut i64[1 20] index = 1; index < required; index += 1) {
+        for willexit (stack mut u8[1 20] index = 1; index < required; index += 1) {
             divisor *= (u64[0 max])10;
         }
 
         stack mut u64[0 max] remaining = value;
         while willexit (divisor > (u64[0 max])0) {
-            stack u64[0 9] digit = (u64[0 9])(remaining / divisor);
-            init self.CodePoints[self.CodePoints.Length] = 48 + (i32[-2147483648 2147483647])digit;
+            stack u8[0 9] digit = (u8[0 9])(remaining / divisor);
+            init self.CodePoints[self.CodePoints.Length] = 48 + (i32[min max])digit;
             remaining = remaining % divisor;
             divisor = divisor / (u64[0 max])10;
         }
@@ -971,7 +971,7 @@ public struct OwnedUnicode {
 
     fn void Clear(mut borrow OwnedUnicode self) {
         while willexit (self.CodePoints.Length > 0) {
-            stack i32[-2147483648 2147483647] value = self.CodePoints.MoveLast();
+            stack i32[min max] value = self.CodePoints.MoveLast();
         }
     }
 }
@@ -1006,74 +1006,74 @@ public fn System.Memory.MemoryStatus FromConstAsciiToUnicode(out OwnedUnicode de
     return destination.AppendConstAscii(source);
 }
 
-internal fn i32[-2147483648 2147483647] UnsignedWide(i16[-32768 32767] value) {
+internal fn i32[min max] UnsignedWide(i16[min max] value) {
     if (value < 0) {
-        return ((i32[-2147483648 2147483647])value) + 65536;
+        return ((i32[min max])value) + (i32[min max])(2 ** 16);
     }
 
-    return (i32[-2147483648 2147483647])value;
+    return (i32[min max])value;
 }
 
-internal unsafe finite i32[-1 9] AsciiDecimalDigitAt(rawptr<i8[-128 127]> data, i64[-9223372036854775808 9223372036854775807] index) {
+internal unsafe finite i8[-1 9] AsciiDecimalDigitAt(rawptr<i8[min max]> data, i64[min max] index) {
     if (data == null || index < 0) {
         return -1;
     }
 
-    stack i8[-128 127] value = *(&data[index]);
-    if (value < (i8[-128 127])48 || value > (i8[-128 127])57) {
+    stack i8[min max] value = *(&data[index]);
+    if (value < (i8[min max])48 || value > (i8[min max])57) {
         return -1;
     }
 
-    return (i32[-1 9])(((i32[-2147483648 2147483647])value) - 48);
+    return (i8[-1 9])(((i32[min max])value) - 48);
 }
 
-internal unsafe finite i32[-1 9] UnicodeDecimalDigitAt(rawptr<i32[-2147483648 2147483647]> data, i64[-9223372036854775808 9223372036854775807] index) {
+internal unsafe finite i8[-1 9] UnicodeDecimalDigitAt(rawptr<i32[min max]> data, i64[min max] index) {
     if (data == null || index < 0) {
         return -1;
     }
 
-    stack i32[-2147483648 2147483647] value = *(&data[index]);
+    stack i32[min max] value = *(&data[index]);
     if (value < 48 || value > 57) {
         return -1;
     }
 
-    return (i32[-1 9])(value - 48);
+    return (i8[-1 9])(value - 48);
 }
 
-internal finite i32[-1 9] AsciiDecimalDigit(ascii unit) {
+internal finite i8[-1 9] AsciiDecimalDigit(ascii unit) {
     unsafe {
         return AsciiDecimalDigitAt(AsciiData(unit), 0);
     }
 }
 
-internal finite i32[-1 9] UnicodeDecimalDigit(unicode unit) {
+internal finite i8[-1 9] UnicodeDecimalDigit(unicode unit) {
     unsafe {
         return UnicodeDecimalDigitAt(UnicodeData(unit), 0);
     }
 }
 public finite TextResult<bool> ParseBoolAscii(ascii source) {
     unsafe {
-        stack i64[-9223372036854775808 9223372036854775807] length = AsciiLength(source);
-        stack rawptr<i8[-128 127]> data = AsciiData(source);
+        stack i64[min max] length = AsciiLength(source);
+        stack rawptr<i8[min max]> data = AsciiData(source);
         if (data == null) {
             return TextResult<bool>.Err(TextError.InvalidFormat);
         }
 
         if (length == 4) {
-            if (*(&data[0]) == (i8[-128 127])116
-                && *(&data[1]) == (i8[-128 127])114
-                && *(&data[2]) == (i8[-128 127])117
-                && *(&data[3]) == (i8[-128 127])101) {
+            if (*(&data[0]) == (i8[min max])116
+                && *(&data[1]) == (i8[min max])114
+                && *(&data[2]) == (i8[min max])117
+                && *(&data[3]) == (i8[min max])101) {
                 return TextResult<bool>.Ok(true);
             }
         }
 
         if (length == 5) {
-            if (*(&data[0]) == (i8[-128 127])102
-                && *(&data[1]) == (i8[-128 127])97
-                && *(&data[2]) == (i8[-128 127])108
-                && *(&data[3]) == (i8[-128 127])115
-                && *(&data[4]) == (i8[-128 127])101) {
+            if (*(&data[0]) == (i8[min max])102
+                && *(&data[1]) == (i8[min max])97
+                && *(&data[2]) == (i8[min max])108
+                && *(&data[3]) == (i8[min max])115
+                && *(&data[4]) == (i8[min max])101) {
                 return TextResult<bool>.Ok(false);
             }
         }
@@ -1084,8 +1084,8 @@ public finite TextResult<bool> ParseBoolAscii(ascii source) {
 
 public finite TextResult<bool> ParseBoolUnicode(unicode source) {
     unsafe {
-        stack i64[-9223372036854775808 9223372036854775807] length = UnicodeLength(source);
-        stack rawptr<i32[-2147483648 2147483647]> data = UnicodeData(source);
+        stack i64[min max] length = UnicodeLength(source);
+        stack rawptr<i32[min max]> data = UnicodeData(source);
         if (data == null) {
             return TextResult<bool>.Err(TextError.InvalidFormat);
         }
@@ -1177,59 +1177,59 @@ public finite TextResult<TextError> ParseTextErrorUnicode(unicode source) {
     return TextResult<TextError>.Err(TextError.InvalidFormat);
 }
 
-finite TextResult<i64[-9223372036854775808 9223372036854775807]> FinishParsedI64(bool negative, u64[0 max] magnitude) {
+finite TextResult<i64[min max]> FinishParsedI64(bool negative, u64[0 max] magnitude) {
     if (negative) {
-        if (magnitude == (u64[0 max])(2**63)) {
-            return TextResult<i64[-9223372036854775808 9223372036854775807]>.Ok(-(2**63));
+        if (magnitude == (u64[0 max])(2 ** 63)) {
+            return TextResult<i64[min max]>.Ok(-(2 ** 63));
         }
 
-        return TextResult<i64[-9223372036854775808 9223372036854775807]>.Ok(
-            0 - (i64[-9223372036854775808 9223372036854775807])magnitude);
+        return TextResult<i64[min max]>.Ok(
+            0 - (i64[min max])magnitude);
     }
 
-    return TextResult<i64[-9223372036854775808 9223372036854775807]>.Ok(
-        (i64[-9223372036854775808 9223372036854775807])magnitude);
+    return TextResult<i64[min max]>.Ok(
+        (i64[min max])magnitude);
 }
 
-public finite TextResult<i64[-9223372036854775808 9223372036854775807]> ParseI64Ascii(ascii source) {
+public finite TextResult<i64[min max]> ParseI64Ascii(ascii source) {
     unsafe {
-        stack i64[-9223372036854775808 9223372036854775807] length = AsciiLength(source);
+        stack i64[min max] length = AsciiLength(source);
         if (length <= 0) {
-            return TextResult<i64[-9223372036854775808 9223372036854775807]>.Err(TextError.InvalidFormat);
+            return TextResult<i64[min max]>.Err(TextError.InvalidFormat);
         }
 
-        stack rawptr<i8[-128 127]> data = AsciiData(source);
+        stack rawptr<i8[min max]> data = AsciiData(source);
         if (data == null) {
-            return TextResult<i64[-9223372036854775808 9223372036854775807]>.Err(TextError.InvalidFormat);
+            return TextResult<i64[min max]>.Err(TextError.InvalidFormat);
         }
 
-        stack mut i64[-9223372036854775808 9223372036854775807] index = 0;
+        stack mut i64[min max] index = 0;
         stack mut bool negative = false;
-        if (*(&data[0]) == (i8[-128 127])45) {
+        if (*(&data[0]) == (i8[min max])45) {
             if (length == 1) {
-                return TextResult<i64[-9223372036854775808 9223372036854775807]>.Err(TextError.InvalidFormat);
+                return TextResult<i64[min max]>.Err(TextError.InvalidFormat);
             }
 
             negative = true;
             index = 1;
         }
 
-        stack mut u64[0 max] limit = (u64[0 max])((2**63) - 1);
+        stack mut u64[0 max] limit = (u64[0 max])(2 ** 63 - 1);
         if (negative) {
-            limit = (u64[0 max])(2**63);
+            limit = (u64[0 max])(2 ** 63);
         }
         stack u64[0 max] cutoff = limit / (u64[0 max])10;
         stack u64[0 max] cutlim = limit % (u64[0 max])10;
         stack mut u64[0 max] value = 0;
         while willexit (index < length) {
-            stack i32[-1 9] digit = AsciiDecimalDigitAt(data, index);
+            stack i8[-1 9] digit = AsciiDecimalDigitAt(data, index);
             if (digit < 0) {
-                return TextResult<i64[-9223372036854775808 9223372036854775807]>.Err(TextError.InvalidFormat);
+                return TextResult<i64[min max]>.Err(TextError.InvalidFormat);
             }
 
-            stack u64[0 9] unsignedDigit = (u64[0 9])digit;
+            stack u8[0 9] unsignedDigit = (u8[0 9])digit;
             if (value > cutoff || (value == cutoff && (u64[0 max])unsignedDigit > cutlim)) {
-                return TextResult<i64[-9223372036854775808 9223372036854775807]>.Err(TextError.Overflow);
+                return TextResult<i64[min max]>.Err(TextError.Overflow);
             }
 
             value = (value * (u64[0 max])10) + (u64[0 max])unsignedDigit;
@@ -1240,45 +1240,45 @@ public finite TextResult<i64[-9223372036854775808 9223372036854775807]> ParseI64
     }
 }
 
-public finite TextResult<i64[-9223372036854775808 9223372036854775807]> ParseI64Unicode(unicode source) {
+public finite TextResult<i64[min max]> ParseI64Unicode(unicode source) {
     unsafe {
-        stack i64[-9223372036854775808 9223372036854775807] length = UnicodeLength(source);
+        stack i64[min max] length = UnicodeLength(source);
         if (length <= 0) {
-            return TextResult<i64[-9223372036854775808 9223372036854775807]>.Err(TextError.InvalidFormat);
+            return TextResult<i64[min max]>.Err(TextError.InvalidFormat);
         }
 
-        stack rawptr<i32[-2147483648 2147483647]> data = UnicodeData(source);
+        stack rawptr<i32[min max]> data = UnicodeData(source);
         if (data == null) {
-            return TextResult<i64[-9223372036854775808 9223372036854775807]>.Err(TextError.InvalidFormat);
+            return TextResult<i64[min max]>.Err(TextError.InvalidFormat);
         }
 
-        stack mut i64[-9223372036854775808 9223372036854775807] index = 0;
+        stack mut i64[min max] index = 0;
         stack mut bool negative = false;
         if (*(&data[0]) == 45) {
             if (length == 1) {
-                return TextResult<i64[-9223372036854775808 9223372036854775807]>.Err(TextError.InvalidFormat);
+                return TextResult<i64[min max]>.Err(TextError.InvalidFormat);
             }
 
             negative = true;
             index = 1;
         }
 
-        stack mut u64[0 max] limit = (u64[0 max])((2**63) - 1);
+        stack mut u64[0 max] limit = (u64[0 max])(2 ** 63 - 1);
         if (negative) {
-            limit = (u64[0 max])(2**63);
+            limit = (u64[0 max])(2 ** 63);
         }
         stack u64[0 max] cutoff = limit / (u64[0 max])10;
         stack u64[0 max] cutlim = limit % (u64[0 max])10;
         stack mut u64[0 max] value = 0;
         while willexit (index < length) {
-            stack i32[-1 9] digit = UnicodeDecimalDigitAt(data, index);
+            stack i8[-1 9] digit = UnicodeDecimalDigitAt(data, index);
             if (digit < 0) {
-                return TextResult<i64[-9223372036854775808 9223372036854775807]>.Err(TextError.InvalidFormat);
+                return TextResult<i64[min max]>.Err(TextError.InvalidFormat);
             }
 
-            stack u64[0 9] unsignedDigit = (u64[0 9])digit;
+            stack u8[0 9] unsignedDigit = (u8[0 9])digit;
             if (value > cutoff || (value == cutoff && (u64[0 max])unsignedDigit > cutlim)) {
-                return TextResult<i64[-9223372036854775808 9223372036854775807]>.Err(TextError.Overflow);
+                return TextResult<i64[min max]>.Err(TextError.Overflow);
             }
 
             value = (value * (u64[0 max])10) + (u64[0 max])unsignedDigit;
@@ -1291,28 +1291,28 @@ public finite TextResult<i64[-9223372036854775808 9223372036854775807]> ParseI64
 
 public finite TextResult<u64[0 max]> ParseU64Ascii(ascii source) {
     unsafe {
-        stack i64[-9223372036854775808 9223372036854775807] length = AsciiLength(source);
+        stack i64[min max] length = AsciiLength(source);
         if (length <= 0) {
             return TextResult<u64[0 max]>.Err(TextError.InvalidFormat);
         }
 
-        stack rawptr<i8[-128 127]> data = AsciiData(source);
+        stack rawptr<i8[min max]> data = AsciiData(source);
         if (data == null) {
             return TextResult<u64[0 max]>.Err(TextError.InvalidFormat);
         }
 
-        stack u64[0 max] limit = (u64[0 max])((2**64) - 1);
+        stack u64[0 max] limit = (u64[0 max])(2 ** 64 - 1);
         stack u64[0 max] cutoff = limit / (u64[0 max])10;
         stack u64[0 max] cutlim = limit % (u64[0 max])10;
         stack mut u64[0 max] value = 0;
-        stack mut i64[-9223372036854775808 9223372036854775807] index = 0;
+        stack mut i64[min max] index = 0;
         while willexit (index < length) {
-            stack i32[-1 9] digit = AsciiDecimalDigitAt(data, index);
+            stack i8[-1 9] digit = AsciiDecimalDigitAt(data, index);
             if (digit < 0) {
                 return TextResult<u64[0 max]>.Err(TextError.InvalidFormat);
             }
 
-            stack u64[0 9] unsignedDigit = (u64[0 9])digit;
+            stack u8[0 9] unsignedDigit = (u8[0 9])digit;
             if (value > cutoff || (value == cutoff && (u64[0 max])unsignedDigit > cutlim)) {
                 return TextResult<u64[0 max]>.Err(TextError.Overflow);
             }
@@ -1327,28 +1327,28 @@ public finite TextResult<u64[0 max]> ParseU64Ascii(ascii source) {
 
 public finite TextResult<u64[0 max]> ParseU64Unicode(unicode source) {
     unsafe {
-        stack i64[-9223372036854775808 9223372036854775807] length = UnicodeLength(source);
+        stack i64[min max] length = UnicodeLength(source);
         if (length <= 0) {
             return TextResult<u64[0 max]>.Err(TextError.InvalidFormat);
         }
 
-        stack rawptr<i32[-2147483648 2147483647]> data = UnicodeData(source);
+        stack rawptr<i32[min max]> data = UnicodeData(source);
         if (data == null) {
             return TextResult<u64[0 max]>.Err(TextError.InvalidFormat);
         }
 
-        stack u64[0 max] limit = (u64[0 max])((2**64) - 1);
+        stack u64[0 max] limit = (u64[0 max])(2 ** 64 - 1);
         stack u64[0 max] cutoff = limit / (u64[0 max])10;
         stack u64[0 max] cutlim = limit % (u64[0 max])10;
         stack mut u64[0 max] value = 0;
-        stack mut i64[-9223372036854775808 9223372036854775807] index = 0;
+        stack mut i64[min max] index = 0;
         while willexit (index < length) {
-            stack i32[-1 9] digit = UnicodeDecimalDigitAt(data, index);
+            stack i8[-1 9] digit = UnicodeDecimalDigitAt(data, index);
             if (digit < 0) {
                 return TextResult<u64[0 max]>.Err(TextError.InvalidFormat);
             }
 
-            stack u64[0 9] unsignedDigit = (u64[0 9])digit;
+            stack u8[0 9] unsignedDigit = (u8[0 9])digit;
             if (value > cutoff || (value == cutoff && (u64[0 max])unsignedDigit > cutlim)) {
                 return TextResult<u64[0 max]>.Err(TextError.Overflow);
             }
@@ -1361,143 +1361,143 @@ public finite TextResult<u64[0 max]> ParseU64Unicode(unicode source) {
     }
 }
 
-public finite TextResult<i8[-128 127]> ParseI8Ascii(ascii source) {
-    stack TextResult<i64[-9223372036854775808 9223372036854775807]> parsed = ParseI64Ascii(source);
+public finite TextResult<i8[min max]> ParseI8Ascii(ascii source) {
+    stack TextResult<i64[min max]> parsed = ParseI64Ascii(source);
     switch (parsed) {
-        case TextResult<i64[-9223372036854775808 9223372036854775807]>.Ok(var value):
+        case TextResult<i64[min max]>.Ok(var value):
             if (value < -128 || value > 127) {
-                return TextResult<i8[-128 127]>.Err(TextError.Overflow);
+                return TextResult<i8[min max]>.Err(TextError.Overflow);
             }
 
-            return TextResult<i8[-128 127]>.Ok((i8[-128 127])value);
-        case TextResult<i64[-9223372036854775808 9223372036854775807]>.Err(var error):
-            return TextResult<i8[-128 127]>.Err(error);
+            return TextResult<i8[min max]>.Ok((i8[min max])value);
+        case TextResult<i64[min max]>.Err(var error):
+            return TextResult<i8[min max]>.Err(error);
     }
 }
 
-public finite TextResult<i8[-128 127]> ParseI8Unicode(unicode source) {
-    stack TextResult<i64[-9223372036854775808 9223372036854775807]> parsed = ParseI64Unicode(source);
+public finite TextResult<i8[min max]> ParseI8Unicode(unicode source) {
+    stack TextResult<i64[min max]> parsed = ParseI64Unicode(source);
     switch (parsed) {
-        case TextResult<i64[-9223372036854775808 9223372036854775807]>.Ok(var value):
+        case TextResult<i64[min max]>.Ok(var value):
             if (value < -128 || value > 127) {
-                return TextResult<i8[-128 127]>.Err(TextError.Overflow);
+                return TextResult<i8[min max]>.Err(TextError.Overflow);
             }
 
-            return TextResult<i8[-128 127]>.Ok((i8[-128 127])value);
-        case TextResult<i64[-9223372036854775808 9223372036854775807]>.Err(var error):
-            return TextResult<i8[-128 127]>.Err(error);
+            return TextResult<i8[min max]>.Ok((i8[min max])value);
+        case TextResult<i64[min max]>.Err(var error):
+            return TextResult<i8[min max]>.Err(error);
     }
 }
 
-public finite TextResult<i16[-32768 32767]> ParseI16Ascii(ascii source) {
-    stack TextResult<i64[-9223372036854775808 9223372036854775807]> parsed = ParseI64Ascii(source);
+public finite TextResult<i16[min max]> ParseI16Ascii(ascii source) {
+    stack TextResult<i64[min max]> parsed = ParseI64Ascii(source);
     switch (parsed) {
-        case TextResult<i64[-9223372036854775808 9223372036854775807]>.Ok(var value):
-            if (value < -(2**15) || value > (2**15) - 1) {
-                return TextResult<i16[-32768 32767]>.Err(TextError.Overflow);
+        case TextResult<i64[min max]>.Ok(var value):
+            if (value < (i64[min max])(-(2 ** 15)) || value > (i64[min max])(2 ** 15 - 1)) {
+                return TextResult<i16[min max]>.Err(TextError.Overflow);
             }
 
-            return TextResult<i16[-32768 32767]>.Ok((i16[-32768 32767])value);
-        case TextResult<i64[-9223372036854775808 9223372036854775807]>.Err(var error):
-            return TextResult<i16[-32768 32767]>.Err(error);
+            return TextResult<i16[min max]>.Ok((i16[min max])value);
+        case TextResult<i64[min max]>.Err(var error):
+            return TextResult<i16[min max]>.Err(error);
     }
 }
 
-public finite TextResult<i16[-32768 32767]> ParseI16Unicode(unicode source) {
-    stack TextResult<i64[-9223372036854775808 9223372036854775807]> parsed = ParseI64Unicode(source);
+public finite TextResult<i16[min max]> ParseI16Unicode(unicode source) {
+    stack TextResult<i64[min max]> parsed = ParseI64Unicode(source);
     switch (parsed) {
-        case TextResult<i64[-9223372036854775808 9223372036854775807]>.Ok(var value):
-            if (value < -(2**15) || value > (2**15) - 1) {
-                return TextResult<i16[-32768 32767]>.Err(TextError.Overflow);
+        case TextResult<i64[min max]>.Ok(var value):
+            if (value < (i64[min max])(-(2 ** 15)) || value > (i64[min max])(2 ** 15 - 1)) {
+                return TextResult<i16[min max]>.Err(TextError.Overflow);
             }
 
-            return TextResult<i16[-32768 32767]>.Ok((i16[-32768 32767])value);
-        case TextResult<i64[-9223372036854775808 9223372036854775807]>.Err(var error):
-            return TextResult<i16[-32768 32767]>.Err(error);
+            return TextResult<i16[min max]>.Ok((i16[min max])value);
+        case TextResult<i64[min max]>.Err(var error):
+            return TextResult<i16[min max]>.Err(error);
     }
 }
 
-public finite TextResult<i24[-8388608 8388607]> ParseI24Ascii(ascii source) {
-    stack TextResult<i64[-9223372036854775808 9223372036854775807]> parsed = ParseI64Ascii(source);
+public finite TextResult<i24[min max]> ParseI24Ascii(ascii source) {
+    stack TextResult<i64[min max]> parsed = ParseI64Ascii(source);
     switch (parsed) {
-        case TextResult<i64[-9223372036854775808 9223372036854775807]>.Ok(var value):
-            if (value < -(2**23) || value > (2**23) - 1) {
-                return TextResult<i24[-8388608 8388607]>.Err(TextError.Overflow);
+        case TextResult<i64[min max]>.Ok(var value):
+            if (value < (i64[min max])(-(2 ** 23)) || value > (i64[min max])(2 ** 23 - 1)) {
+                return TextResult<i24[min max]>.Err(TextError.Overflow);
             }
 
-            return TextResult<i24[-8388608 8388607]>.Ok((i24[-8388608 8388607])value);
-        case TextResult<i64[-9223372036854775808 9223372036854775807]>.Err(var error):
-            return TextResult<i24[-8388608 8388607]>.Err(error);
+            return TextResult<i24[min max]>.Ok((i24[min max])value);
+        case TextResult<i64[min max]>.Err(var error):
+            return TextResult<i24[min max]>.Err(error);
     }
 }
 
-public finite TextResult<i24[-8388608 8388607]> ParseI24Unicode(unicode source) {
-    stack TextResult<i64[-9223372036854775808 9223372036854775807]> parsed = ParseI64Unicode(source);
+public finite TextResult<i24[min max]> ParseI24Unicode(unicode source) {
+    stack TextResult<i64[min max]> parsed = ParseI64Unicode(source);
     switch (parsed) {
-        case TextResult<i64[-9223372036854775808 9223372036854775807]>.Ok(var value):
-            if (value < -(2**23) || value > (2**23) - 1) {
-                return TextResult<i24[-8388608 8388607]>.Err(TextError.Overflow);
+        case TextResult<i64[min max]>.Ok(var value):
+            if (value < (i64[min max])(-(2 ** 23)) || value > (i64[min max])(2 ** 23 - 1)) {
+                return TextResult<i24[min max]>.Err(TextError.Overflow);
             }
 
-            return TextResult<i24[-8388608 8388607]>.Ok((i24[-8388608 8388607])value);
-        case TextResult<i64[-9223372036854775808 9223372036854775807]>.Err(var error):
-            return TextResult<i24[-8388608 8388607]>.Err(error);
+            return TextResult<i24[min max]>.Ok((i24[min max])value);
+        case TextResult<i64[min max]>.Err(var error):
+            return TextResult<i24[min max]>.Err(error);
     }
 }
 
-public finite TextResult<i32[-2147483648 2147483647]> ParseI32Ascii(ascii source) {
-    stack TextResult<i64[-9223372036854775808 9223372036854775807]> parsed = ParseI64Ascii(source);
+public finite TextResult<i32[min max]> ParseI32Ascii(ascii source) {
+    stack TextResult<i64[min max]> parsed = ParseI64Ascii(source);
     switch (parsed) {
-        case TextResult<i64[-9223372036854775808 9223372036854775807]>.Ok(var value):
-            if (value < -(2**31) || value > (2**31) - 1) {
-                return TextResult<i32[-2147483648 2147483647]>.Err(TextError.Overflow);
+        case TextResult<i64[min max]>.Ok(var value):
+            if (value < (i64[min max])(-(2 ** 31)) || value > (i64[min max])(2 ** 31 - 1)) {
+                return TextResult<i32[min max]>.Err(TextError.Overflow);
             }
 
-            return TextResult<i32[-2147483648 2147483647]>.Ok((i32[-2147483648 2147483647])value);
-        case TextResult<i64[-9223372036854775808 9223372036854775807]>.Err(var error):
-            return TextResult<i32[-2147483648 2147483647]>.Err(error);
+            return TextResult<i32[min max]>.Ok((i32[min max])value);
+        case TextResult<i64[min max]>.Err(var error):
+            return TextResult<i32[min max]>.Err(error);
     }
 }
 
-public finite TextResult<i32[-2147483648 2147483647]> ParseI32Unicode(unicode source) {
-    stack TextResult<i64[-9223372036854775808 9223372036854775807]> parsed = ParseI64Unicode(source);
+public finite TextResult<i32[min max]> ParseI32Unicode(unicode source) {
+    stack TextResult<i64[min max]> parsed = ParseI64Unicode(source);
     switch (parsed) {
-        case TextResult<i64[-9223372036854775808 9223372036854775807]>.Ok(var value):
-            if (value < -(2**31) || value > (2**31) - 1) {
-                return TextResult<i32[-2147483648 2147483647]>.Err(TextError.Overflow);
+        case TextResult<i64[min max]>.Ok(var value):
+            if (value < (i64[min max])(-(2 ** 31)) || value > (i64[min max])(2 ** 31 - 1)) {
+                return TextResult<i32[min max]>.Err(TextError.Overflow);
             }
 
-            return TextResult<i32[-2147483648 2147483647]>.Ok((i32[-2147483648 2147483647])value);
-        case TextResult<i64[-9223372036854775808 9223372036854775807]>.Err(var error):
-            return TextResult<i32[-2147483648 2147483647]>.Err(error);
+            return TextResult<i32[min max]>.Ok((i32[min max])value);
+        case TextResult<i64[min max]>.Err(var error):
+            return TextResult<i32[min max]>.Err(error);
     }
 }
 
-public finite TextResult<i48[-140737488355328 140737488355327]> ParseI48Ascii(ascii source) {
-    stack TextResult<i64[-9223372036854775808 9223372036854775807]> parsed = ParseI64Ascii(source);
+public finite TextResult<i48[min max]> ParseI48Ascii(ascii source) {
+    stack TextResult<i64[min max]> parsed = ParseI64Ascii(source);
     switch (parsed) {
-        case TextResult<i64[-9223372036854775808 9223372036854775807]>.Ok(var value):
-            if (value < -(2**47) || value > (2**47) - 1) {
-                return TextResult<i48[-140737488355328 140737488355327]>.Err(TextError.Overflow);
+        case TextResult<i64[min max]>.Ok(var value):
+            if (value < (i64[min max])(-(2 ** 47)) || value > (i64[min max])(2 ** 47 - 1)) {
+                return TextResult<i48[min max]>.Err(TextError.Overflow);
             }
 
-            return TextResult<i48[-140737488355328 140737488355327]>.Ok((i48[-140737488355328 140737488355327])value);
-        case TextResult<i64[-9223372036854775808 9223372036854775807]>.Err(var error):
-            return TextResult<i48[-140737488355328 140737488355327]>.Err(error);
+            return TextResult<i48[min max]>.Ok((i48[min max])value);
+        case TextResult<i64[min max]>.Err(var error):
+            return TextResult<i48[min max]>.Err(error);
     }
 }
 
-public finite TextResult<i48[-140737488355328 140737488355327]> ParseI48Unicode(unicode source) {
-    stack TextResult<i64[-9223372036854775808 9223372036854775807]> parsed = ParseI64Unicode(source);
+public finite TextResult<i48[min max]> ParseI48Unicode(unicode source) {
+    stack TextResult<i64[min max]> parsed = ParseI64Unicode(source);
     switch (parsed) {
-        case TextResult<i64[-9223372036854775808 9223372036854775807]>.Ok(var value):
-            if (value < -(2**47) || value > (2**47) - 1) {
-                return TextResult<i48[-140737488355328 140737488355327]>.Err(TextError.Overflow);
+        case TextResult<i64[min max]>.Ok(var value):
+            if (value < (i64[min max])(-(2 ** 47)) || value > (i64[min max])(2 ** 47 - 1)) {
+                return TextResult<i48[min max]>.Err(TextError.Overflow);
             }
 
-            return TextResult<i48[-140737488355328 140737488355327]>.Ok((i48[-140737488355328 140737488355327])value);
-        case TextResult<i64[-9223372036854775808 9223372036854775807]>.Err(var error):
-            return TextResult<i48[-140737488355328 140737488355327]>.Err(error);
+            return TextResult<i48[min max]>.Ok((i48[min max])value);
+        case TextResult<i64[min max]>.Err(var error):
+            return TextResult<i48[min max]>.Err(error);
     }
 }
 
@@ -1505,7 +1505,7 @@ public finite TextResult<u8[0 max]> ParseU8Ascii(ascii source) {
     stack TextResult<u64[0 max]> parsed = ParseU64Ascii(source);
     switch (parsed) {
         case TextResult<u64[0 max]>.Ok(var value):
-            if (value > (u64[0 max])((2**8) - 1)) {
+            if (value > (u64[0 max])(2 ** 8 - 1)) {
                 return TextResult<u8[0 max]>.Err(TextError.Overflow);
             }
 
@@ -1519,7 +1519,7 @@ public finite TextResult<u8[0 max]> ParseU8Unicode(unicode source) {
     stack TextResult<u64[0 max]> parsed = ParseU64Unicode(source);
     switch (parsed) {
         case TextResult<u64[0 max]>.Ok(var value):
-            if (value > (u64[0 max])((2**8) - 1)) {
+            if (value > (u64[0 max])(2 ** 8 - 1)) {
                 return TextResult<u8[0 max]>.Err(TextError.Overflow);
             }
 
@@ -1533,7 +1533,7 @@ public finite TextResult<u16[0 max]> ParseU16Ascii(ascii source) {
     stack TextResult<u64[0 max]> parsed = ParseU64Ascii(source);
     switch (parsed) {
         case TextResult<u64[0 max]>.Ok(var value):
-            if (value > (u64[0 max])((2**16) - 1)) {
+            if (value > (u64[0 max])(2 ** 16 - 1)) {
                 return TextResult<u16[0 max]>.Err(TextError.Overflow);
             }
 
@@ -1547,7 +1547,7 @@ public finite TextResult<u16[0 max]> ParseU16Unicode(unicode source) {
     stack TextResult<u64[0 max]> parsed = ParseU64Unicode(source);
     switch (parsed) {
         case TextResult<u64[0 max]>.Ok(var value):
-            if (value > (u64[0 max])((2**16) - 1)) {
+            if (value > (u64[0 max])(2 ** 16 - 1)) {
                 return TextResult<u16[0 max]>.Err(TextError.Overflow);
             }
 
@@ -1561,7 +1561,7 @@ public finite TextResult<u24[0 max]> ParseU24Ascii(ascii source) {
     stack TextResult<u64[0 max]> parsed = ParseU64Ascii(source);
     switch (parsed) {
         case TextResult<u64[0 max]>.Ok(var value):
-            if (value > (u64[0 max])((2**24) - 1)) {
+            if (value > (u64[0 max])(2 ** 24 - 1)) {
                 return TextResult<u24[0 max]>.Err(TextError.Overflow);
             }
 
@@ -1575,7 +1575,7 @@ public finite TextResult<u24[0 max]> ParseU24Unicode(unicode source) {
     stack TextResult<u64[0 max]> parsed = ParseU64Unicode(source);
     switch (parsed) {
         case TextResult<u64[0 max]>.Ok(var value):
-            if (value > (u64[0 max])((2**24) - 1)) {
+            if (value > (u64[0 max])(2 ** 24 - 1)) {
                 return TextResult<u24[0 max]>.Err(TextError.Overflow);
             }
 
@@ -1589,7 +1589,7 @@ public finite TextResult<u32[0 max]> ParseU32Ascii(ascii source) {
     stack TextResult<u64[0 max]> parsed = ParseU64Ascii(source);
     switch (parsed) {
         case TextResult<u64[0 max]>.Ok(var value):
-            if (value > (u64[0 max])((2**32) - 1)) {
+            if (value > (u64[0 max])(2 ** 32 - 1)) {
                 return TextResult<u32[0 max]>.Err(TextError.Overflow);
             }
 
@@ -1603,7 +1603,7 @@ public finite TextResult<u32[0 max]> ParseU32Unicode(unicode source) {
     stack TextResult<u64[0 max]> parsed = ParseU64Unicode(source);
     switch (parsed) {
         case TextResult<u64[0 max]>.Ok(var value):
-            if (value > (u64[0 max])((2**32) - 1)) {
+            if (value > (u64[0 max])(2 ** 32 - 1)) {
                 return TextResult<u32[0 max]>.Err(TextError.Overflow);
             }
 
@@ -1617,7 +1617,7 @@ public finite TextResult<u48[0 max]> ParseU48Ascii(ascii source) {
     stack TextResult<u64[0 max]> parsed = ParseU64Ascii(source);
     switch (parsed) {
         case TextResult<u64[0 max]>.Ok(var value):
-            if (value > (u64[0 max])((2**48) - 1)) {
+            if (value > (u64[0 max])(2 ** 48 - 1)) {
                 return TextResult<u48[0 max]>.Err(TextError.Overflow);
             }
 
@@ -1631,7 +1631,7 @@ public finite TextResult<u48[0 max]> ParseU48Unicode(unicode source) {
     stack TextResult<u64[0 max]> parsed = ParseU64Unicode(source);
     switch (parsed) {
         case TextResult<u64[0 max]>.Ok(var value):
-            if (value > (u64[0 max])((2**48) - 1)) {
+            if (value > (u64[0 max])(2 ** 48 - 1)) {
                 return TextResult<u48[0 max]>.Err(TextError.Overflow);
             }
 
@@ -1641,41 +1641,33 @@ public finite TextResult<u48[0 max]> ParseU48Unicode(unicode source) {
     }
 }
 
-finite TextResult<i1024[min max]> FinishParsedI1024(bool negative, u1024[0 max] magnitude, i1024[min max] signedMagnitude, bool signedMagnitudeOverflow) {
+finite TextResult<i1024[min max]> FinishParsedI1024(bool negative, u1024[0 max] magnitude) {
     if (negative) {
-        if (magnitude == (u1024[0 max])(2**1023)) {
-            return TextResult<i1024[min max]>.Ok((i1024[min max])(-(2**1023)));
+        if (magnitude == (u1024[0 max])(2 ** 1023)) {
+            return TextResult<i1024[min max]>.Ok((i1024[min max])(-(2 ** 1023)));
         }
 
-        if (signedMagnitudeOverflow) {
-            return TextResult<i1024[min max]>.Err(TextError.Overflow);
-        }
-
-        return TextResult<i1024[min max]>.Ok(0 - signedMagnitude);
+        return TextResult<i1024[min max]>.Ok(0 - (i1024[min max])magnitude);
     }
 
-    if (signedMagnitudeOverflow) {
-        return TextResult<i1024[min max]>.Err(TextError.Overflow);
-    }
-
-    return TextResult<i1024[min max]>.Ok(signedMagnitude);
+    return TextResult<i1024[min max]>.Ok((i1024[min max])magnitude);
 }
 
 public finite TextResult<i1024[min max]> ParseI1024Ascii(ascii source) {
     unsafe {
-        stack i64[-9223372036854775808 9223372036854775807] length = AsciiLength(source);
+        stack i64[min max] length = AsciiLength(source);
         if (length <= 0) {
             return TextResult<i1024[min max]>.Err(TextError.InvalidFormat);
         }
 
-        stack rawptr<i8[-128 127]> data = AsciiData(source);
+        stack rawptr<i8[min max]> data = AsciiData(source);
         if (data == null) {
             return TextResult<i1024[min max]>.Err(TextError.InvalidFormat);
         }
 
-        stack mut i64[-9223372036854775808 9223372036854775807] index = 0;
+        stack mut i64[min max] index = 0;
         stack mut bool negative = false;
-        if (*(&data[0]) == (i8[-128 127])45) {
+        if (*(&data[0]) == (i8[min max])45) {
             if (length == 1) {
                 return TextResult<i1024[min max]>.Err(TextError.InvalidFormat);
             }
@@ -1684,59 +1676,45 @@ public finite TextResult<i1024[min max]> ParseI1024Ascii(ascii source) {
             index = 1;
         }
 
-        stack mut u1024[0 max] limit = (u1024[0 max])((2**1023) - 1);
+        stack mut u1024[0 max] limit = (u1024[0 max])(2 ** 1023 - 1);
         if (negative) {
-            limit = (u1024[0 max])(2**1023);
+            limit = (u1024[0 max])(2 ** 1023);
         }
         stack u1024[0 max] cutoff = limit / (u1024[0 max])10;
         stack u1024[0 max] cutlim = limit % (u1024[0 max])10;
         stack mut u1024[0 max] value = 0;
-        stack i1024[min max] signedLimit = (i1024[min max])((2**1023) - 1);
-        stack mut i1024[min max] signedMagnitude = 0;
-        stack mut bool signedMagnitudeOverflow = false;
         while willexit (index < length) {
-            stack i32[-1 9] digit = AsciiDecimalDigitAt(data, index);
+            stack i8[-1 9] digit = AsciiDecimalDigitAt(data, index);
             if (digit < 0) {
                 return TextResult<i1024[min max]>.Err(TextError.InvalidFormat);
             }
 
-            stack u1024[0 9] unsignedDigit = (u1024[0 9])digit;
+            stack u8[0 9] unsignedDigit = (u8[0 9])digit;
             if (value > cutoff || (value == cutoff && (u1024[0 max])unsignedDigit > cutlim)) {
                 return TextResult<i1024[min max]>.Err(TextError.Overflow);
-            }
-
-            if (!signedMagnitudeOverflow) {
-                stack i1024[0 9] signedDigit = (i1024[0 9])digit;
-                stack i1024[min max] signedCutoff = (signedLimit - (i1024[min max])signedDigit) / (i1024[min max])10;
-                if (signedMagnitude > signedCutoff) {
-                    signedMagnitudeOverflow = true;
-                }
-                else {
-                    signedMagnitude = (signedMagnitude * (i1024[min max])10) + (i1024[min max])signedDigit;
-                }
             }
 
             value = (value * (u1024[0 max])10) + (u1024[0 max])unsignedDigit;
             index += 1;
         }
 
-        return FinishParsedI1024(negative, value, signedMagnitude, signedMagnitudeOverflow);
+        return FinishParsedI1024(negative, value);
     }
 }
 
 public finite TextResult<i1024[min max]> ParseI1024Unicode(unicode source) {
     unsafe {
-        stack i64[-9223372036854775808 9223372036854775807] length = UnicodeLength(source);
+        stack i64[min max] length = UnicodeLength(source);
         if (length <= 0) {
             return TextResult<i1024[min max]>.Err(TextError.InvalidFormat);
         }
 
-        stack rawptr<i32[-2147483648 2147483647]> data = UnicodeData(source);
+        stack rawptr<i32[min max]> data = UnicodeData(source);
         if (data == null) {
             return TextResult<i1024[min max]>.Err(TextError.InvalidFormat);
         }
 
-        stack mut i64[-9223372036854775808 9223372036854775807] index = 0;
+        stack mut i64[min max] index = 0;
         stack mut bool negative = false;
         if (*(&data[0]) == 45) {
             if (length == 1) {
@@ -1747,70 +1725,56 @@ public finite TextResult<i1024[min max]> ParseI1024Unicode(unicode source) {
             index = 1;
         }
 
-        stack mut u1024[0 max] limit = (u1024[0 max])((2**1023) - 1);
+        stack mut u1024[0 max] limit = (u1024[0 max])(2 ** 1023 - 1);
         if (negative) {
-            limit = (u1024[0 max])(2**1023);
+            limit = (u1024[0 max])(2 ** 1023);
         }
         stack u1024[0 max] cutoff = limit / (u1024[0 max])10;
         stack u1024[0 max] cutlim = limit % (u1024[0 max])10;
         stack mut u1024[0 max] value = 0;
-        stack i1024[min max] signedLimit = (i1024[min max])((2**1023) - 1);
-        stack mut i1024[min max] signedMagnitude = 0;
-        stack mut bool signedMagnitudeOverflow = false;
         while willexit (index < length) {
-            stack i32[-1 9] digit = UnicodeDecimalDigitAt(data, index);
+            stack i8[-1 9] digit = UnicodeDecimalDigitAt(data, index);
             if (digit < 0) {
                 return TextResult<i1024[min max]>.Err(TextError.InvalidFormat);
             }
 
-            stack u1024[0 9] unsignedDigit = (u1024[0 9])digit;
+            stack u8[0 9] unsignedDigit = (u8[0 9])digit;
             if (value > cutoff || (value == cutoff && (u1024[0 max])unsignedDigit > cutlim)) {
                 return TextResult<i1024[min max]>.Err(TextError.Overflow);
-            }
-
-            if (!signedMagnitudeOverflow) {
-                stack i1024[0 9] signedDigit = (i1024[0 9])digit;
-                stack i1024[min max] signedCutoff = (signedLimit - (i1024[min max])signedDigit) / (i1024[min max])10;
-                if (signedMagnitude > signedCutoff) {
-                    signedMagnitudeOverflow = true;
-                }
-                else {
-                    signedMagnitude = (signedMagnitude * (i1024[min max])10) + (i1024[min max])signedDigit;
-                }
             }
 
             value = (value * (u1024[0 max])10) + (u1024[0 max])unsignedDigit;
             index += 1;
         }
 
-        return FinishParsedI1024(negative, value, signedMagnitude, signedMagnitudeOverflow);
+        return FinishParsedI1024(negative, value);
     }
 }
 
 public finite TextResult<u1024[0 max]> ParseU1024Ascii(ascii source) {
     unsafe {
-        stack i64[-9223372036854775808 9223372036854775807] length = AsciiLength(source);
+        stack i64[min max] length = AsciiLength(source);
         if (length <= 0) {
             return TextResult<u1024[0 max]>.Err(TextError.InvalidFormat);
         }
 
-        stack rawptr<i8[-128 127]> data = AsciiData(source);
+        stack rawptr<i8[min max]> data = AsciiData(source);
         if (data == null) {
             return TextResult<u1024[0 max]>.Err(TextError.InvalidFormat);
         }
 
-        stack u1024[0 max] limit = (u1024[0 max])((2**1024) - 1);
+        stack u1024[0 max] limit = (u1024[0 max])(2 ** 1024 - 1);
         stack u1024[0 max] cutoff = limit / (u1024[0 max])10;
         stack u1024[0 max] cutlim = limit % (u1024[0 max])10;
         stack mut u1024[0 max] value = 0;
-        stack mut i64[-9223372036854775808 9223372036854775807] index = 0;
+        stack mut i64[min max] index = 0;
         while willexit (index < length) {
-            stack i32[-1 9] digit = AsciiDecimalDigitAt(data, index);
+            stack i8[-1 9] digit = AsciiDecimalDigitAt(data, index);
             if (digit < 0) {
                 return TextResult<u1024[0 max]>.Err(TextError.InvalidFormat);
             }
 
-            stack u1024[0 9] unsignedDigit = (u1024[0 9])digit;
+            stack u8[0 9] unsignedDigit = (u8[0 9])digit;
             if (value > cutoff || (value == cutoff && (u1024[0 max])unsignedDigit > cutlim)) {
                 return TextResult<u1024[0 max]>.Err(TextError.Overflow);
             }
@@ -1825,28 +1789,28 @@ public finite TextResult<u1024[0 max]> ParseU1024Ascii(ascii source) {
 
 public finite TextResult<u1024[0 max]> ParseU1024Unicode(unicode source) {
     unsafe {
-        stack i64[-9223372036854775808 9223372036854775807] length = UnicodeLength(source);
+        stack i64[min max] length = UnicodeLength(source);
         if (length <= 0) {
             return TextResult<u1024[0 max]>.Err(TextError.InvalidFormat);
         }
 
-        stack rawptr<i32[-2147483648 2147483647]> data = UnicodeData(source);
+        stack rawptr<i32[min max]> data = UnicodeData(source);
         if (data == null) {
             return TextResult<u1024[0 max]>.Err(TextError.InvalidFormat);
         }
 
-        stack u1024[0 max] limit = (u1024[0 max])((2**1024) - 1);
+        stack u1024[0 max] limit = (u1024[0 max])(2 ** 1024 - 1);
         stack u1024[0 max] cutoff = limit / (u1024[0 max])10;
         stack u1024[0 max] cutlim = limit % (u1024[0 max])10;
         stack mut u1024[0 max] value = 0;
-        stack mut i64[-9223372036854775808 9223372036854775807] index = 0;
+        stack mut i64[min max] index = 0;
         while willexit (index < length) {
-            stack i32[-1 9] digit = UnicodeDecimalDigitAt(data, index);
+            stack i8[-1 9] digit = UnicodeDecimalDigitAt(data, index);
             if (digit < 0) {
                 return TextResult<u1024[0 max]>.Err(TextError.InvalidFormat);
             }
 
-            stack u1024[0 9] unsignedDigit = (u1024[0 9])digit;
+            stack u8[0 9] unsignedDigit = (u8[0 9])digit;
             if (value > cutoff || (value == cutoff && (u1024[0 max])unsignedDigit > cutlim)) {
                 return TextResult<u1024[0 max]>.Err(TextError.Overflow);
             }
@@ -1859,31 +1823,23 @@ public finite TextResult<u1024[0 max]> ParseU1024Unicode(unicode source) {
     }
 }
 
-finite TextResult<i128[min max]> FinishParsedI128(bool negative, u128[0 max] magnitude, i128[min max] signedMagnitude, bool signedMagnitudeOverflow) {
+finite TextResult<i128[min max]> FinishParsedI128(bool negative, u128[0 max] magnitude) {
     if (negative) {
-        if (magnitude == (u128[0 max])(2**127)) {
-            return TextResult<i128[min max]>.Ok((i128[min max])(-(2**127)));
+        if (magnitude == (u128[0 max])(2 ** 127)) {
+            return TextResult<i128[min max]>.Ok((i128[min max])(-(2 ** 127)));
         }
 
-        if (signedMagnitudeOverflow) {
-            return TextResult<i128[min max]>.Err(TextError.Overflow);
-        }
-
-        return TextResult<i128[min max]>.Ok(0 - signedMagnitude);
+        return TextResult<i128[min max]>.Ok(0 - (i128[min max])magnitude);
     }
 
-    if (signedMagnitudeOverflow) {
-        return TextResult<i128[min max]>.Err(TextError.Overflow);
-    }
-
-    return TextResult<i128[min max]>.Ok(signedMagnitude);
+    return TextResult<i128[min max]>.Ok((i128[min max])magnitude);
 }
 
 public finite TextResult<i96[min max]> ParseI96Ascii(ascii source) {
     stack TextResult<i128[min max]> parsed = ParseI128Ascii(source);
     switch (parsed) {
         case TextResult<i128[min max]>.Ok(var value):
-            if (value < (i128[min max])(-(2**95)) || value > (i128[min max])((2**95) - 1)) {
+            if (value < (i128[min max])(-(2 ** 95)) || value > (i128[min max])(2 ** 95 - 1)) {
                 return TextResult<i96[min max]>.Err(TextError.Overflow);
             }
 
@@ -1897,7 +1853,7 @@ public finite TextResult<i96[min max]> ParseI96Unicode(unicode source) {
     stack TextResult<i128[min max]> parsed = ParseI128Unicode(source);
     switch (parsed) {
         case TextResult<i128[min max]>.Ok(var value):
-            if (value < (i128[min max])(-(2**95)) || value > (i128[min max])((2**95) - 1)) {
+            if (value < (i128[min max])(-(2 ** 95)) || value > (i128[min max])(2 ** 95 - 1)) {
                 return TextResult<i96[min max]>.Err(TextError.Overflow);
             }
 
@@ -1909,19 +1865,19 @@ public finite TextResult<i96[min max]> ParseI96Unicode(unicode source) {
 
 public finite TextResult<i128[min max]> ParseI128Ascii(ascii source) {
     unsafe {
-        stack i64[-9223372036854775808 9223372036854775807] length = AsciiLength(source);
+        stack i64[min max] length = AsciiLength(source);
         if (length <= 0) {
             return TextResult<i128[min max]>.Err(TextError.InvalidFormat);
         }
 
-        stack rawptr<i8[-128 127]> data = AsciiData(source);
+        stack rawptr<i8[min max]> data = AsciiData(source);
         if (data == null) {
             return TextResult<i128[min max]>.Err(TextError.InvalidFormat);
         }
 
-        stack mut i64[-9223372036854775808 9223372036854775807] index = 0;
+        stack mut i64[min max] index = 0;
         stack mut bool negative = false;
-        if (*(&data[0]) == (i8[-128 127])45) {
+        if (*(&data[0]) == (i8[min max])45) {
             if (length == 1) {
                 return TextResult<i128[min max]>.Err(TextError.InvalidFormat);
             }
@@ -1930,59 +1886,45 @@ public finite TextResult<i128[min max]> ParseI128Ascii(ascii source) {
             index = 1;
         }
 
-        stack mut u128[0 max] limit = (u128[0 max])((2**127) - 1);
+        stack mut u128[0 max] limit = (u128[0 max])(2 ** 127 - 1);
         if (negative) {
-            limit = (u128[0 max])(2**127);
+            limit = (u128[0 max])(2 ** 127);
         }
         stack u128[0 max] cutoff = limit / (u128[0 max])10;
         stack u128[0 max] cutlim = limit % (u128[0 max])10;
         stack mut u128[0 max] value = 0;
-        stack i128[min max] signedLimit = (i128[min max])((2**127) - 1);
-        stack mut i128[min max] signedMagnitude = 0;
-        stack mut bool signedMagnitudeOverflow = false;
         while willexit (index < length) {
-            stack i32[-1 9] digit = AsciiDecimalDigitAt(data, index);
+            stack i8[-1 9] digit = AsciiDecimalDigitAt(data, index);
             if (digit < 0) {
                 return TextResult<i128[min max]>.Err(TextError.InvalidFormat);
             }
 
-            stack u128[0 9] unsignedDigit = (u128[0 9])digit;
+            stack u8[0 9] unsignedDigit = (u8[0 9])digit;
             if (value > cutoff || (value == cutoff && (u128[0 max])unsignedDigit > cutlim)) {
                 return TextResult<i128[min max]>.Err(TextError.Overflow);
-            }
-
-            if (!signedMagnitudeOverflow) {
-                stack i128[0 9] signedDigit = (i128[0 9])digit;
-                stack i128[min max] signedCutoff = (signedLimit - (i128[min max])signedDigit) / (i128[min max])10;
-                if (signedMagnitude > signedCutoff) {
-                    signedMagnitudeOverflow = true;
-                }
-                else {
-                    signedMagnitude = (signedMagnitude * (i128[min max])10) + (i128[min max])signedDigit;
-                }
             }
 
             value = (value * (u128[0 max])10) + (u128[0 max])unsignedDigit;
             index += 1;
         }
 
-        return FinishParsedI128(negative, value, signedMagnitude, signedMagnitudeOverflow);
+        return FinishParsedI128(negative, value);
     }
 }
 
 public finite TextResult<i128[min max]> ParseI128Unicode(unicode source) {
     unsafe {
-        stack i64[-9223372036854775808 9223372036854775807] length = UnicodeLength(source);
+        stack i64[min max] length = UnicodeLength(source);
         if (length <= 0) {
             return TextResult<i128[min max]>.Err(TextError.InvalidFormat);
         }
 
-        stack rawptr<i32[-2147483648 2147483647]> data = UnicodeData(source);
+        stack rawptr<i32[min max]> data = UnicodeData(source);
         if (data == null) {
             return TextResult<i128[min max]>.Err(TextError.InvalidFormat);
         }
 
-        stack mut i64[-9223372036854775808 9223372036854775807] index = 0;
+        stack mut i64[min max] index = 0;
         stack mut bool negative = false;
         if (*(&data[0]) == 45) {
             if (length == 1) {
@@ -1993,43 +1935,29 @@ public finite TextResult<i128[min max]> ParseI128Unicode(unicode source) {
             index = 1;
         }
 
-        stack mut u128[0 max] limit = (u128[0 max])((2**127) - 1);
+        stack mut u128[0 max] limit = (u128[0 max])(2 ** 127 - 1);
         if (negative) {
-            limit = (u128[0 max])(2**127);
+            limit = (u128[0 max])(2 ** 127);
         }
         stack u128[0 max] cutoff = limit / (u128[0 max])10;
         stack u128[0 max] cutlim = limit % (u128[0 max])10;
         stack mut u128[0 max] value = 0;
-        stack i128[min max] signedLimit = (i128[min max])((2**127) - 1);
-        stack mut i128[min max] signedMagnitude = 0;
-        stack mut bool signedMagnitudeOverflow = false;
         while willexit (index < length) {
-            stack i32[-1 9] digit = UnicodeDecimalDigitAt(data, index);
+            stack i8[-1 9] digit = UnicodeDecimalDigitAt(data, index);
             if (digit < 0) {
                 return TextResult<i128[min max]>.Err(TextError.InvalidFormat);
             }
 
-            stack u128[0 9] unsignedDigit = (u128[0 9])digit;
+            stack u8[0 9] unsignedDigit = (u8[0 9])digit;
             if (value > cutoff || (value == cutoff && (u128[0 max])unsignedDigit > cutlim)) {
                 return TextResult<i128[min max]>.Err(TextError.Overflow);
-            }
-
-            if (!signedMagnitudeOverflow) {
-                stack i128[0 9] signedDigit = (i128[0 9])digit;
-                stack i128[min max] signedCutoff = (signedLimit - (i128[min max])signedDigit) / (i128[min max])10;
-                if (signedMagnitude > signedCutoff) {
-                    signedMagnitudeOverflow = true;
-                }
-                else {
-                    signedMagnitude = (signedMagnitude * (i128[min max])10) + (i128[min max])signedDigit;
-                }
             }
 
             value = (value * (u128[0 max])10) + (u128[0 max])unsignedDigit;
             index += 1;
         }
 
-        return FinishParsedI128(negative, value, signedMagnitude, signedMagnitudeOverflow);
+        return FinishParsedI128(negative, value);
     }
 }
 
@@ -2037,7 +1965,7 @@ public finite TextResult<i192[min max]> ParseI192Ascii(ascii source) {
     stack TextResult<i1024[min max]> parsed = ParseI1024Ascii(source);
     switch (parsed) {
         case TextResult<i1024[min max]>.Ok(var value):
-            if (value < (i1024[min max])(-(2**191)) || value > (i1024[min max])((2**191) - 1)) {
+            if (value < (i1024[min max])(-(2 ** 191)) || value > (i1024[min max])(2 ** 191 - 1)) {
                 return TextResult<i192[min max]>.Err(TextError.Overflow);
             }
 
@@ -2051,7 +1979,7 @@ public finite TextResult<i192[min max]> ParseI192Unicode(unicode source) {
     stack TextResult<i1024[min max]> parsed = ParseI1024Unicode(source);
     switch (parsed) {
         case TextResult<i1024[min max]>.Ok(var value):
-            if (value < (i1024[min max])(-(2**191)) || value > (i1024[min max])((2**191) - 1)) {
+            if (value < (i1024[min max])(-(2 ** 191)) || value > (i1024[min max])(2 ** 191 - 1)) {
                 return TextResult<i192[min max]>.Err(TextError.Overflow);
             }
 
@@ -2065,7 +1993,7 @@ public finite TextResult<i256[min max]> ParseI256Ascii(ascii source) {
     stack TextResult<i1024[min max]> parsed = ParseI1024Ascii(source);
     switch (parsed) {
         case TextResult<i1024[min max]>.Ok(var value):
-            if (value < (i1024[min max])(-(2**255)) || value > (i1024[min max])((2**255) - 1)) {
+            if (value < (i1024[min max])(-(2 ** 255)) || value > (i1024[min max])(2 ** 255 - 1)) {
                 return TextResult<i256[min max]>.Err(TextError.Overflow);
             }
 
@@ -2079,7 +2007,7 @@ public finite TextResult<i256[min max]> ParseI256Unicode(unicode source) {
     stack TextResult<i1024[min max]> parsed = ParseI1024Unicode(source);
     switch (parsed) {
         case TextResult<i1024[min max]>.Ok(var value):
-            if (value < (i1024[min max])(-(2**255)) || value > (i1024[min max])((2**255) - 1)) {
+            if (value < (i1024[min max])(-(2 ** 255)) || value > (i1024[min max])(2 ** 255 - 1)) {
                 return TextResult<i256[min max]>.Err(TextError.Overflow);
             }
 
@@ -2093,7 +2021,7 @@ public finite TextResult<i384[min max]> ParseI384Ascii(ascii source) {
     stack TextResult<i1024[min max]> parsed = ParseI1024Ascii(source);
     switch (parsed) {
         case TextResult<i1024[min max]>.Ok(var value):
-            if (value < (i1024[min max])(-(2**383)) || value > (i1024[min max])((2**383) - 1)) {
+            if (value < (i1024[min max])(-(2 ** 383)) || value > (i1024[min max])(2 ** 383 - 1)) {
                 return TextResult<i384[min max]>.Err(TextError.Overflow);
             }
 
@@ -2107,7 +2035,7 @@ public finite TextResult<i384[min max]> ParseI384Unicode(unicode source) {
     stack TextResult<i1024[min max]> parsed = ParseI1024Unicode(source);
     switch (parsed) {
         case TextResult<i1024[min max]>.Ok(var value):
-            if (value < (i1024[min max])(-(2**383)) || value > (i1024[min max])((2**383) - 1)) {
+            if (value < (i1024[min max])(-(2 ** 383)) || value > (i1024[min max])(2 ** 383 - 1)) {
                 return TextResult<i384[min max]>.Err(TextError.Overflow);
             }
 
@@ -2121,7 +2049,7 @@ public finite TextResult<i512[min max]> ParseI512Ascii(ascii source) {
     stack TextResult<i1024[min max]> parsed = ParseI1024Ascii(source);
     switch (parsed) {
         case TextResult<i1024[min max]>.Ok(var value):
-            if (value < (i1024[min max])(-(2**511)) || value > (i1024[min max])((2**511) - 1)) {
+            if (value < (i1024[min max])(-(2 ** 511)) || value > (i1024[min max])(2 ** 511 - 1)) {
                 return TextResult<i512[min max]>.Err(TextError.Overflow);
             }
 
@@ -2135,7 +2063,7 @@ public finite TextResult<i512[min max]> ParseI512Unicode(unicode source) {
     stack TextResult<i1024[min max]> parsed = ParseI1024Unicode(source);
     switch (parsed) {
         case TextResult<i1024[min max]>.Ok(var value):
-            if (value < (i1024[min max])(-(2**511)) || value > (i1024[min max])((2**511) - 1)) {
+            if (value < (i1024[min max])(-(2 ** 511)) || value > (i1024[min max])(2 ** 511 - 1)) {
                 return TextResult<i512[min max]>.Err(TextError.Overflow);
             }
 
@@ -2149,7 +2077,7 @@ public finite TextResult<i768[min max]> ParseI768Ascii(ascii source) {
     stack TextResult<i1024[min max]> parsed = ParseI1024Ascii(source);
     switch (parsed) {
         case TextResult<i1024[min max]>.Ok(var value):
-            if (value < (i1024[min max])(-(2**767)) || value > (i1024[min max])((2**767) - 1)) {
+            if (value < (i1024[min max])(-(2 ** 767)) || value > (i1024[min max])(2 ** 767 - 1)) {
                 return TextResult<i768[min max]>.Err(TextError.Overflow);
             }
 
@@ -2163,7 +2091,7 @@ public finite TextResult<i768[min max]> ParseI768Unicode(unicode source) {
     stack TextResult<i1024[min max]> parsed = ParseI1024Unicode(source);
     switch (parsed) {
         case TextResult<i1024[min max]>.Ok(var value):
-            if (value < (i1024[min max])(-(2**767)) || value > (i1024[min max])((2**767) - 1)) {
+            if (value < (i1024[min max])(-(2 ** 767)) || value > (i1024[min max])(2 ** 767 - 1)) {
                 return TextResult<i768[min max]>.Err(TextError.Overflow);
             }
 
@@ -2177,7 +2105,7 @@ public finite TextResult<u96[0 max]> ParseU96Ascii(ascii source) {
     stack TextResult<u128[0 max]> parsed = ParseU128Ascii(source);
     switch (parsed) {
         case TextResult<u128[0 max]>.Ok(var value):
-            if (value > (u128[0 max])((2**96) - 1)) {
+            if (value > (u128[0 max])(2 ** 96 - 1)) {
                 return TextResult<u96[0 max]>.Err(TextError.Overflow);
             }
 
@@ -2191,7 +2119,7 @@ public finite TextResult<u96[0 max]> ParseU96Unicode(unicode source) {
     stack TextResult<u128[0 max]> parsed = ParseU128Unicode(source);
     switch (parsed) {
         case TextResult<u128[0 max]>.Ok(var value):
-            if (value > (u128[0 max])((2**96) - 1)) {
+            if (value > (u128[0 max])(2 ** 96 - 1)) {
                 return TextResult<u96[0 max]>.Err(TextError.Overflow);
             }
 
@@ -2203,28 +2131,28 @@ public finite TextResult<u96[0 max]> ParseU96Unicode(unicode source) {
 
 public finite TextResult<u128[0 max]> ParseU128Ascii(ascii source) {
     unsafe {
-        stack i64[-9223372036854775808 9223372036854775807] length = AsciiLength(source);
+        stack i64[min max] length = AsciiLength(source);
         if (length <= 0) {
             return TextResult<u128[0 max]>.Err(TextError.InvalidFormat);
         }
 
-        stack rawptr<i8[-128 127]> data = AsciiData(source);
+        stack rawptr<i8[min max]> data = AsciiData(source);
         if (data == null) {
             return TextResult<u128[0 max]>.Err(TextError.InvalidFormat);
         }
 
-        stack u128[0 max] limit = (u128[0 max])((2**128) - 1);
+        stack u128[0 max] limit = (u128[0 max])(2 ** 128 - 1);
         stack u128[0 max] cutoff = limit / (u128[0 max])10;
         stack u128[0 max] cutlim = limit % (u128[0 max])10;
         stack mut u128[0 max] value = 0;
-        stack mut i64[-9223372036854775808 9223372036854775807] index = 0;
+        stack mut i64[min max] index = 0;
         while willexit (index < length) {
-            stack i32[-1 9] digit = AsciiDecimalDigitAt(data, index);
+            stack i8[-1 9] digit = AsciiDecimalDigitAt(data, index);
             if (digit < 0) {
                 return TextResult<u128[0 max]>.Err(TextError.InvalidFormat);
             }
 
-            stack u128[0 9] unsignedDigit = (u128[0 9])digit;
+            stack u8[0 9] unsignedDigit = (u8[0 9])digit;
             if (value > cutoff || (value == cutoff && (u128[0 max])unsignedDigit > cutlim)) {
                 return TextResult<u128[0 max]>.Err(TextError.Overflow);
             }
@@ -2239,28 +2167,28 @@ public finite TextResult<u128[0 max]> ParseU128Ascii(ascii source) {
 
 public finite TextResult<u128[0 max]> ParseU128Unicode(unicode source) {
     unsafe {
-        stack i64[-9223372036854775808 9223372036854775807] length = UnicodeLength(source);
+        stack i64[min max] length = UnicodeLength(source);
         if (length <= 0) {
             return TextResult<u128[0 max]>.Err(TextError.InvalidFormat);
         }
 
-        stack rawptr<i32[-2147483648 2147483647]> data = UnicodeData(source);
+        stack rawptr<i32[min max]> data = UnicodeData(source);
         if (data == null) {
             return TextResult<u128[0 max]>.Err(TextError.InvalidFormat);
         }
 
-        stack u128[0 max] limit = (u128[0 max])((2**128) - 1);
+        stack u128[0 max] limit = (u128[0 max])(2 ** 128 - 1);
         stack u128[0 max] cutoff = limit / (u128[0 max])10;
         stack u128[0 max] cutlim = limit % (u128[0 max])10;
         stack mut u128[0 max] value = 0;
-        stack mut i64[-9223372036854775808 9223372036854775807] index = 0;
+        stack mut i64[min max] index = 0;
         while willexit (index < length) {
-            stack i32[-1 9] digit = UnicodeDecimalDigitAt(data, index);
+            stack i8[-1 9] digit = UnicodeDecimalDigitAt(data, index);
             if (digit < 0) {
                 return TextResult<u128[0 max]>.Err(TextError.InvalidFormat);
             }
 
-            stack u128[0 9] unsignedDigit = (u128[0 9])digit;
+            stack u8[0 9] unsignedDigit = (u8[0 9])digit;
             if (value > cutoff || (value == cutoff && (u128[0 max])unsignedDigit > cutlim)) {
                 return TextResult<u128[0 max]>.Err(TextError.Overflow);
             }
@@ -2277,7 +2205,7 @@ public finite TextResult<u192[0 max]> ParseU192Ascii(ascii source) {
     stack TextResult<u1024[0 max]> parsed = ParseU1024Ascii(source);
     switch (parsed) {
         case TextResult<u1024[0 max]>.Ok(var value):
-            if (value > (u1024[0 max])((2**192) - 1)) {
+            if (value > (u1024[0 max])(2 ** 192 - 1)) {
                 return TextResult<u192[0 max]>.Err(TextError.Overflow);
             }
 
@@ -2291,7 +2219,7 @@ public finite TextResult<u192[0 max]> ParseU192Unicode(unicode source) {
     stack TextResult<u1024[0 max]> parsed = ParseU1024Unicode(source);
     switch (parsed) {
         case TextResult<u1024[0 max]>.Ok(var value):
-            if (value > (u1024[0 max])((2**192) - 1)) {
+            if (value > (u1024[0 max])(2 ** 192 - 1)) {
                 return TextResult<u192[0 max]>.Err(TextError.Overflow);
             }
 
@@ -2305,7 +2233,7 @@ public finite TextResult<u256[0 max]> ParseU256Ascii(ascii source) {
     stack TextResult<u1024[0 max]> parsed = ParseU1024Ascii(source);
     switch (parsed) {
         case TextResult<u1024[0 max]>.Ok(var value):
-            if (value > (u1024[0 max])((2**256) - 1)) {
+            if (value > (u1024[0 max])(2 ** 256 - 1)) {
                 return TextResult<u256[0 max]>.Err(TextError.Overflow);
             }
 
@@ -2319,7 +2247,7 @@ public finite TextResult<u256[0 max]> ParseU256Unicode(unicode source) {
     stack TextResult<u1024[0 max]> parsed = ParseU1024Unicode(source);
     switch (parsed) {
         case TextResult<u1024[0 max]>.Ok(var value):
-            if (value > (u1024[0 max])((2**256) - 1)) {
+            if (value > (u1024[0 max])(2 ** 256 - 1)) {
                 return TextResult<u256[0 max]>.Err(TextError.Overflow);
             }
 
@@ -2333,7 +2261,7 @@ public finite TextResult<u384[0 max]> ParseU384Ascii(ascii source) {
     stack TextResult<u1024[0 max]> parsed = ParseU1024Ascii(source);
     switch (parsed) {
         case TextResult<u1024[0 max]>.Ok(var value):
-            if (value > (u1024[0 max])((2**384) - 1)) {
+            if (value > (u1024[0 max])(2 ** 384 - 1)) {
                 return TextResult<u384[0 max]>.Err(TextError.Overflow);
             }
 
@@ -2347,7 +2275,7 @@ public finite TextResult<u384[0 max]> ParseU384Unicode(unicode source) {
     stack TextResult<u1024[0 max]> parsed = ParseU1024Unicode(source);
     switch (parsed) {
         case TextResult<u1024[0 max]>.Ok(var value):
-            if (value > (u1024[0 max])((2**384) - 1)) {
+            if (value > (u1024[0 max])(2 ** 384 - 1)) {
                 return TextResult<u384[0 max]>.Err(TextError.Overflow);
             }
 
@@ -2361,7 +2289,7 @@ public finite TextResult<u512[0 max]> ParseU512Ascii(ascii source) {
     stack TextResult<u1024[0 max]> parsed = ParseU1024Ascii(source);
     switch (parsed) {
         case TextResult<u1024[0 max]>.Ok(var value):
-            if (value > (u1024[0 max])((2**512) - 1)) {
+            if (value > (u1024[0 max])(2 ** 512 - 1)) {
                 return TextResult<u512[0 max]>.Err(TextError.Overflow);
             }
 
@@ -2375,7 +2303,7 @@ public finite TextResult<u512[0 max]> ParseU512Unicode(unicode source) {
     stack TextResult<u1024[0 max]> parsed = ParseU1024Unicode(source);
     switch (parsed) {
         case TextResult<u1024[0 max]>.Ok(var value):
-            if (value > (u1024[0 max])((2**512) - 1)) {
+            if (value > (u1024[0 max])(2 ** 512 - 1)) {
                 return TextResult<u512[0 max]>.Err(TextError.Overflow);
             }
 
@@ -2389,7 +2317,7 @@ public finite TextResult<u768[0 max]> ParseU768Ascii(ascii source) {
     stack TextResult<u1024[0 max]> parsed = ParseU1024Ascii(source);
     switch (parsed) {
         case TextResult<u1024[0 max]>.Ok(var value):
-            if (value > (u1024[0 max])((2**768) - 1)) {
+            if (value > (u1024[0 max])(2 ** 768 - 1)) {
                 return TextResult<u768[0 max]>.Err(TextError.Overflow);
             }
 
@@ -2403,7 +2331,7 @@ public finite TextResult<u768[0 max]> ParseU768Unicode(unicode source) {
     stack TextResult<u1024[0 max]> parsed = ParseU1024Unicode(source);
     switch (parsed) {
         case TextResult<u1024[0 max]>.Ok(var value):
-            if (value > (u1024[0 max])((2**768) - 1)) {
+            if (value > (u1024[0 max])(2 ** 768 - 1)) {
                 return TextResult<u768[0 max]>.Err(TextError.Overflow);
             }
 
@@ -2413,7 +2341,7 @@ public finite TextResult<u768[0 max]> ParseU768Unicode(unicode source) {
     }
 }
 
-fn i32[-2147483648 2147483647] NormalizeUnicodeCodePoint(i32[-2147483648 2147483647] codePoint) {
+fn i32[min max] NormalizeUnicodeCodePoint(i32[min max] codePoint) {
     unsafe {
         if (codePoint < 0) {
             return 65533;
@@ -2431,8 +2359,8 @@ fn i32[-2147483648 2147483647] NormalizeUnicodeCodePoint(i32[-2147483648 2147483
     }
 }
 
-fn i64[-9223372036854775808 9223372036854775807] Utf8EncodedLength(i32[-2147483648 2147483647] codePoint) {
-    stack i32[-2147483648 2147483647] scalar = NormalizeUnicodeCodePoint(codePoint);
+fn i64[min max] Utf8EncodedLength(i32[min max] codePoint) {
+    stack i32[min max] scalar = NormalizeUnicodeCodePoint(codePoint);
 
     if (scalar <= 127) {
         return 1;
@@ -2442,7 +2370,7 @@ fn i64[-9223372036854775808 9223372036854775807] Utf8EncodedLength(i32[-21474836
         return 2;
     }
 
-    if (scalar <= 65535) {
+    if (scalar <= (i32[min max])(2 ** 16 - 1)) {
         return 3;
     }
 
@@ -2450,44 +2378,44 @@ fn i64[-9223372036854775808 9223372036854775807] Utf8EncodedLength(i32[-21474836
 }
 
 unsafe fn void WriteUtf8CodePoint(
-    rawmutptr<i8[-128 127]>[capacity] destination,
-    i64[0 max] capacity,
-    rawmutptr<i64[-9223372036854775808 9223372036854775807]> writeIndex,
-    i32[-2147483648 2147483647] codePoint) {
-    stack i32[-2147483648 2147483647] scalar = NormalizeUnicodeCodePoint(codePoint);
-    stack i64[-9223372036854775808 9223372036854775807] index = *writeIndex;
+    rawmutptr<i8[min max]>[capacity] destination,
+    u64[0 2 ** 63 - 1] capacity,
+    rawmutptr<i64[min max]> writeIndex,
+    i32[min max] codePoint) {
+    stack i32[min max] scalar = NormalizeUnicodeCodePoint(codePoint);
+    stack i64[min max] index = *writeIndex;
 
     if (scalar <= 127) {
-        *(&destination[index]) = (i8[-128 127])scalar;
+        *(&destination[index]) = (i8[min max])scalar;
         *writeIndex = index + 1;
         return;
     }
 
     if (scalar <= 2047) {
-        *(&destination[index]) = (i8[-128 127])((scalar >> 6) | 192);
-        *(&destination[index + 1]) = (i8[-128 127])((scalar & 63) | 128);
+        *(&destination[index]) = (i8[min max])((scalar >> 6) | 192);
+        *(&destination[index + 1]) = (i8[min max])((scalar & 63) | 128);
         *writeIndex = index + 2;
         return;
     }
 
-    if (scalar <= 65535) {
-        *(&destination[index]) = (i8[-128 127])((scalar >> 12) | 224);
-        *(&destination[index + 1]) = (i8[-128 127])(((scalar >> 6) & 63) | 128);
-        *(&destination[index + 2]) = (i8[-128 127])((scalar & 63) | 128);
+    if (scalar <= (i32[min max])(2 ** 16 - 1)) {
+        *(&destination[index]) = (i8[min max])((scalar >> 12) | 224);
+        *(&destination[index + 1]) = (i8[min max])(((scalar >> 6) & 63) | 128);
+        *(&destination[index + 2]) = (i8[min max])((scalar & 63) | 128);
         *writeIndex = index + 3;
         return;
     }
 
-    *(&destination[index]) = (i8[-128 127])((scalar >> 18) | 240);
-    *(&destination[index + 1]) = (i8[-128 127])(((scalar >> 12) & 63) | 128);
-    *(&destination[index + 2]) = (i8[-128 127])(((scalar >> 6) & 63) | 128);
-    *(&destination[index + 3]) = (i8[-128 127])((scalar & 63) | 128);
+    *(&destination[index]) = (i8[min max])((scalar >> 18) | 240);
+    *(&destination[index + 1]) = (i8[min max])(((scalar >> 12) & 63) | 128);
+    *(&destination[index + 2]) = (i8[min max])(((scalar >> 6) & 63) | 128);
+    *(&destination[index + 3]) = (i8[min max])((scalar & 63) | 128);
     *writeIndex = index + 4;
 }
 
-fn i64[-9223372036854775808 9223372036854775807] Utf16EncodedLength(i32[-2147483648 2147483647] codePoint) {
-    stack i32[-2147483648 2147483647] scalar = NormalizeUnicodeCodePoint(codePoint);
-    if (scalar <= 65535) {
+fn i64[min max] Utf16EncodedLength(i32[min max] codePoint) {
+    stack i32[min max] scalar = NormalizeUnicodeCodePoint(codePoint);
+    if (scalar <= (i32[min max])(2 ** 16 - 1)) {
         return 1;
     }
 
@@ -2495,46 +2423,46 @@ fn i64[-9223372036854775808 9223372036854775807] Utf16EncodedLength(i32[-2147483
 }
 
 unsafe fn void WriteUtf16CodePoint(
-    rawmutptr<i16[-32768 32767]>[capacity] destination,
-    i64[0 max] capacity,
-    rawmutptr<i64[-9223372036854775808 9223372036854775807]> writeIndex,
-    i32[-2147483648 2147483647] codePoint) {
-    stack i32[-2147483648 2147483647] scalar = NormalizeUnicodeCodePoint(codePoint);
-    stack i64[-9223372036854775808 9223372036854775807] index = *writeIndex;
+    rawmutptr<i16[min max]>[capacity] destination,
+    u64[0 2 ** 63 - 1] capacity,
+    rawmutptr<i64[min max]> writeIndex,
+    i32[min max] codePoint) {
+    stack i32[min max] scalar = NormalizeUnicodeCodePoint(codePoint);
+    stack i64[min max] index = *writeIndex;
 
-    if (scalar <= 65535) {
-        *(&destination[index]) = (i16[-32768 32767])scalar;
+    if (scalar <= (i32[min max])(2 ** 16 - 1)) {
+        *(&destination[index]) = (i16[min max])scalar;
         *writeIndex = index + 1;
         return;
     }
 
-    stack i32[-2147483648 2147483647] adjusted = scalar - 65536;
-    *(&destination[index]) = (i16[-32768 32767])((adjusted >> 10) + 55296);
-    *(&destination[index + 1]) = (i16[-32768 32767])((adjusted & 1023) + 56320);
+    stack i32[min max] adjusted = scalar - (i32[min max])(2 ** 16);
+    *(&destination[index]) = (i16[min max])((adjusted >> 10) + 55296);
+    *(&destination[index + 1]) = (i16[min max])((adjusted & 1023) + 56320);
     *writeIndex = index + 2;
 }
 
 unsafe fn bool TryDecodeUtf16CodePoint(
-    rawptr<i16[-32768 32767]>[length] data,
-    i64[0 max] length,
-    rawmutptr<i64[-9223372036854775808 9223372036854775807]> index,
-    rawmutptr<i32[-2147483648 2147483647]> codePoint) {
+    rawptr<i16[min max]>[length] data,
+    u64[0 2 ** 63 - 1] length,
+    rawmutptr<i64[min max]> index,
+    rawmutptr<i32[min max]> codePoint) {
     if (data == null || index == null || codePoint == null) {
         return false;
     }
 
-    stack i64[-9223372036854775808 9223372036854775807] readIndex = *index;
+    stack i64[min max] readIndex = *index;
     if (readIndex < 0 || readIndex >= length) {
         return false;
     }
 
-    stack i32[-2147483648 2147483647] first = UnsignedWide(*(&data[readIndex]));
+    stack i32[min max] first = UnsignedWide(*(&data[readIndex]));
     if (55296 <= first && first <= 56319) {
         if (readIndex + 1 < length) {
-            stack i32[-2147483648 2147483647] second = UnsignedWide(*(&data[readIndex + 1]));
+            stack i32[min max] second = UnsignedWide(*(&data[readIndex + 1]));
             *index = readIndex + 2;
             if (56320 <= second && second <= 57343) {
-                *codePoint = (((first - 55296) << 10) | (second - 56320)) + 65536;
+                *codePoint = (((first - 55296) << 10) | (second - 56320)) + (i32[min max])(2 ** 16);
                 return true;
             }
 
@@ -2590,17 +2518,17 @@ public unsafe finite bool TryFormatTextErrorAscii(rawmutptr<Ascii> destination, 
     }
 }
 
-public unsafe finite bool TryFormatI64Ascii(rawmutptr<Ascii> destination, i64[-9223372036854775808 9223372036854775807] value) {
+public unsafe finite bool TryFormatI64Ascii(rawmutptr<Ascii> destination, i64[min max] value) {
     if (destination == null) {
         return false;
     }
 
-    if (value == -9223372036854775808) {
+    if (value == -(2 ** 63)) {
         return TryConcatAscii(destination, "", "-9223372036854775808");
     }
 
-    stack rawmutptr<i8[-128 127]> data = (*destination).Data;
-    stack i64[-9223372036854775808 9223372036854775807] capacity = (*destination).Capacity;
+    stack rawmutptr<i8[min max]> data = (*destination).Data;
+    stack i64[min max] capacity = (*destination).Capacity;
     if (capacity < 0) {
         *destination = new Ascii() {
             Data = data,
@@ -2610,21 +2538,21 @@ public unsafe finite bool TryFormatI64Ascii(rawmutptr<Ascii> destination, i64[-9
         return false;
     }
 
-    stack i64[-9223372036854775808 9223372036854775807] signedValue = value;
+    stack i64[min max] signedValue = value;
     stack bool negative = signedValue < 0;
-    stack mut i64[-9223372036854775808 9223372036854775807] magnitude = signedValue;
+    stack mut i64[min max] magnitude = signedValue;
     if (negative) {
         magnitude = 0 - signedValue;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] digitCount = 1;
-    stack mut i64[-9223372036854775808 9223372036854775807] scan = magnitude;
+    stack mut i64[min max] digitCount = 1;
+    stack mut i64[min max] scan = magnitude;
     while willexit (scan >= 10) {
         scan = scan / 10;
         digitCount += 1;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] required = digitCount;
+    stack mut i64[min max] required = digitCount;
     if (negative) {
         required += 1;
     }
@@ -2638,18 +2566,18 @@ public unsafe finite bool TryFormatI64Ascii(rawmutptr<Ascii> destination, i64[-9
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = required - 1;
-    stack mut i64[-9223372036854775808 9223372036854775807] remaining = magnitude;
+    stack mut i64[min max] writeIndex = required - 1;
+    stack mut i64[min max] remaining = magnitude;
     while willexit (remaining >= 10) {
-        stack i64[-9223372036854775808 9223372036854775807] digit = remaining % 10;
-        *(&data[writeIndex]) = (i8[-128 127])(48 + digit);
+        stack i64[min max] digit = remaining % 10;
+        *(&data[writeIndex]) = (i8[min max])(48 + digit);
         remaining = remaining / 10;
         writeIndex -= 1;
     }
 
-    *(&data[writeIndex]) = (i8[-128 127])(48 + remaining);
+    *(&data[writeIndex]) = (i8[min max])(48 + remaining);
     if (negative) {
-        *(&data[0]) = (i8[-128 127])45;
+        *(&data[0]) = (i8[min max])45;
     }
 
     *destination = new Ascii() {
@@ -2665,8 +2593,8 @@ unsafe finite bool TryFormatSignedU1024Ascii(rawmutptr<Ascii> destination, bool 
         return false;
     }
 
-    stack rawmutptr<i8[-128 127]> data = (*destination).Data;
-    stack i64[-9223372036854775808 9223372036854775807] capacity = (*destination).Capacity;
+    stack rawmutptr<i8[min max]> data = (*destination).Data;
+    stack i64[min max] capacity = (*destination).Capacity;
     if (capacity < 0) {
         *destination = new Ascii() {
             Data = data,
@@ -2676,14 +2604,14 @@ unsafe finite bool TryFormatSignedU1024Ascii(rawmutptr<Ascii> destination, bool 
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] digitCount = 1;
+    stack mut i64[min max] digitCount = 1;
     stack mut u1024[0 max] scan = magnitude;
     while willexit (scan >= (u1024[0 max])10) {
         scan = scan / (u1024[0 max])10;
         digitCount += 1;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] required = digitCount;
+    stack mut i64[min max] required = digitCount;
     if (negative) {
         required += 1;
     }
@@ -2697,21 +2625,21 @@ unsafe finite bool TryFormatSignedU1024Ascii(rawmutptr<Ascii> destination, bool 
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = required - 1;
+    stack mut i64[min max] writeIndex = required - 1;
     stack mut u1024[0 max] remaining = magnitude;
     while willexit (remaining >= (u1024[0 max])10) {
-        stack u1024[0 9] digit = (u1024[0 9])(remaining % (u1024[0 max])10);
-        stack i64[-9223372036854775808 9223372036854775807] digitValue = (i64[-9223372036854775808 9223372036854775807])digit;
-        *(&data[writeIndex]) = (i8[-128 127])(48 + digitValue);
+        stack u8[0 9] digit = (u8[0 9])(remaining % (u1024[0 max])10);
+        stack i64[min max] digitValue = (i64[min max])digit;
+        *(&data[writeIndex]) = (i8[min max])(48 + digitValue);
         remaining = remaining / (u1024[0 max])10;
         writeIndex -= 1;
     }
 
-    stack u1024[0 9] finalDigit = (u1024[0 9])remaining;
-    stack i64[-9223372036854775808 9223372036854775807] finalDigitValue = (i64[-9223372036854775808 9223372036854775807])finalDigit;
-    *(&data[writeIndex]) = (i8[-128 127])(48 + finalDigitValue);
+    stack u8[0 9] finalDigit = (u8[0 9])remaining;
+    stack i64[min max] finalDigitValue = (i64[min max])finalDigit;
+    *(&data[writeIndex]) = (i8[min max])(48 + finalDigitValue);
     if (negative) {
-        *(&data[0]) = (i8[-128 127])45;
+        *(&data[0]) = (i8[min max])45;
     }
 
     *destination = new Ascii() {
@@ -2723,8 +2651,8 @@ unsafe finite bool TryFormatSignedU1024Ascii(rawmutptr<Ascii> destination, bool 
 }
 
 public unsafe finite bool TryFormatI1024Ascii(rawmutptr<Ascii> destination, i1024[min max] value) {
-    if (value == (i1024[min max])(-(2**1023))) {
-        return TryFormatSignedU1024Ascii(destination, true, (u1024[0 max])(2**1023));
+    if (value == (i1024[min max])(-(2 ** 1023))) {
+        return TryFormatSignedU1024Ascii(destination, true, (u1024[0 max])(2 ** 1023));
     }
 
     if (value < 0) {
@@ -2759,12 +2687,12 @@ public unsafe finite bool TryFormatI128Ascii(rawmutptr<Ascii> destination, i128[
         return false;
     }
 
-    if (value == (i128[min max])(-(2**127))) {
+    if (value == (i128[min max])(-(2 ** 127))) {
         return TryConcatAscii(destination, "", "-170141183460469231731687303715884105728");
     }
 
-    stack rawmutptr<i8[-128 127]> data = (*destination).Data;
-    stack i64[-9223372036854775808 9223372036854775807] capacity = (*destination).Capacity;
+    stack rawmutptr<i8[min max]> data = (*destination).Data;
+    stack i64[min max] capacity = (*destination).Capacity;
     if (capacity < 0) {
         *destination = new Ascii() {
             Data = data,
@@ -2780,14 +2708,14 @@ public unsafe finite bool TryFormatI128Ascii(rawmutptr<Ascii> destination, i128[
         magnitude = 0 - value;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] digitCount = 1;
+    stack mut i64[min max] digitCount = 1;
     stack mut i128[min max] scan = magnitude;
     while willexit (scan >= (i128[min max])10) {
         scan = scan / (i128[min max])10;
         digitCount += 1;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] required = digitCount;
+    stack mut i64[min max] required = digitCount;
     if (negative) {
         required += 1;
     }
@@ -2801,21 +2729,21 @@ public unsafe finite bool TryFormatI128Ascii(rawmutptr<Ascii> destination, i128[
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = required - 1;
+    stack mut i64[min max] writeIndex = required - 1;
     stack mut i128[min max] remaining = magnitude;
     while willexit (remaining >= (i128[min max])10) {
-        stack i128[0 9] digit = (i128[0 9])(remaining % (i128[min max])10);
-        stack i64[-9223372036854775808 9223372036854775807] digitValue = (i64[-9223372036854775808 9223372036854775807])digit;
-        *(&data[writeIndex]) = (i8[-128 127])(48 + digitValue);
+        stack u8[0 9] digit = (u8[0 9])(remaining % (i128[min max])10);
+        stack i64[min max] digitValue = (i64[min max])digit;
+        *(&data[writeIndex]) = (i8[min max])(48 + digitValue);
         remaining = remaining / (i128[min max])10;
         writeIndex -= 1;
     }
 
-    stack i128[0 9] finalDigit = (i128[0 9])remaining;
-    stack i64[-9223372036854775808 9223372036854775807] finalDigitValue = (i64[-9223372036854775808 9223372036854775807])finalDigit;
-    *(&data[writeIndex]) = (i8[-128 127])(48 + finalDigitValue);
+    stack u8[0 9] finalDigit = (u8[0 9])remaining;
+    stack i64[min max] finalDigitValue = (i64[min max])finalDigit;
+    *(&data[writeIndex]) = (i8[min max])(48 + finalDigitValue);
     if (negative) {
-        *(&data[0]) = (i8[-128 127])45;
+        *(&data[0]) = (i8[min max])45;
     }
 
     *destination = new Ascii() {
@@ -2830,24 +2758,24 @@ public unsafe finite bool TryFormatI96Ascii(rawmutptr<Ascii> destination, i96[mi
     return TryFormatI128Ascii(destination, (i128[min max])value);
 }
 
-public unsafe finite bool TryFormatI48Ascii(rawmutptr<Ascii> destination, i48[-140737488355328 140737488355327] value) {
-    return TryFormatI64Ascii(destination, (i64[-9223372036854775808 9223372036854775807])value);
+public unsafe finite bool TryFormatI48Ascii(rawmutptr<Ascii> destination, i48[min max] value) {
+    return TryFormatI64Ascii(destination, (i64[min max])value);
 }
 
-public unsafe finite bool TryFormatI32Ascii(rawmutptr<Ascii> destination, i32[-2147483648 2147483647] value) {
-    return TryFormatI64Ascii(destination, (i64[-9223372036854775808 9223372036854775807])value);
+public unsafe finite bool TryFormatI32Ascii(rawmutptr<Ascii> destination, i32[min max] value) {
+    return TryFormatI64Ascii(destination, (i64[min max])value);
 }
 
-public unsafe finite bool TryFormatI24Ascii(rawmutptr<Ascii> destination, i24[-8388608 8388607] value) {
-    return TryFormatI64Ascii(destination, (i64[-9223372036854775808 9223372036854775807])value);
+public unsafe finite bool TryFormatI24Ascii(rawmutptr<Ascii> destination, i24[min max] value) {
+    return TryFormatI64Ascii(destination, (i64[min max])value);
 }
 
-public unsafe finite bool TryFormatI16Ascii(rawmutptr<Ascii> destination, i16[-32768 32767] value) {
-    return TryFormatI64Ascii(destination, (i64[-9223372036854775808 9223372036854775807])value);
+public unsafe finite bool TryFormatI16Ascii(rawmutptr<Ascii> destination, i16[min max] value) {
+    return TryFormatI64Ascii(destination, (i64[min max])value);
 }
 
-public unsafe finite bool TryFormatI8Ascii(rawmutptr<Ascii> destination, i8[-128 127] value) {
-    return TryFormatI64Ascii(destination, (i64[-9223372036854775808 9223372036854775807])value);
+public unsafe finite bool TryFormatI8Ascii(rawmutptr<Ascii> destination, i8[min max] value) {
+    return TryFormatI64Ascii(destination, (i64[min max])value);
 }
 
 public unsafe finite bool TryFormatU64Ascii(rawmutptr<Ascii> destination, u64[0 max] value) {
@@ -2855,8 +2783,8 @@ public unsafe finite bool TryFormatU64Ascii(rawmutptr<Ascii> destination, u64[0 
         return false;
     }
 
-    stack rawmutptr<i8[-128 127]> data = (*destination).Data;
-    stack i64[-9223372036854775808 9223372036854775807] capacity = (*destination).Capacity;
+    stack rawmutptr<i8[min max]> data = (*destination).Data;
+    stack i64[min max] capacity = (*destination).Capacity;
     if (capacity < 0) {
         *destination = new Ascii() {
             Data = data,
@@ -2866,7 +2794,7 @@ public unsafe finite bool TryFormatU64Ascii(rawmutptr<Ascii> destination, u64[0 
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] digitCount = 1;
+    stack mut i64[min max] digitCount = 1;
     stack mut u64[0 max] scan = value;
     while willexit (scan >= (u64[0 max])10) {
         scan = scan / (u64[0 max])10;
@@ -2882,19 +2810,19 @@ public unsafe finite bool TryFormatU64Ascii(rawmutptr<Ascii> destination, u64[0 
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = digitCount - 1;
+    stack mut i64[min max] writeIndex = digitCount - 1;
     stack mut u64[0 max] remaining = value;
     while willexit (remaining >= (u64[0 max])10) {
-        stack u64[0 9] digit = (u64[0 9])(remaining % (u64[0 max])10);
-        stack i64[-9223372036854775808 9223372036854775807] digitValue = (i64[-9223372036854775808 9223372036854775807])digit;
-        *(&data[writeIndex]) = (i8[-128 127])(48 + digitValue);
+        stack u8[0 9] digit = (u8[0 9])(remaining % (u64[0 max])10);
+        stack i64[min max] digitValue = (i64[min max])digit;
+        *(&data[writeIndex]) = (i8[min max])(48 + digitValue);
         remaining = remaining / (u64[0 max])10;
         writeIndex -= 1;
     }
 
-    stack u64[0 9] finalDigit = (u64[0 9])remaining;
-    stack i64[-9223372036854775808 9223372036854775807] finalDigitValue = (i64[-9223372036854775808 9223372036854775807])finalDigit;
-    *(&data[writeIndex]) = (i8[-128 127])(48 + finalDigitValue);
+    stack u8[0 9] finalDigit = (u8[0 9])remaining;
+    stack i64[min max] finalDigitValue = (i64[min max])finalDigit;
+    *(&data[writeIndex]) = (i8[min max])(48 + finalDigitValue);
 
     *destination = new Ascii() {
         Data = data,
@@ -2933,8 +2861,8 @@ public unsafe finite bool TryFormatU128Ascii(rawmutptr<Ascii> destination, u128[
         return false;
     }
 
-    stack rawmutptr<i8[-128 127]> data = (*destination).Data;
-    stack i64[-9223372036854775808 9223372036854775807] capacity = (*destination).Capacity;
+    stack rawmutptr<i8[min max]> data = (*destination).Data;
+    stack i64[min max] capacity = (*destination).Capacity;
     if (capacity < 0) {
         *destination = new Ascii() {
             Data = data,
@@ -2944,7 +2872,7 @@ public unsafe finite bool TryFormatU128Ascii(rawmutptr<Ascii> destination, u128[
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] digitCount = 1;
+    stack mut i64[min max] digitCount = 1;
     stack mut u128[0 max] scan = value;
     while willexit (scan >= (u128[0 max])10) {
         scan = scan / (u128[0 max])10;
@@ -2960,19 +2888,19 @@ public unsafe finite bool TryFormatU128Ascii(rawmutptr<Ascii> destination, u128[
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = digitCount - 1;
+    stack mut i64[min max] writeIndex = digitCount - 1;
     stack mut u128[0 max] remaining = value;
     while willexit (remaining >= (u128[0 max])10) {
-        stack u128[0 9] digit = (u128[0 9])(remaining % (u128[0 max])10);
-        stack i64[-9223372036854775808 9223372036854775807] digitValue = (i64[-9223372036854775808 9223372036854775807])digit;
-        *(&data[writeIndex]) = (i8[-128 127])(48 + digitValue);
+        stack u8[0 9] digit = (u8[0 9])(remaining % (u128[0 max])10);
+        stack i64[min max] digitValue = (i64[min max])digit;
+        *(&data[writeIndex]) = (i8[min max])(48 + digitValue);
         remaining = remaining / (u128[0 max])10;
         writeIndex -= 1;
     }
 
-    stack u128[0 9] finalDigit = (u128[0 9])remaining;
-    stack i64[-9223372036854775808 9223372036854775807] finalDigitValue = (i64[-9223372036854775808 9223372036854775807])finalDigit;
-    *(&data[writeIndex]) = (i8[-128 127])(48 + finalDigitValue);
+    stack u8[0 9] finalDigit = (u8[0 9])remaining;
+    stack i64[min max] finalDigitValue = (i64[min max])finalDigit;
+    *(&data[writeIndex]) = (i8[min max])(48 + finalDigitValue);
 
     *destination = new Ascii() {
         Data = data,
@@ -3006,13 +2934,13 @@ public unsafe finite bool TryFormatU8Ascii(rawmutptr<Ascii> destination, u8[0 ma
     return TryFormatU64Ascii(destination, (u64[0 max])value);
 }
 
-unsafe finite bool TryFormatFixed6Ascii(rawmutptr<Ascii> destination, bool negative, u64[0 max] whole, i64[0 999999] fractional) {
+unsafe finite bool TryFormatFixed6Ascii(rawmutptr<Ascii> destination, bool negative, u64[0 max] whole, u24[0 999999] fractional) {
     if (destination == null) {
         return false;
     }
 
-    stack rawmutptr<i8[-128 127]> data = (*destination).Data;
-    stack i64[-9223372036854775808 9223372036854775807] capacity = (*destination).Capacity;
+    stack rawmutptr<i8[min max]> data = (*destination).Data;
+    stack i64[min max] capacity = (*destination).Capacity;
     if (capacity < 0) {
         *destination = new Ascii() {
             Data = data,
@@ -3022,14 +2950,14 @@ unsafe finite bool TryFormatFixed6Ascii(rawmutptr<Ascii> destination, bool negat
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] digitCount = 1;
+    stack mut i64[min max] digitCount = 1;
     stack mut u64[0 max] scan = whole;
     while willexit (scan >= (u64[0 max])10) {
         scan = scan / (u64[0 max])10;
         digitCount += 1;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] required = digitCount + 7;
+    stack mut i64[min max] required = digitCount + 7;
     if (negative) {
         required += 1;
     }
@@ -3043,34 +2971,34 @@ unsafe finite bool TryFormatFixed6Ascii(rawmutptr<Ascii> destination, bool negat
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = required - 1;
-    stack mut i64[0 999999] remainingFractional = fractional;
-    stack mut i64[0 6] fractionalDigitCount = 0;
+    stack mut i64[min max] writeIndex = required - 1;
+    stack mut u24[0 999999] remainingFractional = fractional;
+    stack mut u8[0 6] fractionalDigitCount = 0;
     while willexit (fractionalDigitCount < 6) {
-        stack i64[0 9] digit = (i64[0 9])(remainingFractional % 10);
-        *(&data[writeIndex]) = (i8[-128 127])(48 + digit);
-        remainingFractional = (i64[0 999999])(remainingFractional / 10);
+        stack u8[0 9] digit = (u8[0 9])(remainingFractional % 10);
+        *(&data[writeIndex]) = (i8[min max])(48 + digit);
+        remainingFractional = (u24[0 999999])(remainingFractional / 10);
         writeIndex -= 1;
         fractionalDigitCount += 1;
     }
 
-    *(&data[writeIndex]) = (i8[-128 127])46;
+    *(&data[writeIndex]) = (i8[min max])46;
     writeIndex -= 1;
 
     stack mut u64[0 max] remainingWhole = whole;
     while willexit (remainingWhole >= (u64[0 max])10) {
-        stack u64[0 9] digit = (u64[0 9])(remainingWhole % (u64[0 max])10);
-        stack i64[-9223372036854775808 9223372036854775807] digitValue = (i64[-9223372036854775808 9223372036854775807])digit;
-        *(&data[writeIndex]) = (i8[-128 127])(48 + digitValue);
+        stack u8[0 9] digit = (u8[0 9])(remainingWhole % (u64[0 max])10);
+        stack i64[min max] digitValue = (i64[min max])digit;
+        *(&data[writeIndex]) = (i8[min max])(48 + digitValue);
         remainingWhole = remainingWhole / (u64[0 max])10;
         writeIndex -= 1;
     }
 
-    stack u64[0 9] finalDigit = (u64[0 9])remainingWhole;
-    stack i64[-9223372036854775808 9223372036854775807] finalDigitValue = (i64[-9223372036854775808 9223372036854775807])finalDigit;
-    *(&data[writeIndex]) = (i8[-128 127])(48 + finalDigitValue);
+    stack u8[0 9] finalDigit = (u8[0 9])remainingWhole;
+    stack i64[min max] finalDigitValue = (i64[min max])finalDigit;
+    *(&data[writeIndex]) = (i8[min max])(48 + finalDigitValue);
     if (negative) {
-        *(&data[0]) = (i8[-128 127])45;
+        *(&data[0]) = (i8[min max])45;
     }
 
     *destination = new Ascii() {
@@ -3086,7 +3014,7 @@ public unsafe finite bool TryFormatF64Ascii(rawmutptr<Ascii> destination, f64 va
         return false;
     }
 
-    if (value < (f64)(-(2**53)) || value > (f64)(2**53)) {
+    if (value < (f64)(-(2 ** 53)) || value > (f64)(2 ** 53)) {
         return false;
     }
 
@@ -3099,15 +3027,15 @@ public unsafe finite bool TryFormatF64Ascii(rawmutptr<Ascii> destination, f64 va
 
     stack mut u64[0 max] whole = (u64[0 max])System.Math.Truncate(working);
     stack f64 fractional = working - (f64)whole;
-    stack mut i64[-9223372036854775808 9223372036854775807] scaledFractional =
-        (i64[-9223372036854775808 9223372036854775807])System.Math.Truncate((fractional * 1000000.0) + 0.5);
+    stack mut i64[min max] scaledFractional =
+        (i64[min max])System.Math.Truncate((fractional * 1000000.0) + 0.5);
 
     if (scaledFractional >= 1000000) {
         whole += (u64[0 max])1;
         scaledFractional = 0;
     }
 
-    return TryFormatFixed6Ascii(destination, negative, whole, (i64[0 999999])scaledFractional);
+    return TryFormatFixed6Ascii(destination, negative, whole, (u24[0 999999])scaledFractional);
 }
 
 public unsafe finite bool TryFormatF32Ascii(rawmutptr<Ascii> destination, f32 value) {
@@ -3115,7 +3043,7 @@ public unsafe finite bool TryFormatF32Ascii(rawmutptr<Ascii> destination, f32 va
 }
 
 public unsafe fn bool TryFormatBoolUnicode(rawmutptr<Unicode> destination, bool value) {
-    stack mut i8[-128 127][5] buffer = {
+    stack mut i8[min max][5] buffer = {
         0, 0, 0, 0, 0
     };
     stack mut Ascii asciiText = new Ascii() {
@@ -3153,17 +3081,17 @@ public unsafe finite bool TryFormatTextErrorUnicode(rawmutptr<Unicode> destinati
     }
 }
 
-public unsafe finite bool TryFormatI64Unicode(rawmutptr<Unicode> destination, i64[-9223372036854775808 9223372036854775807] value) {
+public unsafe finite bool TryFormatI64Unicode(rawmutptr<Unicode> destination, i64[min max] value) {
     if (destination == null) {
         return false;
     }
 
-    if (value == -9223372036854775808) {
+    if (value == -(2 ** 63)) {
         return TryConcatUnicode(destination, (unicode)"", (unicode)"-9223372036854775808");
     }
 
-    stack rawmutptr<i32[-2147483648 2147483647]> data = (*destination).Data;
-    stack i64[-9223372036854775808 9223372036854775807] capacity = (*destination).Capacity;
+    stack rawmutptr<i32[min max]> data = (*destination).Data;
+    stack i64[min max] capacity = (*destination).Capacity;
     if (capacity < 0) {
         *destination = new Unicode() {
             Data = data,
@@ -3173,21 +3101,21 @@ public unsafe finite bool TryFormatI64Unicode(rawmutptr<Unicode> destination, i6
         return false;
     }
 
-    stack i64[-9223372036854775808 9223372036854775807] signedValue = value;
+    stack i64[min max] signedValue = value;
     stack bool negative = signedValue < 0;
-    stack mut i64[-9223372036854775808 9223372036854775807] magnitude = signedValue;
+    stack mut i64[min max] magnitude = signedValue;
     if (negative) {
         magnitude = 0 - signedValue;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] digitCount = 1;
-    stack mut i64[-9223372036854775808 9223372036854775807] scan = magnitude;
+    stack mut i64[min max] digitCount = 1;
+    stack mut i64[min max] scan = magnitude;
     while willexit (scan >= 10) {
         scan = scan / 10;
         digitCount += 1;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] required = digitCount;
+    stack mut i64[min max] required = digitCount;
     if (negative) {
         required += 1;
     }
@@ -3201,16 +3129,16 @@ public unsafe finite bool TryFormatI64Unicode(rawmutptr<Unicode> destination, i6
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = required - 1;
-    stack mut i64[-9223372036854775808 9223372036854775807] remaining = magnitude;
+    stack mut i64[min max] writeIndex = required - 1;
+    stack mut i64[min max] remaining = magnitude;
     while willexit (remaining >= 10) {
-        stack i64[-9223372036854775808 9223372036854775807] digit = remaining % 10;
-        *(&data[writeIndex]) = 48 + (i32[-2147483648 2147483647])digit;
+        stack i64[min max] digit = remaining % 10;
+        *(&data[writeIndex]) = 48 + (i32[min max])digit;
         remaining = remaining / 10;
         writeIndex -= 1;
     }
 
-    *(&data[writeIndex]) = 48 + (i32[-2147483648 2147483647])remaining;
+    *(&data[writeIndex]) = 48 + (i32[min max])remaining;
     if (negative) {
         *(&data[0]) = 45;
     }
@@ -3228,8 +3156,8 @@ unsafe finite bool TryFormatSignedU1024Unicode(rawmutptr<Unicode> destination, b
         return false;
     }
 
-    stack rawmutptr<i32[-2147483648 2147483647]> data = (*destination).Data;
-    stack i64[-9223372036854775808 9223372036854775807] capacity = (*destination).Capacity;
+    stack rawmutptr<i32[min max]> data = (*destination).Data;
+    stack i64[min max] capacity = (*destination).Capacity;
     if (capacity < 0) {
         *destination = new Unicode() {
             Data = data,
@@ -3239,14 +3167,14 @@ unsafe finite bool TryFormatSignedU1024Unicode(rawmutptr<Unicode> destination, b
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] digitCount = 1;
+    stack mut i64[min max] digitCount = 1;
     stack mut u1024[0 max] scan = magnitude;
     while willexit (scan >= (u1024[0 max])10) {
         scan = scan / (u1024[0 max])10;
         digitCount += 1;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] required = digitCount;
+    stack mut i64[min max] required = digitCount;
     if (negative) {
         required += 1;
     }
@@ -3260,18 +3188,18 @@ unsafe finite bool TryFormatSignedU1024Unicode(rawmutptr<Unicode> destination, b
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = required - 1;
+    stack mut i64[min max] writeIndex = required - 1;
     stack mut u1024[0 max] remaining = magnitude;
     while willexit (remaining >= (u1024[0 max])10) {
-        stack u1024[0 9] digit = (u1024[0 9])(remaining % (u1024[0 max])10);
-        stack i32[-2147483648 2147483647] digitValue = (i32[-2147483648 2147483647])digit;
+        stack u8[0 9] digit = (u8[0 9])(remaining % (u1024[0 max])10);
+        stack i32[min max] digitValue = (i32[min max])digit;
         *(&data[writeIndex]) = 48 + digitValue;
         remaining = remaining / (u1024[0 max])10;
         writeIndex -= 1;
     }
 
-    stack u1024[0 9] finalDigit = (u1024[0 9])remaining;
-    stack i32[-2147483648 2147483647] finalDigitValue = (i32[-2147483648 2147483647])finalDigit;
+    stack u8[0 9] finalDigit = (u8[0 9])remaining;
+    stack i32[min max] finalDigitValue = (i32[min max])finalDigit;
     *(&data[writeIndex]) = 48 + finalDigitValue;
     if (negative) {
         *(&data[0]) = 45;
@@ -3286,8 +3214,8 @@ unsafe finite bool TryFormatSignedU1024Unicode(rawmutptr<Unicode> destination, b
 }
 
 public unsafe finite bool TryFormatI1024Unicode(rawmutptr<Unicode> destination, i1024[min max] value) {
-    if (value == (i1024[min max])(-(2**1023))) {
-        return TryFormatSignedU1024Unicode(destination, true, (u1024[0 max])(2**1023));
+    if (value == (i1024[min max])(-(2 ** 1023))) {
+        return TryFormatSignedU1024Unicode(destination, true, (u1024[0 max])(2 ** 1023));
     }
 
     if (value < 0) {
@@ -3322,8 +3250,8 @@ unsafe finite bool TryFormatSignedU128Unicode(rawmutptr<Unicode> destination, bo
         return false;
     }
 
-    stack rawmutptr<i32[-2147483648 2147483647]> data = (*destination).Data;
-    stack i64[-9223372036854775808 9223372036854775807] capacity = (*destination).Capacity;
+    stack rawmutptr<i32[min max]> data = (*destination).Data;
+    stack i64[min max] capacity = (*destination).Capacity;
     if (capacity < 0) {
         *destination = new Unicode() {
             Data = data,
@@ -3333,14 +3261,14 @@ unsafe finite bool TryFormatSignedU128Unicode(rawmutptr<Unicode> destination, bo
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] digitCount = 1;
+    stack mut i64[min max] digitCount = 1;
     stack mut u128[0 max] scan = magnitude;
     while willexit (scan >= (u128[0 max])10) {
         scan = scan / (u128[0 max])10;
         digitCount += 1;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] required = digitCount;
+    stack mut i64[min max] required = digitCount;
     if (negative) {
         required += 1;
     }
@@ -3354,18 +3282,18 @@ unsafe finite bool TryFormatSignedU128Unicode(rawmutptr<Unicode> destination, bo
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = required - 1;
+    stack mut i64[min max] writeIndex = required - 1;
     stack mut u128[0 max] remaining = magnitude;
     while willexit (remaining >= (u128[0 max])10) {
-        stack u128[0 9] digit = (u128[0 9])(remaining % (u128[0 max])10);
-        stack i32[-2147483648 2147483647] digitValue = (i32[-2147483648 2147483647])digit;
+        stack u8[0 9] digit = (u8[0 9])(remaining % (u128[0 max])10);
+        stack i32[min max] digitValue = (i32[min max])digit;
         *(&data[writeIndex]) = 48 + digitValue;
         remaining = remaining / (u128[0 max])10;
         writeIndex -= 1;
     }
 
-    stack u128[0 9] finalDigit = (u128[0 9])remaining;
-    stack i32[-2147483648 2147483647] finalDigitValue = (i32[-2147483648 2147483647])finalDigit;
+    stack u8[0 9] finalDigit = (u8[0 9])remaining;
+    stack i32[min max] finalDigitValue = (i32[min max])finalDigit;
     *(&data[writeIndex]) = 48 + finalDigitValue;
     if (negative) {
         *(&data[0]) = 45;
@@ -3380,8 +3308,8 @@ unsafe finite bool TryFormatSignedU128Unicode(rawmutptr<Unicode> destination, bo
 }
 
 public unsafe finite bool TryFormatI128Unicode(rawmutptr<Unicode> destination, i128[min max] value) {
-    if (value == (i128[min max])(-(2**127))) {
-        return TryFormatSignedU128Unicode(destination, true, (u128[0 max])(2**127));
+    if (value == (i128[min max])(-(2 ** 127))) {
+        return TryFormatSignedU128Unicode(destination, true, (u128[0 max])(2 ** 127));
     }
 
     if (value < 0) {
@@ -3395,24 +3323,24 @@ public unsafe finite bool TryFormatI96Unicode(rawmutptr<Unicode> destination, i9
     return TryFormatI128Unicode(destination, (i128[min max])value);
 }
 
-public unsafe finite bool TryFormatI48Unicode(rawmutptr<Unicode> destination, i48[-140737488355328 140737488355327] value) {
-    return TryFormatI64Unicode(destination, (i64[-9223372036854775808 9223372036854775807])value);
+public unsafe finite bool TryFormatI48Unicode(rawmutptr<Unicode> destination, i48[min max] value) {
+    return TryFormatI64Unicode(destination, (i64[min max])value);
 }
 
-public unsafe finite bool TryFormatI32Unicode(rawmutptr<Unicode> destination, i32[-2147483648 2147483647] value) {
-    return TryFormatI64Unicode(destination, (i64[-9223372036854775808 9223372036854775807])value);
+public unsafe finite bool TryFormatI32Unicode(rawmutptr<Unicode> destination, i32[min max] value) {
+    return TryFormatI64Unicode(destination, (i64[min max])value);
 }
 
-public unsafe finite bool TryFormatI24Unicode(rawmutptr<Unicode> destination, i24[-8388608 8388607] value) {
-    return TryFormatI64Unicode(destination, (i64[-9223372036854775808 9223372036854775807])value);
+public unsafe finite bool TryFormatI24Unicode(rawmutptr<Unicode> destination, i24[min max] value) {
+    return TryFormatI64Unicode(destination, (i64[min max])value);
 }
 
-public unsafe finite bool TryFormatI16Unicode(rawmutptr<Unicode> destination, i16[-32768 32767] value) {
-    return TryFormatI64Unicode(destination, (i64[-9223372036854775808 9223372036854775807])value);
+public unsafe finite bool TryFormatI16Unicode(rawmutptr<Unicode> destination, i16[min max] value) {
+    return TryFormatI64Unicode(destination, (i64[min max])value);
 }
 
-public unsafe finite bool TryFormatI8Unicode(rawmutptr<Unicode> destination, i8[-128 127] value) {
-    return TryFormatI64Unicode(destination, (i64[-9223372036854775808 9223372036854775807])value);
+public unsafe finite bool TryFormatI8Unicode(rawmutptr<Unicode> destination, i8[min max] value) {
+    return TryFormatI64Unicode(destination, (i64[min max])value);
 }
 
 public unsafe finite bool TryFormatU64Unicode(rawmutptr<Unicode> destination, u64[0 max] value) {
@@ -3420,8 +3348,8 @@ public unsafe finite bool TryFormatU64Unicode(rawmutptr<Unicode> destination, u6
         return false;
     }
 
-    stack rawmutptr<i32[-2147483648 2147483647]> data = (*destination).Data;
-    stack i64[-9223372036854775808 9223372036854775807] capacity = (*destination).Capacity;
+    stack rawmutptr<i32[min max]> data = (*destination).Data;
+    stack i64[min max] capacity = (*destination).Capacity;
     if (capacity < 0) {
         *destination = new Unicode() {
             Data = data,
@@ -3431,7 +3359,7 @@ public unsafe finite bool TryFormatU64Unicode(rawmutptr<Unicode> destination, u6
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] digitCount = 1;
+    stack mut i64[min max] digitCount = 1;
     stack mut u64[0 max] scan = value;
     while willexit (scan >= (u64[0 max])10) {
         scan = scan / (u64[0 max])10;
@@ -3447,18 +3375,18 @@ public unsafe finite bool TryFormatU64Unicode(rawmutptr<Unicode> destination, u6
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = digitCount - 1;
+    stack mut i64[min max] writeIndex = digitCount - 1;
     stack mut u64[0 max] remaining = value;
     while willexit (remaining >= (u64[0 max])10) {
-        stack u64[0 9] digit = (u64[0 9])(remaining % (u64[0 max])10);
-        stack i32[-2147483648 2147483647] digitValue = (i32[-2147483648 2147483647])digit;
+        stack u8[0 9] digit = (u8[0 9])(remaining % (u64[0 max])10);
+        stack i32[min max] digitValue = (i32[min max])digit;
         *(&data[writeIndex]) = 48 + digitValue;
         remaining = remaining / (u64[0 max])10;
         writeIndex -= 1;
     }
 
-    stack u64[0 9] finalDigit = (u64[0 9])remaining;
-    stack i32[-2147483648 2147483647] finalDigitValue = (i32[-2147483648 2147483647])finalDigit;
+    stack u8[0 9] finalDigit = (u8[0 9])remaining;
+    stack i32[min max] finalDigitValue = (i32[min max])finalDigit;
     *(&data[writeIndex]) = 48 + finalDigitValue;
 
     *destination = new Unicode() {
@@ -3522,7 +3450,7 @@ public unsafe finite bool TryFormatU8Unicode(rawmutptr<Unicode> destination, u8[
 }
 
 public unsafe fn bool TryFormatF64Unicode(rawmutptr<Unicode> destination, f64 value) {
-    stack mut i8[-128 127][32] buffer;
+    stack mut i8[min max][32] buffer;
     stack mut Ascii asciiText = new Ascii() {
         Data = &buffer[0],
         Length = 0,
@@ -3560,7 +3488,7 @@ internal fn System.Memory.MemoryResult<OwnedUnicode> FinishOwnedUnicodeResult(Ow
 
 internal fn System.Memory.MemoryStatus AppendFormattedI1024Ascii(mut borrow OwnedAscii destination, i1024[min max] value) {
     unsafe {
-        stack mut i8[-128 127][320] storage;
+        stack mut i8[min max][320] storage;
         stack mut Ascii text = new Ascii() {
             Data = &storage[0],
             Length = 0,
@@ -3577,7 +3505,7 @@ internal fn System.Memory.MemoryStatus AppendFormattedI1024Ascii(mut borrow Owne
 
 internal fn System.Memory.MemoryStatus AppendFormattedU1024Ascii(mut borrow OwnedAscii destination, u1024[0 max] value) {
     unsafe {
-        stack mut i8[-128 127][320] storage;
+        stack mut i8[min max][320] storage;
         stack mut Ascii text = new Ascii() {
             Data = &storage[0],
             Length = 0,
@@ -3594,7 +3522,7 @@ internal fn System.Memory.MemoryStatus AppendFormattedU1024Ascii(mut borrow Owne
 
 internal fn System.Memory.MemoryStatus AppendFormattedF64Ascii(mut borrow OwnedAscii destination, f64 value) {
     unsafe {
-        stack mut i8[-128 127][32] storage;
+        stack mut i8[min max][32] storage;
         stack mut Ascii text = new Ascii() {
             Data = &storage[0],
             Length = 0,
@@ -3611,7 +3539,7 @@ internal fn System.Memory.MemoryStatus AppendFormattedF64Ascii(mut borrow OwnedA
 
 internal fn System.Memory.MemoryStatus AppendFormattedI1024Unicode(mut borrow OwnedUnicode destination, i1024[min max] value) {
     unsafe {
-        stack mut i32[-2147483648 2147483647][320] storage;
+        stack mut i32[min max][320] storage;
         stack mut Unicode text = new Unicode() {
             Data = &storage[0],
             Length = 0,
@@ -3628,7 +3556,7 @@ internal fn System.Memory.MemoryStatus AppendFormattedI1024Unicode(mut borrow Ow
 
 internal fn System.Memory.MemoryStatus AppendFormattedU1024Unicode(mut borrow OwnedUnicode destination, u1024[0 max] value) {
     unsafe {
-        stack mut i32[-2147483648 2147483647][320] storage;
+        stack mut i32[min max][320] storage;
         stack mut Unicode text = new Unicode() {
             Data = &storage[0],
             Length = 0,
@@ -3645,7 +3573,7 @@ internal fn System.Memory.MemoryStatus AppendFormattedU1024Unicode(mut borrow Ow
 
 internal fn System.Memory.MemoryStatus AppendFormattedF64Unicode(mut borrow OwnedUnicode destination, f64 value) {
     unsafe {
-        stack mut i32[-2147483648 2147483647][32] storage;
+        stack mut i32[min max][32] storage;
         stack mut Unicode text = new Unicode() {
             Data = &storage[0],
             Length = 0,
@@ -3665,13 +3593,13 @@ public fn System.Memory.MemoryStatus ToAscii(out OwnedAscii destination, bool va
     return destination.AppendBool(value);
 }
 
-public fn System.Memory.MemoryStatus ToAscii(out OwnedAscii destination, i64[-9223372036854775808 9223372036854775807] value) {
+public fn System.Memory.MemoryStatus ToAscii(out OwnedAscii destination, i64[min max] value) {
     destination = new();
     return destination.AppendI64(value);
 }
 
-public fn System.Memory.MemoryStatus ToAscii(out OwnedAscii destination, i32[-2147483648 2147483647] value) {
-    return ToAscii(destination, (i64[-9223372036854775808 9223372036854775807])value);
+public fn System.Memory.MemoryStatus ToAscii(out OwnedAscii destination, i32[min max] value) {
+    return ToAscii(destination, (i64[min max])value);
 }
 
 public fn System.Memory.MemoryStatus ToAscii(out OwnedAscii destination, u64[0 max] value) {
@@ -3688,13 +3616,13 @@ public fn System.Memory.MemoryStatus ToUnicode(out OwnedUnicode destination, boo
     return destination.AppendBool(value);
 }
 
-public fn System.Memory.MemoryStatus ToUnicode(out OwnedUnicode destination, i64[-9223372036854775808 9223372036854775807] value) {
+public fn System.Memory.MemoryStatus ToUnicode(out OwnedUnicode destination, i64[min max] value) {
     destination = new();
     return destination.AppendI64(value);
 }
 
-public fn System.Memory.MemoryStatus ToUnicode(out OwnedUnicode destination, i32[-2147483648 2147483647] value) {
-    return ToUnicode(destination, (i64[-9223372036854775808 9223372036854775807])value);
+public fn System.Memory.MemoryStatus ToUnicode(out OwnedUnicode destination, i32[min max] value) {
+    return ToUnicode(destination, (i64[min max])value);
 }
 
 public fn System.Memory.MemoryStatus ToUnicode(out OwnedUnicode destination, u64[0 max] value) {
@@ -3712,27 +3640,27 @@ public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(bool value) {
     return FinishOwnedAsciiResult(destination, status);
 }
 
-public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i8[-128 127] value) {
-    return ToAscii((i64[-9223372036854775808 9223372036854775807])value);
+public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i8[min max] value) {
+    return ToAscii((i64[min max])value);
 }
 
-public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i16[-32768 32767] value) {
-    return ToAscii((i64[-9223372036854775808 9223372036854775807])value);
+public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i16[min max] value) {
+    return ToAscii((i64[min max])value);
 }
 
-public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i24[-8388608 8388607] value) {
-    return ToAscii((i64[-9223372036854775808 9223372036854775807])value);
+public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i24[min max] value) {
+    return ToAscii((i64[min max])value);
 }
 
-public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i32[-2147483648 2147483647] value) {
-    return ToAscii((i64[-9223372036854775808 9223372036854775807])value);
+public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i32[min max] value) {
+    return ToAscii((i64[min max])value);
 }
 
-public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i48[-140737488355328 140737488355327] value) {
-    return ToAscii((i64[-9223372036854775808 9223372036854775807])value);
+public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i48[min max] value) {
+    return ToAscii((i64[min max])value);
 }
 
-public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i64[-9223372036854775808 9223372036854775807] value) {
+public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(i64[min max] value) {
     stack mut OwnedAscii destination = new();
     stack System.Memory.MemoryStatus status = destination.AppendI64(value);
     return FinishOwnedAsciiResult(destination, status);
@@ -3872,12 +3800,12 @@ public fn System.Memory.MemoryResult<OwnedAscii> ToAscii(TextError value) {
     return FinishOwnedAsciiResult(destination, status);
 }
 
-public fn System.Memory.MemoryResult<OwnedAscii> ConcatAscii(ascii left, i64[0 max] leftLength, System.Memory.MemoryResult<OwnedAscii> right) {
+public fn System.Memory.MemoryResult<OwnedAscii> ConcatAscii(ascii left, u64[0 2 ** 63 - 1] leftLength, System.Memory.MemoryResult<OwnedAscii> right) {
     switch (right) {
         case System.Memory.MemoryResult<OwnedAscii>.Ok(var value):
             stack mut OwnedAscii rightValue = value;
             stack mut OwnedAscii destination = new();
-            if (leftLength > 9223372036854775807 - rightValue.Length()) {
+            if (leftLength > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) - rightValue.Length()) {
                 return System.Memory.MemoryResult<OwnedAscii>.Err(System.Memory.MemoryError.TooLarge);
             }
 
@@ -3909,27 +3837,27 @@ public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(bool value) {
     return FinishOwnedUnicodeResult(destination, status);
 }
 
-public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i8[-128 127] value) {
-    return ToUnicode((i64[-9223372036854775808 9223372036854775807])value);
+public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i8[min max] value) {
+    return ToUnicode((i64[min max])value);
 }
 
-public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i16[-32768 32767] value) {
-    return ToUnicode((i64[-9223372036854775808 9223372036854775807])value);
+public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i16[min max] value) {
+    return ToUnicode((i64[min max])value);
 }
 
-public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i24[-8388608 8388607] value) {
-    return ToUnicode((i64[-9223372036854775808 9223372036854775807])value);
+public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i24[min max] value) {
+    return ToUnicode((i64[min max])value);
 }
 
-public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i32[-2147483648 2147483647] value) {
-    return ToUnicode((i64[-9223372036854775808 9223372036854775807])value);
+public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i32[min max] value) {
+    return ToUnicode((i64[min max])value);
 }
 
-public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i48[-140737488355328 140737488355327] value) {
-    return ToUnicode((i64[-9223372036854775808 9223372036854775807])value);
+public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i48[min max] value) {
+    return ToUnicode((i64[min max])value);
 }
 
-public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i64[-9223372036854775808 9223372036854775807] value) {
+public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(i64[min max] value) {
     stack mut OwnedUnicode destination = new();
     stack System.Memory.MemoryStatus status = destination.AppendI64(value);
     return FinishOwnedUnicodeResult(destination, status);
@@ -4069,12 +3997,12 @@ public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(TextError value) {
     return FinishOwnedUnicodeResult(destination, status);
 }
 
-public fn System.Memory.MemoryResult<OwnedUnicode> ConcatUnicode(unicode left, i64[0 max] leftLength, System.Memory.MemoryResult<OwnedUnicode> right) {
+public fn System.Memory.MemoryResult<OwnedUnicode> ConcatUnicode(unicode left, u64[0 2 ** 63 - 1] leftLength, System.Memory.MemoryResult<OwnedUnicode> right) {
     switch (right) {
         case System.Memory.MemoryResult<OwnedUnicode>.Ok(var value):
             stack mut OwnedUnicode rightValue = value;
             stack mut OwnedUnicode destination = new();
-            if (leftLength > 9223372036854775807 - rightValue.Length()) {
+            if (leftLength > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) - rightValue.Length()) {
                 return System.Memory.MemoryResult<OwnedUnicode>.Err(System.Memory.MemoryError.TooLarge);
             }
 
@@ -4102,33 +4030,33 @@ public fn System.Memory.MemoryResult<OwnedUnicode> ConcatUnicode(unicode left, i
 public unsafe inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
 
 public unsafe fn bool TryConvertAsciiToUtf16(
-    rawmutptr<i16[-32768 32767]>[capacity] destination,
-    i64[0 max] capacity,
+    rawmutptr<i16[min max]>[capacity] destination,
+    u64[0 2 ** 63 - 1] capacity,
     ascii source,
-    rawmutptr<i64[-9223372036854775808 9223372036854775807]> writtenLength)
+    rawmutptr<i64[min max]> writtenLength)
     where disjoint(source, destination[0, capacity]) {
     if (writtenLength == null) {
         return false;
     }
 
     *writtenLength = 0;
-    stack i64[-9223372036854775808 9223372036854775807] sourceLength = AsciiLength(source);
+    stack i64[min max] sourceLength = AsciiLength(source);
     if (sourceLength < 0) {
         return false;
     }
 
-    stack i64[0 max] sourceCount = (i64[0 max])sourceLength;
+    stack u64[0 2 ** 63 - 1] sourceCount = (u64[0 2 ** 63 - 1])sourceLength;
     stack ascii view = source[0, sourceLength];
-    stack rawptr<i8[-128 127]> data = AsciiData(view);
+    stack rawptr<i8[min max]> data = AsciiData(view);
     if (sourceLength > 0 && data == null) {
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] readIndex = 0;
-    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = 0;
+    stack mut i64[min max] readIndex = 0;
+    stack mut i64[min max] writeIndex = 0;
     while willexit (readIndex < sourceLength) {
-        stack i64[-9223372036854775808 9223372036854775807] start = readIndex;
-        stack mut i32[-2147483648 2147483647] codePoint = 65533;
+        stack i64[min max] start = readIndex;
+        stack mut i32[min max] codePoint = 65533;
         stack mut bool decoded = false;
         unsafe {
             decoded = TryDecodeUtf8CodePoint(data, sourceCount, &readIndex, &codePoint);
@@ -4138,7 +4066,7 @@ public unsafe fn bool TryConvertAsciiToUtf16(
             readIndex = start + 1;
         }
 
-        stack i64[-9223372036854775808 9223372036854775807] required = Utf16EncodedLength(codePoint);
+        stack i64[min max] required = Utf16EncodedLength(codePoint);
         if (writeIndex + required > capacity || (required > 0 && destination == null)) {
             *writtenLength = 0;
             return false;
@@ -4153,14 +4081,14 @@ public unsafe fn bool TryConvertAsciiToUtf16(
 
 public unsafe fn bool TryConvertUtf16ToUnicode(
     rawmutptr<Unicode> destination,
-    rawptr<i16[-32768 32767]>[sourceLength] source,
-    i64[0 max] sourceLength) {
+    rawptr<i16[min max]>[sourceLength] source,
+    u64[0 2 ** 63 - 1] sourceLength) {
     if (destination == null) {
         return false;
     }
 
-    stack rawmutptr<i32[-2147483648 2147483647]> data = (*destination).Data;
-    stack i64[-9223372036854775808 9223372036854775807] capacity = (*destination).Capacity;
+    stack rawmutptr<i32[min max]> data = (*destination).Data;
+    stack i64[min max] capacity = (*destination).Capacity;
     if (capacity < 0) {
         *destination = new Unicode() {
             Data = data,
@@ -4179,9 +4107,9 @@ public unsafe fn bool TryConvertUtf16ToUnicode(
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] readIndex = 0;
-    stack mut i64[-9223372036854775808 9223372036854775807] required = 0;
-    stack mut i32[-2147483648 2147483647] codePoint = 65533;
+    stack mut i64[min max] readIndex = 0;
+    stack mut i64[min max] required = 0;
+    stack mut i32[min max] codePoint = 65533;
     while willexit (readIndex < sourceLength) {
         codePoint = 65533;
         if (!TryDecodeUtf16CodePoint(source, sourceLength, &readIndex, &codePoint)) {
@@ -4213,7 +4141,7 @@ public unsafe fn bool TryConvertUtf16ToUnicode(
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = 0;
+    stack mut i64[min max] writeIndex = 0;
     readIndex = 0;
     while willexit (readIndex < sourceLength) {
         codePoint = 65533;
@@ -4243,8 +4171,8 @@ public unsafe fn bool TryConvertUnicodeToAscii(rawmutptr<Ascii> destination, uni
         return false;
     }
 
-    stack rawmutptr<i8[-128 127]> data = (*destination).Data;
-    stack i64[-9223372036854775808 9223372036854775807] capacity = (*destination).Capacity;
+    stack rawmutptr<i8[min max]> data = (*destination).Data;
+    stack i64[min max] capacity = (*destination).Capacity;
     if (capacity < 0) {
         *destination = new Ascii() {
             Data = data,
@@ -4254,8 +4182,8 @@ public unsafe fn bool TryConvertUnicodeToAscii(rawmutptr<Ascii> destination, uni
         return false;
     }
 
-    stack i64[0 max] safeCapacity = (i64[0 max])capacity;
-    stack i64[-9223372036854775808 9223372036854775807] sourceLength = UnicodeLength(source);
+    stack u64[0 2 ** 63 - 1] safeCapacity = (u64[0 2 ** 63 - 1])capacity;
+    stack i64[min max] sourceLength = UnicodeLength(source);
     if (sourceLength < 0) {
         *destination = new Ascii() {
             Data = data,
@@ -4265,7 +4193,7 @@ public unsafe fn bool TryConvertUnicodeToAscii(rawmutptr<Ascii> destination, uni
         return false;
     }
 
-    stack rawptr<i32[-2147483648 2147483647]> sourceData = UnicodeData(source);
+    stack rawptr<i32[min max]> sourceData = UnicodeData(source);
     if (sourceLength > 0 && sourceData == null) {
         *destination = new Ascii() {
             Data = data,
@@ -4275,8 +4203,8 @@ public unsafe fn bool TryConvertUnicodeToAscii(rawmutptr<Ascii> destination, uni
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] readIndex = 0;
-    stack mut i64[-9223372036854775808 9223372036854775807] required = 0;
+    stack mut i64[min max] readIndex = 0;
+    stack mut i64[min max] required = 0;
     while willexit (readIndex < sourceLength) {
         required += Utf8EncodedLength(*(&sourceData[readIndex]));
         if (required > capacity) {
@@ -4300,8 +4228,8 @@ public unsafe fn bool TryConvertUnicodeToAscii(rawmutptr<Ascii> destination, uni
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = 0;
-    stack mut i64[-9223372036854775808 9223372036854775807] sourceIndex = 0;
+    stack mut i64[min max] writeIndex = 0;
+    stack mut i64[min max] sourceIndex = 0;
     while willexit (sourceIndex < sourceLength) {
         unsafe {
             WriteUtf8CodePoint(data, safeCapacity, &writeIndex, *(&sourceData[sourceIndex]));
@@ -4319,28 +4247,28 @@ public unsafe fn bool TryConvertUnicodeToAscii(rawmutptr<Ascii> destination, uni
 }
 
 public unsafe fn bool TryConvertUnicodeToUtf16(
-    rawmutptr<i16[-32768 32767]>[capacity] destination,
-    i64[0 max] capacity,
+    rawmutptr<i16[min max]>[capacity] destination,
+    u64[0 2 ** 63 - 1] capacity,
     unicode source,
-    rawmutptr<i64[-9223372036854775808 9223372036854775807]> writtenLength)
+    rawmutptr<i64[min max]> writtenLength)
     where disjoint(source, destination[0, capacity]) {
     if (writtenLength == null) {
         return false;
     }
 
     *writtenLength = 0;
-    stack i64[-9223372036854775808 9223372036854775807] sourceLength = UnicodeLength(source);
+    stack i64[min max] sourceLength = UnicodeLength(source);
     if (sourceLength < 0) {
         return false;
     }
 
-    stack rawptr<i32[-2147483648 2147483647]> sourceData = UnicodeData(source);
+    stack rawptr<i32[min max]> sourceData = UnicodeData(source);
     if (sourceLength > 0 && sourceData == null) {
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] readIndex = 0;
-    stack mut i64[-9223372036854775808 9223372036854775807] required = 0;
+    stack mut i64[min max] readIndex = 0;
+    stack mut i64[min max] required = 0;
     while willexit (readIndex < sourceLength) {
         required += Utf16EncodedLength(*(&sourceData[readIndex]));
         if (required > capacity) {
@@ -4354,8 +4282,8 @@ public unsafe fn bool TryConvertUnicodeToUtf16(
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = 0;
-    stack mut i64[-9223372036854775808 9223372036854775807] sourceIndex = 0;
+    stack mut i64[min max] writeIndex = 0;
+    stack mut i64[min max] sourceIndex = 0;
     while willexit (sourceIndex < sourceLength) {
         WriteUtf16CodePoint(destination, capacity, &writeIndex, *(&sourceData[sourceIndex]));
         sourceIndex += 1;
@@ -4367,14 +4295,14 @@ public unsafe fn bool TryConvertUnicodeToUtf16(
 
 public unsafe fn bool TryConvertUtf16ToAscii(
     rawmutptr<Ascii> destination,
-    rawptr<i16[-32768 32767]>[sourceLength] source,
-    i64[0 max] sourceLength) {
+    rawptr<i16[min max]>[sourceLength] source,
+    u64[0 2 ** 63 - 1] sourceLength) {
     if (destination == null) {
         return false;
     }
 
-    stack rawmutptr<i8[-128 127]> data = (*destination).Data;
-    stack i64[-9223372036854775808 9223372036854775807] capacity = (*destination).Capacity;
+    stack rawmutptr<i8[min max]> data = (*destination).Data;
+    stack i64[min max] capacity = (*destination).Capacity;
     if (capacity < 0) {
         *destination = new Ascii() {
             Data = data,
@@ -4384,7 +4312,7 @@ public unsafe fn bool TryConvertUtf16ToAscii(
         return false;
     }
 
-    stack i64[0 max] safeCapacity = (i64[0 max])capacity;
+    stack u64[0 2 ** 63 - 1] safeCapacity = (u64[0 2 ** 63 - 1])capacity;
     if (sourceLength > 0 && source == null) {
         *destination = new Ascii() {
             Data = data,
@@ -4394,9 +4322,9 @@ public unsafe fn bool TryConvertUtf16ToAscii(
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] readIndex = 0;
-    stack mut i64[-9223372036854775808 9223372036854775807] required = 0;
-    stack mut i32[-2147483648 2147483647] codePoint = 65533;
+    stack mut i64[min max] readIndex = 0;
+    stack mut i64[min max] required = 0;
+    stack mut i32[min max] codePoint = 65533;
     while willexit (readIndex < sourceLength) {
         codePoint = 65533;
         if (!TryDecodeUtf16CodePoint(source, sourceLength, &readIndex, &codePoint)) {
@@ -4428,7 +4356,7 @@ public unsafe fn bool TryConvertUtf16ToAscii(
         return false;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] writeIndex = 0;
+    stack mut i64[min max] writeIndex = 0;
     readIndex = 0;
     while willexit (readIndex < sourceLength) {
         codePoint = 65533;

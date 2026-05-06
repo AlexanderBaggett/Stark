@@ -50,6 +50,7 @@ public sealed class CompilerCliTests
         Assert.Contains("--code-model <tiny|small|kernel|medium|large>", text);
         Assert.Contains("-O0|-Og|-O1|-O2|-O3", text);
         Assert.Contains("--optimize <0|g|1|2|3>", text);
+        Assert.Contains("--strict-integer-ranges", text);
         Assert.Contains("--link-arg <arg>", text);
         Assert.Contains("--native-source <path>", text);
         Assert.Contains("--native-library <name>", text);
@@ -70,6 +71,60 @@ public sealed class CompilerCliTests
         Assert.Contains("--compile-only", text);
         Assert.Contains("--link-only", text);
         Assert.Equal(string.Empty, stderr.ToString());
+    }
+
+    [Fact]
+    public async Task CheckModeRejectsPositiveSignedRangesByDefault()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = await CompilerCli.RunAsync(
+            ["--check"],
+            new StringReader(
+                """
+                module Demo
+
+                fn i32[0 10] Run() {
+                    return 0;
+                }
+                """),
+            stdout,
+            stderr);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(string.Empty, stdout.ToString());
+        var text = stderr.ToString();
+        Assert.Contains("error STK3014 [semantic-validate]", text, StringComparison.Ordinal);
+        Assert.Contains("i32[0 10]", text, StringComparison.Ordinal);
+        Assert.Contains("Use `u8[0 10]`", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task StrictIntegerRangeFlagRejectsPositiveSignedRanges()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = await CompilerCli.RunAsync(
+            ["--check", "--strict-integer-ranges"],
+            new StringReader(
+                """
+                module Demo
+
+                fn i32[0 10] Run() {
+                    return 0;
+                }
+                """),
+            stdout,
+            stderr);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(string.Empty, stdout.ToString());
+        var text = stderr.ToString();
+        Assert.Contains("error STK3014 [semantic-validate]", text, StringComparison.Ordinal);
+        Assert.Contains("i32[0 10]", text, StringComparison.Ordinal);
+        Assert.Contains("Use `u8[0 10]`", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1382,7 +1437,7 @@ public sealed class CompilerCliTests
                 import Geometry
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     return Geometry.Read(Geometry.Make());
                 }
                 """);
@@ -1453,7 +1508,7 @@ public sealed class CompilerCliTests
                 """
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     return 0;
                 }
                 """);
@@ -1527,7 +1582,7 @@ public sealed class CompilerCliTests
                 import System
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     stack System.Memory.MemoryResult<System.Text.OwnedAscii> text = 0.ToAscii();
                     return 0;
                 }
@@ -1623,7 +1678,7 @@ public sealed class CompilerCliTests
                 import System.Collections
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     stack mut List<i32[0 max]> values = new();
                     values.Push(1);
                     return (i32[-2147483648 2147483647])values.Count();
@@ -1732,7 +1787,7 @@ public sealed class CompilerCliTests
                 import Inlineable
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     return Opaque.Value() + Inlineable.Value();
                 }
                 """);
@@ -1863,7 +1918,7 @@ public sealed class CompilerCliTests
                 import Facade
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     return Math.Add(3, 4);
                 }
                 """);
@@ -1996,7 +2051,7 @@ public sealed class CompilerCliTests
                 import Facade
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     return Math.Open("demo.txt", Math.FileMode.Write)
                         + Math.Open("demo.txt", Math.FileMode.Write, Text.Encoding.UTF8);
                 }
@@ -2117,7 +2172,7 @@ public sealed class CompilerCliTests
                 import Syscall
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     if (Syscall.Syscall0(39) <= 0) {
                         return 1;
                     }
@@ -2197,7 +2252,7 @@ public sealed class CompilerCliTests
                 """
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     return 7;
                 }
                 """);
@@ -2272,7 +2327,7 @@ public sealed class CompilerCliTests
                 """
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     return 0;
                 }
                 """);
@@ -2402,7 +2457,7 @@ public sealed class CompilerCliTests
                 """
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     return 7;
                 }
                 """);

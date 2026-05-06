@@ -1,4 +1,4 @@
-﻿using Stark.Compiler;
+using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
@@ -31,8 +31,8 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
                 }
 
                 fn bool UsePromotedDynamicMemory() {
-                    stack mut dynamic i8[-128 127] bytes = new();
-                    stack mut i8[-128 127][4] source = { 1, 2, 3, 4 };
+                    stack mut dynamic i8[min max] bytes = new();
+                    stack mut i8[min max][4] source = { 1, 2, 3, 4 };
                     stack i64[0 max] four = 4;
                     if (!MemoryOk(System.Memory.ReserveBytes(bytes, four))) {
                         return false;
@@ -119,7 +119,7 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
                 module System.Memory
 
                 public struct Allocator {
-                    u8[0 127] Kind;
+                    u8[0 2 ** 7 - 1] Kind;
 
                     static finite law Allocator Default() {
                         return new Allocator() {
@@ -129,7 +129,7 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
                 }
 
                 internal struct Allocation {
-                    rawmutptr<i8[-128 127]> Pointer;
+                    rawmutptr<i8[min max]> Pointer;
                     i64[0 max] ByteLength;
                     i64[1 max] Alignment;
                     Allocator Allocator;
@@ -139,15 +139,15 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
                 internal fn Allocation Reallocate(Allocation allocation, i64[0 max] byteLength, i64[1 max] alignment);
                 internal fn void Free(Allocation allocation);
 
-                fn void Fill(borrow Allocation allocation, i64[0 max] count, i8[-128 127] value) {
-                    stack rawmutptr<i8[-128 127]> data = allocation.Pointer;
+                unsafe fn void Fill(borrow Allocation allocation, i64[0 max] count, i8[min max] value) {
+                    stack rawmutptr<i8[min max]> data = allocation.Pointer;
                     for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
                         *(&data[index]) = value;
                     }
                 }
 
-                fn bool AllEqual(borrow Allocation allocation, i64[0 max] count, i8[-128 127] value) {
-                    stack rawmutptr<i8[-128 127]> data = allocation.Pointer;
+                unsafe fn bool AllEqual(borrow Allocation allocation, i64[0 max] count, i8[min max] value) {
+                    stack rawmutptr<i8[min max]> data = allocation.Pointer;
                     for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
                         if (*(&data[index]) != value) {
                             return false;
@@ -157,7 +157,7 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
                     return true;
                 }
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     stack mut Allocation large = Allocate(Allocator.Default(), 5000, 8);
                     if (large.Pointer == null) {
                         return 1;
@@ -515,7 +515,7 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
             import System
             module App
 
-            export unsafe ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[min max] main() {
                 System.Console.WriteLine("allocator stays unused");
                 return 0;
             }

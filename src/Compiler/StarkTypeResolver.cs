@@ -398,7 +398,7 @@ internal sealed class StarkTypeResolver
         var integerTypeText = integerType.INTEGER_TYPE().GetText();
         var isUnsigned = integerTypeText[0] == 'u';
         var width = int.Parse(integerTypeText[1..], CultureInfo.InvariantCulture);
-        GetIntegerTypeBounds(width, isUnsigned, out var typeMin, out var typeMax);
+        IntegerRangeStorageFacts.GetIntegerTypeBounds(width, isUnsigned, out var typeMin, out var typeMax);
 
         var rangeConstraint = integerType.rangeConstraint();
         var endpointTokens = rangeConstraint.rangeEndpointToken()
@@ -421,11 +421,15 @@ internal sealed class StarkTypeResolver
             return StarkTypeSymbols.Integer(width, isUnsigned: isUnsigned);
         }
 
-        if (isUnsigned && (lower.Value < typeMin || lower.Value > typeMax || upper.Value < typeMin || upper.Value > typeMax))
+        if ((isUnsigned || _context.Options.EnforceIntegerRangeStorageRules)
+            && (lower.Value < typeMin || lower.Value > typeMax || upper.Value < typeMin || upper.Value > typeMax))
         {
+            var suggestion = IntegerRangeStorageFacts.TryGetSmallestTypeForRange(lower.Value, upper.Value, out var suggestedType)
+                ? $" Use `{suggestedType.DisplayName}` if that is the intended range."
+                : string.Empty;
             ReportError(
                 "STK3014",
-                $"Integer range endpoints for {integerTypeText} must be between {typeMin} and {typeMax}.",
+                $"Integer range endpoints for {integerTypeText} must be between {typeMin} and {typeMax}.{suggestion}",
                 rangeConstraint);
             return StarkTypeSymbols.Integer(width, isUnsigned: isUnsigned);
         }
@@ -880,23 +884,6 @@ internal sealed class StarkTypeResolver
     private static string FormatIntegerRangeEndpoint(IReadOnlyList<IToken> tokens, int start, int end)
     {
         return string.Concat(tokens.Skip(start).Take(end - start).Select(static token => token.Text));
-    }
-
-    private static void GetIntegerTypeBounds(
-        int bitWidth,
-        bool isUnsigned,
-        out BigInteger min,
-        out BigInteger max)
-    {
-        if (isUnsigned)
-        {
-            min = BigInteger.Zero;
-            max = (BigInteger.One << bitWidth) - BigInteger.One;
-            return;
-        }
-
-        min = -(BigInteger.One << (bitWidth - 1));
-        max = (BigInteger.One << (bitWidth - 1)) - BigInteger.One;
     }
 
     private bool TryResolveTypeAlias(

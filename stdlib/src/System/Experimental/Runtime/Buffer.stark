@@ -1,23 +1,23 @@
-﻿import System.Memory
+import System.Memory
 module System.Experimental.Runtime.Buffer
 
-internal finite law i64[0 max] MaxDynamicByteLength() {
-    return (i64[0 max])((2**63) - 1);
+internal finite law u64[0 2 ** 63 - 1] MaxDynamicByteLength() {
+    return (u64[0 2 ** 63 - 1])(2 ** 63 - 1);
 }
 
-internal finite law i64[0 max] ZeroIndex() {
+internal finite law u64[0 2 ** 63 - 1] ZeroIndex() {
     return 0;
 }
 
-internal finite law i64[0 max] Capacity512() {
+internal finite law u64[0 2 ** 63 - 1] Capacity512() {
     return 512;
 }
 
-internal finite law i64[0 max] Capacity4096() {
+internal finite law u64[0 2 ** 63 - 1] Capacity4096() {
     return 4096;
 }
 
-internal finite law i64[0 max] Capacity8192() {
+internal finite law u64[0 2 ** 63 - 1] Capacity8192() {
     return 8192;
 }
 
@@ -29,45 +29,45 @@ internal finite law System.Memory.MemoryStatus OutOfMemoryStatus() {
     return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
 }
 
-internal finite law i64[0 max] CursorReadable(i64[0 max] readPosition, i64[0 max] writePosition) {
+internal finite law u64[0 2 ** 63 - 1] CursorReadable(u64[0 2 ** 63 - 1] readPosition, u64[0 2 ** 63 - 1] writePosition) {
     if (writePosition <= readPosition) {
         return 0;
     }
 
-    return writePosition - readPosition;
+    return (u64[0 2 ** 63 - 1])(writePosition - readPosition);
 }
 
-internal finite law i64[0 max] CursorWritable(i64[0 max] writePosition, i64[0 max] capacity) {
+internal finite law u64[0 2 ** 63 - 1] CursorWritable(u64[0 2 ** 63 - 1] writePosition, u64[0 2 ** 63 - 1] capacity) {
     if (writePosition >= capacity) {
         return 0;
     }
 
-    return capacity - writePosition;
+    return (u64[0 2 ** 63 - 1])(capacity - writePosition);
 }
 
 internal fn System.Memory.MemoryStatus WriteByteToStorage(
-    borrow mut i8[-128 127][] storage,
-    i64[0 max] writePosition,
-    i64[0 max] capacity,
-    i8[-128 127] value,
-    out i64[0 max] nextWritePosition) {
+    borrow mut i8[min max][] storage,
+    u64[0 2 ** 63 - 1] writePosition,
+    u64[0 2 ** 63 - 1] capacity,
+    i8[min max] value,
+    out u64[0 2 ** 63 - 1] nextWritePosition) {
     nextWritePosition = writePosition;
     if (writePosition >= capacity) {
         return TooLargeStatus();
     }
 
     storage[writePosition] = value;
-    nextWritePosition = (i64[0 max])(writePosition + 1);
+    nextWritePosition = (u64[0 2 ** 63 - 1])(writePosition + 1);
     return System.Memory.MemoryStatus.Ok;
 }
 
 internal fn System.Memory.MemoryStatus WriteSliceToStorage(
-    borrow mut i8[-128 127][] storage,
-    i64[0 max] writePosition,
-    i64[0 max] capacity,
-    borrow i8[-128 127][] source,
-    i64[0 max] count,
-    out i64[0 max] nextWritePosition) {
+    borrow mut i8[min max][] storage,
+    u64[0 2 ** 63 - 1] writePosition,
+    u64[0 2 ** 63 - 1] capacity,
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] count,
+    out u64[0 2 ** 63 - 1] nextWritePosition) {
         unsafe {
         nextWritePosition = writePosition;
         if (count == 0) {
@@ -78,9 +78,9 @@ internal fn System.Memory.MemoryStatus WriteSliceToStorage(
             return TooLargeStatus();
         }
 
-        stack rawmutptr<i8[-128 127]> destinationData = &storage[writePosition];
+        stack rawmutptr<i8[min max]> destinationData = &storage[writePosition];
         unsafe {
-            stack mut i8[-128 127][] destination = slice(destinationData, count);
+            stack mut i8[min max][] destination = slice(destinationData, count);
             if disjoint(source, destination) {
                 System.Memory.CopyBytesDisjointInfallible(source, destination, count);
             } else {
@@ -88,18 +88,18 @@ internal fn System.Memory.MemoryStatus WriteSliceToStorage(
             }
         }
 
-        nextWritePosition = (i64[0 max])(writePosition + count);
+        nextWritePosition = (u64[0 2 ** 63 - 1])(writePosition + count);
         return System.Memory.MemoryStatus.Ok;
         }
 }
 
 internal fn System.Memory.MemoryStatus WriteFillToStorage(
-    borrow mut i8[-128 127][] storage,
-    i64[0 max] writePosition,
-    i64[0 max] capacity,
-    i8[-128 127] value,
-    i64[0 max] count,
-    out i64[0 max] nextWritePosition) {
+    borrow mut i8[min max][] storage,
+    u64[0 2 ** 63 - 1] writePosition,
+    u64[0 2 ** 63 - 1] capacity,
+    i8[min max] value,
+    u64[0 2 ** 63 - 1] count,
+    out u64[0 2 ** 63 - 1] nextWritePosition) {
         unsafe {
         nextWritePosition = writePosition;
         if (count == 0) {
@@ -110,26 +110,26 @@ internal fn System.Memory.MemoryStatus WriteFillToStorage(
             return TooLargeStatus();
         }
 
-        stack rawmutptr<i8[-128 127]> destinationData = &storage[writePosition];
+        stack rawmutptr<i8[min max]> destinationData = &storage[writePosition];
         unsafe {
-            stack mut i8[-128 127][] destination = slice(destinationData, count);
+            stack mut i8[min max][] destination = slice(destinationData, count);
             System.Memory.FillInitializedBytesInfallible(destination, value, count);
         }
-        nextWritePosition = (i64[0 max])(writePosition + count);
+        nextWritePosition = (u64[0 2 ** 63 - 1])(writePosition + count);
         return System.Memory.MemoryStatus.Ok;
         }
 }
 
 internal fn void CompactStorage(
-    borrow mut i8[-128 127][] storage,
-    i64[0 max] readPosition,
-    i64[0 max] writePosition,
-    out i64[0 max] nextReadPosition,
-    out i64[0 max] nextWritePosition) {
+    borrow mut i8[min max][] storage,
+    u64[0 2 ** 63 - 1] readPosition,
+    u64[0 2 ** 63 - 1] writePosition,
+    out u64[0 2 ** 63 - 1] nextReadPosition,
+    out u64[0 2 ** 63 - 1] nextWritePosition) {
         unsafe {
         nextReadPosition = readPosition;
         nextWritePosition = writePosition;
-        stack i64[0 max] readable = CursorReadable(readPosition, writePosition);
+        stack u64[0 2 ** 63 - 1] readable = CursorReadable(readPosition, writePosition);
         if (readPosition == 0) {
             return;
         }
@@ -140,11 +140,11 @@ internal fn void CompactStorage(
             return;
         }
 
-        stack rawptr<i8[-128 127]> sourceData = &storage[readPosition];
-        stack rawmutptr<i8[-128 127]> destinationData = &storage[0];
+        stack rawptr<i8[min max]> sourceData = &storage[readPosition];
+        stack rawmutptr<i8[min max]> destinationData = &storage[0];
         unsafe {
-            stack i8[-128 127][] source = slice(sourceData, readable);
-            stack mut i8[-128 127][] destination = slice(destinationData, readable);
+            stack i8[min max][] source = slice(sourceData, readable);
+            stack mut i8[min max][] destination = slice(destinationData, readable);
             System.Memory.MoveBytesInfallible(source, destination, readable);
         }
         nextReadPosition = 0;
@@ -153,16 +153,16 @@ internal fn void CompactStorage(
 }
 
 public struct FixedByteBuffer512 {
-    internal i8[-128 127][512] Storage;
-    internal i64[0 max] ReadPosition;
-    internal i64[0 max] WritePosition;
+    internal i8[min max][512] Storage;
+    internal u64[0 2 ** 63 - 1] ReadPosition;
+    internal u64[0 2 ** 63 - 1] WritePosition;
 
     FixedByteBuffer512() {
         self.ReadPosition = 0;
         self.WritePosition = 0;
     }
 
-    finite law i64[0 max] Capacity(borrow FixedByteBuffer512 self) {
+    finite law u64[0 2 ** 63 - 1] Capacity(borrow FixedByteBuffer512 self) {
         return Capacity512();
     }
 
@@ -174,17 +174,17 @@ public struct FixedByteBuffer512 {
         return self.WritePosition >= 512;
     }
 
-    finite law i64[0 max] Readable(borrow FixedByteBuffer512 self) {
+    finite law u64[0 2 ** 63 - 1] Readable(borrow FixedByteBuffer512 self) {
         return CursorReadable(self.ReadPosition, self.WritePosition);
     }
 
-    finite law i64[0 max] Writable(borrow FixedByteBuffer512 self) {
+    finite law u64[0 2 ** 63 - 1] Writable(borrow FixedByteBuffer512 self) {
         return CursorWritable(self.WritePosition, 512);
     }
 
-    finite law retborrow i8[-128 127][] ReadSlice(borrow FixedByteBuffer512 self) {
+    finite law retborrow i8[min max][] ReadSlice(borrow FixedByteBuffer512 self) {
         unsafe {
-            stack i64[0 max] readable = self.Readable();
+            stack u64[0 2 ** 63 - 1] readable = self.Readable();
             if (readable == 0) {
                 unsafe {
                     return slice(&self.Storage[0], 0);
@@ -197,9 +197,9 @@ public struct FixedByteBuffer512 {
         }
     }
 
-    finite retborrow mut i8[-128 127][] ReadMutableSlice(mut borrow FixedByteBuffer512 self) {
+    finite retborrow mut i8[min max][] ReadMutableSlice(mut borrow FixedByteBuffer512 self) {
         unsafe {
-            stack i64[0 max] readable = self.Readable();
+            stack u64[0 2 ** 63 - 1] readable = self.Readable();
             if (readable == 0) {
                 unsafe {
                     return slice(&self.Storage[0], 0);
@@ -212,9 +212,9 @@ public struct FixedByteBuffer512 {
         }
     }
 
-    finite retborrow mut i8[-128 127][] WriteSlice(mut borrow FixedByteBuffer512 self) {
+    finite retborrow mut i8[min max][] WriteSlice(mut borrow FixedByteBuffer512 self) {
         unsafe {
-            stack i64[0 max] writable = self.Writable();
+            stack u64[0 2 ** 63 - 1] writable = self.Writable();
             if (writable == 0) {
                 unsafe {
                     return slice(&self.Storage[0], 0);
@@ -227,13 +227,13 @@ public struct FixedByteBuffer512 {
         }
     }
 
-    fn System.Memory.MemoryStatus WriteByte(mut borrow FixedByteBuffer512 self, i8[-128 127] value) {
+    fn System.Memory.MemoryStatus WriteByte(mut borrow FixedByteBuffer512 self, i8[min max] value) {
         unsafe {
-            stack mut i64[0 max] nextWritePosition = self.WritePosition;
+            stack mut u64[0 2 ** 63 - 1] nextWritePosition = self.WritePosition;
             stack mut System.Memory.MemoryStatus status = System.Memory.MemoryStatus.Ok;
-            stack rawmutptr<i8[-128 127]> data = &self.Storage[0];
+            stack rawmutptr<i8[min max]> data = &self.Storage[0];
             unsafe {
-                stack mut i8[-128 127][] fixedStorage = slice(data, Capacity512());
+                stack mut i8[min max][] fixedStorage = slice(data, Capacity512());
                 status = WriteByteToStorage(fixedStorage, self.WritePosition, Capacity512(), value, nextWritePosition);
             }
             switch (status) {
@@ -249,14 +249,14 @@ public struct FixedByteBuffer512 {
 
     fn System.Memory.MemoryStatus WriteSlice(
         mut borrow FixedByteBuffer512 self,
-        borrow i8[-128 127][] source,
-        i64[0 max] count) {
+        borrow i8[min max][] source,
+        u64[0 2 ** 63 - 1] count) {
             unsafe {
-            stack mut i64[0 max] nextWritePosition = self.WritePosition;
+            stack mut u64[0 2 ** 63 - 1] nextWritePosition = self.WritePosition;
             stack mut System.Memory.MemoryStatus status = System.Memory.MemoryStatus.Ok;
-            stack rawmutptr<i8[-128 127]> data = &self.Storage[0];
+            stack rawmutptr<i8[min max]> data = &self.Storage[0];
             unsafe {
-                stack mut i8[-128 127][] fixedStorage = slice(data, Capacity512());
+                stack mut i8[min max][] fixedStorage = slice(data, Capacity512());
                 status = WriteSliceToStorage(fixedStorage, self.WritePosition, Capacity512(), source, count, nextWritePosition);
             }
             switch (status) {
@@ -272,14 +272,14 @@ public struct FixedByteBuffer512 {
 
     fn System.Memory.MemoryStatus WriteFill(
         mut borrow FixedByteBuffer512 self,
-        i8[-128 127] value,
-        i64[0 max] count) {
+        i8[min max] value,
+        u64[0 2 ** 63 - 1] count) {
             unsafe {
-            stack mut i64[0 max] nextWritePosition = self.WritePosition;
+            stack mut u64[0 2 ** 63 - 1] nextWritePosition = self.WritePosition;
             stack mut System.Memory.MemoryStatus status = System.Memory.MemoryStatus.Ok;
-            stack rawmutptr<i8[-128 127]> data = &self.Storage[0];
+            stack rawmutptr<i8[min max]> data = &self.Storage[0];
             unsafe {
-                stack mut i8[-128 127][] fixedStorage = slice(data, Capacity512());
+                stack mut i8[min max][] fixedStorage = slice(data, Capacity512());
                 status = WriteFillToStorage(fixedStorage, self.WritePosition, Capacity512(), value, count, nextWritePosition);
             }
             switch (status) {
@@ -293,8 +293,8 @@ public struct FixedByteBuffer512 {
             }
     }
 
-    fn void AdvanceRead(mut borrow FixedByteBuffer512 self, i64[0 max] count) {
-        stack i64[0 max] readable = self.Readable();
+    fn void AdvanceRead(mut borrow FixedByteBuffer512 self, u64[0 2 ** 63 - 1] count) {
+        stack u64[0 2 ** 63 - 1] readable = self.Readable();
         if (count >= readable) {
             self.Clear();
             return;
@@ -303,8 +303,8 @@ public struct FixedByteBuffer512 {
         self.ReadPosition += count;
     }
 
-    fn void AdvanceWrite(mut borrow FixedByteBuffer512 self, i64[0 max] count) {
-        stack i64[0 max] writable = self.Writable();
+    fn void AdvanceWrite(mut borrow FixedByteBuffer512 self, u64[0 2 ** 63 - 1] count) {
+        stack u64[0 2 ** 63 - 1] writable = self.Writable();
         if (count >= writable) {
             self.WritePosition = Capacity512();
             return;
@@ -315,11 +315,11 @@ public struct FixedByteBuffer512 {
 
     fn void Compact(mut borrow FixedByteBuffer512 self) {
         unsafe {
-            stack mut i64[0 max] nextReadPosition = self.ReadPosition;
-            stack mut i64[0 max] nextWritePosition = self.WritePosition;
-            stack rawmutptr<i8[-128 127]> data = &self.Storage[0];
+            stack mut u64[0 2 ** 63 - 1] nextReadPosition = self.ReadPosition;
+            stack mut u64[0 2 ** 63 - 1] nextWritePosition = self.WritePosition;
+            stack rawmutptr<i8[min max]> data = &self.Storage[0];
             unsafe {
-                stack mut i8[-128 127][] fixedStorage = slice(data, Capacity512());
+                stack mut i8[min max][] fixedStorage = slice(data, Capacity512());
                 CompactStorage(fixedStorage, self.ReadPosition, self.WritePosition, nextReadPosition, nextWritePosition);
             }
             self.ReadPosition = nextReadPosition;
@@ -334,16 +334,16 @@ public struct FixedByteBuffer512 {
 }
 
 public struct FixedByteBuffer4096 {
-    internal i8[-128 127][4096] Storage;
-    internal i64[0 max] ReadPosition;
-    internal i64[0 max] WritePosition;
+    internal i8[min max][4096] Storage;
+    internal u64[0 2 ** 63 - 1] ReadPosition;
+    internal u64[0 2 ** 63 - 1] WritePosition;
 
     FixedByteBuffer4096() {
         self.ReadPosition = 0;
         self.WritePosition = 0;
     }
 
-    finite law i64[0 max] Capacity(borrow FixedByteBuffer4096 self) {
+    finite law u64[0 2 ** 63 - 1] Capacity(borrow FixedByteBuffer4096 self) {
         return Capacity4096();
     }
 
@@ -355,17 +355,17 @@ public struct FixedByteBuffer4096 {
         return self.WritePosition >= 4096;
     }
 
-    finite law i64[0 max] Readable(borrow FixedByteBuffer4096 self) {
+    finite law u64[0 2 ** 63 - 1] Readable(borrow FixedByteBuffer4096 self) {
         return CursorReadable(self.ReadPosition, self.WritePosition);
     }
 
-    finite law i64[0 max] Writable(borrow FixedByteBuffer4096 self) {
+    finite law u64[0 2 ** 63 - 1] Writable(borrow FixedByteBuffer4096 self) {
         return CursorWritable(self.WritePosition, 4096);
     }
 
-    finite law retborrow i8[-128 127][] ReadSlice(borrow FixedByteBuffer4096 self) {
+    finite law retborrow i8[min max][] ReadSlice(borrow FixedByteBuffer4096 self) {
         unsafe {
-            stack i64[0 max] readable = self.Readable();
+            stack u64[0 2 ** 63 - 1] readable = self.Readable();
             if (readable == 0) {
                 unsafe {
                     return slice(&self.Storage[0], 0);
@@ -378,9 +378,9 @@ public struct FixedByteBuffer4096 {
         }
     }
 
-    finite retborrow mut i8[-128 127][] ReadMutableSlice(mut borrow FixedByteBuffer4096 self) {
+    finite retborrow mut i8[min max][] ReadMutableSlice(mut borrow FixedByteBuffer4096 self) {
         unsafe {
-            stack i64[0 max] readable = self.Readable();
+            stack u64[0 2 ** 63 - 1] readable = self.Readable();
             if (readable == 0) {
                 unsafe {
                     return slice(&self.Storage[0], 0);
@@ -393,9 +393,9 @@ public struct FixedByteBuffer4096 {
         }
     }
 
-    finite retborrow mut i8[-128 127][] WriteSlice(mut borrow FixedByteBuffer4096 self) {
+    finite retborrow mut i8[min max][] WriteSlice(mut borrow FixedByteBuffer4096 self) {
         unsafe {
-            stack i64[0 max] writable = self.Writable();
+            stack u64[0 2 ** 63 - 1] writable = self.Writable();
             if (writable == 0) {
                 unsafe {
                     return slice(&self.Storage[0], 0);
@@ -408,13 +408,13 @@ public struct FixedByteBuffer4096 {
         }
     }
 
-    fn System.Memory.MemoryStatus WriteByte(mut borrow FixedByteBuffer4096 self, i8[-128 127] value) {
+    fn System.Memory.MemoryStatus WriteByte(mut borrow FixedByteBuffer4096 self, i8[min max] value) {
         unsafe {
-            stack mut i64[0 max] nextWritePosition = self.WritePosition;
+            stack mut u64[0 2 ** 63 - 1] nextWritePosition = self.WritePosition;
             stack mut System.Memory.MemoryStatus status = System.Memory.MemoryStatus.Ok;
-            stack rawmutptr<i8[-128 127]> data = &self.Storage[0];
+            stack rawmutptr<i8[min max]> data = &self.Storage[0];
             unsafe {
-                stack mut i8[-128 127][] fixedStorage = slice(data, Capacity4096());
+                stack mut i8[min max][] fixedStorage = slice(data, Capacity4096());
                 status = WriteByteToStorage(fixedStorage, self.WritePosition, Capacity4096(), value, nextWritePosition);
             }
             switch (status) {
@@ -430,14 +430,14 @@ public struct FixedByteBuffer4096 {
 
     fn System.Memory.MemoryStatus WriteSlice(
         mut borrow FixedByteBuffer4096 self,
-        borrow i8[-128 127][] source,
-        i64[0 max] count) {
+        borrow i8[min max][] source,
+        u64[0 2 ** 63 - 1] count) {
             unsafe {
-            stack mut i64[0 max] nextWritePosition = self.WritePosition;
+            stack mut u64[0 2 ** 63 - 1] nextWritePosition = self.WritePosition;
             stack mut System.Memory.MemoryStatus status = System.Memory.MemoryStatus.Ok;
-            stack rawmutptr<i8[-128 127]> data = &self.Storage[0];
+            stack rawmutptr<i8[min max]> data = &self.Storage[0];
             unsafe {
-                stack mut i8[-128 127][] fixedStorage = slice(data, Capacity4096());
+                stack mut i8[min max][] fixedStorage = slice(data, Capacity4096());
                 status = WriteSliceToStorage(fixedStorage, self.WritePosition, Capacity4096(), source, count, nextWritePosition);
             }
             switch (status) {
@@ -453,14 +453,14 @@ public struct FixedByteBuffer4096 {
 
     fn System.Memory.MemoryStatus WriteFill(
         mut borrow FixedByteBuffer4096 self,
-        i8[-128 127] value,
-        i64[0 max] count) {
+        i8[min max] value,
+        u64[0 2 ** 63 - 1] count) {
             unsafe {
-            stack mut i64[0 max] nextWritePosition = self.WritePosition;
+            stack mut u64[0 2 ** 63 - 1] nextWritePosition = self.WritePosition;
             stack mut System.Memory.MemoryStatus status = System.Memory.MemoryStatus.Ok;
-            stack rawmutptr<i8[-128 127]> data = &self.Storage[0];
+            stack rawmutptr<i8[min max]> data = &self.Storage[0];
             unsafe {
-                stack mut i8[-128 127][] fixedStorage = slice(data, Capacity4096());
+                stack mut i8[min max][] fixedStorage = slice(data, Capacity4096());
                 status = WriteFillToStorage(fixedStorage, self.WritePosition, Capacity4096(), value, count, nextWritePosition);
             }
             switch (status) {
@@ -474,8 +474,8 @@ public struct FixedByteBuffer4096 {
             }
     }
 
-    fn void AdvanceRead(mut borrow FixedByteBuffer4096 self, i64[0 max] count) {
-        stack i64[0 max] readable = self.Readable();
+    fn void AdvanceRead(mut borrow FixedByteBuffer4096 self, u64[0 2 ** 63 - 1] count) {
+        stack u64[0 2 ** 63 - 1] readable = self.Readable();
         if (count >= readable) {
             self.Clear();
             return;
@@ -484,8 +484,8 @@ public struct FixedByteBuffer4096 {
         self.ReadPosition += count;
     }
 
-    fn void AdvanceWrite(mut borrow FixedByteBuffer4096 self, i64[0 max] count) {
-        stack i64[0 max] writable = self.Writable();
+    fn void AdvanceWrite(mut borrow FixedByteBuffer4096 self, u64[0 2 ** 63 - 1] count) {
+        stack u64[0 2 ** 63 - 1] writable = self.Writable();
         if (count >= writable) {
             self.WritePosition = Capacity4096();
             return;
@@ -496,11 +496,11 @@ public struct FixedByteBuffer4096 {
 
     fn void Compact(mut borrow FixedByteBuffer4096 self) {
         unsafe {
-            stack mut i64[0 max] nextReadPosition = self.ReadPosition;
-            stack mut i64[0 max] nextWritePosition = self.WritePosition;
-            stack rawmutptr<i8[-128 127]> data = &self.Storage[0];
+            stack mut u64[0 2 ** 63 - 1] nextReadPosition = self.ReadPosition;
+            stack mut u64[0 2 ** 63 - 1] nextWritePosition = self.WritePosition;
+            stack rawmutptr<i8[min max]> data = &self.Storage[0];
             unsafe {
-                stack mut i8[-128 127][] fixedStorage = slice(data, Capacity4096());
+                stack mut i8[min max][] fixedStorage = slice(data, Capacity4096());
                 CompactStorage(fixedStorage, self.ReadPosition, self.WritePosition, nextReadPosition, nextWritePosition);
             }
             self.ReadPosition = nextReadPosition;
@@ -515,16 +515,16 @@ public struct FixedByteBuffer4096 {
 }
 
 public struct FixedByteBuffer8192 {
-    internal i8[-128 127][8192] Storage;
-    internal i64[0 max] ReadPosition;
-    internal i64[0 max] WritePosition;
+    internal i8[min max][8192] Storage;
+    internal u64[0 2 ** 63 - 1] ReadPosition;
+    internal u64[0 2 ** 63 - 1] WritePosition;
 
     FixedByteBuffer8192() {
         self.ReadPosition = 0;
         self.WritePosition = 0;
     }
 
-    finite law i64[0 max] Capacity(borrow FixedByteBuffer8192 self) {
+    finite law u64[0 2 ** 63 - 1] Capacity(borrow FixedByteBuffer8192 self) {
         return Capacity8192();
     }
 
@@ -536,17 +536,17 @@ public struct FixedByteBuffer8192 {
         return self.WritePosition >= 8192;
     }
 
-    finite law i64[0 max] Readable(borrow FixedByteBuffer8192 self) {
+    finite law u64[0 2 ** 63 - 1] Readable(borrow FixedByteBuffer8192 self) {
         return CursorReadable(self.ReadPosition, self.WritePosition);
     }
 
-    finite law i64[0 max] Writable(borrow FixedByteBuffer8192 self) {
+    finite law u64[0 2 ** 63 - 1] Writable(borrow FixedByteBuffer8192 self) {
         return CursorWritable(self.WritePosition, 8192);
     }
 
-    finite law retborrow i8[-128 127][] ReadSlice(borrow FixedByteBuffer8192 self) {
+    finite law retborrow i8[min max][] ReadSlice(borrow FixedByteBuffer8192 self) {
         unsafe {
-            stack i64[0 max] readable = self.Readable();
+            stack u64[0 2 ** 63 - 1] readable = self.Readable();
             if (readable == 0) {
                 unsafe {
                     return slice(&self.Storage[0], 0);
@@ -559,9 +559,9 @@ public struct FixedByteBuffer8192 {
         }
     }
 
-    finite retborrow mut i8[-128 127][] ReadMutableSlice(mut borrow FixedByteBuffer8192 self) {
+    finite retborrow mut i8[min max][] ReadMutableSlice(mut borrow FixedByteBuffer8192 self) {
         unsafe {
-            stack i64[0 max] readable = self.Readable();
+            stack u64[0 2 ** 63 - 1] readable = self.Readable();
             if (readable == 0) {
                 unsafe {
                     return slice(&self.Storage[0], 0);
@@ -574,9 +574,9 @@ public struct FixedByteBuffer8192 {
         }
     }
 
-    finite retborrow mut i8[-128 127][] WriteSlice(mut borrow FixedByteBuffer8192 self) {
+    finite retborrow mut i8[min max][] WriteSlice(mut borrow FixedByteBuffer8192 self) {
         unsafe {
-            stack i64[0 max] writable = self.Writable();
+            stack u64[0 2 ** 63 - 1] writable = self.Writable();
             if (writable == 0) {
                 unsafe {
                     return slice(&self.Storage[0], 0);
@@ -589,13 +589,13 @@ public struct FixedByteBuffer8192 {
         }
     }
 
-    fn System.Memory.MemoryStatus WriteByte(mut borrow FixedByteBuffer8192 self, i8[-128 127] value) {
+    fn System.Memory.MemoryStatus WriteByte(mut borrow FixedByteBuffer8192 self, i8[min max] value) {
         unsafe {
-            stack mut i64[0 max] nextWritePosition = self.WritePosition;
+            stack mut u64[0 2 ** 63 - 1] nextWritePosition = self.WritePosition;
             stack mut System.Memory.MemoryStatus status = System.Memory.MemoryStatus.Ok;
-            stack rawmutptr<i8[-128 127]> data = &self.Storage[0];
+            stack rawmutptr<i8[min max]> data = &self.Storage[0];
             unsafe {
-                stack mut i8[-128 127][] fixedStorage = slice(data, Capacity8192());
+                stack mut i8[min max][] fixedStorage = slice(data, Capacity8192());
                 status = WriteByteToStorage(fixedStorage, self.WritePosition, Capacity8192(), value, nextWritePosition);
             }
             switch (status) {
@@ -611,14 +611,14 @@ public struct FixedByteBuffer8192 {
 
     fn System.Memory.MemoryStatus WriteSlice(
         mut borrow FixedByteBuffer8192 self,
-        borrow i8[-128 127][] source,
-        i64[0 max] count) {
+        borrow i8[min max][] source,
+        u64[0 2 ** 63 - 1] count) {
             unsafe {
-            stack mut i64[0 max] nextWritePosition = self.WritePosition;
+            stack mut u64[0 2 ** 63 - 1] nextWritePosition = self.WritePosition;
             stack mut System.Memory.MemoryStatus status = System.Memory.MemoryStatus.Ok;
-            stack rawmutptr<i8[-128 127]> data = &self.Storage[0];
+            stack rawmutptr<i8[min max]> data = &self.Storage[0];
             unsafe {
-                stack mut i8[-128 127][] fixedStorage = slice(data, Capacity8192());
+                stack mut i8[min max][] fixedStorage = slice(data, Capacity8192());
                 status = WriteSliceToStorage(fixedStorage, self.WritePosition, Capacity8192(), source, count, nextWritePosition);
             }
             switch (status) {
@@ -634,14 +634,14 @@ public struct FixedByteBuffer8192 {
 
     fn System.Memory.MemoryStatus WriteFill(
         mut borrow FixedByteBuffer8192 self,
-        i8[-128 127] value,
-        i64[0 max] count) {
+        i8[min max] value,
+        u64[0 2 ** 63 - 1] count) {
             unsafe {
-            stack mut i64[0 max] nextWritePosition = self.WritePosition;
+            stack mut u64[0 2 ** 63 - 1] nextWritePosition = self.WritePosition;
             stack mut System.Memory.MemoryStatus status = System.Memory.MemoryStatus.Ok;
-            stack rawmutptr<i8[-128 127]> data = &self.Storage[0];
+            stack rawmutptr<i8[min max]> data = &self.Storage[0];
             unsafe {
-                stack mut i8[-128 127][] fixedStorage = slice(data, Capacity8192());
+                stack mut i8[min max][] fixedStorage = slice(data, Capacity8192());
                 status = WriteFillToStorage(fixedStorage, self.WritePosition, Capacity8192(), value, count, nextWritePosition);
             }
             switch (status) {
@@ -655,8 +655,8 @@ public struct FixedByteBuffer8192 {
             }
     }
 
-    fn void AdvanceRead(mut borrow FixedByteBuffer8192 self, i64[0 max] count) {
-        stack i64[0 max] readable = self.Readable();
+    fn void AdvanceRead(mut borrow FixedByteBuffer8192 self, u64[0 2 ** 63 - 1] count) {
+        stack u64[0 2 ** 63 - 1] readable = self.Readable();
         if (count >= readable) {
             self.Clear();
             return;
@@ -665,8 +665,8 @@ public struct FixedByteBuffer8192 {
         self.ReadPosition += count;
     }
 
-    fn void AdvanceWrite(mut borrow FixedByteBuffer8192 self, i64[0 max] count) {
-        stack i64[0 max] writable = self.Writable();
+    fn void AdvanceWrite(mut borrow FixedByteBuffer8192 self, u64[0 2 ** 63 - 1] count) {
+        stack u64[0 2 ** 63 - 1] writable = self.Writable();
         if (count >= writable) {
             self.WritePosition = Capacity8192();
             return;
@@ -677,11 +677,11 @@ public struct FixedByteBuffer8192 {
 
     fn void Compact(mut borrow FixedByteBuffer8192 self) {
         unsafe {
-            stack mut i64[0 max] nextReadPosition = self.ReadPosition;
-            stack mut i64[0 max] nextWritePosition = self.WritePosition;
-            stack rawmutptr<i8[-128 127]> data = &self.Storage[0];
+            stack mut u64[0 2 ** 63 - 1] nextReadPosition = self.ReadPosition;
+            stack mut u64[0 2 ** 63 - 1] nextWritePosition = self.WritePosition;
+            stack rawmutptr<i8[min max]> data = &self.Storage[0];
             unsafe {
-                stack mut i8[-128 127][] fixedStorage = slice(data, Capacity8192());
+                stack mut i8[min max][] fixedStorage = slice(data, Capacity8192());
                 CompactStorage(fixedStorage, self.ReadPosition, self.WritePosition, nextReadPosition, nextWritePosition);
             }
             self.ReadPosition = nextReadPosition;
@@ -696,43 +696,43 @@ public struct FixedByteBuffer8192 {
 }
 
 public struct DynamicByteBuffer {
-    internal dynamic i8[-128 127] Storage;
-    internal i64[0 max] ReadPosition;
+    internal dynamic i8[min max] Storage;
+    internal u64[0 2 ** 63 - 1] ReadPosition;
 
     DynamicByteBuffer() {
         self.Storage = new();
         self.ReadPosition = 0;
     }
 
-    finite law i64[0 max] Length(borrow DynamicByteBuffer self) {
+    finite law u64[0 2 ** 63 - 1] Length(borrow DynamicByteBuffer self) {
         return self.Storage.Length;
     }
 
-    finite law i64[0 max] Capacity(borrow DynamicByteBuffer self) {
+    finite law u64[0 2 ** 63 - 1] Capacity(borrow DynamicByteBuffer self) {
         return self.Storage.Capacity;
     }
 
-    finite law i64[0 max] Readable(borrow DynamicByteBuffer self) {
+    finite law u64[0 2 ** 63 - 1] Readable(borrow DynamicByteBuffer self) {
         return CursorReadable(self.ReadPosition, self.Storage.Length);
     }
 
-    finite law i64[0 max] Writable(borrow DynamicByteBuffer self) {
-        return MaxDynamicByteLength() - self.Storage.Length;
+    finite law u64[0 2 ** 63 - 1] Writable(borrow DynamicByteBuffer self) {
+        return (u64[0 2 ** 63 - 1])(MaxDynamicByteLength() - self.Storage.Length);
     }
 
     finite law bool IsEmpty(borrow DynamicByteBuffer self) {
         return self.Readable() == 0;
     }
 
-    finite law retborrow i8[-128 127][] ReadSlice(borrow DynamicByteBuffer self) {
+    finite law retborrow i8[min max][] ReadSlice(borrow DynamicByteBuffer self) {
         return self.Storage[self.ReadPosition, self.Readable()];
     }
 
-    finite retborrow mut i8[-128 127][] ReadMutableSlice(mut borrow DynamicByteBuffer self) {
+    finite retborrow mut i8[min max][] ReadMutableSlice(mut borrow DynamicByteBuffer self) {
         return self.Storage[self.ReadPosition, self.Readable()];
     }
 
-    fn System.Memory.MemoryStatus Reserve(mut borrow DynamicByteBuffer self, i64[0 max] additional) {
+    fn System.Memory.MemoryStatus Reserve(mut borrow DynamicByteBuffer self, u64[0 2 ** 63 - 1] additional) {
         if (additional > self.Writable()) {
             return TooLargeStatus();
         }
@@ -744,7 +744,7 @@ public struct DynamicByteBuffer {
         return System.Memory.MemoryStatus.Ok;
     }
 
-    fn System.Memory.MemoryStatus WriteByte(mut borrow DynamicByteBuffer self, i8[-128 127] value) {
+    fn System.Memory.MemoryStatus WriteByte(mut borrow DynamicByteBuffer self, i8[min max] value) {
         stack System.Memory.MemoryStatus status = self.Reserve(1);
         switch (status) {
             case System.Memory.MemoryStatus.Err(var error):
@@ -758,14 +758,14 @@ public struct DynamicByteBuffer {
 
     fn System.Memory.MemoryStatus WriteSlice(
         mut borrow DynamicByteBuffer self,
-        borrow i8[-128 127][] source,
-        i64[0 max] count) {
+        borrow i8[min max][] source,
+        u64[0 2 ** 63 - 1] count) {
             unsafe {
             if (count == 0) {
                 return System.Memory.MemoryStatus.Ok;
             }
 
-            stack i8[-128 127][] initialized = self.Storage[0, self.Storage.Length];
+            stack i8[min max][] initialized = self.Storage[0, self.Storage.Length];
             if disjoint(source, initialized) {
                 if (count > self.Writable()) {
                     return TooLargeStatus();
@@ -775,23 +775,23 @@ public struct DynamicByteBuffer {
                     return OutOfMemoryStatus();
                 }
 
-                stack init i8[-128 127][] tail = init self.Storage[self.Storage.Length, count];
+                stack init i8[min max][] tail = init self.Storage[self.Storage.Length, count];
                 unsafe {
                     return System.Memory.InitializeBytesDisjoint(source, tail, count);
                 }
             }
 
-            stack mut dynamic i8[-128 127] snapshot = new();
+            stack mut dynamic i8[min max] snapshot = new();
             if (!snapshot.TryReserve(count)) {
                 return OutOfMemoryStatus();
             }
 
-            stack init i8[-128 127][] snapshotTail = init snapshot[snapshot.Length, count];
+            stack init i8[min max][] snapshotTail = init snapshot[snapshot.Length, count];
             unsafe {
                 System.Memory.InitializeBytesDisjoint(source, snapshotTail, count);
             }
 
-            stack i8[-128 127][] snapshotView = snapshot[0, snapshot.Length];
+            stack i8[min max][] snapshotView = snapshot[0, snapshot.Length];
             if (count > self.Writable()) {
                 return TooLargeStatus();
             }
@@ -800,7 +800,7 @@ public struct DynamicByteBuffer {
                 return OutOfMemoryStatus();
             }
 
-            stack init i8[-128 127][] tail = init self.Storage[self.Storage.Length, count];
+            stack init i8[min max][] tail = init self.Storage[self.Storage.Length, count];
             unsafe {
                 return System.Memory.InitializeBytesDisjoint(snapshotView, tail, count);
             }
@@ -809,8 +809,8 @@ public struct DynamicByteBuffer {
 
     fn System.Memory.MemoryStatus WriteFill(
         mut borrow DynamicByteBuffer self,
-        i8[-128 127] value,
-        i64[0 max] count) {
+        i8[min max] value,
+        u64[0 2 ** 63 - 1] count) {
         if (count == 0) {
             return System.Memory.MemoryStatus.Ok;
         }
@@ -823,11 +823,11 @@ public struct DynamicByteBuffer {
             return OutOfMemoryStatus();
         }
 
-        stack init i8[-128 127][] tail = init self.Storage[self.Storage.Length, count];
+        stack init i8[min max][] tail = init self.Storage[self.Storage.Length, count];
         return System.Memory.FillBytes(tail, value, count);
     }
 
-    fn bool TryReadByte(mut borrow DynamicByteBuffer self, out i8[-128 127] value) {
+    fn bool TryReadByte(mut borrow DynamicByteBuffer self, out i8[min max] value) {
         if (self.IsEmpty()) {
             value = 0;
             return false;
@@ -838,8 +838,8 @@ public struct DynamicByteBuffer {
         return true;
     }
 
-    fn void AdvanceRead(mut borrow DynamicByteBuffer self, i64[0 max] count) {
-        stack i64[0 max] readable = self.Readable();
+    fn void AdvanceRead(mut borrow DynamicByteBuffer self, u64[0 2 ** 63 - 1] count) {
+        stack u64[0 2 ** 63 - 1] readable = self.Readable();
         if (count >= readable) {
             self.Clear();
             return;
@@ -849,7 +849,7 @@ public struct DynamicByteBuffer {
     }
 
     fn void Compact(mut borrow DynamicByteBuffer self) {
-        stack i64[0 max] readable = self.Readable();
+        stack u64[0 2 ** 63 - 1] readable = self.Readable();
         if (self.ReadPosition == 0) {
             return;
         }
@@ -859,8 +859,8 @@ public struct DynamicByteBuffer {
             return;
         }
 
-        stack mut i64[0 max] nextReadPosition = self.ReadPosition;
-        stack mut i64[0 max] nextWritePosition = self.Storage.Length;
+        stack mut u64[0 2 ** 63 - 1] nextReadPosition = self.ReadPosition;
+        stack mut u64[0 2 ** 63 - 1] nextWritePosition = self.Storage.Length;
         CompactStorage(
             self.Storage[0, self.Storage.Length],
             self.ReadPosition,
@@ -869,7 +869,7 @@ public struct DynamicByteBuffer {
             nextWritePosition);
 
         while willexit (self.Storage.Length > readable) {
-            stack i8[-128 127] discarded = self.Storage.MoveLast();
+            stack i8[min max] discarded = self.Storage.MoveLast();
         }
 
         self.ReadPosition = nextReadPosition;
@@ -877,7 +877,7 @@ public struct DynamicByteBuffer {
 
     fn void Clear(mut borrow DynamicByteBuffer self) {
         while willexit (self.Storage.Length > 0) {
-            stack i8[-128 127] discarded = self.Storage.MoveLast();
+            stack i8[min max] discarded = self.Storage.MoveLast();
         }
 
         self.ReadPosition = 0;

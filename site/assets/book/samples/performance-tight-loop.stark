@@ -1,7 +1,7 @@
 module Book.PerformanceTightLoop
 
 finite law i32[min max] SumFixed(i32[min max][4] values) {
-    stack mut i32[0 max] index = 0;
+    stack mut u8[0 4] index = 0;
     stack mut i32[min max] total = 0;
 
     while willexit (index < 4) {

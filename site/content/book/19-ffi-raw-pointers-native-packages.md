@@ -29,17 +29,18 @@ This chapter covers explicit low-level boundaries.
 
 {{< stark-sample "assets/book/samples/ffi-raw-pointers.stark" >}}
 
-## `ffi fn`
+## `unsafe ffi fn`
 
-Use `ffi fn` for foreign-facing declarations:
+Use `unsafe ffi fn` for foreign-facing declarations:
 
 ```stark
-ffi fn i32[min max] native_value();
+unsafe ffi fn i32[min max] native_value();
 ```
 
 An FFI declaration tells Stark that the function body lives outside ordinary
 Stark source. The declaration should use types that make sense at the foreign
-boundary.
+boundary. It is marked `unsafe` because the compiler cannot prove the native
+callee's lifetime, aliasing, unwinding, or ABI behavior from Stark source.
 
 Ordinary Stark enums are not automatic native ABI types. Design the boundary
 with explicit scalar tags, payload pointers, or a purpose-built interop
@@ -47,11 +48,11 @@ representation instead:
 
 {{< stark-sample "assets/book/negative-samples/enum-abi-boundary.stark" >}}
 
-Use `export ffi fn` for Stark functions that must be visible to the native
+Use `export unsafe ffi fn` for Stark functions that must be visible to the native
 world, such as the hosted entrypoint:
 
 ```stark
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     return 0;
 }
 ```
@@ -66,8 +67,17 @@ Raw pointers are the explicit low-level pointer forms:
 Raw pointers may be `null`. Safe borrows may not.
 
 ```stark
-stack rawptr<i32[min max]> missing = null;
+unsafe fn bool IsMissing(rawptr<i32[min max]> value) {
+    stack rawptr<i32[min max]> missing = null;
+    return value == missing;
+}
 ```
+
+Declaring raw pointer signatures, constructing `null`, dereferencing raw
+pointers, pointer arithmetic, raw pointer casts, bounded raw pointer regions,
+and `slice(pointer, count)` all require an unsafe context. Use an `unsafe fn`
+when the caller must uphold raw memory or ABI facts. Use an `unsafe { ... }`
+block when a safe wrapper contains a small audited low-level step.
 
 Readonly raw access cannot be upgraded into mutable raw access. If a value is
 not mutable, taking its address gives readonly raw access, and a cast cannot
@@ -84,7 +94,7 @@ low-level boundaries. Do not use them as a general replacement for `borrow` or
 Raw pointer parameters can state an element count:
 
 ```stark
-fn void Fill(
+unsafe fn void Fill(
     i64[0 max] length,
     rawmutptr<i32[min max]>[length] destination,
     i32[min max] value) {

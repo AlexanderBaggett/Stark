@@ -1,4 +1,4 @@
-﻿import System.Text
+import System.Text
 import System.IO
 import System.Memory
 import System.Runtime
@@ -23,7 +23,7 @@ public struct FileSystemEntry {
 }
 
 public struct FileSystemEntryInfo {
-    i64[0 max] NameLength;
+    u64[0 2 ** 63 - 1] NameLength;
     FileSystemEntryKind Kind;
 }
 
@@ -44,8 +44,8 @@ public struct Directory {
     internal bool Closed;
     internal i64[min max] BufferReadPos;
     internal i64[min max] BufferWritePos;
-    internal i64[0 max] BufferCapacity;
-    internal rawmutptr<i8[-128 127]> Buffer;
+    internal u64[0 2 ** 63 - 1] BufferCapacity;
+    internal rawmutptr<i8[min max]> Buffer;
     internal System.Memory.Allocation BufferAllocation;
 
     finite law bool IsOpen(borrow Directory self) {
@@ -217,7 +217,7 @@ fn DirectoryReadInfoResult DirectoryReadInfoResultFromPlatformInfo(
     }
 
     stack FileSystemEntryInfo entry = new FileSystemEntryInfo() {
-        NameLength = (i64[0 max])nameLength,
+        NameLength = (u64[0 2 ** 63 - 1])nameLength,
         Kind = FileSystemEntryKindFromPlatformKind(kindCode)
     };
     return DirectoryReadInfoResult.Entry(entry);
@@ -267,7 +267,7 @@ fn System.Memory.Allocation EmptyDirectoryBufferAllocation() {
 
 fn System.IO.IOResult<Directory> OpenDirectoryWithPlatform(ascii path) {
     unsafe {
-        stack i64[0 max] bufferCapacity = System.Runtime.Platform.DirectoryBufferCapacity();
+        stack u64[0 2 ** 63 - 1] bufferCapacity = System.Runtime.Platform.DirectoryBufferCapacity();
         stack mut System.Memory.Allocation bufferAllocation = System.Memory.Allocate(
             System.Memory.Allocator.Default(),
             bufferCapacity,
@@ -276,7 +276,7 @@ fn System.IO.IOResult<Directory> OpenDirectoryWithPlatform(ascii path) {
             return System.IO.IOResult<Directory>.Err(System.IO.IOError.Unknown(-1));
         }
 
-        stack rawmutptr<i8[-128 127]> buffer = (rawmutptr<i8[-128 127]>)bufferAllocation.Pointer;
+        stack rawmutptr<i8[min max]> buffer = (rawmutptr<i8[min max]>)bufferAllocation.Pointer;
         stack mut i64[min max] initialLength = 0;
         stack mut rawptr<i8[min max]> handle = null;
         unsafe {

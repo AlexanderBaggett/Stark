@@ -1,4 +1,4 @@
-﻿using Stark.Compiler;
+using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
@@ -67,44 +67,44 @@ public sealed class SystemFileSystemStandardLibraryTests : StandardLibraryTestSu
                         return false;
                     }
 
-                    stack rawptr<i8[-128 127]> data = name.Data;
+                    stack rawptr<i8[min max]> data = name.Data;
                     if (data == null) {
                         return false;
                     }
 
-                    if (*(&data[0]) != (i8[-128 127])99) {
+                    if (*(&data[0]) != (i8[min max])99) {
                         return false;
                     }
 
-                    if (*(&data[1]) != (i8[-128 127])104) {
+                    if (*(&data[1]) != (i8[min max])104) {
                         return false;
                     }
 
-                    if (*(&data[2]) != (i8[-128 127])105) {
+                    if (*(&data[2]) != (i8[min max])105) {
                         return false;
                     }
 
-                    if (*(&data[3]) != (i8[-128 127])108) {
+                    if (*(&data[3]) != (i8[min max])108) {
                         return false;
                     }
 
-                    if (*(&data[4]) != (i8[-128 127])100) {
+                    if (*(&data[4]) != (i8[min max])100) {
                         return false;
                     }
 
-                    if (*(&data[5]) != (i8[-128 127])46) {
+                    if (*(&data[5]) != (i8[min max])46) {
                         return false;
                     }
 
-                    if (*(&data[6]) != (i8[-128 127])116) {
+                    if (*(&data[6]) != (i8[min max])116) {
                         return false;
                     }
 
-                    if (*(&data[7]) != (i8[-128 127])120) {
+                    if (*(&data[7]) != (i8[min max])120) {
                         return false;
                     }
 
-                    if (*(&data[8]) != (i8[-128 127])116) {
+                    if (*(&data[8]) != (i8[min max])116) {
                         return false;
                     }
 
@@ -135,7 +135,7 @@ public sealed class SystemFileSystemStandardLibraryTests : StandardLibraryTestSu
                     }
                 }
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     if (!IsOk(System.FileSystem.CreateDirectory("fs-root"))) {
                         return 1;
                     }
@@ -152,7 +152,7 @@ public sealed class SystemFileSystemStandardLibraryTests : StandardLibraryTestSu
                         return 4;
                     }
 
-                    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenWrite("fs-root/child.txt");
+                    stack rawptr<i8[min max]> handle = System.IO.File.OpenWrite("fs-root/child.txt");
                     if (handle == null) {
                         return 5;
                     }

@@ -458,7 +458,7 @@ Goal: the language feels broadly usable, not just impressive on a narrow subset.
 - [x] Add first-class unsigned integer width types.
   - [x] Define the source widths `u8`, `u16`, `u24`, `u32`, `u48`, `u64`, `u96`, `u128`, `u192`, `u256`, `u384`, `u512`, `u768`, and `u1024` alongside the existing signed `iN` widths.
   - [x] Extend the grammar and parser so unsigned widths are accepted anywhere integer source types are accepted.
-  - [x] Apply the existing explicit integer range rules to unsigned widths, with `min` fixed to `0` and `max` fixed to `2**N - 1` for each width.
+  - [x] Apply the existing explicit integer range rules to unsigned widths, with `min` fixed to `0` and `max` fixed to `2 ** N - 1` for each width.
   - [x] Reject negative unsigned ranges and out-of-width unsigned endpoints with friendly diagnostics.
   - [x] Preserve unsigned-ness through syntax models, type checking, HIR/MIR/SSA lowering, LLVM emission, and package images instead of treating `uN[a b]` as only a signed integer range spelling.
   - [x] Ensure unsigned arithmetic, comparisons, shifts, integer/float conversions, and formatting/parsing hooks use unsigned semantics where the operation depends on signedness.
@@ -2007,8 +2007,8 @@ turn that book outline into published website content.
       - [x] add collection-level benchmark labels for Stark, Stark experimental, C, and Rust so List, Stack, Queue, LinkedList, and Dictionary can be compared independently
       - [x] add collection-level correctness suites proving stable and experimental collections agree on insertion order, removal behavior, growth, clear/drop, failed allocation status, and generic value ownership
     - [x] add `System.Experimental.Text`
-      - [x] rewrite `OwnedAscii` around `dynamic i8[-128 127]` while preserving cheap `ascii` views, allocation-status APIs, append/copy/format workflows, and drop behavior
-      - [x] rewrite `OwnedUnicode` around `dynamic i32[-2147483648 2147483647]` while preserving cheap `unicode` views, append/copy/format workflows, and drop behavior
+      - [x] rewrite `OwnedAscii` around `dynamic i8[min max]` while preserving cheap `ascii` views, allocation-status APIs, append/copy/format workflows, and drop behavior
+      - [x] rewrite `OwnedUnicode` around `dynamic i32[min max]` while preserving cheap `unicode` views, append/copy/format workflows, and drop behavior
       - [x] replace hot one-character raw pointer slicing in parsing/formatting helpers with `AsciiView`/`UnicodeView`, indexed view access, or compiler-recognized direct data access
       - [x] apply `const`, `disjoint`, `if disjoint`, and `independent` contracts to text comparison, parsing, formatting, transcoding, and copy loops where the source contract proves the fact
       - [x] add old-vs-new benchmarks for owned text allocation, ASCII-to-Unicode conversion, integer formatting, text concat/copy, parsing, and Unicode formatting

@@ -1,4 +1,4 @@
-﻿using Stark.Compiler;
+using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
@@ -246,7 +246,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                 import System
                 module App
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     stack System.Memory.Allocator allocator = System.Memory.Allocator.Default();
                     if (!allocator.IsDefault()) {
                         return 1;
@@ -323,7 +323,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                     }
                 }
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     if (!IsOk(System.Console.Write((unicode)"Console"))) {
                         return 1;
                     }
@@ -416,14 +416,14 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                         return false;
                     }
 
-                    stack i8[-128 127][] view = entry.Name.AsSlice();
+                    stack i8[min max][] view = entry.Name.AsSlice();
                     return view[0] == 119
                         && view[1] == 105
                         && view[2] == 100
                         && view[3] == 101
                         && view[4] == 45
-                        && view[5] == (i8[-128 127])-61
-                        && view[6] == (i8[-128 127])-87
+                        && view[5] == (i8[min max])-61
+                        && view[6] == (i8[min max])-87
                         && view[7] == 46
                         && view[8] == 116
                         && view[9] == 120
@@ -435,7 +435,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                         return false;
                     }
 
-                    stack i8[-128 127][] view = entry.Name.AsSlice();
+                    stack i8[min max][] view = entry.Name.AsSlice();
                     return view[0] == 97
                         && view[179] == 97
                         && view[180] == 46

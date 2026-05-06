@@ -25,7 +25,7 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn i32[-2147483648 2147483647] Run() {
+                fn i32[min max] Run() {
                     stack System.Net.IPv4Endpoint endpoint = new System.Net.IPv4Endpoint() {
                         Address = new System.Net.IPv4Address() {
                             A = 127,
@@ -64,19 +64,19 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
                         return 8;
                     }
 
-                    stack mut i8[-128 127][4] buffer = { 1, 2, 3, 4 };
-                    stack System.Net.NetResult<i64[0 max]> readResult = client.Read(buffer);
+                    stack mut i8[min max][4] buffer = { 1, 2, 3, 4 };
+                    stack System.Net.NetResult<u64[0 2 ** 63 - 1]> readResult = client.Read(buffer);
                     switch (readResult) {
-                        case System.Net.NetResult<i64[0 max]>.Ok(var count):
+                        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
                             return 10;
-                        case System.Net.NetResult<i64[0 max]>.Err(var error):
+                        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
                     }
 
-                    stack System.Net.NetResult<i64[0 max]> writeResult = client.Write(buffer);
+                    stack System.Net.NetResult<u64[0 2 ** 63 - 1]> writeResult = client.Write(buffer);
                     switch (writeResult) {
-                        case System.Net.NetResult<i64[0 max]>.Ok(var count):
+                        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
                             return 11;
-                        case System.Net.NetResult<i64[0 max]>.Err(var error):
+                        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
                     }
 
                     if (!StatusOk(client.Close())) {
@@ -166,7 +166,7 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn i32[-2147483648 2147483647] Run() {
+                fn i32[min max] Run() {
                     stack System.Net.IPv4Endpoint endpoint = new System.Net.IPv4Endpoint() {
                         Address = new System.Net.IPv4Address() {
                             A = 127,
@@ -205,19 +205,19 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
                         return 8;
                     }
 
-                    stack mut i8[-128 127][4] buffer = { 1, 2, 3, 4 };
-                    stack System.Net.NetResult<i64[0 max]> readResult = client.Read(buffer);
+                    stack mut i8[min max][4] buffer = { 1, 2, 3, 4 };
+                    stack System.Net.NetResult<u64[0 2 ** 63 - 1]> readResult = client.Read(buffer);
                     switch (readResult) {
-                        case System.Net.NetResult<i64[0 max]>.Ok(var count):
+                        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
                             return 10;
-                        case System.Net.NetResult<i64[0 max]>.Err(var error):
+                        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
                     }
 
-                    stack System.Net.NetResult<i64[0 max]> writeResult = client.Write(buffer);
+                    stack System.Net.NetResult<u64[0 2 ** 63 - 1]> writeResult = client.Write(buffer);
                     switch (writeResult) {
-                        case System.Net.NetResult<i64[0 max]>.Ok(var count):
+                        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
                             return 11;
-                        case System.Net.NetResult<i64[0 max]>.Err(var error):
+                        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
                     }
 
                     if (!StatusOk(client.Close())) {

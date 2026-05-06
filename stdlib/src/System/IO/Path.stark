@@ -1,17 +1,17 @@
-﻿import System.Memory
+import System.Memory
 import System.Runtime.Platform
 import System.Text
 module System.IO.Path
 
-internal finite law i8[-128 127] DirectorySeparatorUnit() {
+internal finite law i8[min max] DirectorySeparatorUnit() {
     unsafe {
         return *System.Text.AsciiData(DirectorySeparator());
     }
 }
 
-internal finite law bool IsDirectorySeparatorUnit(i8[-128 127] value) {
+internal finite law bool IsDirectorySeparatorUnit(i8[min max] value) {
     unsafe {
-        stack i8[-128 127] separator = DirectorySeparatorUnit();
+        stack i8[min max] separator = DirectorySeparatorUnit();
         if (value == separator) {
             return true;
         }
@@ -25,25 +25,25 @@ internal finite law bool IsDirectorySeparatorUnit(i8[-128 127] value) {
     }
 }
 
-internal finite law bool IsDotUnit(i8[-128 127] value) {
-    return value == (i8[-128 127])46;
+internal finite law bool IsDotUnit(i8[min max] value) {
+    return value == (i8[min max])46;
 }
 
 internal fn System.Memory.MemoryStatus AppendNormalizedSeparatorsCore(
     mut borrow System.Text.OwnedAscii destination,
     ascii source) {
         unsafe {
-        stack i64[-9223372036854775808 9223372036854775807] signedLength = System.Text.AsciiLength(source);
+        stack i64[min max] signedLength = System.Text.AsciiLength(source);
         if (signedLength < 0) {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
         }
 
-        stack i64[0 max] length = (i64[0 max])signedLength;
+        stack u64[0 2 ** 63 - 1] length = (u64[0 2 ** 63 - 1])signedLength;
         if (length == 0) {
             return System.Memory.MemoryStatus.Ok;
         }
 
-        stack rawptr<i8[-128 127]> data = System.Text.AsciiData(source);
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(source);
         if (data == null) {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
         }
@@ -56,9 +56,9 @@ internal fn System.Memory.MemoryStatus AppendNormalizedSeparatorsCore(
         }
 
         stack mut bool previousWasSeparator = false;
-        stack mut i64[0 max] index = 0;
+        stack mut u64[0 2 ** 63 - 1] index = 0;
         while willexit (index < length) {
-            stack i8[-128 127] unit = *(&data[index]);
+            stack i8[min max] unit = *(&data[index]);
             if (IsDirectorySeparatorUnit(unit)) {
                 if (!previousWasSeparator) {
                     init destination.Bytes[destination.Bytes.Length] = DirectorySeparatorUnit();
@@ -80,18 +80,18 @@ internal fn System.Memory.MemoryStatus AppendNormalizedSeparatorsCore(
 
 public struct PathFacts {
     internal ascii Path;
-    internal i64[-9223372036854775808 9223372036854775807] Length;
-    internal i64[-9223372036854775808 9223372036854775807] End;
-    internal i64[-9223372036854775808 9223372036854775807] SegmentStart;
-    internal i64[-9223372036854775808 9223372036854775807] ExtensionStart;
-    internal i64[-9223372036854775808 9223372036854775807] DirectoryLength;
+    internal i64[min max] Length;
+    internal i64[min max] End;
+    internal i64[min max] SegmentStart;
+    internal i64[min max] ExtensionStart;
+    internal i64[min max] DirectoryLength;
     internal bool HasExtension;
 
-    finite law i64[-9223372036854775808 9223372036854775807] PathLength(borrow PathFacts self) {
+    finite law i64[min max] PathLength(borrow PathFacts self) {
         return self.Length;
     }
 
-    finite law i64[-9223372036854775808 9223372036854775807] ExtensionLength(borrow PathFacts self) {
+    finite law i64[min max] ExtensionLength(borrow PathFacts self) {
         if (!self.HasExtension) {
             return 0;
         }
@@ -107,7 +107,7 @@ public struct PathFacts {
         return self.Path[self.ExtensionStart, self.End - self.ExtensionStart];
     }
 
-    finite law i64[-9223372036854775808 9223372036854775807] BaseNameLength(borrow PathFacts self) {
+    finite law i64[min max] BaseNameLength(borrow PathFacts self) {
         if (self.SegmentStart >= self.End) {
             return 0;
         }
@@ -131,7 +131,7 @@ public struct PathFacts {
         return self.Path[self.SegmentStart, self.End - self.SegmentStart];
     }
 
-    finite law i64[-9223372036854775808 9223372036854775807] DirectoryNameLength(borrow PathFacts self) {
+    finite law i64[min max] DirectoryNameLength(borrow PathFacts self) {
         return self.DirectoryLength;
     }
 
@@ -170,7 +170,7 @@ public finite law ascii PathSeparator() {
 
 public fn System.Memory.MemoryStatus CurrentDirectory(mut borrow System.Text.OwnedAscii destination) {
     unsafe {
-        stack mut i8[-128 127][4096] storage;
+        stack mut i8[min max][4096] storage;
         stack mut Ascii path = new Ascii() {
             Data = &storage[0],
             Length = 0,
@@ -202,16 +202,16 @@ public finite law ascii ParentDirectory() {
 
 internal unsafe fn System.Memory.MemoryStatus TryJoinPointerRanges(
     mut borrow System.Text.OwnedAscii destination,
-    i64[0 max] leftCount,
-    rawptr<i8[-128 127]> leftData,
-    i64[0 max] rightCount,
-    rawptr<i8[-128 127]> rightData) {
-    stack mut i64[0 max] rightStart = 0;
-    stack mut i64[0 max] rightCopyLength = rightCount;
+    u64[0 2 ** 63 - 1] leftCount,
+    rawptr<i8[min max]> leftData,
+    u64[0 2 ** 63 - 1] rightCount,
+    rawptr<i8[min max]> rightData) {
+    stack mut u64[0 2 ** 63 - 1] rightStart = 0;
+    stack mut u64[0 2 ** 63 - 1] rightCopyLength = rightCount;
     stack mut bool needsSeparator = false;
 
     if (leftCount > 0 && rightCount > 0) {
-        stack bool leftEndsWithSeparator = IsDirectorySeparatorUnit(*(&leftData[(i64[0 max])(leftCount - 1)]));
+        stack bool leftEndsWithSeparator = IsDirectorySeparatorUnit(*(&leftData[(u64[0 2 ** 63 - 1])(leftCount - 1)]));
         stack bool rightStartsWithSeparator = IsDirectorySeparatorUnit(*rightData);
         if (leftEndsWithSeparator && rightStartsWithSeparator) {
             rightStart = 1;
@@ -224,14 +224,14 @@ internal unsafe fn System.Memory.MemoryStatus TryJoinPointerRanges(
         }
     }
 
-    stack mut i64[0 max] required = leftCount;
-    if (rightCopyLength > (i64[0 max])((2**63) - 1) - required) {
+    stack mut u64[0 2 ** 63 - 1] required = leftCount;
+    if (rightCopyLength > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) - required) {
         return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
     }
 
     required += rightCopyLength;
     if (needsSeparator) {
-        if (required == (i64[0 max])((2**63) - 1)) {
+        if (required == (u64[0 2 ** 63 - 1])(2 ** 63 - 1)) {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
         }
 
@@ -253,7 +253,7 @@ internal unsafe fn System.Memory.MemoryStatus TryJoinPointerRanges(
     }
 
     if (leftCount > 0) {
-        stack init i8[-128 127][] leftTail = init destination.Bytes[destination.Bytes.Length, leftCount];
+        stack init i8[min max][] leftTail = init destination.Bytes[destination.Bytes.Length, leftCount];
         unsafe {
             stack System.Memory.MemoryStatus leftCopyStatus =
                 System.Memory.InitializeBytesFromPointerDisjoint(leftCount, leftData, leftTail);
@@ -271,7 +271,7 @@ internal unsafe fn System.Memory.MemoryStatus TryJoinPointerRanges(
     }
 
     if (rightCopyLength > 0) {
-        stack init i8[-128 127][] rightTail = init destination.Bytes[destination.Bytes.Length, rightCopyLength];
+        stack init i8[min max][] rightTail = init destination.Bytes[destination.Bytes.Length, rightCopyLength];
         unsafe {
             stack System.Memory.MemoryStatus rightCopyStatus =
                 System.Memory.InitializeBytesFromPointerDisjoint(
@@ -295,16 +295,16 @@ public fn System.Memory.MemoryStatus TryJoin(
     ascii left,
     ascii right) {
         unsafe {
-        stack i64[-9223372036854775808 9223372036854775807] leftLength = System.Text.AsciiLength(left);
-        stack i64[-9223372036854775808 9223372036854775807] rightLength = System.Text.AsciiLength(right);
+        stack i64[min max] leftLength = System.Text.AsciiLength(left);
+        stack i64[min max] rightLength = System.Text.AsciiLength(right);
         if (leftLength < 0 || rightLength < 0) {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
         }
 
-        stack i64[0 max] leftCount = (i64[0 max])leftLength;
-        stack i64[0 max] rightCount = (i64[0 max])rightLength;
-        stack mut rawptr<i8[-128 127]> leftData = System.Text.AsciiData(left);
-        stack mut rawptr<i8[-128 127]> rightData = System.Text.AsciiData(right);
+        stack u64[0 2 ** 63 - 1] leftCount = (u64[0 2 ** 63 - 1])leftLength;
+        stack u64[0 2 ** 63 - 1] rightCount = (u64[0 2 ** 63 - 1])rightLength;
+        stack mut rawptr<i8[min max]> leftData = System.Text.AsciiData(left);
+        stack mut rawptr<i8[min max]> rightData = System.Text.AsciiData(right);
         if ((leftCount > 0 && leftData == null) || (rightCount > 0 && rightData == null)) {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
         }
@@ -346,16 +346,16 @@ public fn System.Memory.MemoryStatus TryJoinConst(
     const ascii left,
     const ascii right) {
         unsafe {
-        stack i64[-9223372036854775808 9223372036854775807] leftLength = System.Text.AsciiLength(left);
-        stack i64[-9223372036854775808 9223372036854775807] rightLength = System.Text.AsciiLength(right);
+        stack i64[min max] leftLength = System.Text.AsciiLength(left);
+        stack i64[min max] rightLength = System.Text.AsciiLength(right);
         if (leftLength < 0 || rightLength < 0) {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
         }
 
-        stack i64[0 max] leftCount = (i64[0 max])leftLength;
-        stack i64[0 max] rightCount = (i64[0 max])rightLength;
-        stack rawptr<i8[-128 127]> leftData = System.Text.AsciiData(left);
-        stack rawptr<i8[-128 127]> rightData = System.Text.AsciiData(right);
+        stack u64[0 2 ** 63 - 1] leftCount = (u64[0 2 ** 63 - 1])leftLength;
+        stack u64[0 2 ** 63 - 1] rightCount = (u64[0 2 ** 63 - 1])rightLength;
+        stack rawptr<i8[min max]> leftData = System.Text.AsciiData(left);
+        stack rawptr<i8[min max]> rightData = System.Text.AsciiData(right);
         if ((leftCount > 0 && leftData == null) || (rightCount > 0 && rightData == null)) {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
         }
@@ -440,13 +440,13 @@ public fn System.Memory.MemoryResult<System.Text.OwnedAscii> NormalizeSeparators
 
 public finite law PathFacts GetFacts(ascii path) {
     unsafe {
-        stack mut i64[-9223372036854775808 9223372036854775807] end = System.Text.AsciiLength(path);
-        stack rawptr<i8[-128 127]> data = System.Text.AsciiData(path);
+        stack mut i64[min max] end = System.Text.AsciiLength(path);
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(path);
         if (end > 0 && data == null) {
             return EmptyPathFacts();
         }
 
-        stack i64[-9223372036854775808 9223372036854775807] length = end;
+        stack i64[min max] length = end;
 
         while willexit (end > 1) {
             if (!IsDirectorySeparatorUnit(*(&data[end - 1]))) {
@@ -460,7 +460,7 @@ public finite law PathFacts GetFacts(ascii path) {
             return EmptyPathFacts();
         }
 
-        stack mut i64[-9223372036854775808 9223372036854775807] separator = end - 1;
+        stack mut i64[min max] separator = end - 1;
         while willexit (separator >= 0) {
             if (IsDirectorySeparatorUnit(*(&data[separator]))) {
                 break;
@@ -469,8 +469,8 @@ public finite law PathFacts GetFacts(ascii path) {
             separator -= 1;
         }
 
-        stack i64[-9223372036854775808 9223372036854775807] segmentStart = separator + 1;
-        stack mut i64[-9223372036854775808 9223372036854775807] directoryLength = 0;
+        stack i64[min max] segmentStart = separator + 1;
+        stack mut i64[min max] directoryLength = 0;
         if (separator == 0) {
             directoryLength = 1;
         } else {
@@ -479,7 +479,7 @@ public finite law PathFacts GetFacts(ascii path) {
             }
         }
 
-        stack mut i64[-9223372036854775808 9223372036854775807] extensionStart = end - 1;
+        stack mut i64[min max] extensionStart = end - 1;
         stack mut bool hasExtension = false;
         while willexit (extensionStart > segmentStart) {
             if (IsDotUnit(*(&data[extensionStart]))) {
@@ -504,13 +504,13 @@ public finite law PathFacts GetFacts(ascii path) {
 
 public finite law PathFacts GetConstFacts(const ascii path) {
     unsafe {
-        stack mut i64[-9223372036854775808 9223372036854775807] end = System.Text.AsciiLength(path);
-        stack rawptr<i8[-128 127]> data = System.Text.AsciiData(path);
+        stack mut i64[min max] end = System.Text.AsciiLength(path);
+        stack rawptr<i8[min max]> data = System.Text.AsciiData(path);
         if (end > 0 && data == null) {
             return EmptyPathFacts();
         }
 
-        stack i64[-9223372036854775808 9223372036854775807] length = end;
+        stack i64[min max] length = end;
 
         while willexit (end > 1) {
             if (!IsDirectorySeparatorUnit(*(&data[end - 1]))) {
@@ -524,7 +524,7 @@ public finite law PathFacts GetConstFacts(const ascii path) {
             return EmptyPathFacts();
         }
 
-        stack mut i64[-9223372036854775808 9223372036854775807] separator = end - 1;
+        stack mut i64[min max] separator = end - 1;
         while willexit (separator >= 0) {
             if (IsDirectorySeparatorUnit(*(&data[separator]))) {
                 break;
@@ -533,8 +533,8 @@ public finite law PathFacts GetConstFacts(const ascii path) {
             separator -= 1;
         }
 
-        stack i64[-9223372036854775808 9223372036854775807] segmentStart = separator + 1;
-        stack mut i64[-9223372036854775808 9223372036854775807] directoryLength = 0;
+        stack i64[min max] segmentStart = separator + 1;
+        stack mut i64[min max] directoryLength = 0;
         if (separator == 0) {
             directoryLength = 1;
         } else {
@@ -543,7 +543,7 @@ public finite law PathFacts GetConstFacts(const ascii path) {
             }
         }
 
-        stack mut i64[-9223372036854775808 9223372036854775807] extensionStart = end - 1;
+        stack mut i64[min max] extensionStart = end - 1;
         stack mut bool hasExtension = false;
         while willexit (extensionStart > segmentStart) {
             if (IsDotUnit(*(&data[extensionStart]))) {

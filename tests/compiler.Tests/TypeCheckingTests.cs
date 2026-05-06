@@ -1121,7 +1121,7 @@ public sealed class TypeCheckingTests
             import Lib.Foundation
             module Demo
 
-            fn i32[0 max] Use() {
+            fn u32[0 2147483647] Use() {
                 stack Box box = new() { Value = Identity(Answer) };
                 stack Status status = Status.Ok;
                 switch (status) {
@@ -1143,7 +1143,7 @@ public sealed class TypeCheckingTests
                         public const Answer = 41;
 
                         public struct Box {
-                            i32[0 max] Value;
+                            u32[0 2147483647] Value;
                         }
 
                         public enum Status {
@@ -1152,12 +1152,12 @@ public sealed class TypeCheckingTests
                         }
 
                         public struct Worker {
-                            static finite law i32[0 max] Value() {
+                            static finite law u32[0 2147483647] Value() {
                                 return 7;
                             }
                         }
 
-                        public fn i32[0 max] Identity(i32[0 max] value) {
+                        public fn u32[0 2147483647] Identity(u32[0 2147483647] value) {
                             return value;
                         }
                         """,
@@ -1175,18 +1175,18 @@ public sealed class TypeCheckingTests
             module Demo
 
             const BoardWidth = 80;
-            const i8 BoardWidthTyped = 80;
-            const i32 BoardWidthWide = 80;
+            const u8 BoardWidthTyped = 80;
+            const BoardWidthWide = 80;
             const Negative = -129;
-            const BigCount = 2**16;
-            const u32 UnsignedSmall = 80;
+            const BigCount = 2 ** 16;
+            const u8 UnsignedSmall = 80;
             const u32 UnsignedWide = 4294967295;
             const SmallFloat = 3.5;
             const FloatLiteral = 3.5f;
             const f32 ExplicitFloat = 3.5;
             const f64 ExplicitSmallFloat = 3.5f;
 
-            finite law i32[0 max] UseBoardWidth() {
+            finite law u8[0 max] UseBoardWidth() {
                 return BoardWidth;
             }
             """,
@@ -1196,9 +1196,9 @@ public sealed class TypeCheckingTests
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
         Assert.NotNull(typeCheckModel);
 
-        AssertIntegerRange(typeCheckModel.Globals["BoardWidth"].Type, 8, new BigInteger(80), new BigInteger(80));
-        AssertIntegerRange(typeCheckModel.Globals["BoardWidthTyped"].Type, 8, new BigInteger(80), new BigInteger(80));
-        AssertIntegerRange(typeCheckModel.Globals["BoardWidthWide"].Type, 8, new BigInteger(80), new BigInteger(80));
+        AssertIntegerRange(typeCheckModel.Globals["BoardWidth"].Type, 8, new BigInteger(80), new BigInteger(80), isUnsigned: true);
+        AssertIntegerRange(typeCheckModel.Globals["BoardWidthTyped"].Type, 8, new BigInteger(80), new BigInteger(80), isUnsigned: true);
+        AssertIntegerRange(typeCheckModel.Globals["BoardWidthWide"].Type, 8, new BigInteger(80), new BigInteger(80), isUnsigned: true);
         AssertIntegerRange(typeCheckModel.Globals["Negative"].Type, 16, new BigInteger(-129), new BigInteger(-129));
         AssertIntegerRange(typeCheckModel.Globals["BigCount"].Type, 24, new BigInteger(65536), new BigInteger(65536));
         AssertIntegerRange(typeCheckModel.Globals["UnsignedSmall"].Type, 8, new BigInteger(80), new BigInteger(80), isUnsigned: true);
@@ -1213,17 +1213,53 @@ public sealed class TypeCheckingTests
         Assert.Equal(32, typeCheckModel.Globals["ExplicitSmallFloat"].Type.BitWidth);
 
         Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Severity == DiagnosticSeverity.Warning
-            && diagnostic.Message.Contains("BoardWidthWide", StringComparison.Ordinal)
-            && diagnostic.Message.Contains("i8", StringComparison.Ordinal));
-        Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Severity == DiagnosticSeverity.Warning
-            && diagnostic.Message.Contains("UnsignedSmall", StringComparison.Ordinal)
-            && diagnostic.Message.Contains("u8", StringComparison.Ordinal));
-        Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Severity == DiagnosticSeverity.Warning
             && diagnostic.Message.Contains("ExplicitFloat", StringComparison.Ordinal)
             && diagnostic.Message.Contains("f32", StringComparison.Ordinal));
         Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Severity == DiagnosticSeverity.Warning
             && diagnostic.Message.Contains("ExplicitSmallFloat", StringComparison.Ordinal)
             && diagnostic.Message.Contains("f32", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void StrictIntegerRangesRejectExplicitScalarConstWrongWidthOrSign()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            const i32 PositiveSigned = 80;
+            const u32 PositiveWide = 80;
+            const i32 NegativeWide = -1;
+            const u8 CorrectUnsigned = 255;
+            const i8 CorrectSigned = -1;
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                EnforceIntegerRangeStorageRules: true));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3014"
+                && diagnostic.Message.Contains("PositiveSigned", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("i32", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("u8", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3014"
+                && diagnostic.Message.Contains("PositiveWide", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("u32", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("u8", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3014"
+                && diagnostic.Message.Contains("NegativeWide", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("i32", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("i8", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Message.Contains("CorrectUnsigned", StringComparison.Ordinal)
+                || diagnostic.Message.Contains("CorrectSigned", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1424,19 +1460,19 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[10**2 10**10] DecimalPowers(i32[10**2 10**10] value) {
+            fn u48[10 ** 2 10 ** 10] DecimalPowers(u48[10 ** 2 10 ** 10] value) {
                 return value;
             }
 
-            fn i32[2**4 2**16] BinaryPowers(i32[2**4 2**16] value) {
+            fn u24[2 ** 4 2 ** 16] BinaryPowers(u24[2 ** 4 2 ** 16] value) {
                 return value;
             }
 
-            fn i64[1024 * 1024 1024 * 1024 * 1024] Sizes(i64[1024 * 1024 1024 * 1024 * 1024] value) {
+            fn u32[1024 * 1024 1024 * 1024 * 1024] Sizes(u32[1024 * 1024 1024 * 1024 * 1024] value) {
                 return value;
             }
 
-            fn i32[(1 + 2) * 3 20 / 2 + 1] MixedArithmetic(i32[(1 + 2) * 3 20 / 2 + 1] value) {
+            fn u8[(1 + 2) * 3 20 / 2 + 1] MixedArithmetic(u8[(1 + 2) * 3 20 / 2 + 1] value) {
                 return value;
             }
             """,
@@ -1447,20 +1483,50 @@ public sealed class TypeCheckingTests
         Assert.NotNull(typeCheckModel);
 
         var decimalPowers = typeCheckModel.Functions["DecimalPowers"];
-        AssertIntegerRange(decimalPowers.ReturnType, 32, new BigInteger(100), BigInteger.Parse("10000000000"));
-        AssertIntegerRange(decimalPowers.Parameters[0].Type, 32, new BigInteger(100), BigInteger.Parse("10000000000"));
+        AssertIntegerRange(decimalPowers.ReturnType, 48, new BigInteger(100), BigInteger.Parse("10000000000"), isUnsigned: true);
+        AssertIntegerRange(decimalPowers.Parameters[0].Type, 48, new BigInteger(100), BigInteger.Parse("10000000000"), isUnsigned: true);
 
         var binaryPowers = typeCheckModel.Functions["BinaryPowers"];
-        AssertIntegerRange(binaryPowers.ReturnType, 32, new BigInteger(16), new BigInteger(65536));
-        AssertIntegerRange(binaryPowers.Parameters[0].Type, 32, new BigInteger(16), new BigInteger(65536));
+        AssertIntegerRange(binaryPowers.ReturnType, 24, new BigInteger(16), new BigInteger(65536), isUnsigned: true);
+        AssertIntegerRange(binaryPowers.Parameters[0].Type, 24, new BigInteger(16), new BigInteger(65536), isUnsigned: true);
 
         var sizes = typeCheckModel.Functions["Sizes"];
-        AssertIntegerRange(sizes.ReturnType, 64, new BigInteger(1048576), new BigInteger(1073741824));
-        AssertIntegerRange(sizes.Parameters[0].Type, 64, new BigInteger(1048576), new BigInteger(1073741824));
+        AssertIntegerRange(sizes.ReturnType, 32, new BigInteger(1048576), new BigInteger(1073741824), isUnsigned: true);
+        AssertIntegerRange(sizes.Parameters[0].Type, 32, new BigInteger(1048576), new BigInteger(1073741824), isUnsigned: true);
 
         var mixedArithmetic = typeCheckModel.Functions["MixedArithmetic"];
-        AssertIntegerRange(mixedArithmetic.ReturnType, 32, new BigInteger(9), new BigInteger(11));
-        AssertIntegerRange(mixedArithmetic.Parameters[0].Type, 32, new BigInteger(9), new BigInteger(11));
+        AssertIntegerRange(mixedArithmetic.ReturnType, 8, new BigInteger(9), new BigInteger(11), isUnsigned: true);
+        AssertIntegerRange(mixedArithmetic.Parameters[0].Type, 8, new BigInteger(9), new BigInteger(11), isUnsigned: true);
+    }
+
+    [Fact]
+    public void StrictIntegerRangesRejectSignedEndpointsOutsideBaseType()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[10**2 10**10] TooWide(i8[-200 0] value) {
+                return 0;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                EnforceIntegerRangeStorageRules: true));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3014"
+                && diagnostic.Message.Contains("i32", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("between", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("u48[100 10000000000]", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3014"
+                && diagnostic.Message.Contains("i8", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("between", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("i16[-200 0]", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1490,7 +1556,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[0 2**2048] Bad() {
+            fn i32[0 2 ** 2048] Bad() {
                 return 0;
             }
             """,
@@ -1573,7 +1639,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[2**8 2**4] Bad() {
+            fn i32[2 ** 8 2 ** 4] Bad() {
                 return 0;
             }
             """,

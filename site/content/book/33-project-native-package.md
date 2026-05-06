@@ -41,9 +41,9 @@ package should do the same thing at package scale: keep raw native declarations
 close to the package that owns them, then expose a smaller Stark API to
 downstream code.
 
-The `ffi fn native_value` declaration shows the boundary shape without making
-the ordinary safe part of the program depend on raw pointers or nullable safe
-borrows.
+The `unsafe ffi fn native_value` declaration shows the boundary shape without
+making the ordinary safe part of the program depend on raw pointers or nullable
+safe borrows.
 
 ## Native Shim
 

@@ -5,6 +5,147 @@ namespace compiler.Tests;
 public sealed class SemanticValidationTests
 {
     [Fact]
+    public void StrictIntegerRangesRejectNonCanonicalStorageOutsideFfiBoundaries()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            alias SmallAlias = i32[0 255];
+
+            struct Box {
+                i32[0 255] Value;
+                i32[0 127][4] Fixed;
+            }
+
+            struct Holder<T> {
+                T Value;
+            }
+
+            fn i64[0 max] Run(i32[1 10] parameter, Holder<i32[0 63]> holder) {
+                stack dynamic i32[0 7] values = new();
+                stack i32[0 128] local = parameter;
+                stack i32[0 9] converted = (i32[0 9])local;
+                return local;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "semantic-validate",
+                EnforceIntegerRangeStorageRules: true));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, static diagnostic => IsStrictRangeDiagnostic(diagnostic, "i32[0 255]", "u8"));
+        Assert.Contains(result.Diagnostics, static diagnostic => IsStrictRangeDiagnostic(diagnostic, "i32[0 127]", "u8[0 127]"));
+        Assert.Contains(result.Diagnostics, static diagnostic => IsStrictRangeDiagnostic(diagnostic, "i64[0 9223372036854775807]", "u64[0 9223372036854775807]"));
+        Assert.Contains(result.Diagnostics, static diagnostic => IsStrictRangeDiagnostic(diagnostic, "i32[1 10]", "u8[1 10]"));
+        Assert.Contains(result.Diagnostics, static diagnostic => IsStrictRangeDiagnostic(diagnostic, "i32[0 63]", "u8[0 63]"));
+        Assert.Contains(result.Diagnostics, static diagnostic => IsStrictRangeDiagnostic(diagnostic, "i32[0 7]", "u8[0 7]"));
+        Assert.Contains(result.Diagnostics, static diagnostic => IsStrictRangeDiagnostic(diagnostic, "i32[0 128]", "u8[0 128]"));
+        Assert.Contains(result.Diagnostics, static diagnostic => IsStrictRangeDiagnostic(diagnostic, "i32[0 9]", "u8[0 9]"));
+    }
+
+    [Fact]
+    public void StrictIntegerRangesAllowFfiAbiSignatureStorage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            public unsafe ffi fn i32[0 255] Read(i32[0 255] value);
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "semantic-validate",
+                EnforceIntegerRangeStorageRules: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void StrictIntegerRangesAllowPlatformAnnotatedAbiSignatureStorage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [Platform]
+            unsafe fn i32[0 255] ReadPlatformStatus(i32[0 255] status) {
+                return status;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "semantic-validate",
+                EnforceIntegerRangeStorageRules: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void StrictIntegerRangesAllowPlatformAnnotatedAggregateFieldStorage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [Platform]
+            struct HostStatus {
+                i32[0 255] Code;
+            }
+
+            fn i32[min max] Read(HostStatus status) {
+                return (i32[min max])status.Code;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "semantic-validate",
+                EnforceIntegerRangeStorageRules: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void StrictIntegerRangesStillRejectNonCanonicalLocalsInsidePlatformAnnotatedFunctions()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [Platform]
+            unsafe fn i32[min max] Run() {
+                stack i32[0 255] status = 0;
+                return status;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "semantic-validate",
+                EnforceIntegerRangeStorageRules: true));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, static diagnostic => IsStrictRangeDiagnostic(diagnostic, "i32[0 255]", "u8"));
+    }
+
+    [Fact]
+    public void StrictIntegerRangesRejectUnnecessarilyWideUnsignedAndSignedRanges()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn u32[0 255] Run(u16[0 15] tag) {
+                stack i32[-1 1] delta = -1;
+                return tag;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "semantic-validate",
+                EnforceIntegerRangeStorageRules: true));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, static diagnostic => IsStrictRangeDiagnostic(diagnostic, "u32[0 255]", "u8"));
+        Assert.Contains(result.Diagnostics, static diagnostic => IsStrictRangeDiagnostic(diagnostic, "u16[0 15]", "u8[0 15]"));
+        Assert.Contains(result.Diagnostics, static diagnostic => IsStrictRangeDiagnostic(diagnostic, "i32[-1 1]", "i8[-1 1]"));
+    }
+
+    [Fact]
     public void BorrowReturnTypesAreRejected()
     {
         var result = Compile(
@@ -213,7 +354,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            public unsafe fn rawmutptr<i8[-128 127]> AllocateBytes(i64[0 9223372036854775807] byteCount);
+            public unsafe fn rawmutptr<i8[-128 127]> AllocateBytes(u64[0 9223372036854775807] byteCount);
             """);
 
         Assert.False(result.Succeeded);
@@ -241,7 +382,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            internal unsafe fn rawmutptr<i8[-128 127]> AllocateBytes(i64[0 9223372036854775807] byteCount);
+            internal unsafe fn rawmutptr<i8[-128 127]> AllocateBytes(u64[0 9223372036854775807] byteCount);
             """);
 
         Assert.True(result.Succeeded);
@@ -314,7 +455,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            const i32 Answer = 1 + 2;
+            const u8 Answer = 1 + 2;
             """);
 
         Assert.True(result.Succeeded);
@@ -343,9 +484,9 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            const i32 Answer = 42;
+            const Answer = 42;
 
-            law i32[-2147483648 2147483647] Read() {
+            law u8[0 max] Read() {
                 return Answer;
             }
             """);
@@ -549,9 +690,9 @@ public sealed class SemanticValidationTests
             module Demo
 
             struct Box {
-                i32[0 max] Value;
+                u32[0 2147483647] Value;
 
-                law retborrow i32[0 max] Get(borrow Box self) {
+                law retborrow u32[0 2147483647] Get(borrow Box self) {
                     return self.Value;
                 }
             }
@@ -559,7 +700,7 @@ public sealed class SemanticValidationTests
             struct Holder {
                 Box Inner;
 
-                law retborrow i32[0 max] Get(borrow Holder self) {
+                law retborrow u32[0 2147483647] Get(borrow Holder self) {
                     return self.Inner.Get();
                 }
             }
@@ -985,10 +1126,10 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            const i32 Answer = 42;
+            const Answer = 42;
 
             doctrine Numbers {
-                law i32[-2147483648 2147483647] Read() {
+                law u8[0 max] Read() {
                     return Answer;
                 }
             }
@@ -1096,5 +1237,12 @@ public sealed class SemanticValidationTests
     private static void AssertDiagnostic(CompilationResult result, string code)
     {
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == code);
+    }
+
+    private static bool IsStrictRangeDiagnostic(CompilerDiagnostic diagnostic, string sourceType, string suggestedType)
+    {
+        return diagnostic.Code == "STK3014"
+            && diagnostic.Message.Contains(sourceType, StringComparison.Ordinal)
+            && diagnostic.Message.Contains(suggestedType, StringComparison.Ordinal);
     }
 }

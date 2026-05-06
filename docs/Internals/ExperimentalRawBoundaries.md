@@ -3,6 +3,10 @@
 Experimental standard-library modules should prefer Stark-owned safe contracts:
 slices, `dynamic T`, `init`/`out`, owned text, and runtime buffers.
 
+The canonical stable and experimental boundary inventory lives in
+`docs/Internals/StandardLibraryRawPointerBoundaries.md`. This file summarizes
+the experimental promotion rule.
+
 Raw pointers remain legitimate in these places:
 
 - `System.Runtime`, `System.Runtime.Platform.*`, syscall shims, OS handles,

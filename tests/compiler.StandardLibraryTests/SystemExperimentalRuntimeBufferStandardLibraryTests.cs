@@ -1,4 +1,4 @@
-﻿using Stark.Compiler;
+using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
@@ -27,7 +27,7 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
             }
         }
 
-        fn i64[min max] SumBytes(borrow i8[-128 127][] values, i64[0 max] count) {
+        fn i64[min max] SumBytes(borrow i8[min max][] values, i64[0 max] count) {
             stack mut i64[min max] checksum = 0;
             for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
                 checksum += (i64[min max])values[index];
@@ -38,7 +38,7 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
 
         fn bool WriteFirstWritable(
             mut borrow System.Runtime.Buffer.FixedByteBuffer512 buffer,
-            i8[-128 127] value,
+            i8[min max] value,
             i64[0 max] expectedWritable) {
             if (buffer.Writable() != expectedWritable) {
                 return false;
@@ -59,7 +59,7 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
 
         export unsafe ffi fn i32[min max] main() {
             stack mut System.Runtime.Buffer.FixedByteBuffer512 fixedBuffer = new();
-            stack mut i8[-128 127][8] source = { 1, 2, 3, 4, 5, 6, 7, 8 };
+            stack mut i8[min max][8] source = { 1, 2, 3, 4, 5, 6, 7, 8 };
 
             if (fixedBuffer.Capacity() != 512 || !fixedBuffer.IsEmpty() || fixedBuffer.Writable() != 512) {
                 return 1;
@@ -73,7 +73,7 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
                 return 3;
             }
 
-            stack i8[-128 127][] initial = fixedBuffer.ReadSlice();
+            stack i8[min max][] initial = fixedBuffer.ReadSlice();
             if (SumBytes(initial, 8) != 36) {
                 return 4;
             }
@@ -88,7 +88,7 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
                 return 6;
             }
 
-            stack i8[-128 127][] compacted = fixedBuffer.ReadSlice();
+            stack i8[min max][] compacted = fixedBuffer.ReadSlice();
             if (compacted[0] != 4 || compacted[4] != 8) {
                 return 7;
             }
@@ -119,18 +119,18 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
                 return 13;
             }
 
-            stack i8[-128 127][] manual = fixedBuffer.ReadSlice();
+            stack i8[min max][] manual = fixedBuffer.ReadSlice();
             if (fixedBuffer.Readable() != 5 || manual[0] != 6 || manual[4] != 6) {
                 return 14;
             }
 
             stack i64[0 max] aliasedFixedCount = fixedBuffer.Readable();
-            stack i8[-128 127][] aliasedFixedSource = fixedBuffer.ReadSlice();
+            stack i8[min max][] aliasedFixedSource = fixedBuffer.ReadSlice();
             if (!Ok(fixedBuffer.WriteSlice(aliasedFixedSource, aliasedFixedCount))) {
                 return 32;
             }
 
-            stack i8[-128 127][] duplicatedFixed = fixedBuffer.ReadSlice();
+            stack i8[min max][] duplicatedFixed = fixedBuffer.ReadSlice();
             if (fixedBuffer.Readable() != 10 || duplicatedFixed[5] != duplicatedFixed[0] || duplicatedFixed[9] != duplicatedFixed[4]) {
                 return 33;
             }
@@ -166,7 +166,7 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
                 return 20;
             }
 
-            stack mut i8[-128 127] popped = 0;
+            stack mut i8[min max] popped = 0;
             if (!dynamicBuffer.TryReadByte(popped) || popped != 10) {
                 return 21;
             }
@@ -178,23 +178,23 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
                 return 22;
             }
 
-            stack i8[-128 127][] remaining = dynamicBuffer.ReadSlice();
+            stack i8[min max][] remaining = dynamicBuffer.ReadSlice();
             if (remaining[0] != 5 || remaining[3] != 8 || remaining[7] != 2) {
                 return 23;
             }
 
             stack i64[0 max] aliasedDynamicCount = dynamicBuffer.Readable();
-            stack i8[-128 127][] aliasedDynamicSource = dynamicBuffer.ReadSlice();
+            stack i8[min max][] aliasedDynamicSource = dynamicBuffer.ReadSlice();
             if (!Ok(dynamicBuffer.WriteSlice(aliasedDynamicSource, aliasedDynamicCount))) {
                 return 30;
             }
 
-            stack i8[-128 127][] duplicatedDynamic = dynamicBuffer.ReadSlice();
+            stack i8[min max][] duplicatedDynamic = dynamicBuffer.ReadSlice();
             if (dynamicBuffer.Readable() != 16 || duplicatedDynamic[8] != duplicatedDynamic[0] || duplicatedDynamic[15] != duplicatedDynamic[7]) {
                 return 31;
             }
 
-            if (!TooLarge(dynamicBuffer.Reserve((i64[0 max])((2**63) - 1)))) {
+            if (!TooLarge(dynamicBuffer.Reserve((i64[0 max])(2 ** 63 - 1)))) {
                 return 24;
             }
 
@@ -243,14 +243,14 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
 
                 fn System.Memory.MemoryStatus FillFixed(
                     mut borrow System.Runtime.Buffer.FixedByteBuffer512 buffer,
-                    i8[-128 127] value,
+                    i8[min max] value,
                     i64[0 max] count) {
                     return buffer.WriteFill(value, count);
                 }
 
                 fn System.Memory.MemoryStatus AppendDynamic(
                     mut borrow System.Runtime.Buffer.DynamicByteBuffer buffer,
-                    borrow i8[-128 127][] source,
+                    borrow i8[min max][] source,
                     i64[0 max] count) {
                     return buffer.WriteSlice(source, count);
                 }

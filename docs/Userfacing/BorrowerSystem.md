@@ -213,7 +213,7 @@ These are the only pointer forms that may be:
 
 Raw pointers are allowed only in:
 
-* `ffi fn`
+* `unsafe ffi fn`
 * explicit raw or unsafe regions
 * explicit low level runtime code
 * explicit conversions at FFI boundaries
@@ -239,10 +239,10 @@ This boundary preserves the safe code guarantees that matter for optimization:
 ```stark
 module Demo
 
-ffi fn rawptr<i8[-128 127]> getenv(rawptr<i8[-128 127]> name);
+unsafe ffi fn rawptr<i8[min max]> getenv(rawptr<i8[min max]> name);
 
-fn bool RawNullIsExplicit() {
-    stack rawptr<i8[-128 127]> missing = null;
+unsafe fn bool RawNullIsExplicit() {
+    stack rawptr<i8[min max]> missing = null;
     return missing == null;
 }
 ```
@@ -254,7 +254,7 @@ module Demo
 
 fn void InvalidNullBorrow() {
     // Rejected: safe borrows are never null.
-    stack borrow i8[-128 127] value = null;
+    stack borrow i8[min max] value = null;
 }
 ```
 
@@ -527,8 +527,8 @@ module Demo
 
 fn void Copy(
     i64[0 max] length,
-    disjoint rawptr<i8[-128 127]>[length] source,
-    disjoint rawmutptr<i8[-128 127]>[length] destination)
+    disjoint rawptr<i8[min max]>[length] source,
+    disjoint rawmutptr<i8[min max]>[length] destination)
     where disjoint(source[0, length], destination[0, length]) {
     return;
 }

@@ -157,7 +157,7 @@ public enum MemoryResult<T> {
 }
 
 public struct Allocator {
-    u8[0 127] Kind;
+    u8[0 2 ** 7 - 1] Kind;
 
     static finite law Allocator Default();
     finite law bool IsDefault(borrow Allocator self);

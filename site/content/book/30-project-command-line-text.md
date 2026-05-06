@@ -32,7 +32,7 @@ The project should have three layers:
 
 - parsing and validation over `ascii` or `unicode` input
 - processing functions that return status/result data
-- a tiny `export ffi fn main` that maps success/failure to an exit code
+- a tiny `export unsafe ffi fn main` that maps success/failure to an exit code
 
 That shape works today even before hosted argument arrays exist.
 

@@ -1,4 +1,4 @@
-﻿using Stark.Compiler;
+using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
@@ -113,8 +113,8 @@ public sealed class SystemRuntimePlatformLinuxStandardLibraryTests
                 import System.Runtime.Platform
                 module App
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
-                    if (System.Runtime.Platform.WaitWritable((rawptr<i8[-128 127]>)1, 0) <= 0) {
+                export unsafe ffi fn i32[min max] main() {
+                    if (System.Runtime.Platform.WaitWritable((rawptr<i8[min max]>)1, 0) <= 0) {
                         return 1;
                     }
 
@@ -218,8 +218,8 @@ public sealed class SystemRuntimePlatformLinuxStandardLibraryTests
                 import System.Runtime.Platform
                 module App
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
-                    stack mut i32[-2147483648 2147483647] state = 1;
+                export unsafe ffi fn i32[min max] main() {
+                    stack mut i32[min max] state = 1;
                     if (System.Runtime.Platform.FutexWait(&state, 2) != -11) {
                         return 1;
                     }
@@ -301,7 +301,7 @@ public sealed class SystemRuntimePlatformLinuxStandardLibraryTests
                 import System.Runtime.Platform
                 module App
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     if (System.Runtime.Platform.ProcessId() <= 0) {
                         return 3;
                     }

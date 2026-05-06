@@ -1,4 +1,4 @@
-﻿using Stark.Compiler;
+using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
@@ -47,11 +47,11 @@ public sealed class SystemThreadingStandardLibraryTests : StandardLibraryTestSui
                 import System.Threading
                 module App
 
-                fn i32[-2147483648 2147483647] Worker() {
+                fn i32[min max] Worker() {
                     return 7;
                 }
 
-                fn bool JoinResultIs(System.Threading.ThreadJoinResult result, i32[-2147483648 2147483647] expected) {
+                fn bool JoinResultIs(System.Threading.ThreadJoinResult result, i32[min max] expected) {
                     switch (result) {
                         case System.Threading.ThreadJoinResult.Ok(var value):
                             return value == expected;
@@ -69,7 +69,7 @@ public sealed class SystemThreadingStandardLibraryTests : StandardLibraryTestSui
                     }
                 }
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     stack ThreadEntry entry = Worker;
                     Thread.Yield();
                     Thread.SleepMilliseconds(0);
@@ -161,11 +161,11 @@ public sealed class SystemThreadingStandardLibraryTests : StandardLibraryTestSui
                 import System.Threading
                 module Demo
 
-                fn i32[-2147483648 2147483647] Worker() {
+                fn i32[min max] Worker() {
                     return 7;
                 }
 
-                fn i32[-2147483648 2147483647] Run() {
+                fn i32[min max] Run() {
                     stack System.Threading.ThreadEntry entry = Worker;
                     stack System.Threading.ThreadEntry lambdaEntry = () => 11;
                     System.Threading.Thread.Yield();
@@ -225,7 +225,7 @@ public sealed class SystemThreadingStandardLibraryTests : StandardLibraryTestSui
                 module Demo
 
                 fn void Run() {
-                    stack i32[-2147483648 2147483647] exitCode = 7;
+                    stack i32[min max] exitCode = 7;
                     stack System.Threading.ThreadEntry entry = capture(copy exitCode) () => exitCode;
                     stack mut System.Threading.Thread worker = new(capture(copy exitCode) () => exitCode);
                     return;

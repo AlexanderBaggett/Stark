@@ -5361,7 +5361,11 @@ internal sealed class TypeChecker
                 && constant.IntegerValue <= declaredMax)
             {
                 var unsignedConstantType = InferConstUnsignedIntegerStorageType(constant.IntegerValue);
-                ReportConstIntegerDemotionIfNeeded(declarator, declaredType, unsignedConstantType, integerTypeToken);
+                if (!ReportStrictConstIntegerStorageErrorIfNeeded(declarator, declaredType, constant.IntegerValue, integerTypeToken))
+                {
+                    ReportConstIntegerDemotionIfNeeded(declarator, declaredType, unsignedConstantType, integerTypeToken);
+                }
+
                 return ValidateRuntimeValueType(unsignedConstantType, declarator, usage);
             }
 
@@ -5375,7 +5379,11 @@ internal sealed class TypeChecker
         var resolvedConstantType = declaredType.IsUnsigned
             ? InferConstUnsignedIntegerStorageType(constant.IntegerValue)
             : constantType;
-        ReportConstIntegerDemotionIfNeeded(declarator, declaredType, resolvedConstantType, integerTypeToken);
+        if (!ReportStrictConstIntegerStorageErrorIfNeeded(declarator, declaredType, constant.IntegerValue, integerTypeToken))
+        {
+            ReportConstIntegerDemotionIfNeeded(declarator, declaredType, resolvedConstantType, integerTypeToken);
+        }
+
         return ValidateRuntimeValueType(resolvedConstantType, declarator, usage);
     }
 
@@ -5571,14 +5579,9 @@ internal sealed class TypeChecker
 
     private static StarkTypeSymbol InferConstIntegerStorageType(BigInteger value)
     {
-        foreach (var width in SupportedIntegerLiteralWidths)
+        if (IntegerRangeStorageFacts.TryGetSmallestTypeForRange(value, value, out var type))
         {
-            var min = -(BigInteger.One << (width - 1));
-            var max = (BigInteger.One << (width - 1)) - BigInteger.One;
-            if (value >= min && value <= max)
-            {
-                return StarkTypeSymbols.Integer(width, value, value);
-            }
+            return type;
         }
 
         return StarkTypeSymbols.Integer(SupportedIntegerLiteralWidths[^1], value, value);
@@ -5603,21 +5606,8 @@ internal sealed class TypeChecker
         var text = integerTypeToken.Text;
         var isUnsigned = text[0] == 'u';
         var width = int.Parse(text[1..], CultureInfo.InvariantCulture);
-        GetIntegerTypeBounds(width, isUnsigned, out var min, out var max);
+        IntegerRangeStorageFacts.GetIntegerTypeBounds(width, isUnsigned, out var min, out var max);
         return StarkTypeSymbols.Integer(width, min, max, isUnsigned);
-    }
-
-    private static void GetIntegerTypeBounds(int width, bool isUnsigned, out BigInteger min, out BigInteger max)
-    {
-        if (isUnsigned)
-        {
-            min = BigInteger.Zero;
-            max = (BigInteger.One << width) - BigInteger.One;
-            return;
-        }
-
-        min = -(BigInteger.One << (width - 1));
-        max = (BigInteger.One << (width - 1)) - BigInteger.One;
     }
 
     private static bool IsScalarIntegerType(StarkParser.Type_Context typeContext)
@@ -5641,6 +5631,26 @@ internal sealed class TypeChecker
             "STK3025",
             $"Constant '{declarator.Identifier().GetText()}' fits in {FormatConstStorageName(constantType)}, so Stark will store it as {FormatConstStorageName(constantType)} instead of {FormatConstStorageName(declaredType)}. You can write `{BuildUntypedConstSuggestion(declarator)}` to let Stark pick this automatically.",
             context);
+    }
+
+    private bool ReportStrictConstIntegerStorageErrorIfNeeded(
+        StarkParser.ConstantDeclaratorContext declarator,
+        StarkTypeSymbol declaredType,
+        BigInteger value,
+        IToken token)
+    {
+        if (!_context.Options.EnforceIntegerRangeStorageRules
+            || !IntegerRangeStorageFacts.TryGetSmallestTypeForRange(value, value, out var suggestedType)
+            || declaredType.BitWidth == suggestedType.BitWidth && declaredType.IsUnsigned == suggestedType.IsUnsigned)
+        {
+            return false;
+        }
+
+        ReportError(
+            "STK3014",
+            $"Constant '{declarator.Identifier().GetText()}' is written as {token.Text}, but value {value} fits in {FormatConstStorageName(suggestedType)}. Use `{FormatConstStorageName(suggestedType)}` or write `{BuildUntypedConstSuggestion(declarator)}` and Stark will choose it.",
+            token);
+        return true;
     }
 
     private void ReportConstIntegerDemotionIfNeeded(

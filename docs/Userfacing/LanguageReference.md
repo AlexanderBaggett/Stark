@@ -385,7 +385,7 @@ Stark's first class callable model starts with **function items**.
 A function item is the callable value represented by a named function. It is not a raw pointer by default, does not capture state, and can usually be specialized, inlined, or called directly.
 
 ```stark
-fn i32[-2147483648 2147483647] Worker() {
+fn i32[min max] Worker() {
     return 0;
 }
 
@@ -397,8 +397,8 @@ fn void Start() {
 Function items may be promoted to explicit function pointer values when a runtime pointer is required.
 
 ```stark
-stack fnptr<fn i32[-2147483648 2147483647]()> entry = Worker;
-stack i32[-2147483648 2147483647] result = entry();
+stack fnptr<fn i32[min max]()> entry = Worker;
+stack i32[min max] result = entry();
 ```
 
 Promotion to a function pointer is the point where the function becomes address taken. Ordinary function item use stays direct; indirect callable behavior is requested explicitly through a `fnptr` value.
@@ -422,7 +422,7 @@ Lambda syntax follows the C# arrow form:
 stack fnptr<fn i32[0 max](i32[0 max])> square =
     (i32[0 max] value) => value * value;
 
-stack fnptr<fn i32[-2147483648 2147483647](rawmutptr<State>)> worker =
+stack fnptr<fn i32[min max](rawmutptr<State>)> worker =
     (rawmutptr<State> state) => {
         return Worker(state);
     };
@@ -478,26 +478,28 @@ The builtin type families:
 
 Examples:
 
-* `i32[0 255]`
-* `u8[0 255]`
-* `i64[-9223372036854775808 9223372036854775807]`
-* `i128[0 340282366920938463463374607431768211455]`
+* `u8[0 max]`
+* `i32[min max]`
+* `i64[min max]`
+* `u128[0 max]`
 * `f16`, `f32`, `f64`, `f80`, `f128`
 
 Integer source types are always written as explicit ranged forms over one of the supported widths.
 
 ```stark
-i32[0 255]
+u8[0 max]
 i32[min max]
-i64[0 max]
+u64[0 max]
 u8[min 127]
-i32[10**2 10**10]
-i64[1024 * 1024 1024 * 1024 * 1024]
+u48[10 ** 2 10 ** 10]
+u32[1024 * 1024 1024 * 1024 * 1024]
 ```
 
-Within an integer range, `min` and `max` are type relative endpoint names. For signed `iN` ranges they mean the signed minimum and maximum for that width. For unsigned `uN` ranges they mean `0` and `2**N - 1`.
+Within an integer range, `min` and `max` are type relative endpoint names. For signed `iN` ranges they mean the signed minimum and maximum for that width. For unsigned `uN` ranges they mean `0` and `2 ** N - 1`.
 
-Unsigned integer widths are real integer types, not aliases for signed integers with non negative ranges. For `uN`, `min` is `0` and `max` is `2**N - 1`. Negative endpoints and endpoints outside that width are rejected.
+Unsigned integer widths are real integer types, not aliases for signed integers with non negative ranges. For `uN`, `min` is `0` and `max` is `2 ** N - 1`. Negative endpoints and endpoints outside that width are rejected.
+
+Stark rejects non negative signed ranges and unnecessarily wide integer range storage by default. For example, write `u8[0 max]` instead of `i32[0 255]`, and use a narrower supported width when the declared range fits. `ffi` signatures and declarations annotated with `[Platform]` may preserve signedness and width when they mirror an external ABI.
 
 Range endpoints support compile time integer arithmetic over literals and type relative endpoint names. Supported endpoint operators: `+`, `-`, `*`, `/`, `%`, `**`, unary `-`, and parentheses. Endpoint arithmetic is checked during compile time evaluation.
 
@@ -505,12 +507,14 @@ Bare width names such as `i32` are convenient family labels in prose, but they a
 
 Scalar integer constants are the exception: they should be declared without an explicit integer type. A `const` integer is compile time known and cannot change, so Stark derives both the exact single value range and the smallest supported storage width that can hold it. If a scalar integer const does name a type, it uses only the bare width form such as `i8` or `i32`; ranged forms such as `i32[min max]` are for runtime integer values, not scalar constants.
 
+An explicit scalar integer const width or sign must also be canonical. For example, `const u8 Count = 80;` is accepted, while `const i32 Count = 80;` is rejected with a suggestion to use `u8` or omit the explicit integer type.
+
 ```stark
-const PageSize = 2**12;      // i16 storage
-const BoardWidth = 80;      // i8 storage
-const BigCount = 2**16;     // i24 storage
+const PageSize = 2 ** 12;      // i16 storage
+const BoardWidth = 80;      // u8 storage
+const BigCount = 2 ** 16;     // u24 storage
 const i8 SmallCount = 80;   // accepted explicit width
-const i32 WideCount = 80;   // accepted, with a warning that storage is i8
+const i32 WideCount = 80;   // compile-time error; use u8 or omit the explicit type
 ```
 
 For floating point constants, an unsuffixed decimal such as `80.0` is `f64`. Use an `f` suffix for `f32`, as in `80.0f`.
@@ -1291,7 +1295,7 @@ Each `{...}` hole is parsed and checked as an ordinary Stark expression. Compile
 Runtime holes need caller selected storage:
 
 ```stark
-fn Ascii ScoreLabel(i32[-2147483648 2147483647] score) {
+fn Ascii ScoreLabel(i32[min max] score) {
     stack Ascii label[64] = $"Score: {score}";
     return label;
 }
@@ -1356,7 +1360,7 @@ The first explicit owned conversion APIs live as ordinary `System.Text` function
 stack System.Memory.MemoryResult<System.Text.OwnedAscii> label =
     System.Text.ToAscii((i64)42);
 
-stack i64[-9223372036854775808 9223372036854775807] score = 42;
+stack i64[min max] score = 42;
 stack System.Memory.MemoryResult<System.Text.OwnedAscii> methodLabel =
     score.ToAscii();
 
@@ -1489,7 +1493,7 @@ The runtime contract:
 * recoverable errors are represented as ordinary values
 * panic, assert, and failure paths are unrecoverable and do not unwind
 * unrecoverable failure terminates execution through a trap or abort style path
-* the canonical hosted entrypoint is `export unsafe ffi fn i32 main()`
+* the canonical hosted entrypoint is `export unsafe ffi fn i32[min max] main()`
 * normal process termination happens by returning from `main`
 * foreign unwinding into or through Stark code is unsupported
 

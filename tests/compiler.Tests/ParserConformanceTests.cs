@@ -334,7 +334,7 @@ public sealed class ParserConformanceTests
 
             fn void Accept(
                 i32[10**2 10**10] decimalPowers,
-                i32[2**4 2**16] binaryPowers,
+                i32[2 ** 4 2 ** 16] binaryPowers,
                 i64[1024 * 1024 1024 * 1024 * 1024] sizes,
                 i32[(1 + 2) * 3 20 / 2 + 1] parenthesized)
             {

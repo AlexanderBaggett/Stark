@@ -90,7 +90,7 @@ package API without becoming a binary symbol for FFI or a native runtime entry.
 
 Use `export` for boundaries like:
 
-- `export ffi fn main`
+- `export unsafe ffi fn main`
 - FFI-facing functions
 - intentionally stable binary entry points
 
@@ -102,7 +102,7 @@ This sample has all three visibility ideas in one small package surface:
 
 - `Rectangle` and `Area` are `public` because they are the Stark API
 - `Multiply` is `internal` because it is a package helper
-- `main` is `export ffi` because it is a native entrypoint symbol
+- `main` is `export unsafe ffi` because it is a native entrypoint symbol
 
 In a real package, the public API and the entrypoint usually live in different
 projects. The distinction is the same: `public` is for Stark source consumers;

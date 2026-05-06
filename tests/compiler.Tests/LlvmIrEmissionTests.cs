@@ -9550,7 +9550,7 @@ public sealed class LlvmIrEmissionTests
             unsafe fn void MoveOverlapSafe(
                 borrow i32[-2147483648 2147483647][] input,
                 borrow mut i32[-2147483648 2147483647][] output,
-                i64[0 (2 ** 61) - 1] count) {
+                i64[0 2 ** 61 - 1] count) {
                 if (count == 0) {
                     return;
                 }
@@ -9558,14 +9558,14 @@ public sealed class LlvmIrEmissionTests
                 stack rawptr<i32[-2147483648 2147483647]> sourceStart = &input[0];
                 stack rawptr<i32[-2147483648 2147483647]> destinationStart = (rawptr<i32[-2147483648 2147483647]>)(&output[0]);
                 if (destinationStart < sourceStart) {
-                    for willexit (stack mut i64[0 (2 ** 61) - 1] index = 0; index < count; index += 1) {
+                    for willexit (stack mut i64[0 2 ** 61 - 1] index = 0; index < count; index += 1) {
                         output[index] = input[index];
                     }
 
                     return;
                 }
 
-                stack mut i64[0 (2 ** 61) - 1] remaining = count;
+                stack mut i64[0 2 ** 61 - 1] remaining = count;
                 while willexit (remaining > 0) {
                     remaining -= 1;
                     output[remaining] = input[remaining];

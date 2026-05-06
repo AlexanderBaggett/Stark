@@ -1,4 +1,4 @@
-﻿using Stark.Compiler;
+using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
@@ -57,7 +57,7 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
         }
 
         export unsafe ffi fn i32[min max] main() {
-            stack mut i8[-128 127][3] source = { 65, 66, 67 };
+            stack mut i8[min max][3] source = { 65, 66, 67 };
             stack System.IO.IOResult<System.IO.File.File> opened =
                 System.IO.File.Open("experimental-file.txt", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.None);
             switch (opened) {
@@ -104,7 +104,7 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
                 return 10;
             }
 
-            stack mut i8[-128 127][4] destination = { 0, 0, 0, 0 };
+            stack mut i8[min max][4] destination = { 0, 0, 0, 0 };
             stack System.IO.IOResult<System.IO.File.File> readerResult =
                 System.IO.File.Open("experimental-file.txt", System.IO.File.FileMode.Read);
             switch (readerResult) {
@@ -135,7 +135,7 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
                     }
                     readBuffer.AdvanceWrite((i64[0 max])fixedReadCount);
 
-                    stack i8[-128 127][] buffered = readBuffer.ReadSlice();
+                    stack i8[min max][] buffered = readBuffer.ReadSlice();
                     if (readBuffer.Readable() != 9 || buffered[0] != 65 || buffered[8] != 67) {
                         return 21;
                     }
@@ -221,11 +221,11 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
         }
 
         fn i32[min max] CheckTooLargeNormalization() {
-            stack mut i8[-128 127][1] storage = { 47 };
+            stack mut i8[min max][1] storage = { 47 };
             stack Ascii huge = new Ascii() {
                 Data = &storage[0],
-                Length = (i64[min max])((2**63) - 1),
-                Capacity = (i64[min max])((2**63) - 1)
+                Length = (i64[min max])(2 ** 63 - 1),
+                Capacity = (i64[min max])(2 ** 63 - 1)
             };
             stack mut System.Text.OwnedAscii destination = new();
             stack ascii hugeView = System.Text.AsciiView(huge);
@@ -249,7 +249,7 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
                 return false;
             }
 
-            stack i8[-128 127][] view = entry.Name.AsSlice();
+            stack i8[min max][] view = entry.Name.AsSlice();
             return view[0] == 99
                 && view[1] == 104
                 && view[2] == 105
@@ -357,7 +357,7 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
 
                 fn System.IO.IOResult<i64[0 max]> WriteBytes(
                     mut borrow System.IO.File.File file,
-                    borrow i8[-128 127][] source) {
+                    borrow i8[min max][] source) {
                     return file.Write(source);
                 }
 
@@ -403,12 +403,12 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
         Assert.DoesNotContain("System_Experimental_FileSystem_", llvm, StringComparison.Ordinal);
 
         var platformSource = File.ReadAllText(Path.Combine(sourceRoot, "System", "Runtime", "Platform.stark"));
-        Assert.Contains("rawmutptr<i8[-128 127]>[capacity] buffer", platformSource, StringComparison.Ordinal);
+        Assert.Contains("rawmutptr<i8[min max]>[capacity] buffer", platformSource, StringComparison.Ordinal);
         Assert.Contains("OpenDirectoryFastInto", platformSource, StringComparison.Ordinal);
-        Assert.Contains("ReadFileBytes(rawmutptr<i8[-128 127]>[length] buffer", platformSource, StringComparison.Ordinal);
-        Assert.Contains("WriteFileBytes(rawptr<i8[-128 127]>[length] buffer", platformSource, StringComparison.Ordinal);
-        Assert.Contains("ReadFileBytesFast(rawmutptr<i8[-128 127]>[length] buffer", platformSource, StringComparison.Ordinal);
-        Assert.Contains("WriteFileBytesFast(rawptr<i8[-128 127]>[length] buffer", platformSource, StringComparison.Ordinal);
+        Assert.Contains("ReadFileBytes(rawmutptr<i8[min max]>[length] buffer", platformSource, StringComparison.Ordinal);
+        Assert.Contains("WriteFileBytes(rawptr<i8[min max]>[length] buffer", platformSource, StringComparison.Ordinal);
+        Assert.Contains("ReadFileBytesFast(rawmutptr<i8[min max]>[length] buffer", platformSource, StringComparison.Ordinal);
+        Assert.Contains("WriteFileBytesFast(rawptr<i8[min max]>[length] buffer", platformSource, StringComparison.Ordinal);
     }
 
     [Fact]

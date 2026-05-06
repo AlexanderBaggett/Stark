@@ -1,7 +1,7 @@
-﻿import System.Runtime.Platform
+import System.Runtime.Platform
 module System.Threading
 
-public alias ThreadEntry = fnptr<fn i32[-2147483648 2147483647]()>;
+public alias ThreadEntry = fnptr<fn i32[min max]()>;
 
 public enum ThreadError {
     StartFailed,
@@ -17,12 +17,12 @@ public enum ThreadStatus {
 }
 
 public enum ThreadJoinResult {
-    Ok(i32[-2147483648 2147483647]),
+    Ok(i32[min max]),
     Err(ThreadError),
 }
 
 public struct Thread {
-    internal rawptr<i8[-128 127]> Handle;
+    internal rawptr<i8[min max]> Handle;
     internal bool Joined;
     internal bool Detached;
     internal bool StartFailed;
@@ -59,8 +59,8 @@ public struct Thread {
                 return ThreadJoinResult.Err(ThreadError.InvalidState);
             }
 
-            stack mut i32[-2147483648 2147483647] exitCode = 0;
-            stack mut i32[-2147483648 2147483647] status = 0;
+            stack mut i32[min max] exitCode = 0;
+            stack mut i32[min max] status = 0;
             unsafe {
                 status = System.Runtime.Platform.JoinThread(self.Handle, &exitCode);
             }
@@ -94,7 +94,7 @@ public struct Thread {
                 return ThreadStatus.Err(ThreadError.InvalidState);
             }
 
-            stack mut i32[-2147483648 2147483647] status = 0;
+            stack mut i32[min max] status = 0;
             unsafe {
                 status = System.Runtime.Platform.DetachThread(self.Handle);
             }
@@ -114,7 +114,7 @@ public struct Thread {
         return;
     }
 
-    static fn void SleepMilliseconds(i64[0 max] milliseconds) {
+    static fn void SleepMilliseconds(u64[0 2 ** 63 - 1] milliseconds) {
         System.Runtime.Platform.SleepThreadMilliseconds(milliseconds);
         return;
     }

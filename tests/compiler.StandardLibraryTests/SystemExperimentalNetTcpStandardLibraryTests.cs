@@ -28,11 +28,11 @@ public sealed class SystemExperimentalNetTcpStandardLibraryTests : StandardLibra
                     }
                 }
 
-                fn bool CountFailed(System.Net.NetResult<i64[0 max]> result) {
+                fn bool CountFailed(System.Net.NetResult<u64[0 2 ** 63 - 1]> result) {
                     switch (result) {
-                        case System.Net.NetResult<i64[0 max]>.Ok(var value):
+                        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var value):
                             return false;
-                        case System.Net.NetResult<i64[0 max]>.Err(var error):
+                        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
                             return true;
                     }
                 }
@@ -48,9 +48,9 @@ public sealed class SystemExperimentalNetTcpStandardLibraryTests : StandardLibra
 
                 fn i32[min max] RunClosedSurface() {
                     stack mut System.Net.Tcp.TcpClient client = new();
-                    stack mut i8[-128 127][4] rawBuffer = { 1, 2, 3, 4 };
-                    stack mut i8[-128 127][2] rawFirst = { 1, 2 };
-                    stack mut i8[-128 127][2] rawSecond = { 3, 4 };
+                    stack mut i8[min max][4] rawBuffer = { 1, 2, 3, 4 };
+                    stack mut i8[min max][2] rawFirst = { 1, 2 };
+                    stack mut i8[min max][2] rawSecond = { 3, 4 };
                     stack mut System.Runtime.Buffer.FixedByteBuffer512 fixedBuffer = new();
                     stack mut System.Runtime.Buffer.DynamicByteBuffer dynamicBuffer = new();
 
@@ -157,7 +157,7 @@ public sealed class SystemExperimentalNetTcpStandardLibraryTests : StandardLibra
         var fixed512Read = ExtractLlvmFunctionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_FixedByteBuffer512_(");
         var fixed4096Read = ExtractLlvmFunctionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_FixedByteBuffer4096_(");
         var fixed8192Read = ExtractLlvmFunctionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_FixedByteBuffer8192_(");
-        var dynamicRead = ExtractLlvmFunctionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_DynamicByteBuffer_i64_0max__(");
+        var dynamicRead = ExtractLlvmFunctionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_DynamicByteBuffer_u64_0_2__63__1__(");
         var fixedReads = string.Join(Environment.NewLine, [fixed512Read, fixed4096Read, fixed8192Read]);
 
         Assert.Contains("ptr noundef nonnull noalias nocapture dereferenceable(528) align 8 %arg_destination", fixed512Read, StringComparison.Ordinal);
@@ -182,8 +182,8 @@ public sealed class SystemExperimentalNetTcpStandardLibraryTests : StandardLibra
         Assert.DoesNotContain("DynamicByteBuffer_WriteByte", dynamicRead, StringComparison.Ordinal);
 
         var platformSource = File.ReadAllText(platformPath);
-        Assert.Contains("rawmutptr<i8[-128 127]>[capacity] buffer", platformSource, StringComparison.Ordinal);
-        Assert.Contains("rawptr<i8[-128 127]>[length] buffer", platformSource, StringComparison.Ordinal);
+        Assert.Contains("rawmutptr<i8[min max]>[capacity] buffer", platformSource, StringComparison.Ordinal);
+        Assert.Contains("rawptr<i8[min max]>[length] buffer", platformSource, StringComparison.Ordinal);
     }
 
     private static string ExtractLlvmFunctionBody(string llvm, string functionSignatureFragment)

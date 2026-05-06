@@ -58,7 +58,7 @@ include:
 - the loop counter and total are explicit local scalar values
 - the fixed array is source-visible storage
 - no collection, text, or allocator API is involved
-- the entrypoint is `export ffi fn main`
+- the entrypoint is `export unsafe ffi fn main`
 
 The point is not to memorize generated names. The point is to connect a
 specific source promise to a specific output question.

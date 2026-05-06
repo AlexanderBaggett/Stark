@@ -64,7 +64,7 @@ with Stark-specific framing:
    - current status of `stark test`
 3. Hello, Stark
    - first executable
-   - `export ffi fn main`
+   - `export unsafe ffi fn main`
    - return codes
    - using `System.Console`
 4. A Small Stark Tour
@@ -173,7 +173,7 @@ with Stark-specific framing:
     - current capture-lowering limits
     - thread entry values
 19. FFI, Raw Pointers, and Native Packages
-    - `ffi fn`
+    - `unsafe ffi fn`
     - raw pointers and `null`
     - bounded raw pointer region parameters
     - unsafe raw slice construction

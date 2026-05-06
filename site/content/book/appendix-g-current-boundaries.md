@@ -37,6 +37,19 @@ argument passing lands.
 The fixed input is a placeholder for the future hosted argument model. The
 parse-and-status shape is the part that is valid today.
 
+## Unsafe And Raw Pointers
+
+FFI declarations, exported ABI entrypoints, raw pointer signatures, `null`,
+raw pointer casts, dereference, pointer arithmetic, and raw slice construction
+must be written inside an explicit unsafe boundary. Examples should use
+`unsafe ffi fn`, `export unsafe ffi fn`, `unsafe fn`, or a small
+`unsafe { ... }` block as appropriate.
+
+Prefer safe examples built from borrows, slices, `dynamic`, owned handles, and
+standard-library wrappers. Use raw pointers only when the chapter is directly
+teaching FFI, platform ABI work, or a deliberately low-level standard-library
+boundary.
+
 ## Constrained Generics
 
 Generic functions and types exist. Full user-defined constrained generics are

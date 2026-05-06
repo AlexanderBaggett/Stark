@@ -82,28 +82,54 @@ The current default compilation pipeline is dependency-ordered rather than hard-
 22. `const-prop`
    Runs constant propagation over the cleaned SSA graph.
    This pass folds constant arithmetic, conversions, compares, branches, and simple `switch` decisions, then runs the SSA cleanup optimizer again and republishes the optimized SSA artifact consumed by LLVM emission. At `O0` and `Og`, this pass is also bypassed.
-23. `lower-abi`
+23. `devirt-ssa`
+   Rewrites recoverable indirect calls into direct SSA calls.
+   This pass currently handles singleton function-address cases produced by function item or non-capturing lambda lowering, preserves the address-taken function records that still matter after rewriting, and republishes the optimized SSA artifact. At `O0` and `Og`, it is bypassed.
+24. `inline-ssa`
+   Inlines eligible direct calls in SSA.
+   This pass consumes refined effects, module-private visibility, declared law functions, monomorphization planning, and specialization codegen strategy facts. It inlines small safe candidates, gives declared law functions a larger inline budget, can inline with constant specialization arguments, rejects recursive and unsafe candidate shapes, then reruns SSA cleanup and constant propagation. At `O0` and `Og`, it is bypassed.
+25. `value-facts`
+   Computes SSA value facts for later optimization and LLVM emission.
+   This pass records integer ranges, known bits, boolean constants, nullability, pointer alignment, length ranges, text literal payloads, and block-entry/block-exit fact maps. It also publishes a summary log entry so optimization decisions can be inspected.
+26. `specialize-ascii-to-unicode-literals-ssa`
+   Specializes ASCII-to-Unicode literal conversion paths using SSA value facts.
+   This pass recognizes compile-time text literal payloads and rewrites supported conversion patterns into cheaper constant/view forms, then refreshes SSA value facts when it changes the graph. At `O0` and `Og`, it is bypassed.
+27. `prune-branches`
+   Removes branches and switch cases proven unreachable by SSA facts.
+   This pass consumes the value-fact model, folds fact-known branch directions and switch targets, removes stale phi incomings, reruns cleanup and constant propagation, and republishes refreshed value facts. At `O0` and `Og`, it is bypassed.
+28. `memory-opt-ssa`
+   Runs alias-aware SSA memory optimization.
+   This pass consumes refined memory/effect summaries to forward stack scalar loads, eliminate dead stack field stores, preserve memory barriers when calls or escapes can observe state, and keep only transformations justified by local storage and alias facts. It reruns cleanup, constant propagation, and value-fact analysis when it changes the graph. At `O0` and `Og`, it is bypassed.
+29. `sroa-ssa`
+   Performs scalar replacement for eligible aggregate memory operations.
+   This pass removes dead aggregate copies, forwards exact scalar field/index copies when later loads can observe them, and stays conservative around moves, escaping addresses, non-scalar observations, and unsupported aggregate shapes. It reruns cleanup, constant propagation, and value-fact analysis when it changes the graph. At `O0` and `Og`, it is bypassed.
+30. `shape-branches`
+   Runs final branch shaping over optimized SSA.
+   This pass enables select predication for simple return diamonds after the heavier SSA optimization passes have run, then refreshes value facts. At `O0` and `Og`, it republishes the existing optimized SSA unchanged.
+31. `lower-abi`
    Produces a compiler-owned ABI model from typed Stark signatures and function effects.
    This is where internal aggregate parameters and returns are lowered to stable calling-convention rules, while `ffi` signatures keep their foreign-facing shape and imported Stark calls are assigned their dependency-facing symbol/ABI form.
-24. `emit-llvm`
+32. `emit-llvm`
    Produces LLVM IR from the optimized SSA form plus semantic, type, and ABI metadata.
-   The current emitter generates real function bodies for the supported SSA subset, emits concrete aggregate/array/slice/string layouts, uses parameter memory summaries from semantic validation to emit stronger `readonly`/`writeonly`/`nocapture` facts for root Stark functions, consumes the closed-world optimization model for caller-sensitive law-path specialization decisions, can materialize internal root-side clones of eligible imported law bodies for closed-world law-call optimization with caller-sensitive law-path rewriting, emits imported Stark declarations using the ABI model, qualifies non-FFI symbols for library builds, and falls back to declarations only for still-unsupported bodies.
+   The current emitter generates real function bodies for the supported SSA subset, emits concrete aggregate/array/slice/string layouts, uses parameter memory summaries from semantic validation to emit stronger `readonly`/`writeonly`/`nocapture`/`captures(...)` facts for root Stark functions, consumes SSA value facts for range, alignment, assumption, and literal-data decisions, consumes scoped noalias and loop-access groups from MIR/SSA, consumes the closed-world optimization model for caller-sensitive law-path specialization decisions, can materialize internal root-side clones of eligible imported law bodies and imported inline bodies for closed-world optimization, emits optimized raw-pointer and slice loops as `memcpy`, `memmove`, or `memset` when the source contracts prove the shape, emits imported Stark declarations using the ABI model, qualifies non-FFI symbols for library builds, and falls back to declarations only for still-unsupported bodies.
 
 ## Extension Points And Remaining Work
 
 The pass structure is no longer just a skeleton; the current compiler has real
 typing, generic instantiation ownership, monomorphization planning,
 specialization planning, semantic validation, ownership validation, MIR, SSA,
-ABI lowering, package-image loading, and LLVM emission. The pipeline still
-leaves clear extension points for future performance and tooling work:
+SSA cleanup, constant propagation, devirtualization, direct-call inlining,
+value-fact analysis, fact-driven branch pruning, alias-aware memory
+optimization, aggregate scalar replacement, ABI lowering, package-image
+loading, and LLVM emission. The pipeline still leaves clear extension points
+for future performance and tooling work:
 
-- interprocedural MIR/SSA inlining before LLVM
-- cross-block value numbering and redundancy elimination
-- scalar replacement of aggregates before ABI lowering
+- broader interprocedural MIR/SSA inlining and clone cost modeling before LLVM
+- cross-block value numbering and redundancy elimination beyond the current local reuse and cleanup passes
 - destination propagation and copy-elision improvements
-- deeper proof/range propagation for bounds, enum tags, and non-null facts
-- loop optimization before LLVM
-- package-aware generic/template inlining and clone pruning
+- deeper proof/range propagation for bounds, enum tags, non-null facts, and raw-region byte extents
+- loop optimization before LLVM beyond current loop metadata and recognized raw-pointer/slice intrinsic lowering
+- deeper package-aware generic/template inlining and clone pruning
 - first-class value tracing and trace-file sinks for compiler observability
 - allocator-backed `arena` lowering
 
@@ -131,7 +157,10 @@ The current ownership split is:
 - SSA:
   good for phi-aware dataflow, register-style values, and direct LLVM emission
 - optimized SSA:
-  cleanup and constant-propagation result used by code generation
+  the post-MIR middle-end artifact used by code generation, after cleanup,
+  constant propagation, devirtualization, inlining, value-fact analysis,
+  literal specialization, fact-driven branch pruning, alias-aware memory
+  optimization, aggregate scalar replacement, and final branch shaping
 - LLVM IR:
   backend representation only
 

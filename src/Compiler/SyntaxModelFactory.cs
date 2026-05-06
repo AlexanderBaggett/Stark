@@ -698,11 +698,25 @@ internal static class SyntaxModelFactory
         {
             var attribute = attributes[index];
             var attributeContext = attributeContexts[index];
+            if (string.Equals(attribute.Name, "Platform", StringComparison.Ordinal))
+            {
+                if (attribute.Arguments.Count != 0)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2113",
+                        $"Attribute '[Platform]' on {targetDescription} does not take arguments.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                }
+
+                continue;
+            }
+
             if (!string.Equals(attribute.Name, "Backend", StringComparison.Ordinal))
             {
                 diagnostics.Add(new SyntaxModelDiagnostic(
                     "STK2110",
-                    $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. v1 attributes only support '[Backend(Opaque)]'.",
+                    $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. v1 attributes support '[Backend(Opaque)]' and '[Platform]'.",
                     attributeContext.Start.Line,
                     attributeContext.Start.Column + 1));
                 continue;

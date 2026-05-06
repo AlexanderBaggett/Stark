@@ -142,7 +142,7 @@ Completion rules:
         dynamic, owned handle, or platform wrapper.
   - [x] Add parser, semantic, ownership, lowering, and codegen tests.
   - [x] Update language reference.
-  - [ ] Update book and style guide.
+  - [x] Update book and style guide.
 
 ## 3. Remove Unnecessary Raw Pointers From The Standard Library
 
@@ -152,145 +152,261 @@ Completion rules:
         audited unsafe internals.
   - [x] Prefer `dynamic`, slices, borrowed values, fixed buffers, and owned
         handles everywhere else.
-  - [ ] Add standard library audit tests that fail on unexpected raw pointer
+  - [x] Add standard library audit tests that fail on unexpected raw pointer
         usage outside allowlisted files or functions.
-  - [ ] Document every remaining raw pointer with the boundary it serves.
+  - [x] Document every remaining raw pointer with the boundary it serves.
 
 ### Raw Pointer Replacement Checklist
 
+Verified against `stdlib/src` in this pass. Checked items are complete in the
+current source shape. Unchecked items still expose raw pointers publicly or keep
+replaceable raw storage that should move behind `dynamic`, slices, owned values,
+or a narrower explicitly unsafe boundary.
+
 - [ ] `System`
   - [ ] Remove raw pointer re-exports from public surface unless required.
-- [ ] `System.BitOperations`
-  - [ ] Replace raw pointer helpers with value or slice APIs where present.
+    - Still open: `System.stark` re-exports `System.IO.File` and
+      `System.Text`, both of which still expose public raw-pointer APIs.
+- [x] `System.BitOperations`
+  - [x] Replace raw pointer helpers with value or slice APIs where present.
+    - Verified raw-pointer free.
 - [ ] `System.Collections`
   - [ ] Replace internal raw storage with `dynamic` or safe storage wrappers
         wherever possible.
-- [ ] `System.Console`
-  - [ ] Keep raw handles internal to platform calls.
-  - [ ] Use slices or dynamic buffers for user-facing write paths.
+    - [x] Replaced `Queue<T>` raw allocation storage with `dynamic T` storage
+          in both stable and experimental collections.
+    - [x] Verified `Stack<T>`, `RingQueue<T>`, and linked-list storage use
+          `dynamic` storage instead of raw allocation storage.
+    - [x] Documented `Dictionary<K, V>` raw sparse storage as the remaining
+          collection raw pointer boundary.
+    - [ ] Replace `Dictionary<K, V>` raw sparse key/value/state storage once
+          `dynamic` can model sparse uninitialized slots with mutable borrows
+          from occupied values.
+- [x] `System.Console`
+  - [x] Keep raw handles internal to platform calls.
+    - Verified: stdin handle state is module-private and platform calls are the
+      only raw handle consumers.
+  - [x] Use slices or dynamic buffers for user-facing write paths.
+    - Verified: public byte write/read APIs use slices, `DynamicByteBuffer`, or
+      fixed runtime buffers.
 - [ ] `System.FileSystem`
-  - [ ] Hide directory and file system handles behind owned types.
+  - [x] Hide directory and file system handles behind owned types.
+    - Verified: `Directory.Handle` is internal and the public surface returns
+      owned `Directory` values.
   - [ ] Replace raw entry buffers with dynamic or fixed safe buffers.
-- [ ] `System.IO`
-  - [ ] Keep public IO contracts free of raw pointers.
+    - Still open: `Directory` keeps an internal raw entry buffer plus
+      `System.Memory.Allocation`.
+- [x] `System.IO`
+  - [x] Keep public IO contracts free of raw pointers.
+    - Verified: the base `System.IO` result/status/error module is raw-pointer
+      free; raw file APIs are tracked under `System.IO.File`.
 - [ ] `System.IO.File`
   - [ ] Replace file buffers with slices, dynamic storage, or owned buffers.
+    - Partially done: owned `File` read/write paths accept byte slices,
+      `DynamicByteBuffer`, and fixed runtime buffers, but raw byte and region
+      methods still remain on the stable file surface.
   - [ ] Keep OS handles internal.
-- [ ] `System.IO.Path`
-  - [ ] Replace raw path buffers with dynamic text or fixed safe buffers.
-- [ ] `System.Math`
-  - [ ] Ensure math APIs remain raw-pointer free.
+    - Partially done: stable `File.Handle` is internal, but public unsafe
+      handle helpers such as `OpenRead`, `Close`, `ReadBytes`, `WriteBytes`,
+      `Seek`, `WriteText`, and `WriteLine` remain exported.
+    - Also open: `System.Experimental.IO.File` is raw-free, but the
+      `System.Experimental.IO` aggregator currently re-exports stable
+      `System.IO.File`.
+- [x] `System.IO.Path`
+  - [x] Replace raw path buffers with dynamic text or fixed safe buffers.
+    - Verified: public path APIs use `OwnedAscii`, text views, and value
+      results; remaining raw pointers are internal read-only text scans.
+- [x] `System.Math`
+  - [x] Ensure math APIs remain raw-pointer free.
+    - Verified raw-pointer free.
 - [ ] `System.Memory`
-  - [ ] Keep raw allocation pointers internal to allocator implementation.
-  - [ ] Expose `dynamic` memory primitives instead of raw allocation plumbing.
-- [ ] `System.Net`
-  - [ ] Hide socket handles behind owned socket types.
-- [ ] `System.Net.Tcp`
-  - [ ] Replace raw socket buffers with slices or vectored safe wrappers.
-- [ ] `System.Process`
-  - [ ] Keep process APIs raw-pointer free.
-- [ ] `System.Runtime`
-  - [ ] Allow raw pointers only for compiler/runtime ABI hooks.
+  - [x] Keep raw allocation pointers internal to allocator implementation.
+    - Verified: `Allocation` is internal.
+  - [x] Expose `dynamic` memory primitives instead of raw allocation plumbing.
+    - Verified: reserve, append, copy, move, and fill APIs operate on
+      `dynamic`, slices, and initialized destinations.
+  - [ ] Fence or replace public raw-pointer initialization helpers.
+    - Still open: `InitializeBytesFromPointerDisjoint` and
+      `InitializeCodePointsFromPointerDisjoint` remain public unsafe APIs.
+- [x] `System.Net`
+  - [x] Hide socket handles behind owned socket types.
+    - Verified: the base networking module is raw-pointer free.
+- [x] `System.Net.Tcp`
+  - [x] Replace raw socket buffers with slices or vectored safe wrappers.
+    - Verified: public reads/writes use byte slices, vectored slice APIs, or
+      runtime buffers; socket handles are internal to `TcpClient` and
+      `TcpListener`.
+- [x] `System.Process`
+  - [x] Keep process APIs raw-pointer free.
+    - Verified raw-pointer free.
+- [x] `System.Runtime`
+  - [x] Allow raw pointers only for compiler/runtime ABI hooks.
+    - Verified: raw pointers are confined to internal slice-part ABI structs and
+      compiler-known slice extraction hooks.
 - [ ] `System.Runtime.Buffer`
-  - [ ] Prefer dynamic and fixed buffers over raw pointer storage.
-- [ ] `System.Runtime.ConsoleInput`
-  - [ ] Keep OS handle access internal and unsafe.
-- [ ] `System.Runtime.Platform`
-  - [ ] Keep raw pointers internal and explicitly unsafe.
-- [ ] `System.Runtime.Platform.Linux`
-  - [ ] Audit syscall buffers and handles.
-  - [ ] Wrap raw regions in narrow unsafe helpers.
-- [ ] `System.Runtime.Platform.Windows`
-  - [ ] Audit Kernel32, NtDll, Winsock, and console buffers.
-  - [ ] Wrap raw regions in narrow unsafe helpers.
+  - [x] Prefer dynamic and fixed buffers over raw pointer storage.
+    - Verified: storage is `dynamic` or fixed arrays.
+  - [ ] Remove or internalize stable fixed-buffer raw pointer accessors.
+    - Still open: stable `FixedByteBuffer*` types expose unsafe `ReadPointer`,
+      `ReadWritePointer`, and `WritePointer`; experimental buffers expose slices
+      instead.
+    - Also open: `System.Experimental.Runtime.Buffer` has the slice-only shape,
+      but the `System.Experimental.Runtime` aggregator currently re-exports the
+      stable buffer module.
+- [x] `System.Runtime.ConsoleInput`
+  - [x] Keep OS handle access internal and unsafe.
+    - Verified: raw pointer helpers are module-private.
+- [x] `System.Runtime.Platform`
+  - [x] Keep raw pointers internal and explicitly unsafe.
+    - Verified: platform dispatch functions are internal and raw consumers are
+      unsafe.
+- [x] `System.Runtime.Platform.Linux`
+  - [x] Audit syscall buffers and handles.
+  - [x] Wrap raw regions in narrow unsafe helpers.
+    - Verified: Linux raw pointer use is internal unsafe platform and syscall
+      handoff code.
+- [x] `System.Runtime.Platform.Windows`
+  - [x] Audit Kernel32, NtDll, Winsock, and console buffers.
+  - [x] Wrap raw regions in narrow unsafe helpers.
+    - Verified: Windows raw pointer use is internal unsafe platform and FFI
+      handoff code.
 - [ ] `System.Syscall`
   - [ ] Restrict or internalize user-facing raw syscall APIs.
+    - Still open: `Syscall0` through `Syscall6` remain public unsafe direct
+      syscall entry points even though their signatures use integer registers
+      rather than typed raw pointers.
 - [ ] `System.Text`
   - [ ] Replace raw text storage with dynamic/owned text and slices.
-- [ ] `System.Threading`
-  - [ ] Hide thread handles behind owned thread types.
+    - Partially done: `OwnedAscii` and `OwnedUnicode` provide owned/dynamic text
+      surfaces.
+    - Still open: public unsafe `AsciiData`, `UnicodeData`, caller-buffer
+      formatters, UTF-16 conversion helpers, and `rawmutptr<Ascii>` /
+      `rawmutptr<Unicode>` APIs remain in stable and experimental text.
+- [x] `System.Threading`
+  - [x] Hide thread handles behind owned thread types.
+    - Verified: `Thread.Handle` is internal and public thread operations use the
+      owned `Thread` type.
 
-## 4. Enforce Integer Range Issues As Compile-Time Errors, using singed integers with postive only range as compile time error, suggest use of unsigned integer instead.
+## 4. Enforce Integer Range Issues As Compile-Time Errors, using signed integers with positive-only range as compile time error, suggest use of unsigned integer instead.
 
-- [ ] Make invalid or unnecessarily wide integer range declarations compile-time
-      errors.
-  - [ ] Define the exact rule for oversized storage ranges. Example:
+- [x] Make invalid or unnecessarily wide integer range declarations compile-time
+      errors by default.
+  - [x] Add enforcement through `CompilerOptions.EnforceIntegerRangeStorageRules`
+        and keep `--strict-integer-ranges` as a compatibility spelling for the
+        default CLI behavior.
+  - [x] Define the strict-mode rule for oversized storage ranges. Example:
         `i64[0 128]` should be rejected when a narrower integer type can express
         the declared range and no ABI, pointer-size, or platform reason is
         documented. use new `platform` keyword if required by abi contract to allow you to use a type you don't need to.
-  - [ ] Add an escape hatch or annotation only for ABI/platform cases that truly
-        require a specific width. use new `platform` keyword if required by abi contract to allow you to use a type you don't need to.
-  - [ ] Reject impossible ranges, inverted ranges, endpoints outside the base
-        integer type, and endpoints that force unnecessary storage width.
-  - [ ] Emit diagnostics that suggest the smallest valid integer type in the error message.
-  - [ ] Update constant folding and range inference so exponent endpoints such
-        as `(2**63) - 1` are validated before lowering.
-  - [ ] Add tests for locals, fields, parameters, return types, arrays, generic
-        instantiations, casts, and inferred expressions.
+  - [x] Add an escape hatch or annotation only for ABI/platform cases that truly
+        require a specific width. `[Platform]` declarations preserve ABI-required
+        storage for signatures and aggregate fields without relaxing ordinary
+        local, array, generic, or cast range checks.
+  - [x] Reject impossible ranges, inverted ranges, endpoints outside the base
+        integer type, and endpoints that force unnecessary storage width in strict mode.
+  - [x] Emit diagnostics that suggest the smallest valid integer type in the error message.
+  - [x] Update constant folding and range inference so exponent endpoints such
+        as `2 ** 63 - 1` are validated before lowering.
+  - [x] Add strict-mode tests for locals, fields, parameters, return types, arrays,
+        generic instantiations, casts, signed-to-unsigned suggestions, narrower
+        unsigned storage suggestions, signed narrowing suggestions, scalar const
+        width/sign errors, and FFI ABI signature exemptions.
+  - [x] Flip strict range enforcement on by default after the standard library
+        integer range audit is complete.
 
 ### Standard Library Integer Range Audit
 
-- [ ] `System`
-- [ ] `System.BitOperations`
-- [ ] `System.Collections`
-- [ ] `System.Console`
-- [ ] `System.FileSystem`
-- [ ] `System.IO`
-- [ ] `System.IO.File`
-- [ ] `System.IO.Path`
-- [ ] `System.Math`
-- [ ] `System.Memory`
-- [ ] `System.Net`
-- [ ] `System.Net.Tcp`
-- [ ] `System.Process`
-- [ ] `System.Runtime`
-- [ ] `System.Runtime.Buffer`
-- [ ] `System.Runtime.ConsoleInput`
-- [ ] `System.Runtime.Platform`
-- [ ] `System.Runtime.Platform.Linux`
-- [ ] `System.Runtime.Platform.Windows`
-- [ ] `System.Syscall`
-- [ ] `System.Text`
-- [ ] `System.Threading`
+Completed against `stdlib/src` with the default strict integer range checks. Ordinary
+non-negative signed ranges now use unsigned storage with the original upper
+bounds preserved, and over-wide helper ranges now use the smallest signed or
+unsigned storage that expresses them. Full-width signed ABI and syscall ranges
+remain signed. Experimental mirrors were audited with the same rule.
+
+- [x] `System`
+- [x] `System.BitOperations`
+- [x] `System.Collections`
+- [x] `System.Console`
+- [x] `System.FileSystem`
+- [x] `System.IO`
+- [x] `System.IO.File`
+- [x] `System.IO.Path`
+- [x] `System.Math`
+- [x] `System.Memory`
+- [x] `System.Net`
+- [x] `System.Net.Tcp`
+- [x] `System.Process`
+- [x] `System.Runtime`
+- [x] `System.Runtime.Buffer`
+- [x] `System.Runtime.ConsoleInput`
+- [x] `System.Runtime.Platform`
+- [x] `System.Runtime.Platform.Linux`
+- [x] `System.Runtime.Platform.Windows`
+- [x] `System.Syscall`
+- [x] `System.Text`
+- [x] `System.Threading`
 
 ## 5. Normalize Standard Library Range Notation
 
-- [ ] Make standard library integer ranges use exponentiation or `[min max]`.
-  - [ ] Replace large literal endpoints such as
-        `-9223372036854775808 9223372036854775807` with `[min max]` when the full
-        primitive range is intended.
-  - [ ] Use exponentiation for explicit numeric bounds where the exact value is
-        meaningful, such as `(2**31) - 1`.
-  - [ ] Prefer the narrowest integer type that expresses the range.
-  - [ ] Add format/lint tests that prevent regression to giant literal bounds.
-  - [ ] Update docs and examples to model the new style.
+- [x] Make standard library integer ranges use exponentiation or `[min max]`.
+  - [x] Replace large literal endpoints with `[min max]` when the full primitive
+        range is intended.
+  - [x] Use exponentiation for explicit numeric bounds where the exact value is
+        meaningful, such as `2 ** 31 - 1`.
+  - [x] Prefer the narrowest integer type that expresses the range.
+  - [x] Add format/lint tests that prevent regression to giant literal bounds.
+  - [x] Update docs and examples to model the new style.
 
 ### Range Notation Module Checklist
 
-- [ ] `System`
-- [ ] `System.BitOperations`
-- [ ] `System.Collections`
-- [ ] `System.Console`
-- [ ] `System.FileSystem`
-- [ ] `System.IO`
-- [ ] `System.IO.File`
-- [ ] `System.IO.Path`
-- [ ] `System.Math`
-- [ ] `System.Memory`
-- [ ] `System.Net`
-- [ ] `System.Net.Tcp`
-- [ ] `System.Process`
-- [ ] `System.Runtime`
-- [ ] `System.Runtime.Buffer`
-- [ ] `System.Runtime.ConsoleInput`
-- [ ] `System.Runtime.Platform`
-- [ ] `System.Runtime.Platform.Linux`
-- [ ] `System.Runtime.Platform.Windows`
-- [ ] `System.Syscall`
-- [ ] `System.Text`
-- [ ] `System.Threading`
+- [x] `System`
+- [x] `System.BitOperations`
+- [x] `System.Collections`
+- [x] `System.Console`
+- [x] `System.FileSystem`
+- [x] `System.IO`
+- [x] `System.IO.File`
+- [x] `System.IO.Path`
+- [x] `System.Math`
+- [x] `System.Memory`
+- [x] `System.Net`
+- [x] `System.Net.Tcp`
+- [x] `System.Process`
+- [x] `System.Runtime`
+- [x] `System.Runtime.Buffer`
+- [x] `System.Runtime.ConsoleInput`
+- [x] `System.Runtime.Platform`
+- [x] `System.Runtime.Platform.Linux`
+- [x] `System.Runtime.Platform.Windows`
+- [x] `System.Syscall`
+- [x] `System.Text`
+- [x] `System.Threading`
 
-## 6. Add macOS Standard Library Platform Backend
+
+
+## 6 Project Testing and `System.Testing`
+
+- [ ] Define the Stark test-project model.
+  - [ ] Model keywords and syntax after Xunit, such as [Fact] [Theory]
+  - [ ] decide whether test projects are a separate `kind = "test"` manifest kind or executable projects with test metadata
+  - [ ] define how solution manifests identify default test sets
+  - [ ] keep test discovery explicit and static; avoid runtime reflection as a required language feature
+- [ ] Add a standard-library testing module inspired by xUnit.
+  - [ ] add a `System.Testing` module or equivalent package-facing testing root
+  - [ ] port the core assertion vocabulary needed by the current C# xUnit tests, such as truth checks, equality checks, and failure reporting
+  - [ ] model assertion failure using Stark's no-exception failure/result story rather than hidden unwinding
+  - [ ] keep allocation and formatting costs explicit so test-only helpers do not leak into normal runtime expectations
+- [ ] Implement `stark test` on top of test projects.
+  - [ ] build test projects through the existing project/solution manifest driver
+  - [ ] run produced test executables and map their results into concise CLI output
+  - [ ] support solution-level test aliases and default test sets
+  - [ ] preserve `--dev`, `--release`, path dependencies, and package-backed dependencies for tests
+- [ ] Add examples and docs for Stark-native tests.
+  - [ ] add at least one standard-library test project using `System.Testing`
+  - [ ] document how to port existing xUnit-style test cases into Stark test projects
+  - [ ] add regression coverage for project-local and solution-level `stark test`
+
+
+## 7. Add macOS Standard Library Platform Backend
 
 - [ ] Create a macOS OS-backed platform implementation.
   - [ ] Add `System.Runtime.Platform.MacOS.stark`.
@@ -312,13 +428,15 @@ Completion rules:
   - [ ] Add macOS benchmark runs to compare Stark, C, and Rust.
   - [ ] Document macOS platform behavior and unsupported APIs.
 
-## 7. Update Website Book
+## 8. Update Website Book
 
 - [ ] Update the book portion of the website.
   - [ ] Convert the book plan into website pages with stable URLs.
   - [ ] Make every chapter a tutorial that builds on previous chapters.
+  - [ ] Add content for any planned chapters that do not currently exist
+  - [ ] renumber chapters after addition of new ones
   - [ ] Include multiple code examples per chapter.
-  - [ ] Add compile checks for code examples where possible.
+  - [x] Add compile checks for code examples where possible.
   - [ ] Add navigation, previous/next links, and version/release labels.
   - [ ] Keep the language reference separate from tutorial material.
 
@@ -372,7 +490,7 @@ Completion rules:
   - [ ] Stark for C# programmers
   - [ ] Stark for C programmers
 
-## 8. GitHub Release Pipeline
+## 9. GitHub Release Pipeline
 
 - [ ] Create GitHub Actions release pipeline for Linux, Windows, and macOS.
   - [ ] Add build matrix for supported host and target triples.

@@ -1,4 +1,4 @@
-﻿import System.Runtime.Buffer
+import System.Runtime.Buffer
 import System.IO
 import System.Memory
 import System.Runtime
@@ -25,7 +25,7 @@ public enum SeekOrigin {
     End,
 }
 
-fn System.IO.IOError IOErrorFromPlatformResult(i32[-2147483648 2147483647] result) {
+fn System.IO.IOError IOErrorFromPlatformResult(i32[min max] result) {
     if (result == -2 || result == -3 || result == -20) {
         return System.IO.IOError.NotFound;
     }
@@ -53,7 +53,7 @@ fn System.IO.IOError IOErrorFromPlatformResult(i32[-2147483648 2147483647] resul
     return System.IO.IOError.Unknown(result);
 }
 
-fn System.IO.IOStatus StatusFromPlatformResult(i32[-2147483648 2147483647] result) {
+fn System.IO.IOStatus StatusFromPlatformResult(i32[min max] result) {
     if (result < 0) {
         return System.IO.IOStatus.Err(IOErrorFromPlatformResult(result));
     }
@@ -61,15 +61,15 @@ fn System.IO.IOStatus StatusFromPlatformResult(i32[-2147483648 2147483647] resul
     return System.IO.IOStatus.Ok;
 }
 
-fn System.IO.IOResult<i64[0 max]> ByteCountFromPlatformResult(i64[-9223372036854775808 9223372036854775807] result) {
+fn System.IO.IOResult<u64[0 2 ** 63 - 1]> ByteCountFromPlatformResult(i64[min max] result) {
     if (result < 0) {
-        return System.IO.IOResult<i64[0 max]>.Err(IOErrorFromPlatformResult((i32[-2147483648 2147483647])result));
+        return System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(IOErrorFromPlatformResult((i32[min max])result));
     }
 
-    return System.IO.IOResult<i64[0 max]>.Ok((i64[0 max])result);
+    return System.IO.IOResult<u64[0 2 ** 63 - 1]>.Ok((u64[0 2 ** 63 - 1])result);
 }
 
-unsafe fn rawptr<i8[-128 127]> OpenHandle(ascii path, FileMode mode) {
+unsafe fn rawptr<i8[min max]> OpenHandle(ascii path, FileMode mode) {
     switch (mode) {
         case FileMode.Read:
             return System.Runtime.Platform.OpenFileRead(path);
@@ -82,7 +82,7 @@ unsafe fn rawptr<i8[-128 127]> OpenHandle(ascii path, FileMode mode) {
     }
 }
 
-finite law i32[-2147483648 2147483647] SeekOriginCode(SeekOrigin origin) {
+finite law i32[min max] SeekOriginCode(SeekOrigin origin) {
     switch (origin) {
         case SeekOrigin.Begin:
             return 0;
@@ -93,7 +93,7 @@ finite law i32[-2147483648 2147483647] SeekOriginCode(SeekOrigin origin) {
     }
 }
 
-internal unsafe ffi asm(x86_64) fn void CopyAsciiBytes(rawmutptr<i8[-128 127]> destination, rawptr<i8[-128 127]> source, i32[-2147483648 2147483647] length)
+internal unsafe ffi asm(x86_64) fn void CopyAsciiBytes(rawmutptr<i8[min max]> destination, rawptr<i8[min max]> source, i32[min max] length)
     in("r8") destination,
     in("r9") source,
     in("r10") length,
@@ -102,7 +102,7 @@ internal unsafe ffi asm(x86_64) fn void CopyAsciiBytes(rawmutptr<i8[-128 127]> d
     "cld\nmovq %r8, %rdi\nmovq %r9, %rsi\nmovl %r10d, %ecx\nrep movsb"
 }
 
-internal unsafe ffi asm(aarch64) fn void CopyAsciiBytes(rawmutptr<i8[-128 127]> destination, rawptr<i8[-128 127]> source, i32[-2147483648 2147483647] length)
+internal unsafe ffi asm(aarch64) fn void CopyAsciiBytes(rawmutptr<i8[min max]> destination, rawptr<i8[min max]> source, i32[min max] length)
     in("x0") destination,
     in("x1") source,
     in("w2") length,
@@ -111,7 +111,7 @@ internal unsafe ffi asm(aarch64) fn void CopyAsciiBytes(rawmutptr<i8[-128 127]> 
     "cbz w2, 2f\nmov w9, wzr\n1:\nldrb w10, [x1, w9, uxtw]\nstrb w10, [x0, w9, uxtw]\nadd w9, w9, #1\nsub w11, w2, w9\ncbnz w11, 1b\n2:"
 }
 
-internal unsafe ffi asm(riscv64) fn void CopyAsciiBytes(rawmutptr<i8[-128 127]> destination, rawptr<i8[-128 127]> source, i32[-2147483648 2147483647] length)
+internal unsafe ffi asm(riscv64) fn void CopyAsciiBytes(rawmutptr<i8[min max]> destination, rawptr<i8[min max]> source, i32[min max] length)
     in("a0") destination,
     in("a1") source,
     in("a2") length,
@@ -120,7 +120,7 @@ internal unsafe ffi asm(riscv64) fn void CopyAsciiBytes(rawmutptr<i8[-128 127]> 
     "beq a2, zero, 2f\nli t0, 0\n1:\nadd t1, a1, t0\nlbu t2, 0(t1)\nadd t3, a0, t0\nsb t2, 0(t3)\naddi t0, t0, 1\nsub t4, a2, t0\nbne t4, zero, 1b\n2:"
 }
 
-internal unsafe ffi asm(x86) fn void CopyAsciiBytes(rawmutptr<i8[-128 127]> destination, rawptr<i8[-128 127]> source, i32[-2147483648 2147483647] length)
+internal unsafe ffi asm(x86) fn void CopyAsciiBytes(rawmutptr<i8[min max]> destination, rawptr<i8[min max]> source, i32[min max] length)
     in("eax") destination,
     in("edx") source,
     in("ebx") length,
@@ -129,7 +129,7 @@ internal unsafe ffi asm(x86) fn void CopyAsciiBytes(rawmutptr<i8[-128 127]> dest
     "cld\nmovl %eax, %edi\nmovl %edx, %esi\nmovl %ebx, %ecx\nrep movsb"
 }
 
-internal unsafe ffi asm(arm) fn void CopyAsciiBytes(rawmutptr<i8[-128 127]> destination, rawptr<i8[-128 127]> source, i32[-2147483648 2147483647] length)
+internal unsafe ffi asm(arm) fn void CopyAsciiBytes(rawmutptr<i8[min max]> destination, rawptr<i8[min max]> source, i32[min max] length)
     in("r0") destination,
     in("r1") source,
     in("r2") length,
@@ -138,19 +138,19 @@ internal unsafe ffi asm(arm) fn void CopyAsciiBytes(rawmutptr<i8[-128 127]> dest
     "cmp r2, #0\nbeq 2f\nmov r3, #0\n1:\nldrb r12, [r1, r3]\nstrb r12, [r0, r3]\nadd r3, r3, #1\nsub r12, r2, r3\ncmp r12, #0\nbne 1b\n2:"
 }
 
-fn i32[-2147483648 2147483647] UnsignedByte(i8[-128 127] value) {
+fn i32[min max] UnsignedByte(i8[min max] value) {
     if (value < 0) {
-        return ((i32[-2147483648 2147483647])value) + 256;
+        return ((i32[min max])value) + 256;
     }
 
-    return (i32[-2147483648 2147483647])value;
+    return (i32[min max])value;
 }
 
-unsafe fn i64[-9223372036854775808 9223372036854775807] Utf8ChunkByteLengthLimited(rawptr<i8[-128 127]> data, i64[-9223372036854775808 9223372036854775807] limit) {
-    stack mut i64[-9223372036854775808 9223372036854775807] read = 0;
+unsafe fn i64[min max] Utf8ChunkByteLengthLimited(rawptr<i8[min max]> data, i64[min max] limit) {
+    stack mut i64[min max] read = 0;
     while willexit (read < limit) {
-        stack i32[-2147483648 2147483647] first = UnsignedByte(*(&data[read]));
-        stack mut i64[-9223372036854775808 9223372036854775807] needed = 1;
+        stack i32[min max] first = UnsignedByte(*(&data[read]));
+        stack mut i64[min max] needed = 1;
         if (194 <= first && first <= 223) {
             needed = 2;
         }
@@ -179,7 +179,7 @@ unsafe fn i64[-9223372036854775808 9223372036854775807] Utf8ChunkByteLengthLimit
     return read;
 }
 
-unsafe fn i64[-9223372036854775808 9223372036854775807] Utf8ChunkByteLength(rawptr<i8[-128 127]> data, i64[-9223372036854775808 9223372036854775807] remaining, i64[-9223372036854775808 9223372036854775807] maxBytes) {
+unsafe fn i64[min max] Utf8ChunkByteLength(rawptr<i8[min max]> data, i64[min max] remaining, i64[min max] maxBytes) {
     if (data == null || remaining <= 0 || maxBytes <= 0) {
         return 0;
     }
@@ -191,7 +191,7 @@ unsafe fn i64[-9223372036854775808 9223372036854775807] Utf8ChunkByteLength(rawp
     return Utf8ChunkByteLengthLimited(data, maxBytes);
 }
 
-unsafe fn i32[-2147483648 2147483647] WriteAllBytes(rawptr<i8[-128 127]> handle, rawptr<i8[-128 127]> buffer, i64[-9223372036854775808 9223372036854775807] byteLength) {
+unsafe fn i32[min max] WriteAllBytes(rawptr<i8[min max]> handle, rawptr<i8[min max]> buffer, i64[min max] byteLength) {
     if (byteLength <= 0) {
         return 0;
     }
@@ -200,10 +200,10 @@ unsafe fn i32[-2147483648 2147483647] WriteAllBytes(rawptr<i8[-128 127]> handle,
         return -1;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] offset = 0;
+    stack mut i64[min max] offset = 0;
     while willexit (offset < byteLength) {
-        stack rawptr<i8[-128 127]> chunk = &buffer[offset];
-        stack i64[-9223372036854775808 9223372036854775807] written = System.Runtime.Platform.WriteFile(chunk, 1, byteLength - offset, handle);
+        stack rawptr<i8[min max]> chunk = &buffer[offset];
+        stack i64[min max] written = System.Runtime.Platform.WriteFile(chunk, 1, byteLength - offset, handle);
         if (written <= 0) {
             return -1;
         }
@@ -214,36 +214,36 @@ unsafe fn i32[-2147483648 2147483647] WriteAllBytes(rawptr<i8[-128 127]> handle,
     return 0;
 }
 
-unsafe fn i32[-2147483648 2147483647] WriteAsciiUtf16(rawptr<i8[-128 127]> handle, ascii text) {
-    stack i64[-9223372036854775808 9223372036854775807] sourceLength = System.Text.AsciiLength(text);
+unsafe fn i32[min max] WriteAsciiUtf16(rawptr<i8[min max]> handle, ascii text) {
+    stack i64[min max] sourceLength = System.Text.AsciiLength(text);
     if (sourceLength <= 0) {
         return 0;
     }
 
     stack ascii view = text[0, sourceLength];
-    stack rawptr<i8[-128 127]> sourceData = System.Text.AsciiData(view);
+    stack rawptr<i8[min max]> sourceData = System.Text.AsciiData(view);
     if (sourceData == null) {
         return -1;
     }
 
-    stack mut i16[-32768 32767][2048] utf16Storage;
-    stack mut i64[-9223372036854775808 9223372036854775807] sourceIndex = 0;
+    stack mut i16[min max][2048] utf16Storage;
+    stack mut i64[min max] sourceIndex = 0;
     while willexit (sourceIndex < sourceLength) {
-        stack i64[-9223372036854775808 9223372036854775807] chunkLength = Utf8ChunkByteLength(&sourceData[sourceIndex], sourceLength - sourceIndex, 2048);
+        stack i64[min max] chunkLength = Utf8ChunkByteLength(&sourceData[sourceIndex], sourceLength - sourceIndex, 2048);
         if (chunkLength <= 0) {
             return -1;
         }
 
         stack ascii chunk = view[sourceIndex, chunkLength];
-        stack mut i64[-9223372036854775808 9223372036854775807] writtenUnits = 0;
-        stack rawmutptr<i16[-32768 32767]> destinationData = &utf16Storage[0];
+        stack mut i64[min max] writtenUnits = 0;
+        stack rawmutptr<i16[min max]> destinationData = &utf16Storage[0];
         unsafe {
             if (!System.Text.TryConvertAsciiToUtf16(destinationData, 2048, chunk, &writtenUnits)) {
                 return -1;
             }
         }
 
-        if (WriteAllBytes(handle, (rawptr<i8[-128 127]>)(&utf16Storage[0]), writtenUnits * 2) != 0) {
+        if (WriteAllBytes(handle, (rawptr<i8[min max]>)(&utf16Storage[0]), writtenUnits * 2) != 0) {
             return -1;
         }
 
@@ -253,27 +253,27 @@ unsafe fn i32[-2147483648 2147483647] WriteAsciiUtf16(rawptr<i8[-128 127]> handl
     return 0;
 }
 
-unsafe fn i32[-2147483648 2147483647] WriteAsciiUtf32(rawptr<i8[-128 127]> handle, ascii text) {
-    stack i64[-9223372036854775808 9223372036854775807] sourceLength = System.Text.AsciiLength(text);
+unsafe fn i32[min max] WriteAsciiUtf32(rawptr<i8[min max]> handle, ascii text) {
+    stack i64[min max] sourceLength = System.Text.AsciiLength(text);
     if (sourceLength <= 0) {
         return 0;
     }
 
     stack ascii view = text[0, sourceLength];
-    stack rawptr<i8[-128 127]> sourceData = System.Text.AsciiData(view);
+    stack rawptr<i8[min max]> sourceData = System.Text.AsciiData(view);
     if (sourceData == null) {
         return -1;
     }
 
-    stack mut i32[-2147483648 2147483647][1024] unicodeStorage;
+    stack mut i32[min max][1024] unicodeStorage;
     stack mut Unicode owned = new Unicode() {
         Data = &unicodeStorage[0],
         Length = 0,
         Capacity = 1024
     };
-    stack mut i64[-9223372036854775808 9223372036854775807] sourceIndex = 0;
+    stack mut i64[min max] sourceIndex = 0;
     while willexit (sourceIndex < sourceLength) {
-        stack i64[-9223372036854775808 9223372036854775807] chunkLength = Utf8ChunkByteLength(&sourceData[sourceIndex], sourceLength - sourceIndex, 1024);
+        stack i64[min max] chunkLength = Utf8ChunkByteLength(&sourceData[sourceIndex], sourceLength - sourceIndex, 1024);
         if (chunkLength <= 0) {
             return -1;
         }
@@ -289,7 +289,7 @@ unsafe fn i32[-2147483648 2147483647] WriteAsciiUtf32(rawptr<i8[-128 127]> handl
             return -1;
         }
 
-        if (WriteAllBytes(handle, (rawptr<i8[-128 127]>)owned.Data, owned.Length * 4) != 0) {
+        if (WriteAllBytes(handle, (rawptr<i8[min max]>)owned.Data, owned.Length * 4) != 0) {
             return -1;
         }
 
@@ -299,31 +299,31 @@ unsafe fn i32[-2147483648 2147483647] WriteAsciiUtf32(rawptr<i8[-128 127]> handl
     return 0;
 }
 
-unsafe fn i32[-2147483648 2147483647] WriteUnicodeUtf16(rawptr<i8[-128 127]> handle, unicode text) {
-    stack i64[-9223372036854775808 9223372036854775807] sourceLength = System.Text.UnicodeLength(text);
+unsafe fn i32[min max] WriteUnicodeUtf16(rawptr<i8[min max]> handle, unicode text) {
+    stack i64[min max] sourceLength = System.Text.UnicodeLength(text);
     if (sourceLength <= 0) {
         return 0;
     }
 
     stack unicode view = text[0, sourceLength];
-    stack mut i16[-32768 32767][2048] utf16Storage;
-    stack mut i64[-9223372036854775808 9223372036854775807] sourceIndex = 0;
+    stack mut i16[min max][2048] utf16Storage;
+    stack mut i64[min max] sourceIndex = 0;
     while willexit (sourceIndex < sourceLength) {
-        stack mut i64[-9223372036854775808 9223372036854775807] chunkLength = sourceLength - sourceIndex;
+        stack mut i64[min max] chunkLength = sourceLength - sourceIndex;
         if (chunkLength > 1024) {
             chunkLength = 1024;
         }
 
         stack unicode chunk = view[sourceIndex, chunkLength];
-        stack mut i64[-9223372036854775808 9223372036854775807] writtenUnits = 0;
-        stack rawmutptr<i16[-32768 32767]> destinationData = &utf16Storage[0];
+        stack mut i64[min max] writtenUnits = 0;
+        stack rawmutptr<i16[min max]> destinationData = &utf16Storage[0];
         unsafe {
             if (!System.Text.TryConvertUnicodeToUtf16(destinationData, 2048, chunk, &writtenUnits)) {
                 return -1;
             }
         }
 
-        if (WriteAllBytes(handle, (rawptr<i8[-128 127]>)(&utf16Storage[0]), writtenUnits * 2) != 0) {
+        if (WriteAllBytes(handle, (rawptr<i8[min max]>)(&utf16Storage[0]), writtenUnits * 2) != 0) {
             return -1;
         }
 
@@ -333,26 +333,26 @@ unsafe fn i32[-2147483648 2147483647] WriteUnicodeUtf16(rawptr<i8[-128 127]> han
     return 0;
 }
 
-unsafe fn i32[-2147483648 2147483647] WriteUnicodeUtf32(rawptr<i8[-128 127]> handle, unicode text) {
-    stack i64[-9223372036854775808 9223372036854775807] sourceLength = System.Text.UnicodeLength(text);
+unsafe fn i32[min max] WriteUnicodeUtf32(rawptr<i8[min max]> handle, unicode text) {
+    stack i64[min max] sourceLength = System.Text.UnicodeLength(text);
     if (sourceLength <= 0) {
         return 0;
     }
 
     stack unicode view = text[0, sourceLength];
-    stack rawptr<i32[-2147483648 2147483647]> sourceData = System.Text.UnicodeData(view);
+    stack rawptr<i32[min max]> sourceData = System.Text.UnicodeData(view);
     if (sourceData == null) {
         return -1;
     }
 
-    stack mut i64[-9223372036854775808 9223372036854775807] sourceIndex = 0;
+    stack mut i64[min max] sourceIndex = 0;
     while willexit (sourceIndex < sourceLength) {
-        stack mut i64[-9223372036854775808 9223372036854775807] chunkLength = sourceLength - sourceIndex;
+        stack mut i64[min max] chunkLength = sourceLength - sourceIndex;
         if (chunkLength > 2048) {
             chunkLength = 2048;
         }
 
-        if (WriteAllBytes(handle, (rawptr<i8[-128 127]>)(&sourceData[sourceIndex]), chunkLength * 4) != 0) {
+        if (WriteAllBytes(handle, (rawptr<i8[min max]>)(&sourceData[sourceIndex]), chunkLength * 4) != 0) {
             return -1;
         }
 
@@ -362,7 +362,7 @@ unsafe fn i32[-2147483648 2147483647] WriteUnicodeUtf32(rawptr<i8[-128 127]> han
     return 0;
 }
 
-unsafe fn i32[-2147483648 2147483647] WriteAsciiEncoded(rawptr<i8[-128 127]> handle, System.Text.Encoding encoding, ascii text) {
+unsafe fn i32[min max] WriteAsciiEncoded(rawptr<i8[min max]> handle, System.Text.Encoding encoding, ascii text) {
     switch (encoding) {
         case System.Text.Encoding.Binary:
             return System.Runtime.Platform.WriteAscii(handle, text);
@@ -375,7 +375,7 @@ unsafe fn i32[-2147483648 2147483647] WriteAsciiEncoded(rawptr<i8[-128 127]> han
     }
 }
 
-unsafe fn i32[-2147483648 2147483647] WriteUnicodeEncoded(rawptr<i8[-128 127]> handle, System.Text.Encoding encoding, unicode text) {
+unsafe fn i32[min max] WriteUnicodeEncoded(rawptr<i8[min max]> handle, System.Text.Encoding encoding, unicode text) {
     switch (encoding) {
         case System.Text.Encoding.Binary:
             return System.Runtime.Platform.WriteUnicode(handle, text);
@@ -388,14 +388,14 @@ unsafe fn i32[-2147483648 2147483647] WriteUnicodeEncoded(rawptr<i8[-128 127]> h
     }
 }
 
-unsafe fn void WriteAsciiLineHandle(rawptr<i8[-128 127]> handle, ascii text) {
+unsafe fn void WriteAsciiLineHandle(rawptr<i8[min max]> handle, ascii text) {
     stack mut System.Runtime.Buffer.FixedByteBuffer512 lineBuffer = new System.Runtime.Buffer.FixedByteBuffer512();
     stack mut Ascii owned = new Ascii();
     owned.Data = lineBuffer.WritePointer();
     owned.Length = 0;
     owned.Capacity = lineBuffer.Writable();
-    stack i64[-9223372036854775808 9223372036854775807] textLength = System.Text.AsciiLength(text);
-    stack i64[-9223372036854775808 9223372036854775807] required = textLength + 1;
+    stack i64[min max] textLength = System.Text.AsciiLength(text);
+    stack i64[min max] required = textLength + 1;
 
     if (owned.Data != null && required <= owned.Capacity) {
         stack ascii fullText = text[0, textLength];
@@ -412,13 +412,13 @@ unsafe fn void WriteAsciiLineHandle(rawptr<i8[-128 127]> handle, ascii text) {
     return;
 }
 
-unsafe fn void WriteUnicodeLineHandle(rawptr<i8[-128 127]> handle, unicode text) {
+unsafe fn void WriteUnicodeLineHandle(rawptr<i8[min max]> handle, unicode text) {
     System.Runtime.Platform.WriteUnicode(handle, text);
     System.Runtime.Platform.WriteUnicode(handle, (unicode)"\n");
     return;
 }
 
-unsafe fn FileBuffering DefaultBufferingForHandle(rawptr<i8[-128 127]> handle) {
+unsafe fn FileBuffering DefaultBufferingForHandle(rawptr<i8[min max]> handle) {
     if (handle != null && System.Runtime.Platform.IsTerminal(handle)) {
         return FileBuffering.Line;
     }
@@ -426,7 +426,7 @@ unsafe fn FileBuffering DefaultBufferingForHandle(rawptr<i8[-128 127]> handle) {
     return FileBuffering.Full;
 }
 
-unsafe fn File CreateFile(rawptr<i8[-128 127]> handle, System.Text.Encoding encoding, FileBuffering buffering) {
+unsafe fn File CreateFile(rawptr<i8[min max]> handle, System.Text.Encoding encoding, FileBuffering buffering) {
     stack mut bool bufferWrites = true;
     stack mut bool flushOnLine = false;
 
@@ -453,13 +453,13 @@ unsafe fn File CreateFile(rawptr<i8[-128 127]> handle, System.Text.Encoding enco
 }
 
 public struct File {
-    rawptr<i8[-128 127]> Handle;
+    internal rawptr<i8[min max]> Handle;
     bool Closed;
     System.Text.Encoding Encoding;
     bool BufferWrites;
     bool FlushOnLine;
-    i64[-9223372036854775808 9223372036854775807] WriteBufferLength;
-    i8[-128 127][8192] WriteBufferStorage;
+    i64[min max] WriteBufferLength;
+    i8[min max][8192] WriteBufferStorage;
 
     fn bool IsOpen(borrow File self) {
         return !self.Closed;
@@ -467,7 +467,7 @@ public struct File {
 
     fn ascii BufferedAscii(mut borrow File self) {
         unsafe {
-            stack i64[-9223372036854775808 9223372036854775807] length = self.WriteBufferLength;
+            stack i64[min max] length = self.WriteBufferLength;
             if (length <= 0) {
                 return "";
             }
@@ -481,14 +481,14 @@ public struct File {
         }
     }
 
-    fn i32[-2147483648 2147483647] FlushBufferedWrite(mut borrow File self) {
+    fn i32[min max] FlushBufferedWrite(mut borrow File self) {
         unsafe {
             if (self.Handle == null || self.WriteBufferLength <= 0) {
                 return 0;
             }
 
             stack ascii buffered = self.BufferedAscii();
-            stack i32[-2147483648 2147483647] status = System.Runtime.Platform.WriteAscii(self.Handle, buffered);
+            stack i32[min max] status = System.Runtime.Platform.WriteAscii(self.Handle, buffered);
             if (status == 0) {
                 self.WriteBufferLength = 0;
             }
@@ -499,31 +499,31 @@ public struct File {
 
     fn bool TryAppendBufferedAscii(mut borrow File self, ascii text) {
         unsafe {
-            stack i64[-9223372036854775808 9223372036854775807] textLength = System.Text.AsciiLength(text);
+            stack i64[min max] textLength = System.Text.AsciiLength(text);
             if (textLength <= 0) {
                 return true;
             }
 
             stack ascii fullText = text[0, textLength];
 
-            stack i64[-9223372036854775808 9223372036854775807] existingLength = self.WriteBufferLength;
-            stack i64[-9223372036854775808 9223372036854775807] capacity = 8192;
+            stack i64[min max] existingLength = self.WriteBufferLength;
+            stack i64[min max] capacity = 8192;
             if (existingLength + textLength > capacity) {
                 return false;
             }
 
-            stack rawptr<i8[-128 127]> textData = System.Text.AsciiData(fullText);
+            stack rawptr<i8[min max]> textData = System.Text.AsciiData(fullText);
             if (textData == null) {
                 return false;
             }
 
-            CopyAsciiBytes(&self.WriteBufferStorage[existingLength], textData, (i32[-2147483648 2147483647])textLength);
+            CopyAsciiBytes(&self.WriteBufferStorage[existingLength], textData, (i32[min max])textLength);
             self.WriteBufferLength = existingLength + textLength;
             return true;
         }
     }
 
-    internal fn i32[-2147483648 2147483647] CloseRaw(mut borrow File self) {
+    internal fn i32[min max] CloseRaw(mut borrow File self) {
         unsafe {
             if (self.Closed || self.Handle == null) {
                 self.Handle = null;
@@ -531,8 +531,8 @@ public struct File {
                 return 0;
             }
 
-            stack i32[-2147483648 2147483647] flushStatus = self.FlushBufferedWrite();
-            stack i32[-2147483648 2147483647] closeStatus = System.Runtime.Platform.CloseFile(self.Handle);
+            stack i32[min max] flushStatus = self.FlushBufferedWrite();
+            stack i32[min max] closeStatus = System.Runtime.Platform.CloseFile(self.Handle);
             self.Handle = null;
             self.Closed = true;
 
@@ -544,7 +544,7 @@ public struct File {
         }
     }
 
-    internal fn i32[-2147483648 2147483647] FlushRaw(mut borrow File self) {
+    internal fn i32[min max] FlushRaw(mut borrow File self) {
         if (self.Closed || self.Handle == null) {
             return 0;
         }
@@ -552,13 +552,13 @@ public struct File {
         return self.FlushBufferedWrite();
     }
 
-    internal fn i32[-2147483648 2147483647] SyncAllRaw(mut borrow File self) {
+    internal fn i32[min max] SyncAllRaw(mut borrow File self) {
         unsafe {
             if (self.Closed || self.Handle == null) {
                 return 0;
             }
 
-            stack i32[-2147483648 2147483647] bufferStatus = self.FlushBufferedWrite();
+            stack i32[min max] bufferStatus = self.FlushBufferedWrite();
             if (bufferStatus != 0) {
                 return bufferStatus;
             }
@@ -567,7 +567,7 @@ public struct File {
         }
     }
 
-    unsafe fn i64[-9223372036854775808 9223372036854775807] ReadBytes(mut borrow File self, rawptr<i8[-128 127]> buffer, i64[-9223372036854775808 9223372036854775807] size, i64[-9223372036854775808 9223372036854775807] count) {
+    unsafe fn i64[min max] ReadBytes(mut borrow File self, rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count) {
         if (self.Closed || self.Handle == null) {
             return 0;
         }
@@ -579,7 +579,7 @@ public struct File {
         return System.Runtime.Platform.ReadFile(buffer, size, count, self.Handle);
     }
 
-    unsafe fn i64[-9223372036854775808 9223372036854775807] WriteBytes(mut borrow File self, rawptr<i8[-128 127]> buffer, i64[-9223372036854775808 9223372036854775807] size, i64[-9223372036854775808 9223372036854775807] count) {
+    unsafe fn i64[min max] WriteBytes(mut borrow File self, rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count) {
         if (self.Closed || self.Handle == null) {
             return 0;
         }
@@ -591,7 +591,7 @@ public struct File {
         return System.Runtime.Platform.WriteFile(buffer, size, count, self.Handle);
     }
 
-    unsafe fn i64[-9223372036854775808 9223372036854775807] ReadByteRegion(mut borrow File self, rawmutptr<i8[-128 127]>[count] buffer, i64[0 max] count) {
+    unsafe fn i64[min max] ReadByteRegion(mut borrow File self, rawmutptr<i8[min max]>[count] buffer, u64[0 2 ** 63 - 1] count) {
         if (self.Closed || self.Handle == null) {
             return 0;
         }
@@ -603,7 +603,7 @@ public struct File {
         return System.Runtime.Platform.ReadFileBytes(buffer, count, self.Handle);
     }
 
-    unsafe fn i64[-9223372036854775808 9223372036854775807] WriteByteRegion(mut borrow File self, rawptr<i8[-128 127]>[count] buffer, i64[0 max] count) {
+    unsafe fn i64[min max] WriteByteRegion(mut borrow File self, rawptr<i8[min max]>[count] buffer, u64[0 2 ** 63 - 1] count) {
         if (self.Closed || self.Handle == null) {
             return 0;
         }
@@ -615,7 +615,7 @@ public struct File {
         return System.Runtime.Platform.WriteFileBytes(buffer, count, self.Handle);
     }
 
-    unsafe fn i64[-9223372036854775808 9223372036854775807] ReadByteRegionFast(mut borrow File self, rawmutptr<i8[-128 127]>[count] buffer, i64[0 max] count) {
+    unsafe fn i64[min max] ReadByteRegionFast(mut borrow File self, rawmutptr<i8[min max]>[count] buffer, u64[0 2 ** 63 - 1] count) {
         if (self.Closed || self.Handle == null) {
             return 0;
         }
@@ -627,7 +627,7 @@ public struct File {
         return System.Runtime.Platform.ReadFileBytesFast(buffer, count, self.Handle);
     }
 
-    unsafe fn i64[-9223372036854775808 9223372036854775807] WriteByteRegionFast(mut borrow File self, rawptr<i8[-128 127]>[count] buffer, i64[0 max] count) {
+    unsafe fn i64[min max] WriteByteRegionFast(mut borrow File self, rawptr<i8[min max]>[count] buffer, u64[0 2 ** 63 - 1] count) {
         if (self.Closed || self.Handle == null) {
             return 0;
         }
@@ -639,7 +639,7 @@ public struct File {
         return System.Runtime.Platform.WriteFileBytesFast(buffer, count, self.Handle);
     }
 
-    internal fn i64[-9223372036854775808 9223372036854775807] SeekRaw(mut borrow File self, i64[-9223372036854775808 9223372036854775807] offset, SeekOrigin origin) {
+    internal fn i64[min max] SeekRaw(mut borrow File self, i64[min max] offset, SeekOrigin origin) {
         unsafe {
             if (self.Closed || self.Handle == null) {
                 return -1;
@@ -661,7 +661,7 @@ public struct File {
 
             switch (self.Encoding) {
                 case System.Text.Encoding.Binary:
-                    stack i64[-9223372036854775808 9223372036854775807] textLength = System.Text.AsciiLength(text);
+                    stack i64[min max] textLength = System.Text.AsciiLength(text);
                     if (!self.BufferWrites) {
                         self.FlushRaw();
                         stack ascii directText = text[0, textLength];
@@ -669,8 +669,8 @@ public struct File {
                         return;
                     }
 
-                    stack i64[-9223372036854775808 9223372036854775807] bufferedLength = self.WriteBufferLength;
-                    stack i64[-9223372036854775808 9223372036854775807] capacity = 8192;
+                    stack i64[min max] bufferedLength = self.WriteBufferLength;
+                    stack i64[min max] capacity = 8192;
                     if (bufferedLength + textLength <= capacity) {
                         stack ascii bufferedText = text[0, textLength];
                         self.TryAppendBufferedAscii(bufferedText);
@@ -691,7 +691,7 @@ public struct File {
                     System.Runtime.Platform.WriteAscii(self.Handle, directText);
                     return;
                 case System.Text.Encoding.UTF8:
-                    stack i64[-9223372036854775808 9223372036854775807] textLength = System.Text.AsciiLength(text);
+                    stack i64[min max] textLength = System.Text.AsciiLength(text);
                     if (!self.BufferWrites) {
                         self.FlushRaw();
                         stack ascii directText = text[0, textLength];
@@ -699,8 +699,8 @@ public struct File {
                         return;
                     }
 
-                    stack i64[-9223372036854775808 9223372036854775807] bufferedLength = self.WriteBufferLength;
-                    stack i64[-9223372036854775808 9223372036854775807] capacity = 8192;
+                    stack i64[min max] bufferedLength = self.WriteBufferLength;
+                    stack i64[min max] capacity = 8192;
                     if (bufferedLength + textLength <= capacity) {
                         stack ascii bufferedText = text[0, textLength];
                         self.TryAppendBufferedAscii(bufferedText);
@@ -785,7 +785,7 @@ public struct File {
 
             switch (self.Encoding) {
                 case System.Text.Encoding.Binary:
-                    stack i64[-9223372036854775808 9223372036854775807] textLength = System.Text.AsciiLength(text);
+                    stack i64[min max] textLength = System.Text.AsciiLength(text);
                     if (!self.BufferWrites) {
                         stack ascii lineText = text[0, textLength];
                         WriteAsciiLineHandle(self.Handle, lineText);
@@ -801,7 +801,7 @@ public struct File {
 
                     return;
                 case System.Text.Encoding.UTF8:
-                    stack i64[-9223372036854775808 9223372036854775807] textLength = System.Text.AsciiLength(text);
+                    stack i64[min max] textLength = System.Text.AsciiLength(text);
                     if (!self.BufferWrites) {
                         stack ascii lineText = text[0, textLength];
                         WriteAsciiLineHandle(self.Handle, lineText);
@@ -817,7 +817,7 @@ public struct File {
 
                     return;
                 case System.Text.Encoding.UTF16:
-                    stack i64[-9223372036854775808 9223372036854775807] textLength = System.Text.AsciiLength(text);
+                    stack i64[min max] textLength = System.Text.AsciiLength(text);
                     stack ascii lineText = text[0, textLength];
                     self.WriteTextRaw(lineText);
                     self.WriteTextRaw("\n");
@@ -827,7 +827,7 @@ public struct File {
 
                     return;
                 case System.Text.Encoding.UTF32:
-                    stack i64[-9223372036854775808 9223372036854775807] textLength = System.Text.AsciiLength(text);
+                    stack i64[min max] textLength = System.Text.AsciiLength(text);
                     stack ascii lineText = text[0, textLength];
                     self.WriteTextRaw(lineText);
                     self.WriteTextRaw("\n");
@@ -893,26 +893,26 @@ public struct File {
         return StatusFromPlatformResult(self.SyncAllRaw());
     }
 
-    fn System.IO.IOResult<i64[0 max]> Seek(mut borrow File self, i64[-9223372036854775808 9223372036854775807] offset, SeekOrigin origin) {
+    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Seek(mut borrow File self, i64[min max] offset, SeekOrigin origin) {
         return ByteCountFromPlatformResult(self.SeekRaw(offset, origin));
     }
 
-    fn System.IO.IOResult<i64[0 max]> Read(mut borrow File self, mut borrow i8[-128 127][] destination) {
+    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Read(mut borrow File self, mut borrow i8[min max][] destination) {
         unsafe {
             if (!self.IsOpen()) {
-                return System.IO.IOResult<i64[0 max]>.Err(System.IO.IOError.Unknown(-1));
+                return System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(System.IO.IOError.Unknown(-1));
             }
 
             stack System.Runtime.MutableByteSliceParts destinationParts = System.Runtime.GetMutableByteSliceParts(destination);
             if (destinationParts.Length == 0) {
-                return System.IO.IOResult<i64[0 max]>.Ok(0);
+                return System.IO.IOResult<u64[0 2 ** 63 - 1]>.Ok(0);
             }
 
             if (destinationParts.Data == null) {
-                return System.IO.IOResult<i64[0 max]>.Err(System.IO.IOError.InvalidPath);
+                return System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(System.IO.IOError.InvalidPath);
             }
 
-            stack mut i64[-9223372036854775808 9223372036854775807] readCount = 0;
+            stack mut i64[min max] readCount = 0;
             unsafe {
                 readCount = self.ReadByteRegionFast(destinationParts.Data, destinationParts.Length);
             }
@@ -921,59 +921,59 @@ public struct File {
         }
     }
 
-    fn System.IO.IOResult<i64[0 max]> Write(mut borrow File self, borrow i8[-128 127][] source) {
+    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Write(mut borrow File self, borrow i8[min max][] source) {
         unsafe {
             if (!self.IsOpen()) {
-                return System.IO.IOResult<i64[0 max]>.Err(System.IO.IOError.Unknown(-1));
+                return System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(System.IO.IOError.Unknown(-1));
             }
 
             stack System.Runtime.ByteSliceParts sourceParts = System.Runtime.GetByteSliceParts(source);
             if (sourceParts.Length == 0) {
-                return System.IO.IOResult<i64[0 max]>.Ok(0);
+                return System.IO.IOResult<u64[0 2 ** 63 - 1]>.Ok(0);
             }
 
             if (sourceParts.Data == null) {
-                return System.IO.IOResult<i64[0 max]>.Err(System.IO.IOError.InvalidPath);
+                return System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(System.IO.IOError.InvalidPath);
             }
 
-            stack mut i64[0 max] totalWritten = 0;
+            stack mut u64[0 2 ** 63 - 1] totalWritten = 0;
             while willexit (totalWritten < sourceParts.Length) {
-                stack rawptr<i8[-128 127]> chunk = &sourceParts.Data[totalWritten];
-                stack mut i64[-9223372036854775808 9223372036854775807] written = 0;
+                stack rawptr<i8[min max]> chunk = &sourceParts.Data[totalWritten];
+                stack mut i64[min max] written = 0;
                 unsafe {
                     written = self.WriteByteRegionFast(chunk, sourceParts.Length - totalWritten);
                 }
 
                 if (written <= 0) {
-                    return System.IO.IOResult<i64[0 max]>.Err(System.IO.IOError.BrokenPipe);
+                    return System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(System.IO.IOError.BrokenPipe);
                 }
 
-                totalWritten += (i64[0 max])written;
+                totalWritten += (u64[0 2 ** 63 - 1])written;
             }
 
-            return System.IO.IOResult<i64[0 max]>.Ok(totalWritten);
+            return System.IO.IOResult<u64[0 2 ** 63 - 1]>.Ok(totalWritten);
         }
     }
 
-    fn System.IO.IOResult<i64[0 max]> Write(
+    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Write(
         mut borrow File self,
         borrow System.Runtime.Buffer.DynamicByteBuffer source) {
         return self.Write(source.ReadSlice());
     }
 
-    fn System.IO.IOResult<i64[0 max]> Write(
+    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Write(
         mut borrow File self,
         borrow System.Runtime.Buffer.FixedByteBuffer512 source) {
         return self.Write(source.ReadSlice());
     }
 
-    fn System.IO.IOResult<i64[0 max]> Write(
+    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Write(
         mut borrow File self,
         borrow System.Runtime.Buffer.FixedByteBuffer4096 source) {
         return self.Write(source.ReadSlice());
     }
 
-    fn System.IO.IOResult<i64[0 max]> Write(
+    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Write(
         mut borrow File self,
         borrow System.Runtime.Buffer.FixedByteBuffer8192 source) {
         return self.Write(source.ReadSlice());
@@ -1038,35 +1038,35 @@ public fn System.IO.IOResult<File> Open(ascii path, FileMode mode, FileBuffering
 
 public fn System.IO.IOResult<File> Open(ascii path, FileMode mode, System.Text.Encoding encoding) {
     unsafe {
-        stack rawptr<i8[-128 127]> handle = OpenHandle(path, mode);
+        stack rawptr<i8[min max]> handle = OpenHandle(path, mode);
         return FileResult(CreateFile(handle, encoding, DefaultBufferingForHandle(handle)));
     }
 }
 
 public fn System.IO.IOResult<File> Open(ascii path, FileMode mode, System.Text.Encoding encoding, FileBuffering buffering) {
     unsafe {
-        stack rawptr<i8[-128 127]> handle = OpenHandle(path, mode);
+        stack rawptr<i8[min max]> handle = OpenHandle(path, mode);
         return FileResult(CreateFile(handle, encoding, buffering));
     }
 }
 
-public unsafe fn rawptr<i8[-128 127]> OpenRead(ascii path) {
+public unsafe fn rawptr<i8[min max]> OpenRead(ascii path) {
     return System.Runtime.Platform.OpenFileRead(path);
 }
 
-public unsafe fn rawptr<i8[-128 127]> OpenWrite(ascii path) {
+public unsafe fn rawptr<i8[min max]> OpenWrite(ascii path) {
     return System.Runtime.Platform.OpenFileWrite(path);
 }
 
-public unsafe fn rawptr<i8[-128 127]> OpenAppend(ascii path) {
+public unsafe fn rawptr<i8[min max]> OpenAppend(ascii path) {
     return System.Runtime.Platform.OpenFileAppend(path);
 }
 
-public unsafe fn i32[-2147483648 2147483647] Close(rawptr<i8[-128 127]> handle) {
+public unsafe fn i32[min max] Close(rawptr<i8[min max]> handle) {
     return System.Runtime.Platform.CloseFile(handle);
 }
 
-public unsafe fn i32[-2147483648 2147483647] Flush(rawptr<i8[-128 127]> handle) {
+public unsafe fn i32[min max] Flush(rawptr<i8[min max]> handle) {
     if (handle == null) {
         return 0;
     }
@@ -1074,38 +1074,38 @@ public unsafe fn i32[-2147483648 2147483647] Flush(rawptr<i8[-128 127]> handle) 
     return 0;
 }
 
-public unsafe fn i32[-2147483648 2147483647] SyncAll(rawptr<i8[-128 127]> handle) {
+public unsafe fn i32[min max] SyncAll(rawptr<i8[min max]> handle) {
     return System.Runtime.Platform.FlushFile(handle);
 }
 
-public unsafe fn i64[-9223372036854775808 9223372036854775807] ReadBytes(rawptr<i8[-128 127]> buffer, i64[-9223372036854775808 9223372036854775807] size, i64[-9223372036854775808 9223372036854775807] count, rawptr<i8[-128 127]> handle) {
+public unsafe fn i64[min max] ReadBytes(rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
     return System.Runtime.Platform.ReadFile(buffer, size, count, handle);
 }
 
-public unsafe fn i64[-9223372036854775808 9223372036854775807] WriteBytes(rawptr<i8[-128 127]> buffer, i64[-9223372036854775808 9223372036854775807] size, i64[-9223372036854775808 9223372036854775807] count, rawptr<i8[-128 127]> handle) {
+public unsafe fn i64[min max] WriteBytes(rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
     return System.Runtime.Platform.WriteFile(buffer, size, count, handle);
 }
 
-public unsafe fn i64[-9223372036854775808 9223372036854775807] Seek(rawptr<i8[-128 127]> handle, i64[-9223372036854775808 9223372036854775807] offset, SeekOrigin origin) {
+public unsafe fn i64[min max] Seek(rawptr<i8[min max]> handle, i64[min max] offset, SeekOrigin origin) {
     return System.Runtime.Platform.SeekFile(handle, offset, SeekOriginCode(origin));
 }
 
-public unsafe fn void WriteText(rawptr<i8[-128 127]> handle, ascii text) {
+public unsafe fn void WriteText(rawptr<i8[min max]> handle, ascii text) {
     System.Runtime.Platform.WriteAscii(handle, text);
     return;
 }
 
-public unsafe fn void WriteText(rawptr<i8[-128 127]> handle, unicode text) {
+public unsafe fn void WriteText(rawptr<i8[min max]> handle, unicode text) {
     System.Runtime.Platform.WriteUnicode(handle, text);
     return;
 }
 
-public unsafe fn void WriteLine(rawptr<i8[-128 127]> handle, ascii text) {
+public unsafe fn void WriteLine(rawptr<i8[min max]> handle, ascii text) {
     WriteAsciiLineHandle(handle, text);
     return;
 }
 
-public unsafe fn void WriteLine(rawptr<i8[-128 127]> handle, unicode text) {
+public unsafe fn void WriteLine(rawptr<i8[min max]> handle, unicode text) {
     WriteUnicodeLineHandle(handle, text);
     return;
 }

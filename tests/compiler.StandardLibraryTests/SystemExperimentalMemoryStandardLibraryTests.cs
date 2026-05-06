@@ -1,4 +1,4 @@
-﻿using Stark.Compiler;
+using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
@@ -17,35 +17,35 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
             }
         }
 
-        fn bool InitialBytesOk(borrow i8[-128 127][] values) {
+        fn bool InitialBytesOk(borrow i8[min max][] values) {
             return values[0] == 1 && values[3] == 4;
         }
 
-        fn bool FilledBytesOk(borrow i8[-128 127][] values) {
+        fn bool FilledBytesOk(borrow i8[min max][] values) {
             return values[4] == 9 && values[7] == 9;
         }
 
-        fn bool OverwrittenBytesOk(borrow i8[-128 127][] values) {
+        fn bool OverwrittenBytesOk(borrow i8[min max][] values) {
             return values[0] == 7 && values[1] == 7;
         }
 
-        fn bool InitialCodePointsOk(borrow i32[-2147483648 2147483647][] values) {
+        fn bool InitialCodePointsOk(borrow i32[min max][] values) {
             return values[0] == 65 && values[7] == 90;
         }
 
-        fn bool CopiedBytesOk(borrow i8[-128 127][] values) {
+        fn bool CopiedBytesOk(borrow i8[min max][] values) {
             return values[2] == 1 && values[3] == 2 && values[4] == 3 && values[5] == 4;
         }
 
-        fn bool MovedBytesOk(borrow i8[-128 127][] values) {
+        fn bool MovedBytesOk(borrow i8[min max][] values) {
             return values[0] == 3 && values[1] == 4 && values[2] == 5 && values[3] == 6;
         }
 
-        fn bool CopiedCodePointsOk(borrow i32[-2147483648 2147483647][] values) {
+        fn bool CopiedCodePointsOk(borrow i32[min max][] values) {
             return values[2] == 65 && values[3] == 66 && values[4] == 67 && values[5] == 68;
         }
 
-        fn bool MovedCodePointsOk(borrow i32[-2147483648 2147483647][] values) {
+        fn bool MovedCodePointsOk(borrow i32[min max][] values) {
             return values[0] == 67 && values[1] == 68 && values[2] == 69 && values[3] == 70;
         }
 
@@ -61,8 +61,8 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 return 2;
             }
 
-            stack mut dynamic i8[-128 127] bytes = new();
-            stack mut i8[-128 127][4] sourceBytes = { 1, 2, 3, 4 };
+            stack mut dynamic i8[min max] bytes = new();
+            stack mut i8[min max][4] sourceBytes = { 1, 2, 3, 4 };
             stack i64[0 max] two = 2;
             stack i64[0 max] four = 4;
             stack i64[0 max] eight = 8;
@@ -107,13 +107,13 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 return 10;
             }
 
-            stack i8[-128 127][] aliasedBytes = bytes[0, bytes.Length];
+            stack i8[min max][] aliasedBytes = bytes[0, bytes.Length];
             if (bytes.Length != 16 || aliasedBytes[8] != aliasedBytes[0] || aliasedBytes[15] != aliasedBytes[7]) {
                 return 11;
             }
 
-            stack mut dynamic i32[-2147483648 2147483647] codePoints = new();
-            stack mut i32[-2147483648 2147483647][4] sourceCodePoints = { 65, 66, 67, 68 };
+            stack mut dynamic i32[min max] codePoints = new();
+            stack mut i32[min max][4] sourceCodePoints = { 65, 66, 67, 68 };
             if (!Ok(System.Memory.ReserveCodePoints(codePoints, eight))) {
                 return 13;
             }
@@ -143,18 +143,18 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 return 17;
             }
 
-            stack i32[-2147483648 2147483647][] aliasedCodePoints = codePoints[0, codePoints.Length];
+            stack i32[min max][] aliasedCodePoints = codePoints[0, codePoints.Length];
             if (codePoints.Length != 16 || aliasedCodePoints[8] != aliasedCodePoints[0] || aliasedCodePoints[15] != aliasedCodePoints[7]) {
                 return 18;
             }
 
-            stack mut dynamic i8[-128 127] byteMoveBuffer = new();
+            stack mut dynamic i8[min max] byteMoveBuffer = new();
             if (!Ok(System.Memory.ReserveBytes(byteMoveBuffer, eight))) {
                 return 24;
             }
 
             for willexit (stack mut i64[0 max] byteMoveIndex = 0; byteMoveIndex < eight; byteMoveIndex += 1) {
-                init byteMoveBuffer[byteMoveBuffer.Length] = (i8[-128 127])(byteMoveIndex + 1);
+                init byteMoveBuffer[byteMoveBuffer.Length] = (i8[min max])(byteMoveIndex + 1);
             }
 
             if (!Ok(System.Memory.CopyBytes(byteMoveBuffer[0, four], byteMoveBuffer[two, four], four))) {
@@ -165,13 +165,13 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 return 26;
             }
 
-            stack mut dynamic i8[-128 127] byteMoveOnlyBuffer = new();
+            stack mut dynamic i8[min max] byteMoveOnlyBuffer = new();
             if (!Ok(System.Memory.ReserveBytes(byteMoveOnlyBuffer, eight))) {
                 return 27;
             }
 
             for willexit (stack mut i64[0 max] byteMoveOnlyIndex = 0; byteMoveOnlyIndex < eight; byteMoveOnlyIndex += 1) {
-                init byteMoveOnlyBuffer[byteMoveOnlyBuffer.Length] = (i8[-128 127])(byteMoveOnlyIndex + 1);
+                init byteMoveOnlyBuffer[byteMoveOnlyBuffer.Length] = (i8[min max])(byteMoveOnlyIndex + 1);
             }
 
             if (!Ok(System.Memory.MoveBytes(byteMoveOnlyBuffer[two, four], byteMoveOnlyBuffer[0, four], four))) {
@@ -182,14 +182,14 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 return 28;
             }
 
-            stack mut dynamic i32[-2147483648 2147483647] codePointMoveBuffer = new();
+            stack mut dynamic i32[min max] codePointMoveBuffer = new();
             if (!Ok(System.Memory.ReserveCodePoints(codePointMoveBuffer, eight))) {
                 return 29;
             }
 
             for willexit (stack mut i64[0 max] codePointMoveIndex = 0; codePointMoveIndex < eight; codePointMoveIndex += 1) {
                 init codePointMoveBuffer[codePointMoveBuffer.Length] =
-                    (i32[-2147483648 2147483647])(65 + codePointMoveIndex);
+                    (i32[min max])(65 + codePointMoveIndex);
             }
 
             if (!Ok(System.Memory.CopyCodePoints(codePointMoveBuffer[0, four], codePointMoveBuffer[two, four], four))) {
@@ -200,14 +200,14 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 return 31;
             }
 
-            stack mut dynamic i32[-2147483648 2147483647] codePointMoveOnlyBuffer = new();
+            stack mut dynamic i32[min max] codePointMoveOnlyBuffer = new();
             if (!Ok(System.Memory.ReserveCodePoints(codePointMoveOnlyBuffer, eight))) {
                 return 32;
             }
 
             for willexit (stack mut i64[0 max] codePointMoveOnlyIndex = 0; codePointMoveOnlyIndex < eight; codePointMoveOnlyIndex += 1) {
                 init codePointMoveOnlyBuffer[codePointMoveOnlyBuffer.Length] =
-                    (i32[-2147483648 2147483647])(65 + codePointMoveOnlyIndex);
+                    (i32[min max])(65 + codePointMoveOnlyIndex);
             }
 
             if (!Ok(System.Memory.MoveCodePoints(codePointMoveOnlyBuffer[two, four], codePointMoveOnlyBuffer[0, four], four))) {
@@ -235,7 +235,7 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
             }
         }
 
-        fn i64[min max] SumBytes(borrow i8[-128 127][] values, i64[0 max] count) {
+        fn i64[min max] SumBytes(borrow i8[min max][] values, i64[0 max] count) {
             stack mut i64[min max] checksum = 0;
             for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
                 checksum += (i64[min max])values[index];
@@ -244,7 +244,7 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
             return checksum;
         }
 
-        fn i64[min max] SumCodePoints(borrow i32[-2147483648 2147483647][] values, i64[0 max] count) {
+        fn i64[min max] SumCodePoints(borrow i32[min max][] values, i64[0 max] count) {
             stack mut i64[min max] checksum = 0;
             for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
                 checksum += (i64[min max])values[index];
@@ -255,25 +255,25 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
 
         export unsafe ffi fn i32[min max] main() {
             stack i64[0 max] count = 32;
-            stack mut i8[-128 127][32] byteSource = {
+            stack mut i8[min max][32] byteSource = {
                 3, 3, 3, 3, 3, 3, 3, 3,
                 3, 3, 3, 3, 3, 3, 3, 3,
                 3, 3, 3, 3, 3, 3, 3, 3,
                 3, 3, 3, 3, 3, 3, 3, 3
             };
-            stack mut i8[-128 127][32] byteDestination = {
+            stack mut i8[min max][32] byteDestination = {
                 0, 0, 0, 0, 0, 0, 0, 0,
                 0, 0, 0, 0, 0, 0, 0, 0,
                 0, 0, 0, 0, 0, 0, 0, 0,
                 0, 0, 0, 0, 0, 0, 0, 0
             };
-            stack mut i32[-2147483648 2147483647][32] codePointSource = {
+            stack mut i32[min max][32] codePointSource = {
                 65, 65, 65, 65, 65, 65, 65, 65,
                 65, 65, 65, 65, 65, 65, 65, 65,
                 65, 65, 65, 65, 65, 65, 65, 65,
                 65, 65, 65, 65, 65, 65, 65, 65
             };
-            stack mut i32[-2147483648 2147483647][32] codePointDestination = {
+            stack mut i32[min max][32] codePointDestination = {
                 0, 0, 0, 0, 0, 0, 0, 0,
                 0, 0, 0, 0, 0, 0, 0, 0,
                 0, 0, 0, 0, 0, 0, 0, 0,
@@ -321,25 +321,25 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
             }
         }
 
-        fn MemoryStatus SeedBytes(mut borrow dynamic i8[-128 127] values, i64[0 max] count) {
+        fn MemoryStatus SeedBytes(mut borrow dynamic i8[min max] values, i64[0 max] count) {
             if (!values.TryReserve(count)) {
                 return MemoryStatus.Err(MemoryError.OutOfMemory);
             }
 
             for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
-                init values[values.Length] = (i8[-128 127])(index + 1);
+                init values[values.Length] = (i8[min max])(index + 1);
             }
 
             return MemoryStatus.Ok;
         }
 
-        fn MemoryStatus SeedCodePoints(mut borrow dynamic i32[-2147483648 2147483647] values, i64[0 max] count) {
+        fn MemoryStatus SeedCodePoints(mut borrow dynamic i32[min max] values, i64[0 max] count) {
             if (!values.TryReserve(count)) {
                 return MemoryStatus.Err(MemoryError.OutOfMemory);
             }
 
             for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
-                init values[values.Length] = (i32[-2147483648 2147483647])(65 + index);
+                init values[values.Length] = (i32[min max])(65 + index);
             }
 
             return MemoryStatus.Ok;
@@ -351,7 +351,7 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
             stack i64[0 max] four = 4;
             stack i64[0 max] eight = 8;
 
-            stack mut dynamic i8[-128 127] copyThenMove = new();
+            stack mut dynamic i8[min max] copyThenMove = new();
             if (!Ok(SeedBytes(copyThenMove, eight))) {
                 return 1;
             }
@@ -364,12 +364,12 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 return 3;
             }
 
-            stack i8[-128 127][] copyThenMoveValues = copyThenMove[zero, copyThenMove.Length];
+            stack i8[min max][] copyThenMoveValues = copyThenMove[zero, copyThenMove.Length];
             if (copyThenMoveValues[0] != 1 || copyThenMoveValues[1] != 2 || copyThenMoveValues[2] != 3 || copyThenMoveValues[3] != 4 || copyThenMoveValues[4] != 3 || copyThenMoveValues[5] != 4) {
                 return 4;
             }
 
-            stack mut dynamic i8[-128 127] forwardOverlap = new();
+            stack mut dynamic i8[min max] forwardOverlap = new();
             if (!Ok(SeedBytes(forwardOverlap, eight))) {
                 return 5;
             }
@@ -378,12 +378,12 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 return 6;
             }
 
-            stack i8[-128 127][] forwardOverlapValues = forwardOverlap[zero, forwardOverlap.Length];
+            stack i8[min max][] forwardOverlapValues = forwardOverlap[zero, forwardOverlap.Length];
             if (forwardOverlapValues[0] != 3 || forwardOverlapValues[1] != 4 || forwardOverlapValues[2] != 5 || forwardOverlapValues[3] != 6 || forwardOverlapValues[4] != 5 || forwardOverlapValues[5] != 6) {
                 return 7;
             }
 
-            stack mut dynamic i8[-128 127] backwardOverlap = new();
+            stack mut dynamic i8[min max] backwardOverlap = new();
             if (!Ok(SeedBytes(backwardOverlap, eight))) {
                 return 8;
             }
@@ -392,12 +392,12 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 return 9;
             }
 
-            stack i8[-128 127][] backwardOverlapValues = backwardOverlap[zero, backwardOverlap.Length];
+            stack i8[min max][] backwardOverlapValues = backwardOverlap[zero, backwardOverlap.Length];
             if (backwardOverlapValues[0] != 1 || backwardOverlapValues[1] != 2 || backwardOverlapValues[2] != 1 || backwardOverlapValues[3] != 2 || backwardOverlapValues[4] != 3 || backwardOverlapValues[5] != 4 || backwardOverlapValues[6] != 7 || backwardOverlapValues[7] != 8) {
                 return 10;
             }
 
-            stack mut dynamic i8[-128 127] sameRange = new();
+            stack mut dynamic i8[min max] sameRange = new();
             if (!Ok(SeedBytes(sameRange, eight))) {
                 return 11;
             }
@@ -406,12 +406,12 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 return 12;
             }
 
-            stack i8[-128 127][] sameRangeValues = sameRange[zero, sameRange.Length];
+            stack i8[min max][] sameRangeValues = sameRange[zero, sameRange.Length];
             if (sameRangeValues[0] != 1 || sameRangeValues[1] != 2 || sameRangeValues[2] != 3 || sameRangeValues[3] != 4 || sameRangeValues[7] != 8) {
                 return 13;
             }
 
-            stack mut dynamic i8[-128 127] disjointMove = new();
+            stack mut dynamic i8[min max] disjointMove = new();
             if (!Ok(SeedBytes(disjointMove, eight))) {
                 return 14;
             }
@@ -420,12 +420,12 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 return 15;
             }
 
-            stack i8[-128 127][] disjointMoveValues = disjointMove[zero, disjointMove.Length];
+            stack i8[min max][] disjointMoveValues = disjointMove[zero, disjointMove.Length];
             if (disjointMoveValues[0] != 1 || disjointMoveValues[1] != 2 || disjointMoveValues[4] != 1 || disjointMoveValues[5] != 2 || disjointMoveValues[6] != 7 || disjointMoveValues[7] != 8) {
                 return 16;
             }
 
-            stack mut dynamic i8[-128 127] zeroMove = new();
+            stack mut dynamic i8[min max] zeroMove = new();
             if (!Ok(SeedBytes(zeroMove, eight))) {
                 return 17;
             }
@@ -434,7 +434,7 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 return 18;
             }
 
-            stack i8[-128 127][] zeroMoveValues = zeroMove[zero, zeroMove.Length];
+            stack i8[min max][] zeroMoveValues = zeroMove[zero, zeroMove.Length];
             if (zeroMoveValues[0] != 1 || zeroMoveValues[1] != 2 || zeroMoveValues[2] != 3 || zeroMoveValues[7] != 8) {
                 return 19;
             }
@@ -448,7 +448,7 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
             stack i64[0 max] four = 4;
             stack i64[0 max] eight = 8;
 
-            stack mut dynamic i32[-2147483648 2147483647] copyThenMove = new();
+            stack mut dynamic i32[min max] copyThenMove = new();
             if (!Ok(SeedCodePoints(copyThenMove, eight))) {
                 return 1;
             }
@@ -461,12 +461,12 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 return 3;
             }
 
-            stack i32[-2147483648 2147483647][] copyThenMoveValues = copyThenMove[zero, copyThenMove.Length];
+            stack i32[min max][] copyThenMoveValues = copyThenMove[zero, copyThenMove.Length];
             if (copyThenMoveValues[0] != 65 || copyThenMoveValues[1] != 66 || copyThenMoveValues[2] != 67 || copyThenMoveValues[3] != 68 || copyThenMoveValues[4] != 67 || copyThenMoveValues[5] != 68) {
                 return 4;
             }
 
-            stack mut dynamic i32[-2147483648 2147483647] forwardOverlap = new();
+            stack mut dynamic i32[min max] forwardOverlap = new();
             if (!Ok(SeedCodePoints(forwardOverlap, eight))) {
                 return 5;
             }
@@ -475,12 +475,12 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 return 6;
             }
 
-            stack i32[-2147483648 2147483647][] forwardOverlapValues = forwardOverlap[zero, forwardOverlap.Length];
+            stack i32[min max][] forwardOverlapValues = forwardOverlap[zero, forwardOverlap.Length];
             if (forwardOverlapValues[0] != 67 || forwardOverlapValues[1] != 68 || forwardOverlapValues[2] != 69 || forwardOverlapValues[3] != 70 || forwardOverlapValues[4] != 69 || forwardOverlapValues[5] != 70) {
                 return 7;
             }
 
-            stack mut dynamic i32[-2147483648 2147483647] backwardOverlap = new();
+            stack mut dynamic i32[min max] backwardOverlap = new();
             if (!Ok(SeedCodePoints(backwardOverlap, eight))) {
                 return 8;
             }
@@ -489,12 +489,12 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 return 9;
             }
 
-            stack i32[-2147483648 2147483647][] backwardOverlapValues = backwardOverlap[zero, backwardOverlap.Length];
+            stack i32[min max][] backwardOverlapValues = backwardOverlap[zero, backwardOverlap.Length];
             if (backwardOverlapValues[0] != 65 || backwardOverlapValues[1] != 66 || backwardOverlapValues[2] != 65 || backwardOverlapValues[3] != 66 || backwardOverlapValues[4] != 67 || backwardOverlapValues[5] != 68 || backwardOverlapValues[6] != 71 || backwardOverlapValues[7] != 72) {
                 return 10;
             }
 
-            stack mut dynamic i32[-2147483648 2147483647] sameRange = new();
+            stack mut dynamic i32[min max] sameRange = new();
             if (!Ok(SeedCodePoints(sameRange, eight))) {
                 return 11;
             }
@@ -503,12 +503,12 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 return 12;
             }
 
-            stack i32[-2147483648 2147483647][] sameRangeValues = sameRange[zero, sameRange.Length];
+            stack i32[min max][] sameRangeValues = sameRange[zero, sameRange.Length];
             if (sameRangeValues[0] != 65 || sameRangeValues[1] != 66 || sameRangeValues[2] != 67 || sameRangeValues[3] != 68 || sameRangeValues[7] != 72) {
                 return 13;
             }
 
-            stack mut dynamic i32[-2147483648 2147483647] disjointMove = new();
+            stack mut dynamic i32[min max] disjointMove = new();
             if (!Ok(SeedCodePoints(disjointMove, eight))) {
                 return 14;
             }
@@ -517,12 +517,12 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 return 15;
             }
 
-            stack i32[-2147483648 2147483647][] disjointMoveValues = disjointMove[zero, disjointMove.Length];
+            stack i32[min max][] disjointMoveValues = disjointMove[zero, disjointMove.Length];
             if (disjointMoveValues[0] != 65 || disjointMoveValues[1] != 66 || disjointMoveValues[4] != 65 || disjointMoveValues[5] != 66 || disjointMoveValues[6] != 71 || disjointMoveValues[7] != 72) {
                 return 16;
             }
 
-            stack mut dynamic i32[-2147483648 2147483647] zeroMove = new();
+            stack mut dynamic i32[min max] zeroMove = new();
             if (!Ok(SeedCodePoints(zeroMove, eight))) {
                 return 17;
             }
@@ -531,7 +531,7 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 return 18;
             }
 
-            stack i32[-2147483648 2147483647][] zeroMoveValues = zeroMove[zero, zeroMove.Length];
+            stack i32[min max][] zeroMoveValues = zeroMove[zero, zeroMove.Length];
             if (zeroMoveValues[0] != 65 || zeroMoveValues[1] != 66 || zeroMoveValues[2] != 67 || zeroMoveValues[7] != 72) {
                 return 19;
             }
@@ -569,8 +569,8 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
 
         export unsafe ffi fn i32[min max] main() {
             stack i64[0 max] four = 4;
-            stack mut i8[-128 127][4] byteSource = { 1, 2, 3, 4 };
-            stack mut dynamic i8[-128 127] bytes = new();
+            stack mut i8[min max][4] byteSource = { 1, 2, 3, 4 };
+            stack mut dynamic i8[min max] bytes = new();
             unsafe {
                 if (!Ok(System.Memory.AppendBytesDisjoint(bytes, byteSource, four))) {
                     return 1;
@@ -581,13 +581,13 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 return 2;
             }
 
-            stack i8[-128 127][] byteView = bytes[0, bytes.Length];
+            stack i8[min max][] byteView = bytes[0, bytes.Length];
             if (byteView[0] != 1 || byteView[1] != 2 || byteView[2] != 3 || byteView[3] != 4) {
                 return 3;
             }
 
-            stack mut i32[-2147483648 2147483647][4] codePointSource = { 65, 66, 67, 68 };
-            stack mut dynamic i32[-2147483648 2147483647] codePoints = new();
+            stack mut i32[min max][4] codePointSource = { 65, 66, 67, 68 };
+            stack mut dynamic i32[min max] codePoints = new();
             unsafe {
                 if (!Ok(System.Memory.AppendCodePointsDisjoint(codePoints, codePointSource, four))) {
                     return 4;
@@ -598,7 +598,7 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 return 5;
             }
 
-            stack i32[-2147483648 2147483647][] codePointView = codePoints[0, codePoints.Length];
+            stack i32[min max][] codePointView = codePoints[0, codePoints.Length];
             if (codePointView[0] != 65 || codePointView[1] != 66 || codePointView[2] != 67 || codePointView[3] != 68) {
                 return 6;
             }
@@ -620,40 +620,40 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 module Demo
 
                 fn MemoryStatus InitBytes(
-                    disjoint borrow i8[-128 127][] source,
-                    disjoint init i8[-128 127][] destination,
+                    disjoint borrow i8[min max][] source,
+                    disjoint init i8[min max][] destination,
                     i64[0 max] count) {
                     return System.Memory.InitializeBytesDisjoint(source, destination, count);
                 }
 
-                fn MemoryStatus FillBytes(init i8[-128 127][] destination, i64[0 max] count) {
+                fn MemoryStatus FillBytes(init i8[min max][] destination, i64[0 max] count) {
                     return System.Memory.FillBytes(destination, 1, count);
                 }
 
                 fn MemoryStatus AppendBytes(
-                    borrow mut dynamic i8[-128 127] destination,
-                    borrow i8[-128 127][] source,
+                    borrow mut dynamic i8[min max] destination,
+                    borrow i8[min max][] source,
                     i64[0 max] count) {
                     return System.Memory.AppendBytes(destination, source, count);
                 }
 
                 fn MemoryStatus AppendBytesDisjoint(
-                    disjoint mut borrow dynamic i8[-128 127] destination,
-                    disjoint borrow i8[-128 127][] source,
+                    disjoint mut borrow dynamic i8[min max] destination,
+                    disjoint borrow i8[min max][] source,
                     i64[0 max] count) {
                     return System.Memory.AppendBytesDisjoint(destination, source, count);
                 }
 
                 fn MemoryStatus CopyCodePoints(
-                    disjoint borrow i32[-2147483648 2147483647][] source,
-                    disjoint borrow mut i32[-2147483648 2147483647][] destination,
+                    disjoint borrow i32[min max][] source,
+                    disjoint borrow mut i32[min max][] destination,
                     i64[0 max] count) {
                     return System.Memory.CopyCodePointsDisjoint(source, destination, count);
                 }
 
                 fn MemoryStatus MoveBytes(
-                    borrow i8[-128 127][] source,
-                    borrow mut i8[-128 127][] destination,
+                    borrow i8[min max][] source,
+                    borrow mut i8[min max][] destination,
                     i64[0 max] count) {
                     return System.Memory.MoveBytes(source, destination, count);
                 }
@@ -792,15 +792,15 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 module App
 
                 fn System.Memory.MemoryStatus UseCopy(
-                    disjoint borrow i8[-128 127][] source,
-                    disjoint init i8[-128 127][] destination,
+                    disjoint borrow i8[min max][] source,
+                    disjoint init i8[min max][] destination,
                     i64[0 max] count) {
                     return System.Memory.InitializeBytesDisjoint(source, destination, count);
                 }
 
                 fn System.Memory.MemoryStatus UseFill(
-                    init i8[-128 127][] destination,
-                    i8[-128 127] value,
+                    init i8[min max][] destination,
+                    i8[min max] value,
                     i64[0 max] count) {
                     return System.Memory.FillBytes(destination, value, count);
                 }

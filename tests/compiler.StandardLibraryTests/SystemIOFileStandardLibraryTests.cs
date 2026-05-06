@@ -1,4 +1,4 @@
-﻿using Stark.Compiler;
+using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
@@ -42,7 +42,7 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
                 unsafe fn void Use() {
-                    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenWrite("demo.txt");
+                    stack rawptr<i8[min max]> handle = System.IO.File.OpenWrite("demo.txt");
                     System.IO.File.WriteText(handle, "ascii");
                     System.IO.File.WriteText(handle, (unicode)"ascii");
                     System.IO.File.WriteLine(handle, "line");
@@ -97,7 +97,7 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                             return new();
                     }
                 }
-                fn void Use() {
+                unsafe fn void Use() {
                     stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open("demo.txt", System.IO.File.FileMode.Write));
                     file.WriteText("ascii");
                     file.WriteText((unicode)"ascii");
@@ -153,8 +153,8 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                             return new();
                     }
                 }
-                fn void Use() {
-                    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenRead("demo.txt");
+                unsafe fn void Use() {
+                    stack rawptr<i8[min max]> handle = System.IO.File.OpenRead("demo.txt");
                     System.IO.File.Seek(handle, 0, System.IO.File.SeekOrigin.Begin);
                     System.IO.File.Seek(handle, 1, System.IO.File.SeekOrigin.Current);
                     System.IO.File.Seek(handle, -1, System.IO.File.SeekOrigin.End);
@@ -348,14 +348,14 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                             return new();
                     }
                 }
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
-                    stack mut i8[-128 127][1] buffer = { 0 };
-                    stack rawptr<i8[-128 127]> read = System.IO.File.OpenRead("seek.txt");
+                export unsafe ffi fn i32[min max] main() {
+                    stack mut i8[min max][1] buffer = { 0 };
+                    stack rawptr<i8[min max]> read = System.IO.File.OpenRead("seek.txt");
                     if (read == null) {
                         return 1;
                     }
 
-                    stack rawptr<i8[-128 127]> result = System.IO.File.OpenWrite("seek-result.txt");
+                    stack rawptr<i8[min max]> result = System.IO.File.OpenWrite("seek-result.txt");
                     if (result == null) {
                         return 2;
                     }
@@ -529,7 +529,7 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     return;
                 }
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     WriteOwned();
 
                     if (!BoolOrFalse(System.IO.File.Exists("owned-test.txt"))) {
@@ -540,9 +540,9 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                         return 3;
                     }
 
-                    stack mut i8[-128 127][8] buffer = { 0, 0, 0, 0, 0, 0, 0, 0 };
-                    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenRead("owned-test.txt");
-                    stack i64[-9223372036854775808 9223372036854775807] count = System.IO.File.ReadBytes(&buffer[0], 1, 6, handle);
+                    stack mut i8[min max][8] buffer = { 0, 0, 0, 0, 0, 0, 0, 0 };
+                    stack rawptr<i8[min max]> handle = System.IO.File.OpenRead("owned-test.txt");
+                    stack i64[min max] count = System.IO.File.ReadBytes(&buffer[0], 1, 6, handle);
                     System.IO.File.Close(handle);
 
                     if (count != 6) {
@@ -665,15 +665,15 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                             return new();
                     }
                 }
-                fn i64[-9223372036854775808 9223372036854775807] ReadCount(ascii path, i64[-9223372036854775808 9223372036854775807] expected) {
-                    stack mut i8[-128 127][16] buffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-                    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenRead(path);
-                    stack i64[-9223372036854775808 9223372036854775807] count = System.IO.File.ReadBytes(&buffer[0], 1, expected, handle);
+                fn i64[min max] ReadCount(ascii path, i64[min max] expected) {
+                    stack mut i8[min max][16] buffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                    stack rawptr<i8[min max]> handle = System.IO.File.OpenRead(path);
+                    stack i64[min max] count = System.IO.File.ReadBytes(&buffer[0], 1, expected, handle);
                     System.IO.File.Close(handle);
                     return count;
                 }
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     stack mut System.IO.File.File defaulted = OpenOrEmpty(System.IO.File.Open("default.txt", System.IO.File.FileMode.Write));
                     defaulted.WriteLine("Default");
                     if (ReadCount("default.txt", 8) != 0) {
@@ -845,8 +845,8 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                             return new();
                     }
                 }
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
-                    stack mut i32[-2147483648 2147483647][1] gothicBuffer = { 66376 };
+                export unsafe ffi fn i32[min max] main() {
+                    stack mut i32[min max][1] gothicBuffer = { 66376 };
                     stack mut Unicode gothic = new Unicode() {
                         Data = &gothicBuffer[0],
                         Length = 1,
@@ -1008,8 +1008,8 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                             return new();
                     }
                 }
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
-                    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenWrite("before.txt");
+                export unsafe ffi fn i32[min max] main() {
+                    stack rawptr<i8[min max]> handle = System.IO.File.OpenWrite("before.txt");
                     if (handle == null) {
                         return 1;
                     }
@@ -1160,8 +1160,8 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                             return new();
                     }
                 }
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
-                    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenWrite("unicode.txt");
+                export unsafe ffi fn i32[min max] main() {
+                    stack rawptr<i8[min max]> handle = System.IO.File.OpenWrite("unicode.txt");
                     if (handle == null) {
                         return 1;
                     }

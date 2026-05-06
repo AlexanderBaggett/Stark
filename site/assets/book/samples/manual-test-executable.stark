@@ -5,7 +5,7 @@ finite law bool ArithmeticStillWorks() {
 }
 
 finite law bool RangesStillMatch() {
-    stack i32[0 100] score = 75;
+    stack u8[0 100] score = 75;
     return score >= 0 && score <= 100;
 }
 

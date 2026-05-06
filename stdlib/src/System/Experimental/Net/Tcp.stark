@@ -1,4 +1,4 @@
-﻿import System.Runtime.Buffer
+import System.Runtime.Buffer
 import System.Memory
 import System.Net
 import System.Runtime
@@ -51,19 +51,19 @@ public struct TcpClient {
         return self.Handle != null && !self.Closed;
     }
 
-    fn System.Net.NetResult<i64[0 max]> Read(mut borrow TcpClient self, mut borrow i8[min max][] destination) {
+    fn System.Net.NetResult<u64[0 2 ** 63 - 1]> Read(mut borrow TcpClient self, mut borrow i8[min max][] destination) {
         unsafe {
             if (self.Closed || self.Handle == null) {
-                return System.Net.NetResult<i64[0 max]>.Err(System.Net.NetworkError.NotConnected);
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(System.Net.NetworkError.NotConnected);
             }
 
             stack System.Runtime.MutableByteSliceParts destinationParts = System.Runtime.GetMutableByteSliceParts(destination);
             if (destinationParts.Length == 0) {
-                return System.Net.NetResult<i64[0 max]>.Ok(0);
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(0);
             }
 
             if (destinationParts.Data == null) {
-                return System.Net.NetResult<i64[0 max]>.Err(System.Net.NetworkError.AddressInvalid);
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(System.Net.NetworkError.AddressInvalid);
             }
 
             stack mut i64[min max] result = 0;
@@ -75,23 +75,23 @@ public struct TcpClient {
         }
     }
 
-    fn System.Net.NetResult<i64[0 max]> Read(
+    fn System.Net.NetResult<u64[0 2 ** 63 - 1]> Read(
         mut borrow TcpClient self,
         mut borrow System.Runtime.Buffer.FixedByteBuffer512 destination) {
             unsafe {
             if (self.Closed || self.Handle == null) {
-                return System.Net.NetResult<i64[0 max]>.Err(System.Net.NetworkError.NotConnected);
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(System.Net.NetworkError.NotConnected);
             }
 
-            stack i64[0 max] capacity = destination.Writable();
+            stack u64[0 2 ** 63 - 1] capacity = destination.Writable();
             if (capacity == 0) {
-                return System.Net.NetResult<i64[0 max]>.Ok(0);
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(0);
             }
 
-            stack mut i8[-128 127][] tail = destination.WriteSlice();
+            stack mut i8[min max][] tail = destination.WriteSlice();
             stack System.Runtime.MutableByteSliceParts tailParts = System.Runtime.GetMutableByteSliceParts(tail);
             if (tailParts.Data == null) {
-                return System.Net.NetResult<i64[0 max]>.Err(System.Net.NetworkError.AddressInvalid);
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(System.Net.NetworkError.AddressInvalid);
             }
 
             stack mut i64[min max] result = 0;
@@ -99,32 +99,32 @@ public struct TcpClient {
                 result = System.Runtime.Platform.ReadSocket(self.Handle, tailParts.Data, tailParts.Length);
             }
             if (result < 0) {
-                return System.Net.NetResult<i64[0 max]>.Err(NetworkErrorFromPlatformResult((i32[min max])result));
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(NetworkErrorFromPlatformResult((i32[min max])result));
             }
 
-            stack i64[0 max] count = (i64[0 max])result;
+            stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])result;
             destination.AdvanceWrite(count);
-            return System.Net.NetResult<i64[0 max]>.Ok(count);
+            return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(count);
             }
     }
 
-    fn System.Net.NetResult<i64[0 max]> Read(
+    fn System.Net.NetResult<u64[0 2 ** 63 - 1]> Read(
         mut borrow TcpClient self,
         mut borrow System.Runtime.Buffer.FixedByteBuffer4096 destination) {
             unsafe {
             if (self.Closed || self.Handle == null) {
-                return System.Net.NetResult<i64[0 max]>.Err(System.Net.NetworkError.NotConnected);
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(System.Net.NetworkError.NotConnected);
             }
 
-            stack i64[0 max] capacity = destination.Writable();
+            stack u64[0 2 ** 63 - 1] capacity = destination.Writable();
             if (capacity == 0) {
-                return System.Net.NetResult<i64[0 max]>.Ok(0);
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(0);
             }
 
-            stack mut i8[-128 127][] tail = destination.WriteSlice();
+            stack mut i8[min max][] tail = destination.WriteSlice();
             stack System.Runtime.MutableByteSliceParts tailParts = System.Runtime.GetMutableByteSliceParts(tail);
             if (tailParts.Data == null) {
-                return System.Net.NetResult<i64[0 max]>.Err(System.Net.NetworkError.AddressInvalid);
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(System.Net.NetworkError.AddressInvalid);
             }
 
             stack mut i64[min max] result = 0;
@@ -132,32 +132,32 @@ public struct TcpClient {
                 result = System.Runtime.Platform.ReadSocket(self.Handle, tailParts.Data, tailParts.Length);
             }
             if (result < 0) {
-                return System.Net.NetResult<i64[0 max]>.Err(NetworkErrorFromPlatformResult((i32[min max])result));
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(NetworkErrorFromPlatformResult((i32[min max])result));
             }
 
-            stack i64[0 max] count = (i64[0 max])result;
+            stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])result;
             destination.AdvanceWrite(count);
-            return System.Net.NetResult<i64[0 max]>.Ok(count);
+            return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(count);
             }
     }
 
-    fn System.Net.NetResult<i64[0 max]> Read(
+    fn System.Net.NetResult<u64[0 2 ** 63 - 1]> Read(
         mut borrow TcpClient self,
         mut borrow System.Runtime.Buffer.FixedByteBuffer8192 destination) {
             unsafe {
             if (self.Closed || self.Handle == null) {
-                return System.Net.NetResult<i64[0 max]>.Err(System.Net.NetworkError.NotConnected);
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(System.Net.NetworkError.NotConnected);
             }
 
-            stack i64[0 max] capacity = destination.Writable();
+            stack u64[0 2 ** 63 - 1] capacity = destination.Writable();
             if (capacity == 0) {
-                return System.Net.NetResult<i64[0 max]>.Ok(0);
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(0);
             }
 
-            stack mut i8[-128 127][] tail = destination.WriteSlice();
+            stack mut i8[min max][] tail = destination.WriteSlice();
             stack System.Runtime.MutableByteSliceParts tailParts = System.Runtime.GetMutableByteSliceParts(tail);
             if (tailParts.Data == null) {
-                return System.Net.NetResult<i64[0 max]>.Err(System.Net.NetworkError.AddressInvalid);
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(System.Net.NetworkError.AddressInvalid);
             }
 
             stack mut i64[min max] result = 0;
@@ -165,75 +165,75 @@ public struct TcpClient {
                 result = System.Runtime.Platform.ReadSocket(self.Handle, tailParts.Data, tailParts.Length);
             }
             if (result < 0) {
-                return System.Net.NetResult<i64[0 max]>.Err(NetworkErrorFromPlatformResult((i32[min max])result));
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(NetworkErrorFromPlatformResult((i32[min max])result));
             }
 
-            stack i64[0 max] count = (i64[0 max])result;
+            stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])result;
             destination.AdvanceWrite(count);
-            return System.Net.NetResult<i64[0 max]>.Ok(count);
+            return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(count);
             }
     }
 
-    fn System.Net.NetResult<i64[0 max]> Read(
+    fn System.Net.NetResult<u64[0 2 ** 63 - 1]> Read(
         mut borrow TcpClient self,
         mut borrow System.Runtime.Buffer.DynamicByteBuffer destination,
-        i64[0 max] maxCount) {
+        u64[0 2 ** 63 - 1] maxCount) {
             unsafe {
             if (self.Closed || self.Handle == null) {
-                return System.Net.NetResult<i64[0 max]>.Err(System.Net.NetworkError.NotConnected);
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(System.Net.NetworkError.NotConnected);
             }
 
-            stack mut i64[0 8192] capacity = 8192;
+            stack mut u16[0 2 ** 13] capacity = 8192;
             if (maxCount < 8192) {
-                capacity = (i64[0 8192])maxCount;
+                capacity = (u16[0 2 ** 13])maxCount;
             }
 
             if (capacity == 0) {
-                return System.Net.NetResult<i64[0 max]>.Ok(0);
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(0);
             }
 
-            stack mut i8[-128 127][8192] scratch;
+            stack mut i8[min max][8192] scratch;
             stack mut i64[min max] result = 0;
             unsafe {
                 result = System.Runtime.Platform.ReadSocket(self.Handle, &scratch[0], capacity);
             }
             if (result < 0) {
-                return System.Net.NetResult<i64[0 max]>.Err(NetworkErrorFromPlatformResult((i32[min max])result));
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(NetworkErrorFromPlatformResult((i32[min max])result));
             }
 
-            stack i64[0 max] count = (i64[0 max])result;
+            stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])result;
             if (count == 0) {
-                return System.Net.NetResult<i64[0 max]>.Ok(0);
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(0);
             }
 
-            stack rawptr<i8[-128 127]> scratchData = &scratch[0];
+            stack rawptr<i8[min max]> scratchData = &scratch[0];
             unsafe {
-                stack i8[-128 127][] readBytes = slice(scratchData, count);
+                stack i8[min max][] readBytes = slice(scratchData, count);
                 stack System.Memory.MemoryStatus appendStatus = destination.WriteSlice(readBytes, count);
                 switch (appendStatus) {
                     case System.Memory.MemoryStatus.Err(var error):
-                        return System.Net.NetResult<i64[0 max]>.Err(System.Net.NetworkError.Unknown(-1));
+                        return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(System.Net.NetworkError.Unknown(-1));
                     case System.Memory.MemoryStatus.Ok:
                 }
             }
 
-            return System.Net.NetResult<i64[0 max]>.Ok(count);
+            return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(count);
             }
     }
 
-    fn System.Net.NetResult<i64[0 max]> Write(mut borrow TcpClient self, borrow i8[min max][] source) {
+    fn System.Net.NetResult<u64[0 2 ** 63 - 1]> Write(mut borrow TcpClient self, borrow i8[min max][] source) {
         unsafe {
             if (self.Closed || self.Handle == null) {
-                return System.Net.NetResult<i64[0 max]>.Err(System.Net.NetworkError.NotConnected);
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(System.Net.NetworkError.NotConnected);
             }
 
             stack System.Runtime.ByteSliceParts sourceParts = System.Runtime.GetByteSliceParts(source);
             if (sourceParts.Length == 0) {
-                return System.Net.NetResult<i64[0 max]>.Ok(0);
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(0);
             }
 
             if (sourceParts.Data == null) {
-                return System.Net.NetResult<i64[0 max]>.Err(System.Net.NetworkError.AddressInvalid);
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(System.Net.NetworkError.AddressInvalid);
             }
 
             stack mut i64[min max] result = 0;
@@ -245,23 +245,23 @@ public struct TcpClient {
         }
     }
 
-    fn System.Net.NetResult<i64[0 max]> ReadVectored(
+    fn System.Net.NetResult<u64[0 2 ** 63 - 1]> ReadVectored(
         mut borrow TcpClient self,
         mut borrow i8[min max][] firstDestination,
         mut borrow i8[min max][] secondDestination) {
             unsafe {
             if (self.Closed || self.Handle == null) {
-                return System.Net.NetResult<i64[0 max]>.Err(System.Net.NetworkError.NotConnected);
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(System.Net.NetworkError.NotConnected);
             }
 
             stack System.Runtime.MutableByteSliceParts firstParts = System.Runtime.GetMutableByteSliceParts(firstDestination);
             stack System.Runtime.MutableByteSliceParts secondParts = System.Runtime.GetMutableByteSliceParts(secondDestination);
             if (firstParts.Length == 0 && secondParts.Length == 0) {
-                return System.Net.NetResult<i64[0 max]>.Ok(0);
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(0);
             }
 
             if ((firstParts.Length > 0 && firstParts.Data == null) || (secondParts.Length > 0 && secondParts.Data == null)) {
-                return System.Net.NetResult<i64[0 max]>.Err(System.Net.NetworkError.AddressInvalid);
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(System.Net.NetworkError.AddressInvalid);
             }
 
             if (firstParts.Length > 0 && secondParts.Length > 0) {
@@ -271,7 +271,7 @@ public struct TcpClient {
                 }
 
                 if (!destinationsDisjoint) {
-                    return System.Net.NetResult<i64[0 max]>.Err(System.Net.NetworkError.AddressInvalid);
+                    return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(System.Net.NetworkError.AddressInvalid);
                 }
             }
 
@@ -289,23 +289,23 @@ public struct TcpClient {
             }
     }
 
-    fn System.Net.NetResult<i64[0 max]> WriteVectored(
+    fn System.Net.NetResult<u64[0 2 ** 63 - 1]> WriteVectored(
         mut borrow TcpClient self,
         borrow i8[min max][] firstSource,
         borrow i8[min max][] secondSource) {
             unsafe {
             if (self.Closed || self.Handle == null) {
-                return System.Net.NetResult<i64[0 max]>.Err(System.Net.NetworkError.NotConnected);
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(System.Net.NetworkError.NotConnected);
             }
 
             stack System.Runtime.ByteSliceParts firstParts = System.Runtime.GetByteSliceParts(firstSource);
             stack System.Runtime.ByteSliceParts secondParts = System.Runtime.GetByteSliceParts(secondSource);
             if (firstParts.Length == 0 && secondParts.Length == 0) {
-                return System.Net.NetResult<i64[0 max]>.Ok(0);
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(0);
             }
 
             if ((firstParts.Length > 0 && firstParts.Data == null) || (secondParts.Length > 0 && secondParts.Data == null)) {
-                return System.Net.NetResult<i64[0 max]>.Err(System.Net.NetworkError.AddressInvalid);
+                return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(System.Net.NetworkError.AddressInvalid);
             }
 
             stack mut i64[min max] result = 0;
@@ -322,25 +322,25 @@ public struct TcpClient {
             }
     }
 
-    fn System.Net.NetResult<i64[0 max]> Write(
+    fn System.Net.NetResult<u64[0 2 ** 63 - 1]> Write(
         mut borrow TcpClient self,
         borrow System.Runtime.Buffer.DynamicByteBuffer source) {
         return self.Write(source.ReadSlice());
     }
 
-    fn System.Net.NetResult<i64[0 max]> Write(
+    fn System.Net.NetResult<u64[0 2 ** 63 - 1]> Write(
         mut borrow TcpClient self,
         borrow System.Runtime.Buffer.FixedByteBuffer512 source) {
         return self.Write(source.ReadSlice());
     }
 
-    fn System.Net.NetResult<i64[0 max]> Write(
+    fn System.Net.NetResult<u64[0 2 ** 63 - 1]> Write(
         mut borrow TcpClient self,
         borrow System.Runtime.Buffer.FixedByteBuffer4096 source) {
         return self.Write(source.ReadSlice());
     }
 
-    fn System.Net.NetResult<i64[0 max]> Write(
+    fn System.Net.NetResult<u64[0 2 ** 63 - 1]> Write(
         mut borrow TcpClient self,
         borrow System.Runtime.Buffer.FixedByteBuffer8192 source) {
         return self.Write(source.ReadSlice());
@@ -560,10 +560,10 @@ fn System.Net.NetStatus StatusFromPlatformResult(i32[min max] result) {
     return System.Net.NetStatus.Ok;
 }
 
-fn System.Net.NetResult<i64[0 max]> ByteCountFromPlatformResult(i64[min max] result) {
+fn System.Net.NetResult<u64[0 2 ** 63 - 1]> ByteCountFromPlatformResult(i64[min max] result) {
     if (result < 0) {
-        return System.Net.NetResult<i64[0 max]>.Err(NetworkErrorFromPlatformResult((i32[min max])result));
+        return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(NetworkErrorFromPlatformResult((i32[min max])result));
     }
 
-    return System.Net.NetResult<i64[0 max]>.Ok((i64[0 max])result);
+    return System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok((u64[0 2 ** 63 - 1])result);
 }

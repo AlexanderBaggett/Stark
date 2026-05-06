@@ -1,4 +1,4 @@
-﻿using Stark.Compiler;
+using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
@@ -213,7 +213,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 return 7;
             }
 
-            if (!TooLarge(stable.Reserve(9223372036854775807)) || !TooLarge(experimental.Reserve(9223372036854775807))) {
+            if (!TooLarge(stable.Reserve((u64[0 2 ** 63 - 1])(2 ** 63 - 1))) || !TooLarge(experimental.Reserve((u64[0 2 ** 63 - 1])(2 ** 63 - 1)))) {
                 return 8;
             }
 
@@ -458,7 +458,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 return 7;
             }
 
-            if (!TooLarge(stable.Reserve(9223372036854775807)) || !TooLarge(experimental.Reserve(9223372036854775807))) {
+            if (!TooLarge(stable.Reserve((u64[0 2 ** 63 - 1])(2 ** 63 - 1))) || !TooLarge(experimental.Reserve((u64[0 2 ** 63 - 1])(2 ** 63 - 1)))) {
                 return 8;
             }
 
@@ -1034,7 +1034,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
 
             stable.Clear();
             experimental.Clear();
-            stack i64[0 max] impossible = (i64[0 max])((2**63) - 1);
+            stack i64[0 max] impossible = (i64[0 max])(2 ** 63 - 1);
             return stable.IsEmpty()
                 && experimental.IsEmpty()
                 && TooLarge(stable.Reserve(impossible))
@@ -1065,7 +1065,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 checksum += (i64[min max])experimentalValue;
             }
 
-            stack i64[0 max] impossible = (i64[0 max])((2**63) - 1);
+            stack i64[0 max] impossible = (i64[0 max])(2 ** 63 - 1);
             return stable.IsEmpty()
                 && experimental.IsEmpty()
                 && checksum == 496
@@ -1113,7 +1113,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 checksum += (i64[min max])experimentalValue;
             }
 
-            stack i64[0 max] impossible = (i64[0 max])((2**63) - 1);
+            stack i64[0 max] impossible = (i64[0 max])(2 ** 63 - 1);
             return stable.IsEmpty()
                 && experimental.IsEmpty()
                 && checksum == 2556
@@ -1157,7 +1157,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 checksum += (i64[min max])ringValue;
             }
 
-            stack i64[0 max] impossible = (i64[0 max])((2**63) - 1);
+            stack i64[0 max] impossible = (i64[0 max])(2 ** 63 - 1);
             return stable.IsEmpty()
                 && ring.IsEmpty()
                 && checksum == 2016
@@ -1276,7 +1276,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
 
             stable.Clear();
             experimental.Clear();
-            stack i64[0 max] impossible = (i64[0 max])((2**63) - 1);
+            stack i64[0 max] impossible = (i64[0 max])(2 ** 63 - 1);
             return stable.IsEmpty()
                 && experimental.IsEmpty()
                 && TooLarge(stable.Reserve(impossible))
@@ -2350,7 +2350,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
     }
 
     [Fact]
-    public void ExperimentalQueueTryDequeueUsesHeadLengthRingPath()
+    public void ExperimentalQueueTryDequeueUsesDynamicStorageMoveAtPath()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
@@ -2373,12 +2373,11 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             llvm,
             "define linkonce_odr dso_local fastcc noundef i1 @__stark_mono_fn_System_Collections__System_Collections_Queue_TryDequeue__i32_0_2147483647(");
 
-        Assert.Contains("getelementptr i32", tryDequeueBody, StringComparison.Ordinal);
-        Assert.Contains("i32 0, i32 2", tryDequeueBody, StringComparison.Ordinal);
-        Assert.Contains("i32 0, i32 3", tryDequeueBody, StringComparison.Ordinal);
-        Assert.Contains("i32 0, i32 4", tryDequeueBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("__stark_dynamic_move_at", tryDequeueBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("llvm.memmove", tryDequeueBody, StringComparison.Ordinal);
+        Assert.Contains("dynamic_move_at", tryDequeueBody, StringComparison.Ordinal);
+        Assert.Contains("llvm.memmove", tryDequeueBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("i32 0, i32 2", tryDequeueBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("i32 0, i32 3", tryDequeueBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("i32 0, i32 4", tryDequeueBody, StringComparison.Ordinal);
     }
 
     [Fact]

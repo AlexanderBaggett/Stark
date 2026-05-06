@@ -13,7 +13,7 @@ internal sealed record ModuleOptimizationSafetyFacts(
 
 internal static class CompilerCli
 {
-    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only|--emit-pkg|--emit-package|--inspect-pkg|--inspect-package] [-I dir|--search-dir dir]* [-L dir|--library-dir dir]* [--link-arg arg]* [--native-source path]* [--native-include-dir dir]* [--native-library-dir dir]* [--native-library name]* [--native-pkg-config name]* [--native-link-arg arg]* [--package-library-file name] [-o output] [--target triple] [--target-data-layout layout] [--target-cpu cpu] [--target-feature feature]* [--relocation-model mode] [--code-model model] [-O0|-Og|-O1|-O2|-O3|--optimize level] [--linker tool] [--archiver tool] [--save-temps dir] [--toolchain-metrics path] [--diagnostic-format format] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
+    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only|--emit-pkg|--emit-package|--inspect-pkg|--inspect-package] [-I dir|--search-dir dir]* [-L dir|--library-dir dir]* [--link-arg arg]* [--native-source path]* [--native-include-dir dir]* [--native-library-dir dir]* [--native-library name]* [--native-pkg-config name]* [--native-link-arg arg]* [--package-library-file name] [-o output] [--target triple] [--target-data-layout layout] [--target-cpu cpu] [--target-feature feature]* [--relocation-model mode] [--code-model model] [-O0|-Og|-O1|-O2|-O3|--optimize level] [--strict-integer-ranges] [--linker tool] [--archiver tool] [--save-temps dir] [--toolchain-metrics path] [--diagnostic-format format] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
     private const int DiagnosticTabWidth = 4;
 
     public static async Task<int> RunAsync(string[] args, TextReader stdin, TextWriter stdout, TextWriter stderr)
@@ -53,6 +53,7 @@ internal static class CompilerCli
         var logCategories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var logStages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var logKinds = new HashSet<CompilerLogKind>();
+        var strictIntegerRanges = true;
         var showHelp = false;
 
         for (var index = 0; index < args.Length; index++)
@@ -143,6 +144,12 @@ internal static class CompilerCli
             if (TryParseOptimizationLevelArgument(argument, out var shortOptimizationLevel))
             {
                 optimizationLevel = shortOptimizationLevel;
+                continue;
+            }
+
+            if (string.Equals(argument, "--strict-integer-ranges", StringComparison.Ordinal))
+            {
+                strictIntegerRanges = true;
                 continue;
             }
 
@@ -448,7 +455,8 @@ internal static class CompilerCli
             ModuleResolver: moduleResolver,
             QualifyModuleSymbols: mode == CliMode.EmitLibrary,
             OptimizationLevel: optimizationLevel,
-            InternalizeModulePrivate: mode == CliMode.EmitExecutable);
+            InternalizeModulePrivate: mode == CliMode.EmitExecutable,
+            EnforceIntegerRangeStorageRules: strictIntegerRanges);
         var nativeDependencies = new NativeDependencyCliOptions(
             nativeSources,
             nativeIncludeDirectories,
@@ -2528,6 +2536,7 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("  --code-model <tiny|small|kernel|medium|large>  Forward an explicit LLVM code model");
         await stdout.WriteLineAsync("  -O0|-Og|-O1|-O2|-O3            Select the optimization level for frontend/codegen behavior (default: -O3)");
         await stdout.WriteLineAsync("  --optimize <0|g|1|2|3>         Long-form optimization level control");
+        await stdout.WriteLineAsync("  --strict-integer-ranges        Keep strict integer range storage checks enabled (default)");
         await stdout.WriteLineAsync("  --linker <tool>                Override the executable linker tool");
         await stdout.WriteLineAsync("  --archiver <tool>              Override the static library archiver tool");
         await stdout.WriteLineAsync("  --link-arg <arg>               Pass an additional argument through to the linker");

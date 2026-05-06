@@ -6,7 +6,7 @@ unsafe fn bool HasAddress(rawptr<i32[min max]> ptr) {
     return ptr != null;
 }
 
-fn i32[min max] ReadThroughRawPointer() {
+unsafe fn i32[min max] ReadThroughRawPointer() {
     stack mut i32[min max] value = 40;
     stack rawmutptr<i32[min max]> writable = &value;
 

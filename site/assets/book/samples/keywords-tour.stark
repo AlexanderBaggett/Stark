@@ -1,6 +1,6 @@
 module Book.KeywordsTour
 
-const Limit = 3;
+const u8 Limit = 3;
 
 alias Count = i32[min max];
 

@@ -411,7 +411,7 @@ Unsigned integer widths (`u8` through `u1024`) are first-class integer type
 facts. They are not represented internally as signed integers that merely happen
 to have non-negative ranges. The parser and type resolver still apply the normal
 explicit range rule, but for `uN` the type-relative `min` endpoint is `0` and
-`max` is `2**N - 1`.
+`max` is `2 ** N - 1`.
 
 The unsigned fact is preserved through type checking, lowering, LLVM emission,
 and package images so operations with signedness-sensitive meaning can choose
@@ -426,8 +426,8 @@ For integer constants, the type checker records the exact single-value range on
 the smallest supported integer width that can represent the value. It does not
 preserve a user-written integer range for scalar const storage, because the exact
 value is already known and can be propagated as an LLVM constant. For example,
-`const BoardWidth = 80;` is stored as `i8[80 80]`, while
-`const BigCount = 2**16;` is stored as `i24[65536 65536]`.
+`const BoardWidth = 80;` is stored as `u8[80 80]`, while
+`const BigCount = 2 ** 16;` is stored as `u24[2 ** 16 2 ** 16]`.
 
 For floating-point constants, the type checker follows the literal spelling.
 An unsuffixed decimal such as `80.0` is `f64`; an `f`-suffixed decimal such as

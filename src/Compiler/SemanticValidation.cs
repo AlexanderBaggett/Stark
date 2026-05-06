@@ -64,6 +64,7 @@ internal sealed class SemanticValidator
     public SemanticValidationModel Validate()
     {
         ValidateGlobalDeclarations();
+        ValidateTypeDeclarations();
         ValidateDestructorDeclarations();
 
         foreach (var function in _functionDeclarations.Values)
@@ -97,7 +98,7 @@ internal sealed class SemanticValidator
                         : constantDeclaration.type_() is { } typeContext
                             ? ResolveType(typeContext)
                             : StarkTypeSymbols.Error;
-                    ValidateTypeUsage(declaredType, TypeUsage.Global, constantDeclaration.type_() ?? (ParserRuleContext)declarator, isFfiBoundary: false);
+                    ValidateTypeUsage(constantDeclaration.type_() ?? (ParserRuleContext)declarator, declaredType, TypeUsage.Global);
                     ValidateConstGlobal(declarator.Identifier().GetText(), declaredType, declarator.variableInitializer());
                 }
 
@@ -108,7 +109,7 @@ internal sealed class SemanticValidator
             {
                 ValidateGlobalVariableStorageClass(variableDeclaration);
                 var declaredType = ResolveType(variableDeclaration.type_());
-                ValidateTypeUsage(declaredType, TypeUsage.Global, variableDeclaration.type_(), isFfiBoundary: false);
+                ValidateTypeUsage(variableDeclaration.type_(), declaredType, TypeUsage.Global);
             }
         }
     }
@@ -334,7 +335,12 @@ internal sealed class SemanticValidator
 
     private StarkTypeSymbol ResolveType(StarkParser.Type_Context type)
     {
-        return _typeResolver.ResolveType(type, _currentFunctionGenericParameters, _syntaxModel.ModuleName);
+        return ResolveType(type, _currentFunctionGenericParameters);
+    }
+
+    private StarkTypeSymbol ResolveType(StarkParser.Type_Context type, ISet<string>? genericParameters)
+    {
+        return _typeResolver.ResolveType(type, genericParameters, _syntaxModel.ModuleName);
     }
 
     private StarkTypeSymbol ResolveLocalConstantDeclarationType(StarkParser.LocalConstantDeclarationContext declaration)
@@ -412,6 +418,97 @@ internal sealed class SemanticValidator
         }
     }
 
+    private void ValidateTypeDeclarations()
+    {
+        if (!_context.Options.EnforceIntegerRangeStorageRules)
+        {
+            return;
+        }
+
+        foreach (var declaration in _parseResult.Root.topLevelDeclaration())
+        {
+            if (declaration.typeAliasDeclaration() is { } typeAliasDeclaration)
+            {
+                var genericParameters = _typeResolver.GetGenericParameterNames(typeAliasDeclaration.typeParameterList());
+                var aliasedType = ResolveType(typeAliasDeclaration.type_(), genericParameters);
+                ValidateTypeUsage(typeAliasDeclaration.type_(), aliasedType, TypeUsage.Alias);
+                continue;
+            }
+
+            if (declaration.structDeclaration() is { } structDeclaration)
+            {
+                var genericParameters = _typeResolver.GetGenericParameterNames(structDeclaration.typeParameterList());
+                var isPlatformAbiBoundary = IsPlatformAbiDeclaration(structDeclaration.Identifier().GetText());
+                foreach (var field in structDeclaration.structBody().structMember()
+                             .Select(static member => member.fieldDeclaration())
+                             .Where(static field => field is not null)!)
+                {
+                    ValidateFieldDeclarationType(field, genericParameters, isPlatformAbiBoundary);
+                }
+
+                continue;
+            }
+
+            if (declaration.recordDeclaration() is { } recordDeclaration)
+            {
+                var genericParameters = _typeResolver.GetGenericParameterNames(recordDeclaration.typeParameterList());
+                var isPlatformAbiBoundary = IsPlatformAbiDeclaration(recordDeclaration.Identifier().GetText());
+
+                if (recordDeclaration.primaryConstructorParameters() is { } primaryConstructor)
+                {
+                    foreach (var parameter in primaryConstructor.parameterList().parameter())
+                    {
+                        var parameterType = ResolveType(parameter.type_(), genericParameters);
+                        ValidateTypeUsage(parameter.type_(), parameterType, TypeUsage.Field, isPlatformAbiBoundary: isPlatformAbiBoundary);
+                    }
+                }
+
+                foreach (var field in recordDeclaration.recordBody().recordMember()
+                             .Select(static member => member.fieldDeclaration())
+                             .Where(static field => field is not null)!)
+                {
+                    ValidateFieldDeclarationType(field, genericParameters, isPlatformAbiBoundary);
+                }
+
+                continue;
+            }
+
+            if (declaration.enumDeclaration() is { } enumDeclaration)
+            {
+                var genericParameters = _typeResolver.GetGenericParameterNames(enumDeclaration.typeParameterList());
+                foreach (var variant in enumDeclaration.enumBody().enumVariantDeclaration())
+                {
+                    var payload = variant.enumVariantPayload();
+                    if (payload is null)
+                    {
+                        continue;
+                    }
+
+                    foreach (var field in payload.enumVariantFieldDeclaration())
+                    {
+                        var fieldType = ResolveType(field.type_(), genericParameters);
+                        ValidateTypeUsage(field.type_(), fieldType, TypeUsage.Field);
+                    }
+
+                    foreach (var fieldTypeContext in payload.type_())
+                    {
+                        var fieldType = ResolveType(fieldTypeContext, genericParameters);
+                        ValidateTypeUsage(fieldTypeContext, fieldType, TypeUsage.Field);
+                    }
+                }
+            }
+        }
+    }
+
+    private void ValidateFieldDeclarationType(
+        StarkParser.FieldDeclarationContext field,
+        ISet<string>? genericParameters,
+        bool isPlatformAbiBoundary)
+    {
+        var fieldType = ResolveType(field.type_(), genericParameters);
+        ValidateTypeUsage(field.type_(), fieldType, TypeUsage.Field, isPlatformAbiBoundary: isPlatformAbiBoundary);
+    }
+
     private void ValidateFunctionSignature(
         DeclaredFunctionSyntax functionDeclaration,
         FunctionDeclarationModel declaration,
@@ -421,7 +518,13 @@ internal sealed class SemanticValidator
     {
         ValidateFunctionModifiers(functionDeclaration, summary);
         ValidatePublicSafeApiDoesNotExposeRawAllocation(functionDeclaration, declaration, signature, summary);
-        ValidateTypeUsage(signature.ReturnType, TypeUsage.Return, functionDeclaration.ReturnType, declaration.Modifiers.IsFfi);
+        var isPlatformAbiBoundary = IsPlatformAbiDeclaration(functionDeclaration, declaration);
+        ValidateTypeUsage(
+            functionDeclaration.ReturnType,
+            signature.ReturnType,
+            TypeUsage.Return,
+            isFfiBoundary: declaration.Modifiers.IsFfi,
+            isPlatformAbiBoundary: isPlatformAbiBoundary);
 
         if (signature.ReturnType.BorrowKind == StarkBorrowKind.Borrow)
         {
@@ -447,7 +550,12 @@ internal sealed class SemanticValidator
             var parameterContext = functionDeclaration.ParameterList.parameter(index);
             var parameter = signature.Parameters[index];
 
-            ValidateTypeUsage(parameter.Type, TypeUsage.Parameter, parameterContext.type_(), declaration.Modifiers.IsFfi);
+            ValidateTypeUsage(
+                parameterContext.type_(),
+                parameter.Type,
+                TypeUsage.Parameter,
+                isFfiBoundary: declaration.Modifiers.IsFfi,
+                isPlatformAbiBoundary: isPlatformAbiBoundary);
 
             if (parameter.Type.InitializationKind != StarkInitializationKind.None)
             {
@@ -664,7 +772,7 @@ internal sealed class SemanticValidator
         if (statement.localConstantDeclaration() is { } constantDeclaration)
         {
             var declaredType = ResolveLocalConstantDeclarationType(constantDeclaration);
-            ValidateTypeUsage(declaredType, TypeUsage.Local, constantDeclaration.type_() ?? (ParserRuleContext)constantDeclaration, isFfiBoundary: false);
+            ValidateTypeUsage(constantDeclaration.type_() ?? (ParserRuleContext)constantDeclaration, declaredType, TypeUsage.Local);
 
             foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
             {
@@ -692,7 +800,7 @@ internal sealed class SemanticValidator
             var storageClass = ParseStorageClass(localVariable.storageClass());
             ValidateLocalVariableStorageClass(storageClass, localVariable.storageClass());
             var declaredType = ResolveType(localVariable.type_());
-            ValidateTypeUsage(declaredType, TypeUsage.Local, localVariable.type_(), isFfiBoundary: false);
+            ValidateTypeUsage(localVariable.type_(), declaredType, TypeUsage.Local);
 
             if (storageClass is LocalStorageClass.Heap or LocalStorageClass.Arena or LocalStorageClass.Static)
             {
@@ -823,7 +931,7 @@ internal sealed class SemanticValidator
                 var storageClass = ParseStorageClass(localForDeclaration.storageClass());
                 ValidateLocalVariableStorageClass(storageClass, localForDeclaration.storageClass());
                 var declaredType = ResolveType(localForDeclaration.type_());
-                ValidateTypeUsage(declaredType, TypeUsage.Local, localForDeclaration.type_(), isFfiBoundary: false);
+                ValidateTypeUsage(localForDeclaration.type_(), declaredType, TypeUsage.Local);
 
                 if (storageClass is LocalStorageClass.Heap or LocalStorageClass.Arena or LocalStorageClass.Static)
                 {
@@ -1586,6 +1694,7 @@ internal sealed class SemanticValidator
         {
             var operand = EvaluateUnaryExpression(expression.unaryExpression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
             var targetType = _typeResolver.ResolveConversionType(conversionType, _currentFunctionGenericParameters, _syntaxModel.ModuleName);
+            ValidateTypeUsage(conversionType, targetType, TypeUsage.Conversion);
             return CreateConvertedValidationValue(targetType, operand, expression);
         }
 
@@ -1963,6 +2072,11 @@ internal sealed class SemanticValidator
             : TryGetObjectCreationTyping(expression, out var objectCreationTyping)
                 ? objectCreationTyping.CreatedType
                 : StarkTypeSymbols.Error;
+
+        if (expression.type_() is { } explicitObjectType)
+        {
+            ValidateTypeUsage(explicitObjectType, createdType, TypeUsage.Conversion);
+        }
 
         if (expression.argumentList() is { } argumentList)
         {
@@ -3738,8 +3852,15 @@ internal sealed class SemanticValidator
         }
     }
 
-    private void ValidateTypeUsage(StarkTypeSymbol type, TypeUsage usage, ParserRuleContext context, bool isFfiBoundary)
+    private void ValidateTypeUsage(
+        ParserRuleContext context,
+        StarkTypeSymbol type,
+        TypeUsage usage,
+        bool isFfiBoundary = false,
+        bool isPlatformAbiBoundary = false)
     {
+        ValidateIntegerRangeStorageRules(type, usage, context, isFfiBoundary, isPlatformAbiBoundary);
+
         if (usage == TypeUsage.Global && type.InitializationKind != StarkInitializationKind.None)
         {
             _context.Diagnostics.Error(
@@ -3796,6 +3917,116 @@ internal sealed class SemanticValidator
                 Location(context.Start));
         }
 
+    }
+
+    private bool IsPlatformAbiDeclaration(string localDeclarationName)
+    {
+        return _syntaxDeclarations.TryGetValue(localDeclarationName, out var declaration)
+            && HasPlatformAttribute(declaration.Attributes);
+    }
+
+    private bool IsPlatformAbiDeclaration(
+        DeclaredFunctionSyntax functionDeclaration,
+        FunctionDeclarationModel declaration)
+    {
+        return HasPlatformAttribute(declaration.Attributes)
+            || functionDeclaration.ContainingTypeName is not null
+                && IsPlatformAbiDeclaration(functionDeclaration.ContainingTypeName);
+    }
+
+    private static bool HasPlatformAttribute(IReadOnlyList<ModuleAttributeModel>? attributes)
+    {
+        return attributes is not null
+            && attributes.Any(static attribute => string.Equals(attribute.Name, "Platform", StringComparison.Ordinal));
+    }
+
+    private void ValidateIntegerRangeStorageRules(
+        StarkTypeSymbol type,
+        TypeUsage usage,
+        ParserRuleContext context,
+        bool isFfiBoundary,
+        bool isPlatformAbiBoundary)
+    {
+        if (!_context.Options.EnforceIntegerRangeStorageRules
+            || type.Kind == StarkTypeKind.Error
+            || isFfiBoundary && usage is TypeUsage.Parameter or TypeUsage.Return
+            || isPlatformAbiBoundary && usage is TypeUsage.Parameter or TypeUsage.Return or TypeUsage.Field)
+        {
+            return;
+        }
+
+        if (!TryFindIntegerRangeStorageViolation(type, out var violatingType, out var suggestedType, out var violationKind))
+        {
+            return;
+        }
+
+        var message = violationKind switch
+        {
+            IntegerRangeStorageViolationKind.NonNegativeSigned =>
+                $"Integer range '{violatingType.DisplayName}' is non-negative but uses signed storage. Use `{suggestedType.DisplayName}` instead, or keep the signed form only on an ffi boundary or a '[Platform]' ABI declaration.",
+            IntegerRangeStorageViolationKind.WiderThanNeeded =>
+                $"Integer range '{violatingType.DisplayName}' uses wider storage than required. Use `{suggestedType.DisplayName}` instead, or keep the wider form only on an ffi boundary or a '[Platform]' ABI declaration.",
+            _ =>
+                $"Integer range '{violatingType.DisplayName}' is not using its canonical storage type. Use `{suggestedType.DisplayName}` instead."
+        };
+
+        _context.Diagnostics.Error(
+            "STK3014",
+            message,
+            "semantic-validate",
+            Location(context.Start));
+    }
+
+    private static bool TryFindIntegerRangeStorageViolation(
+        StarkTypeSymbol type,
+        out StarkTypeSymbol violatingType,
+        out StarkTypeSymbol suggestedType,
+        out IntegerRangeStorageViolationKind violationKind)
+    {
+        if (IntegerRangeStorageFacts.TryGetStorageViolation(type, out suggestedType, out violationKind))
+        {
+            violatingType = type;
+            return true;
+        }
+
+        if (type.ElementType is not null
+            && TryFindIntegerRangeStorageViolation(type.ElementType, out violatingType, out suggestedType, out violationKind))
+        {
+            return true;
+        }
+
+        if (type.FunctionPointerReturnType is not null
+            && TryFindIntegerRangeStorageViolation(type.FunctionPointerReturnType, out violatingType, out suggestedType, out violationKind))
+        {
+            return true;
+        }
+
+        if (type.FunctionPointerParameterTypes is not null)
+        {
+            foreach (var parameterType in type.FunctionPointerParameterTypes)
+            {
+                if (TryFindIntegerRangeStorageViolation(parameterType, out violatingType, out suggestedType, out violationKind))
+                {
+                    return true;
+                }
+            }
+        }
+
+        if (type.TypeArguments is not null)
+        {
+            foreach (var typeArgument in type.TypeArguments)
+            {
+                if (TryFindIntegerRangeStorageViolation(typeArgument, out violatingType, out suggestedType, out violationKind))
+                {
+                    return true;
+                }
+            }
+        }
+
+        violatingType = StarkTypeSymbols.Error;
+        suggestedType = StarkTypeSymbols.Error;
+        violationKind = IntegerRangeStorageViolationKind.None;
+        return false;
     }
 
     private bool RequiresRuntimeDrop(StarkTypeSymbol type, ISet<string> activeNamedTypes)
@@ -3958,6 +4189,9 @@ internal sealed class SemanticValidator
             TypeUsage.Parameter => "function parameters",
             TypeUsage.Return => "function return types",
             TypeUsage.Local => "local declarations",
+            TypeUsage.Field => "field declarations",
+            TypeUsage.Alias => "type aliases",
+            TypeUsage.Conversion => "conversion type positions",
             _ => "runtime type positions"
         };
     }
@@ -5136,7 +5370,10 @@ internal sealed class SemanticValidator
         Global,
         Parameter,
         Return,
-        Local
+        Local,
+        Field,
+        Alias,
+        Conversion
     }
 
     private enum ExpressionObservation

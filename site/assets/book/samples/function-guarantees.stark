@@ -8,12 +8,12 @@ finite law i32[min max] ClampToZero(i32[min max] value) {
     return value;
 }
 
-finite i32[min max] SumTo(i32[0 max] limit) {
-    stack mut i32[min max] index = 0;
+finite i32[min max] SumTo(u32[0 max] limit) {
+    stack mut u32[0 max] index = 0;
     stack mut i32[min max] total = 0;
 
     while willexit (index <= limit) {
-        total += index;
+        total += (i32[min max])index;
         index += 1;
     }
 

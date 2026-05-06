@@ -138,7 +138,7 @@ For Stark-owned top-level globals and constants, use `PascalCase`.
 Examples:
 
 ```stark
-const PageSize = 2**12;
+const PageSize = 2 ** 12;
 static mut i32[min max] GlobalCounter = 0;
 ```
 
@@ -186,10 +186,10 @@ Preserve the foreign symbol spelling exactly when declaring imported FFI functio
 Examples:
 
 ```stark
-ffi fn i32 fputs(ascii text, rawptr<i8> stream);
-ffi fn rawptr<i8> fopen(ascii path, ascii mode);
-const rawptr<i8> stdout = null;
-const rawptr<i8> stderr = null;
+unsafe ffi fn i32[min max] fputs(ascii text, rawptr<i8[min max]> stream);
+unsafe ffi fn rawptr<i8[min max]> fopen(ascii path, ascii mode);
+const rawptr<i8[min max]> stdout = null;
+const rawptr<i8[min max]> stderr = null;
 ```
 
 Do not rename imported foreign symbols into Stark-style `PascalCase` names.
@@ -199,13 +199,13 @@ A separate Stark wrapper is justified only when it creates a real semantic or pa
 Bad:
 
 ```stark
-ffi fn i32 FPuts(ascii text, rawptr<i8> stream);
+unsafe ffi fn i32[min max] FPuts(ascii text, rawptr<i8[min max]> stream);
 ```
 
 Good:
 
 ```stark
-ffi fn i32 fputs(ascii text, rawptr<i8> stream);
+unsafe ffi fn i32[min max] fputs(ascii text, rawptr<i8[min max]> stream);
 ```
 
 ### Exported FFI Names
@@ -215,7 +215,7 @@ If a function exists to satisfy a foreign ABI contract, spell it the way the for
 Examples:
 
 ```stark
-export ffi fn i32 main() 
+export unsafe ffi fn i32[min max] main()
 {
     return 0;
 }
@@ -242,9 +242,9 @@ That kind of wrapper usually adds no semantic value and can lengthen hot call pa
 Bad:
 
 ```stark
-ffi fn i32 fputs(ascii text, rawptr<i8> stream);
+unsafe ffi fn i32[min max] fputs(ascii text, rawptr<i8[min max]> stream);
 
-public fn i32 FPuts(ascii text, rawptr<i8> stream) 
+public unsafe fn i32[min max] FPuts(ascii text, rawptr<i8[min max]> stream)
 {
     return fputs(text, stream);
 }
@@ -266,13 +266,16 @@ Typical valid reasons include:
 Example:
 
 ```stark
-ffi fn i32 fputs(ascii text, rawptr<i8> stream);
-const rawptr<i8> stdout = null;
+unsafe ffi fn i32[min max] fputs(ascii text, rawptr<i8[min max]> stream);
+const rawptr<i8[min max]> stdout = null;
 
-public fn void WriteLine(ascii text) 
+public fn void WriteLine(ascii text)
 {
-    fputs(text, stdout);
-    fputs("\n", stdout);
+    unsafe {
+        fputs(text, stdout);
+        fputs("\n", stdout);
+    }
+
     return;
 }
 ```
@@ -286,7 +289,7 @@ If a wrapper adds no semantic value and exists only for naming, prefer direct FF
 For the hosted program entrypoint, use:
 
 ```stark
-export ffi fn i32 main()
+export unsafe ffi fn i32[min max] main()
 ```
 
 Use `main`, not `Main`.
@@ -296,6 +299,24 @@ Reason:
 - this is an ABI/runtime convention, not an ordinary Stark API name
 - the host toolchain expects the conventional entrypoint spelling
 - Stark should be explicit at foreign boundaries instead of pretending they are ordinary source-level calls
+
+## Unsafe And Raw Pointer Boundaries
+
+FFI declarations, inline assembly declarations, raw pointer signatures, raw
+pointer casts, dereference, pointer arithmetic, `null`, and raw slice
+construction must be inside an explicit unsafe boundary.
+
+Use these defaults:
+
+- imported and exported FFI functions are `unsafe ffi fn`
+- public APIs that accept or return `rawptr` or `rawmutptr` are `unsafe fn`
+- safe Stark wrappers keep the unsafe block as small as possible
+- prefer `borrow`, `mut borrow`, slices, `dynamic`, owned handles, and platform
+  wrappers before introducing raw pointers
+
+Raw pointers are justified for FFI, OS/platform calls, compiler-known runtime
+ABI helpers, allocator internals, and small audited conversions between safe
+Stark views and backend-required pointer shapes.
 
 ## Formatting
 
@@ -339,7 +360,7 @@ import System
 import Math
 module App
 
-export ffi fn i32 main() 
+export unsafe ffi fn i32[min max] main()
 {
     return Math.Add(1, 2);
 }
@@ -369,12 +390,15 @@ public finite law i32 Area(Box box)
 ```stark
 module System.Console
 
-ffi fn i32 fputs(ascii text, rawptr<i8> stream);
-const rawptr<i8> stdout = null;
+unsafe ffi fn i32[min max] fputs(ascii text, rawptr<i8[min max]> stream);
+const rawptr<i8[min max]> stdout = null;
 
-public fn void Write(ascii text) 
+public fn void Write(ascii text)
 {
-    fputs(text, stdout);
+    unsafe {
+        fputs(text, stdout);
+    }
+
     return;
 }
 ```
@@ -385,7 +409,7 @@ public fn void Write(ascii text)
 import System
 module Hello
 
-export ffi fn i32 main() 
+export unsafe ffi fn i32[min max] main()
 {
     System.Console.WriteLine("Hello, world!");
     return 0;
@@ -403,7 +427,8 @@ Use these defaults unless there is a strong reason not to:
 - parameters and locals: `camelCase`
 - Stark-owned globals and constants: `PascalCase`
 - imported FFI names: preserve foreign spelling exactly
-- ABI entrypoint: `main`
+- unsafe FFI and raw pointer boundaries: keep them explicit and narrow
+- ABI entrypoint: `export unsafe ffi fn i32[min max] main`
 
 In short:
 

@@ -1,4 +1,4 @@
-﻿import System.Runtime.Buffer
+import System.Runtime.Buffer
 import System.Text
 import System.IO
 import System.IO.File
@@ -73,7 +73,7 @@ fn System.Text.Encoding StableEncoding(System.Text.Encoding encoding) {
     }
 }
 
-fn System.IO.IOError IOErrorFromPlatformResult(i32[-2147483648 2147483647] result) {
+fn System.IO.IOError IOErrorFromPlatformResult(i32[min max] result) {
     if (result == -2 || result == -3 || result == -20) {
         return System.IO.IOError.NotFound;
     }
@@ -101,7 +101,7 @@ fn System.IO.IOError IOErrorFromPlatformResult(i32[-2147483648 2147483647] resul
     return System.IO.IOError.Unknown(result);
 }
 
-fn System.IO.IOStatus StatusFromPlatformResult(i32[-2147483648 2147483647] result) {
+fn System.IO.IOStatus StatusFromPlatformResult(i32[min max] result) {
     if (result < 0) {
         return System.IO.IOStatus.Err(IOErrorFromPlatformResult(result));
     }
@@ -109,12 +109,12 @@ fn System.IO.IOStatus StatusFromPlatformResult(i32[-2147483648 2147483647] resul
     return System.IO.IOStatus.Ok;
 }
 
-fn System.IO.IOResult<i64[0 max]> ByteCountFromPlatformResult(i64[-9223372036854775808 9223372036854775807] result) {
+fn System.IO.IOResult<u64[0 2 ** 63 - 1]> ByteCountFromPlatformResult(i64[min max] result) {
     if (result < 0) {
-        return System.IO.IOResult<i64[0 max]>.Err(IOErrorFromPlatformResult((i32[-2147483648 2147483647])result));
+        return System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(IOErrorFromPlatformResult((i32[min max])result));
     }
 
-    return System.IO.IOResult<i64[0 max]>.Ok((i64[0 max])result);
+    return System.IO.IOResult<u64[0 2 ** 63 - 1]>.Ok((u64[0 2 ** 63 - 1])result);
 }
 
 public struct File {
@@ -142,39 +142,39 @@ public struct File {
         }
     }
 
-    fn System.IO.IOResult<i64[0 max]> Seek(mut borrow File self, i64[-9223372036854775808 9223372036854775807] offset, SeekOrigin origin) {
+    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Seek(mut borrow File self, i64[min max] offset, SeekOrigin origin) {
         unsafe {
             return self.Inner.Seek(offset, StableSeekOrigin(origin));
         }
     }
 
-    fn System.IO.IOResult<i64[0 max]> Read(mut borrow File self, mut borrow i8[-128 127][] destination) {
+    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Read(mut borrow File self, mut borrow i8[min max][] destination) {
         return self.Inner.Read(destination);
     }
 
-    fn System.IO.IOResult<i64[0 max]> Write(mut borrow File self, borrow i8[-128 127][] source) {
+    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Write(mut borrow File self, borrow i8[min max][] source) {
         return self.Inner.Write(source);
     }
 
-    fn System.IO.IOResult<i64[0 max]> Write(
+    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Write(
         mut borrow File self,
         borrow System.Runtime.Buffer.DynamicByteBuffer source) {
         return self.Write(source.ReadSlice());
     }
 
-    fn System.IO.IOResult<i64[0 max]> Write(
+    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Write(
         mut borrow File self,
         borrow System.Runtime.Buffer.FixedByteBuffer512 source) {
         return self.Write(source.ReadSlice());
     }
 
-    fn System.IO.IOResult<i64[0 max]> Write(
+    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Write(
         mut borrow File self,
         borrow System.Runtime.Buffer.FixedByteBuffer4096 source) {
         return self.Write(source.ReadSlice());
     }
 
-    fn System.IO.IOResult<i64[0 max]> Write(
+    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Write(
         mut borrow File self,
         borrow System.Runtime.Buffer.FixedByteBuffer8192 source) {
         return self.Write(source.ReadSlice());
