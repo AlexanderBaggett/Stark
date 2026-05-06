@@ -14,7 +14,7 @@ export unsafe ffi fn i32[min max] main() {
     Counter = (i64[min max])(System.Process.CurrentId() % 31) + 1;
     stack mut i64[min max] checksum = 0;
 
-    for willexit (stack mut i32[0 200000] i = 0; i < 200000; i += 1) {
+    for willexit (stack mut u24[0 200000] i = 0; i < 200000; i += 1) {
         checksum += Accumulate((i64[min max])(i % 97));
         checksum = checksum % 1000000007;
         Counter = Counter % 1000000007;

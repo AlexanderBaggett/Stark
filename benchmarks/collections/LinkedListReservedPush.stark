@@ -12,7 +12,7 @@ unsafe finite law bool Ok(MemoryStatus status) {
 }
 
 export unsafe ffi fn i32[min max] main() {
-    stack mut System.Collections.LinkedList<i32[0 max]> values = new();
+    stack mut System.Collections.LinkedList<u32[0 max]> values = new();
     stack mut i64[min max] checksum = 0;
 
     if (!Ok(values.ReserveNodes(4096))) {
@@ -23,7 +23,7 @@ export unsafe ffi fn i32[min max] main() {
         return 2;
     }
 
-    for willexit (stack mut i32[0 4096] i = 0; i < 4096; i += 1) {
+    for willexit (stack mut u16[0 4096] i = 0; i < 4096; i += 1) {
         if (!Ok(values.AddLast(i))) {
             return 3;
         }
@@ -33,7 +33,7 @@ export unsafe ffi fn i32[min max] main() {
         return 4;
     }
 
-    stack mut i32[0 max] value = 0;
+    stack mut u32[0 max] value = 0;
     while willexit (!values.IsEmpty()) {
         if (!values.TryRemoveFirst(value)) {
             return 5;

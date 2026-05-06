@@ -1659,6 +1659,7 @@ internal sealed partial class MidLevelIrLowerer
             return string.Equals(functionName, "System.Process.Exit", StringComparison.Ordinal)
                 || string.Equals(functionName, "System.Runtime.Platform.ExitProcess", StringComparison.Ordinal)
                 || string.Equals(functionName, "System.Runtime.Platform.Linux.ExitProcess", StringComparison.Ordinal)
+                || string.Equals(functionName, "System.Runtime.Platform.MacOS.ExitProcess", StringComparison.Ordinal)
                 || string.Equals(functionName, "System.Runtime.Platform.Windows.ExitProcess", StringComparison.Ordinal);
         }
 

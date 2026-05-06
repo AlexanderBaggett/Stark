@@ -1553,6 +1553,77 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
+    public async Task EmitExecutableModeForwardsMacOSSdkRootToClangForDarwinTargets()
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-exe-macos-sdk-");
+        var rootPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, "app");
+        var clangLogPath = Path.Combine(tempDirectory.FullName, "clang.log");
+        var sdkRoot = Path.Combine(tempDirectory.FullName, "MacOSX.sdk");
+        Directory.CreateDirectory(sdkRoot);
+        _ = await CreateUnixCaptureClangAsync(tempDirectory.FullName, clangLogPath);
+        var originalPath = Environment.GetEnvironmentVariable("PATH");
+        var originalSdkRoot = Environment.GetEnvironmentVariable("SDKROOT");
+
+        try
+        {
+            Environment.SetEnvironmentVariable("PATH", $"{tempDirectory.FullName}{Path.PathSeparator}{originalPath}");
+            Environment.SetEnvironmentVariable("SDKROOT", sdkRoot);
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                module App
+
+                export unsafe ffi fn i32[min max] main() {
+                    return 0;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [
+                    rootPath,
+                    "--emit-exe",
+                    "-O0",
+                    "-o", outputPath,
+                    "--target", "arm64-apple-darwin"
+                ],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var clangLog = await File.ReadAllTextAsync(clangLogPath);
+            Assert.Contains("-isysroot", clangLog, StringComparison.Ordinal);
+            Assert.Contains(sdkRoot, clangLog, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", originalPath);
+            Environment.SetEnvironmentVariable("SDKROOT", originalSdkRoot);
+
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public async Task EmitExecutableModeAllowsSystemMemoryDependencyThinLto()
     {
         if (OperatingSystem.IsWindows())

@@ -51,7 +51,7 @@ unsafe fn bool ExpectU1024(System.Text.TextResult<u1024[0 max]> result, u1024[0 
 export unsafe ffi fn i32[min max] main() {
     stack mut i64[min max] checksum = 0;
 
-    for willexit (stack mut i32[0 50] i = 0; i < Iterations; i += 1) {
+    for willexit (stack mut u8[0 50] i = 0; i < Iterations; i += 1) {
         if (!ExpectBool(System.Text.ParseBoolAscii("true"), true)) {
             return 1;
         }

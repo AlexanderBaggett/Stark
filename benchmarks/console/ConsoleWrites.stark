@@ -42,7 +42,7 @@ export unsafe ffi fn i32[min max] main() {
         return 2;
     }
 
-    for willexit (stack mut i32[0 64] iteration = 0; iteration < Iterations; iteration += 1) {
+    for willexit (stack mut u8[0 64] iteration = 0; iteration < Iterations; iteration += 1) {
         if (!IOOk(System.Console.Write("small"))
             || !IOOk(System.Console.WriteLine(owned))
             || !IOOk(System.Console.WriteLine((unicode)"wide a"))

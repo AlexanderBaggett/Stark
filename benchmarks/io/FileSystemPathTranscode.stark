@@ -52,7 +52,7 @@ export unsafe ffi fn i32[min max] main() {
     System.IO.File.Delete("io-bench-root/child.txt");
     System.FileSystem.DeleteDirectory("io-bench-root");
 
-    for willexit (stack mut i32[0 16] iteration = 0; iteration < Iterations; iteration += 1) {
+    for willexit (stack mut u8[0 16] iteration = 0; iteration < Iterations; iteration += 1) {
         if (!IOOk(System.FileSystem.CreateDirectory("io-bench-root"))) {
             return 1;
         }
@@ -117,7 +117,7 @@ export unsafe ffi fn i32[min max] main() {
         }
     }
 
-    if (checksum != 1296) {
+    if (checksum != 880) {
         return 10;
     }
 

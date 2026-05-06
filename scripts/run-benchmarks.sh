@@ -79,12 +79,26 @@ if language_enabled rust && ! command -v "${rust_compiler}" >/dev/null 2>&1; the
 fi
 
 mkdir -p "${output_dir}"
+portable_mktemp_file() {
+  local template="$1"
+  local suffix="${2:-}"
+  local path
+
+  path="$(mktemp "${template}")"
+  if [[ -n "${suffix}" ]]; then
+    mv "${path}" "${path}${suffix}"
+    path="${path}${suffix}"
+  fi
+
+  printf '%s\n' "${path}"
+}
+
 if [[ -z "${results_file}" ]]; then
-  results_file="$(mktemp "${output_dir}/results-${timestamp}.XXXXXX.csv")"
+  results_file="$(portable_mktemp_file "${output_dir}/results-${timestamp}.XXXXXX" ".csv")"
 fi
 
 if [[ -z "${machine_file}" ]]; then
-  machine_file="$(mktemp "${output_dir}/machine-${timestamp}.XXXXXX.txt")"
+  machine_file="$(portable_mktemp_file "${output_dir}/machine-${timestamp}.XXXXXX" ".txt")"
 fi
 
 mkdir -p "$(dirname "${results_file}")" "$(dirname "${machine_file}")"
@@ -257,6 +271,26 @@ read_metric_value() {
   awk -F= -v key="${key}" '$1 == key { print $2; found = 1; exit } END { if (!found) print 0 }' "${path}"
 }
 
+timed_native_benchmarks=()
+
+timed_native_benchmark_seen() {
+  local key="$1"
+  local timed_native_benchmark
+
+  for timed_native_benchmark in "${timed_native_benchmarks[@]+"${timed_native_benchmarks[@]}"}"; do
+    if [[ "${timed_native_benchmark}" == "${key}" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+mark_timed_native_benchmark() {
+  local key="$1"
+  timed_native_benchmarks+=("${key}")
+}
+
 last_run_peak_rss_kib=0
 
 run_benchmark_executable() {
@@ -285,11 +319,15 @@ run_benchmark_executable() {
       exit "${status}"
     fi
 
-    if "${output_path}" >/dev/null; then
+    set +e
+    "${output_path}" >/dev/null
+    status="$?"
+    set -e
+
+    if [[ "${status}" -eq 0 ]]; then
       return 0
     fi
 
-    status="$?"
     echo "Benchmark ${benchmark_id}/${language} exited with status ${status} during ${phase}." >&2
     exit "${status}"
   fi
@@ -424,14 +462,20 @@ compile_and_time_stark() {
   local compile_us
   local metrics_path="${output_path}.metrics"
   compile_start="$(date +%s%N)"
-  dotnet run --project "${repo_root}/src" -- \
+  local compiler_command=(
+    dotnet run --project "${repo_root}/src" -- \
     "${source_path}" \
     --emit-exe \
     -O3 \
     -I "${stdlib_root}" \
     -o "${output_path}" \
-    --toolchain-metrics "${metrics_path}" \
-    "${compiler_args[@]}" >/dev/null
+    --toolchain-metrics "${metrics_path}"
+  )
+  if [[ "${#compiler_args[@]}" -gt 0 ]]; then
+    compiler_command+=("${compiler_args[@]}")
+  fi
+
+  "${compiler_command[@]}" >/dev/null
   compile_end="$(date +%s%N)"
   compile_us="$(ns_to_us "$((compile_end - compile_start))")"
   time_executable \
@@ -486,7 +530,10 @@ write_machine_metadata "${machine_file}"
 echo "Benchmark results: ${results_file}" >&2
 echo "Machine metadata: ${machine_file}" >&2
 
-mapfile -t benchmarks < <(find "${bench_root}" -type f -name '*.stark' | sort)
+benchmarks=()
+while IFS= read -r benchmark; do
+  benchmarks+=("${benchmark}")
+done < <(find "${bench_root}" -type f -name '*.stark' | sort)
 if [[ -n "${filter}" ]]; then
   normalized_filter="${filter//\\//}"
   filtered=()
@@ -501,7 +548,10 @@ if [[ -n "${filter}" ]]; then
       filtered+=("${benchmark}")
     fi
   done
-  benchmarks=("${filtered[@]}")
+  benchmarks=()
+  for benchmark in "${filtered[@]+"${filtered[@]}"}"; do
+    benchmarks+=("${benchmark}")
+  done
 fi
 
 if [[ "${#benchmarks[@]}" -eq 0 ]]; then
@@ -521,7 +571,6 @@ fi
 
 emit_row 'benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib'
 
-declare -A timed_native_benchmarks=()
 for source_path in "${benchmarks[@]}"; do
   rel_path="${source_path#"${repo_root}/"}"
   if grep -q '^// stark-bench: compile-only' "${source_path}"; then
@@ -548,8 +597,8 @@ for source_path in "${benchmarks[@]}"; do
   fi
 
   c_benchmark_key="c|${benchmark_group}"
-  if language_enabled c && [[ -z "${timed_native_benchmarks[${c_benchmark_key}]+x}" ]]; then
-    timed_native_benchmarks["${c_benchmark_key}"]=1
+  if language_enabled c && ! timed_native_benchmark_seen "${c_benchmark_key}"; then
+    mark_timed_native_benchmark "${c_benchmark_key}"
     c_source_path="${repo_root}/${benchmark_group}.c"
     if [[ ! -f "${c_source_path}" ]]; then
       echo "Missing C benchmark counterpart for group ${benchmark_group}: ${c_source_path#${repo_root}/}" >&2
@@ -559,8 +608,8 @@ for source_path in "${benchmarks[@]}"; do
   fi
 
   rust_benchmark_key="rust|${benchmark_group}"
-  if language_enabled rust && [[ -z "${timed_native_benchmarks[${rust_benchmark_key}]+x}" ]]; then
-    timed_native_benchmarks["${rust_benchmark_key}"]=1
+  if language_enabled rust && ! timed_native_benchmark_seen "${rust_benchmark_key}"; then
+    mark_timed_native_benchmark "${rust_benchmark_key}"
     rust_source_path="${repo_root}/${benchmark_group}.rs"
     if [[ ! -f "${rust_source_path}" ]]; then
       echo "Missing Rust benchmark counterpart for group ${benchmark_group}: ${rust_source_path#${repo_root}/}" >&2
@@ -571,7 +620,7 @@ for source_path in "${benchmarks[@]}"; do
     shopt -s nullglob
     rust_variant_paths=("${repo_root}/${benchmark_group}".rust-*.rs)
     shopt -u nullglob
-    for rust_variant_path in "${rust_variant_paths[@]}"; do
+    for rust_variant_path in "${rust_variant_paths[@]+"${rust_variant_paths[@]}"}"; do
       rust_variant_name="$(basename "${rust_variant_path}")"
       rust_variant_name="${rust_variant_name#"$(basename "${benchmark_group}").rust-"}"
       rust_variant_name="${rust_variant_name%.rs}"

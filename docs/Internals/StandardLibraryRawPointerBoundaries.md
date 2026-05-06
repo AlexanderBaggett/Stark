@@ -55,8 +55,8 @@ justification and a test update.
     internalized or replaced by slices.
 - `System.Runtime.ConsoleInput`
   - Console input handles are internal platform ABI state.
-- `System.Runtime.Platform`, `System.Runtime.Platform.Linux`, and
-  `System.Runtime.Platform.Windows`
+- `System.Runtime.Platform`, `System.Runtime.Platform.Linux`,
+  `System.Runtime.Platform.MacOS`, and `System.Runtime.Platform.Windows`
   - Raw pointers are required for syscall, kernel, Winsock, console, file,
     directory, memory, threading, and socket ABI calls. These functions are
     internal and explicitly unsafe.

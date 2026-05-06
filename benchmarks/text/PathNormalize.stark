@@ -20,7 +20,7 @@ export unsafe ffi fn i32[min max] main() {
 
     stack mut i64[min max] checksum = 0;
 
-    for willexit (stack mut i32[0 5000] i = 0; i < 5000; i += 1) {
+    for willexit (stack mut u16[0 5000] i = 0; i < 5000; i += 1) {
         if (!Ok(System.IO.Path.TryNormalizeSeparators(output, "alpha//beta///gamma.txt"))) {
             return 2;
         }

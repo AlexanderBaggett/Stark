@@ -223,6 +223,7 @@ public sealed class TargetAwareStdLibModuleResolver : IModuleSourceResolver, IMo
 {
     private const string PlatformModuleName = "System.Runtime.Platform";
     private const string LinuxDispatchTemplateRelativePath = "templates/System.Runtime.Platform.LinuxDispatch.stark";
+    private const string MacOSDispatchTemplateRelativePath = "templates/System.Runtime.Platform.MacOSDispatch.stark";
     private const string WindowsDispatchTemplateRelativePath = "templates/System.Runtime.Platform.WindowsDispatch.stark";
 
     private readonly IModuleSourceResolver _inner;
@@ -296,11 +297,20 @@ public sealed class TargetAwareStdLibModuleResolver : IModuleSourceResolver, IMo
             || targetInfo?.Triple.EndsWith("-windows", StringComparison.OrdinalIgnoreCase) == true;
     }
 
+    private static bool IsMacOSTarget(LlvmTargetInfo? targetInfo)
+    {
+        return targetInfo?.Triple.Contains("darwin", StringComparison.OrdinalIgnoreCase) == true
+            || targetInfo?.Triple.Contains("macos", StringComparison.OrdinalIgnoreCase) == true
+            || targetInfo?.Triple.Contains("macosx", StringComparison.OrdinalIgnoreCase) == true;
+    }
+
     private static string? FindDispatchTemplate(IEnumerable<string> searchDirectories, LlvmTargetInfo? targetInfo)
     {
-        var templateRelativePath = IsWindowsTarget(targetInfo)
-            ? WindowsDispatchTemplateRelativePath
-            : LinuxDispatchTemplateRelativePath;
+        var templateRelativePath = IsMacOSTarget(targetInfo)
+            ? MacOSDispatchTemplateRelativePath
+            : IsWindowsTarget(targetInfo)
+                ? WindowsDispatchTemplateRelativePath
+                : LinuxDispatchTemplateRelativePath;
 
         foreach (var searchDirectory in searchDirectories)
         {

@@ -24,14 +24,14 @@ unsafe fn bool IOOk(System.IO.IOStatus status) {
     }
 }
 
-unsafe fn void WriteAsciiEntryPath(rawmutptr<i8[-128 127]> data, i32[0 119] index) {
+unsafe fn void WriteAsciiEntryPath(rawmutptr<i8[-128 127]> data, u8[0 119] index) {
     stack i32[-2147483648 2147483647] value = (i32[-2147483648 2147483647])index;
     *(&data[HundredsIndex]) = (i8[-128 127])(48 + ((value / 100) % 10));
     *(&data[TensIndex]) = (i8[-128 127])(48 + ((value / 10) % 10));
     *(&data[OnesIndex]) = (i8[-128 127])(48 + (value % 10));
 }
 
-unsafe fn void WriteUnicodeEntryPath(rawmutptr<i8[-128 127]> data, i32[0 7] index) {
+unsafe fn void WriteUnicodeEntryPath(rawmutptr<i8[-128 127]> data, u8[0 7] index) {
     *(&data[OnesIndex]) = (i8[-128 127])(48 + (i32[-2147483648 2147483647])index);
 }
 
@@ -60,8 +60,8 @@ unsafe fn void DeleteEntries() {
         Capacity = 32
     };
 
-    for willexit (stack mut i32[0 120] index = 0; index < AsciiEntries; index += 1) {
-        WriteAsciiEntryPath(&pathStorage[0], (i32[0 119])index);
+    for willexit (stack mut u8[0 120] index = 0; index < AsciiEntries; index += 1) {
+        WriteAsciiEntryPath(&pathStorage[0], (u8[0 119])index);
         System.IO.File.Delete(System.Text.AsciiView(path));
     }
 
@@ -77,8 +77,8 @@ unsafe fn void DeleteEntries() {
         Capacity = 32
     };
 
-    for willexit (stack mut i32[0 8] index = 0; index < UnicodeEntries; index += 1) {
-        WriteUnicodeEntryPath(&unicodePathStorage[0], (i32[0 7])index);
+    for willexit (stack mut u8[0 8] index = 0; index < UnicodeEntries; index += 1) {
+        WriteUnicodeEntryPath(&unicodePathStorage[0], (u8[0 7])index);
         System.IO.File.Delete(System.Text.AsciiView(unicodePath));
     }
 
@@ -103,8 +103,8 @@ unsafe fn bool CreateEntries() {
         Capacity = 32
     };
 
-    for willexit (stack mut i32[0 120] index = 0; index < AsciiEntries; index += 1) {
-        WriteAsciiEntryPath(&pathStorage[0], (i32[0 119])index);
+    for willexit (stack mut u8[0 120] index = 0; index < AsciiEntries; index += 1) {
+        WriteAsciiEntryPath(&pathStorage[0], (u8[0 119])index);
         if (!CreateEntry(System.Text.AsciiView(path))) {
             return false;
         }
@@ -122,8 +122,8 @@ unsafe fn bool CreateEntries() {
         Capacity = 32
     };
 
-    for willexit (stack mut i32[0 8] index = 0; index < UnicodeEntries; index += 1) {
-        WriteUnicodeEntryPath(&unicodePathStorage[0], (i32[0 7])index);
+    for willexit (stack mut u8[0 8] index = 0; index < UnicodeEntries; index += 1) {
+        WriteUnicodeEntryPath(&unicodePathStorage[0], (u8[0 7])index);
         if (!CreateEntry(System.Text.AsciiView(unicodePath))) {
             return false;
         }
@@ -164,7 +164,7 @@ unsafe fn i64[-9223372036854775808 9223372036854775807] EnumerateOnce() {
             stack mut i64[-9223372036854775808 9223372036854775807] checksum = 0;
             stack mut i64[-9223372036854775808 9223372036854775807] count = 0;
 
-            for willexit (stack mut i32[0 128] index = 0; index < Entries; index += 1) {
+            for willexit (stack mut u8[0 128] index = 0; index < Entries; index += 1) {
                 stack i64[-9223372036854775808 9223372036854775807] length = EntryLength(directory.ReadNextInfo());
                 if (length < 0) {
                     directory.Close();
@@ -195,7 +195,7 @@ export unsafe ffi fn i32[-2147483648 2147483647] main() {
     }
 
     stack mut i64[-9223372036854775808 9223372036854775807] checksum = 0;
-    for willexit (stack mut i32[0 128] iteration = 0; iteration < Iterations; iteration += 1) {
+    for willexit (stack mut u8[0 128] iteration = 0; iteration < Iterations; iteration += 1) {
         stack i64[-9223372036854775808 9223372036854775807] iterationChecksum = EnumerateOnce();
         if (iterationChecksum < 0) {
             DeleteEntries();

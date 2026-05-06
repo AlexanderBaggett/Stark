@@ -14,18 +14,18 @@ unsafe fn bool Ok(System.Memory.MemoryStatus status) {
     }
 }
 
-unsafe fn i64[min max] SumBytes(borrow i8[-128 127][] values, i64[0 max] count) {
+unsafe fn i64[min max] SumBytes(borrow i8[-128 127][] values, u64[0 2 ** 63 - 1] count) {
     stack mut i64[min max] checksum = count;
-    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
         checksum += (i64[min max])values[index];
     }
 
     return checksum;
 }
 
-unsafe fn i64[min max] SumCodePoints(borrow i32[-2147483648 2147483647][] values, i64[0 max] count) {
+unsafe fn i64[min max] SumCodePoints(borrow i32[-2147483648 2147483647][] values, u64[0 2 ** 63 - 1] count) {
     stack mut i64[min max] checksum = count;
-    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
         checksum += (i64[min max])values[index];
     }
 
@@ -44,15 +44,15 @@ export unsafe ffi fn i32[min max] main() {
         65, 66, 67, 68,
         69, 70, 71, 72
     };
-    stack i64[0 max] byteChunkLength = 16;
-    stack i64[0 max] codePointChunkLength = 8;
-    stack i64[0 max] fillLength = 32;
+    stack u64[0 2 ** 63 - 1] byteChunkLength = 16;
+    stack u64[0 2 ** 63 - 1] codePointChunkLength = 8;
+    stack u64[0 2 ** 63 - 1] fillLength = 32;
 
-    for willexit (stack mut i32[0 800] iteration = 0; iteration < Iterations; iteration += 1) {
+    for willexit (stack mut u16[0 800] iteration = 0; iteration < Iterations; iteration += 1) {
         stack mut dynamic i8[-128 127] bytes = new();
         stack mut dynamic i32[-2147483648 2147483647] codePoints = new();
 
-        for willexit (stack mut i32[0 32] chunk = 0; chunk < Chunks; chunk += 1) {
+        for willexit (stack mut u8[0 32] chunk = 0; chunk < Chunks; chunk += 1) {
             unsafe {
                 if (!Ok(System.Memory.AppendBytesDisjoint(bytes, byteSource, byteChunkLength))) {
                     return 1;

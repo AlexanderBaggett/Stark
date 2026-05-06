@@ -25,18 +25,18 @@ unsafe fn bool MemoryOk(System.Memory.MemoryStatus status) {
     }
 }
 
-unsafe fn i64[min max] CountOrNegative(System.IO.IOResult<i64[0 max]> result) {
+unsafe fn i64[min max] CountOrNegative(System.IO.IOResult<u64[0 2 ** 63 - 1]> result) {
     switch (result) {
-        case System.IO.IOResult<i64[0 max]>.Ok(var value):
+        case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Ok(var value):
             return (i64[min max])value;
-        case System.IO.IOResult<i64[0 max]>.Err(var error):
+        case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(var error):
             return -1;
     }
 }
 
-unsafe fn i64[min max] SumBytes(borrow i8[-128 127][] values, i64[0 max] count) {
+unsafe fn i64[min max] SumBytes(borrow i8[-128 127][] values, u64[0 2 ** 63 - 1] count) {
     stack mut i64[min max] checksum = 0;
-    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
         checksum += (i64[min max])values[index];
     }
 
@@ -60,7 +60,7 @@ export unsafe ffi fn i32[min max] main() {
 
     System.IO.File.Delete("buffered-rw.tmp");
 
-    for willexit (stack mut i32[0 64] iteration = 0; iteration < Iterations; iteration += 1) {
+    for willexit (stack mut u8[0 64] iteration = 0; iteration < Iterations; iteration += 1) {
         stack System.IO.IOResult<System.IO.File.File> opened =
             System.IO.File.Open(
                 "buffered-rw.tmp",
@@ -71,7 +71,7 @@ export unsafe ffi fn i32[min max] main() {
                 return 1;
             case System.IO.IOResult<System.IO.File.File>.Ok(var value):
                 stack mut System.IO.File.File writer = value;
-                for willexit (stack mut i32[0 32] chunk = 0; chunk < 32; chunk += 1) {
+                for willexit (stack mut u8[0 32] chunk = 0; chunk < 32; chunk += 1) {
                     if (CountOrNegative(writer.Write(source)) != 32) {
                         return 2;
                     }
@@ -98,7 +98,7 @@ export unsafe ffi fn i32[min max] main() {
                     return 6;
                 }
 
-                for willexit (stack mut i32[0 33] chunk = 0; chunk < Chunks; chunk += 1) {
+                for willexit (stack mut u8[0 33] chunk = 0; chunk < Chunks; chunk += 1) {
                     if (CountOrNegative(reader.Read(destination)) != 32) {
                         return 7;
                     }

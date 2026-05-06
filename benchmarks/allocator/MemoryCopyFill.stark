@@ -13,18 +13,18 @@ unsafe fn bool Ok(System.Memory.MemoryStatus status) {
     }
 }
 
-unsafe fn i64[min max] SumBytes(borrow i8[-128 127][] values, i64[0 max] count) {
+unsafe fn i64[min max] SumBytes(borrow i8[-128 127][] values, u64[0 2 ** 63 - 1] count) {
     stack mut i64[min max] checksum = 0;
-    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
         checksum += (i64[min max])values[index];
     }
 
     return checksum;
 }
 
-unsafe fn i64[min max] SumCodePoints(borrow i32[-2147483648 2147483647][] values, i64[0 max] count) {
+unsafe fn i64[min max] SumCodePoints(borrow i32[-2147483648 2147483647][] values, u64[0 2 ** 63 - 1] count) {
     stack mut i64[min max] checksum = 0;
-    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
         checksum += (i64[min max])values[index];
     }
 
@@ -32,10 +32,10 @@ unsafe fn i64[min max] SumCodePoints(borrow i32[-2147483648 2147483647][] values
 }
 
 export unsafe ffi fn i32[min max] main() {
-    stack i64[0 max] byteCount = 32;
-    stack i64[0 (2 ** 61) - 1] codePointCount = 32;
-    stack i64[0 (2 ** 61) - 1] moveCount = 16;
-    stack i64[0 max] moveDestinationStart = 8;
+    stack u64[0 2 ** 63 - 1] byteCount = 32;
+    stack u64[0 2 ** 61 - 1] codePointCount = 32;
+    stack u64[0 2 ** 61 - 1] moveCount = 16;
+    stack u64[0 2 ** 63 - 1] moveDestinationStart = 8;
     stack mut i8[-128 127][32] byteSource = {
         3, 3, 3, 3, 3, 3, 3, 3,
         3, 3, 3, 3, 3, 3, 3, 3,
@@ -71,12 +71,12 @@ export unsafe ffi fn i32[min max] main() {
         return 1;
     }
 
-    for willexit (stack mut i64[0 max] initIndex = 0; initIndex < byteCount; initIndex += 1) {
+    for willexit (stack mut u64[0 2 ** 63 - 1] initIndex = 0; initIndex < byteCount; initIndex += 1) {
         init byteMoveBuffer[byteMoveBuffer.Length] = 0;
         init codePointMoveBuffer[codePointMoveBuffer.Length] = 0;
     }
 
-    for willexit (stack mut i32[0 10000] iteration = 0; iteration < Iterations; iteration += 1) {
+    for willexit (stack mut u16[0 10000] iteration = 0; iteration < Iterations; iteration += 1) {
         System.Memory.CopyBytesDisjointInfallible(
             byteSource,
             byteDestination,
@@ -101,8 +101,8 @@ export unsafe ffi fn i32[min max] main() {
 
         checksum += SumCodePoints(codePointDestination, codePointCount);
 
-        stack i64[0 max] iteration64 = (i64[0 max])iteration;
-        for willexit (stack mut i64[0 max] setupIndex = 0; setupIndex < byteCount; setupIndex += 1) {
+        stack u64[0 2 ** 63 - 1] iteration64 = (u64[0 2 ** 63 - 1])iteration;
+        for willexit (stack mut u64[0 2 ** 63 - 1] setupIndex = 0; setupIndex < byteCount; setupIndex += 1) {
             unsafe {
                 byteMoveBuffer[setupIndex] = (i8[-128 127])((setupIndex + iteration64) % 97);
                 codePointMoveBuffer[setupIndex] = (i32[-2147483648 2147483647])(65 + ((setupIndex + iteration64) % 17));

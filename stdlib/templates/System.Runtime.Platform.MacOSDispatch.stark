@@ -1,199 +1,198 @@
-import System.Runtime.Platform.Linux
-import System.Runtime.Platform.Windows
+import System.Runtime.Platform.MacOS
 module System.Runtime.Platform
 
 internal fn void ExitProcess(i32[min max] code) {
     unsafe {
-        System.Runtime.Platform.Linux.ExitProcess(code);
+        System.Runtime.Platform.MacOS.ExitProcess(code);
         return;
     }
 }
 
 internal fn i32[min max] ProcessId() {
-    return System.Runtime.Platform.Linux.ProcessId();
+    return System.Runtime.Platform.MacOS.ProcessId();
 }
 
 internal fn i32[min max] WriteStdoutAscii(ascii text) {
-    return System.Runtime.Platform.Linux.WriteStdoutAscii(text);
+    return System.Runtime.Platform.MacOS.WriteStdoutAscii(text);
 }
 
 internal fn i32[min max] WriteStdoutUnicode(unicode text) {
-    return System.Runtime.Platform.Linux.WriteStdoutUnicode(text);
+    return System.Runtime.Platform.MacOS.WriteStdoutUnicode(text);
 }
 
 internal unsafe fn i32[min max] WriteStdoutBytes(rawptr<i8[min max]>[length] data, u64[0 2 ** 63 - 1] length) {
-    return System.Runtime.Platform.Linux.WriteStdoutBytes(data, length);
+    return System.Runtime.Platform.MacOS.WriteStdoutBytes(data, length);
 }
 
 internal fn i32[min max] WriteStdoutAsciiLine(ascii text) {
-    return System.Runtime.Platform.Linux.WriteStdoutAsciiLine(text);
+    return System.Runtime.Platform.MacOS.WriteStdoutAsciiLine(text);
 }
 
 internal fn i32[min max] WriteStdoutUnicodeLine(unicode text) {
-    return System.Runtime.Platform.Linux.WriteStdoutUnicodeLine(text);
+    return System.Runtime.Platform.MacOS.WriteStdoutUnicodeLine(text);
 }
 
 internal unsafe fn i32[min max] WriteStdoutBytesLine(rawptr<i8[min max]>[length] data, u64[0 2 ** 63 - 1] length) {
-    return System.Runtime.Platform.Linux.WriteStdoutBytesLine(data, length);
+    return System.Runtime.Platform.MacOS.WriteStdoutBytesLine(data, length);
 }
 
 internal fn i32[min max] WriteStderrAscii(ascii text) {
-    return System.Runtime.Platform.Linux.WriteStderrAscii(text);
+    return System.Runtime.Platform.MacOS.WriteStderrAscii(text);
 }
 
 internal fn i32[min max] WriteStderrUnicode(unicode text) {
-    return System.Runtime.Platform.Linux.WriteStderrUnicode(text);
+    return System.Runtime.Platform.MacOS.WriteStderrUnicode(text);
 }
 
 internal unsafe fn i32[min max] WriteStderrBytes(rawptr<i8[min max]>[length] data, u64[0 2 ** 63 - 1] length) {
-    return System.Runtime.Platform.Linux.WriteStderrBytes(data, length);
+    return System.Runtime.Platform.MacOS.WriteStderrBytes(data, length);
 }
 
 internal fn i32[min max] WriteStderrAsciiLine(ascii text) {
-    return System.Runtime.Platform.Linux.WriteStderrAsciiLine(text);
+    return System.Runtime.Platform.MacOS.WriteStderrAsciiLine(text);
 }
 
 internal fn i32[min max] WriteStderrUnicodeLine(unicode text) {
-    return System.Runtime.Platform.Linux.WriteStderrUnicodeLine(text);
+    return System.Runtime.Platform.MacOS.WriteStderrUnicodeLine(text);
 }
 
 internal unsafe fn i32[min max] WriteStderrBytesLine(rawptr<i8[min max]>[length] data, u64[0 2 ** 63 - 1] length) {
-    return System.Runtime.Platform.Linux.WriteStderrBytesLine(data, length);
+    return System.Runtime.Platform.MacOS.WriteStderrBytesLine(data, length);
 }
 
 internal unsafe fn rawptr<i8[min max]> OpenStdin() {
-    return System.Runtime.Platform.Linux.OpenStdin();
+    return System.Runtime.Platform.MacOS.OpenStdin();
 }
 
 internal unsafe fn void CloseStdin(rawptr<i8[min max]> handle) {
-    System.Runtime.Platform.Linux.CloseStdin(handle);
+    System.Runtime.Platform.MacOS.CloseStdin(handle);
     return;
 }
 
 internal unsafe fn i64[min max] ReadStdin(rawmutptr<i8[min max]>[capacity] buffer, u64[0 2 ** 63 - 1] capacity) {
-    return System.Runtime.Platform.Linux.ReadStdin(buffer, capacity);
+    return System.Runtime.Platform.MacOS.ReadStdin(buffer, capacity);
 }
 
 internal unsafe fn i32[min max] WriteAscii(rawptr<i8[min max]> handle, ascii text) {
-    return System.Runtime.Platform.Linux.WriteAscii(handle, text);
+    return System.Runtime.Platform.MacOS.WriteAscii(handle, text);
 }
 
 internal finite law ascii DirectorySeparator() {
-    return System.Runtime.Platform.Linux.DirectorySeparator();
+    return System.Runtime.Platform.MacOS.DirectorySeparator();
 }
 
 internal finite law ascii AlternateDirectorySeparator() {
-    return System.Runtime.Platform.Linux.AlternateDirectorySeparator();
+    return System.Runtime.Platform.MacOS.AlternateDirectorySeparator();
 }
 
 internal finite law ascii PathSeparator() {
-    return System.Runtime.Platform.Linux.PathSeparator();
+    return System.Runtime.Platform.MacOS.PathSeparator();
 }
 
 internal finite law bool IsDirectorySeparator(ascii value) {
-    return System.Runtime.Platform.Linux.IsDirectorySeparator(value);
+    return System.Runtime.Platform.MacOS.IsDirectorySeparator(value);
 }
 
 internal unsafe fn bool IsTerminal(rawptr<i8[min max]> handle) {
-    return System.Runtime.Platform.Linux.IsTerminal(handle);
+    return System.Runtime.Platform.MacOS.IsTerminal(handle);
 }
 
 internal unsafe fn i32[min max] WriteUnicode(rawptr<i8[min max]> handle, unicode text) {
-    return System.Runtime.Platform.Linux.WriteUnicode(handle, text);
+    return System.Runtime.Platform.MacOS.WriteUnicode(handle, text);
 }
 
 internal unsafe fn rawptr<i8[min max]> OpenFileRead(ascii path) {
-    return System.Runtime.Platform.Linux.OpenFileRead(path);
+    return System.Runtime.Platform.MacOS.OpenFileRead(path);
 }
 
 internal unsafe fn rawptr<i8[min max]> OpenFileWrite(ascii path) {
-    return System.Runtime.Platform.Linux.OpenFileWrite(path);
+    return System.Runtime.Platform.MacOS.OpenFileWrite(path);
 }
 
 internal unsafe fn rawptr<i8[min max]> OpenFileAppend(ascii path) {
-    return System.Runtime.Platform.Linux.OpenFileAppend(path);
+    return System.Runtime.Platform.MacOS.OpenFileAppend(path);
 }
 
 internal unsafe fn rawptr<i8[min max]> OpenFileReadWrite(ascii path) {
-    return System.Runtime.Platform.Linux.OpenFileReadWrite(path);
+    return System.Runtime.Platform.MacOS.OpenFileReadWrite(path);
 }
 
 internal unsafe fn i32[min max] CloseFile(rawptr<i8[min max]> handle) {
-    return System.Runtime.Platform.Linux.CloseFile(handle);
+    return System.Runtime.Platform.MacOS.CloseFile(handle);
 }
 
 internal unsafe fn i32[min max] FlushFile(rawptr<i8[min max]> handle) {
-    return System.Runtime.Platform.Linux.FlushFile(handle);
+    return System.Runtime.Platform.MacOS.FlushFile(handle);
 }
 
 internal unsafe fn i64[min max] ReadFile(rawmutptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
-    return System.Runtime.Platform.Linux.ReadFile(buffer, size, count, handle);
+    return System.Runtime.Platform.MacOS.ReadFile(buffer, size, count, handle);
 }
 
 internal unsafe fn i64[min max] WriteFile(rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
-    return System.Runtime.Platform.Linux.WriteFile(buffer, size, count, handle);
+    return System.Runtime.Platform.MacOS.WriteFile(buffer, size, count, handle);
 }
 
 internal unsafe fn i64[min max] ReadFileBytes(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
-    return System.Runtime.Platform.Linux.ReadFileBytes(buffer, length, handle);
+    return System.Runtime.Platform.MacOS.ReadFileBytes(buffer, length, handle);
 }
 
 internal unsafe fn i64[min max] WriteFileBytes(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
-    return System.Runtime.Platform.Linux.WriteFileBytes(buffer, length, handle);
+    return System.Runtime.Platform.MacOS.WriteFileBytes(buffer, length, handle);
 }
 
 internal unsafe fn i64[min max] ReadFileBytesFast(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
-    return System.Runtime.Platform.Linux.ReadFileBytes(buffer, length, handle);
+    return System.Runtime.Platform.MacOS.ReadFileBytes(buffer, length, handle);
 }
 
 internal unsafe fn i64[min max] WriteFileBytesFast(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
-    return System.Runtime.Platform.Linux.WriteFileBytes(buffer, length, handle);
+    return System.Runtime.Platform.MacOS.WriteFileBytes(buffer, length, handle);
 }
 
 internal unsafe fn i64[min max] SeekFile(rawptr<i8[min max]> handle, i64[min max] offset, i32[min max] origin) {
-    return System.Runtime.Platform.Linux.SeekFile(handle, offset, origin);
+    return System.Runtime.Platform.MacOS.SeekFile(handle, offset, origin);
 }
 
 internal fn i32[min max] DeleteFile(ascii path) {
-    return System.Runtime.Platform.Linux.DeleteFile(path);
+    return System.Runtime.Platform.MacOS.DeleteFile(path);
 }
 
 internal fn i32[min max] MoveFile(ascii oldPath, ascii newPath) {
-    return System.Runtime.Platform.Linux.MoveFile(oldPath, newPath);
+    return System.Runtime.Platform.MacOS.MoveFile(oldPath, newPath);
 }
 
 internal fn bool FileExists(ascii path) {
-    return System.Runtime.Platform.Linux.FileExists(path);
+    return System.Runtime.Platform.MacOS.FileExists(path);
 }
 
 internal fn bool PathExists(ascii path) {
-    return System.Runtime.Platform.Linux.PathExists(path);
+    return System.Runtime.Platform.MacOS.PathExists(path);
 }
 
 internal fn bool IsFile(ascii path) {
-    return System.Runtime.Platform.Linux.IsFile(path);
+    return System.Runtime.Platform.MacOS.IsFile(path);
 }
 
 internal fn bool IsDirectory(ascii path) {
-    return System.Runtime.Platform.Linux.IsDirectory(path);
+    return System.Runtime.Platform.MacOS.IsDirectory(path);
 }
 
 internal fn i32[min max] CreateDirectory(ascii path) {
-    return System.Runtime.Platform.Linux.CreateDirectory(path);
+    return System.Runtime.Platform.MacOS.CreateDirectory(path);
 }
 
 internal fn i32[min max] DeleteDirectory(ascii path) {
-    return System.Runtime.Platform.Linux.DeleteDirectory(path);
+    return System.Runtime.Platform.MacOS.DeleteDirectory(path);
 }
 
 internal unsafe fn rawptr<i8[min max]> OpenDirectory(ascii path)
 {
-    return System.Runtime.Platform.Linux.OpenDirectory(path);
+    return System.Runtime.Platform.MacOS.OpenDirectory(path);
 }
 
 internal unsafe fn rawptr<i8[min max]> OpenDirectoryFast(ascii path)
 {
-    return System.Runtime.Platform.Linux.OpenDirectory(path);
+    return System.Runtime.Platform.MacOS.OpenDirectory(path);
 }
 
 internal unsafe fn rawptr<i8[min max]> OpenDirectoryFastInto(
@@ -202,15 +201,15 @@ internal unsafe fn rawptr<i8[min max]> OpenDirectoryFastInto(
     u64[0 2 ** 63 - 1] capacity,
     rawmutptr<i64[min max]> initialLength)
 {
-    return System.Runtime.Platform.Linux.OpenDirectoryInto(path, buffer, capacity, initialLength);
+    return System.Runtime.Platform.MacOS.OpenDirectoryFastInto(path, buffer, capacity, initialLength);
 }
 
 internal fn u64[0 2 ** 63 - 1] DirectoryBufferCapacity() {
-    return System.Runtime.Platform.Linux.DirectoryBufferCapacity();
+    return System.Runtime.Platform.MacOS.DirectoryBufferCapacity();
 }
 
 internal unsafe fn i32[min max] CloseDirectory(rawptr<i8[min max]> handle) {
-    return System.Runtime.Platform.Linux.CloseDirectory(handle);
+    return System.Runtime.Platform.MacOS.CloseDirectory(handle);
 }
 
 internal unsafe fn i32[min max] ReadDirectoryEntry(
@@ -222,7 +221,7 @@ internal unsafe fn i32[min max] ReadDirectoryEntry(
     rawmutptr<Ascii> name,
     rawmutptr<i32[min max]> kind)
 {
-    return System.Runtime.Platform.Linux.ReadDirectoryEntry(handle, buffer, capacity, readPos, readLength, name, kind);
+    return System.Runtime.Platform.MacOS.ReadDirectoryEntry(handle, buffer, capacity, readPos, readLength, name, kind);
 }
 
 internal unsafe fn i32[min max] ReadDirectoryEntryInfo(
@@ -234,23 +233,23 @@ internal unsafe fn i32[min max] ReadDirectoryEntryInfo(
     rawmutptr<i64[min max]> nameLength,
     rawmutptr<i32[min max]> kind)
 {
-    return System.Runtime.Platform.Linux.ReadDirectoryEntryInfo(handle, buffer, capacity, readPos, readLength, nameLength, kind);
+    return System.Runtime.Platform.MacOS.ReadDirectoryEntryInfo(handle, buffer, capacity, readPos, readLength, nameLength, kind);
 }
 
 internal unsafe fn bool TryCurrentDirectory(rawmutptr<Ascii> destination) {
-    return System.Runtime.Platform.Linux.TryCurrentDirectory(destination);
+    return System.Runtime.Platform.MacOS.TryCurrentDirectory(destination);
 }
 
 internal unsafe fn rawptr<i8[min max]> StartThread(fnptr<fn i32[min max]()> entry) {
-    return System.Runtime.Platform.Linux.StartThread(entry);
+    return System.Runtime.Platform.MacOS.StartThread(entry);
 }
 
 internal unsafe fn i32[min max] JoinThread(rawptr<i8[min max]> handle, rawmutptr<i32[min max]> exitCode) {
-    return System.Runtime.Platform.Linux.JoinThread(handle, exitCode);
+    return System.Runtime.Platform.MacOS.JoinThread(handle, exitCode);
 }
 
 internal unsafe fn i32[min max] DetachThread(rawptr<i8[min max]> handle) {
-    return System.Runtime.Platform.Linux.DetachThread(handle);
+    return System.Runtime.Platform.MacOS.DetachThread(handle);
 }
 
 internal unsafe fn rawptr<i8[min max]> ConnectTcpIPv4(
@@ -261,7 +260,7 @@ internal unsafe fn rawptr<i8[min max]> ConnectTcpIPv4(
     u16[0 max] port,
     rawmutptr<i32[min max]> status)
 {
-    return System.Runtime.Platform.Linux.ConnectTcpIPv4(a, b, c, d, port, status);
+    return System.Runtime.Platform.MacOS.ConnectTcpIPv4(a, b, c, d, port, status);
 }
 
 internal unsafe fn rawptr<i8[min max]> ListenTcpIPv4(
@@ -272,7 +271,7 @@ internal unsafe fn rawptr<i8[min max]> ListenTcpIPv4(
     u16[0 max] port,
     rawmutptr<i32[min max]> status)
 {
-    return System.Runtime.Platform.Linux.ListenTcpIPv4(a, b, c, d, port, status);
+    return System.Runtime.Platform.MacOS.ListenTcpIPv4(a, b, c, d, port, status);
 }
 
 internal unsafe fn i64[min max] ReadSocket(
@@ -280,7 +279,7 @@ internal unsafe fn i64[min max] ReadSocket(
     rawmutptr<i8[min max]>[capacity] buffer,
     u64[0 2 ** 63 - 1] capacity)
 {
-    return System.Runtime.Platform.Linux.ReadSocket(handle, buffer, capacity);
+    return System.Runtime.Platform.MacOS.ReadSocket(handle, buffer, capacity);
 }
 
 internal unsafe fn i64[min max] WriteSocket(
@@ -288,7 +287,7 @@ internal unsafe fn i64[min max] WriteSocket(
     rawptr<i8[min max]>[length] buffer,
     u64[0 2 ** 63 - 1] length)
 {
-    return System.Runtime.Platform.Linux.WriteSocket(handle, buffer, length);
+    return System.Runtime.Platform.MacOS.WriteSocket(handle, buffer, length);
 }
 
 internal unsafe fn i64[min max] ReadSocketVector2(
@@ -298,7 +297,7 @@ internal unsafe fn i64[min max] ReadSocketVector2(
     rawmutptr<i8[min max]>[secondCapacity] secondBuffer,
     u64[0 2 ** 63 - 1] secondCapacity)
 {
-    return System.Runtime.Platform.Linux.ReadSocketVector2(handle, firstBuffer, firstCapacity, secondBuffer, secondCapacity);
+    return System.Runtime.Platform.MacOS.ReadSocketVector2(handle, firstBuffer, firstCapacity, secondBuffer, secondCapacity);
 }
 
 internal unsafe fn i64[min max] WriteSocketVector2(
@@ -308,46 +307,46 @@ internal unsafe fn i64[min max] WriteSocketVector2(
     rawptr<i8[min max]>[secondLength] secondBuffer,
     u64[0 2 ** 63 - 1] secondLength)
 {
-    return System.Runtime.Platform.Linux.WriteSocketVector2(handle, firstBuffer, firstLength, secondBuffer, secondLength);
+    return System.Runtime.Platform.MacOS.WriteSocketVector2(handle, firstBuffer, firstLength, secondBuffer, secondLength);
 }
 
 internal unsafe fn rawptr<i8[min max]> AcceptSocket(
     rawptr<i8[min max]> handle,
     rawmutptr<i32[min max]> status)
 {
-    return System.Runtime.Platform.Linux.AcceptSocket(handle, status);
+    return System.Runtime.Platform.MacOS.AcceptSocket(handle, status);
 }
 
 internal unsafe fn i32[min max] ShutdownSocket(rawptr<i8[min max]> handle, i32[min max] how) {
-    return System.Runtime.Platform.Linux.ShutdownSocket(handle, how);
+    return System.Runtime.Platform.MacOS.ShutdownSocket(handle, how);
 }
 
 internal unsafe fn i32[min max] CloseSocket(rawptr<i8[min max]> handle) {
-    return System.Runtime.Platform.Linux.CloseSocket(handle);
+    return System.Runtime.Platform.MacOS.CloseSocket(handle);
 }
 
 internal fn void YieldThread() {
-    System.Runtime.Platform.Linux.YieldThread();
+    System.Runtime.Platform.MacOS.YieldThread();
     return;
 }
 
 internal fn void SleepThreadMilliseconds(u64[0 2 ** 63 - 1] milliseconds) {
-    System.Runtime.Platform.Linux.SleepThreadMilliseconds(milliseconds);
+    System.Runtime.Platform.MacOS.SleepThreadMilliseconds(milliseconds);
     return;
 }
 
 internal unsafe fn i32[min max] WaitReadable(rawptr<i8[min max]> handle, i32[min max] timeoutMilliseconds) {
-    return System.Runtime.Platform.Linux.WaitReadable(handle, timeoutMilliseconds);
+    return System.Runtime.Platform.MacOS.WaitReadable(handle, timeoutMilliseconds);
 }
 
 internal unsafe fn i32[min max] WaitWritable(rawptr<i8[min max]> handle, i32[min max] timeoutMilliseconds) {
-    return System.Runtime.Platform.Linux.WaitWritable(handle, timeoutMilliseconds);
+    return System.Runtime.Platform.MacOS.WaitWritable(handle, timeoutMilliseconds);
 }
 
 internal unsafe fn i32[min max] FutexWait(rawptr<i32[min max]> address, i32[min max] expected) {
-    return System.Runtime.Platform.Linux.FutexWait(address, expected);
+    return System.Runtime.Platform.MacOS.FutexWait(address, expected);
 }
 
 internal unsafe fn i32[min max] FutexWake(rawptr<i32[min max]> address, i32[min max] count) {
-    return System.Runtime.Platform.Linux.FutexWake(address, count);
+    return System.Runtime.Platform.MacOS.FutexWake(address, count);
 }

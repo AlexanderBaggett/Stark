@@ -144,6 +144,7 @@ internal static class NativeToolchain
         AppendOptimizationArgument(startInfo.ArgumentList, optimizationLevel);
         AppendCompileLtoArguments(startInfo.ArgumentList, enableLto);
         AppendTargetCodegenArguments(startInfo.ArgumentList, targetInfo, compileOnly: true);
+        AppendMacOSPlatformSdkArguments(startInfo.ArgumentList, targetInfo, forClangDriver: true);
 
         foreach (var includeDirectory in includeDirectories ?? [])
         {
@@ -195,9 +196,18 @@ internal static class NativeToolchain
         CompilerOptimizationLevel optimizationLevel = CompilerOptimizationLevel.O3,
         bool enableLto = false)
     {
+        var resolvedLinkerTool = string.IsNullOrWhiteSpace(linkerTool) ? "clang" : linkerTool;
         return RunTool(
-            string.IsNullOrWhiteSpace(linkerTool) ? "clang" : linkerTool,
-            BuildLinkExecutableArguments(objectPaths, outputPath, librarySearchPaths, extraArguments, targetInfo, optimizationLevel, enableLto),
+            resolvedLinkerTool,
+            BuildLinkExecutableArguments(
+                objectPaths,
+                outputPath,
+                librarySearchPaths,
+                extraArguments,
+                targetInfo,
+                optimizationLevel,
+                enableLto,
+                IsClangDriver(resolvedLinkerTool)),
             outputPath);
     }
 
@@ -301,6 +311,7 @@ internal static class NativeToolchain
             AppendCompileLtoArguments(startInfo.ArgumentList, compileOnly && enableLto);
             AppendStarkLlvmIrCompileStabilityArguments(startInfo.ArgumentList, llvmIr, optimizationLevel, compileOnly && enableLto);
             AppendTargetCodegenArguments(startInfo.ArgumentList, targetInfo, compileOnly);
+            AppendMacOSPlatformSdkArguments(startInfo.ArgumentList, targetInfo, forClangDriver: true);
             startInfo.ArgumentList.Add(llvmPath);
             startInfo.ArgumentList.Add("-o");
             startInfo.ArgumentList.Add(fullOutputPath);
@@ -340,12 +351,18 @@ internal static class NativeToolchain
         IEnumerable<string>? extraArguments,
         LlvmTargetInfo? targetInfo,
         CompilerOptimizationLevel optimizationLevel,
-        bool enableLto)
+        bool enableLto,
+        bool linkerIsClangDriver)
     {
         if (targetInfo is not null && !string.IsNullOrWhiteSpace(targetInfo.Triple))
         {
             yield return "-target";
             yield return targetInfo.Triple;
+        }
+
+        foreach (var argument in GetMacOSPlatformSdkArguments(targetInfo, linkerIsClangDriver))
+        {
+            yield return argument;
         }
 
         if (enableLto)
@@ -520,6 +537,117 @@ internal static class NativeToolchain
 
         AppendCodegenModelArguments(arguments, targetInfo, compileOnly);
     }
+
+    private static void AppendMacOSPlatformSdkArguments(ICollection<string> arguments, LlvmTargetInfo? targetInfo, bool forClangDriver)
+    {
+        foreach (var argument in GetMacOSPlatformSdkArguments(targetInfo, forClangDriver))
+        {
+            arguments.Add(argument);
+        }
+    }
+
+    private static IEnumerable<string> GetMacOSPlatformSdkArguments(LlvmTargetInfo? targetInfo, bool forClangDriver)
+    {
+        if (!ShouldUseMacOSPlatformSdk(targetInfo)
+            || ResolveMacOSSdkRoot() is not { } sdkRoot)
+        {
+            yield break;
+        }
+
+        if (forClangDriver)
+        {
+            yield return "-isysroot";
+            yield return sdkRoot;
+        }
+        else
+        {
+            yield return "-syslibroot";
+            yield return sdkRoot;
+        }
+    }
+
+    private static bool ShouldUseMacOSPlatformSdk(LlvmTargetInfo? targetInfo)
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            return false;
+        }
+
+        if (targetInfo is null || string.IsNullOrWhiteSpace(targetInfo.Triple))
+        {
+            return true;
+        }
+
+        return targetInfo.Triple.Contains("apple-darwin", StringComparison.OrdinalIgnoreCase)
+            || targetInfo.Triple.Contains("apple-macos", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? ResolveMacOSSdkRoot()
+    {
+        var sdkRoot = Environment.GetEnvironmentVariable("SDKROOT");
+        if (sdkRoot is not null && IsUsableMacOSSdkRoot(sdkRoot))
+        {
+            return Path.GetFullPath(sdkRoot);
+        }
+
+        foreach (var candidate in new[]
+        {
+            "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+            "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+        })
+        {
+            if (IsUsableMacOSSdkRoot(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return QueryXcrunMacOSSdkRoot();
+    }
+
+    private static string? QueryXcrunMacOSSdkRoot()
+    {
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "xcrun",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            startInfo.ArgumentList.Add("--sdk");
+            startInfo.ArgumentList.Add("macosx");
+            startInfo.ArgumentList.Add("--show-sdk-path");
+
+            using var process = Process.Start(startInfo);
+            if (process is null)
+            {
+                return null;
+            }
+
+            var standardOutput = process.StandardOutput.ReadToEnd();
+            _ = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+
+            var sdkRoot = standardOutput.Trim();
+            return process.ExitCode == 0 && IsUsableMacOSSdkRoot(sdkRoot)
+                ? Path.GetFullPath(sdkRoot)
+                : null;
+        }
+        catch (Exception exception) when (exception is Win32Exception or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    private static bool IsUsableMacOSSdkRoot(string? sdkRoot)
+        => !string.IsNullOrWhiteSpace(sdkRoot) && Directory.Exists(sdkRoot);
+
+    private static bool IsClangDriver(string linkerTool)
+        => Path.GetFileNameWithoutExtension(linkerTool).Contains("clang", StringComparison.OrdinalIgnoreCase);
 
     private static void AppendCodegenModelArguments(ICollection<string> arguments, LlvmTargetInfo targetInfo, bool compileOnly)
     {

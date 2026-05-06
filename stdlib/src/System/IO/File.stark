@@ -567,7 +567,7 @@ public struct File {
         }
     }
 
-    unsafe fn i64[min max] ReadBytes(mut borrow File self, rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count) {
+    unsafe fn i64[min max] ReadBytes(mut borrow File self, rawmutptr<i8[min max]> buffer, i64[min max] size, i64[min max] count) {
         if (self.Closed || self.Handle == null) {
             return 0;
         }
@@ -1078,7 +1078,7 @@ public unsafe fn i32[min max] SyncAll(rawptr<i8[min max]> handle) {
     return System.Runtime.Platform.FlushFile(handle);
 }
 
-public unsafe fn i64[min max] ReadBytes(rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
+public unsafe fn i64[min max] ReadBytes(rawmutptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
     return System.Runtime.Platform.ReadFile(buffer, size, count, handle);
 }
 
