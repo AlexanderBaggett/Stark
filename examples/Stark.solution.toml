@@ -20,6 +20,7 @@ members = [
   "multi-module",
   "data-model",
   "static-library",
+  "standard-library-tests",
 ]
 
 [defaults]
@@ -39,6 +40,9 @@ build = [
   "static-library",
 ]
 run = "basic-syntax"
+test = [
+  "standard-library-tests",
+]
 
 [aliases]
 hello = "hello"
@@ -63,6 +67,8 @@ control-flow = "control-flow"
 multi-module = "multi-module"
 data-model = "data-model"
 static-library = "static-library"
+standard-library-tests = "standard-library-tests"
+stdlib-tests = "standard-library-tests"
 
 [profiles.dev]
 opt = 0

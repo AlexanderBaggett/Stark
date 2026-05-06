@@ -2,9 +2,9 @@ using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
-public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibraryTestSuite
+public sealed class SystemPromotedConsoleStandardLibraryTests : StandardLibraryTestSuite
 {
-    private const string ExperimentalConsoleProgram = """
+    private const string PromotedConsoleProgram = """
         import System.Console
         import System.Runtime.Buffer
         import System.Text
@@ -161,11 +161,11 @@ public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibr
         """;
 
     [Fact]
-    public void StdLibSourceExperimentalConsoleSurfaceCompiles()
+    public void StdLibSourcePromotedConsoleSurfaceCompiles()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibExperimentalConsoleSurface.stark");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibPromotedConsoleSurface.stark");
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(
                 """
@@ -207,7 +207,7 @@ public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibr
     }
 
     [Fact]
-    public void StdLibSourceExperimentalConsoleByteAndLineWritesUseDirectPlatformPaths()
+    public void StdLibSourcePromotedConsoleByteAndLineWritesUseDirectPlatformPaths()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
@@ -290,11 +290,11 @@ public sealed class SystemExperimentalConsoleStandardLibraryTests : StandardLibr
     }
 
     [Fact]
-    public async Task SourceStdLibExperimentalConsoleExecutableRuns()
+    public async Task SourceStdLibPromotedConsoleExecutableRuns()
     {
         await AssertSourceExecutableRunsAsync(
-            ExperimentalConsoleProgram,
-            "stark-stdlib-experimental-console-",
+            PromotedConsoleProgram,
+            "stark-stdlib-promoted-console-",
             "alpha\r\ncafÃ©\nZ123" + new string('a', 8193),
             "ascii:owned\nunicode:Î±\nBUF\n",
             "err\n",

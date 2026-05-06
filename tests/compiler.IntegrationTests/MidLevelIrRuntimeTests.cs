@@ -19,7 +19,7 @@ public sealed class MidLevelIrRuntimeTests
                 return 2;
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 return Pick("caf\u00E9");
             }
             """);
@@ -34,7 +34,7 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 if ("Score: " + "100" == "Score: 100") {
                     return 0;
                 }
@@ -60,7 +60,7 @@ public sealed class MidLevelIrRuntimeTests
             public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
             public fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 stack mut i8[-128 127][2] leftStorage = { 65, 0 };
                 stack mut Ascii left = new Ascii() {
                     Data = &leftStorage[0],
@@ -132,7 +132,7 @@ public sealed class MidLevelIrRuntimeTests
                 return !TryConcatUnicode(&destination, (unicode)"A", (unicode)"B");
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 if (RejectsAsciiNegativeCapacity() && RejectsUnicodeNegativeCapacity()) {
                     return 0;
                 }
@@ -163,7 +163,7 @@ public sealed class MidLevelIrRuntimeTests
                 return false;
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 stack i32[-2147483648 2147483647] score = 42;
                 stack Ascii label[32] = $"Score: {score}";
                 if (AsciiLength(AsciiView(label)) == 9) {
@@ -196,7 +196,7 @@ public sealed class MidLevelIrRuntimeTests
                 return false;
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 stack i32[-2147483648 2147483647] score = 42;
                 stack Unicode label[32] = $"Score: {score}";
                 if (UnicodeLength(UnicodeView(label)) == 9) {
@@ -217,7 +217,7 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 const score = 100;
                 if ($"Score: {score}" == "Score: 100") {
                     return 0;
@@ -246,7 +246,7 @@ public sealed class MidLevelIrRuntimeTests
                 return left + right;
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 return (i32[-2147483648 2147483647])Add(1.0, 2.0);
             }
             """);
@@ -270,7 +270,7 @@ public sealed class MidLevelIrRuntimeTests
                 return left + middle * right / divisor - 1.0;
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 return (i32[-2147483648 2147483647])Compute(1.5, 2, 3.0, 0.5);
             }
             """);
@@ -294,7 +294,7 @@ public sealed class MidLevelIrRuntimeTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 heap Box box = new Box() { Value = 7 };
                 return box.Value;
             }
@@ -340,7 +340,7 @@ public sealed class MidLevelIrRuntimeTests
             internal fn Allocation Reallocate(Allocation allocation, i64[0 max] byteLength, i64[1 max] alignment);
             internal fn void Free(Allocation allocation);
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 stack Allocator allocator = new Allocator() {
                     Kind = 42
                 };
@@ -376,7 +376,7 @@ public sealed class MidLevelIrRuntimeTests
                 return values[index];
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 stack i32[-2147483648 2147483647][3] values = { 4, 7, 9 };
                 return Read(values, 1);
             }
@@ -401,7 +401,7 @@ public sealed class MidLevelIrRuntimeTests
                 i32[-2147483648 2147483647][3] Values;
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 stack Box box = new Box() { Values = { 4, 7 } };
                 return box.Values[0] + box.Values[1] + box.Values[2];
             }
@@ -431,7 +431,7 @@ public sealed class MidLevelIrRuntimeTests
                 }
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 return Pick("abc", 1);
             }
             """);
@@ -455,7 +455,7 @@ public sealed class MidLevelIrRuntimeTests
                 return text[];
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 switch (Whole("abc")[1]) {
                     case 'b':
                         return 7;
@@ -490,7 +490,7 @@ public sealed class MidLevelIrRuntimeTests
                 return left != right;
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 stack Pair sameLeft = new Pair(1, 2);
                 stack Pair sameRight = new Pair(1, 2);
                 stack Pair differentLeft = new Pair(1, 2);
@@ -537,7 +537,7 @@ public sealed class MidLevelIrRuntimeTests
                 return left >= right;
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 stack Many lessLeft = new Many(1, 2, 3, 4, 5);
                 stack Many lessRight = new Many(1, 2, 3, 4, 6);
                 stack Many lessOrEqualLeft = new Many(1, 2, 3, 4, 5);
@@ -584,7 +584,7 @@ public sealed class MidLevelIrRuntimeTests
                 return left != right;
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 stack i32[-2147483648 2147483647][2] sameLeft = { 1, 2 };
                 stack i32[-2147483648 2147483647][2] sameRight = { 1, 2 };
                 stack i32[-2147483648 2147483647][2] differentLeft = { 1, 2 };
@@ -622,7 +622,7 @@ public sealed class MidLevelIrRuntimeTests
                 }
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 stack mut Counter left = new Counter() { Value = 0 };
                 stack mut Counter right = new Counter() { Value = 0 };
                 true ? left.Set(7) : right.Set(9);
@@ -658,7 +658,7 @@ public sealed class MidLevelIrRuntimeTests
                 return left != right;
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 stack Token sameLeft = Token.Number(7);
                 stack Token sameRight = Token.Number(7);
                 stack Token differentPayloadLeft = Token.Number(7);
@@ -713,7 +713,7 @@ public sealed class MidLevelIrRuntimeTests
                 return left >= right;
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 stack Token lessPayloadLeft = Token.Number(7);
                 stack Token lessPayloadRight = Token.Number(9);
                 stack Token lessVariantLeft = Token.None;
@@ -786,7 +786,7 @@ public sealed class MidLevelIrRuntimeTests
                 return left != right;
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 stack Many sameRecordLeft = new Many(1, 2, 3, 4, 5);
                 stack Many sameRecordRight = new Many(1, 2, 3, 4, 5);
                 stack Many differentRecordLeft = new Many(1, 2, 3, 4, 5);
@@ -848,7 +848,7 @@ public sealed class MidLevelIrRuntimeTests
                 return left != right;
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 if (SameAscii("cab!"[1, 2], "zab?"[1, 2])
                     && DifferentUnicode(((unicode)"caf\u00E9!")[0, 4], ((unicode)"cafe?")[0, 4])
                     && SameLabel(
@@ -897,7 +897,7 @@ public sealed class MidLevelIrRuntimeTests
                 return left != right;
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 stack i32[-2147483648 2147483647][3] selfValues = { 1, 2, 3 };
                 stack i32[-2147483648 2147483647][] selfView = selfValues;
 
@@ -958,7 +958,7 @@ public sealed class MidLevelIrRuntimeTests
                 Text(Resource),
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 stack mut Token token = Token.Text(new Resource() { Value = 1 });
                 token = Token.End;
                 return Counter;
@@ -1005,7 +1005,7 @@ public sealed class MidLevelIrRuntimeTests
                 Resource Backup;
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 {
                     stack Holder holder = new Holder() {
                         Token = Token.Text(new Resource() { Value = 3 }),
@@ -1056,7 +1056,7 @@ public sealed class MidLevelIrRuntimeTests
                 return Result<Resource>.Removed(new Resource() { Value = 3 });
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 {
                     stack Result<Resource> result = Make();
                     switch (result) {
@@ -1107,7 +1107,7 @@ public sealed class MidLevelIrRuntimeTests
                 }
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 stack mut Counter counter = new Counter() { Value = 9 };
                 counter.ResetThenAdd(7);
                 return counter.Current();
@@ -1149,7 +1149,7 @@ public sealed class MidLevelIrRuntimeTests
                 }
             }
 
-            export ffi fn i32[min max] main() {
+            export unsafe ffi fn i32[min max] main() {
                 stack mut Holder holder = new Holder() {
                     Inner = new Counter() {
                         Value = 0
@@ -1182,7 +1182,7 @@ public sealed class MidLevelIrRuntimeTests
                 return true;
             }
 
-            export ffi fn i32[min max] main() {
+            export unsafe ffi fn i32[min max] main() {
                 stack mut i32[0 max] value = 1;
                 if (!WriteValue(value)) {
                     return 99;
@@ -1219,7 +1219,7 @@ public sealed class MidLevelIrRuntimeTests
                 return Status.Ok;
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 switch (Next()) {
                     case Status.Ok:
                         return Counter;
@@ -1271,7 +1271,7 @@ public sealed class MidLevelIrRuntimeTests
                 }
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 if (MatchLabel(new Label("ab", (unicode)"cat"))
                     && MatchToken(Token.Text { Tag: "ab", Word: (unicode)"cat" })
                     && !MatchLabel(new Label("zz", (unicode)"cat"))
@@ -1312,7 +1312,7 @@ public sealed class MidLevelIrRuntimeTests
                 return (i32[-2147483648 2147483647])*(&(*buffer).Storage[index]);
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 stack mut Buffer buffer = new Buffer();
                 Put(&buffer, 3, (i8[-128 127])90);
                 return Read(&buffer, 3);
@@ -1343,7 +1343,7 @@ public sealed class MidLevelIrRuntimeTests
                 return (i32[-2147483648 2147483647])*(&data[index]);
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 stack mut i8[-128 127][16] buffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
                 Put(&buffer[0], 4, (i8[-128 127])77);
                 return Read(&buffer[0], 4);
@@ -1378,7 +1378,7 @@ public sealed class MidLevelIrRuntimeTests
                 }
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 stack mut Buffer buffer = new Buffer();
                 buffer.Put(5, (i8[-128 127])65);
                 return buffer.Read(5);
@@ -1414,7 +1414,7 @@ public sealed class MidLevelIrRuntimeTests
                 return (i32[-2147483648 2147483647])(value.A + value.C);
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 return Read(Make(20));
             }
             """);

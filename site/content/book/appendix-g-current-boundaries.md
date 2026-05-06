@@ -16,7 +16,9 @@ until the matching language, CLI, or standard-library surface is fully settled.
 
 ## Testing
 
-`stark test`, test-project manifests, and `System.Testing` are v2.0 work.
+`stark test`, `kind = "test"` manifests, and `System.Testing` are implemented
+with explicit fact runners. Reflection-free auto-discovery and data-driven
+`[Theory]` cases remain future work.
 Current examples should use executable return codes.
 
 {{< stark-sample "assets/book/samples/manual-test-executable.stark" >}}

@@ -10,5 +10,9 @@ public sealed class SystemSyscallStandardLibraryTests
         => _suite.SystemSyscallModuleSelectsExpectedLinuxShimPerArchitecture(targetTriple, expectedInlineAsm);
 
     [Fact]
-    public Task PackagedStdLibSyscallModuleCanBeConsumedWithoutSource() => _suite.PackagedStdLibSyscallModuleCanBeConsumedWithoutSource();
+    public void SystemSyscallDirectEntryPointsAreInternal() => _suite.SystemSyscallDirectEntryPointsAreInternal();
+
+    [Fact]
+    public Task PackagedStdLibLinuxPlatformSyscallsRemainUsableWithoutPublicSyscallSource()
+        => _suite.PackagedStdLibLinuxPlatformSyscallsRemainUsableWithoutPublicSyscallSource();
 }

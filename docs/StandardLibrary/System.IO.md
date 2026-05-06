@@ -77,6 +77,6 @@ finite law bool IsOk(System.IO.IOStatus status) {
 ## Current Status
 
 - These shared types are implemented and used by `System.Console`.
-- `System.IO.File` still exposes a compatibility-oriented mixed surface today:
-  owned file handles plus raw-handle helpers.
+- `System.IO.File` exposes owned file handles and slice/buffer-based byte IO;
+  raw file handles are internal stdlib/platform boundaries.
 - Directory-wide operations live in `System.FileSystem`.

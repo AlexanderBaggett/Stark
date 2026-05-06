@@ -99,7 +99,7 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
             """
             module Demo
 
-            fn i64[-9223372036854775808 9223372036854775807] Run() {
+            unsafe fn i64[-9223372036854775808 9223372036854775807] Run() {
                 stack mut i8[-128 127][8] asciiBuffer = { 0, 0, 0, 0, 0, 0, 0, 0 };
                 stack mut Ascii asciiOwned = new Ascii() {
                     Data = &asciiBuffer[0],
@@ -131,9 +131,9 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
             module System.Text
 
             public finite law ascii AsciiView(Ascii source);
-            public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+            public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
 
-            public fn ascii Run() {
+            public unsafe fn ascii Run() {
                 stack mut i8[-128 127][16] buffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
                 stack mut Ascii owned = new Ascii() {
                     Data = &buffer[0],
@@ -168,9 +168,9 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
 
             public finite law ascii AsciiView(Ascii source);
             public finite law i64[-9223372036854775808 9223372036854775807] AsciiLength(ascii source);
-            public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+            public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
 
-            public fn i64[-9223372036854775808 9223372036854775807] Run() {
+            public unsafe fn i64[-9223372036854775808 9223372036854775807] Run() {
                 stack mut i8[-128 127][2] leftStorage = { 65, 0 };
                 stack mut Ascii left = new Ascii() {
                     Data = &leftStorage[0],
@@ -203,9 +203,9 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
 
             public finite law unicode UnicodeView(Unicode source);
             public finite law i64[-9223372036854775808 9223372036854775807] UnicodeLength(unicode source);
-            public fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
+            public unsafe finite bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
 
-            public fn i64[-9223372036854775808 9223372036854775807] Run() {
+            public unsafe fn i64[-9223372036854775808 9223372036854775807] Run() {
                 stack mut i32[-2147483648 2147483647][2] leftStorage = { 65, 0 };
                 stack mut Unicode left = new Unicode() {
                     Data = &leftStorage[0],
@@ -238,10 +238,10 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
 
             public finite law ascii AsciiView(Ascii source);
             public finite law i64[-9223372036854775808 9223372036854775807] AsciiLength(ascii source);
-            public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
-            public fn bool TryFormatI32Ascii(rawmutptr<Ascii> destination, i32[-2147483648 2147483647] value);
+            public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+            public unsafe finite bool TryFormatI32Ascii(rawmutptr<Ascii> destination, i32[-2147483648 2147483647] value);
 
-            public fn i64[-9223372036854775808 9223372036854775807] Run() {
+            public unsafe fn i64[-9223372036854775808 9223372036854775807] Run() {
                 stack i32[-2147483648 2147483647] score = 42;
                 stack Ascii label[32] = $"Score: {score}";
                 return AsciiLength(AsciiView(label));
@@ -263,10 +263,10 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
 
             public finite law unicode UnicodeView(Unicode source);
             public finite law i64[-9223372036854775808 9223372036854775807] UnicodeLength(unicode source);
-            public fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
-            public fn bool TryFormatI32Unicode(rawmutptr<Unicode> destination, i32[-2147483648 2147483647] value);
+            public unsafe finite bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
+            public unsafe finite bool TryFormatI32Unicode(rawmutptr<Unicode> destination, i32[-2147483648 2147483647] value);
 
-            public fn i64[-9223372036854775808 9223372036854775807] Run() {
+            public unsafe fn i64[-9223372036854775808 9223372036854775807] Run() {
                 stack i32[-2147483648 2147483647] score = 42;
                 stack Unicode label[32] = $"Score: {score}";
                 return UnicodeLength(UnicodeView(label));
@@ -286,12 +286,12 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
             """
             module System.Text
 
-            public finite law rawptr<i8[-128 127]> AsciiData(ascii source);
+            public unsafe finite law rawptr<i8[-128 127]> AsciiData(ascii source);
             public finite law i64[-9223372036854775808 9223372036854775807] AsciiLength(ascii source);
-            public finite law rawptr<i32[-2147483648 2147483647]> UnicodeData(unicode source);
+            public unsafe finite law rawptr<i32[-2147483648 2147483647]> UnicodeData(unicode source);
             public finite law i64[-9223372036854775808 9223372036854775807] UnicodeLength(unicode source);
 
-            public fn i64[-9223372036854775808 9223372036854775807] Run(ascii asciiText, unicode unicodeText) {
+            public unsafe fn i64[-9223372036854775808 9223372036854775807] Run(ascii asciiText, unicode unicodeText) {
                 if (AsciiData(asciiText) == null) {
                     return -1;
                 }

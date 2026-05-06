@@ -1089,7 +1089,7 @@ public sealed class TypeTypingDiagnosticsTests
 
             unsafe fn void Run(
                 frozen rawmutptr<i32[-2147483648 2147483647]>[count] pointer,
-                i32[1 10] count) {
+                u8[1 10] count) {
                 unsafe {
                     stack frozen i32[-2147483648 2147483647][] view = slice(pointer, count);
                     Inspect(view);
@@ -1242,7 +1242,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn void Bad(i64[0 max] size, Ascii left, Ascii right) {
+            fn void Bad(u64[0 2 ** 63 - 1] size, Ascii left, Ascii right) {
                 stack i32[-2147483648 2147483647] number[4] = 0;
                 heap Ascii heapText[16] = left + right;
                 stack Ascii dynamicText[size] = left + right;

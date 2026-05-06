@@ -133,7 +133,7 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 import Facade
                 module Demo
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
                     stack i32[-2147483648 2147483647] seed = 40;
                     stack Facade.Outer<i32[-2147483648 2147483647]> wrapped = Facade.WrapObject(seed, 1, seed);
                     stack Facade.Boxed<i32[-2147483648 2147483647]> boxed = Facade.WrapEnum(wrapped.Item.Value, wrapped.Count, seed);
@@ -307,7 +307,7 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                     return Facade.Bump(box, delta, tag);
                 }
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
                     stack Facade.Box box = new Facade.Box(new Facade.Inner(40));
                     stack i32[-2147483648 2147483647] delta = 2;
                     stack i32[-2147483648 2147483647] tag = 0;
@@ -492,7 +492,7 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 import Facade
                 module Demo
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
                     stack i32[-2147483648 2147483647] tag = 0;
                     stack i32[-2147483648 2147483647] first = Facade.ChooseBranch(false, true, 1, 40, 9, tag);
                     stack i32[-2147483648 2147483647] second = Facade.ChooseSwitch(0, 2, 7, 9, tag);
@@ -668,7 +668,7 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 import Facade
                 module Demo
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
                     stack i32[-2147483648 2147483647] delta = 2;
                     stack i32[-2147483648 2147483647] limit = 50;
                     stack i32[-2147483648 2147483647] result = Facade.AddDelta(new Facade.Box(new Facade.Inner(40)), delta, delta);
@@ -833,7 +833,7 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 import Facade
                 module Demo
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
                     stack Facade.Box box = new Facade.Box(new Facade.Inner(41));
                     stack i32[-2147483648 2147483647] tag = box.Inner.Value;
                     return (i32[-2147483648 2147483647])Facade.Read(box, tag) + 1;

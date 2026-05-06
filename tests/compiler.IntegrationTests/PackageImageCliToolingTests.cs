@@ -227,7 +227,7 @@ public sealed class PackageImageCliToolingTests
             import NativeDemo
             module App
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 return GetValue();
             }
             """);
@@ -339,7 +339,7 @@ public sealed class PackageImageCliToolingTests
                 import NativePkgDemo
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
                     return GetValue();
                 }
                 """);

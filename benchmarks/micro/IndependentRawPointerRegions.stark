@@ -1,4 +1,4 @@
-﻿import System.Process
+import System.Process
 module Benchmarks.Micro.IndependentRawPointerRegions
 
 unsafe fn void Copy(

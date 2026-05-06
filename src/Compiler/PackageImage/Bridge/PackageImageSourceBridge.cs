@@ -223,14 +223,14 @@ internal static partial class PackageImageLoader
                         builder.Append(' ');
                     }
 
-                    if (method.IsFfi)
-                    {
-                        builder.Append("ffi ");
-                    }
-
                     if (method.IsUnsafe)
                     {
                         builder.Append("unsafe ");
+                    }
+
+                    if (method.IsFfi)
+                    {
+                        builder.Append("ffi ");
                     }
 
                     builder.Append(RenderFunctionKind(method.Kind));
@@ -571,6 +571,11 @@ internal static partial class PackageImageLoader
             builder.Append(' ');
         }
 
+        if (function.IsUnsafe)
+        {
+            builder.Append("unsafe ");
+        }
+
         if (function.IsFfi)
         {
             builder.Append("ffi ");
@@ -579,11 +584,6 @@ internal static partial class PackageImageLoader
         if (function.IsVarargs)
         {
             builder.Append("varargs ");
-        }
-
-        if (function.IsUnsafe)
-        {
-            builder.Append("unsafe ");
         }
 
         if (function.Asm is not null)

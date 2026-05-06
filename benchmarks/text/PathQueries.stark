@@ -1,4 +1,4 @@
-﻿import System.IO.Path
+import System.IO.Path
 import System.Text
 module Benchmarks.Text.PathQueries
 

@@ -1,4 +1,4 @@
-﻿import System.Process
+import System.Process
 module Benchmarks.Micro.NullBranchPruning
 
 unsafe noinline finite law i32[min max] Score(rawmutptr<i64[min max]> ptr, i64[min max] seed) {

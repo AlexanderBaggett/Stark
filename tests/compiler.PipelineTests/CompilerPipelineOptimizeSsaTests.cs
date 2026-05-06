@@ -19,7 +19,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                     return 1;
                 }
 
-                fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[-2147483648 2147483647] Run() {
                     stack fnptr<fn i32[-2147483648 2147483647]()> op = Target;
                     return op();
                 }
@@ -78,7 +78,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[-2147483648 2147483647] Run() {
                     stack fnptr<fn i32[-2147483648 2147483647](i32[-2147483648 2147483647])> increment =
                         (i32[-2147483648 2147483647] value) => value + 1;
                     return increment(41);
@@ -273,7 +273,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                     return 1;
                 }
 
-                fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[-2147483648 2147483647] Run() {
                     stack fnptr<fn i32[-2147483648 2147483647]()> op = Target;
                     return op();
                 }
@@ -433,9 +433,9 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(i32[0 7] slot) {
-                    stack i32[-2147483648 2147483647] modulo = slot % 8;
-                    stack i32[-2147483648 2147483647] divided = slot / 8;
+                fn i32[-2147483648 2147483647] Run(u8[0 7] slot) {
+                    stack u8[0 max] modulo = slot % (u8[0 max])8;
+                    stack u8[0 max] divided = slot / (u8[0 max])8;
                     return modulo + divided;
                 }
                 """),
@@ -464,9 +464,9 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(i32[1 100] value) {
-                    stack i32[-2147483648 2147483647] divided = value / value;
-                    stack i32[-2147483648 2147483647] modulo = value % value;
+                fn i32[-2147483648 2147483647] Run(u8[1 100] value) {
+                    stack u8[0 max] divided = value / value;
+                    stack u8[0 max] modulo = value % value;
                     return divided + modulo;
                 }
                 """),
@@ -571,7 +571,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                     return value + 1;
                 }
 
-                fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[-2147483648 2147483647] Run() {
                     return AddOne(41);
                 }
                 """),
@@ -608,7 +608,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                     return value + 1;
                 }
 
-                fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[-2147483648 2147483647] Run() {
                     return AddOne(41);
                 }
                 """),
@@ -658,7 +658,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                     import Math
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[-2147483648 2147483647] Run() {
                         return Math.AddOne(41);
                     }
                     """,
@@ -822,10 +822,13 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                ffi fn void Touch();
+                unsafe ffi fn void Touch();
 
                 public fn i32[-2147483648 2147483647] AddOne(i32[-2147483648 2147483647] value) {
-                    Touch();
+                    unsafe {
+                        Touch();
+                    }
+
                     return value + 1;
                 }
 
@@ -862,7 +865,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                     return value * 2;
                 }
 
-                fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[-2147483648 2147483647] Run() {
                     return Double(21);
                 }
                 """),
@@ -893,14 +896,17 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                ffi fn void Touch();
+                unsafe ffi fn void Touch();
 
                 public fn i32[-2147483648 2147483647] AddOne(i32[-2147483648 2147483647] value) {
-                    Touch();
+                    unsafe {
+                        Touch();
+                    }
+
                     return value + 1;
                 }
 
-                fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[-2147483648 2147483647] Run() {
                     return AddOne(41);
                 }
                 """),
@@ -973,7 +979,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                     return value + 1;
                 }
 
-                fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[-2147483648 2147483647] Run() {
                     return AddOne(41);
                 }
                 """),
@@ -1014,7 +1020,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                     return AddOne(value);
                 }
 
-                fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[-2147483648 2147483647] Run() {
                     return Forward(41);
                 }
                 """),
@@ -1115,7 +1121,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn bool Run(i32[0 10] value) {
+                fn bool Run(u8[0 10] value) {
                     return value < 20;
                 }
                 """),
@@ -1150,7 +1156,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn bool Run(i32[0 10] value) {
+                fn bool Run(u8[0 10] value) {
                     return value < 20;
                 }
                 """),
@@ -1181,8 +1187,8 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[0 10] Choose(bool flag, i32[2 3] left, i32[4 5] right) {
-                    stack mut i32[0 10] result = left;
+                fn u8[0 10] Choose(bool flag, u8[2 3] left, u8[4 5] right) {
+                    stack mut u8[0 10] result = left;
                     if (flag) {
                         result = right;
                     }
@@ -1216,7 +1222,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] AddAfterJoin(bool flag, i32[0 10] left, i32[20 30] right) {
+                fn i32[-2147483648 2147483647] AddAfterJoin(bool flag, u8[0 10] left, u8[20 30] right) {
                     stack mut i32[-2147483648 2147483647] value = left;
                     if (flag) {
                         value = right;
@@ -1249,11 +1255,11 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[0 255] Combine(i32[0 15] value, i32[0 2] amount) {
-                    stack i32[0 255] masked = (i32[0 255])(value & 7);
-                    stack i32[0 255] shifted = (i32[0 255])(value << 2);
-                    stack i32[0 255] restored = (i32[0 255])(shifted >> amount);
-                    return (i32[0 255])(masked | restored);
+                fn u8[0 max] Combine(u8[0 15] value, u8[0 2] amount) {
+                    stack u8[0 max] masked = (u8[0 max])(value & 7);
+                    stack u8[0 max] shifted = (u8[0 max])(value << 2);
+                    stack u8[0 max] restored = (u8[0 max])(shifted >> amount);
+                    return (u8[0 max])(masked | restored);
                 }
                 """),
             new CompilerOptions(StopAfterPassId: "value-facts"));
@@ -1277,8 +1283,8 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[0 255] Mask(i32[0 7] value) {
-                    return (i32[0 255])(value & 8);
+                fn u8[0 max] Mask(u8[0 7] value) {
+                    return (u8[0 max])(value & 8);
                 }
                 """),
             new CompilerOptions(StopAfterPassId: "value-facts"));
@@ -1329,9 +1335,9 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[0 255] MaskShifted(i32[0 7] value) {
-                    stack i32[0 255] shifted = (i32[0 255])(value << 1);
-                    return (i32[0 255])(shifted & 1);
+                fn u8[0 max] MaskShifted(u8[0 7] value) {
+                    stack u8[0 max] shifted = (u8[0 max])(value << 1);
+                    return (u8[0 max])(shifted & 1);
                 }
                 """),
             new CompilerOptions(StopAfterPassId: "value-facts"));
@@ -1353,8 +1359,8 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn bool ForcedBitCannotEqualZero(i32[0 7] value) {
-                    stack i32[0 4095] forced = (i32[0 4095])(value | 8);
+                fn bool ForcedBitCannotEqualZero(u8[0 7] value) {
+                    stack u16[0 4095] forced = (u16[0 4095])(value | 8);
                     return forced == 0;
                 }
                 """),
@@ -1380,11 +1386,11 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Divide(i32[0 100] value) {
+                fn i32[-2147483648 2147483647] Divide(u8[0 100] value) {
                     return value / 10;
                 }
 
-                fn i32[-2147483648 2147483647] Modulo(i32[0 100] value) {
+                fn i32[-2147483648 2147483647] Modulo(u8[0 100] value) {
                     return value % 8;
                 }
                 """),
@@ -1410,8 +1416,8 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(i32[0 7] value) {
-                    stack i32[0 255] masked = (i32[0 255])(value & 8);
+                fn i32[-2147483648 2147483647] Run(u8[0 7] value) {
+                    stack u8[0 max] masked = (u8[0 max])(value & 8);
                     if (masked == 0) {
                         return 1;
                     }
@@ -1442,8 +1448,8 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(i32[0 7] value) {
-                    stack i32[0 4095] forced = (i32[0 4095])(value | 8);
+                fn i32[-2147483648 2147483647] Run(u8[0 7] value) {
+                    stack u16[0 4095] forced = (u16[0 4095])(value | 8);
                     if (forced == 0) {
                         return 1;
                     }
@@ -1474,7 +1480,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(i32[0 100] value) {
+                fn i32[-2147483648 2147483647] Run(u8[0 100] value) {
                     stack i32[-2147483648 2147483647] slot = value % 8;
                     if (slot >= 8) {
                         return 1;
@@ -1506,9 +1512,9 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(i32[0 7] value) {
-                    stack i32[0 255] shifted = (i32[0 255])(value << 1);
-                    stack i32[0 255] masked = (i32[0 255])(shifted & 1);
+                fn i32[-2147483648 2147483647] Run(u8[0 7] value) {
+                    stack u8[0 max] shifted = (u8[0 max])(value << 1);
+                    stack u8[0 max] masked = (u8[0 max])(shifted & 1);
                     if (masked == 0) {
                         return 1;
                     }
@@ -1539,7 +1545,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(i32[0 100] value) {
+                fn i32[-2147483648 2147483647] Run(u8[0 100] value) {
                     if (value < 10) {
                         return value;
                     }
@@ -1573,7 +1579,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(i32[0 100] value) {
+                fn i32[-2147483648 2147483647] Run(u8[0 100] value) {
                     if (value < 10) {
                         return value;
                     }
@@ -1607,7 +1613,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(rawptr<i32[-2147483648 2147483647]> ptr) {
+                unsafe fn i32[-2147483648 2147483647] Run(rawptr<i32[-2147483648 2147483647]> ptr) {
                     if (ptr != null) {
                         return 1;
                     }
@@ -1644,7 +1650,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(rawmutptr<i32[-2147483648 2147483647]> ptr) {
+                unsafe fn i32[-2147483648 2147483647] Run(rawmutptr<i32[-2147483648 2147483647]> ptr) {
                     stack mut i32[-2147483648 2147483647] local = 1;
                     stack rawmutptr<i32[-2147483648 2147483647]> localPtr = &local;
 
@@ -1687,7 +1693,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(rawmutptr<i32[-2147483648 2147483647]> ptr) {
+                unsafe fn i32[-2147483648 2147483647] Run(rawmutptr<i32[-2147483648 2147483647]> ptr) {
                     stack mut i32[-2147483648 2147483647] local = 1;
                     stack rawmutptr<i32[-2147483648 2147483647]> localPtr = &local;
 
@@ -1728,7 +1734,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[-2147483648 2147483647] Run() {
                     stack mut i32[-2147483648 2147483647] value = 1;
                     stack rawmutptr<i32[-2147483648 2147483647]> ptr = &value;
                     return *ptr;
@@ -1761,7 +1767,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(i32[0 2] index) {
+                fn i32[-2147483648 2147483647] Run(u8[0 2] index) {
                     stack i32[-2147483648 2147483647][3] values = { 4, 7, 9 };
                     stack i32[-2147483648 2147483647][] view = values;
                     return view[index];
@@ -1794,7 +1800,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Read(bool flag, i32[0 1] index) {
+                fn i32[-2147483648 2147483647] Read(bool flag, u8[0 1] index) {
                     stack i32[-2147483648 2147483647][3] left = { 1, 2, 3 };
                     stack i32[-2147483648 2147483647][5] right = { 4, 5, 6, 7, 8 };
                     stack mut i32[-2147483648 2147483647][] view = left;
@@ -1827,7 +1833,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn unicode Run(unicode text, i32[2 5] length) {
+                fn unicode Run(unicode text, u8[2 5] length) {
                     return text[0, length];
                 }
                 """),
@@ -1858,12 +1864,12 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module System.Text
 
-                fn i64[0 9223372036854775807] Run() {
+                fn u64[0 2 ** 63 - 1] Run() {
                     return AsciiLength("stark") + UnicodeLength((unicode)"llvm");
                 }
 
-                public finite law i64[0 9223372036854775807] AsciiLength(ascii source);
-                public finite law i64[0 9223372036854775807] UnicodeLength(unicode source);
+                public finite law u64[0 2 ** 63 - 1] AsciiLength(ascii source);
+                public finite law u64[0 2 ** 63 - 1] UnicodeLength(unicode source);
                 """),
             new CompilerOptions(
                 StopAfterPassId: "cleanup-ssa",
@@ -1888,12 +1894,12 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module System.Text
 
-                fn i64[0 9223372036854775807] Run() {
+                fn u64[0 2 ** 63 - 1] Run() {
                     return AsciiLength("stark") + UnicodeLength((unicode)"llvm");
                 }
 
-                public finite law i64[0 9223372036854775807] AsciiLength(ascii source);
-                public finite law i64[0 9223372036854775807] UnicodeLength(unicode source);
+                public finite law u64[0 2 ** 63 - 1] AsciiLength(ascii source);
+                public finite law u64[0 2 ** 63 - 1] UnicodeLength(unicode source);
                 """),
             new CompilerOptions(StopAfterPassId: "const-prop"));
 
@@ -1920,7 +1926,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(i32[0 10] left, i32[0 5] right) {
+                fn i32[-2147483648 2147483647] Run(u8[0 10] left, u8[0 5] right) {
                     stack i32[-2147483648 2147483647] wrapped = left +% right;
                     stack i32[-2147483648 2147483647] saturated = left +| right;
                     return wrapped + saturated;
@@ -1945,7 +1951,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(i32[0 10] value) {
+                fn i32[-2147483648 2147483647] Run(u8[0 10] value) {
                     stack mut i32[-2147483648 2147483647] result = 0;
                     if (value < 20) {
                         result = 1;
@@ -1980,7 +1986,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(i32[0 100] value) {
+                fn i32[-2147483648 2147483647] Run(u8[0 100] value) {
                     if (value < 10) {
                         if (value >= 10) {
                             return 1;
@@ -2015,7 +2021,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(rawptr<i32[-2147483648 2147483647]> ptr) {
+                unsafe fn i32[-2147483648 2147483647] Run(rawptr<i32[-2147483648 2147483647]> ptr) {
                     if (ptr != null) {
                         if (ptr == null) {
                             return 1;
@@ -2050,7 +2056,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(rawmutptr<i32[-2147483648 2147483647]> ptr) {
+                unsafe fn i32[-2147483648 2147483647] Run(rawmutptr<i32[-2147483648 2147483647]> ptr) {
                     stack mut i32[-2147483648 2147483647] local = 1;
                     stack rawmutptr<i32[-2147483648 2147483647]> localPtr = &local;
 
@@ -2088,8 +2094,8 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(i32[0 15] value) {
-                    stack i32[0 255] masked = (i32[0 255])(value & 7);
+                fn i32[-2147483648 2147483647] Run(u8[0 15] value) {
+                    stack u8[0 max] masked = (u8[0 max])(value & 7);
                     if (masked < 8) {
                         return 1;
                     }
@@ -2120,7 +2126,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(i32[0 10] left, i32[0 5] right) {
+                fn i32[-2147483648 2147483647] Run(u8[0 10] left, u8[0 5] right) {
                     stack i32[-2147483648 2147483647] saturated = left +| right;
                     stack i32[-2147483648 2147483647] wrapped = left +% right;
 
@@ -2158,7 +2164,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(i8[120 127] value) {
+                fn i32[-2147483648 2147483647] Run(i8[-1 127] value) {
                     stack i8[-128 127] wrapped = value +% 1;
                     if (wrapped < 0) {
                         return 1;
@@ -2186,7 +2192,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module System.Text
 
-                fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[-2147483648 2147483647] Run() {
                     if (AsciiLength("stark") == 5) {
                         return 1;
                     }
@@ -2194,7 +2200,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                     return 2;
                 }
 
-                public finite law i64[0 9223372036854775807] AsciiLength(ascii source);
+                public finite law u64[0 2 ** 63 - 1] AsciiLength(ascii source);
                 """),
             new CompilerOptions(StopAfterPassId: "prune-branches"));
 
@@ -2219,9 +2225,9 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module System.Text
 
-                public inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+                public unsafe inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
 
-                public fn bool Run() {
+                public unsafe fn bool Run() {
                     stack mut i32[-2147483648 2147483647][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
                     stack mut Unicode ownedUnicode = new Unicode() {
                         Data = &unicodeBuffer[0],
@@ -2264,9 +2270,9 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module System.Text
 
-                public inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+                public unsafe inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
 
-                public fn bool Run() {
+                public unsafe fn bool Run() {
                     stack mut i32[-2147483648 2147483647][64] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
                     stack mut Unicode ownedUnicode = new Unicode() {
                         Data = &unicodeBuffer[0],
@@ -2306,9 +2312,9 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module System.Text
 
-                public inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+                public unsafe inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
 
-                public fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] count) {
+                public unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] count) {
                     stack mut i32[-2147483648 2147483647][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
                     stack mut Unicode ownedUnicode = new Unicode() {
                         Data = &unicodeBuffer[0],
@@ -2347,9 +2353,9 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module System.Text
 
-                public inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+                public unsafe inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
 
-                public fn bool Run() {
+                public unsafe fn bool Run() {
                     stack mut i32[-2147483648 2147483647][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
                     stack mut Unicode ownedUnicode = new Unicode() {
                         Data = &unicodeBuffer[0],
@@ -2385,7 +2391,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(i32[0 2] value) {
+                fn i32[-2147483648 2147483647] Run(u8[0 2] value) {
                     stack i32[-2147483648 2147483647] widened = (i32[-2147483648 2147483647])value;
                     switch (widened) {
                         case 0:
@@ -2432,7 +2438,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(i32[10 12] value) {
+                fn i32[-2147483648 2147483647] Run(u8[10 12] value) {
                     stack i32[-2147483648 2147483647] widened = (i32[-2147483648 2147483647])value;
                     switch (widened) {
                         case 10:
@@ -2469,13 +2475,13 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run() {
-                    stack mut i32[0 200000] total = 0;
-                    for willexit (stack mut i32[0 2] i = 0; i < 2; i += 1) {
+                unsafe fn i32[-2147483648 2147483647] Run() {
+                    stack mut u24[0 200000] total = 0;
+                    for willexit (stack mut u8[0 2] i = 0; i < 2; i += 1) {
                         total += 1;
                     }
 
-                    for willexit (stack mut i32[0 100000] i = 0; i < 100000; i += 1) {
+                    for willexit (stack mut u24[0 100000] i = 0; i < 100000; i += 1) {
                         total += 1;
                     }
 
@@ -2517,7 +2523,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                     stack mut i32[-2147483648 2147483647] local = value;
                     local = local + 1;
                     return local;
@@ -2549,7 +2555,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                     stack mut i32[-2147483648 2147483647] local = value;
                     local = local + 1;
                     return local;
@@ -2581,7 +2587,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                     stack mut i32[-2147483648 2147483647] local = value;
                     stack rawptr<i32[-2147483648 2147483647]> ptr = &local;
                     local = value + 1;
@@ -2757,8 +2763,8 @@ public sealed class CompilerPipelineOptimizeSsaTests
                 """
                 module Demo
 
-                fn i32[0 200] Run(i32[0 100] value) {
-                    stack mut i32[0 200][4] items = { 0, 0, 0, 0 };
+                fn u8[0 200] Run(u8[0 100] value) {
+                    stack mut u8[0 200][4] items = { 0, 0, 0, 0 };
                     items[0] = value;
                     items[1] = 7;
                     return items[0];

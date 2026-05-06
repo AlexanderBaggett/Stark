@@ -98,7 +98,7 @@ public sealed class PackageImageTypedTerminalIfIntegrationTests
                 import Facade
                 module Demo
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
                     stack i32[-2147483648 2147483647] tag = 0;
                     return Facade.ChooseTerminal(false, true, 3, 7, 9, tag);
                 }

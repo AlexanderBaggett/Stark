@@ -43,7 +43,7 @@ public fn Unicode Read();
 import System
 module App
 
-export ffi fn i32 main() {
+export unsafe ffi fn i32 main() {
     switch (System.Console.WriteLine("Hello")) {
         case System.IO.IOStatus.Ok:
             return 0;

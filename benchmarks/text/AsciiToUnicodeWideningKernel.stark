@@ -1,4 +1,5 @@
-﻿import System
+import System
+import System.Text
 module Benchmarks.Text.AsciiToUnicodeWideningKernel
 
 export unsafe ffi fn i32[min max] main() {

@@ -236,7 +236,7 @@ public inline finite MemoryStatus InitializeBytes(
     return MemoryStatus.Ok;
 }
 
-public unsafe inline finite MemoryStatus InitializeBytesFromPointerDisjoint(
+internal unsafe inline finite MemoryStatus InitializeBytesFromPointerDisjoint(
     u64[0 2 ** 63 - 1] count,
     disjoint rawptr<i8[min max]>[count] source,
     disjoint init i8[min max][] destination) {
@@ -390,7 +390,7 @@ public inline finite MemoryStatus InitializeCodePoints(
     return MemoryStatus.Ok;
 }
 
-public unsafe inline finite MemoryStatus InitializeCodePointsFromPointerDisjoint(
+internal unsafe inline finite MemoryStatus InitializeCodePointsFromPointerDisjoint(
     u64[0 2 ** 61 - 1] count,
     disjoint rawptr<i32[min max]>[count] source,
     disjoint init i32[min max][] destination) {

@@ -6,10 +6,10 @@ public sealed class SystemTextStandardLibraryTests
 {
     private readonly StandardLibraryTestSuite _suite = new();
 
-    private const string ExperimentalTextProgram = """
+    private const string PromotedTextProgram = """
         import System.Text
         import System.Memory
-        module ExperimentalTextParity
+        module PromotedTextParity
 
         const ascii ConstAsciiSuffix = "Const";
         const ascii ConstUnicodeAsciiSuffix = " AZ";
@@ -176,7 +176,7 @@ public sealed class SystemTextStandardLibraryTests
             }
         }
 
-        fn bool OwnedAsciiLength(System.Memory.MemoryResult<System.Text.OwnedAscii> result, i64[0 max] expected) {
+        fn bool OwnedAsciiLength(System.Memory.MemoryResult<System.Text.OwnedAscii> result, u64[0 2 ** 63 - 1] expected) {
             switch (result) {
                 case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
                     return value.Length() == expected;
@@ -185,7 +185,7 @@ public sealed class SystemTextStandardLibraryTests
             }
         }
 
-        fn bool OwnedUnicodeLength(System.Memory.MemoryResult<System.Text.OwnedUnicode> result, i64[0 max] expected) {
+        fn bool OwnedUnicodeLength(System.Memory.MemoryResult<System.Text.OwnedUnicode> result, u64[0 2 ** 63 - 1] expected) {
             switch (result) {
                 case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Ok(var value):
                     return value.Length() == expected;
@@ -196,7 +196,7 @@ public sealed class SystemTextStandardLibraryTests
 
         fn bool AsciiOwnedMatches(
             mut borrow System.Text.OwnedAscii text,
-            i64[0 max] expectedLength,
+            u64[0 2 ** 63 - 1] expectedLength,
             i8[min max] expectedFirst,
             i8[min max] expectedLast) {
             stack i8[min max][] view = text.AsSlice();
@@ -204,12 +204,12 @@ public sealed class SystemTextStandardLibraryTests
                 return false;
             }
 
-            return view[0] == expectedFirst && view[(i64[0 max])(expectedLength - 1)] == expectedLast;
+            return view[0] == expectedFirst && view[(u64[0 2 ** 63 - 1])(expectedLength - 1)] == expectedLast;
         }
 
         fn bool UnicodeOwnedMatches(
             mut borrow System.Text.OwnedUnicode text,
-            i64[0 max] expectedLength,
+            u64[0 2 ** 63 - 1] expectedLength,
             i32[min max] expectedFirst,
             i32[min max] expectedLast) {
             stack i32[min max][] view = text.AsSlice();
@@ -217,7 +217,7 @@ public sealed class SystemTextStandardLibraryTests
                 return false;
             }
 
-            return view[0] == expectedFirst && view[(i64[0 max])(expectedLength - 1)] == expectedLast;
+            return view[0] == expectedFirst && view[(u64[0 2 ** 63 - 1])(expectedLength - 1)] == expectedLast;
         }
 
         fn bool ProbeOwnedAscii() {
@@ -428,8 +428,8 @@ public sealed class SystemTextStandardLibraryTests
 
             stack mut System.Text.OwnedAscii tooLarge = new();
             if (!Ok(tooLarge.AppendByte((i8[min max])65))
-                || !TooLargeStatus(tooLarge.Reserve((i64[0 max])(2 ** 63 - 1)))
-                || !TooLargeAsciiResult(System.Text.ConcatAscii("x", (i64[0 max])(2 ** 63 - 1), System.Text.ToAscii((i32[min max])1)))) {
+                || !TooLargeStatus(tooLarge.Reserve((u64[0 2 ** 63 - 1])(2 ** 63 - 1)))
+                || !TooLargeAsciiResult(System.Text.ConcatAscii("x", (u64[0 2 ** 63 - 1])(2 ** 63 - 1), System.Text.ToAscii((i32[min max])1)))) {
                 return 16;
             }
 
@@ -441,11 +441,11 @@ public sealed class SystemTextStandardLibraryTests
     public void StdLibSourceTextBuiltinsAndPathHelperSurfaceCompile() => _suite.StdLibSourceTextBuiltinsAndPathHelperSurfaceCompile();
 
     [Fact]
-    public void StdLibSourceExperimentalTextLowersThroughDynamicStorage()
+    public void StdLibSourcePromotedTextLowersThroughDynamicStorage()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibExperimentalTextLowering.stark");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibPromotedTextLowering.stark");
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(
                 """
@@ -462,14 +462,14 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn i64[0 max] GrowAndRead() {
+                fn u64[0 2 ** 63 - 1] GrowAndRead() {
                     stack mut System.Text.OwnedAscii text = new();
                     if (!Ok(text.Reserve(8)) || !Ok(text.AppendAscii("abc")) || !Ok(text.AppendI64(42))) {
                         return 0;
                     }
 
                     stack i8[min max][] view = text.AsSlice();
-                    return (i64[0 max])view[4];
+                    return (u64[0 2 ** 63 - 1])view[4];
                 }
                 """,
                 appPath),
@@ -489,7 +489,7 @@ public sealed class SystemTextStandardLibraryTests
     }
 
     [Fact]
-    public void StdLibSourceExperimentalTextAppendsUseTailRegionMemoryHelpers()
+    public void StdLibSourcePromotedTextAppendsUseTailRegionMemoryHelpers()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
@@ -580,7 +580,7 @@ public sealed class SystemTextStandardLibraryTests
     }
 
     [Fact]
-    public void StdLibSourceExperimentalWideUnicodeIntegerFormattingWritesUnicodeDirectly()
+    public void StdLibSourcePromotedWideUnicodeIntegerFormattingWritesUnicodeDirectly()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
@@ -628,7 +628,7 @@ public sealed class SystemTextStandardLibraryTests
     }
 
     [Fact]
-    public void StdLibSourceExperimentalTextEncodingHelpersUseBoundedRawPointerRegions()
+    public void StdLibSourcePromotedTextEncodingHelpersUseBoundedRawPointerRegions()
     {
         var repositoryRoot = FindRepositoryRoot();
         var modulePath = Path.Combine(repositoryRoot, "stdlib", "src", "System", "Text.stark");
@@ -1033,7 +1033,7 @@ public sealed class SystemTextStandardLibraryTests
     }
 
     [Fact]
-    public async Task SourceStdLibExperimentalTextExecutableRuns()
+    public async Task SourceStdLibPromotedTextExecutableRuns()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
         {
@@ -1042,13 +1042,13 @@ public sealed class SystemTextStandardLibraryTests
 
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-experimental-text-");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-promoted-text-");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
 
         try
         {
-            await File.WriteAllTextAsync(appPath, ExperimentalTextProgram);
+            await File.WriteAllTextAsync(appPath, PromotedTextProgram);
 
             var stdout = new StringWriter();
             var stderr = new StringWriter();

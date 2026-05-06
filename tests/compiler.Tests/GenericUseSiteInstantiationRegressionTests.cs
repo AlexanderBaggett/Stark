@@ -342,10 +342,10 @@ public sealed class GenericUseSiteInstantiationRegressionTests
                     module Demo
 
                     struct Box {
-                        i32[0 max] Value;
+                        u32[0 2 ** 31 - 1] Value;
                     }
 
-                    fn void Use(Dictionary<Box, i32[0 max]> boxes) {
+                    fn void Use(Dictionary<Box, u32[0 2 ** 31 - 1]> boxes) {
                         return;
                     }
                     """,

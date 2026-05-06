@@ -93,6 +93,38 @@ public sealed class CompilerPipelineSyntaxModelTests
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == "STK2111");
     }
 
+    [Fact]
+    public void TestingCallableAttributesFlowIntoSyntaxModelAsMetadata()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                [Fact]
+                fn bool AdditionWorks() {
+                    return true;
+                }
+
+                [Theory]
+                fn bool AdditionTheory() {
+                    return true;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "syntax-model"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SyntaxModel, out SyntaxModel? syntaxModel));
+        Assert.NotNull(syntaxModel);
+
+        var fact = syntaxModel.Declarations.Single(static declaration => declaration.Name == "AdditionWorks");
+        var theory = syntaxModel.Declarations.Single(static declaration => declaration.Name == "AdditionTheory");
+        Assert.Equal("Fact", Assert.Single(fact.Attributes ?? []).Name);
+        Assert.Equal("Theory", Assert.Single(theory.Attributes ?? []).Name);
+    }
+
     [Theory]
     [InlineData(
         """
@@ -106,7 +138,7 @@ public sealed class CompilerPipelineSyntaxModelTests
         """
         [Backend(Opaque)]
         [Backend(Opaque)]
-        record Cursor(i32[-2147483648 2147483647] Position) {
+        record Cursor(i32[-(2 ** 31) 2 ** 31 - 1] Position) {
         }
         """,
         "STK2111")]
@@ -115,7 +147,7 @@ public sealed class CompilerPipelineSyntaxModelTests
         [Backend(Opaque)]
         [Backend(Opaque)]
         doctrine Numbers {
-            finite law bool Equals(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right);
+            finite law bool Equals(i32[-(2 ** 31) 2 ** 31 - 1] left, i32[-(2 ** 31) 2 ** 31 - 1] right);
         }
         """,
         "STK2111")]
@@ -123,7 +155,7 @@ public sealed class CompilerPipelineSyntaxModelTests
         """
         struct Box {
             [Backend(Opaque)]
-            i32[-2147483648 2147483647] Value;
+            i32[-(2 ** 31) 2 ** 31 - 1] Value;
         }
         """,
         "STK2110")]
@@ -161,16 +193,16 @@ public sealed class CompilerPipelineSyntaxModelTests
 
                 [Backend(Opaque)]
                 struct Box {
-                    i32[-2147483648 2147483647] Value;
+                    i32[-(2 ** 31) 2 ** 31 - 1] Value;
 
-                    fn i32[-2147483648 2147483647] Read() {
+                    fn i32[-(2 ** 31) 2 ** 31 - 1] Read() {
                         return self.Value;
                     }
                 }
 
                 [Backend(Opaque)]
-                record Cursor(i32[-2147483648 2147483647] Position) {
-                    fn i32[-2147483648 2147483647] Read() {
+                record Cursor(i32[-(2 ** 31) 2 ** 31 - 1] Position) {
+                    fn i32[-(2 ** 31) 2 ** 31 - 1] Read() {
                         return self.Position;
                     }
                 }
@@ -220,7 +252,7 @@ public sealed class CompilerPipelineSyntaxModelTests
                 module Demo
 
                 [Backend(Opaque)]
-                finite law i32[-2147483648 2147483647] Read() {
+                finite law i32[-(2 ** 31) 2 ** 31 - 1] Read() {
                     return 1;
                 }
                 """),
@@ -246,15 +278,15 @@ public sealed class CompilerPipelineSyntaxModelTests
                 module Demo
 
                 [Backend(Opaque)]
-                finite law i32[-2147483648 2147483647] Read() {
+                finite law i32[-(2 ** 31) 2 ** 31 - 1] Read() {
                     return 1;
                 }
 
-                finite law i32[-2147483648 2147483647] Fast() {
+                finite law i32[-(2 ** 31) 2 ** 31 - 1] Fast() {
                     return 2;
                 }
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[-(2 ** 31) 2 ** 31 - 1] main() {
                     return Read() + Fast();
                 }
                 """),
@@ -280,14 +312,14 @@ public sealed class CompilerPipelineSyntaxModelTests
                 module Demo
 
                 struct Buffer {
-                    i32[-2147483648 2147483647] Value;
+                    i32[-(2 ** 31) 2 ** 31 - 1] Value;
 
                     drop {
                         ;
                     }
                 }
 
-                record Cursor(i32[-2147483648 2147483647] Position) {
+                record Cursor(i32[-(2 ** 31) 2 ** 31 - 1] Position) {
                     mut drop {
                         self.Position = 0;
                     }
@@ -319,7 +351,7 @@ public sealed class CompilerPipelineSyntaxModelTests
                 """
                 module Demo
 
-                public alias Byte = i8[-128 127];
+                public alias Byte = i8[-(2 ** 7) 2 ** 7 - 1];
                 alias BufferView<T> = borrow T[];
                 """),
             new CompilerOptions(StopAfterPassId: "syntax-model"));
@@ -331,7 +363,7 @@ public sealed class CompilerPipelineSyntaxModelTests
         var byteAlias = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Kind == DeclarationKind.TypeAlias && declaration.Name == "Byte");
         Assert.Equal(StarkVisibility.Public, byteAlias.Visibility);
         Assert.NotNull(byteAlias.TypeAlias);
-        Assert.Equal("i8[-128127]", byteAlias.TypeAlias!.AliasedType);
+        Assert.Equal("i8[-(2**7)2**7-1]", byteAlias.TypeAlias!.AliasedType);
         Assert.Empty(byteAlias.TypeAlias.GenericParameters);
 
         var bufferViewAlias = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Kind == DeclarationKind.TypeAlias && declaration.Name == "BufferView");

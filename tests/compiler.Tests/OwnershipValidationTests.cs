@@ -152,21 +152,21 @@ public sealed class OwnershipValidationTests
             """
             module Demo
 
-            finite law i64[0 max] ReadAscii(ascii value) {
+            finite law u64[0 2 ** 63 - 1] ReadAscii(ascii value) {
                 return 1;
             }
 
-            finite law i64[0 max] ReadUnicode(unicode value) {
+            finite law u64[0 2 ** 63 - 1] ReadUnicode(unicode value) {
                 return 1;
             }
 
-            finite law i64[0 max] Run() {
+            finite law u64[0 2 ** 63 - 1] Run() {
                 stack ascii text = "alpha";
                 stack unicode wide = (unicode)"beta";
-                stack i64[0 max] first = ReadAscii(text);
-                stack i64[0 max] second = ReadAscii(text);
-                stack i64[0 max] third = ReadUnicode(wide);
-                stack i64[0 max] fourth = ReadUnicode(wide);
+                stack u64[0 2 ** 63 - 1] first = ReadAscii(text);
+                stack u64[0 2 ** 63 - 1] second = ReadAscii(text);
+                stack u64[0 2 ** 63 - 1] third = ReadUnicode(wide);
+                stack u64[0 2 ** 63 - 1] fourth = ReadUnicode(wide);
                 return first + second + third + fourth;
             }
             """);
@@ -392,7 +392,7 @@ public sealed class OwnershipValidationTests
                             ascii Text;
                         }
 
-                        public fn System.Memory.MemoryResult<OwnedAscii> ConcatAscii(ascii left, i64[0 max] leftLength, System.Memory.MemoryResult<OwnedAscii> right);
+                        public fn System.Memory.MemoryResult<OwnedAscii> ConcatAscii(ascii left, u64[0 2 ** 63 - 1] leftLength, System.Memory.MemoryResult<OwnedAscii> right);
                         """,
                         "/virtual/System.Text.stark"
                     )

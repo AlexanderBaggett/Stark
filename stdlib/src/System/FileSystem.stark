@@ -45,8 +45,7 @@ public struct Directory {
     internal i64[min max] BufferReadPos;
     internal i64[min max] BufferWritePos;
     internal u64[0 2 ** 63 - 1] BufferCapacity;
-    internal rawmutptr<i8[min max]> Buffer;
-    internal System.Memory.Allocation BufferAllocation;
+    internal System.Runtime.Buffer.FixedByteBuffer8192 Buffer;
 
     finite law bool IsOpen(borrow Directory self) {
         return !self.Closed;
@@ -60,31 +59,19 @@ public struct Directory {
                 self.BufferReadPos = 0;
                 self.BufferWritePos = 0;
                 self.BufferCapacity = 0;
-                self.Buffer = null;
-                if (self.BufferAllocation.Pointer != null) {
-                    System.Memory.Free(self.BufferAllocation);
-                }
-
-                self.BufferAllocation = EmptyDirectoryBufferAllocation();
+                self.Buffer.Clear();
                 return System.IO.IOStatus.Ok;
             }
 
             stack rawptr<i8[min max]> handle = self.Handle;
-            stack System.Memory.Allocation bufferAllocation = self.BufferAllocation;
             self.Handle = null;
             self.Closed = true;
             self.BufferReadPos = 0;
             self.BufferWritePos = 0;
             self.BufferCapacity = 0;
-            self.Buffer = null;
-            self.BufferAllocation = EmptyDirectoryBufferAllocation();
+            self.Buffer.Clear();
 
-            stack System.IO.IOStatus closeStatus = StatusFromPlatformResult(System.Runtime.Platform.CloseDirectory(handle));
-            if (bufferAllocation.Pointer != null) {
-                System.Memory.Free(bufferAllocation);
-            }
-
-            return closeStatus;
+            return StatusFromPlatformResult(System.Runtime.Platform.CloseDirectory(handle));
         }
     }
 
@@ -94,7 +81,8 @@ public struct Directory {
                 return DirectoryReadInfoResult.Err(System.IO.IOError.Unknown(-1));
             }
 
-            if (self.Buffer == null || self.BufferCapacity == 0) {
+            stack rawmutptr<i8[min max]> buffer = self.Buffer.WritePointer();
+            if (buffer == null || self.BufferCapacity == 0 || self.BufferCapacity > self.Buffer.Capacity()) {
                 return DirectoryReadInfoResult.Err(System.IO.IOError.InvalidPath);
             }
 
@@ -103,7 +91,7 @@ public struct Directory {
             unsafe {
                 System.Runtime.Platform.ReadDirectoryEntryInfo(
                     self.Handle,
-                    self.Buffer,
+                    buffer,
                     self.BufferCapacity,
                     &self.BufferReadPos,
                     &self.BufferWritePos,
@@ -121,7 +109,8 @@ public struct Directory {
                 return DirectoryReadResult.Err(System.IO.IOError.Unknown(-1));
             }
 
-            if (self.Buffer == null || self.BufferCapacity == 0) {
+            stack rawmutptr<i8[min max]> buffer = self.Buffer.WritePointer();
+            if (buffer == null || self.BufferCapacity == 0 || self.BufferCapacity > self.Buffer.Capacity()) {
                 return DirectoryReadResult.Err(System.IO.IOError.InvalidPath);
             }
 
@@ -135,7 +124,7 @@ public struct Directory {
             unsafe {
                 System.Runtime.Platform.ReadDirectoryEntry(
                     self.Handle,
-                    self.Buffer,
+                    buffer,
                     self.BufferCapacity,
                     &self.BufferReadPos,
                     &self.BufferWritePos,
@@ -256,27 +245,19 @@ fn DirectoryReadResult DirectoryReadResultFromPlatformResult(
     return DirectoryReadResult.Entry(entry);
 }
 
-fn System.Memory.Allocation EmptyDirectoryBufferAllocation() {
-    return new System.Memory.Allocation() {
-        Pointer = null,
-        ByteLength = 0,
-        Alignment = 1,
-        Allocator = System.Memory.Allocator.Default()
-    };
-}
-
 fn System.IO.IOResult<Directory> OpenDirectoryWithPlatform(ascii path) {
     unsafe {
+        stack mut System.Runtime.Buffer.FixedByteBuffer8192 bufferStorage = new();
         stack u64[0 2 ** 63 - 1] bufferCapacity = System.Runtime.Platform.DirectoryBufferCapacity();
-        stack mut System.Memory.Allocation bufferAllocation = System.Memory.Allocate(
-            System.Memory.Allocator.Default(),
-            bufferCapacity,
-            1);
-        if (bufferAllocation.Pointer == null) {
-            return System.IO.IOResult<Directory>.Err(System.IO.IOError.Unknown(-1));
+        if (bufferCapacity == 0 || bufferCapacity > bufferStorage.Capacity()) {
+            return System.IO.IOResult<Directory>.Err(System.IO.IOError.InvalidPath);
         }
 
-        stack rawmutptr<i8[min max]> buffer = (rawmutptr<i8[min max]>)bufferAllocation.Pointer;
+        stack rawmutptr<i8[min max]> buffer = bufferStorage.WritePointer();
+        if (buffer == null) {
+            return System.IO.IOResult<Directory>.Err(System.IO.IOError.InvalidPath);
+        }
+
         stack mut i64[min max] initialLength = 0;
         stack mut rawptr<i8[min max]> handle = null;
         unsafe {
@@ -287,8 +268,6 @@ fn System.IO.IOResult<Directory> OpenDirectoryWithPlatform(ascii path) {
                 &initialLength);
         }
         if (handle == null) {
-            System.Memory.Free(bufferAllocation);
-            bufferAllocation = EmptyDirectoryBufferAllocation();
             return System.IO.IOResult<Directory>.Err(System.IO.IOError.Unknown(-1));
         }
 
@@ -298,8 +277,7 @@ fn System.IO.IOResult<Directory> OpenDirectoryWithPlatform(ascii path) {
             BufferReadPos = 0,
             BufferWritePos = initialLength,
             BufferCapacity = bufferCapacity,
-            Buffer = buffer,
-            BufferAllocation = bufferAllocation
+            Buffer = bufferStorage
         };
         return System.IO.IOResult<Directory>.Ok(directory);
     }

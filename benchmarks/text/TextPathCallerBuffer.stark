@@ -1,6 +1,7 @@
 // stark-bench: compile-only
 import System
 import System.Memory
+import System.Text
 module Benchmarks.Text.TextPathCallerBuffer
 
 unsafe fn bool Ok(System.Memory.MemoryStatus status) {

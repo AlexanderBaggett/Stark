@@ -32,8 +32,8 @@ with Stark-specific framing:
   exception or unwinding patterns
 - split implemented generic/function-pointer/lambda behavior from future
   constrained-generic and capture-lowering work
-- defer test-project examples until v2.0 `System.Testing` and `stark test`
-  exist
+- teach the implemented `kind = "test"` project model, explicit `System.Testing`
+  fact runners, and `stark test`
 - teach callable values and current lambda boundaries without implying a
   Rust-style iterator ecosystem
 - teach threading through `System.Threading` and safe thread entries; keep
@@ -61,7 +61,7 @@ with Stark-specific framing:
    - compiler CLI
    - project manifests and solution manifests
    - `stark build` and `stark run`
-   - current status of `stark test`
+   - `stark test`
 3. Hello, Stark
    - first executable
    - `export unsafe ffi fn main`
@@ -204,10 +204,10 @@ with Stark-specific framing:
     - safe slices at IO boundaries
     - current synchronization gaps
 24. Testing Stark Code
-    - current absence of test projects
-    - planned `System.Testing`
+    - `kind = "test"` manifests
+    - explicit `System.Testing`
     - xUnit-inspired assertions without hidden exceptions
-    - planned `stark test`
+    - `stark test`
 
 ## Part V: Performance and Systems Programming
 

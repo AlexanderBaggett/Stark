@@ -1,4 +1,4 @@
-﻿import System.Text
+import System.Text
 module Benchmarks.Text.AsciiToUnicodeConversion
 
 export unsafe ffi fn i32[min max] main() {

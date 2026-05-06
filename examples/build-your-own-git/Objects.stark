@@ -1,4 +1,5 @@
 import System
+import System.Text
 module BuildYourOwnGitObjects
 
 finite law bool NameIsDemoCommit(Ascii name) {

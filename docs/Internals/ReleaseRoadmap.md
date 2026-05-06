@@ -17,13 +17,13 @@ Completion rules:
 ## 1. Promote Experimental Standard Library
 
 - [ ] Replace the current standard library with the experimental implementation.
-  - [ ] Delete obsolete stable implementations after the replacement compiles.
-  - [ ] Copy or move experimental modules into the canonical `System.*`
+  - [x] Delete obsolete stable implementations after the replacement compiles.
+  - [x] Copy or move experimental modules into the canonical `System.*`
         namespace.
-  - [ ] Remove temporary `System.Experimental.*` public surface unless a
+  - [x] Remove temporary `System.Experimental.*` public surface unless a
         compatibility shim is explicitly needed for one release.
-  - [ ] Update imports in examples, tests, benchmarks, and docs.
-  - [ ] Preserve benchmark names and only report the language as `stark`.
+  - [x] Update imports in examples, tests, benchmarks, and docs.
+  - [x] Preserve benchmark names and only report the language as `stark`.
   - [x] Remove `stark-experimental` benchmark variants after promotion.
   - [ ] Run the full compiler, standard library, integration, and benchmark
         suites on Windows and Linux before closing this task.
@@ -88,6 +88,10 @@ Completion rules:
         matching `Experimental*.stark` files.
   - [ ] Re-run focused benchmark smoke tests for each promoted batch against C
         and Rust.
+    - [x] Windows smoke reran `MemoryCopyFill` and `DictionaryLookup` with
+          canonical `stark`, `c`, and `rust` rows after the benchmark range
+          cleanup.
+    - [ ] Finish the remaining promoted batch smoke set.
   - [ ] Re-run the full benchmark suite after the promotion is complete.
 
 - [ ] Behavioral and performance verification.
@@ -117,10 +121,10 @@ Completion rules:
 - [ ] Cleanup and final removal.
   - [x] Delete `System.Experimental.Memory` after canonical `System.Memory`
         consumers and tests were updated.
-  - [ ] Remove remaining `System.Experimental.*` public surface unless a
+  - [x] Remove remaining `System.Experimental.*` public surface unless a
         compatibility shim is explicitly approved for one release.
-  - [ ] Remove experimental namespace aliases after all consumers are canonical.
-  - [ ] Remove temporary migration tests, docs, and benchmark gates that only
+  - [x] Remove experimental namespace aliases after all consumers are canonical.
+  - [x] Remove temporary migration tests, docs, and benchmark gates that only
         existed to compare stable and experimental implementations.
   - [ ] Audit promoted modules against the new unsafe, raw-pointer, and range
         rules before release.
@@ -163,25 +167,28 @@ current source shape. Unchecked items still expose raw pointers publicly or keep
 replaceable raw storage that should move behind `dynamic`, slices, owned values,
 or a narrower explicitly unsafe boundary.
 
-- [ ] `System`
-  - [ ] Remove raw pointer re-exports from public surface unless required.
-    - Still open: `System.stark` re-exports `System.IO.File` and
-      `System.Text`, both of which still expose public raw-pointer APIs.
+- [x] `System`
+  - [x] Remove raw pointer re-exports from public surface unless required.
+    - Done: `System.IO.File` no longer exposes public raw-pointer APIs, and
+      `System.stark` no longer re-exports `System.Text`. Code that needs the
+      current low-level text interop exception must import `System.Text`
+      explicitly.
 - [x] `System.BitOperations`
   - [x] Replace raw pointer helpers with value or slice APIs where present.
     - Verified raw-pointer free.
-- [ ] `System.Collections`
-  - [ ] Replace internal raw storage with `dynamic` or safe storage wrappers
+- [x] `System.Collections`
+  - [x] Replace internal raw storage with `dynamic` or safe storage wrappers
         wherever possible.
     - [x] Replaced `Queue<T>` raw allocation storage with `dynamic T` storage
           in both stable and experimental collections.
     - [x] Verified `Stack<T>`, `RingQueue<T>`, and linked-list storage use
           `dynamic` storage instead of raw allocation storage.
-    - [x] Documented `Dictionary<K, V>` raw sparse storage as the remaining
-          collection raw pointer boundary.
-    - [ ] Replace `Dictionary<K, V>` raw sparse key/value/state storage once
-          `dynamic` can model sparse uninitialized slots with mutable borrows
-          from occupied values.
+    - [x] Retained `Dictionary<K, V>` raw sparse key/value/state storage as the
+          remaining collection raw pointer boundary because current `dynamic`
+          storage cannot model sparse uninitialized slots while returning
+          mutable borrows from occupied values without moving generic payloads.
+          Replace it once the language has first-class sparse initialized-slot
+          storage or borrowed enum-payload projection.
 - [x] `System.Console`
   - [x] Keep raw handles internal to platform calls.
     - Verified: stdin handle state is module-private and platform calls are the
@@ -189,29 +196,28 @@ or a narrower explicitly unsafe boundary.
   - [x] Use slices or dynamic buffers for user-facing write paths.
     - Verified: public byte write/read APIs use slices, `DynamicByteBuffer`, or
       fixed runtime buffers.
-- [ ] `System.FileSystem`
+- [x] `System.FileSystem`
   - [x] Hide directory and file system handles behind owned types.
     - Verified: `Directory.Handle` is internal and the public surface returns
       owned `Directory` values.
-  - [ ] Replace raw entry buffers with dynamic or fixed safe buffers.
-    - Still open: `Directory` keeps an internal raw entry buffer plus
-      `System.Memory.Allocation`.
+  - [x] Replace raw entry buffers with dynamic or fixed safe buffers.
+    - Done: `Directory` now owns a `System.Runtime.Buffer.FixedByteBuffer8192`
+      for platform entry reads and guards the platform-reported capacity before
+      passing an internal raw pointer to the OS boundary.
 - [x] `System.IO`
   - [x] Keep public IO contracts free of raw pointers.
     - Verified: the base `System.IO` result/status/error module is raw-pointer
-      free; raw file APIs are tracked under `System.IO.File`.
-- [ ] `System.IO.File`
-  - [ ] Replace file buffers with slices, dynamic storage, or owned buffers.
-    - Partially done: owned `File` read/write paths accept byte slices,
-      `DynamicByteBuffer`, and fixed runtime buffers, but raw byte and region
-      methods still remain on the stable file surface.
-  - [ ] Keep OS handles internal.
-    - Partially done: stable `File.Handle` is internal, but public unsafe
-      handle helpers such as `OpenRead`, `Close`, `ReadBytes`, `WriteBytes`,
-      `Seek`, `WriteText`, and `WriteLine` remain exported.
-    - Also open: `System.Experimental.IO.File` is raw-free, but the
-      `System.Experimental.IO` aggregator currently re-exports stable
+      free; file handle and byte-region raw helpers are now internalized under
       `System.IO.File`.
+- [x] `System.IO.File`
+  - [x] Replace file buffers with slices, dynamic storage, or owned buffers.
+    - Done: public owned `File` read/write paths accept byte slices,
+      `DynamicByteBuffer`, fixed runtime buffers, and text views; raw byte and
+      region helpers are internal stdlib/platform handoff code only.
+  - [x] Keep OS handles internal.
+    - Done: stable `File.Handle` and compatibility-style raw helpers such as
+      `OpenRead`, `Close`, `ReadBytes`, `WriteBytes`, `Seek`, `WriteText`, and
+      `WriteLine` are internal unsafe helpers, not public APIs.
 - [x] `System.IO.Path`
   - [x] Replace raw path buffers with dynamic text or fixed safe buffers.
     - Verified: public path APIs use `OwnedAscii`, text views, and value
@@ -219,15 +225,16 @@ or a narrower explicitly unsafe boundary.
 - [x] `System.Math`
   - [x] Ensure math APIs remain raw-pointer free.
     - Verified raw-pointer free.
-- [ ] `System.Memory`
+- [x] `System.Memory`
   - [x] Keep raw allocation pointers internal to allocator implementation.
     - Verified: `Allocation` is internal.
   - [x] Expose `dynamic` memory primitives instead of raw allocation plumbing.
     - Verified: reserve, append, copy, move, and fill APIs operate on
       `dynamic`, slices, and initialized destinations.
-  - [ ] Fence or replace public raw-pointer initialization helpers.
-    - Still open: `InitializeBytesFromPointerDisjoint` and
-      `InitializeCodePointsFromPointerDisjoint` remain public unsafe APIs.
+  - [x] Fence or replace public raw-pointer initialization helpers.
+    - Done: `InitializeBytesFromPointerDisjoint` and
+      `InitializeCodePointsFromPointerDisjoint` are internal unsafe bridges for
+      standard-library text/path internals, not public APIs.
 - [x] `System.Net`
   - [x] Hide socket handles behind owned socket types.
     - Verified: the base networking module is raw-pointer free.
@@ -243,16 +250,13 @@ or a narrower explicitly unsafe boundary.
   - [x] Allow raw pointers only for compiler/runtime ABI hooks.
     - Verified: raw pointers are confined to internal slice-part ABI structs and
       compiler-known slice extraction hooks.
-- [ ] `System.Runtime.Buffer`
+- [x] `System.Runtime.Buffer`
   - [x] Prefer dynamic and fixed buffers over raw pointer storage.
     - Verified: storage is `dynamic` or fixed arrays.
-  - [ ] Remove or internalize stable fixed-buffer raw pointer accessors.
-    - Still open: stable `FixedByteBuffer*` types expose unsafe `ReadPointer`,
-      `ReadWritePointer`, and `WritePointer`; experimental buffers expose slices
-      instead.
-    - Also open: `System.Experimental.Runtime.Buffer` has the slice-only shape,
-      but the `System.Experimental.Runtime` aggregator currently re-exports the
-      stable buffer module.
+  - [x] Remove or internalize stable fixed-buffer raw pointer accessors.
+    - Done: stable `FixedByteBuffer*` public access now uses `ReadSlice`,
+      `ReadMutableSlice`, and `WriteSlice`, matching the slice-only
+      experimental buffer shape.
 - [x] `System.Runtime.ConsoleInput`
   - [x] Keep OS handle access internal and unsafe.
     - Verified: raw pointer helpers are module-private.
@@ -270,18 +274,19 @@ or a narrower explicitly unsafe boundary.
   - [x] Wrap raw regions in narrow unsafe helpers.
     - Verified: Windows raw pointer use is internal unsafe platform and FFI
       handoff code.
-- [ ] `System.Syscall`
-  - [ ] Restrict or internalize user-facing raw syscall APIs.
-    - Still open: `Syscall0` through `Syscall6` remain public unsafe direct
-      syscall entry points even though their signatures use integer registers
-      rather than typed raw pointers.
+- [x] `System.Syscall`
+  - [x] Restrict or internalize user-facing raw syscall APIs.
+    - Done: `Syscall0` through `Syscall6` are internal unsafe ABI helpers; Linux
+      platform code uses `System.Runtime.Platform.Linux` internal syscall
+      shims, and packaged user code should go through safe modules such as
+      `System.Process`.
 - [ ] `System.Text`
   - [ ] Replace raw text storage with dynamic/owned text and slices.
     - Partially done: `OwnedAscii` and `OwnedUnicode` provide owned/dynamic text
       surfaces.
     - Still open: public unsafe `AsciiData`, `UnicodeData`, caller-buffer
       formatters, UTF-16 conversion helpers, and `rawmutptr<Ascii>` /
-      `rawmutptr<Unicode>` APIs remain in stable and experimental text.
+      `rawmutptr<Unicode>` APIs remain in canonical text.
 - [x] `System.Threading`
   - [x] Hide thread handles behind owned thread types.
     - Verified: `Thread.Handle` is internal and public thread operations use the
@@ -320,7 +325,8 @@ Completed against `stdlib/src` with the default strict integer range checks. Ord
 non-negative signed ranges now use unsigned storage with the original upper
 bounds preserved, and over-wide helper ranges now use the smallest signed or
 unsigned storage that expresses them. Full-width signed ABI and syscall ranges
-remain signed. Experimental mirrors were audited with the same rule.
+remain signed. Benchmark `.stark` sources are now covered by the same default
+strict range checks in `BenchmarkSourceTests`.
 
 - [x] `System`
 - [x] `System.BitOperations`
@@ -385,25 +391,48 @@ remain signed. Experimental mirrors were audited with the same rule.
 
 ## 6 Project Testing and `System.Testing`
 
-- [ ] Define the Stark test-project model.
-  - [ ] Model keywords and syntax after Xunit, such as [Fact] [Theory]
-  - [ ] decide whether test projects are a separate `kind = "test"` manifest kind or executable projects with test metadata
-  - [ ] define how solution manifests identify default test sets
-  - [ ] keep test discovery explicit and static; avoid runtime reflection as a required language feature
-- [ ] Add a standard-library testing module inspired by xUnit.
-  - [ ] add a `System.Testing` module or equivalent package-facing testing root
-  - [ ] port the core assertion vocabulary needed by the current C# xUnit tests, such as truth checks, equality checks, and failure reporting
-  - [ ] model assertion failure using Stark's no-exception failure/result story rather than hidden unwinding
-  - [ ] keep allocation and formatting costs explicit so test-only helpers do not leak into normal runtime expectations
-- [ ] Implement `stark test` on top of test projects.
-  - [ ] build test projects through the existing project/solution manifest driver
-  - [ ] run produced test executables and map their results into concise CLI output
-  - [ ] support solution-level test aliases and default test sets
-  - [ ] preserve `--dev`, `--release`, path dependencies, and package-backed dependencies for tests
-- [ ] Add examples and docs for Stark-native tests.
-  - [ ] add at least one standard-library test project using `System.Testing`
-  - [ ] document how to port existing xUnit-style test cases into Stark test projects
-  - [ ] add regression coverage for project-local and solution-level `stark test`
+- [x] Define the Stark test-project model.
+  - [x] Model keywords and syntax after Xunit, such as `[Fact]`.
+    - Done: `[Fact]` attributes are valid source metadata on test functions;
+      test discovery remains explicit in `main`, and `[Theory]` is reserved for
+      the later data-driven runner rather than implied today.
+  - [x] decide whether test projects are a separate `kind = "test"` manifest kind or executable projects with test metadata
+    - Done: test projects use separate `kind = "test"` manifests with a
+      `[test]` root/output table.
+  - [x] define how solution manifests identify default test sets
+    - Done: solution `[defaults].test` lists default test targets; absent
+      defaults run all solution members with `kind = "test"`.
+  - [x] keep test discovery explicit and static; avoid runtime reflection as a required language feature
+    - Done: test executables call facts directly through ordinary Stark code.
+- [x] Add a standard-library testing module inspired by xUnit.
+  - [x] add a `System.Testing` module or equivalent package-facing testing root
+    - Done: `System.Testing` is packaged with `System` but not root-re-exported.
+  - [x] port the core assertion vocabulary needed by the current C# xUnit tests, such as truth checks, equality checks, and failure reporting
+    - Done: `True`, `False`, `Fail`, scalar/text `Equal`, `RunFact`, and
+      `ExitCode` provide the first assertion/reporting vocabulary.
+  - [x] model assertion failure using Stark's no-exception failure/result story rather than hidden unwinding
+    - Done: assertions return `bool`; `RunFact` returns `0` or `1`; test
+      projects return process exit codes.
+  - [x] keep allocation and formatting costs explicit so test-only helpers do not leak into normal runtime expectations
+    - Done: helpers write literal pass/fail prefixes and caller-provided names
+      through `System.Console`; no reflection or hidden exception payloads.
+- [x] Implement `stark test` on top of test projects.
+  - [x] build test projects through the existing project/solution manifest driver
+  - [x] run produced test executables and map their results into concise CLI output
+  - [x] support solution-level test aliases and default test sets
+  - [x] preserve `--dev`, `--release`, path dependencies, and package-backed dependencies for tests
+- [x] Add examples and docs for Stark-native tests.
+  - [x] add at least one standard-library test project using `System.Testing`
+    - Done: `examples/standard-library-tests` is a `kind = "test"` project
+      wired into `examples/Stark.solution.toml`.
+  - [x] document how to port existing xUnit-style test cases into Stark test projects
+    - Done: `docs/Userfacing/ProjectsAndSolutions.md`,
+      `docs/StandardLibrary/System.Testing.md`, and book Chapter 24 document
+      explicit fact runners and no-exception assertions.
+  - [x] add regression coverage for project-local and solution-level `stark test`
+    - Done: integration coverage exercises project-local test runs, failing
+      test exit-code mapping, and solution default test targets with path
+      dependencies.
 
 
 ## 7. Add macOS Standard Library Platform Backend
@@ -473,7 +502,10 @@ remain signed. Experimental mirrors were audited with the same rule.
 - [ ] Chapter 21: Memory and Collections
 - [ ] Chapter 22: Files, Directories, Paths, and Text
 - [ ] Chapter 23: Threading and TCP
-- [ ] Chapter 24: Testing Stark Code
+- [x] Chapter 24: Testing Stark Code
+  - Done: the website book chapter now documents `kind = "test"`,
+    `System.Testing`, explicit fact runners, solution default test sets, and
+    `stark test`.
 - [ ] Chapter 25: Stark's Performance Model
 - [ ] Chapter 26: Memory Layout, ABI, and Interop Expectations
 - [ ] Chapter 27: Integer, Floating-Point, and Overflow Policy
@@ -500,20 +532,29 @@ remain signed. Experimental mirrors were audited with the same rule.
 
 ## 9. GitHub Release Pipeline
 
-- [ ] Create GitHub Actions release pipeline for Linux, Windows, and macOS.
-  - [ ] Add build matrix for supported host and target triples.
-  - [ ] Build compiler binaries for Linux, Windows, and macOS.
-  - [ ] Build and package the promoted standard library.
-  - [ ] Run parser, compiler, standard library, and integration tests.
-  - [ ] Run focused smoke benchmarks or runtime smoke tests per OS.
-  - [ ] Package release archives with compiler, standard library, templates,
+- [x] Create GitHub Actions release pipeline for Linux and Windows.
+  - Done: `.github/workflows/release.yml` builds `linux-x64` and `windows-x64`
+    release artifacts on tag pushes and manual release-candidate dispatches.
+- [ ] Add macOS to the release workflow after the macOS standard-library backend
+      exists.
+  - Skipped for this Windows pass with the rest of the macOS-specific work.
+- [x] Add build matrix for supported Linux and Windows host/target triples.
+- [x] Build compiler binaries for Linux and Windows.
+- [x] Build and package the promoted standard library.
+- [x] Run parser, compiler, standard library, feature, and integration tests.
+- [x] Run focused runtime smoke tests per OS.
+  - Done: the workflow runs `stark test standard-library-tests --release`.
+- [x] Package release archives with compiler, standard library, templates,
         docs, examples, and license files.
-  - [ ] Generate checksums for every artifact.
-  - [ ] Add version stamping from tags.
-  - [ ] Generate draft release notes from changelog or commit metadata.
-  - [ ] Upload artifacts to GitHub Releases.
-  - [ ] Add manual dispatch for release candidates.
-  - [ ] Add post-release install smoke tests that download the artifacts and
+  - Done: `scripts/package-release.ps1` stages compiler publish output, the
+    standard-library package image/native library, templates, docs, examples,
+    `README.md`, `LICENSE`, and a `VERSION` file.
+- [x] Generate checksums for every artifact.
+- [x] Add version stamping from tags.
+- [x] Generate draft release notes from changelog or commit metadata.
+- [x] Upload artifacts to GitHub Releases.
+- [x] Add manual dispatch for release candidates.
+- [x] Add post-release install smoke tests that download the artifacts and
         compile a small Stark program on each OS.
-  - [ ] Cache toolchains and dependencies without making release outputs depend
+- [x] Cache toolchains and dependencies without making release outputs depend
         on stale caches.

@@ -682,7 +682,7 @@ public sealed class DiagnosticRegressionTests
                 return;
             }
 
-            unsafe fn void Run(ascii text, i32[0 1] leftStart, i32[4 5] rightStart) {
+            unsafe fn void Run(ascii text, u8[0 1] leftStart, u8[4 5] rightStart) {
                 stack ascii left = text[leftStart, 2];
                 stack ascii right = text[rightStart, 2];
                 Touch(left, right);
@@ -725,7 +725,7 @@ public sealed class DiagnosticRegressionTests
                 return;
             }
 
-            unsafe fn void Run(ascii text, i32[0 2] leftStart, i32[4 5] rightStart) {
+            unsafe fn void Run(ascii text, u8[0 2] leftStart, u8[4 5] rightStart) {
                 stack ascii left = text[leftStart, 3];
                 stack ascii right = text[rightStart, 1];
                 Touch(left, right);
@@ -897,7 +897,7 @@ public sealed class DiagnosticRegressionTests
                 return;
             }
 
-            unsafe fn void Run(i32[0 2] leftIndex, i32[0 2] rightIndex) {
+            unsafe fn void Run(u8[0 2] leftIndex, u8[0 2] rightIndex) {
                 stack mut i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
                 Touch(&values[leftIndex], &values[rightIndex]);
                 return;
@@ -940,7 +940,7 @@ public sealed class DiagnosticRegressionTests
                 return;
             }
 
-            unsafe fn void Run(i32[0 1] leftIndex, i32[2 3] rightIndex) {
+            unsafe fn void Run(u8[0 1] leftIndex, u8[2 3] rightIndex) {
                 stack mut i32[-2147483648 2147483647][4] values = { 1, 2, 3, 4 };
                 Touch(&values[leftIndex], &values[rightIndex]);
                 return;
@@ -961,7 +961,7 @@ public sealed class DiagnosticRegressionTests
                 return;
             }
 
-            unsafe fn void Run(i32[0 2] leftIndex, i32[2 3] rightIndex) {
+            unsafe fn void Run(u8[0 2] leftIndex, u8[2 3] rightIndex) {
                 stack mut i32[-2147483648 2147483647][4] values = { 1, 2, 3, 4 };
                 Touch(&values[leftIndex], &values[rightIndex]);
                 return;
@@ -983,7 +983,7 @@ public sealed class DiagnosticRegressionTests
                 return;
             }
 
-            unsafe fn void Run(i32[0 2] leftIndex, i32[0 2] rightIndex) {
+            unsafe fn void Run(u8[0 2] leftIndex, u8[0 2] rightIndex) {
                 stack mut i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
                 if disjoint(&values[leftIndex], &values[rightIndex]) {
                     Touch(&values[leftIndex], &values[rightIndex]);
@@ -1007,7 +1007,7 @@ public sealed class DiagnosticRegressionTests
                 return;
             }
 
-            unsafe fn void Run(ascii text, i32[0 3] leftStart, i32[0 3] rightStart) {
+            unsafe fn void Run(ascii text, u8[0 3] leftStart, u8[0 3] rightStart) {
                 stack ascii left = text[leftStart, 2];
                 stack ascii right = text[rightStart, 2];
                 if disjoint(left, right) {
@@ -1037,7 +1037,7 @@ public sealed class DiagnosticRegressionTests
             unsafe fn void Run(
                 rawmutptr<i32[-2147483648 2147483647]>[count] left,
                 rawptr<i32[-2147483648 2147483647]>[count] right,
-                i32[1 10] count) {
+                u8[1 10] count) {
                 if disjoint(left[0, count], right[0, count]) {
                     unsafe {
                         stack mut mut i32[-2147483648 2147483647][] leftView = slice(left, count);
@@ -1068,7 +1068,7 @@ public sealed class DiagnosticRegressionTests
                 return;
             }
 
-            unsafe fn void Run(i32[0 2] leftIndex, i32[0 2] rightIndex) {
+            unsafe fn void Run(u8[0 2] leftIndex, u8[0 2] rightIndex) {
                 stack mut Cell[3] cells = {
                     new Cell() { Value = 1 },
                     new Cell() { Value = 2 },
@@ -1096,7 +1096,7 @@ public sealed class DiagnosticRegressionTests
                 return;
             }
 
-            unsafe fn void Run(i32[0 2] leftIndex, i32[0 2] rightIndex) {
+            unsafe fn void Run(u8[0 2] leftIndex, u8[0 2] rightIndex) {
                 stack mut i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
                 if disjoint(&values[leftIndex], &values[rightIndex]) {
                     return;
@@ -1119,11 +1119,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn i32[0 10] WhileRun() {
-                stack mut i32[0 10] value = 0;
+            unsafe fn u8[0 10] WhileRun() {
+                stack mut u8[0 10] value = 0;
                 while willexit independent (value < 4) {
                     const bool shouldStep = true;
-                    stack mut i32[0 10] next = value;
+                    stack mut u8[0 10] next = value;
                     if (shouldStep) {
                         next += 1;
                     }
@@ -1134,10 +1134,10 @@ public sealed class DiagnosticRegressionTests
                 return value;
             }
 
-            unsafe fn i32[0 10] ForRun() {
-                stack mut i32[0 10] value = 0;
-                for willexit independent (stack mut i32[0 10] index = 0; index < 4; index += 1) {
-                    register i32[0 10] copy = index;
+            unsafe fn u8[0 10] ForRun() {
+                stack mut u8[0 10] value = 0;
+                for willexit independent (stack mut u8[0 10] index = 0; index < 4; index += 1) {
+                    register u8[0 10] copy = index;
                     value += copy;
                 }
 
@@ -1159,8 +1159,8 @@ public sealed class DiagnosticRegressionTests
                 disjoint borrow i32[-2147483648 2147483647][] left,
                 disjoint borrow i32[-2147483648 2147483647][] right,
                 disjoint borrow mut i32[-2147483648 2147483647][] output,
-                i32[0 10] count) {
-                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                u8[0 10] count) {
+                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     output[index] = left[index] + right[index];
                 }
 
@@ -1182,8 +1182,8 @@ public sealed class DiagnosticRegressionTests
                 disjoint borrow i32[-2147483648 2147483647][] left,
                 disjoint borrow i32[-2147483648 2147483647][] right,
                 disjoint borrow mut i32[-2147483648 2147483647][] output,
-                i32[0 10] count) {
-                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                u8[0 10] count) {
+                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     if (left[index] > 0) {
                         output[index] = left[index];
                     } else {
@@ -1212,8 +1212,8 @@ public sealed class DiagnosticRegressionTests
             unsafe fn void Copy(
                 disjoint borrow Cell[] input,
                 disjoint borrow mut Cell[] output,
-                i32[0 10] count) {
-                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                u8[0 10] count) {
+                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     output[index].Value = input[index].Value;
                 }
 
@@ -1234,9 +1234,9 @@ public sealed class DiagnosticRegressionTests
             unsafe fn void Copy(
                 disjoint rawptr<i32[-2147483648 2147483647]>[count] input,
                 disjoint rawmutptr<i32[-2147483648 2147483647]>[count] output,
-                i32[0 10] count)
+                u8[0 10] count)
                 where disjoint(input[0, count], output[0, count]) {
-                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     *(&output[index]) = *(&input[index]);
                 }
 
@@ -1257,9 +1257,9 @@ public sealed class DiagnosticRegressionTests
             unsafe fn void Copy(
                 rawptr<i32[-2147483648 2147483647]>[count] input,
                 rawmutptr<i32[-2147483648 2147483647]>[count] output,
-                i32[0 10] count) {
+                u8[0 10] count) {
                 if disjoint(input[0, count], output[0, count]) {
-                    for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                    for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                         *(&output[index]) = *(&input[index]);
                     }
                 }
@@ -1281,10 +1281,10 @@ public sealed class DiagnosticRegressionTests
             unsafe fn void Copy(
                 rawptr<i32[-2147483648 2147483647]>[count] input,
                 rawmutptr<i32[-2147483648 2147483647]>[count] output,
-                i32[0 10] count,
-                i32[0 20] limit)
+                u8[0 10] count,
+                u8[0 20] limit)
                 where disjoint(input[0, count], output[0, count]) {
-                for willexit independent (stack mut i32[0 20] index = 0; index < limit; index += 1) {
+                for willexit independent (stack mut u8[0 20] index = 0; index < limit; index += 1) {
                     *(&output[index]) = *(&input[index]);
                 }
 
@@ -1365,11 +1365,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Read(rawptr<i32[-2147483648 2147483647]>[count] input, i32[0 10] count) {
+            unsafe fn void Read(rawptr<i32[-2147483648 2147483647]>[count] input, u8[0 10] count) {
                 return;
             }
 
-            unsafe fn void Forward(rawptr<i32[-2147483648 2147483647]>[count] input, i32[0 10] count) {
+            unsafe fn void Forward(rawptr<i32[-2147483648 2147483647]>[count] input, u8[0 10] count) {
                 Read(input, count);
                 return;
             }
@@ -1385,11 +1385,11 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Read(rawptr<i32[-2147483648 2147483647]>[count] input, i32[0 10] count) {
+            unsafe fn void Read(rawptr<i32[-2147483648 2147483647]>[count] input, u8[0 10] count) {
                 return;
             }
 
-            unsafe fn void Forward(rawptr<i32[-2147483648 2147483647]>[count] input, i32[0 10] count) {
+            unsafe fn void Forward(rawptr<i32[-2147483648 2147483647]>[count] input, u8[0 10] count) {
                 stack rawptr<i32[-2147483648 2147483647]> localPointer = input;
                 Read(localPointer, count);
                 return;
@@ -1410,7 +1410,7 @@ public sealed class DiagnosticRegressionTests
                 return;
             }
 
-            unsafe fn void Forward(rawptr<i32[-2147483648 2147483647]>[count] input, i32[6 10] count) {
+            unsafe fn void Forward(rawptr<i32[-2147483648 2147483647]>[count] input, u8[6 10] count) {
                 Read(&input[2]);
                 return;
             }
@@ -1430,7 +1430,7 @@ public sealed class DiagnosticRegressionTests
                 return;
             }
 
-            unsafe fn void Forward(rawptr<i32[-2147483648 2147483647]>[count] input, i32[5 10] count) {
+            unsafe fn void Forward(rawptr<i32[-2147483648 2147483647]>[count] input, u8[5 10] count) {
                 unsafe {
                     stack i32[-2147483648 2147483647][] view = slice(input, count);
                     Read(&view[1]);
@@ -1472,7 +1472,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Run(rawmutptr<i32[-2147483648 2147483647]>[count] pointer, i32[0 10] count) {
+            unsafe fn void Run(rawmutptr<i32[-2147483648 2147483647]>[count] pointer, u8[0 10] count) {
                 stack mut mut i32[-2147483648 2147483647][] view = slice(pointer, count);
                 view[0] = 1;
                 return;
@@ -1489,7 +1489,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Read(rawptr<i32[-2147483648 2147483647]>[count] pointer, i32[0 10] count) {
+            unsafe fn i32[-2147483648 2147483647] Read(rawptr<i32[-2147483648 2147483647]>[count] pointer, u8[0 10] count) {
                 unsafe {
                     return slice(pointer, count)[0];
                 }
@@ -1528,7 +1528,7 @@ public sealed class DiagnosticRegressionTests
                 rawptr<i32[-2147483648 2147483647]>[count] left,
                 rawptr<i32[-2147483648 2147483647]>[count] right,
                 i32[-1 10] start,
-                i32[0 10] count) {
+                u8[0 10] count) {
                 if disjoint(left[start, count], right[0, count]) {
                     return true;
                 }
@@ -1611,7 +1611,7 @@ public sealed class DiagnosticRegressionTests
                 return pointer;
             }
 
-            unsafe fn void Run(rawptr<i32[-2147483648 2147483647]> pointer, i32[0 10] count) {
+            unsafe fn void Run(rawptr<i32[-2147483648 2147483647]> pointer, u8[0 10] count) {
                 unsafe {
                     stack i32[-2147483648 2147483647][] view = slice(Identity(pointer), count);
                 }
@@ -1631,7 +1631,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Run(rawptr<i32[-2147483648 2147483647]>[count] pointer, i32[0 10] count) {
+            unsafe fn void Run(rawptr<i32[-2147483648 2147483647]>[count] pointer, u8[0 10] count) {
                 unsafe {
                     stack mut mut i32[-2147483648 2147483647][] view = slice(pointer, count);
                 }
@@ -1658,8 +1658,8 @@ public sealed class DiagnosticRegressionTests
             unsafe fn void ScaleAll(
                 disjoint borrow i32[-2147483648 2147483647][] input,
                 disjoint borrow mut i32[-2147483648 2147483647][] output,
-                i32[0 10] count) {
-                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                u8[0 10] count) {
+                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     output[index] = Scale(input[index]);
                 }
 
@@ -1680,8 +1680,8 @@ public sealed class DiagnosticRegressionTests
             unsafe fn void Add(
                 borrow i32[-2147483648 2147483647][] input,
                 borrow mut i32[-2147483648 2147483647][] output,
-                i32[0 10] count) {
-                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                u8[0 10] count) {
+                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     output[index] = input[index];
                 }
 
@@ -1703,9 +1703,9 @@ public sealed class DiagnosticRegressionTests
             unsafe fn void Copy(
                 disjoint borrow i32[-2147483648 2147483647][] input,
                 disjoint borrow mut i32[-2147483648 2147483647][] output,
-                i32[0 10] count,
-                i32[0 10] other) {
-                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                u8[0 10] count,
+                u8[0 10] other) {
+                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     output[index] = input[other];
                 }
 
@@ -1727,8 +1727,8 @@ public sealed class DiagnosticRegressionTests
             unsafe fn void Copy(
                 disjoint borrow i32[-2147483648 2147483647][] input,
                 disjoint borrow mut i32[-2147483648 2147483647][] output,
-                i32[0 10] count) {
-                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                u8[0 10] count) {
+                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     index += 1;
                     output[index] = input[index];
                 }
@@ -1755,8 +1755,8 @@ public sealed class DiagnosticRegressionTests
             unsafe fn void ScaleAll(
                 disjoint borrow i32[-2147483648 2147483647][] input,
                 disjoint borrow mut i32[-2147483648 2147483647][] output,
-                i32[0 10] count) {
-                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                u8[0 10] count) {
+                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     output[index] = Scale(input[index]);
                 }
 
@@ -1798,8 +1798,8 @@ public sealed class DiagnosticRegressionTests
             unsafe fn void Copy(
                 disjoint borrow i32[-2147483648 2147483647][] input,
                 disjoint borrow mut i32[-2147483648 2147483647][] output,
-                i32[0 10] count) {
-                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                u8[0 10] count) {
+                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     stack mut i32[-2147483648 2147483647][2] values = { input[index], 0 };
                     output[index] = values[0];
                 }
@@ -1822,8 +1822,8 @@ public sealed class DiagnosticRegressionTests
             unsafe fn void Copy(
                 disjoint borrow i32[-2147483648 2147483647][] input,
                 disjoint borrow mut i32[-2147483648 2147483647][] output,
-                i32[0 10] count) {
-                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                u8[0 10] count) {
+                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     while willexit (false) {
                     }
 
@@ -1848,8 +1848,8 @@ public sealed class DiagnosticRegressionTests
             unsafe fn void Copy(
                 disjoint borrow i32[-2147483648 2147483647][] input,
                 disjoint borrow mut i32[-2147483648 2147483647][] output,
-                i32[0 10] count) {
-                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                u8[0 10] count) {
+                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     if (input[index] == 0) {
                         return;
                     }

@@ -932,9 +932,9 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            unsafe fn i32[0 10] Run() {
-                stack mut i32[0 10] sum = 0;
-                for willexit independent (stack mut i32[0 10] index = 0; index < 4; index += 1) {
+            unsafe fn u8[0 10] Run() {
+                stack mut u8[0 10] sum = 0;
+                for willexit independent (stack mut u8[0 10] index = 0; index < 4; index += 1) {
                     sum += index;
                 }
 
@@ -962,8 +962,8 @@ public sealed class SsaLoweringTests
                 disjoint borrow i32[-2147483648 2147483647][] left,
                 disjoint borrow i32[-2147483648 2147483647][] right,
                 disjoint borrow mut i32[-2147483648 2147483647][] output,
-                i32[0 10] count) {
-                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+                u8[0 10] count) {
+                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     output[index] = left[index] + right[index];
                 }
 

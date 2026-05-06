@@ -6,13 +6,6 @@ public sealed class SystemRawPointerAuditStandardLibraryTests : StandardLibraryT
     [
         "stdlib/src/System/Collections.stark",
         "stdlib/src/System/Console.stark",
-        "stdlib/src/System/Experimental/Collections.stark",
-        "stdlib/src/System/Experimental/Console.stark",
-        "stdlib/src/System/Experimental/FileSystem.stark",
-        "stdlib/src/System/Experimental/IO/Path.stark",
-        "stdlib/src/System/Experimental/Net/Tcp.stark",
-        "stdlib/src/System/Experimental/Runtime/Buffer.stark",
-        "stdlib/src/System/Experimental/Text.stark",
         "stdlib/src/System/FileSystem.stark",
         "stdlib/src/System/IO/File.stark",
         "stdlib/src/System/IO/Path.stark",
@@ -31,10 +24,6 @@ public sealed class SystemRawPointerAuditStandardLibraryTests : StandardLibraryT
 
     private static readonly string[] PublicRawPointerSurfaceFiles =
     [
-        "stdlib/src/System/Experimental/Text.stark",
-        "stdlib/src/System/IO/File.stark",
-        "stdlib/src/System/Memory.stark",
-        "stdlib/src/System/Runtime/Buffer.stark",
         "stdlib/src/System/Text.stark"
     ];
 
@@ -103,6 +92,17 @@ public sealed class SystemRawPointerAuditStandardLibraryTests : StandardLibraryT
             "Public standard-library APIs should expose raw pointers only in explicitly unsafe low-level compatibility or compiler-known surfaces."
             + Environment.NewLine
             + string.Join(Environment.NewLine, violations));
+    }
+
+    [Fact]
+    public void StdLibRootDoesNotReExportPublicRawPointerSurfaceModules()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var systemSource = File.ReadAllText(Path.Combine(repositoryRoot, "stdlib", "src", "System.stark"));
+
+        Assert.DoesNotContain("export import System.Text", systemSource, StringComparison.Ordinal);
+        Assert.Contains("export import System.IO.File", systemSource, StringComparison.Ordinal);
+        Assert.Contains("export import System.Collections", systemSource, StringComparison.Ordinal);
     }
 
     private static IEnumerable<(int Line, string Text)> EnumeratePublicSurfaceDeclarations(string[] lines)

@@ -1,4 +1,4 @@
-﻿module Benchmarks.Allocator.HeapLocalBucketReuse
+module Benchmarks.Allocator.HeapLocalBucketReuse
 
 struct Box {
     i64[min max] Value;

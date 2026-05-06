@@ -689,7 +689,8 @@ internal static class SyntaxModelFactory
         IReadOnlyList<ModuleAttributeModel> attributes,
         IReadOnlyList<StarkParser.AttributeContext> attributeContexts,
         string targetDescription,
-        List<SyntaxModelDiagnostic> diagnostics)
+        List<SyntaxModelDiagnostic> diagnostics,
+        bool allowTestingAttributes = false)
     {
         var backendOptimizationMode = ModuleBackendOptimizationMode.Default;
         var backendAttributeCount = 0;
@@ -712,11 +713,37 @@ internal static class SyntaxModelFactory
                 continue;
             }
 
+            if (IsTestingAttribute(attribute.Name))
+            {
+                if (!allowTestingAttributes)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2110",
+                        $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. v1 attributes support '[Backend(Opaque)]' and '[Platform]' here.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                    continue;
+                }
+
+                if (attribute.Arguments.Count != 0)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2113",
+                        $"Attribute '[{attribute.Name}]' on {targetDescription} does not take arguments.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                }
+
+                continue;
+            }
+
             if (!string.Equals(attribute.Name, "Backend", StringComparison.Ordinal))
             {
                 diagnostics.Add(new SyntaxModelDiagnostic(
                     "STK2110",
-                    $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. v1 attributes support '[Backend(Opaque)]' and '[Platform]'.",
+                    allowTestingAttributes
+                        ? $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. v1 attributes support '[Backend(Opaque)]', '[Platform]', '[Fact]', and '[Theory]'."
+                        : $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. v1 attributes support '[Backend(Opaque)]' and '[Platform]'.",
                     attributeContext.Start.Line,
                     attributeContext.Start.Column + 1));
                 continue;
@@ -748,6 +775,12 @@ internal static class SyntaxModelFactory
         }
 
         return backendOptimizationMode;
+    }
+
+    private static bool IsTestingAttribute(string name)
+    {
+        return string.Equals(name, "Fact", StringComparison.Ordinal)
+            || string.Equals(name, "Theory", StringComparison.Ordinal);
     }
 
     private static void AddUnsupportedAttributeDiagnostics(
@@ -785,7 +818,8 @@ internal static class SyntaxModelFactory
                 declarationAttributes,
                 declarationAttributeContexts,
                 $"function '{function.Identifier().GetText()}'",
-                diagnostics);
+                diagnostics,
+                allowTestingAttributes: true);
             declarations.Add(new TopLevelDeclarationModel(
                 function.Identifier().GetText(),
                 DeclarationKind.Function,
@@ -847,7 +881,8 @@ internal static class SyntaxModelFactory
                     memberAttributes,
                     memberAttributeContexts,
                     $"method '{structDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
-                    diagnostics);
+                    diagnostics,
+                    allowTestingAttributes: true);
                 if (methodBackendOptimizationMode == ModuleBackendOptimizationMode.Default)
                 {
                     methodBackendOptimizationMode = backendOptimizationMode;
@@ -917,7 +952,8 @@ internal static class SyntaxModelFactory
                     memberAttributes,
                     memberAttributeContexts,
                     $"method '{recordDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
-                    diagnostics);
+                    diagnostics,
+                    allowTestingAttributes: true);
                 if (methodBackendOptimizationMode == ModuleBackendOptimizationMode.Default)
                 {
                     methodBackendOptimizationMode = backendOptimizationMode;

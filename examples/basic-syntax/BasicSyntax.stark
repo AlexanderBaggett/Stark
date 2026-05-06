@@ -9,12 +9,12 @@ finite law i32[min max] Add(
     return left + right;
 }
 
-finite law i32[min max] SumPrefix(i32[0 10] count) {
-    stack mut i32[min max] index = 0;
+finite law i32[min max] SumPrefix(u8[0 10] count) {
+    stack mut u8[0 10] index = 0;
     stack mut i32[min max] total = 0;
 
     while willexit (index < count) {
-        total += index;
+        total += (i32[min max])index;
         index += 1;
     }
 

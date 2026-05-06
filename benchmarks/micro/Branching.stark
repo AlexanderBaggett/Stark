@@ -1,4 +1,4 @@
-﻿import System.Process
+import System.Process
 module Benchmarks.Micro.Branching
 
 export unsafe ffi fn i32[min max] main() {

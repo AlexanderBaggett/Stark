@@ -298,7 +298,7 @@ public sealed class PackageImageArchitectureTests
             Assert.True(abiFunction.IsVarargs);
 
             Assert.True(PackageImageLoader.TryBuildModuleSource(CreateResolvedPackageModule(facadeModule), out var sourceText));
-            Assert.Contains("public ffi varargs unsafe fn i32[", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public unsafe ffi varargs fn i32[", sourceText, StringComparison.Ordinal);
             Assert.Contains("printf(ascii format);", sourceText, StringComparison.Ordinal);
         }
         finally
@@ -420,7 +420,7 @@ public sealed class PackageImageArchitectureTests
                             value += 1;
                         }
 
-                        for willexit independent (stack mut i32[0 10] index = 0; index < 4; index += 1) {
+                        for willexit independent (stack mut u8[0 10] index = 0; index < 4; index += 1) {
                             value += 1;
                         }
 
@@ -847,12 +847,12 @@ public sealed class PackageImageArchitectureTests
                 new ResolvedPackageModule(manifestPath, libraryPath, manifest, module),
                 out var sourceText));
 
-            Assert.Contains("public const i8 Small = 0;", sourceText, StringComparison.Ordinal);
-            Assert.Contains("public const i24 Big = 0;", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public const u8 Small = 0;", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public const u24 Big = 0;", sourceText, StringComparison.Ordinal);
             Assert.Contains("public const f64 Float64 = 0;", sourceText, StringComparison.Ordinal);
             Assert.Contains("public const f32 Float32 = 0;", sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("const i8[80 80]", sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("const i24[65536 65536]", sourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("const u8[80 80]", sourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("const u24[65536 65536]", sourceText, StringComparison.Ordinal);
         }
         finally
         {

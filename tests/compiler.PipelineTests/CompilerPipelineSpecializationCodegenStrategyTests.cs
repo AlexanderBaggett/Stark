@@ -97,7 +97,7 @@ public sealed class CompilerPipelineSpecializationCodegenStrategyTests
 
 
     [Fact]
-    public void ColdImportedLawGenericsAvoidCloneInCodegenStrategy()
+    public void ColdImportedLawGenericsUseAbiFallbackOnlyCodegenStrategy()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-cold-source-generic-codegen-strategy-pipeline-");
 
@@ -136,7 +136,7 @@ public sealed class CompilerPipelineSpecializationCodegenStrategyTests
             Assert.NotNull(strategy);
 
             var function = Assert.Single(strategy.Functions);
-            Assert.Equal(FunctionSpecializationCodegenStrategyKind.EmitOwnedConcreteBody, function.StrategyKind);
+            Assert.Equal(FunctionSpecializationCodegenStrategyKind.AbiFallbackOnly, function.StrategyKind);
             Assert.True(function.SupportsAbiFallback);
         }
         finally

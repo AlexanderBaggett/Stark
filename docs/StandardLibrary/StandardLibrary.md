@@ -36,6 +36,7 @@ The standard library provides:
 - minimal thread management
 - minimal blocking TCP
 - public process id and exit helpers
+- explicit test-project assertion helpers
 - text encoding support
 - a small dynamic-memory contract for owned standard-library containers
 - a platform abstraction layer that avoids stdio and exposes direct backend
@@ -63,6 +64,7 @@ The current public module references live here:
 - [System.Net](./System.Net.md)
 - [System.Net.Tcp](./System.Net.Tcp.md)
 - [System.Process](./System.Process.md)
+- [System.Testing](./System.Testing.md)
 - [System.Threading](./System.Threading.md)
 - [System.Text](./System.Text.md)
 
@@ -86,6 +88,7 @@ Repository source layout:
 - `stdlib/src/System/Net.stark`
 - `stdlib/src/System/Net/Tcp.stark`
 - `stdlib/src/System/Process.stark`
+- `stdlib/src/System/Testing.stark`
 - `stdlib/src/System/Threading.stark`
 - `stdlib/src/System/Runtime.stark`
 - `stdlib/src/System/Runtime/Buffer.stark`
@@ -110,6 +113,7 @@ Current public module surface:
 - `System.Net`
 - `System.Net.Tcp`
 - `System.Process`
+- `System.Testing`
 - `System.Text`
 - `System.Math`
 - `System.Threading`
@@ -135,17 +139,19 @@ syscall support needed during package build:
 ```stark
 import System.Runtime
 import System.Syscall
+import System.Testing
 export import System.BitOperations
 export import System.Collections
 export import System.Console
 export import System.FileSystem
 export import System.IO
+export import System.IO.File
+export import System.IO.Path
 export import System.Math
 export import System.Memory
 export import System.Net
 export import System.Net.Tcp
 export import System.Process
-export import System.Text
 export import System.Threading
 module System
 ```
@@ -158,6 +164,10 @@ initial `System.Net.Tcp` owned lifecycle, `TcpClient.Connect`,
 `TcpListener.Listen`, `TcpListener.Accept`, and socket-close surface with Linux
 syscall and Windows Winsock backends. The versioned `v1.0` baseline remains the
 narrower module list in [StandardLibraryBaseline.md](./StandardLibraryBaseline.md).
+`System.Text` remains a public module, but callers import it explicitly because
+its current low-level text data and caller-buffer APIs are intentionally unsafe.
+`System.Testing` is also packaged but imported explicitly so test helpers stay
+out of the ordinary `System` root re-export set.
 
 ## Concrete APIs Before Streams
 
@@ -463,7 +473,7 @@ more optimized.
 
 The semantics are:
 
-- `Binary` means the file handle does not request an alternate multibyte text encoding. Byte APIs always ignore encoding. `ascii` text writes are passthrough UTF-8 bytes, and `unicode` text writes use the same UTF-8 platform text path as the raw-handle helpers for compatibility with the current default owned-file surface.
+- `Binary` means the file handle does not request an alternate multibyte text encoding. Byte APIs always ignore encoding. `ascii` text writes are passthrough UTF-8 bytes, and `unicode` text writes use the same UTF-8 platform text path as the internal platform helper used by the owned-file surface.
 - `UTF8` means the file stream converts to and from UTF-8. Writing an `ascii` string is a passthrough. Writing a `unicode` string converts UTF-32 to UTF-8 before writing.
 - `UTF16` means the file stream converts to and from UTF-16LE. Both `ascii` and `unicode` strings are converted before writing.
 - `UTF32` means the file stream converts to and from UTF-32. Writing a `unicode` string is a passthrough. Writing an `ascii` string converts UTF-8 to UTF-32 before writing.
@@ -545,38 +555,26 @@ module System.IO.File
 
 public struct File {
     finite law bool IsOpen(borrow File self);
-    fn i32 Close(mut borrow File self);
-    fn i32 Flush(mut borrow File self);
-    fn i32 SyncAll(mut borrow File self);
-    fn i64 ReadBytes(mut borrow File self, rawptr<i8> buffer, i64 size, i64 count);
-    fn i64 WriteBytes(mut borrow File self, rawptr<i8> buffer, i64 size, i64 count);
-    fn void WriteText(mut borrow File self, ascii text);
-    fn void WriteText(mut borrow File self, unicode text);
-    fn void WriteLine(mut borrow File self, ascii text);
-    fn void WriteLine(mut borrow File self, unicode text);
+    fn System.IO.IOStatus Close(mut borrow File self);
+    fn System.IO.IOStatus Flush(mut borrow File self);
+    fn System.IO.IOStatus SyncAll(mut borrow File self);
+    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Seek(mut borrow File self, i64[min max] offset, SeekOrigin origin);
+    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Read(mut borrow File self, mut borrow i8[min max][] destination);
+    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Write(mut borrow File self, borrow i8[min max][] source);
+    fn System.IO.IOStatus WriteText(mut borrow File self, ascii text);
+    fn System.IO.IOStatus WriteText(mut borrow File self, unicode text);
+    fn System.IO.IOStatus WriteLine(mut borrow File self, ascii text);
+    fn System.IO.IOStatus WriteLine(mut borrow File self, unicode text);
 }
 
-public fn File Open(ascii path, FileMode mode);
-public fn File Open(ascii path, FileMode mode, FileBuffering buffering);
-public fn File Open(ascii path, FileMode mode, System.Text.Encoding encoding);
-public fn File Open(ascii path, FileMode mode, System.Text.Encoding encoding, FileBuffering buffering);
+public fn System.IO.IOResult<File> Open(ascii path, FileMode mode);
+public fn System.IO.IOResult<File> Open(ascii path, FileMode mode, FileBuffering buffering);
+public fn System.IO.IOResult<File> Open(ascii path, FileMode mode, System.Text.Encoding encoding);
+public fn System.IO.IOResult<File> Open(ascii path, FileMode mode, System.Text.Encoding encoding, FileBuffering buffering);
 
-public fn rawptr<i8> OpenRead(ascii path);
-public fn rawptr<i8> OpenWrite(ascii path);
-public fn rawptr<i8> OpenAppend(ascii path);
-
-public fn i32 Close(rawptr<i8> handle);
-public fn i32 Flush(rawptr<i8> handle);
-public fn i32 SyncAll(rawptr<i8> handle);
-public fn i64 ReadBytes(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle);
-public fn i64 WriteBytes(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle);
-public fn void WriteText(rawptr<i8> handle, ascii text);
-public fn void WriteText(rawptr<i8> handle, unicode text);
-public fn void WriteLine(rawptr<i8> handle, ascii text);
-public fn void WriteLine(rawptr<i8> handle, unicode text);
-public fn i32 Delete(ascii path);
-public fn i32 Move(ascii oldPath, ascii newPath);
-public fn bool Exists(ascii path);
+public fn System.IO.IOStatus Delete(ascii path);
+public fn System.IO.IOStatus Move(ascii oldPath, ascii newPath);
+public fn System.IO.IOResult<bool> Exists(ascii path);
 ```
 
 Methods on a `public struct` inherit the struct's visibility unless explicitly
@@ -629,21 +627,21 @@ Because destructors cannot surface rich failure values, implicit destructor clea
 The `encoding` field and `System.Text.Encoding` enum are in place, but the current Milestone 7 slice is still narrower than the eventual text-IO design:
 
 - owned `File` text writes support both `ascii` and `unicode`
-- raw-handle helpers already support both `ascii` and `unicode`
+- internal platform handoff helpers support both `ascii` and `unicode`
 - on Linux, the current `unicode` write path converts UTF-32 to UTF-8 before issuing the write syscall
 - owned-file `UTF8`, `UTF16`, and `UTF32` writes now honor the selected encoding for both `ascii` and `unicode`
 - owned-file `UTF16` and `UTF32` writes flush any pending buffered ascii data before writing encoded bytes directly
 - byte-level file reads and writes are implemented; higher-level text-reading
   helpers for `File` remain future work
 
-`ReadBytes` and `WriteBytes` always ignore encoding and operate on raw bytes regardless.
+`Read` and `Write` always ignore encoding and operate on raw bytes regardless.
 
 ### File Operations
 
 Internal implementation:
 
-- On Linux, `Open` calls the internal platform open boundary backed by `openat(2)`. `Close` calls the internal close boundary backed by `close(2)`. `ReadBytes` calls the internal read boundary backed by `read(2)`. `WriteBytes` calls the internal write boundary backed by `write(2)`. `Flush` drains Stark userspace buffers. `Delete` calls the internal delete boundary backed by `unlinkat(2)`. `Move` calls the internal rename boundary backed by `renameat2(2)`. `Exists` uses `newfstatat(2)`.
-- On Windows, `Open` calls `CreateFileW`. `Close` calls `CloseHandle`. `ReadBytes` calls `ReadFile`. `WriteBytes` calls `WriteFile`. `Flush` drains Stark userspace buffers. `SyncAll` calls `FlushFileBuffers`. `Delete` calls `DeleteFileW`. `Move` calls `MoveFileExW`. `Exists` uses `GetFileAttributesW`.
+- On Linux, `Open` calls the internal platform open boundary backed by `openat(2)`. `Close` calls the internal close boundary backed by `close(2)`. `Read` calls the internal read boundary backed by `read(2)`. `Write` calls the internal write boundary backed by `write(2)`. `Flush` drains Stark userspace buffers. `Delete` calls the internal delete boundary backed by `unlinkat(2)`. `Move` calls the internal rename boundary backed by `renameat2(2)`. `Exists` uses `newfstatat(2)`.
+- On Windows, `Open` calls `CreateFileW`. `Close` calls `CloseHandle`. `Read` calls `ReadFile`. `Write` calls `WriteFile`. `Flush` drains Stark userspace buffers. `SyncAll` calls `FlushFileBuffers`. `Delete` calls `DeleteFileW`. `Move` calls `MoveFileExW`. `Exists` uses `GetFileAttributesW`.
 - Path strings are converted at the platform boundary. On Linux, `ascii` paths pass through as-is. On Windows, `ascii` paths are converted from UTF-8 to UTF-16LE before calling the `W` APIs, and `GetCurrentDirectoryW` results are converted back to UTF-8 for `System.IO.Path.CurrentDirectory`.
 
 ## Path API
@@ -657,7 +655,7 @@ module System.IO.Path
 public finite law ascii DirectorySeparator();
 public finite law ascii AlternateDirectorySeparator();
 public finite law ascii PathSeparator();
-public fn bool TryJoin(rawmutptr<Ascii> destination, ascii left, ascii right);
+public fn System.Memory.MemoryStatus TryJoin(mut borrow System.Text.OwnedAscii destination, ascii left, ascii right);
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(ascii left, ascii right);
 public struct PathFacts;
 public finite law PathFacts GetFacts(ascii path);
@@ -665,7 +663,8 @@ public finite law ascii Extension(borrow ascii path);
 public finite law ascii BaseName(borrow ascii path);
 public finite law ascii DirectoryName(borrow ascii path);
 
-public fn bool CurrentDirectory(rawmutptr<Ascii> destination);
+public fn System.Memory.MemoryStatus CurrentDirectory(mut borrow System.Text.OwnedAscii destination);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> CurrentDirectory();
 ```
 
 `DirectorySeparator` returns `"/"` on Linux and `"\\"` on Windows. `AlternateDirectorySeparator` returns `"/"` on Windows and `""` on Linux. `PathSeparator` returns `":"` on Linux and `";"` on Windows.
@@ -674,11 +673,11 @@ public fn bool CurrentDirectory(rawmutptr<Ascii> destination);
 
 `GetFacts` computes the reusable component ranges for callers that need several pieces of the same path. `PathFacts` exposes view and length helpers for the full path, extension, base name, and directory name without rescanning.
 
-`TryJoin` uses a caller-provided `Ascii` destination rather than allocating hidden storage. It returns `false` if the destination buffer is too small.
+`TryJoin` uses caller-owned `System.Text.OwnedAscii` storage rather than allocating hidden storage. It returns `MemoryStatus` so allocation and layout failures remain explicit.
 
 `Join` allocates an owned `System.Text.OwnedAscii` result through `System.Memory` and returns `System.Memory.MemoryResult<T>`, so allocation failure remains visible. It uses the same separator normalization rules as `TryJoin`.
 
-`CurrentDirectory` is `fn` because it issues an OS call. It uses a caller-provided `Ascii` buffer and returns `bool` success instead of a richer result type. On the current Linux-backed implementation, the destination buffer must have room for the path text plus one trailing zero byte reserved for the raw `getcwd` syscall.
+`CurrentDirectory` is `fn` because it issues an OS call. It appends into caller-owned `System.Text.OwnedAscii` storage or returns an owned-text `MemoryResult`; raw platform buffers stay internal.
 
 ## Platform Abstraction Layer
 
@@ -943,7 +942,7 @@ Example:
 import System
 module Hello
 
-export ffi fn i32 main() {
+export unsafe ffi fn i32 main() {
     System.Console.WriteLine("Hello, world!");
     System.Console.WriteErrorLine("stderr works too");
     return 0;

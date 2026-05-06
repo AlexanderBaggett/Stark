@@ -2,9 +2,9 @@ using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
-public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : StandardLibraryTestSuite
+public sealed class SystemPromotedRuntimeBufferStandardLibraryTests : StandardLibraryTestSuite
 {
-    private const string ExperimentalRuntimeBufferProgram = """
+    private const string PromotedRuntimeBufferProgram = """
         import System.Runtime.Buffer
         import System.Memory
         module App
@@ -27,9 +27,9 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
             }
         }
 
-        fn i64[min max] SumBytes(borrow i8[min max][] values, i64[0 max] count) {
+        fn i64[min max] SumBytes(borrow i8[min max][] values, u64[0 2 ** 63 - 1] count) {
             stack mut i64[min max] checksum = 0;
-            for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
                 checksum += (i64[min max])values[index];
             }
 
@@ -39,7 +39,7 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
         fn bool WriteFirstWritable(
             mut borrow System.Runtime.Buffer.FixedByteBuffer512 buffer,
             i8[min max] value,
-            i64[0 max] expectedWritable) {
+            u64[0 2 ** 63 - 1] expectedWritable) {
             if (buffer.Writable() != expectedWritable) {
                 return false;
             }
@@ -124,7 +124,7 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
                 return 14;
             }
 
-            stack i64[0 max] aliasedFixedCount = fixedBuffer.Readable();
+            stack u64[0 2 ** 63 - 1] aliasedFixedCount = fixedBuffer.Readable();
             stack i8[min max][] aliasedFixedSource = fixedBuffer.ReadSlice();
             if (!Ok(fixedBuffer.WriteSlice(aliasedFixedSource, aliasedFixedCount))) {
                 return 32;
@@ -183,7 +183,7 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
                 return 23;
             }
 
-            stack i64[0 max] aliasedDynamicCount = dynamicBuffer.Readable();
+            stack u64[0 2 ** 63 - 1] aliasedDynamicCount = dynamicBuffer.Readable();
             stack i8[min max][] aliasedDynamicSource = dynamicBuffer.ReadSlice();
             if (!Ok(dynamicBuffer.WriteSlice(aliasedDynamicSource, aliasedDynamicCount))) {
                 return 30;
@@ -194,7 +194,7 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
                 return 31;
             }
 
-            if (!TooLarge(dynamicBuffer.Reserve((i64[0 max])(2 ** 63 - 1)))) {
+            if (!TooLarge(dynamicBuffer.Reserve((u64[0 2 ** 63 - 1])(2 ** 63 - 1)))) {
                 return 24;
             }
 
@@ -228,11 +228,11 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
         """;
 
     [Fact]
-    public void StdLibSourceExperimentalRuntimeBufferSurfaceCompiles()
+    public void StdLibSourcePromotedRuntimeBufferSurfaceCompiles()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibExperimentalRuntimeBufferSurface.stark");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibPromotedRuntimeBufferSurface.stark");
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(
                 """
@@ -244,14 +244,14 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
                 fn System.Memory.MemoryStatus FillFixed(
                     mut borrow System.Runtime.Buffer.FixedByteBuffer512 buffer,
                     i8[min max] value,
-                    i64[0 max] count) {
+                    u64[0 2 ** 63 - 1] count) {
                     return buffer.WriteFill(value, count);
                 }
 
                 fn System.Memory.MemoryStatus AppendDynamic(
                     mut borrow System.Runtime.Buffer.DynamicByteBuffer buffer,
                     borrow i8[min max][] source,
-                    i64[0 max] count) {
+                    u64[0 2 ** 63 - 1] count) {
                     return buffer.WriteSlice(source, count);
                 }
                 """,
@@ -268,7 +268,7 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
     }
 
     [Fact]
-    public void StdLibSourceExperimentalRuntimeBufferModuleLowersRuntimeDisjointWriteFastPaths()
+    public void StdLibSourcePromotedRuntimeBufferModuleLowersRuntimeDisjointWriteFastPaths()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
@@ -290,7 +290,7 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
     }
 
     [Fact]
-    public void StdLibSourceExperimentalRuntimeBufferModuleUsesTailRegionMemoryHelpers()
+    public void StdLibSourcePromotedRuntimeBufferModuleUsesTailRegionMemoryHelpers()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
@@ -317,7 +317,7 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
     }
 
     [Fact]
-    public void StdLibSourceExperimentalRuntimeBufferFixedBuffersUseInlineStorage()
+    public void StdLibSourcePromotedRuntimeBufferFixedBuffersUseInlineStorage()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
@@ -362,9 +362,9 @@ public sealed class SystemExperimentalRuntimeBufferStandardLibraryTests : Standa
     }
 
     [Fact]
-    public async Task SourceStdLibExperimentalRuntimeBufferExecutableRuns()
+    public async Task SourceStdLibPromotedRuntimeBufferExecutableRuns()
     {
-        await AssertSourceExecutableRunsAsync(ExperimentalRuntimeBufferProgram, "stark-stdlib-experimental-runtime-buffer-");
+        await AssertSourceExecutableRunsAsync(PromotedRuntimeBufferProgram, "stark-stdlib-promoted-runtime-buffer-");
     }
 
     private async Task AssertSourceExecutableRunsAsync(string source, string tempPrefix)

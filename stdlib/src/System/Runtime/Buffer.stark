@@ -182,7 +182,7 @@ public struct FixedByteBuffer512 {
         return CursorWritable(self.WritePosition, 512);
     }
 
-    unsafe fn rawptr<i8[min max]> ReadPointer(borrow FixedByteBuffer512 self) {
+    internal unsafe fn rawptr<i8[min max]> ReadPointer(borrow FixedByteBuffer512 self) {
         if (self.Readable() == 0) {
             return null;
         }
@@ -190,7 +190,7 @@ public struct FixedByteBuffer512 {
         return &self.Storage[self.ReadPosition];
     }
 
-    unsafe fn rawmutptr<i8[min max]> ReadWritePointer(mut borrow FixedByteBuffer512 self) {
+    internal unsafe fn rawmutptr<i8[min max]> ReadWritePointer(mut borrow FixedByteBuffer512 self) {
         if (self.Readable() == 0) {
             return null;
         }
@@ -198,7 +198,7 @@ public struct FixedByteBuffer512 {
         return &self.Storage[self.ReadPosition];
     }
 
-    unsafe fn rawmutptr<i8[min max]> WritePointer(mut borrow FixedByteBuffer512 self) {
+    internal unsafe fn rawmutptr<i8[min max]> WritePointer(mut borrow FixedByteBuffer512 self) {
         if (self.Writable() == 0) {
             return null;
         }
@@ -387,7 +387,7 @@ public struct FixedByteBuffer4096 {
         return CursorWritable(self.WritePosition, 4096);
     }
 
-    unsafe fn rawptr<i8[min max]> ReadPointer(borrow FixedByteBuffer4096 self) {
+    internal unsafe fn rawptr<i8[min max]> ReadPointer(borrow FixedByteBuffer4096 self) {
         if (self.Readable() == 0) {
             return null;
         }
@@ -395,7 +395,7 @@ public struct FixedByteBuffer4096 {
         return &self.Storage[self.ReadPosition];
     }
 
-    unsafe fn rawmutptr<i8[min max]> ReadWritePointer(mut borrow FixedByteBuffer4096 self) {
+    internal unsafe fn rawmutptr<i8[min max]> ReadWritePointer(mut borrow FixedByteBuffer4096 self) {
         if (self.Readable() == 0) {
             return null;
         }
@@ -403,7 +403,7 @@ public struct FixedByteBuffer4096 {
         return &self.Storage[self.ReadPosition];
     }
 
-    unsafe fn rawmutptr<i8[min max]> WritePointer(mut borrow FixedByteBuffer4096 self) {
+    internal unsafe fn rawmutptr<i8[min max]> WritePointer(mut borrow FixedByteBuffer4096 self) {
         if (self.Writable() == 0) {
             return null;
         }
@@ -592,7 +592,7 @@ public struct FixedByteBuffer8192 {
         return CursorWritable(self.WritePosition, 8192);
     }
 
-    unsafe fn rawptr<i8[min max]> ReadPointer(borrow FixedByteBuffer8192 self) {
+    internal unsafe fn rawptr<i8[min max]> ReadPointer(borrow FixedByteBuffer8192 self) {
         if (self.Readable() == 0) {
             return null;
         }
@@ -600,7 +600,7 @@ public struct FixedByteBuffer8192 {
         return &self.Storage[self.ReadPosition];
     }
 
-    unsafe fn rawmutptr<i8[min max]> ReadWritePointer(mut borrow FixedByteBuffer8192 self) {
+    internal unsafe fn rawmutptr<i8[min max]> ReadWritePointer(mut borrow FixedByteBuffer8192 self) {
         if (self.Readable() == 0) {
             return null;
         }
@@ -608,7 +608,7 @@ public struct FixedByteBuffer8192 {
         return &self.Storage[self.ReadPosition];
     }
 
-    unsafe fn rawmutptr<i8[min max]> WritePointer(mut borrow FixedByteBuffer8192 self) {
+    internal unsafe fn rawmutptr<i8[min max]> WritePointer(mut borrow FixedByteBuffer8192 self) {
         if (self.Writable() == 0) {
             return null;
         }

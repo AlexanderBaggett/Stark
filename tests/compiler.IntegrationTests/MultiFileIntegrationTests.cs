@@ -349,7 +349,7 @@ public sealed class MultiFileIntegrationTests
                 import Facade
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
                     return Math.Add(3, 4);
                 }
                 """);
@@ -445,7 +445,7 @@ public sealed class MultiFileIntegrationTests
                 import Globals
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
                     return Globals.Answer;
                 }
                 """);
@@ -511,7 +511,7 @@ public sealed class MultiFileIntegrationTests
                 sourceText
                 + """
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
                     stack mut i32[-2147483648 2147483647][8] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0 };
                     stack mut Unicode unicodeText = new Unicode() {
                         Data = &unicodeBuffer[0],
@@ -649,7 +649,7 @@ public sealed class MultiFileIntegrationTests
                 sourceText
                 + """
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
                     stack mut i16[-32768 32767][8] utf16Buffer;
                     stack mut i64[-9223372036854775808 9223372036854775807] utf16Length = 0;
                     if (!TryConvertAsciiToUtf16(&utf16Buffer[0], 8, "A𐍈", &utf16Length)) {

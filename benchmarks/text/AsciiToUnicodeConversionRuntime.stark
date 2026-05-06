@@ -1,4 +1,5 @@
-﻿import System
+import System
+import System.Text
 module Benchmarks.Text.AsciiToUnicodeConversionRuntime
 
 unsafe ffi fn u64[0 2 ** 63 - 1] strlen(rawptr<i8[-128 127]> text);

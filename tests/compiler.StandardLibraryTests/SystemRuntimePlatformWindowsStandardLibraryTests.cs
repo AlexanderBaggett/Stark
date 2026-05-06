@@ -336,11 +336,11 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                         return 3;
                     }
 
-                    if (!IsOk(System.Console.WriteLine((unicode)"Experimental"))) {
+                    if (!IsOk(System.Console.WriteLine((unicode)"Promoted"))) {
                         return 4;
                     }
 
-                    if (!IsOk(System.Console.WriteErrorLine("experimental stderr"))) {
+                    if (!IsOk(System.Console.WriteErrorLine("promoted stderr"))) {
                         return 5;
                     }
 
@@ -361,8 +361,8 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
 
             var execution = await RunProcessAsync(outputPath, tempDirectory.FullName);
             Assert.Equal(0, execution.ExitCode);
-            Assert.Equal("Console Status\nExperimental\n", NormalizeNewlines(execution.Stdout));
-            Assert.Equal("stderr works\nexperimental stderr\n", NormalizeNewlines(execution.Stderr));
+            Assert.Equal("Console Status\nPromoted\n", NormalizeNewlines(execution.Stdout));
+            Assert.Equal("stderr works\npromoted stderr\n", NormalizeNewlines(execution.Stderr));
         }
         finally
         {
@@ -455,7 +455,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                             stack mut bool foundWide = false;
                             stack mut bool foundLong = false;
 
-                            for willexit (stack mut i32[0 8] index = 0; index < 8; index += 1) {
+                            for willexit (stack mut u8[0 8] index = 0; index < 8; index += 1) {
                                 switch (directory.ReadNext()) {
                                     case System.FileSystem.DirectoryReadResult.Err(var readError):
                                         directory.Close();
@@ -523,7 +523,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
     }
 
     [Fact]
-    public async Task SourceWindowsExperimentalDirectoryEnumerationExecutablePreservesCachedFirstEntry()
+    public async Task SourceWindowsPromotedDirectoryEnumerationExecutablePreservesCachedFirstEntry()
     {
         if (!OperatingSystem.IsWindows()
             || !NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
@@ -641,8 +641,8 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                             stack mut bool foundFirst = false;
                             stack mut bool foundWide = false;
                             stack mut bool foundLong = false;
-                            stack mut i32[0 3] count = 0;
-                            stack mut i64[0 210] checksum = 0;
+                            stack mut u8[0 3] count = 0;
+                            stack mut u8[0 210] checksum = 0;
 
                             while willexit (true) {
                                 switch (directory.ReadNextInfo()) {
@@ -664,7 +664,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
 
                                         return 0;
                                     case System.FileSystem.DirectoryReadInfoResult.Entry(var entry):
-                                        stack i64[0 210] length = (i64[0 210])entry.NameLength;
+                                        stack u8[0 210] length = (u8[0 210])entry.NameLength;
                                         if (length == 15) {
                                             foundFirst = true;
                                         }

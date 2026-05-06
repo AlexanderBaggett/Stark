@@ -69,7 +69,7 @@ Create `hello.stark`:
 import System.Console
 module Hello
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     WriteLine("Hello, World!");
     return 0;
 }
@@ -133,7 +133,7 @@ dotnet run --project src -- libExample.starkpkg.json --inspect-pkg
 With no input path, the compiler reads Stark source from stdin:
 
 ```bash
-printf 'module Demo\nexport ffi fn i32[min max] main() { return 1; }\n' \
+printf 'module Demo\nexport unsafe ffi fn i32[min max] main() { return 1; }\n' \
   | dotnet run --project src -- --emit-llvm
 ```
 
@@ -174,6 +174,7 @@ works from `examples/`:
 cd examples
 dotnet run --project ../src -- build hello
 dotnet run --project ../src -- run hello
+dotnet run --project ../src -- test standard-library-tests
 ```
 
 Manifest behavior is documented in
@@ -247,6 +248,7 @@ Standard-library docs:
 - [docs/StandardLibrary/System.IO.md](./docs/StandardLibrary/System.IO.md)
 - [docs/StandardLibrary/System.Collections.md](./docs/StandardLibrary/System.Collections.md)
 - [docs/StandardLibrary/System.Net.Tcp.md](./docs/StandardLibrary/System.Net.Tcp.md)
+- [docs/StandardLibrary/System.Testing.md](./docs/StandardLibrary/System.Testing.md)
 
 ## Benchmarks
 
@@ -433,5 +435,8 @@ Stark currently has:
 - a benchmark harness with Stark, C, and Rust rows for performance work;
 - a Hugo documentation site backed by repository docs and checked examples.
 
-The binary release pipeline is still being finalized. For now, treat the docs,
-tests, and checked examples as the source of truth for the implemented surface.
+Binary release packaging is automated for Linux and Windows through the GitHub
+Actions release workflow. macOS packaging remains tied to the future macOS
+standard-library backend work. Until tagged artifacts are published, treat the
+docs, tests, and checked examples as the source of truth for the implemented
+surface.

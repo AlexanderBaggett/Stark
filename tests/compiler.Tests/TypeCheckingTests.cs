@@ -1200,7 +1200,7 @@ public sealed class TypeCheckingTests
         AssertIntegerRange(typeCheckModel.Globals["BoardWidthTyped"].Type, 8, new BigInteger(80), new BigInteger(80), isUnsigned: true);
         AssertIntegerRange(typeCheckModel.Globals["BoardWidthWide"].Type, 8, new BigInteger(80), new BigInteger(80), isUnsigned: true);
         AssertIntegerRange(typeCheckModel.Globals["Negative"].Type, 16, new BigInteger(-129), new BigInteger(-129));
-        AssertIntegerRange(typeCheckModel.Globals["BigCount"].Type, 24, new BigInteger(65536), new BigInteger(65536));
+        AssertIntegerRange(typeCheckModel.Globals["BigCount"].Type, 24, new BigInteger(65536), new BigInteger(65536), isUnsigned: true);
         AssertIntegerRange(typeCheckModel.Globals["UnsignedSmall"].Type, 8, new BigInteger(80), new BigInteger(80), isUnsigned: true);
         AssertIntegerRange(typeCheckModel.Globals["UnsignedWide"].Type, 32, BigInteger.Parse("4294967295"), BigInteger.Parse("4294967295"), isUnsigned: true);
         Assert.Equal(StarkTypeKind.Float, typeCheckModel.Globals["SmallFloat"].Type.Kind);

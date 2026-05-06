@@ -217,11 +217,11 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
 
                 record Buffer(i32[-2147483648 2147483647][2] Values) { }
 
-                fn rawptr<i32[-2147483648 2147483647]> Pin<T>(borrow Buffer buffer, i32[-2147483648 2147483647] index, T tag) {
+                unsafe fn rawptr<i32[-2147483648 2147483647]> Pin<T>(borrow Buffer buffer, i32[-2147483648 2147483647] index, T tag) {
                     return &buffer.Values[index];
                 }
 
-                fn rawptr<i32[-2147483648 2147483647]> Run(borrow Buffer buffer, i32[-2147483648 2147483647] index) {
+                unsafe fn rawptr<i32[-2147483648 2147483647]> Run(borrow Buffer buffer, i32[-2147483648 2147483647] index) {
                     return Pin(buffer, index, index);
                 }
                 """),

@@ -1,4 +1,4 @@
-﻿import System.Text
+import System.Text
 import System.Memory
 module Benchmarks.Text.OwnedTextAllocation
 

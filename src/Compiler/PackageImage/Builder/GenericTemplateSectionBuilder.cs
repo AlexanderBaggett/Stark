@@ -114,6 +114,7 @@ internal static partial class PackageImageBuilder
 
         return DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel)
             .Where(static function => function.HasBody)
+            .Where(static function => GenericTemplatePublicationPolicy.HasPublishedApiVisibility(function.Visibility))
             .Select(function =>
             {
                 var qualifiedResolvedName = $"{module.SyntaxModel.ModuleName}.{function.Name}";
