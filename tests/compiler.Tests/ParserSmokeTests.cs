@@ -109,12 +109,12 @@ public sealed class ParserSmokeTests
 
             public const i32[-2147483648 2147483647] Answer = 42;
             internal static rawptr<i8[-128 127]> Buffer = null;
-            export static i32[0 255] Limit = 255;
+            export static u8[0 255] Limit = 255;
 
             public unsafe finite void Accept(
                 borrow i8[-128 127][] input,
                 frozen ascii name,
-                shared i32[0 10] state,
+                shared u8[0 10] state,
                 out i8[-128 127][16] output,
                 init rawmutptr<i8[-128 127]> rawBuffer)
             {

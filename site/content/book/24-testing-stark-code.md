@@ -2,57 +2,62 @@
 title = "24. Testing Stark Code"
 weight = 240
 book_part = "Part IV: The Standard Library"
-book_status = "future"
+book_status = "current"
 prev = "/book/23-threading-tcp/"
 next = "/book/25-performance-model/"
 +++
 
 # Testing Stark Code
 
-Stark does not have test projects yet.
+Stark test projects are executable projects with an explicit test manifest kind.
+They are run through `stark test`.
 
-This chapter is reserved for the v2.0 testing work. For now, do not write book
-examples that imply `stark test` exists.
+The first implementation deliberately avoids reflection and hidden test
+discovery. A test executable owns its `main`, calls the facts it wants to run,
+and returns a process exit code.
 
-## Planned Shape
+## Project Shape
 
-The intended testing story is:
+Use `kind = "test"` and a `[test]` root:
 
-- test-project manifests
-- a `System.Testing` standard-library module
-- xUnit-inspired assertions
-- assertion failure without hidden exceptions or stack unwinding
-- `stark test`
-- solution-level test sets
+```toml
+[project]
+name = "math-tests"
+version = "0.1.0"
+kind = "test"
 
-## Why It Is Deferred
+[test]
+root = "MathTests.stark"
+output = "math-tests"
+```
 
-The current repository has many C# xUnit tests for the compiler and standard
-library, but those are not Stark test projects. Porting that vocabulary into
-Stark needs a real standard-library testing module and a project model that can
-build and run test executables predictably.
+From the project directory:
 
-That belongs in v2.0 because it touches package manifests, standard-library
-API design, CLI behavior, diagnostics, and result reporting.
+```bash
+stark test
+```
 
-## What To Use Today
+From a solution directory, `stark test` runs `[defaults].test` when present. If
+no default test set is declared, it runs every member whose manifest has
+`kind = "test"`.
 
-Today, examples should be written as ordinary executable programs whose `main`
-returns `0` on success and a non-zero code on failure:
+## Assertion Shape
 
-{{< stark-sample "assets/book/samples/manual-test-executable.stark" >}}
+`System.Testing` assertions are ordinary Stark functions. They return `bool`;
+they do not throw, allocate hidden exception objects, or unwind the stack.
 
-That pattern is simple, explicit, and compatible with the current compiler and
-CI workflows.
+{{< stark-sample "assets/book/stdlib-samples/testing-project-runner.stark" >}}
 
-Use one return code per failed check when the program is small enough that the
-code itself is the report. For larger examples, return a status enum inside the
-program and collapse it to a process exit code at the boundary.
+The `[Fact]` attributes are source metadata. In the current implementation,
+discovery is still explicit: `main` calls the facts and reports each result
+through `System.Testing.RunFact`.
 
-This is not a replacement for Stark-native test projects. It is the current
-book-sample pattern: compile a real executable, keep the checks deterministic,
-and avoid implying that assertion macros, reflection-based discovery, or
-`stark test` exist today.
+## Result Reporting
 
-Until that work lands, Stark's compiler and standard library tests are still
-hosted by the repository's C# test projects.
+`RunFact` writes a concise pass/fail line and returns `1` for failure. Test
+projects collapse their accumulated failure count to a process status with
+`System.Testing.ExitCode`.
+
+That keeps failure behavior in the ordinary result/exit-code model. Later test
+discovery can become more convenient without changing the basic runtime
+contract.

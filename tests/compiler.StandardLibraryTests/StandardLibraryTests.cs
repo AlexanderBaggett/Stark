@@ -37,6 +37,7 @@ public class StandardLibraryTestSuite
         Assert.True(moduleGraph.ContainsLoadedModule("System.Net.Tcp"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Process"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Text"));
+        Assert.True(moduleGraph.ContainsLoadedModule("System.Testing"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Threading"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Buffer"));
@@ -46,6 +47,20 @@ public class StandardLibraryTestSuite
         Assert.True(moduleGraph.ContainsLoadedModule("System.Syscall"));
         Assert.False(moduleGraph.ContainsLoadedModule("System.IO.Stdout"));
         Assert.False(moduleGraph.ContainsLoadedModule("System.IO.Stderr"));
+    }
+
+    public void StdLibSourceTreeHasNoExperimentalModules()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var experimentalDirectory = Path.Combine(repositoryRoot, "stdlib", "src", "System", "Experimental");
+        var experimentalSources = Directory.Exists(experimentalDirectory)
+            ? Directory.GetFiles(experimentalDirectory, "*.stark", SearchOption.AllDirectories)
+                .Select(path => Path.GetRelativePath(repositoryRoot, path))
+                .Order(StringComparer.Ordinal)
+                .ToArray()
+            : [];
+
+        Assert.Empty(experimentalSources);
     }
 
     public void StdLibSourceCommonErrorResultModelUsesCompactEnumLayouts()
@@ -266,6 +281,7 @@ public class StandardLibraryTestSuite
             }
             Assert.Contains(modules, module => module.ModuleName == "System.Syscall");
             Assert.Contains(modules, module => module.ModuleName == "System.Text");
+            Assert.Contains(modules, module => module.ModuleName == "System.Testing");
             Assert.Contains(modules, module => module.ModuleName == "System.Threading");
             Assert.DoesNotContain(modules, static module => module.ModuleName.StartsWith("System.Experimental", StringComparison.Ordinal));
 
@@ -283,8 +299,9 @@ public class StandardLibraryTestSuite
             Assert.Contains("System.Net", reExports);
             Assert.Contains("System.Net.Tcp", reExports);
             Assert.Contains("System.Process", reExports);
-            Assert.Contains("System.Text", reExports);
             Assert.Contains("System.Threading", reExports);
+            Assert.DoesNotContain("System.Text", reExports);
+            Assert.DoesNotContain("System.Testing", reExports);
             Assert.DoesNotContain(reExports, static moduleName => moduleName.StartsWith("System.Experimental", StringComparison.Ordinal));
 
             var fileSystemModule = modules.Single(module => module.ModuleName == "System.FileSystem");
@@ -395,6 +412,7 @@ public class StandardLibraryTestSuite
             new CompilationInput(
                 """
                 import System
+                import System.Text
                 module Demo
 
                 fn void Use() {
@@ -576,6 +594,7 @@ public class StandardLibraryTestSuite
             new CompilationInput(
                 """
                 import System
+                import System.Text
                 module Demo
 
                 fn bool MemoryOk(System.Memory.MemoryStatus status) {
@@ -646,16 +665,11 @@ public class StandardLibraryTestSuite
 
                 unsafe fn i32[min max] Use() {
                     stack mut System.Runtime.Buffer.FixedByteBuffer512 linear = new System.Runtime.Buffer.FixedByteBuffer512();
-                    stack rawmutptr<i8[min max]> writePtr = linear.WritePointer();
-                    if (writePtr == null) {
-                        return 1;
-                    }
-
-                    *writePtr = (i8[min max])65;
+                    linear.WriteSlice()[0] = (i8[min max])65;
                     linear.AdvanceWrite(1);
 
-                    stack rawptr<i8[min max]> readPtr = linear.ReadPointer();
-                    if (readPtr == null || *readPtr != (i8[min max])65) {
+                    stack i8[min max][] readSlice = linear.ReadSlice();
+                    if (readSlice[0] != (i8[min max])65) {
                         return 2;
                     }
 
@@ -1035,6 +1049,17 @@ public class StandardLibraryTestSuite
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
         Assert.Contains(expectedInlineAsm, llvm, StringComparison.Ordinal);
     }
+
+    public void SystemSyscallDirectEntryPointsAreInternal()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var syscallPath = Path.Combine(repositoryRoot, "stdlib", "src", "System", "Syscall.stark");
+        var source = File.ReadAllText(syscallPath);
+
+        Assert.DoesNotContain("public unsafe ffi asm", source, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe ffi asm", source, StringComparison.Ordinal);
+    }
+
     public async Task PackagedStdLibCanBeConsumedWithoutSource()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
@@ -1059,7 +1084,7 @@ public class StandardLibraryTestSuite
             var buildStdout = new StringWriter();
             var buildStderr = new StringWriter();
             var buildExitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-lib", "-o", libraryPath, "--target", targetInfo.Triple],
+                [systemPath, "--emit-lib", "-O0", "-o", libraryPath, "--target", targetInfo.Triple],
                 new StringReader(string.Empty),
                 buildStdout,
                 buildStderr);
@@ -1071,7 +1096,26 @@ public class StandardLibraryTestSuite
                 appPath,
                 """
                 import System
+                import System.Text
                 module App
+
+                fn bool StatusOk(System.IO.IOStatus status) {
+                    switch (status) {
+                        case System.IO.IOStatus.Ok:
+                            return true;
+                        case System.IO.IOStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
+                    switch (result) {
+                        case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+                            return value;
+                        case System.IO.IOResult<System.IO.File.File>.Err(var error):
+                            return new();
+                    }
+                }
 
                 export unsafe ffi fn i32[min max] main() {
                     stack mut i8[min max][16] asciiBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
@@ -1114,9 +1158,14 @@ public class StandardLibraryTestSuite
                         Capacity = ownedAscii.Capacity
                     };
 
-                    stack rawptr<i8[min max]> handle = System.IO.File.OpenWrite("io-test.txt");
-                    System.IO.File.WriteLine(handle, System.Text.AsciiView(fileAscii));
-                    System.IO.File.Close(handle);
+                    stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open("io-test.txt", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.Line));
+                    if (!StatusOk(file.WriteLine(System.Text.AsciiView(fileAscii)))) {
+                        return 4;
+                    }
+
+                    if (!StatusOk(file.Close())) {
+                        return 5;
+                    }
 
                     System.Console.WriteLine(System.Text.AsciiView(consoleAscii));
                     System.Console.WriteLine(System.IO.Path.DirectorySeparator());
@@ -1129,12 +1178,14 @@ public class StandardLibraryTestSuite
             var stderr = new StringWriter();
 
             var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath, "--target", targetInfo.Triple],
+                [appPath, "--emit-exe", "-O0", "-I", packageDirectory, "-o", outputPath, "--target", targetInfo.Triple],
                 new StringReader(string.Empty),
                 stdout,
                 stderr);
 
-            Assert.Equal(0, exitCode);
+            Assert.True(
+                exitCode == 0,
+                stdout + Environment.NewLine + stderr);
             Assert.Contains("Emitted executable:", stdout.ToString());
             AssertCompilerLogsEmitted(stderr.ToString());
             Assert.True(File.Exists(outputPath));
@@ -2016,7 +2067,7 @@ public class StandardLibraryTestSuite
             }
         }
     }
-    public async Task PackagedStdLibSyscallModuleCanBeConsumedWithoutSource()
+    public async Task PackagedStdLibLinuxPlatformSyscallsRemainUsableWithoutPublicSyscallSource()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
             || !OperatingSystem.IsLinux()
@@ -2053,11 +2104,11 @@ public class StandardLibraryTestSuite
             await File.WriteAllTextAsync(
                 appPath,
                 """
-                import System.Syscall
+                import System.Process
                 module App
 
                 export unsafe ffi fn i32[min max] main() {
-                    if (System.Syscall.Syscall0(39) <= 0) {
+                    if (System.Process.CurrentId() <= 0) {
                         return 1;
                     }
 
@@ -2151,16 +2202,11 @@ public class StandardLibraryTestSuite
                         return 1;
                     }
 
-                    stack rawmutptr<i8[min max]> writePtr = linear.WritePointer();
-                    if (writePtr == null) {
-                        return 2;
-                    }
-
-                    *writePtr = (i8[min max])65;
+                    linear.WriteSlice()[0] = (i8[min max])65;
                     linear.AdvanceWrite(1);
 
-                    stack rawptr<i8[min max]> readPtr = linear.ReadPointer();
-                    if (readPtr == null || *readPtr != (i8[min max])65) {
+                    stack i8[min max][] readSlice = linear.ReadSlice();
+                    if (readSlice[0] != (i8[min max])65) {
                         return 3;
                     }
 

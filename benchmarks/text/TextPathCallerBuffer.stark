@@ -1,6 +1,7 @@
 // stark-bench: compile-only
 import System
 import System.Memory
+import System.Text
 module Benchmarks.Text.TextPathCallerBuffer
 
 unsafe fn bool Ok(System.Memory.MemoryStatus status) {
@@ -17,7 +18,7 @@ export unsafe ffi fn i32[min max] main() {
     stack mut System.Text.OwnedUnicode unicodeText = new();
     stack mut i64[min max] checksum = 0;
 
-    for willexit (stack mut i32[0 2000] i = 0; i < 2000; i += 1) {
+    for willexit (stack mut u16[0 2000] i = 0; i < 2000; i += 1) {
         if (!Ok(System.IO.Path.TryJoin(joined, "alpha", "beta.txt"))) {
             return 1;
         }

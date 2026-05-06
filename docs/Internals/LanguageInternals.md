@@ -230,34 +230,20 @@ Backend facts from dynamic storage include:
 
 Sparse data structures use explicit source facts for initialized slots. When the compiler can see the initialized range or slot identity, reads, moves, and drops are safe. When a data structure keeps a dynamic sparse state that the type checker cannot prove from control flow, the proof boundary is explicit and unsafe; it does not require converting the storage to a raw pointer. Code that uses an unsafe sparse proof is responsible for preserving the runtime dynamic owner invariant before ordinary safe code observes or drops the owner.
 
-### 2.5 Standard Library Comparison Implementations
+### 2.5 Standard Library Promotion Status
 
-The standard library keeps stable public modules under their ordinary names,
-such as `System.Collections`, while new-feature rewrites live under
-`System.Experimental.*` modules. The comparison modules are source-visible and
-imported explicitly by benchmarks or tests, but they are not re-exported from
-the root `System` module.
+The release standard library exposes only canonical `System.*` modules. The
+temporary `System.Experimental.*` comparison modules used during promotion have
+been removed from `stdlib/src`, and package images are expected to contain only
+canonical modules and root re-exports.
 
-This keeps current APIs stable while letting benchmarks select old and new
-implementations side by side:
-
-```stark
-import System.Collections
-import System.Experimental.Collections
-```
-
-Comparison modules use the same operation names where the source contract is
-the same, but their fully qualified type names are distinct. For example,
-`System.Collections.List<T>` remains the current raw-pointer-backed public
-collection, while `System.Experimental.Collections.List<T>` is the
-dynamic-storage comparison collection.
-
-Dynamic-storage comparison types inherit the language-level dynamic storage
-contract. `dynamic T.TryReserve(additional)` returns an explicit success bit,
+Promoted collection, text, runtime-buffer, IO, filesystem, console, and network
+modules keep the dynamic-storage contracts validated during the comparison
+period. `dynamic T.TryReserve(additional)` returns an explicit success bit,
 preserves the initialized prefix on success, and leaves the owner unchanged on
-failure. Comparison modules use it to map capacity overflow, byte-size overflow,
-and allocation failure into `System.Memory.MemoryStatus` without exposing raw
-pointers or relying on trapping allocator paths.
+failure. Standard-library code maps capacity overflow, byte-size overflow, and
+allocation failure into status/result values without exposing raw allocation
+storage in ordinary public APIs.
 
 ### 2.6 Independent Loops
 

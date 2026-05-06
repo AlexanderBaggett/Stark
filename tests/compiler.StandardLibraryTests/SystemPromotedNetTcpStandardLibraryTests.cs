@@ -2,14 +2,14 @@ using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
-public sealed class SystemExperimentalNetTcpStandardLibraryTests : StandardLibraryTestSuite
+public sealed class SystemPromotedNetTcpStandardLibraryTests : StandardLibraryTestSuite
 {
     [Fact]
-    public void StdLibSourceExperimentalNetTcpSurfaceCompiles()
+    public void StdLibSourcePromotedNetTcpSurfaceCompiles()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibExperimentalNetTcpSurface.stark");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibPromotedNetTcpSurface.stark");
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(
                 """
@@ -138,7 +138,7 @@ public sealed class SystemExperimentalNetTcpStandardLibraryTests : StandardLibra
     }
 
     [Fact]
-    public void StdLibSourceExperimentalNetTcpBufferReadsUseBulkPaths()
+    public void StdLibSourcePromotedNetTcpBufferReadsUseBulkPaths()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");

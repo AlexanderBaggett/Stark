@@ -112,7 +112,7 @@ public sealed class CompilerPipelineFullIntegrationTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 return (1 + 2) * 3;
             }
             """));
@@ -278,7 +278,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Lib
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[-2147483648 2147483647] Run() {
                     return Lib.Adjust(4);
                 }
                 """,
@@ -366,7 +366,7 @@ public sealed class CompilerPipelineFullIntegrationTests
 
             public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right);
             public strictfp finite law f32 Precise(f32 left, f32 right);
-            export ffi cold fn void Accept(rawptr<i8[-128 127]> value);
+            export cold unsafe ffi fn void Accept(rawptr<i8[-128 127]> value);
             internal hot fn i32[-2147483648 2147483647] Warm(i32[-2147483648 2147483647] value);
             """));
 
@@ -429,7 +429,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import System.Syscall
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[-2147483648 2147483647] Run() {
                     return 0;
                 }
                 """,
@@ -443,7 +443,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module System.Syscall
 
-                        public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall3(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3)
+                        public unsafe ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall3(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3)
                             in("rax") number,
                             in("rdi") arg1,
                             in("rsi") arg2,
@@ -454,7 +454,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                             "syscall"
                         }
 
-                        public ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] Syscall3(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3)
+                        public unsafe ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] Syscall3(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3)
                             in("x8") number,
                             in("x0") arg1,
                             in("x1") arg2,
@@ -523,7 +523,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     "syscall"
                 }
 
-                public ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] NoMatch(i64[-9223372036854775808 9223372036854775807] number)
+                public unsafe ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] NoMatch(i64[-9223372036854775808 9223372036854775807] number)
                     out("x0") return
                 {
                     "svc #0"
@@ -547,13 +547,13 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Demo
 
-                public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall0()
+                public unsafe ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall0()
                     out("rax") return
                 {
                     "syscall"
                 }
 
-                public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall0()
+                public unsafe ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall0()
                     out("rax") return
                 {
                     "syscall"
@@ -576,7 +576,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Demo
 
-                public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Broken(i64[-9223372036854775808 9223372036854775807] number, out i64[-9223372036854775808 9223372036854775807] result)
+                public unsafe ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Broken(i64[-9223372036854775808 9223372036854775807] number, out i64[-9223372036854775808 9223372036854775807] result)
                     in("x0") number,
                     in("rsi") result,
                     out("rax") result,
@@ -604,7 +604,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Demo
 
-                public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall2(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> path)
+                public unsafe ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall2(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> path)
                     in("rax") number,
                     in("rdi") path,
                     out("rax") return,
@@ -663,7 +663,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Syscall
                 module Demo
 
-                fn i64[-9223372036854775808 9223372036854775807] Run(rawptr<i8[-128 127]> path) {
+                unsafe fn i64[-9223372036854775808 9223372036854775807] Run(rawptr<i8[-128 127]> path) {
                     return Syscall.Syscall2(2, path);
                 }
                 """,
@@ -677,7 +677,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Syscall
 
-                        public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall2(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> path)
+                        public unsafe ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall2(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> path)
                             in("rax") number,
                             in("rdi") path,
                             out("rax") return,
@@ -904,7 +904,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     Resource Backup;
                 }
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
                     {
                         stack Holder holder = new Holder() {
                             Token = Token.Text(new Resource() { Value = 3 }),
@@ -960,7 +960,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return 7;
                 }
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
                     stack Outer outer = new Outer() {
                         Score = MakeScore(),
                         Node = { Pair = { MakeLeft(), MakeRight() } }
@@ -1026,7 +1026,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     Pair(i32[-2147483648 2147483647], i32[-2147483648 2147483647]),
                 }
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
                     stack Many lessLeft = new Many(1, 2, 3, 4, 5);
                     stack Many lessRight = new Many(1, 2, 3, 4, 6);
 
@@ -1092,7 +1092,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return new Box() { Value = value };
                 }
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
                     stack mut Box box = new Box() { Value = 1 };
                     box.Value + 2;
                     MakeBox(Next());
@@ -1133,7 +1133,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     Cell[2] Cells;
                 }
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
                     stack mut Holder holder = new Holder() {
                         Cells = { new Cell() { Value = 1 }, new Cell() { Value = 2 } }
                     };
@@ -1175,7 +1175,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 i32[-2147483648 2147483647] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 heap Box box = new Box() { Value = 7 };
                 return box.Value;
             }
@@ -1277,7 +1277,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Math
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[-2147483648 2147483647] Run() {
                     return Math.UseLaw();
                 }
                 """,
@@ -1381,11 +1381,14 @@ public sealed class CompilerPipelineFullIntegrationTests
                 }
 
                 fn i32[-2147483648 2147483647] FnRun() {
-                    Touch();
+                    unsafe {
+                        Touch();
+                    }
+
                     return Math.UseLaw();
                 }
 
-                ffi fn void Touch();
+                unsafe ffi fn void Touch();
                 """,
                 "/virtual/Demo.stark"),
             new CompilerOptions(
@@ -1507,7 +1510,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Math
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[-2147483648 2147483647] Run() {
                     return Math.Add(3, 4);
                 }
                 """,
@@ -1550,7 +1553,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Math
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[-2147483648 2147483647] Run() {
                     return Math.Add(3, 4);
                 }
                 """,
@@ -1611,7 +1614,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Path
 
-                        ffi fn i32[-2147483648 2147483647] fputs(ascii text, rawptr<i8[-128 127]> stream);
+                        unsafe ffi fn i32[-2147483648 2147483647] fputs(ascii text, rawptr<i8[-128 127]> stream);
                         const rawptr<i8[-128 127]> stdout = null;
 
                         public fn ascii DirectorySeparator() {
@@ -1661,7 +1664,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 }
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 return Numbers.Add(1, 2);
             }
             """));
@@ -1698,7 +1701,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 law i32[-2147483648 2147483647] Compare(i32[-2147483648 2147483647] other);
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 return 0;
             }
             """));
@@ -1734,7 +1737,7 @@ public sealed class CompilerPipelineFullIntegrationTests
 
             alias Byte = i8[-128 127];
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 return 0;
             }
             """));
@@ -1759,7 +1762,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Math
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[-2147483648 2147483647] Run() {
                     return Math.Numbers.Add(3, 4);
                 }
                 """,
@@ -1805,7 +1808,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Math
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[-2147483648 2147483647] Run() {
                     return 0;
                 }
                 """,
@@ -1863,11 +1866,14 @@ public sealed class CompilerPipelineFullIntegrationTests
                 }
 
                 fn i32[-2147483648 2147483647] UseFn() {
-                    Touch();
+                    unsafe {
+                        Touch();
+                    }
+
                     return Math.Numbers.Add(3, 4);
                 }
 
-                ffi fn void Touch();
+                unsafe ffi fn void Touch();
                 """,
                 "/virtual/Demo.stark"),
             new CompilerOptions(
@@ -1949,11 +1955,14 @@ public sealed class CompilerPipelineFullIntegrationTests
                 }
 
                 fn i32[-2147483648 2147483647] UseDirect(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
-                    Touch();
+                    unsafe {
+                        Touch();
+                    }
+
                     return Math.Add(left, right);
                 }
 
-                ffi fn void Touch();
+                unsafe ffi fn void Touch();
                 """,
                 "/virtual/Demo.stark"),
             new CompilerOptions(
@@ -2044,7 +2053,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Facade
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[-2147483648 2147483647] Run() {
                     return Math.Add(3, 4);
                 }
                 """,
@@ -2097,7 +2106,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Facade
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[-2147483648 2147483647] Run() {
                     return Math.Add(3, 4);
                 }
                 """,
@@ -2159,7 +2168,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     """
                     module Syscall
 
-                    public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall0(i64[-9223372036854775808 9223372036854775807] number)
+                    public unsafe ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall0(i64[-9223372036854775808 9223372036854775807] number)
                         in("rax") number,
                         out("rax") return,
                         clobber("rcx", "r11")
@@ -2183,7 +2192,9 @@ public sealed class CompilerPipelineFullIntegrationTests
                     module Demo
 
                     fn i64[-9223372036854775808 9223372036854775807] Run() {
-                        return Syscall.Syscall0(39);
+                        unsafe {
+                            return Syscall.Syscall0(39);
+                        }
                     }
                     """,
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
@@ -2247,7 +2258,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     """
                     module Syscall
 
-                    public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall0(i64[-9223372036854775808 9223372036854775807] number)
+                    public unsafe ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall0(i64[-9223372036854775808 9223372036854775807] number)
                         in("rax") number,
                         out("rax") return,
                         clobber("rcx", "r11")
@@ -2410,7 +2421,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[-2147483648 2147483647] Run() {
                         return Facade.Numbers.Double(3);
                     }
                     """,
@@ -2494,7 +2505,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[-2147483648 2147483647] Run() {
                         return Facade.Numbers.Double(3);
                     }
                     """,
@@ -2556,7 +2567,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[-2147483648 2147483647] Run() {
                         return 0;
                     }
                     """,
@@ -2638,7 +2649,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[-2147483648 2147483647] Run() {
                         return 0;
                     }
                     """,
@@ -2706,7 +2717,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[-2147483648 2147483647] Run() {
                         return Facade.Numbers.Add(1, 2);
                     }
                     """,
@@ -2920,7 +2931,7 @@ public sealed class CompilerPipelineFullIntegrationTests
             public const Answer = 42;
             internal static rawptr<i8[-128 127]> Buffer = null;
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 stack Widget widget = new Widget() { Value = 1 };
                 stack i32[-2147483648 2147483647] value = widget.Value + 2;
                 return value;
@@ -2933,7 +2944,7 @@ public sealed class CompilerPipelineFullIntegrationTests
 
         Assert.True(typeCheckModel.NamedTypes.ContainsKey("Widget"));
         Assert.True(typeCheckModel.Globals.ContainsKey("Answer"));
-        Assert.Equal("i8[42 42]", typeCheckModel.Globals["Answer"].Type.DisplayName);
+        Assert.Equal("u8[42 42]", typeCheckModel.Globals["Answer"].Type.DisplayName);
         Assert.Equal("i32", typeCheckModel.Functions["Run"].ReturnType.DisplayName);
         Assert.Contains(typeCheckModel.Literals, literal => literal.LiteralText == "null" && literal.Type.Kind == StarkTypeKind.Null);
     }
@@ -3023,7 +3034,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 return token;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 stack Token first = Token.Integer(5);
                 stack Token second = Token.Move { X: 1, Y: 2 };
                 stack Token third = Make(0);
@@ -3163,7 +3174,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 }
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[-2147483648 2147483647] Run() {
                 stack Buffer buffer = new Buffer() { Value = 3 };
                 return buffer.Scale(4) + buffer.Scale(true);
             }
@@ -3241,7 +3252,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[-2147483648 2147483647] Run() {
                         return Facade.Parse(4) + Facade.Parse(true);
                     }
                     """,
@@ -4803,7 +4814,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public strictfp hot noinline finite law f32 Precise(f32 value);
-                export cold ffi fn void Sink(rawptr<i8[-128 127]> value);
+                export cold unsafe ffi fn void Sink(rawptr<i8[-128 127]> value);
                 """,
                 Path.Combine(tempDirectory.FullName, "Facade.stark")));
 
@@ -5995,7 +6006,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public fn i32[-2147483648 2147483647] Observe<T>(rawmutptr<i32[-2147483648 2147483647]> ptr, i32[-2147483648 2147483647] value, T tag) {
+                public unsafe fn i32[-2147483648 2147483647] Observe<T>(rawmutptr<i32[-2147483648 2147483647]> ptr, i32[-2147483648 2147483647] value, T tag) {
                     stack mut i32[-2147483648 2147483647] copy = *ptr;
                     return *ptr += copy + value;
                 }
@@ -6055,11 +6066,11 @@ public sealed class CompilerPipelineFullIntegrationTests
 
                 public record Buffer(i32[-2147483648 2147483647] First, i32[-2147483648 2147483647][4] Values) { }
 
-                public fn rawmutptr<Buffer> Pick<T>(rawmutptr<Buffer> ptr, T tag) {
+                public unsafe fn rawmutptr<Buffer> Pick<T>(rawmutptr<Buffer> ptr, T tag) {
                     return ptr;
                 }
 
-                public fn i32[-2147483648 2147483647] Observe<T>(rawmutptr<Buffer> ptr, i32[-2147483648 2147483647] slot, i32[-2147483648 2147483647] value, T tag) {
+                public unsafe fn i32[-2147483648 2147483647] Observe<T>(rawmutptr<Buffer> ptr, i32[-2147483648 2147483647] slot, i32[-2147483648 2147483647] value, T tag) {
                     (*ptr).First += value;
                     return (*Pick(ptr, tag)).Values[slot] = (*ptr).First + value;
                 }
@@ -6136,7 +6147,7 @@ public sealed class CompilerPipelineFullIntegrationTests
 
                 public record Buffer(i32[-2147483648 2147483647] First, i32[-2147483648 2147483647][4] Values) { }
 
-                public fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, T tag) {
+                public unsafe fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, T tag) {
                     stack mut i32[-2147483648 2147483647][4] data = { 1, 2, 3, 4 };
                     stack mut Buffer buffer = { First = value, Values = data };
                     stack rawmutptr<i32[-2147483648 2147483647]> firstPtr = &buffer.First;
@@ -8566,7 +8577,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[-2147483648 2147483647] Run() {
                         stack i32[-2147483648 2147483647][1] values = { 4 };
                         stack Facade.ExportedPair exported = new Facade.Pair() { Left = 3, Right = 0 };
                         stack Facade.PublicPair pair = exported;
@@ -8685,7 +8696,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[-2147483648 2147483647] Run() {
                         stack Facade.PublicPair pair = new Facade.Pair() { Left = 3, Right = 4 };
                         return pair.Left;
                     }
@@ -8778,7 +8789,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[-2147483648 2147483647] Run() {
                         stack Facade.PublicPair pair = new Facade.Pair() { Left = 3, Right = 4 };
                         return Facade.Numbers.Double(pair.Left);
                     }
@@ -8858,7 +8869,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[-2147483648 2147483647] Run() {
                         stack Facade.Hidden value = 3;
                         return Facade.Id(value);
                     }
@@ -8958,7 +8969,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[-2147483648 2147483647] Run() {
                         stack mut Facade.Counter value = new Facade.Counter() { Value = 1 };
                         return 0;
                     }

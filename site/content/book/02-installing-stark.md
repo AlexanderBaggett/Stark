@@ -62,8 +62,9 @@ dotnet run --project ../src -- build
 dotnet run --project ../src -- run
 ```
 
-The implemented project workflow supports `build` and `run`. `stark test` is
-reserved for future test projects and the planned `System.Testing` module.
+The implemented project workflow supports `build`, `run`, and `test`. Test
+projects use `kind = "test"` manifests and explicit `System.Testing` fact
+runners.
 
 A solution manifest collects several projects and names defaults:
 

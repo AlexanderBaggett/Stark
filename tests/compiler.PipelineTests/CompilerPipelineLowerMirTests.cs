@@ -98,7 +98,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[-2147483648 2147483647] Run() {
                         stack i32[-2147483648 2147483647] value = 7;
                         return Facade.Identity(value);
                     }
@@ -1767,7 +1767,7 @@ public sealed class CompilerPipelineLowerMirTests
                 """
                 module Facade
 
-                public fn i32[-2147483648 2147483647] Observe<T>(rawmutptr<i32[-2147483648 2147483647]> ptr, i32[-2147483648 2147483647] value, T tag) {
+                public unsafe fn i32[-2147483648 2147483647] Observe<T>(rawmutptr<i32[-2147483648 2147483647]> ptr, i32[-2147483648 2147483647] value, T tag) {
                     stack mut i32[-2147483648 2147483647] copy = *ptr;
                     return *ptr += copy + value;
                 }
@@ -1813,7 +1813,7 @@ public sealed class CompilerPipelineLowerMirTests
                     new ResolvedPackageModule(manifestPath, libraryPath, typedOnlyManifest, typedFacadeModule),
                     out var sourceText));
 
-            Assert.Contains(StrictIntegerSource("public fn i32 Observe<T>(rawmutptr<i32> ptr, i32 value, T tag);"), sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public unsafe fn i32 Observe<T>(rawmutptr<i32> ptr, i32 value, T tag);"), sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("return *ptr += copy + value;", sourceText, StringComparison.Ordinal);
 
             File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
@@ -1825,7 +1825,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                    unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                         stack mut i32[-2147483648 2147483647] current = 5;
                         stack i32[-2147483648 2147483647] tag = 0;
                         return Facade.Observe(&current, value, tag);
@@ -1881,11 +1881,11 @@ public sealed class CompilerPipelineLowerMirTests
 
                 public record Buffer(i32[-2147483648 2147483647] First, i32[-2147483648 2147483647][4] Values) { }
 
-                public fn rawmutptr<Buffer> Pick<T>(rawmutptr<Buffer> ptr, T tag) {
+                public unsafe fn rawmutptr<Buffer> Pick<T>(rawmutptr<Buffer> ptr, T tag) {
                     return ptr;
                 }
 
-                public fn i32[-2147483648 2147483647] Observe<T>(rawmutptr<Buffer> ptr, i32[-2147483648 2147483647] slot, i32[-2147483648 2147483647] value, T tag) {
+                public unsafe fn i32[-2147483648 2147483647] Observe<T>(rawmutptr<Buffer> ptr, i32[-2147483648 2147483647] slot, i32[-2147483648 2147483647] value, T tag) {
                     (*ptr).First += value;
                     return (*Pick(ptr, tag)).Values[slot] = (*ptr).First + value;
                 }
@@ -1931,7 +1931,7 @@ public sealed class CompilerPipelineLowerMirTests
                     new ResolvedPackageModule(manifestPath, libraryPath, typedOnlyManifest, typedFacadeModule),
                     out var sourceText));
 
-            Assert.Contains(StrictIntegerSource("public fn i32 Observe<T>(rawmutptr<Buffer> ptr, i32 slot, i32 value, T tag);"), sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public unsafe fn i32 Observe<T>(rawmutptr<Buffer> ptr, i32 slot, i32 value, T tag);"), sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("(*ptr).First += value;", sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("(*Pick(ptr, tag)).Values[slot] = (*ptr).First + value;", sourceText, StringComparison.Ordinal);
 
@@ -1944,7 +1944,7 @@ public sealed class CompilerPipelineLowerMirTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                    unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                         stack mut i32[-2147483648 2147483647][4] values = { 10, 20, 30, 40 };
                         stack mut Facade.Buffer buffer = { First = 5, Values = values };
                         stack i32[-2147483648 2147483647] tag = 0;
@@ -1999,7 +1999,7 @@ public sealed class CompilerPipelineLowerMirTests
 
                 public record Buffer(i32[-2147483648 2147483647] First, i32[-2147483648 2147483647][4] Values) { }
 
-                public fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, T tag) {
+                public unsafe fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, T tag) {
                     stack mut i32[-2147483648 2147483647][4] data = { 1, 2, 3, 4 };
                     stack mut Buffer buffer = { First = value, Values = data };
                     stack rawmutptr<i32[-2147483648 2147483647]> firstPtr = &buffer.First;
@@ -2049,7 +2049,7 @@ public sealed class CompilerPipelineLowerMirTests
                     new ResolvedPackageModule(manifestPath, libraryPath, typedOnlyManifest, typedFacadeModule),
                     out var sourceText));
 
-            Assert.Contains(StrictIntegerSource("public fn i32 Observe<T>(i32 value, T tag);"), sourceText, StringComparison.Ordinal);
+            Assert.Contains(StrictIntegerSource("public unsafe fn i32 Observe<T>(i32 value, T tag);"), sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("stack rawmutptr<i32> firstPtr = &buffer.First;", sourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("stack rawmutptr<i32> slotPtr = &buffer.Values[2];", sourceText, StringComparison.Ordinal);
 
@@ -2064,7 +2064,9 @@ public sealed class CompilerPipelineLowerMirTests
 
                     fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
                         stack i32[-2147483648 2147483647] tag = 0;
-                        return Facade.Observe(value, tag);
+                        unsafe {
+                            return Facade.Observe(value, tag);
+                        }
                     }
                     """,
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),

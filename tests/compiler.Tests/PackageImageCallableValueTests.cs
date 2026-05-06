@@ -18,9 +18,9 @@ public sealed class PackageImageCallableValueTests
                 module Facade
 
                 public fn void Register(fnptr<fn void()> callback);
-                public fn void RegisterFinite(fnptr<finite i32[0 max]()> callback);
+                public fn void RegisterFinite(fnptr<finite u32[0 2 ** 31 - 1]()> callback);
                 public fn void RegisterLaw(fnptr<law bool()> callback);
-                public fn void RegisterFiniteLaw(fnptr<finite law i32[0 max]()> callback);
+                public fn void RegisterFiniteLaw(fnptr<finite law u32[0 2 ** 31 - 1]()> callback);
                 public unsafe fn void Dangerous();
                 """,
                 sourcePath));
@@ -161,10 +161,10 @@ public sealed class PackageImageCallableValueTests
                 """
                 module Facade
 
-                public alias StrictFactory = fnptr<finite law i32[0 max]()>;
+                public alias StrictFactory = fnptr<finite law u32[0 2 ** 31 - 1]()>;
 
                 public struct Box {
-                    internal i32[0 max] Value;
+                    internal u32[0 2 ** 31 - 1] Value;
 
                     Box(StrictFactory factory) {
                         self.Value = factory();
@@ -190,11 +190,11 @@ public sealed class PackageImageCallableValueTests
                     import Facade
                     module Demo
 
-                    finite law i32[0 max] Make() {
+                    finite law u32[0 2 ** 31 - 1] Make() {
                         return 11;
                     }
 
-                    fn i32[0 max] Run() {
+                    fn u32[0 2 ** 31 - 1] Run() {
                         stack Facade.Box box = new(Make);
                         return 0;
                     }

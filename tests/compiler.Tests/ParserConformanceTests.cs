@@ -24,13 +24,13 @@ public sealed class ParserConformanceTests
             module Demo
 
             unsafe fn void Danger();
-            fn void RegisterZero(fnptr<fn i32[0 max]()> callback);
-            fn void RegisterOne(fnptr<fn i32[0 max](i32[0 max])> callback);
+            fn void RegisterZero(fnptr<fn u32[0 2 ** 31 - 1]()> callback);
+            fn void RegisterOne(fnptr<fn u32[0 2 ** 31 - 1](u32[0 2 ** 31 - 1])> callback);
 
-            fn void Run(i32[0 max] scale, i32[0 max] token, i32[0 max] sharedState) {
-                stack fnptr<fn i32[0 max](i32[0 max])> callback = Transform;
+            fn void Run(u32[0 2 ** 31 - 1] scale, u32[0 2 ** 31 - 1] token, u32[0 2 ** 31 - 1] sharedState) {
+                stack fnptr<fn u32[0 2 ** 31 - 1](u32[0 2 ** 31 - 1])> callback = Transform;
                 RegisterZero(() => 0);
-                RegisterOne(capture(copy scale, read token, move sharedState) (i32[0 max] index) => {
+                RegisterOne(capture(copy scale, read token, move sharedState) (u32[0 2 ** 31 - 1] index) => {
                     return index;
                 });
 
@@ -40,7 +40,7 @@ public sealed class ParserConformanceTests
                 }
             }
 
-            fn i32[0 max] Transform(i32[0 max] value) {
+            fn u32[0 2 ** 31 - 1] Transform(u32[0 2 ** 31 - 1] value) {
                 return value;
             }
             """
@@ -144,7 +144,7 @@ public sealed class ParserConformanceTests
                 borrow rawptr<i8[-128 127]>[] buffers,
                 shared Matrix<Vector<i32[-2147483648 2147483647][4]>> table,
                 out i32[-2147483648 2147483647][4][2] lanes,
-                frozen i32[0 255][] levels)
+                frozen u8[0 255][] levels)
             {
                 return;
             }
@@ -189,7 +189,7 @@ public sealed class ParserConformanceTests
                     break;
                 }
 
-                for willexit independent (stack mut i32[0 max] index = 0; index < 4; index += 1) {
+                for willexit independent (stack mut u32[0 2 ** 31 - 1] index = 0; index < 4; index += 1) {
                     continue;
                 }
             }
@@ -320,7 +320,7 @@ public sealed class ParserConformanceTests
 
             fn void Accept(
                 i32[min max] signedValue,
-                i64[0 max] nonNegative,
+                u64[0 2 ** 63 - 1] nonNegative,
                 u8[min 127] bytePrefix)
             {
                 return;
@@ -333,9 +333,9 @@ public sealed class ParserConformanceTests
             module Ranges
 
             fn void Accept(
-                i32[10**2 10**10] decimalPowers,
-                i32[2 ** 4 2 ** 16] binaryPowers,
-                i64[1024 * 1024 1024 * 1024 * 1024] sizes,
+                u64[10 ** 2 10 ** 10] decimalPowers,
+                u24[2 ** 4 2 ** 16] binaryPowers,
+                u32[1024 * 1024 1024 * 1024 * 1024] sizes,
                 i32[(1 + 2) * 3 20 / 2 + 1] parenthesized)
             {
                 return;

@@ -9,15 +9,16 @@ Normal builds should not need long command lines.
 * `stark build` and `stark run` should just work
 * native dependencies belong to the package, not to every project that uses it
 * machine specific paths belong in user config, not in checked in files
-* `stark test` is planned but not implemented yet
+* `stark test` should build and run test projects without a separate harness command
 
-Stark ships with a project driver for builds and runs. The lower level compiler CLI is still available for advanced workflows.
+Stark ships with a project driver for builds, runs, and test projects. The lower level compiler CLI is still available for advanced workflows.
 
 ## Cases That Should Be Simple
 
 * build a single Stark project from its directory
 * build a whole solution from its root
 * run an executable project
+* run a test project or a solution-level test set
 * use a native backed package such as Raylib without repeating linker flags
 * keep local machine setup separate from shared project files
 
@@ -29,6 +30,7 @@ Project manifest. Lives in a project directory. Describes:
 
 * project name
 * library or executable
+* test project
 * root Stark file
 * dependencies
 * native package metadata
@@ -39,7 +41,7 @@ Project manifest. Lives in a project directory. Describes:
 Solution manifest. Lives at the root of a multi project repo. Describes:
 
 * member projects
-* default build and run targets
+* default build, run, and test targets
 * aliases
 * shared profile defaults
 
@@ -91,16 +93,14 @@ stark run --release
 
 ### `stark test`
 
-Planned. Not implemented yet. Depends on the v2.0 test project model and a Stark native testing module, likely `System.Testing`.
-
-When implemented:
-
-* in a project directory: runs that project's tests
-* in a solution directory: runs the declared test set, or every test project if none is declared
+* in a test project directory: builds and runs that project's test executable
+* in a solution directory: runs the declared test set, or every member with `kind = "test"` if none is declared
+* a target name can be a solution alias, member path, or project name
+* assertions are ordinary Stark functions from `System.Testing`; discovery is explicit and static today
 
 ```bash
 stark test
-stark test compiler.IntegrationTests
+stark test standard-library-tests
 ```
 
 ## `Stark.toml`
@@ -139,6 +139,45 @@ root = "Raylib.stark"
 output = "RaylibStark"
 ```
 
+Test form:
+
+```toml
+[project]
+name = "standard-library-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "StandardLibraryTests.stark"
+output = "standard-library-tests"
+
+[dependencies]
+stdlib = { path = "../../stdlib" }
+```
+
+The test root is compiled as an executable. It returns `0` for success and a
+non-zero exit code for failure. `System.Testing` provides the first assertion
+helpers and a small explicit fact runner:
+
+```stark
+import System.Testing
+module DemoTests
+
+[Fact]
+fn bool AddsNumbers() {
+    return System.Testing.Equal(4, 2 + 2);
+}
+
+export unsafe ffi fn i32[min max] main() {
+    stack mut u8[0 1] failed = 0;
+    if (System.Testing.RunFact("AddsNumbers", AddsNumbers()) != 0) {
+        failed = 1;
+    }
+
+    return System.Testing.ExitCode(failed);
+}
+```
+
 ## `Stark.solution.toml`
 
 ```toml
@@ -153,6 +192,7 @@ members = [
 [defaults]
 build = ["examples/breakout"]
 run = "examples/breakout"
+test = ["examples/standard-library-tests"]
 
 [aliases]
 breakout = "examples/breakout"
@@ -166,11 +206,12 @@ opt = 0
 opt = 3
 ```
 
-The solution file stays small. It answers four questions:
+The solution file stays small. It answers five questions:
 
 * what projects belong to this solution
 * what builds by default
 * what runs by default
+* what tests by default
 * what short names work from the root
 
 ## Dependencies
@@ -303,16 +344,19 @@ stdlib = { path = "../../stdlib" }
 name = "Examples"
 members = [
   "examples/raylib",
-  "examples/breakout"
+  "examples/breakout",
+  "examples/standard-library-tests"
 ]
 
 [defaults]
 build = ["examples/breakout"]
 run = "examples/breakout"
+test = ["examples/standard-library-tests"]
 
 [aliases]
 breakout = "examples/breakout"
 raylib = "examples/raylib"
+standard-library-tests = "examples/standard-library-tests"
 ```
 
 From the solution root:
@@ -332,7 +376,7 @@ stark run breakout
 
 The lower level compiler CLI is still available. The split:
 
-* `stark`: projects, solutions, dependencies, builds, runs (and tests, eventually)
+* `stark`: projects, solutions, dependencies, builds, runs, and tests
 * `starkc`: direct low level compilation
 
 ## Summary
@@ -340,5 +384,4 @@ The lower level compiler CLI is still available. The split:
 * `Stark.toml` describes a project
 * `Stark.solution.toml` describes a solution
 * user config holds machine local native paths
-* `stark build` and `stark run` are the everyday commands
-* `stark test` is planned
+* `stark build`, `stark run`, and `stark test` are the everyday commands

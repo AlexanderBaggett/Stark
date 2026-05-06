@@ -167,7 +167,7 @@ public sealed class CompilerPipelineSpecializationPlanTests
 
 
     [Fact]
-    public void ColdImportedLawGenericsPreferOwnedBodyOverCallerCloneInSpecializationPlan()
+    public void ColdImportedLawGenericsPreferAbiFallbackOverCallerCloneInSpecializationPlan()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-cold-source-generic-specialization-plan-pipeline-");
 
@@ -209,11 +209,10 @@ public sealed class CompilerPipelineSpecializationPlanTests
             Assert.Equal(
                 new[]
                 {
-                    FunctionSpecializationStrategy.OwnedConcreteBody,
                     FunctionSpecializationStrategy.DirectAbiBoundaryFallback
                 },
                 function.SelectionOrder);
-            Assert.Equal(FunctionSpecializationCodeGenerationMode.SingleOwnerConcreteBody, function.CodeGenerationMode);
+            Assert.Equal(FunctionSpecializationCodeGenerationMode.AbiBoundaryOnly, function.CodeGenerationMode);
         }
         finally
         {

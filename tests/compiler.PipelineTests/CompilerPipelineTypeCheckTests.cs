@@ -102,7 +102,7 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[-2147483648 2147483647] Run() {
                         stack i32[-2147483648 2147483647] value = 4;
                         return Facade.Identity(value);
                     }
@@ -149,7 +149,7 @@ public sealed class CompilerPipelineTypeCheckTests
                 module Facade
 
                 public struct Allocator {
-                    i32[0 255] Tag;
+                    u8[0 max] Tag;
 
                     static finite law Allocator Default() {
                         return new() { Tag = 0 };
@@ -337,7 +337,7 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[-2147483648 2147483647] Run() {
                         return Facade.Answer;
                     }
                     """,
@@ -349,7 +349,7 @@ public sealed class CompilerPipelineTypeCheckTests
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
             Assert.NotNull(typeCheckModel);
-            Assert.Equal("i8[42 42]", typeCheckModel.Globals["Facade.Answer"].Type.DisplayName);
+            Assert.Equal("u8[42 42]", typeCheckModel.Globals["Facade.Answer"].Type.DisplayName);
             Assert.True(typeCheckModel.Globals["Facade.Answer"].IsConst);
             Assert.Equal("i32", typeCheckModel.Globals["Facade.Counter"].Type.DisplayName);
             Assert.True(typeCheckModel.Globals["Facade.Counter"].IsMutable);
@@ -422,7 +422,7 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[-2147483648 2147483647] Run() {
                         stack Facade.Box box = new Facade.Box() { Value = 3 };
                         return box.Value;
                     }

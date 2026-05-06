@@ -1,11 +1,11 @@
-﻿import System.Process
+import System.Process
 module Benchmarks.Micro.Arithmetic
 
 export unsafe ffi fn i32[min max] main() {
     stack i64[min max] seed = (i64[min max])System.Process.CurrentId();
     stack mut i64[min max] total = seed % 97;
 
-    for willexit (stack mut i32[0 200000] i = 0; i < 200000; i += 1) {
+    for willexit (stack mut u24[0 200000] i = 0; i < 200000; i += 1) {
         stack i64[min max] value = (i64[min max])i + total;
         total = (total + (value * 3) - (value / 3) + (value % 11)) % 1000000007;
     }

@@ -62,6 +62,15 @@ public sealed class SystemFileSystemStandardLibraryTests : StandardLibraryTestSu
                     }
                 }
 
+                fn System.IO.File.File OpenFileOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
+                    switch (result) {
+                        case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+                            return value;
+                        case System.IO.IOResult<System.IO.File.File>.Err(var error):
+                            return new();
+                    }
+                }
+
                 fn bool IsChildFileName(Ascii name) {
                     if (name.Length != 9) {
                         return false;
@@ -152,13 +161,17 @@ public sealed class SystemFileSystemStandardLibraryTests : StandardLibraryTestSu
                         return 4;
                     }
 
-                    stack rawptr<i8[min max]> handle = System.IO.File.OpenWrite("fs-root/child.txt");
-                    if (handle == null) {
+                    stack mut System.IO.File.File child =
+                        OpenFileOrEmpty(System.IO.File.Open("fs-root/child.txt", System.IO.File.FileMode.Write));
+                    if (!child.IsOpen()) {
                         return 5;
                     }
 
-                    System.IO.File.WriteLine(handle, "child");
-                    if (System.IO.File.Close(handle) != 0) {
+                    if (!IsOk(child.WriteLine("child"))) {
+                        return 6;
+                    }
+
+                    if (!IsOk(child.Close())) {
                         return 6;
                     }
 

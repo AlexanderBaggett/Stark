@@ -20,7 +20,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Lib
 
-                export inline finite i32[0 102] SelectOrAdd(i32[0 100] value, bool add) {
+                export inline finite u8[0 102] SelectOrAdd(u8[0 100] value, bool add) {
                     if (add) {
                         return value + 1;
                     }
@@ -35,7 +35,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Lib
                     module Demo
 
-                    fn i32[0 102] Run(i32[0 100] value, bool add) {
+                    fn u8[0 102] Run(u8[0 100] value, bool add) {
                         return Lib.SelectOrAdd(value, add);
                     }
                     """,
@@ -94,7 +94,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Lib
 
-                public noinline finite i32[0 102] SelectOrAdd(i32[0 100] value, bool add) {
+                public noinline finite u8[0 102] SelectOrAdd(u8[0 100] value, bool add) {
                     if (add) {
                         return value + 1;
                     }
@@ -109,7 +109,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Lib
                     module Demo
 
-                    fn i32[0 102] Run(i32[0 100] value, bool add) {
+                    fn u8[0 102] Run(u8[0 100] value, bool add) {
                         return Lib.SelectOrAdd(value, add);
                     }
                     """,
@@ -968,7 +968,7 @@ public sealed class CompilerPipelineEmitLlvmTests
 
                 public record Buffer(i32[-2147483648 2147483647][2] Values) { }
 
-                public fn rawptr<i32[-2147483648 2147483647]> Pin<T>(borrow Buffer buffer, i32[-2147483648 2147483647] index, T tag) {
+                public unsafe fn rawptr<i32[-2147483648 2147483647]> Pin<T>(borrow Buffer buffer, i32[-2147483648 2147483647] index, T tag) {
                     return &buffer.Values[index];
                 }
                 """,
@@ -1016,7 +1016,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn rawptr<i32[-2147483648 2147483647]> Run(borrow Facade.Buffer buffer, i32[-2147483648 2147483647] index) {
+                    unsafe fn rawptr<i32[-2147483648 2147483647]> Run(borrow Facade.Buffer buffer, i32[-2147483648 2147483647] index) {
                         return Facade.Pin(buffer, index, index);
                     }
                     """,
@@ -1895,7 +1895,7 @@ public sealed class CompilerPipelineEmitLlvmTests
 
                 const Box Current = new Box() { Value = 5 };
 
-                fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[-2147483648 2147483647] Run() {
                     stack mut i32[-2147483648 2147483647] local = 3;
                     stack rawptr<i32[-2147483648 2147483647]> localPtr = &local;
                     stack rawptr<frozen i32[-2147483648 2147483647]> constPtr = &(Current.Value);

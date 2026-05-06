@@ -121,7 +121,7 @@ public sealed class CompilerPipelineLowerAbiTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[-2147483648 2147483647] Run() {
                         return 0;
                     }
                     """,

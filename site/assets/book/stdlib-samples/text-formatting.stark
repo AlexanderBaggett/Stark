@@ -1,8 +1,9 @@
 import System
+import System.Text
 module Book.Stdlib.TextFormatting
 
 fn bool FixedInterpolationHasExpectedLength() {
-    stack i64[-9223372036854775808 9223372036854775807] score = 42;
+    stack i64[min max] score = 42;
 
     stack Ascii label[32] = $"Score: {score}";
     stack Unicode wideLabel[32] = $"Score: {score}";

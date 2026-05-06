@@ -12,23 +12,23 @@ unsafe finite law bool Ok(MemoryStatus status) {
 }
 
 export unsafe ffi fn i32[min max] main() {
-    stack mut System.Collections.Dictionary<i32[0 max], i32[0 max]> values = new();
+    stack mut System.Collections.Dictionary<u32[0 max], u32[0 max]> values = new();
     if (!Ok(values.Reserve(2048))) {
         return 1;
     }
 
-    for willexit (stack mut i32[0 2048] i = 0; i < 2048; i += 1) {
-        stack i32[0 max] key = i;
-        stack i32[0 max] value = (i32[0 max])(i * 3);
+    for willexit (stack mut u16[0 2048] i = 0; i < 2048; i += 1) {
+        stack u32[0 max] key = i;
+        stack u32[0 max] value = (u32[0 max])(i * 3);
         if (!Ok(values.Set(key, value))) {
             return 1;
         }
     }
 
     stack mut i64[min max] checksum = 0;
-    stack mut i32[0 max] found = 0;
-    for willexit (stack mut i32[0 100000] i = 0; i < 100000; i += 1) {
-        stack i32[0 max] key = (i32[0 max])(i % 2048);
+    stack mut u32[0 max] found = 0;
+    for willexit (stack mut u24[0 100000] i = 0; i < 100000; i += 1) {
+        stack u32[0 max] key = (u32[0 max])(i % 2048);
         if (!values.TryGet(key, found)) {
             return 2;
         }

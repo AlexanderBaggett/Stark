@@ -393,7 +393,7 @@ Goal: Stark can build real multi-file programs and expose a small but useful sta
 
 ### Runtime Surface
 
-- [ ] Define program entrypoint conventions beyond raw `export ffi fn main`
+- [ ] Define program entrypoint conventions beyond raw `export unsafe ffi fn main`
   - [ ] hosted entrypoint rules around `main`
   - [ ] freestanding entrypoint form, if supported
   - [ ] argument and environment exposure model
@@ -1154,7 +1154,7 @@ surface through native executable workflows.
 Remaining near-term gaps should come from the explicit unchecked roadmap items
 below, especially:
 
-- [ ] hosted and freestanding entrypoint conventions beyond raw `export ffi fn main`
+- [ ] hosted and freestanding entrypoint conventions beyond raw `export unsafe ffi fn main`
 - [ ] source-level `assert` / `panic` surface over the existing trap/no-unwind failure model
 - [ ] common C interop helper conventions and examples
 - [ ] captured-lambda environment lowering and full capture-mode preservation
@@ -1806,25 +1806,25 @@ turn that book outline into published website content.
 
 ### Project Testing and `System.Testing`
 
-- [ ] Define the Stark test-project model.
-  - [ ] Model keywords and syntax after Xunit, such as [Fact] [Theory]
-  - [ ] decide whether test projects are a separate `kind = "test"` manifest kind or executable projects with test metadata
-  - [ ] define how solution manifests identify default test sets
-  - [ ] keep test discovery explicit and static; avoid runtime reflection as a required language feature
-- [ ] Add a standard-library testing module inspired by xUnit.
-  - [ ] add a `System.Testing` module or equivalent package-facing testing root
-  - [ ] port the core assertion vocabulary needed by the current C# xUnit tests, such as truth checks, equality checks, and failure reporting
-  - [ ] model assertion failure using Stark's no-exception failure/result story rather than hidden unwinding
-  - [ ] keep allocation and formatting costs explicit so test-only helpers do not leak into normal runtime expectations
-- [ ] Implement `stark test` on top of test projects.
-  - [ ] build test projects through the existing project/solution manifest driver
-  - [ ] run produced test executables and map their results into concise CLI output
-  - [ ] support solution-level test aliases and default test sets
-  - [ ] preserve `--dev`, `--release`, path dependencies, and package-backed dependencies for tests
-- [ ] Add examples and docs for Stark-native tests.
-  - [ ] add at least one standard-library test project using `System.Testing`
-  - [ ] document how to port existing xUnit-style test cases into Stark test projects
-  - [ ] add regression coverage for project-local and solution-level `stark test`
+- [x] Define the Stark test-project model.
+  - [x] Model keywords and syntax after Xunit, such as `[Fact]`.
+  - [x] decide whether test projects are a separate `kind = "test"` manifest kind or executable projects with test metadata
+  - [x] define how solution manifests identify default test sets
+  - [x] keep test discovery explicit and static; avoid runtime reflection as a required language feature
+- [x] Add a standard-library testing module inspired by xUnit.
+  - [x] add a `System.Testing` module or equivalent package-facing testing root
+  - [x] port the core assertion vocabulary needed by the current C# xUnit tests, such as truth checks, equality checks, and failure reporting
+  - [x] model assertion failure using Stark's no-exception failure/result story rather than hidden unwinding
+  - [x] keep allocation and formatting costs explicit so test-only helpers do not leak into normal runtime expectations
+- [x] Implement `stark test` on top of test projects.
+  - [x] build test projects through the existing project/solution manifest driver
+  - [x] run produced test executables and map their results into concise CLI output
+  - [x] support solution-level test aliases and default test sets
+  - [x] preserve `--dev`, `--release`, path dependencies, and package-backed dependencies for tests
+- [x] Add examples and docs for Stark-native tests.
+  - [x] add at least one standard-library test project using `System.Testing`
+  - [x] document how to port existing xUnit-style test cases into Stark test projects
+  - [x] add regression coverage for project-local and solution-level `stark test`
 
 ### Constrained Generics
 
@@ -2086,7 +2086,7 @@ turn that book outline into published website content.
         - [x] add compile/lowering coverage for closed-handle reads/writes, fixed/dynamic buffer overloads, readiness errors, listener accept errors, close idempotence, direct platform socket calls, and no lowering through stable `System.Net.Tcp`
     - [x] keep `System.Runtime`, `System.Runtime.Platform.*`, syscall, OS handles, thread handles, and native FFI declarations as explicit raw-boundary modules rather than rewriting them as safe dynamic storage
       - [x] document which raw pointers are legitimate FFI/runtime boundary details and which raw-pointer uses should disappear from higher-level experimental modules
-        - [x] add `docs/Internals/ExperimentalRawBoundaries.md` describing runtime/platform/allocator handles, internal ABI handoff regions, and the intentionally low-level text caller-buffer compatibility surface
+        - [x] add the temporary experimental raw-boundaries note describing runtime/platform/allocator handles, internal ABI handoff regions, and the intentionally low-level text caller-buffer compatibility surface; the note was removed after the experimental modules were promoted into canonical `System.*`
       - [x] add checks or review tasks preventing experimental public APIs from exposing raw pointer storage when a slice, dynamic owner, text view, or buffer type carries the same contract
         - [x] add `SystemExperimentalRawBoundaryAuditTests` to reject public raw pointer APIs in higher-level experimental modules outside the documented low-level text boundary
 

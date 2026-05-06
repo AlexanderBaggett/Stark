@@ -567,7 +567,7 @@ public struct File {
         }
     }
 
-    unsafe fn i64[min max] ReadBytes(mut borrow File self, rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count) {
+    internal unsafe fn i64[min max] ReadBytes(mut borrow File self, rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count) {
         if (self.Closed || self.Handle == null) {
             return 0;
         }
@@ -579,7 +579,7 @@ public struct File {
         return System.Runtime.Platform.ReadFile(buffer, size, count, self.Handle);
     }
 
-    unsafe fn i64[min max] WriteBytes(mut borrow File self, rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count) {
+    internal unsafe fn i64[min max] WriteBytes(mut borrow File self, rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count) {
         if (self.Closed || self.Handle == null) {
             return 0;
         }
@@ -591,7 +591,7 @@ public struct File {
         return System.Runtime.Platform.WriteFile(buffer, size, count, self.Handle);
     }
 
-    unsafe fn i64[min max] ReadByteRegion(mut borrow File self, rawmutptr<i8[min max]>[count] buffer, u64[0 2 ** 63 - 1] count) {
+    internal unsafe fn i64[min max] ReadByteRegion(mut borrow File self, rawmutptr<i8[min max]>[count] buffer, u64[0 2 ** 63 - 1] count) {
         if (self.Closed || self.Handle == null) {
             return 0;
         }
@@ -603,7 +603,7 @@ public struct File {
         return System.Runtime.Platform.ReadFileBytes(buffer, count, self.Handle);
     }
 
-    unsafe fn i64[min max] WriteByteRegion(mut borrow File self, rawptr<i8[min max]>[count] buffer, u64[0 2 ** 63 - 1] count) {
+    internal unsafe fn i64[min max] WriteByteRegion(mut borrow File self, rawptr<i8[min max]>[count] buffer, u64[0 2 ** 63 - 1] count) {
         if (self.Closed || self.Handle == null) {
             return 0;
         }
@@ -615,7 +615,7 @@ public struct File {
         return System.Runtime.Platform.WriteFileBytes(buffer, count, self.Handle);
     }
 
-    unsafe fn i64[min max] ReadByteRegionFast(mut borrow File self, rawmutptr<i8[min max]>[count] buffer, u64[0 2 ** 63 - 1] count) {
+    internal unsafe fn i64[min max] ReadByteRegionFast(mut borrow File self, rawmutptr<i8[min max]>[count] buffer, u64[0 2 ** 63 - 1] count) {
         if (self.Closed || self.Handle == null) {
             return 0;
         }
@@ -627,7 +627,7 @@ public struct File {
         return System.Runtime.Platform.ReadFileBytesFast(buffer, count, self.Handle);
     }
 
-    unsafe fn i64[min max] WriteByteRegionFast(mut borrow File self, rawptr<i8[min max]>[count] buffer, u64[0 2 ** 63 - 1] count) {
+    internal unsafe fn i64[min max] WriteByteRegionFast(mut borrow File self, rawptr<i8[min max]>[count] buffer, u64[0 2 ** 63 - 1] count) {
         if (self.Closed || self.Handle == null) {
             return 0;
         }
@@ -1050,23 +1050,23 @@ public fn System.IO.IOResult<File> Open(ascii path, FileMode mode, System.Text.E
     }
 }
 
-public unsafe fn rawptr<i8[min max]> OpenRead(ascii path) {
+internal unsafe fn rawptr<i8[min max]> OpenRead(ascii path) {
     return System.Runtime.Platform.OpenFileRead(path);
 }
 
-public unsafe fn rawptr<i8[min max]> OpenWrite(ascii path) {
+internal unsafe fn rawptr<i8[min max]> OpenWrite(ascii path) {
     return System.Runtime.Platform.OpenFileWrite(path);
 }
 
-public unsafe fn rawptr<i8[min max]> OpenAppend(ascii path) {
+internal unsafe fn rawptr<i8[min max]> OpenAppend(ascii path) {
     return System.Runtime.Platform.OpenFileAppend(path);
 }
 
-public unsafe fn i32[min max] Close(rawptr<i8[min max]> handle) {
+internal unsafe fn i32[min max] Close(rawptr<i8[min max]> handle) {
     return System.Runtime.Platform.CloseFile(handle);
 }
 
-public unsafe fn i32[min max] Flush(rawptr<i8[min max]> handle) {
+internal unsafe fn i32[min max] Flush(rawptr<i8[min max]> handle) {
     if (handle == null) {
         return 0;
     }
@@ -1074,38 +1074,38 @@ public unsafe fn i32[min max] Flush(rawptr<i8[min max]> handle) {
     return 0;
 }
 
-public unsafe fn i32[min max] SyncAll(rawptr<i8[min max]> handle) {
+internal unsafe fn i32[min max] SyncAll(rawptr<i8[min max]> handle) {
     return System.Runtime.Platform.FlushFile(handle);
 }
 
-public unsafe fn i64[min max] ReadBytes(rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
+internal unsafe fn i64[min max] ReadBytes(rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
     return System.Runtime.Platform.ReadFile(buffer, size, count, handle);
 }
 
-public unsafe fn i64[min max] WriteBytes(rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
+internal unsafe fn i64[min max] WriteBytes(rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
     return System.Runtime.Platform.WriteFile(buffer, size, count, handle);
 }
 
-public unsafe fn i64[min max] Seek(rawptr<i8[min max]> handle, i64[min max] offset, SeekOrigin origin) {
+internal unsafe fn i64[min max] Seek(rawptr<i8[min max]> handle, i64[min max] offset, SeekOrigin origin) {
     return System.Runtime.Platform.SeekFile(handle, offset, SeekOriginCode(origin));
 }
 
-public unsafe fn void WriteText(rawptr<i8[min max]> handle, ascii text) {
+internal unsafe fn void WriteText(rawptr<i8[min max]> handle, ascii text) {
     System.Runtime.Platform.WriteAscii(handle, text);
     return;
 }
 
-public unsafe fn void WriteText(rawptr<i8[min max]> handle, unicode text) {
+internal unsafe fn void WriteText(rawptr<i8[min max]> handle, unicode text) {
     System.Runtime.Platform.WriteUnicode(handle, text);
     return;
 }
 
-public unsafe fn void WriteLine(rawptr<i8[min max]> handle, ascii text) {
+internal unsafe fn void WriteLine(rawptr<i8[min max]> handle, ascii text) {
     WriteAsciiLineHandle(handle, text);
     return;
 }
 
-public unsafe fn void WriteLine(rawptr<i8[min max]> handle, unicode text) {
+internal unsafe fn void WriteLine(rawptr<i8[min max]> handle, unicode text) {
     WriteUnicodeLineHandle(handle, text);
     return;
 }

@@ -14,45 +14,45 @@ justification and a test update.
 
 ## Documented Boundaries
 
-- `System.Collections` and `System.Experimental.Collections`
+- `System.Collections`
   - `Dictionary<K, V>` still uses raw sparse key, value, and state storage.
     This is a temporary internal boundary for sparse uninitialized slots until
     `dynamic` can model occupied-slot borrows without forcing every slot to be
-    initialized.
-- `System.Console` and `System.Experimental.Console`
+    initialized. A dynamic enum-slot rewrite was rejected for the release audit
+    because current enum payload matching moves generic values instead of
+    projecting stable mutable borrows from occupied slots.
+- `System.Console`
   - Raw stdin/stdout/stderr handles and byte handoff regions are internal
     platform ABI boundaries. Public console APIs use text, slices, dynamic
     buffers, or fixed runtime buffers.
-- `System.FileSystem` and `System.Experimental.FileSystem`
-  - Directory handles and directory-entry buffers are internal OS boundaries.
-    Public APIs expose owned directory values and status/result data.
+- `System.FileSystem`
+  - Directory handles are internal OS boundaries. Directory-entry storage is an
+    owned fixed runtime buffer; raw pointers appear only as temporary internal
+    platform handoff views over that buffer.
 - `System.IO.File`
-  - The stable file module still has public unsafe raw handle and raw byte APIs
-    for compatibility with low-level callers: `OpenRead`, `OpenWrite`,
-    `OpenAppend`, `Close`, `Flush`, `SyncAll`, `ReadBytes`, `WriteBytes`,
-    `Seek`, `WriteText`, and `WriteLine`.
-  - Owned `File` methods and newer paths should prefer byte slices,
-    `DynamicByteBuffer`, fixed runtime buffers, and owned handles.
-- `System.IO.Path` and `System.Experimental.IO.Path`
+  - Raw handles and byte-region helpers are internal OS ABI handoff code.
+    Public file APIs use owned `File` values, `IOStatus`/`IOResult<T>`, byte
+    slices, `DynamicByteBuffer`, fixed runtime buffers, and text views.
+- `System.IO.Path`
   - Raw pointers are internal read-only scans over compiler-known text data
     returned by `System.Text.AsciiData`.
 - `System.Memory`
   - `Allocation.Pointer` is allocator-internal raw storage.
   - `InitializeBytesFromPointerDisjoint` and
-    `InitializeCodePointsFromPointerDisjoint` remain public unsafe bridges from
-    caller-owned raw regions into initialized Stark dynamic storage.
-- `System.Net.Tcp` and `System.Experimental.Net.Tcp`
+    `InitializeCodePointsFromPointerDisjoint` are internal unsafe bridges used
+    by text and path internals to copy compiler-known text pointers into
+    initialized Stark dynamic storage.
+- `System.Net.Tcp`
   - Socket handles and platform byte-buffer handoffs are internal OS ABI
     boundaries. Public TCP APIs use owned client/listener values, slices,
     vectored slices, dynamic buffers, or fixed runtime buffers.
 - `System.Runtime`
   - Raw pointers are limited to compiler-known slice-part ABI structs and
     helper declarations used by lowering.
-- `System.Runtime.Buffer` and `System.Experimental.Runtime.Buffer`
+- `System.Runtime.Buffer`
   - Fixed and dynamic byte buffers use raw pointers only as narrow views over
-    their own storage for memory/platform calls. Stable fixed-buffer raw
-    pointer accessors are still public unsafe compatibility APIs and should be
-    internalized or replaced by slices.
+    their own storage for memory/platform calls. Public fixed-buffer access uses
+    read, mutable-read, and write slices instead of raw pointer accessors.
 - `System.Runtime.ConsoleInput`
   - Console input handles are internal platform ABI state.
 - `System.Runtime.Platform`, `System.Runtime.Platform.Linux`, and
@@ -60,7 +60,7 @@ justification and a test update.
   - Raw pointers are required for syscall, kernel, Winsock, console, file,
     directory, memory, threading, and socket ABI calls. These functions are
     internal and explicitly unsafe.
-- `System.Text` and `System.Experimental.Text`
+- `System.Text`
   - `AsciiData` and `UnicodeData` are compiler-known text view data extractors.
   - Caller-buffer formatting and conversion APIs expose `rawmutptr<Ascii>`,
     `rawmutptr<Unicode>`, UTF-16 regions, and text data pointers so low-level
@@ -74,13 +74,11 @@ justification and a test update.
 Public raw pointer APIs are allowed only in explicitly unsafe low-level
 surfaces:
 
-- `System.Text` and `System.Experimental.Text` for compiler-known text data,
+- `System.Text` for compiler-known text data,
   caller-buffer formatting, and conversion helpers.
-- `System.IO.File` for stable raw file handle compatibility.
-- `System.Memory` for raw-region initialization bridges.
-- `System.Runtime.Buffer` for stable fixed-buffer raw pointer accessors that
-  remain as unsafe compatibility APIs until they are internalized or replaced
-  by slices.
+
+`System.Text` is intentionally not re-exported by the root `System` module, so
+callers must opt into this low-level surface with `import System.Text`.
 
 All other standard-library public APIs should avoid `rawptr` and `rawmutptr`.
 Use owned values, slices, `dynamic`, or module-private unsafe wrappers instead.

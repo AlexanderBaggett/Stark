@@ -2,9 +2,9 @@ using Stark.Compiler;
 
 namespace compiler.StandardLibraryTests;
 
-public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : StandardLibraryTestSuite
+public sealed class SystemPromotedIOFileSystemStandardLibraryTests : StandardLibraryTestSuite
 {
-    private const string ExperimentalFileProgram = """
+    private const string PromotedFileProgram = """
         import System.IO.File
         import System.Runtime.Buffer
         import System.IO
@@ -166,7 +166,7 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
         }
         """;
 
-    private const string ExperimentalFileSystemProgram = """
+    private const string PromotedFileSystemProgram = """
         import System.FileSystem
         import System.IO.File
         import System.IO.Path
@@ -338,11 +338,11 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
         """;
 
     [Fact]
-    public void StdLibSourceExperimentalIOFileSystemSurfaceCompiles()
+    public void StdLibSourcePromotedIOFileSystemSurfaceCompiles()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibExperimentalIOFileSystemSurface.stark");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibPromotedIOFileSystemSurface.stark");
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(
                 """
@@ -355,7 +355,7 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
                 import System.Memory
                 module Demo
 
-                fn System.IO.IOResult<i64[0 max]> WriteBytes(
+                fn System.IO.IOResult<u64[0 2 ** 63 - 1]> WriteBytes(
                     mut borrow System.IO.File.File file,
                     borrow i8[min max][] source) {
                     return file.Write(source);
@@ -409,18 +409,23 @@ public sealed class SystemExperimentalIOFileSystemStandardLibraryTests : Standar
         Assert.Contains("WriteFileBytes(rawptr<i8[min max]>[length] buffer", platformSource, StringComparison.Ordinal);
         Assert.Contains("ReadFileBytesFast(rawmutptr<i8[min max]>[length] buffer", platformSource, StringComparison.Ordinal);
         Assert.Contains("WriteFileBytesFast(rawptr<i8[min max]>[length] buffer", platformSource, StringComparison.Ordinal);
+
+        var fileSystemSource = File.ReadAllText(Path.Combine(sourceRoot, "System", "FileSystem.stark"));
+        Assert.Contains("System.Runtime.Buffer.FixedByteBuffer8192 Buffer", fileSystemSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("System.Memory.Allocation", fileSystemSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("rawmutptr<i8[min max]> Buffer", fileSystemSource, StringComparison.Ordinal);
     }
 
     [Fact]
-    public async Task SourceStdLibExperimentalFileExecutableRuns()
+    public async Task SourceStdLibPromotedFileExecutableRuns()
     {
-        await AssertSourceExecutableRunsAsync(ExperimentalFileProgram, "stark-stdlib-experimental-file-", skipWindows: true);
+        await AssertSourceExecutableRunsAsync(PromotedFileProgram, "stark-stdlib-promoted-file-", skipWindows: true);
     }
 
     [Fact]
-    public async Task SourceStdLibExperimentalFileSystemExecutableRuns()
+    public async Task SourceStdLibPromotedFileSystemExecutableRuns()
     {
-        await AssertSourceExecutableRunsAsync(ExperimentalFileSystemProgram, "stark-stdlib-experimental-filesystem-", skipWindows: true);
+        await AssertSourceExecutableRunsAsync(PromotedFileSystemProgram, "stark-stdlib-promoted-filesystem-", skipWindows: true);
     }
 
     private async Task AssertSourceExecutableRunsAsync(string source, string tempPrefix, bool skipWindows)

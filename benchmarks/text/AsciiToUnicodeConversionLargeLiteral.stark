@@ -1,4 +1,5 @@
-﻿import System
+import System
+import System.Text
 module Benchmarks.Text.AsciiToUnicodeConversionLargeLiteral
 
 export unsafe ffi fn i32[min max] main() {
@@ -16,7 +17,7 @@ export unsafe ffi fn i32[min max] main() {
     };
     stack mut i64[min max] checksum = 0;
 
-    for willexit (stack mut i32[0 100000] i = 0; i < 100000; i += 1) {
+    for willexit (stack mut u24[0 100000] i = 0; i < 100000; i += 1) {
         if (!System.Text.TryConvertAsciiToUnicode(&unicodeText, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_!")) {
             return 1;
         }

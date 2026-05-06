@@ -1,11 +1,11 @@
-﻿import System.Process
+import System.Process
 module Benchmarks.Micro.IndependentRawPointerRegions
 
 unsafe fn void Copy(
     disjoint rawptr<i64[min max]>[32] input,
     disjoint rawmutptr<i64[min max]>[32] output)
     where disjoint(input[0, 32], output[0, 32]) {
-    for willexit independent (stack mut i32[0 32] index = 0; index < 32; index += 1) {
+    for willexit independent (stack mut u8[0 32] index = 0; index < 32; index += 1) {
         *(&output[index]) = *(&input[index]);
     }
 
@@ -16,9 +16,9 @@ unsafe fn void CopyWithScalarWork(
     disjoint rawptr<i64[min max]>[32] input,
     disjoint rawmutptr<i64[min max]>[32] output)
     where disjoint(input[0, 32], output[0, 32]) {
-    stack i32[0 32] before = 32;
+    stack u8[0 32] before = 32;
 
-    for willexit independent (stack mut i32[0 32] index = 0; index < 32; index += 1) {
+    for willexit independent (stack mut u8[0 32] index = 0; index < 32; index += 1) {
         *(&output[index]) = *(&input[index]);
     }
 
@@ -31,11 +31,11 @@ unsafe fn void OverlapSafeCopyWithScalarWork(
     rawmutptr<i64[min max]>[4] output) {
     stack mut i64[min max][4] temporary = { 0, 0, 0, 0 };
 
-    for willexit (stack mut i32[0 4] index = 0; index < 4; index += 1) {
+    for willexit (stack mut u8[0 4] index = 0; index < 4; index += 1) {
         temporary[index] = *(&input[index]);
     }
 
-    for willexit (stack mut i32[0 4] index = 0; index < 4; index += 1) {
+    for willexit (stack mut u8[0 4] index = 0; index < 4; index += 1) {
         *(&output[index]) = temporary[index];
     }
 
@@ -44,7 +44,7 @@ unsafe fn void OverlapSafeCopyWithScalarWork(
 }
 
 unsafe fn void Fill(rawmutptr<i64[min max]>[32] output, i64[min max] value) {
-    for willexit independent (stack mut i32[0 32] index = 0; index < 32; index += 1) {
+    for willexit independent (stack mut u8[0 32] index = 0; index < 32; index += 1) {
         *(&output[index]) = value + (i64[min max])index;
     }
 
@@ -52,9 +52,9 @@ unsafe fn void Fill(rawmutptr<i64[min max]>[32] output, i64[min max] value) {
 }
 
 unsafe fn void FillBytesWithScalarWork(rawmutptr<i8[min max]>[32] output, i8[min max] value) {
-    stack i32[0 32] before = 32;
+    stack u8[0 32] before = 32;
 
-    for willexit independent (stack mut i32[0 32] index = 0; index < 32; index += 1) {
+    for willexit independent (stack mut u8[0 32] index = 0; index < 32; index += 1) {
         *(&output[index]) = value;
     }
 
@@ -66,7 +66,7 @@ unsafe fn void Transform(
     disjoint rawptr<i64[min max]>[32] input,
     disjoint rawmutptr<i64[min max]>[32] output)
     where disjoint(input[0, 32], output[0, 32]) {
-    for willexit independent (stack mut i32[0 32] index = 0; index < 32; index += 1) {
+    for willexit independent (stack mut u8[0 32] index = 0; index < 32; index += 1) {
         *(&output[index]) = *(&input[index]) + 1;
     }
 
@@ -100,7 +100,7 @@ export unsafe ffi fn i32[min max] main() {
     };
     stack mut i64[min max] checksum = (i64[min max])System.Process.CurrentId();
 
-    for willexit (stack mut i32[0 200000] iteration = 0; iteration < 200000; iteration += 1) {
+    for willexit (stack mut u24[0 200000] iteration = 0; iteration < 200000; iteration += 1) {
         input[0] += 1;
         Fill(&scratch[0], (i64[min max])iteration);
         Copy(&input[0], &output[0]);

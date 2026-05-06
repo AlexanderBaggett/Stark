@@ -1580,6 +1580,7 @@ public sealed class CompilerCliTests
                 rootPath,
                 """
                 import System
+                import System.Text
                 module App
 
                 export unsafe ffi fn i32[min max] main() {
@@ -1679,7 +1680,7 @@ public sealed class CompilerCliTests
                 module App
 
                 export unsafe ffi fn i32[min max] main() {
-                    stack mut List<i32[0 max]> values = new();
+                    stack mut List<u32[0 2 ** 31 - 1]> values = new();
                     values.Push(1);
                     return (i32[-2147483648 2147483647])values.Count();
                 }

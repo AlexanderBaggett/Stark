@@ -508,8 +508,10 @@ public enum DictionaryRemoveResult<T> {
 
 // Raw pointer boundary: Dictionary keeps sparse key/value/control storage so it
 // can leave empty hash-table slots uninitialized while still returning mutable
-// borrows from occupied values. This storage is internal to the collection and
-// should move to dynamic once dynamic sparse-slot mutable borrows are supported.
+// borrows from occupied values. A dynamic enum-slot rewrite currently moves
+// generic payloads during lookup/removal instead of projecting stable mutable
+// borrows, so this internal boundary stays until sparse-slot borrows are a
+// first-class language/storage feature.
 public struct Dictionary<K, V> {
     internal rawmutptr<K> Keys;
     internal rawmutptr<V> Values;

@@ -17,12 +17,12 @@ unsafe fn System.Memory.MemoryResult<System.Text.OwnedUnicode> ReadUnitExperimen
     return System.Console.Read();
 }
 
-unsafe fn System.Memory.MemoryResult<i64[0 max]> ReadDynamicBytes(
+unsafe fn System.Memory.MemoryResult<u64[0 2 ** 63 - 1]> ReadDynamicBytes(
     mut borrow System.Runtime.Buffer.DynamicByteBuffer destination) {
     return System.Console.ReadBytes(destination, 4096);
 }
 
-unsafe fn System.Memory.MemoryResult<i64[0 max]> ReadFixedBytes(
+unsafe fn System.Memory.MemoryResult<u64[0 2 ** 63 - 1]> ReadFixedBytes(
     mut borrow System.Runtime.Buffer.FixedByteBuffer8192 destination) {
     return System.Console.ReadBytes(destination, 4096);
 }

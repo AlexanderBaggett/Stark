@@ -18,34 +18,34 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             }
         }
 
-        fn bool IsPowerOfTwo(i64[0 max] value) {
+        fn bool IsPowerOfTwo(u64[0 2 ** 63 - 1] value) {
             if (value == 0) {
                 return false;
             }
 
-            stack i64[0 max] mask = (i64[0 max])(value - 1);
+            stack u64[0 2 ** 63 - 1] mask = (u64[0 2 ** 63 - 1])(value - 1);
             return (value & mask) == 0;
         }
 
-        fn bool ConsumeList(List<i32[0 max]> values, i64[0 max] expected) {
+        fn bool ConsumeList(List<u32[0 2 ** 31 - 1]> values, u64[0 2 ** 63 - 1] expected) {
             return values.Count() == expected && values.Capacity() >= expected;
         }
 
-        fn bool ConsumeStack(Stack<i32[0 max]> values, i64[0 max] expected) {
+        fn bool ConsumeStack(Stack<u32[0 2 ** 31 - 1]> values, u64[0 2 ** 63 - 1] expected) {
             return values.Count() == expected && values.Peek() == 79;
         }
 
-        fn bool ConsumeQueue(Queue<i32[0 max]> values, i64[0 max] expected) {
+        fn bool ConsumeQueue(Queue<u32[0 2 ** 31 - 1]> values, u64[0 2 ** 63 - 1] expected) {
             return values.Count() == expected && values.Peek() == 0;
         }
 
-        fn bool ConsumeLinkedList(LinkedList<i32[0 max]> values, i64[0 max] expected) {
+        fn bool ConsumeLinkedList(LinkedList<u32[0 2 ** 31 - 1]> values, u64[0 2 ** 63 - 1] expected) {
             return values.Count() == expected;
         }
 
-        fn bool ConsumeDictionary(Dictionary<i32[0 max], i32[0 max]> values, i64[0 max] expected) {
-            stack i32[0 max] key = 17;
-            stack mut i32[0 max] found = 0;
+        fn bool ConsumeDictionary(Dictionary<u32[0 2 ** 31 - 1], u32[0 2 ** 31 - 1]> values, u64[0 2 ** 63 - 1] expected) {
+            stack u32[0 2 ** 31 - 1] key = 17;
+            stack mut u32[0 2 ** 31 - 1] found = 0;
             return values.Count() == expected
                 && IsPowerOfTwo(values.Capacity())
                 && values.ContainsKey(key)
@@ -54,8 +54,8 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
 
         export unsafe ffi fn i32[min max] main() {
-            stack mut List<i32[0 max]> list = new();
-            for willexit (stack mut i32[0 96] i = 0; i < 96; i += 1) {
+            stack mut List<u32[0 2 ** 31 - 1]> list = new();
+            for willexit (stack mut u8[0 96] i = 0; i < 96; i += 1) {
                 if (!Ok(list.Push(i))) {
                     return 1;
                 }
@@ -65,8 +65,8 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 return 2;
             }
 
-            stack mut Stack<i32[0 max]> stackValues = new();
-            for willexit (stack mut i32[0 80] i = 0; i < 80; i += 1) {
+            stack mut Stack<u32[0 2 ** 31 - 1]> stackValues = new();
+            for willexit (stack mut u8[0 80] i = 0; i < 80; i += 1) {
                 if (!Ok(stackValues.Push(i))) {
                     return 3;
                 }
@@ -76,8 +76,8 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 return 4;
             }
 
-            stack mut Queue<i32[0 max]> queue = new();
-            for willexit (stack mut i32[0 96] i = 0; i < 96; i += 1) {
+            stack mut Queue<u32[0 2 ** 31 - 1]> queue = new();
+            for willexit (stack mut u8[0 96] i = 0; i < 96; i += 1) {
                 if (!Ok(queue.Enqueue(i))) {
                     return 5;
                 }
@@ -87,8 +87,8 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 return 6;
             }
 
-            stack mut LinkedList<i32[0 max]> linked = new();
-            for willexit (stack mut i32[0 48] i = 0; i < 48; i += 1) {
+            stack mut LinkedList<u32[0 2 ** 31 - 1]> linked = new();
+            for willexit (stack mut u8[0 48] i = 0; i < 48; i += 1) {
                 if (!Ok(linked.AddLast(i))) {
                     return 7;
                 }
@@ -98,14 +98,14 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 return 8;
             }
 
-            stack mut Dictionary<i32[0 max], i32[0 max]> dictionary = new();
+            stack mut Dictionary<u32[0 2 ** 31 - 1], u32[0 2 ** 31 - 1]> dictionary = new();
             if (!Ok(dictionary.Reserve(3)) || !IsPowerOfTwo(dictionary.Capacity())) {
                 return 9;
             }
 
-            for willexit (stack mut i32[0 64] i = 0; i < 64; i += 1) {
-                stack i32[0 max] key = i;
-                stack i32[0 max] value = (i32[0 max])(i * 2);
+            for willexit (stack mut u8[0 64] i = 0; i < 64; i += 1) {
+                stack u32[0 2 ** 31 - 1] key = i;
+                stack u32[0 2 ** 31 - 1] value = (u32[0 2 ** 31 - 1])(i * 2);
                 if (!Ok(dictionary.Set(key, value))) {
                     return 9;
                 }
@@ -127,7 +127,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
         """;
 
-    private const string ExperimentalListParityProgram = """
+    private const string PromotedListParityProgram = """
         import System.Collections
         import System.Memory
         module App
@@ -166,14 +166,14 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
 
         export unsafe ffi fn i32[min max] main() {
-            stack mut System.Collections.List<i32[0 max]> stable = new();
-            stack mut System.Collections.List<i32[0 max]> experimental = new();
+            stack mut System.Collections.List<u32[0 2 ** 31 - 1]> stable = new();
+            stack mut System.Collections.List<u32[0 2 ** 31 - 1]> experimental = new();
 
             if (!Ok(stable.Reserve(0)) || !Ok(experimental.Reserve(0))) {
                 return 1;
             }
 
-            for willexit (stack mut i32[0 128] i = 0; i < 128; i += 1) {
+            for willexit (stack mut u8[0 128] i = 0; i < 128; i += 1) {
                 if (!Ok(stable.Push(i)) || !Ok(experimental.Push(i))) {
                     return 2;
                 }
@@ -188,7 +188,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             stable.AsMutableSlice()[11] = 222;
             experimental.AsMutableSlice()[11] = 222;
 
-            for willexit (stack mut i32[0 128] i = 0; i < 128; i += 1) {
+            for willexit (stack mut u8[0 128] i = 0; i < 128; i += 1) {
                 if (stable.Get(i) != experimental.Get(i) || stable.AsSlice()[i] != experimental.AsSlice()[i]) {
                     return 4;
                 }
@@ -196,8 +196,8 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
 
             stack mut i64[min max] checksum = 0;
             while willexit (experimental.Count() > 0) {
-                stack mut i32[0 max] stableValue = 0;
-                stack mut i32[0 max] experimentalValue = 0;
+                stack mut u32[0 2 ** 31 - 1] stableValue = 0;
+                stack mut u32[0 2 ** 31 - 1] experimentalValue = 0;
                 if (!stable.TryPop(stableValue) || !experimental.TryPop(experimentalValue)) {
                     return 5;
                 }
@@ -264,7 +264,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
         """;
 
-    private const string ExperimentalStackParityProgram = """
+    private const string PromotedStackParityProgram = """
         import System.Collections
         import System.Collections
         import System.Memory
@@ -295,10 +295,10 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
 
         export unsafe ffi fn i32[min max] main() {
-            stack mut System.Collections.Stack<i32[0 max]> stable = new();
-            stack mut System.Collections.Stack<i32[0 max]> experimental = new();
+            stack mut System.Collections.Stack<u32[0 2 ** 31 - 1]> stable = new();
+            stack mut System.Collections.Stack<u32[0 2 ** 31 - 1]> experimental = new();
 
-            for willexit (stack mut i32[0 128] i = 0; i < 128; i += 1) {
+            for willexit (stack mut u8[0 128] i = 0; i < 128; i += 1) {
                 if (!Ok(stable.Push(i)) || !Ok(experimental.Push(i))) {
                     return 1;
                 }
@@ -314,8 +314,8 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
 
             stack mut i64[min max] checksum = 0;
             while willexit (!experimental.IsEmpty()) {
-                stack mut i32[0 max] stableValue = 0;
-                stack mut i32[0 max] experimentalValue = 0;
+                stack mut u32[0 2 ** 31 - 1] stableValue = 0;
+                stack mut u32[0 2 ** 31 - 1] experimentalValue = 0;
                 if (!stable.TryPop(stableValue) || !experimental.TryPop(experimentalValue)) {
                     return 4;
                 }
@@ -378,7 +378,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
         """;
 
-    private const string ExperimentalQueueParityProgram = """
+    private const string PromotedQueueParityProgram = """
         import System.Collections
         import System.Collections
         import System.Memory
@@ -418,14 +418,14 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
 
         export unsafe ffi fn i32[min max] main() {
-            stack mut System.Collections.Queue<i32[0 max]> stable = new();
-            stack mut System.Collections.Queue<i32[0 max]> experimental = new();
+            stack mut System.Collections.Queue<u32[0 2 ** 31 - 1]> stable = new();
+            stack mut System.Collections.Queue<u32[0 2 ** 31 - 1]> experimental = new();
 
             if (!Ok(stable.Reserve(0)) || !Ok(experimental.Reserve(0))) {
                 return 1;
             }
 
-            for willexit (stack mut i32[0 128] i = 0; i < 128; i += 1) {
+            for willexit (stack mut u8[0 128] i = 0; i < 128; i += 1) {
                 if (!Ok(stable.Enqueue(i)) || !Ok(experimental.Enqueue(i))) {
                     return 2;
                 }
@@ -441,8 +441,8 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
 
             stack mut i64[min max] checksum = 0;
             while willexit (!experimental.IsEmpty()) {
-                stack mut i32[0 max] stableValue = 0;
-                stack mut i32[0 max] experimentalValue = 0;
+                stack mut u32[0 2 ** 31 - 1] stableValue = 0;
+                stack mut u32[0 2 ** 31 - 1] experimentalValue = 0;
                 if (!stable.TryDequeue(stableValue) || !experimental.TryDequeue(experimentalValue)) {
                     return 5;
                 }
@@ -509,7 +509,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
         """;
 
-    private const string ExperimentalRingQueueCandidateProgram = """
+    private const string PromotedRingQueueCandidateProgram = """
         import System.Collections
         import System.Collections
         import System.Memory
@@ -540,19 +540,19 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
 
         export unsafe ffi fn i32[min max] main() {
-            stack mut System.Collections.Queue<i32[0 max]> stable = new();
-            stack mut System.Collections.RingQueue<i32[0 max]> ring = new();
+            stack mut System.Collections.Queue<u32[0 2 ** 31 - 1]> stable = new();
+            stack mut System.Collections.RingQueue<u32[0 2 ** 31 - 1]> ring = new();
 
-            for willexit (stack mut i32[0 64] i = 0; i < 64; i += 1) {
+            for willexit (stack mut u8[0 64] i = 0; i < 64; i += 1) {
                 if (!Ok(stable.Enqueue(i)) || !Ok(ring.Enqueue(i))) {
                     return 1;
                 }
             }
 
             stack mut i64[min max] checksum = 0;
-            for willexit (stack mut i32[0 32] i = 0; i < 32; i += 1) {
-                stack mut i32[0 max] stableValue = 0;
-                stack mut i32[0 max] ringValue = 0;
+            for willexit (stack mut u8[0 32] i = 0; i < 32; i += 1) {
+                stack mut u32[0 2 ** 31 - 1] stableValue = 0;
+                stack mut u32[0 2 ** 31 - 1] ringValue = 0;
                 if (!stable.TryDequeue(stableValue) || !ring.TryDequeue(ringValue)) {
                     return 2;
                 }
@@ -564,7 +564,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 checksum += (i64[min max])stableValue;
             }
 
-            for willexit (stack mut i32[0 128] i = 64; i < 128; i += 1) {
+            for willexit (stack mut u8[0 128] i = 64; i < 128; i += 1) {
                 if (!Ok(stable.Enqueue(i)) || !Ok(ring.Enqueue(i))) {
                     return 4;
                 }
@@ -575,8 +575,8 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             }
 
             while willexit (!ring.IsEmpty()) {
-                stack mut i32[0 max] stableValue = 0;
-                stack mut i32[0 max] ringValue = 0;
+                stack mut u32[0 2 ** 31 - 1] stableValue = 0;
+                stack mut u32[0 2 ** 31 - 1] ringValue = 0;
                 if (!stable.TryDequeue(stableValue) || !ring.TryDequeue(ringValue)) {
                     return 6;
                 }
@@ -623,7 +623,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
         """;
 
-    private const string ExperimentalLinkedListParityProgram = """
+    private const string PromotedLinkedListParityProgram = """
         import System.Collections
         import System.Collections
         import System.Memory
@@ -654,8 +654,8 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
 
         export unsafe ffi fn i32[min max] main() {
-            stack mut System.Collections.LinkedList<i32[0 max]> stable = new();
-            stack mut System.Collections.LinkedList<i32[0 max]> experimental = new();
+            stack mut System.Collections.LinkedList<u32[0 2 ** 31 - 1]> stable = new();
+            stack mut System.Collections.LinkedList<u32[0 2 ** 31 - 1]> experimental = new();
 
             if (!Ok(stable.ReserveNodes(4)) || !Ok(experimental.ReserveNodes(4))) {
                 return 1;
@@ -681,8 +681,8 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 return 6;
             }
 
-            stack mut i32[0 max] stableValue = 0;
-            stack mut i32[0 max] experimentalValue = 0;
+            stack mut u32[0 2 ** 31 - 1] stableValue = 0;
+            stack mut u32[0 2 ** 31 - 1] experimentalValue = 0;
             if (!stable.TryRemoveFirst(stableValue) || !experimental.TryRemoveFirst(experimentalValue)) {
                 return 7;
             }
@@ -708,7 +708,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             }
 
             stack mut i64[min max] checksum = 0;
-            for willexit (stack mut i32[0 64] i = 0; i < 64; i += 1) {
+            for willexit (stack mut u8[0 64] i = 0; i < 64; i += 1) {
                 if (!Ok(stable.AddLast(i)) || !Ok(experimental.AddLast(i))) {
                     return 13;
                 }
@@ -759,7 +759,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
         """;
 
-    private const string ExperimentalDictionaryProgram = """
+    private const string PromotedDictionaryProgram = """
         import System.Collections
         import System.Memory
         module App
@@ -775,12 +775,12 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             }
         }
 
-        fn bool IsPowerOfTwo(i64[0 max] value) {
+        fn bool IsPowerOfTwo(u64[0 2 ** 63 - 1] value) {
             if (value == 0) {
                 return false;
             }
 
-            stack i64[0 max] mask = (i64[0 max])(value - 1);
+            stack u64[0 2 ** 63 - 1] mask = (u64[0 2 ** 63 - 1])(value - 1);
             return (value & mask) == 0;
         }
 
@@ -798,14 +798,14 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
 
         export unsafe ffi fn i32[min max] main() {
-            stack mut System.Collections.Dictionary<i32[0 max], i32[0 max]> dictionary = new();
+            stack mut System.Collections.Dictionary<u32[0 2 ** 31 - 1], u32[0 2 ** 31 - 1]> dictionary = new();
             if (!Ok(dictionary.Reserve(3)) || !IsPowerOfTwo(dictionary.Capacity())) {
                 return 1;
             }
 
-            for willexit (stack mut i32[0 128] i = 0; i < 128; i += 1) {
-                stack i32[0 max] key = i;
-                stack i32[0 max] value = (i32[0 max])(i * 5);
+            for willexit (stack mut u8[0 128] i = 0; i < 128; i += 1) {
+                stack u32[0 2 ** 31 - 1] key = i;
+                stack u32[0 2 ** 31 - 1] value = (u32[0 2 ** 31 - 1])(i * 5);
                 if (!Ok(dictionary.Set(key, value)) || !IsPowerOfTwo(dictionary.Capacity())) {
                     return 2;
                 }
@@ -816,9 +816,9 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             }
 
             stack mut i64[min max] checksum = 0;
-            stack mut i32[0 max] found = 0;
-            stack i32[0 max] refKey = 7;
-            stack i64[0 max] refIndex = dictionary.FindIndex(refKey);
+            stack mut u32[0 2 ** 31 - 1] found = 0;
+            stack u32[0 2 ** 31 - 1] refKey = 7;
+            stack u64[0 2 ** 63 - 1] refIndex = dictionary.FindIndex(refKey);
             if (!dictionary.ContainsIndex(refIndex) || dictionary.GetAtIndex(refIndex) != 35) {
                 return 25;
             }
@@ -829,9 +829,9 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             }
 
             dictionary.GetMutAtIndex(refIndex) = 35;
-            for willexit (stack mut i32[0 128] i = 0; i < 128; i += 1) {
-                stack i32[0 max] key = i;
-                if (!dictionary.ContainsKey(key) || !dictionary.TryGet(key, found) || found != (i32[0 max])(i * 5)) {
+            for willexit (stack mut u8[0 128] i = 0; i < 128; i += 1) {
+                stack u32[0 2 ** 31 - 1] key = i;
+                if (!dictionary.ContainsKey(key) || !dictionary.TryGet(key, found) || found != (u32[0 2 ** 31 - 1])(i * 5)) {
                     return 4;
                 }
 
@@ -842,13 +842,13 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 return 5;
             }
 
-            stack i32[0 max] updateKey = 64;
+            stack u32[0 2 ** 31 - 1] updateKey = 64;
             if (!Ok(dictionary.Set(updateKey, 999)) || !dictionary.TryGet(updateKey, found) || found != 999 || dictionary.Count() != 128) {
                 return 6;
             }
 
-            for willexit (stack mut i32[0 64] i = 0; i < 64; i += 1) {
-                stack i32[0 max] key = (i32[0 max])(i * 2);
+            for willexit (stack mut u8[0 64] i = 0; i < 64; i += 1) {
+                stack u32[0 2 ** 31 - 1] key = (u32[0 2 ** 31 - 1])(i * 2);
                 if (!dictionary.Remove(key)) {
                     return 7;
                 }
@@ -858,12 +858,12 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 return 8;
             }
 
-            stack i32[0 max] removedKey = 65;
+            stack u32[0 2 ** 31 - 1] removedKey = 65;
             if (!dictionary.TryRemove(removedKey, found) || found != 325 || dictionary.ContainsKey(removedKey) || dictionary.Count() != 63) {
                 return 9;
             }
 
-            stack i32[0 max] tombstoneKey = 4096;
+            stack u32[0 2 ** 31 - 1] tombstoneKey = 4096;
             if (!Ok(dictionary.Set(tombstoneKey, 12345)) || !dictionary.TryGet(tombstoneKey, found) || found != 12345) {
                 return 10;
             }
@@ -874,11 +874,11 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             }
 
             {
-                stack mut System.Collections.Dictionary<i32[0 max], Resource> drops = new();
-                stack i32[0 max] keyOne = 1;
-                stack i32[0 max] keyTwo = 2;
-                stack i32[0 max] keyThree = 3;
-                stack i32[0 max] keyFour = 4;
+                stack mut System.Collections.Dictionary<u32[0 2 ** 31 - 1], Resource> drops = new();
+                stack u32[0 2 ** 31 - 1] keyOne = 1;
+                stack u32[0 2 ** 31 - 1] keyTwo = 2;
+                stack u32[0 2 ** 31 - 1] keyThree = 3;
+                stack u32[0 2 ** 31 - 1] keyFour = 4;
                 if (!Ok(drops.Set(keyOne, new Resource() { Value = 10 }))
                     || !Ok(drops.Set(keyTwo, new Resource() { Value = 20 }))
                     || !Ok(drops.Set(keyOne, new Resource() { Value = 30 }))) {
@@ -934,8 +934,8 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             }
 
             {
-                stack mut System.Collections.Dictionary<i32[0 max], Resource> scopedDrops = new();
-                stack i32[0 max] scopedKey = 7;
+                stack mut System.Collections.Dictionary<u32[0 2 ** 31 - 1], Resource> scopedDrops = new();
+                stack u32[0 2 ** 31 - 1] scopedKey = 7;
                 if (!Ok(scopedDrops.Set(scopedKey, new Resource() { Value = 60 }))) {
                     return 23;
                 }
@@ -949,7 +949,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
         """;
 
-    private const string ExperimentalCollectionsCrossFamilyParityProgram = """
+    private const string PromotedCollectionsCrossFamilyParityProgram = """
         import System.Collections
         import System.Collections
         import System.Memory
@@ -989,14 +989,14 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
 
         fn bool CheckListParity() {
-            stack mut System.Collections.List<i32[0 max]> stable = new();
-            stack mut System.Collections.List<i32[0 max]> experimental = new();
+            stack mut System.Collections.List<u32[0 2 ** 31 - 1]> stable = new();
+            stack mut System.Collections.List<u32[0 2 ** 31 - 1]> experimental = new();
             if (!Ok(stable.Reserve(3)) || !Ok(experimental.Reserve(3))) {
                 return false;
             }
 
-            for willexit (stack mut i32[0 40] i = 0; i < 40; i += 1) {
-                stack i32[0 max] value = (i32[0 max])((i * 3) + 1);
+            for willexit (stack mut u8[0 40] i = 0; i < 40; i += 1) {
+                stack u32[0 2 ** 31 - 1] value = (u32[0 2 ** 31 - 1])((i * 3) + 1);
                 if (!Ok(stable.Push(value)) || !Ok(experimental.Push(value))) {
                     return false;
                 }
@@ -1011,16 +1011,16 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             stable.AsMutableSlice()[7] = 77;
             experimental.AsMutableSlice()[7] = 77;
 
-            for willexit (stack mut i32[0 40] i = 0; i < 40; i += 1) {
+            for willexit (stack mut u8[0 40] i = 0; i < 40; i += 1) {
                 if (stable.Get(i) != experimental.Get(i) || stable.AsSlice()[i] != experimental.AsSlice()[i]) {
                     return false;
                 }
             }
 
             stack mut i64[min max] checksum = 0;
-            for willexit (stack mut i32[0 20] i = 0; i < 20; i += 1) {
-                stack mut i32[0 max] stableValue = 0;
-                stack mut i32[0 max] experimentalValue = 0;
+            for willexit (stack mut u8[0 20] i = 0; i < 20; i += 1) {
+                stack mut u32[0 2 ** 31 - 1] stableValue = 0;
+                stack mut u32[0 2 ** 31 - 1] experimentalValue = 0;
                 if (!stable.TryPop(stableValue) || !experimental.TryPop(experimentalValue) || stableValue != experimentalValue) {
                     return false;
                 }
@@ -1034,7 +1034,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
 
             stable.Clear();
             experimental.Clear();
-            stack i64[0 max] impossible = (i64[0 max])(2 ** 63 - 1);
+            stack u64[0 2 ** 63 - 1] impossible = (u64[0 2 ** 63 - 1])(2 ** 63 - 1);
             return stable.IsEmpty()
                 && experimental.IsEmpty()
                 && TooLarge(stable.Reserve(impossible))
@@ -1042,13 +1042,13 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
 
         fn bool CheckStackParity() {
-            stack mut System.Collections.Stack<i32[0 max]> stable = new();
-            stack mut System.Collections.Stack<i32[0 max]> experimental = new();
+            stack mut System.Collections.Stack<u32[0 2 ** 31 - 1]> stable = new();
+            stack mut System.Collections.Stack<u32[0 2 ** 31 - 1]> experimental = new();
             if (!Ok(stable.Reserve(2)) || !Ok(experimental.Reserve(2))) {
                 return false;
             }
 
-            for willexit (stack mut i32[0 32] i = 0; i < 32; i += 1) {
+            for willexit (stack mut u8[0 32] i = 0; i < 32; i += 1) {
                 if (!Ok(stable.Push(i)) || !Ok(experimental.Push(i)) || stable.Peek() != experimental.Peek()) {
                     return false;
                 }
@@ -1056,8 +1056,8 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
 
             stack mut i64[min max] checksum = 0;
             while willexit (!experimental.IsEmpty()) {
-                stack mut i32[0 max] stableValue = 0;
-                stack mut i32[0 max] experimentalValue = 0;
+                stack mut u32[0 2 ** 31 - 1] stableValue = 0;
+                stack mut u32[0 2 ** 31 - 1] experimentalValue = 0;
                 if (!stable.TryPop(stableValue) || !experimental.TryPop(experimentalValue) || stableValue != experimentalValue) {
                     return false;
                 }
@@ -1065,7 +1065,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 checksum += (i64[min max])experimentalValue;
             }
 
-            stack i64[0 max] impossible = (i64[0 max])(2 ** 63 - 1);
+            stack u64[0 2 ** 63 - 1] impossible = (u64[0 2 ** 63 - 1])(2 ** 63 - 1);
             return stable.IsEmpty()
                 && experimental.IsEmpty()
                 && checksum == 496
@@ -1074,22 +1074,22 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
 
         fn bool CheckQueueParity() {
-            stack mut System.Collections.Queue<i32[0 max]> stable = new();
-            stack mut System.Collections.Queue<i32[0 max]> experimental = new();
+            stack mut System.Collections.Queue<u32[0 2 ** 31 - 1]> stable = new();
+            stack mut System.Collections.Queue<u32[0 2 ** 31 - 1]> experimental = new();
             if (!Ok(stable.Reserve(4)) || !Ok(experimental.Reserve(4))) {
                 return false;
             }
 
-            for willexit (stack mut i32[0 48] i = 0; i < 48; i += 1) {
+            for willexit (stack mut u8[0 48] i = 0; i < 48; i += 1) {
                 if (!Ok(stable.Enqueue(i)) || !Ok(experimental.Enqueue(i)) || stable.Peek() != experimental.Peek()) {
                     return false;
                 }
             }
 
             stack mut i64[min max] checksum = 0;
-            for willexit (stack mut i32[0 16] i = 0; i < 16; i += 1) {
-                stack mut i32[0 max] stableValue = 0;
-                stack mut i32[0 max] experimentalValue = 0;
+            for willexit (stack mut u8[0 16] i = 0; i < 16; i += 1) {
+                stack mut u32[0 2 ** 31 - 1] stableValue = 0;
+                stack mut u32[0 2 ** 31 - 1] experimentalValue = 0;
                 if (!stable.TryDequeue(stableValue) || !experimental.TryDequeue(experimentalValue) || stableValue != experimentalValue) {
                     return false;
                 }
@@ -1097,15 +1097,15 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 checksum += (i64[min max])experimentalValue;
             }
 
-            for willexit (stack mut i32[0 72] i = 48; i < 72; i += 1) {
+            for willexit (stack mut u8[0 72] i = 48; i < 72; i += 1) {
                 if (!Ok(stable.Enqueue(i)) || !Ok(experimental.Enqueue(i))) {
                     return false;
                 }
             }
 
             while willexit (!experimental.IsEmpty()) {
-                stack mut i32[0 max] stableValue = 0;
-                stack mut i32[0 max] experimentalValue = 0;
+                stack mut u32[0 2 ** 31 - 1] stableValue = 0;
+                stack mut u32[0 2 ** 31 - 1] experimentalValue = 0;
                 if (!stable.TryDequeue(stableValue) || !experimental.TryDequeue(experimentalValue) || stableValue != experimentalValue) {
                     return false;
                 }
@@ -1113,7 +1113,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 checksum += (i64[min max])experimentalValue;
             }
 
-            stack i64[0 max] impossible = (i64[0 max])(2 ** 63 - 1);
+            stack u64[0 2 ** 63 - 1] impossible = (u64[0 2 ** 63 - 1])(2 ** 63 - 1);
             return stable.IsEmpty()
                 && experimental.IsEmpty()
                 && checksum == 2556
@@ -1122,18 +1122,18 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
 
         fn bool CheckRingQueueParity() {
-            stack mut System.Collections.Queue<i32[0 max]> stable = new();
-            stack mut System.Collections.RingQueue<i32[0 max]> ring = new();
-            for willexit (stack mut i32[0 32] i = 0; i < 32; i += 1) {
+            stack mut System.Collections.Queue<u32[0 2 ** 31 - 1]> stable = new();
+            stack mut System.Collections.RingQueue<u32[0 2 ** 31 - 1]> ring = new();
+            for willexit (stack mut u8[0 32] i = 0; i < 32; i += 1) {
                 if (!Ok(stable.Enqueue(i)) || !Ok(ring.Enqueue(i))) {
                     return false;
                 }
             }
 
             stack mut i64[min max] checksum = 0;
-            for willexit (stack mut i32[0 12] i = 0; i < 12; i += 1) {
-                stack mut i32[0 max] stableValue = 0;
-                stack mut i32[0 max] ringValue = 0;
+            for willexit (stack mut u8[0 12] i = 0; i < 12; i += 1) {
+                stack mut u32[0 2 ** 31 - 1] stableValue = 0;
+                stack mut u32[0 2 ** 31 - 1] ringValue = 0;
                 if (!stable.TryDequeue(stableValue) || !ring.TryDequeue(ringValue) || stableValue != ringValue) {
                     return false;
                 }
@@ -1141,15 +1141,15 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 checksum += (i64[min max])ringValue;
             }
 
-            for willexit (stack mut i32[0 64] i = 32; i < 64; i += 1) {
+            for willexit (stack mut u8[0 64] i = 32; i < 64; i += 1) {
                 if (!Ok(stable.Enqueue(i)) || !Ok(ring.Enqueue(i))) {
                     return false;
                 }
             }
 
             while willexit (!ring.IsEmpty()) {
-                stack mut i32[0 max] stableValue = 0;
-                stack mut i32[0 max] ringValue = 0;
+                stack mut u32[0 2 ** 31 - 1] stableValue = 0;
+                stack mut u32[0 2 ** 31 - 1] ringValue = 0;
                 if (!stable.TryDequeue(stableValue) || !ring.TryDequeue(ringValue) || stableValue != ringValue) {
                     return false;
                 }
@@ -1157,7 +1157,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 checksum += (i64[min max])ringValue;
             }
 
-            stack i64[0 max] impossible = (i64[0 max])(2 ** 63 - 1);
+            stack u64[0 2 ** 63 - 1] impossible = (u64[0 2 ** 63 - 1])(2 ** 63 - 1);
             return stable.IsEmpty()
                 && ring.IsEmpty()
                 && checksum == 2016
@@ -1165,8 +1165,8 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
 
         fn bool CheckLinkedListParity() {
-            stack mut System.Collections.LinkedList<i32[0 max]> stable = new();
-            stack mut System.Collections.LinkedList<i32[0 max]> experimental = new();
+            stack mut System.Collections.LinkedList<u32[0 2 ** 31 - 1]> stable = new();
+            stack mut System.Collections.LinkedList<u32[0 2 ** 31 - 1]> experimental = new();
             if (!Ok(stable.ReserveNodes(3)) || !Ok(experimental.ReserveNodes(3))) {
                 return false;
             }
@@ -1178,8 +1178,8 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 return false;
             }
 
-            stack mut i32[0 max] stableValue = 0;
-            stack mut i32[0 max] experimentalValue = 0;
+            stack mut u32[0 2 ** 31 - 1] stableValue = 0;
+            stack mut u32[0 2 ** 31 - 1] experimentalValue = 0;
             if (!stable.TryRemoveFirst(stableValue) || !experimental.TryRemoveFirst(experimentalValue) || stableValue != 5 || experimentalValue != 5) {
                 return false;
             }
@@ -1200,7 +1200,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 return false;
             }
 
-            for willexit (stack mut i32[0 24] i = 0; i < 24; i += 1) {
+            for willexit (stack mut u8[0 24] i = 0; i < 24; i += 1) {
                 if (!Ok(stable.AddLast(i)) || !Ok(experimental.AddLast(i))) {
                     return false;
                 }
@@ -1212,15 +1212,15 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         }
 
         fn bool CheckDictionaryParity() {
-            stack mut System.Collections.Dictionary<i32[0 max], i32[0 max]> stable = new();
-            stack mut System.Collections.Dictionary<i32[0 max], i32[0 max]> experimental = new();
+            stack mut System.Collections.Dictionary<u32[0 2 ** 31 - 1], u32[0 2 ** 31 - 1]> stable = new();
+            stack mut System.Collections.Dictionary<u32[0 2 ** 31 - 1], u32[0 2 ** 31 - 1]> experimental = new();
             if (!Ok(stable.Reserve(5)) || !Ok(experimental.Reserve(5))) {
                 return false;
             }
 
-            for willexit (stack mut i32[0 48] i = 0; i < 48; i += 1) {
-                stack i32[0 max] key = (i32[0 max])(i * 2);
-                stack i32[0 max] value = (i32[0 max])(i + 100);
+            for willexit (stack mut u8[0 48] i = 0; i < 48; i += 1) {
+                stack u32[0 2 ** 31 - 1] key = (u32[0 2 ** 31 - 1])(i * 2);
+                stack u32[0 2 ** 31 - 1] value = (u32[0 2 ** 31 - 1])(i + 100);
                 if (!Ok(stable.Set(key, value)) || !Ok(experimental.Set(key, value))) {
                     return false;
                 }
@@ -1231,10 +1231,10 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             }
 
             stack mut i64[min max] checksum = 0;
-            stack mut i32[0 max] stableFound = 0;
-            stack mut i32[0 max] experimentalFound = 0;
-            for willexit (stack mut i32[0 48] i = 0; i < 48; i += 1) {
-                stack i32[0 max] key = (i32[0 max])(i * 2);
+            stack mut u32[0 2 ** 31 - 1] stableFound = 0;
+            stack mut u32[0 2 ** 31 - 1] experimentalFound = 0;
+            for willexit (stack mut u8[0 48] i = 0; i < 48; i += 1) {
+                stack u32[0 2 ** 31 - 1] key = (u32[0 2 ** 31 - 1])(i * 2);
                 if (!stable.TryGet(key, stableFound) || !experimental.TryGet(key, experimentalFound) || stableFound != experimentalFound) {
                     return false;
                 }
@@ -1246,7 +1246,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 return false;
             }
 
-            stack i32[0 max] updateKey = 20;
+            stack u32[0 2 ** 31 - 1] updateKey = 20;
             if (!Ok(stable.Set(updateKey, 999)) || !Ok(experimental.Set(updateKey, 999))
                 || stable.Count() != experimental.Count()
                 || !stable.TryGet(updateKey, stableFound)
@@ -1256,14 +1256,14 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 return false;
             }
 
-            for willexit (stack mut i32[0 12] i = 0; i < 12; i += 1) {
-                stack i32[0 max] key = (i32[0 max])(i * 4);
+            for willexit (stack mut u8[0 12] i = 0; i < 12; i += 1) {
+                stack u32[0 2 ** 31 - 1] key = (u32[0 2 ** 31 - 1])(i * 4);
                 if (!stable.Remove(key) || !experimental.Remove(key) || stable.ContainsKey(key) || experimental.ContainsKey(key)) {
                     return false;
                 }
             }
 
-            stack i32[0 max] tombstoneKey = 777;
+            stack u32[0 2 ** 31 - 1] tombstoneKey = 777;
             if (stable.Count() != 36
                 || experimental.Count() != 36
                 || !Ok(stable.Set(tombstoneKey, 12345))
@@ -1276,7 +1276,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
 
             stable.Clear();
             experimental.Clear();
-            stack i64[0 max] impossible = (i64[0 max])(2 ** 63 - 1);
+            stack u64[0 2 ** 63 - 1] impossible = (u64[0 2 ** 63 - 1])(2 ** 63 - 1);
             return stable.IsEmpty()
                 && experimental.IsEmpty()
                 && TooLarge(stable.Reserve(impossible))
@@ -1390,9 +1390,9 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             }
 
             {
-                stack mut System.Collections.Dictionary<i32[0 max], Resource> values = new();
-                stack i32[0 max] one = 1;
-                stack i32[0 max] two = 2;
+                stack mut System.Collections.Dictionary<u32[0 2 ** 31 - 1], Resource> values = new();
+                stack u32[0 2 ** 31 - 1] one = 1;
+                stack u32[0 2 ** 31 - 1] two = 2;
                 if (!Ok(values.Set(one, new Resource() { Value = 17 })) || !Ok(values.Set(two, new Resource() { Value = 18 }))) {
                     return false;
                 }
@@ -1405,9 +1405,9 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             }
 
             {
-                stack mut System.Collections.Dictionary<i32[0 max], Resource> values = new();
-                stack i32[0 max] three = 3;
-                stack i32[0 max] four = 4;
+                stack mut System.Collections.Dictionary<u32[0 2 ** 31 - 1], Resource> values = new();
+                stack u32[0 2 ** 31 - 1] three = 3;
+                stack u32[0 2 ** 31 - 1] four = 4;
                 if (!Ok(values.Set(three, new Resource() { Value = 19 })) || !Ok(values.Set(four, new Resource() { Value = 20 }))) {
                     return false;
                 }
@@ -1496,7 +1496,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 }
 
                 fn bool UseCollections() {
-                    stack mut List<i32[0 max]> values = new();
+                    stack mut List<u32[0 2 ** 31 - 1]> values = new();
                     if (!Ok(values.Push(10))) {
                         return false;
                     }
@@ -1508,12 +1508,12 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                     if (values.AsSlice()[0] != 12) {
                         return false;
                     }
-                    stack mut i32[0 max] popped = 0;
+                    stack mut u32[0 2 ** 31 - 1] popped = 0;
                     if (!values.TryPop(popped) || popped != 12 || values.Count() != 0) {
                         return false;
                     }
 
-                    stack mut Stack<i32[0 max]> numbers = new();
+                    stack mut Stack<u32[0 2 ** 31 - 1]> numbers = new();
                     if (!Ok(numbers.Push(20))) {
                         return false;
                     }
@@ -1524,7 +1524,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                         return false;
                     }
 
-                    stack mut Queue<i32[0 max]> queue = new();
+                    stack mut Queue<u32[0 2 ** 31 - 1]> queue = new();
                     if (!Ok(queue.Enqueue(30))) {
                         return false;
                     }
@@ -1535,7 +1535,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                         return false;
                     }
 
-                    stack mut LinkedList<i32[0 max]> linked = new();
+                    stack mut LinkedList<u32[0 2 ** 31 - 1]> linked = new();
                     if (!Ok(linked.ReserveNodes(2)) || linked.Count() != 0) {
                         return false;
                     }
@@ -1552,15 +1552,15 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                         return false;
                     }
 
-                    stack mut Dictionary<i32[0 max], i32[0 max]> dictionary = new();
-                    stack i32[0 max] dictionaryKey = 3;
+                    stack mut Dictionary<u32[0 2 ** 31 - 1], u32[0 2 ** 31 - 1]> dictionary = new();
+                    stack u32[0 2 ** 31 - 1] dictionaryKey = 3;
                     if (!Ok(dictionary.Set(dictionaryKey, 33))) {
                         return false;
                     }
                     if (!dictionary.ContainsKey(dictionaryKey)) {
                         return false;
                     }
-                    stack mut i32[0 max] found = 0;
+                    stack mut u32[0 2 ** 31 - 1] found = 0;
                     if (!dictionary.TryGet(dictionaryKey, found) || found != 33) {
                         return false;
                     }
@@ -1568,18 +1568,18 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                         return false;
                     }
 
-                    stack mut List<i32[0 max]> customList = new();
+                    stack mut List<u32[0 2 ** 31 - 1]> customList = new();
                     if (!Ok(customList.Push(1)) || !Ok(customList.Push(2)) || customList.Count() != 2) {
                         return false;
                     }
 
-                    stack mut Queue<i32[0 max]> customQueue = new();
+                    stack mut Queue<u32[0 2 ** 31 - 1]> customQueue = new();
                     if (!Ok(customQueue.Enqueue(3)) || !Ok(customQueue.Enqueue(4)) || customQueue.Count() != 2) {
                         return false;
                     }
 
-                    stack mut Dictionary<i32[0 max], i32[0 max]> customDictionary = new();
-                    stack i32[0 max] customDictionaryKey = 9;
+                    stack mut Dictionary<u32[0 2 ** 31 - 1], u32[0 2 ** 31 - 1]> customDictionary = new();
+                    stack u32[0 2 ** 31 - 1] customDictionaryKey = 9;
                     if (!Ok(customDictionary.Set(customDictionaryKey, 18)) || !customDictionary.ContainsKey(customDictionaryKey)) {
                         return false;
                     }
@@ -1595,11 +1595,11 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
     }
 
     [Fact]
-    public void StdLibSourceExperimentalCollectionsExposeDynamicComparisonTypes()
+    public void StdLibSourcePromotedCollectionsExposeDynamicComparisonTypes()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibExperimentalCollectionsSurface.stark");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibPromotedCollectionsSurface.stark");
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(
                 """
@@ -1616,8 +1616,8 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                     }
                 }
 
-                fn bool UseExperimentalCollections() {
-                    stack mut System.Collections.List<i32[0 max]> values = new();
+                fn bool UsePromotedCollections() {
+                    stack mut System.Collections.List<u32[0 2 ** 31 - 1]> values = new();
                     if (!Ok(values.Push(10))) {
                         return false;
                     }
@@ -1628,12 +1628,12 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                         return false;
                     }
 
-                    stack mut i32[0 max] popped = 0;
+                    stack mut u32[0 2 ** 31 - 1] popped = 0;
                     if (!values.TryPop(popped) || popped != 12 || values.Count() != 0) {
                         return false;
                     }
 
-                    stack mut System.Collections.Stack<i32[0 max]> stackValues = new();
+                    stack mut System.Collections.Stack<u32[0 2 ** 31 - 1]> stackValues = new();
                     if (!Ok(stackValues.Push(20)) || stackValues.Peek() != 20) {
                         return false;
                     }
@@ -1642,7 +1642,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                         return false;
                     }
 
-                    stack mut System.Collections.Queue<i32[0 max]> queueValues = new();
+                    stack mut System.Collections.Queue<u32[0 2 ** 31 - 1]> queueValues = new();
                     if (!Ok(queueValues.Enqueue(30)) || queueValues.Peek() != 30) {
                         return false;
                     }
@@ -1651,7 +1651,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                         return false;
                     }
 
-                    stack mut System.Collections.RingQueue<i32[0 max]> ringValues = new();
+                    stack mut System.Collections.RingQueue<u32[0 2 ** 31 - 1]> ringValues = new();
                     if (!Ok(ringValues.Enqueue(40)) || !Ok(ringValues.Enqueue(41))) {
                         return false;
                     }
@@ -1660,7 +1660,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                         return false;
                     }
 
-                    stack mut System.Collections.LinkedList<i32[0 max]> linkedValues = new();
+                    stack mut System.Collections.LinkedList<u32[0 2 ** 31 - 1]> linkedValues = new();
                     if (!Ok(linkedValues.ReserveNodes(2)) || !Ok(linkedValues.AddFirst(50)) || !Ok(linkedValues.AddLast(51))) {
                         return false;
                     }
@@ -1673,13 +1673,13 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                         return false;
                     }
 
-                    stack mut System.Collections.Dictionary<i32[0 max], i32[0 max]> dictionary = new();
-                    stack i32[0 max] dictionaryKey = 3;
+                    stack mut System.Collections.Dictionary<u32[0 2 ** 31 - 1], u32[0 2 ** 31 - 1]> dictionary = new();
+                    stack u32[0 2 ** 31 - 1] dictionaryKey = 3;
                     if (!Ok(dictionary.Reserve(8)) || !Ok(dictionary.Set(dictionaryKey, 33))) {
                         return false;
                     }
 
-                    stack mut i32[0 max] found = 0;
+                    stack mut u32[0 2 ** 31 - 1] found = 0;
                     if (!dictionary.ContainsKey(dictionaryKey) || !dictionary.TryGet(dictionaryKey, found) || found != 33) {
                         return false;
                     }
@@ -1700,11 +1700,11 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                         return false;
                     }
 
-                    stack DictionaryRemoveResult<i32[0 max]> removed = dictionary.RemoveMove(dictionaryKey);
+                    stack DictionaryRemoveResult<u32[0 2 ** 31 - 1]> removed = dictionary.RemoveMove(dictionaryKey);
                     switch (removed) {
-                        case DictionaryRemoveResult<i32[0 max]>.Missing:
+                        case DictionaryRemoveResult<u32[0 2 ** 31 - 1]>.Missing:
                             return false;
-                        case DictionaryRemoveResult<i32[0 max]>.Removed(var removedValue):
+                        case DictionaryRemoveResult<u32[0 2 ** 31 - 1]>.Removed(var removedValue):
                             if (removedValue != 55 || dictionary.ContainsKey(dictionaryKey) || dictionary.Count() != 0) {
                                 return false;
                             }
@@ -1725,11 +1725,11 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
     }
 
     [Fact]
-    public void StdLibSourceExperimentalListLowersThroughDynamicStorage()
+    public void StdLibSourcePromotedListLowersThroughDynamicStorage()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibExperimentalListLowering.stark");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibPromotedListLowering.stark");
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(
                 """
@@ -1746,20 +1746,20 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                     }
                 }
 
-                fn i64[0 max] GrowAndSlice() {
-                    stack mut System.Collections.List<i32[0 max]> values = new();
+                fn u64[0 2 ** 63 - 1] GrowAndSlice() {
+                    stack mut System.Collections.List<u32[0 2 ** 31 - 1]> values = new();
                     if (!Ok(values.Reserve(8))) {
                         return 0;
                     }
 
-                    for willexit (stack mut i32[0 8] i = 0; i < 8; i += 1) {
+                    for willexit (stack mut u8[0 8] i = 0; i < 8; i += 1) {
                         if (!Ok(values.Push(i))) {
                             return 0;
                         }
                     }
 
                     values.AsMutableSlice()[3] = 99;
-                    return (i64[0 max])values.AsSlice()[3];
+                    return (u64[0 2 ** 63 - 1])values.AsSlice()[3];
                 }
                 """,
                 appPath),
@@ -1781,11 +1781,27 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
     }
 
     [Fact]
-    public void StdLibSourceExperimentalDictionaryUsesSparseRawValueStorage()
+    public void StdLibSourceDictionaryRawSparseStorageStaysInternalAndJustified()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(repositoryRoot, "stdlib", "src", "System", "Collections.stark"));
+
+        Assert.Contains("Raw pointer boundary: Dictionary keeps sparse key/value/control storage", source, StringComparison.Ordinal);
+        Assert.Contains("internal rawmutptr<K> Keys;", source, StringComparison.Ordinal);
+        Assert.Contains("internal rawmutptr<V> Values;", source, StringComparison.Ordinal);
+        Assert.Contains("internal rawmutptr<u8[0 2]> States;", source, StringComparison.Ordinal);
+        Assert.Contains("internal System.Memory.Allocation KeysAllocation;", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("public rawptr", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("public rawmutptr", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("DictionaryValueSlot", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourcePromotedDictionaryUsesSparseRawValueStorage()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibExperimentalDictionaryLowering.stark");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibPromotedDictionaryLowering.stark");
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(
                 """
@@ -1803,16 +1819,16 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 }
 
                 fn bool GrowDictionary() {
-                    stack mut System.Collections.Dictionary<i32[0 max], i32[0 max]> dictionary = new();
-                    for willexit (stack mut i32[0 32] i = 0; i < 32; i += 1) {
-                        stack i32[0 max] value = (i32[0 max])(i + 7);
+                    stack mut System.Collections.Dictionary<u32[0 2 ** 31 - 1], u32[0 2 ** 31 - 1]> dictionary = new();
+                    for willexit (stack mut u8[0 32] i = 0; i < 32; i += 1) {
+                        stack u32[0 2 ** 31 - 1] value = (u32[0 2 ** 31 - 1])(i + 7);
                         if (!Ok(dictionary.Set(i, value))) {
                             return false;
                         }
                     }
 
-                    stack i32[0 max] lookupKey = 17;
-                    stack mut i32[0 max] found = 0;
+                    stack u32[0 2 ** 31 - 1] lookupKey = 17;
+                    stack mut u32[0 2 ** 31 - 1] found = 0;
                     return dictionary.Capacity() >= 32
                         && dictionary.TryGet(lookupKey, found)
                         && found == 24
@@ -1837,11 +1853,11 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
 
         var reserveBody = ExtractDefinedFunctionText(
             llvm.Text,
-            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_Dictionary_Reserve__i32_0_2147483647__i32_0_2147483647(",
+            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_Dictionary_Reserve__u32_0_2147483647__u32_0_2147483647(",
             "Expected Dictionary.Reserve specialization to be emitted.");
         var tryGetBody = ExtractDefinedFunctionText(
             llvm.Text,
-            "define linkonce_odr dso_local fastcc noundef i1 @__stark_mono_fn_System_Collections__System_Collections_Dictionary_TryGet__i32_0_2147483647__i32_0_2147483647(",
+            "define linkonce_odr dso_local fastcc noundef i1 @__stark_mono_fn_System_Collections__System_Collections_Dictionary_TryGet__u32_0_2147483647__u32_0_2147483647(",
             "Expected Dictionary.TryGet specialization to be emitted.");
 
         Assert.Contains("@System_Memory_Allocate(", reserveBody, StringComparison.Ordinal);
@@ -1852,7 +1868,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
     }
 
     [Fact]
-    public void ExperimentalDictionaryLookupUsesGroupedControlByteProbe()
+    public void PromotedDictionaryLookupUsesGroupedControlByteProbe()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
@@ -1873,13 +1889,13 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
         var findIndexBody = ExtractDefinedFunctionText(
             llvm,
-            "define linkonce_odr dso_local fastcc noundef range(i64 0, -9223372036854775808) i64 @__stark_mono_fn_System_Collections__System_Collections_Dictionary_FindIndex__i32_0_2147483647__i32_0_2147483647(");
+            "define linkonce_odr dso_local fastcc noundef range(i64 0, -9223372036854775808) i64 @__stark_mono_fn_System_Collections__System_Collections_Dictionary_FindIndex__u32__u32(");
         var findInsertionBody = ExtractDefinedFunctionText(
             llvm,
-            "define linkonce_odr dso_local fastcc noundef range(i64 0, -9223372036854775808) i64 @__stark_mono_fn_System_Collections__System_Collections_Dictionary_FindInsertionIndex__i32_0_2147483647__i32_0_2147483647(");
+            "define linkonce_odr dso_local fastcc noundef range(i64 0, -9223372036854775808) i64 @__stark_mono_fn_System_Collections__System_Collections_Dictionary_FindInsertionIndex__u32__u32(");
         var initializeBody = ExtractDefinedFunctionText(
             llvm,
-            "define linkonce_odr dso_local fastcc void @__stark_mono_fn_System_Collections__System_Collections_Dictionary_InitializeStates__i32_0_2147483647__i32_0_2147483647(");
+            "define linkonce_odr dso_local fastcc void @__stark_mono_fn_System_Collections__System_Collections_Dictionary_InitializeStates__u32__u32(");
 
         Assert.DoesNotContain("; LLVM body emission fallback", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("br i1 undef", llvm, StringComparison.Ordinal);
@@ -1898,11 +1914,11 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
     }
 
     [Fact]
-    public void StdLibSourceExperimentalCollectionReservesUseTailInitializationRegions()
+    public void StdLibSourcePromotedCollectionReservesUseTailInitializationRegions()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibExperimentalCollectionReserveLowering.stark");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibPromotedCollectionReserveLowering.stark");
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(
                 """
@@ -1920,8 +1936,8 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 }
 
                 fn bool GrowCollections() {
-                    stack mut System.Collections.RingQueue<i32[0 max]> queue = new();
-                    stack mut System.Collections.Dictionary<i32[0 max], i32[0 max]> dictionary = new();
+                    stack mut System.Collections.RingQueue<u32[0 2 ** 31 - 1]> queue = new();
+                    stack mut System.Collections.Dictionary<u32[0 2 ** 31 - 1], u32[0 2 ** 31 - 1]> dictionary = new();
                     return Ok(queue.Reserve(32)) && Ok(dictionary.Reserve(32));
                 }
                 """,
@@ -1937,11 +1953,11 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
 
         var ringQueueReserveBody = ExtractDefinedFunctionText(
             llvm.Text,
-            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_RingQueue_Reserve__i32_0_2147483647(",
+            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_RingQueue_Reserve__u32_0_2147483647(",
             "Expected RingQueue.Reserve specialization to be emitted.");
         var dictionaryReserveBody = ExtractDefinedFunctionText(
             llvm.Text,
-            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_Dictionary_Reserve__i32_0_2147483647__i32_0_2147483647(",
+            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_Dictionary_Reserve__u32_0_2147483647__u32_0_2147483647(",
             "Expected Dictionary.Reserve specialization to be emitted.");
 
         Assert.Contains("%slot_addedSlots", ringQueueReserveBody, StringComparison.Ordinal);
@@ -1977,10 +1993,10 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 }
 
                 fn bool GrowDictionary() {
-                    stack mut Dictionary<i32[0 max], i32[0 max]> dictionary = new();
-                    stack mut i32[0 max] index = 0;
+                    stack mut Dictionary<u32[0 2 ** 31 - 1], u32[0 2 ** 31 - 1]> dictionary = new();
+                    stack mut u32[0 2 ** 31 - 1] index = 0;
                     while willexit (index < 9) {
-                        stack i32[0 max] value = (i32[0 max])(index + 1);
+                        stack u32[0 2 ** 31 - 1] value = (u32[0 2 ** 31 - 1])(index + 1);
                         if (!Ok(dictionary.Set(index, value))) {
                             return false;
                         }
@@ -1988,8 +2004,8 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                         index += 1;
                     }
 
-                    stack i32[0 max] lookupKey = 4;
-                    stack mut i32[0 max] found = 0;
+                    stack u32[0 2 ** 31 - 1] lookupKey = 4;
+                    stack mut u32[0 2 ** 31 - 1] found = 0;
                     return dictionary.Capacity() >= 16
                         && dictionary.TryGet(lookupKey, found)
                         && found == 5;
@@ -2007,7 +2023,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         Assert.Contains("ComputeContiguousGrowthCapacity", llvm.Text, StringComparison.Ordinal);
         var tryGetBody = ExtractDefinedFunctionText(
             llvm.Text,
-            "define linkonce_odr dso_local fastcc noundef i1 @__stark_mono_fn_System_Collections__System_Collections_Dictionary_TryGet__i32_0_2147483647__i32_0_2147483647",
+            "define linkonce_odr dso_local fastcc noundef i1 @__stark_mono_fn_System_Collections__System_Collections_Dictionary_TryGet__u32_0_2147483647__u32_0_2147483647",
             "Expected integer Dictionary.TryGet specialization to be emitted.");
         Assert.DoesNotContain(" srem i64 ", tryGetBody, StringComparison.Ordinal);
         Assert.DoesNotContain("call fastcc i64 @__stark_mono_fn_System_Collections__System_Collections_DictionaryKey_Hash__", tryGetBody, StringComparison.Ordinal);
@@ -2065,7 +2081,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
     }
 
     [Fact]
-    public async Task SourceStdLibExperimentalListMatchesStableListExecutableRuns()
+    public async Task SourceStdLibPromotedListMatchesStableListExecutableRuns()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
         {
@@ -2074,13 +2090,13 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
 
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-experimental-list-");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-promoted-list-");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
 
         try
         {
-            await File.WriteAllTextAsync(appPath, ExperimentalListParityProgram);
+            await File.WriteAllTextAsync(appPath, PromotedListParityProgram);
 
             var stdout = new StringWriter();
             var stderr = new StringWriter();
@@ -2115,7 +2131,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
     }
 
     [Fact]
-    public async Task SourceStdLibExperimentalStackMatchesStableStackExecutableRuns()
+    public async Task SourceStdLibPromotedStackMatchesStableStackExecutableRuns()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
         {
@@ -2124,13 +2140,13 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
 
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-experimental-stack-");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-promoted-stack-");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
 
         try
         {
-            await File.WriteAllTextAsync(appPath, ExperimentalStackParityProgram);
+            await File.WriteAllTextAsync(appPath, PromotedStackParityProgram);
 
             var stdout = new StringWriter();
             var stderr = new StringWriter();
@@ -2165,7 +2181,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
     }
 
     [Fact]
-    public async Task SourceStdLibExperimentalQueueMatchesStableQueueExecutableRuns()
+    public async Task SourceStdLibPromotedQueueMatchesStableQueueExecutableRuns()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
         {
@@ -2174,13 +2190,13 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
 
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-experimental-queue-");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-promoted-queue-");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
 
         try
         {
-            await File.WriteAllTextAsync(appPath, ExperimentalQueueParityProgram);
+            await File.WriteAllTextAsync(appPath, PromotedQueueParityProgram);
 
             var stdout = new StringWriter();
             var stderr = new StringWriter();
@@ -2215,7 +2231,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
     }
 
     [Fact]
-    public async Task SourceStdLibExperimentalRingQueueCandidateExecutableRuns()
+    public async Task SourceStdLibPromotedRingQueueCandidateExecutableRuns()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
         {
@@ -2224,13 +2240,13 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
 
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-experimental-ring-queue-");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-promoted-ring-queue-");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
 
         try
         {
-            await File.WriteAllTextAsync(appPath, ExperimentalRingQueueCandidateProgram);
+            await File.WriteAllTextAsync(appPath, PromotedRingQueueCandidateProgram);
 
             var stdout = new StringWriter();
             var stderr = new StringWriter();
@@ -2265,7 +2281,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
     }
 
     [Fact]
-    public async Task SourceStdLibExperimentalLinkedListMatchesStableLinkedListExecutableRuns()
+    public async Task SourceStdLibPromotedLinkedListMatchesStableLinkedListExecutableRuns()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
         {
@@ -2274,13 +2290,13 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
 
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-experimental-linked-list-");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-promoted-linked-list-");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
 
         try
         {
-            await File.WriteAllTextAsync(appPath, ExperimentalLinkedListParityProgram);
+            await File.WriteAllTextAsync(appPath, PromotedLinkedListParityProgram);
 
             var stdout = new StringWriter();
             var stderr = new StringWriter();
@@ -2315,7 +2331,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
     }
 
     [Fact]
-    public void ExperimentalLinkedListReserveNodesDoesNotEagerlyBuildFreeList()
+    public void PromotedLinkedListReserveNodesDoesNotEagerlyBuildFreeList()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
@@ -2336,21 +2352,21 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
         var reserveBody = ExtractDefinedFunctionText(
             llvm,
-            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_LinkedList_ReserveNodes__i32_0_2147483647(");
+            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_LinkedList_ReserveNodes__u32_0_2147483647(");
         var allocateBody = ExtractDefinedFunctionText(
             llvm,
-            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_LinkedList_AllocateNode__i32_0_2147483647(");
+            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_LinkedList_AllocateNode__u32_0_2147483647(");
 
         Assert.Contains("__stark_dynamic_try_reserve", reserveBody, StringComparison.Ordinal);
         Assert.DoesNotContain("LinkedListValueSlot", reserveBody, StringComparison.Ordinal);
         Assert.DoesNotContain("LinkedListLinks", reserveBody, StringComparison.Ordinal);
         Assert.Contains("LinkedListValueSlot", allocateBody, StringComparison.Ordinal);
-        Assert.Contains("LinkedList_ReserveNodes__i32_0_2147483647", allocateBody, StringComparison.Ordinal);
-        Assert.Contains("insertvalue %System_Collections_LinkedListValueSlot_i32_0_2147483647__ zeroinitializer, i8 1", allocateBody, StringComparison.Ordinal);
+        Assert.Contains("LinkedList_ReserveNodes__u32_0_2147483647", allocateBody, StringComparison.Ordinal);
+        Assert.Contains("insertvalue %System_Collections_LinkedListValueSlot_u32_0_2147483647__ zeroinitializer, i8 1", allocateBody, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void ExperimentalQueueTryDequeueUsesDynamicStorageMoveAtPath()
+    public void PromotedQueueTryDequeueUsesDynamicStorageMoveAtPath()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
@@ -2371,7 +2387,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
         var tryDequeueBody = ExtractDefinedFunctionText(
             llvm,
-            "define linkonce_odr dso_local fastcc noundef i1 @__stark_mono_fn_System_Collections__System_Collections_Queue_TryDequeue__i32_0_2147483647(");
+            "define linkonce_odr dso_local fastcc noundef i1 @__stark_mono_fn_System_Collections__System_Collections_Queue_TryDequeue__u32_0_2147483647(");
 
         Assert.Contains("dynamic_move_at", tryDequeueBody, StringComparison.Ordinal);
         Assert.Contains("llvm.memmove", tryDequeueBody, StringComparison.Ordinal);
@@ -2381,7 +2397,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
     }
 
     [Fact]
-    public async Task SourceStdLibExperimentalDictionaryExecutableRuns()
+    public async Task SourceStdLibPromotedDictionaryExecutableRuns()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
         {
@@ -2390,13 +2406,13 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
 
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-experimental-dictionary-");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-promoted-dictionary-");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
 
         try
         {
-            await File.WriteAllTextAsync(appPath, ExperimentalDictionaryProgram);
+            await File.WriteAllTextAsync(appPath, PromotedDictionaryProgram);
 
             var stdout = new StringWriter();
             var stderr = new StringWriter();
@@ -2431,7 +2447,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
     }
 
     [Fact]
-    public async Task SourceStdLibExperimentalCollectionsCrossFamilyParityExecutableRuns()
+    public async Task SourceStdLibPromotedCollectionsCrossFamilyParityExecutableRuns()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
         {
@@ -2440,13 +2456,13 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
 
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-experimental-collections-cross-family-");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-promoted-collections-cross-family-");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
 
         try
         {
-            await File.WriteAllTextAsync(appPath, ExperimentalCollectionsCrossFamilyParityProgram);
+            await File.WriteAllTextAsync(appPath, PromotedCollectionsCrossFamilyParityProgram);
 
             var stdout = new StringWriter();
             var stderr = new StringWriter();

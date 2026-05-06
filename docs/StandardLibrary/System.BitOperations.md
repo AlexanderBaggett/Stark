@@ -33,7 +33,7 @@ public finite law i64 RotateRight(i64 value, i64 amount);
 import System
 module App
 
-export ffi fn i32 main() {
+export unsafe ffi fn i32 main() {
     stack i32 value = 1;
     stack i32 leading = System.BitOperations.LeadingZeroCount(value);
     stack i32 rotated = System.BitOperations.RotateLeft(value, 31);

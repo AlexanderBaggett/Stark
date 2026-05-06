@@ -5,56 +5,28 @@ namespace compiler.StandardLibraryTests;
 public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
 {
     [Fact]
-    public void StdLibSourceRawFileHandlesSupportAsciiAndUnicodeWriteOverloads()
+    public void StdLibSourceRawFileHandleHelpersStayInternal()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibFileUnicodeSurface.stark");
+        var filePath = Path.Combine(sourceRoot, "System", "IO", "File.stark");
+        var source = File.ReadAllText(filePath);
+
+        Assert.Contains("internal unsafe fn rawptr<i8[min max]> OpenRead", source, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe fn rawptr<i8[min max]> OpenWrite", source, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe fn i64[min max] ReadBytes", source, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe fn void WriteLine(rawptr<i8[min max]> handle", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("public unsafe fn rawptr<i8[min max]> OpenRead", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("public unsafe fn rawptr<i8[min max]> OpenWrite", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("public unsafe fn i64[min max] ReadBytes", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("public unsafe fn void WriteLine(rawptr<i8[min max]> handle", source, StringComparison.Ordinal);
+
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(
-                """
-                import System
-                module Demo
-                fn bool StatusOk(System.IO.IOStatus status) {
-                    switch (status) {
-                        case System.IO.IOStatus.Ok:
-                            return true;
-                        case System.IO.IOStatus.Err(var error):
-                            return false;
-                    }
-                }
-
-                fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
-                    switch (result) {
-                        case System.IO.IOResult<bool>.Ok(var value):
-                            return value;
-                        case System.IO.IOResult<bool>.Err(var error):
-                            return false;
-                    }
-                }
-
-                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
-                    switch (result) {
-                        case System.IO.IOResult<System.IO.File.File>.Ok(var value):
-                            return value;
-                        case System.IO.IOResult<System.IO.File.File>.Err(var error):
-                            return new();
-                    }
-                }
-                unsafe fn void Use() {
-                    stack rawptr<i8[min max]> handle = System.IO.File.OpenWrite("demo.txt");
-                    System.IO.File.WriteText(handle, "ascii");
-                    System.IO.File.WriteText(handle, (unicode)"ascii");
-                    System.IO.File.WriteLine(handle, "line");
-                    System.IO.File.WriteLine(handle, (unicode)"line");
-                    System.IO.File.Flush(handle);
-                    System.IO.File.SyncAll(handle);
-                    System.IO.File.Close(handle);
-                    return;
-                }
-                """,
-                appPath),
+                source,
+                filePath),
             new CompilerOptions(
+                EmitLlvmIr: true,
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
@@ -154,14 +126,10 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
                 unsafe fn void Use() {
-                    stack rawptr<i8[min max]> handle = System.IO.File.OpenRead("demo.txt");
-                    System.IO.File.Seek(handle, 0, System.IO.File.SeekOrigin.Begin);
-                    System.IO.File.Seek(handle, 1, System.IO.File.SeekOrigin.Current);
-                    System.IO.File.Seek(handle, -1, System.IO.File.SeekOrigin.End);
-                    System.IO.File.Close(handle);
-
                     stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open("demo.txt", System.IO.File.FileMode.ReadWrite));
                     file.Seek(0, System.IO.File.SeekOrigin.Begin);
+                    file.Seek(1, System.IO.File.SeekOrigin.Current);
+                    file.Seek(-1, System.IO.File.SeekOrigin.End);
                     file.Close();
                     return;
                 }
@@ -321,6 +289,7 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                 appPath,
                 """
                 import System
+                import System.Text
                 module App
                 fn bool StatusOk(System.IO.IOStatus status) {
                     switch (status) {
@@ -348,59 +317,71 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                             return new();
                     }
                 }
+
+                fn i64[min max] CountOrNegative(System.IO.IOResult<u64[0 2 ** 63 - 1]> result) {
+                    switch (result) {
+                        case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Ok(var value):
+                            return (i64[min max])value;
+                        case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                            return -1;
+                    }
+                }
+
                 export unsafe ffi fn i32[min max] main() {
                     stack mut i8[min max][1] buffer = { 0 };
-                    stack rawptr<i8[min max]> read = System.IO.File.OpenRead("seek.txt");
-                    if (read == null) {
+                    stack mut System.IO.File.File read = OpenOrEmpty(System.IO.File.Open("seek.txt", System.IO.File.FileMode.Read));
+                    if (!read.IsOpen()) {
                         return 1;
                     }
 
-                    stack rawptr<i8[min max]> result = System.IO.File.OpenWrite("seek-result.txt");
-                    if (result == null) {
+                    stack mut System.IO.File.File result = OpenOrEmpty(System.IO.File.Open("seek-result.txt", System.IO.File.FileMode.Write));
+                    if (!result.IsOpen()) {
                         return 2;
                     }
 
-                    if (System.IO.File.Seek(read, 2, System.IO.File.SeekOrigin.Begin) != 2) {
+                    stack mut i8[min max][] byte = slice(&buffer[0], 1);
+
+                    if (CountOrNegative(read.Seek(2, System.IO.File.SeekOrigin.Begin)) != 2) {
                         return 3;
                     }
 
-                    if (System.IO.File.ReadBytes(&buffer[0], 1, 1, read) != 1) {
+                    if (CountOrNegative(read.Read(byte)) != 1) {
                         return 4;
                     }
 
-                    if (System.IO.File.WriteBytes(&buffer[0], 1, 1, result) != 1) {
+                    if (CountOrNegative(result.Write(byte)) != 1) {
                         return 5;
                     }
 
-                    if (System.IO.File.Seek(read, -1, System.IO.File.SeekOrigin.Current) != 2) {
+                    if (CountOrNegative(read.Seek(-1, System.IO.File.SeekOrigin.Current)) != 2) {
                         return 6;
                     }
 
-                    if (System.IO.File.ReadBytes(&buffer[0], 1, 1, read) != 1) {
+                    if (CountOrNegative(read.Read(byte)) != 1) {
                         return 7;
                     }
 
-                    if (System.IO.File.WriteBytes(&buffer[0], 1, 1, result) != 1) {
+                    if (CountOrNegative(result.Write(byte)) != 1) {
                         return 8;
                     }
 
-                    if (System.IO.File.Seek(read, -1, System.IO.File.SeekOrigin.End) != 4) {
+                    if (CountOrNegative(read.Seek(-1, System.IO.File.SeekOrigin.End)) != 4) {
                         return 9;
                     }
 
-                    if (System.IO.File.ReadBytes(&buffer[0], 1, 1, read) != 1) {
+                    if (CountOrNegative(read.Read(byte)) != 1) {
                         return 10;
                     }
 
-                    if (System.IO.File.WriteBytes(&buffer[0], 1, 1, result) != 1) {
+                    if (CountOrNegative(result.Write(byte)) != 1) {
                         return 11;
                     }
 
-                    if (System.IO.File.Close(read) != 0) {
+                    if (!StatusOk(read.Close())) {
                         return 12;
                     }
 
-                    if (System.IO.File.Close(result) != 0) {
+                    if (!StatusOk(result.Close())) {
                         return 13;
                     }
 
@@ -523,6 +504,16 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                             return new();
                     }
                 }
+
+                fn i64[min max] CountOrNegative(System.IO.IOResult<u64[0 2 ** 63 - 1]> result) {
+                    switch (result) {
+                        case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Ok(var value):
+                            return (i64[min max])value;
+                        case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                            return -1;
+                    }
+                }
+
                 fn void WriteOwned() {
                     stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open("owned-test.txt", System.IO.File.FileMode.Write));
                     file.WriteLine("Owned");
@@ -541,9 +532,10 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
 
                     stack mut i8[min max][8] buffer = { 0, 0, 0, 0, 0, 0, 0, 0 };
-                    stack rawptr<i8[min max]> handle = System.IO.File.OpenRead("owned-test.txt");
-                    stack i64[min max] count = System.IO.File.ReadBytes(&buffer[0], 1, 6, handle);
-                    System.IO.File.Close(handle);
+                    stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open("owned-test.txt", System.IO.File.FileMode.Read));
+                    stack mut i8[min max][] destination = slice(&buffer[0], 6);
+                    stack i64[min max] count = CountOrNegative(file.Read(destination));
+                    file.Close();
 
                     if (count != 6) {
                         return 4;
@@ -665,11 +657,26 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                             return new();
                     }
                 }
+
+                fn i64[min max] CountOrNegative(System.IO.IOResult<u64[0 2 ** 63 - 1]> result) {
+                    switch (result) {
+                        case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Ok(var value):
+                            return (i64[min max])value;
+                        case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                            return -1;
+                    }
+                }
+
                 fn i64[min max] ReadCount(ascii path, i64[min max] expected) {
                     stack mut i8[min max][16] buffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-                    stack rawptr<i8[min max]> handle = System.IO.File.OpenRead(path);
-                    stack i64[min max] count = System.IO.File.ReadBytes(&buffer[0], 1, expected, handle);
-                    System.IO.File.Close(handle);
+                    stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open(path, System.IO.File.FileMode.Read));
+                    if (!file.IsOpen()) {
+                        return -1;
+                    }
+
+                    stack mut i8[min max][] destination = slice(&buffer[0], expected);
+                    stack i64[min max] count = CountOrNegative(file.Read(destination));
+                    file.Close();
                     return count;
                 }
 
@@ -1009,13 +1016,16 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
                 export unsafe ffi fn i32[min max] main() {
-                    stack rawptr<i8[min max]> handle = System.IO.File.OpenWrite("before.txt");
-                    if (handle == null) {
+                    stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open("before.txt", System.IO.File.FileMode.Write));
+                    if (!file.IsOpen()) {
                         return 1;
                     }
 
-                    System.IO.File.WriteLine(handle, "Move me");
-                    if (System.IO.File.Close(handle) != 0) {
+                    if (!StatusOk(file.WriteLine("Move me"))) {
+                        return 2;
+                    }
+
+                    if (!StatusOk(file.Close())) {
                         return 2;
                     }
 
@@ -1161,13 +1171,16 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
                 export unsafe ffi fn i32[min max] main() {
-                    stack rawptr<i8[min max]> handle = System.IO.File.OpenWrite("unicode.txt");
-                    if (handle == null) {
+                    stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open("unicode.txt", System.IO.File.FileMode.Write, System.Text.Encoding.UTF8));
+                    if (!file.IsOpen()) {
                         return 1;
                     }
 
-                    System.IO.File.WriteLine(handle, (unicode)"File \u03B1");
-                    if (System.IO.File.Close(handle) != 0) {
+                    if (!StatusOk(file.WriteLine((unicode)"File \u03B1"))) {
+                        return 2;
+                    }
+
+                    if (!StatusOk(file.Close())) {
                         return 2;
                     }
 

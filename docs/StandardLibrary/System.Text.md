@@ -308,7 +308,7 @@ bits.
 ## Example
 
 ```stark
-import System
+import System.Text
 module App
 
 fn bool Build(rawmutptr<Unicode> destination) {

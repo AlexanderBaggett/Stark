@@ -10,11 +10,11 @@ const ChunkBytes = 4096;
 const Iterations = 256;
 const ExpectedBytes = 1048576;
 
-unsafe fn System.Net.IPv4Endpoint LoopbackEndpoint(i32[0 63] attempt) {
+unsafe fn System.Net.IPv4Endpoint LoopbackEndpoint(u8[0 63] attempt) {
     stack i32[min max] processId = System.Process.CurrentId();
-    stack mut i32[0 max] positiveProcessId = 0;
+    stack mut u32[0 2 ** 31 - 1] positiveProcessId = 0;
     if (processId > 0) {
-        positiveProcessId = (i32[0 max])processId;
+        positiveProcessId = (u32[0 2 ** 31 - 1])processId;
     }
 
     stack u16[0 65535] port = (u16[0 65535])(41000 + (positiveProcessId % 20000) + attempt);
@@ -33,11 +33,11 @@ unsafe fn bool WriteVectorExact(
     mut borrow System.Net.Tcp.TcpClient client,
     borrow i8[-128 127][] firstSource,
     borrow i8[-128 127][] secondSource) {
-    stack System.Net.NetResult<i64[0 max]> written = client.WriteVectored(firstSource, secondSource);
+    stack System.Net.NetResult<u64[0 2 ** 63 - 1]> written = client.WriteVectored(firstSource, secondSource);
     switch (written) {
-        case System.Net.NetResult<i64[0 max]>.Err(var writeError):
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var writeError):
             return false;
-        case System.Net.NetResult<i64[0 max]>.Ok(var writtenBytes):
+        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var writtenBytes):
             return writtenBytes == ChunkBytes;
     }
 }
@@ -46,13 +46,13 @@ unsafe fn bool ReadVectorExact(
     mut borrow System.Net.Tcp.TcpClient server,
     mut borrow i8[-128 127][] firstDestination,
     mut borrow i8[-128 127][] secondDestination) {
-    stack mut i64[0 max] readTotal = 0;
+    stack mut u64[0 2 ** 63 - 1] readTotal = 0;
     while willexit (readTotal < ChunkBytes) {
-        stack System.Net.NetResult<i64[0 max]> read = server.ReadVectored(firstDestination, secondDestination);
+        stack System.Net.NetResult<u64[0 2 ** 63 - 1]> read = server.ReadVectored(firstDestination, secondDestination);
         switch (read) {
-            case System.Net.NetResult<i64[0 max]>.Err(var readError):
+            case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var readError):
                 return false;
-            case System.Net.NetResult<i64[0 max]>.Ok(var readBytes):
+            case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var readBytes):
                 if (readBytes == 0) {
                     return false;
                 }
@@ -74,7 +74,7 @@ export unsafe ffi fn i32[min max] main() {
     stack mut i8[-128 127][] readFirstView = readFirst;
     stack mut i8[-128 127][] readSecondView = readSecond;
 
-    stack mut i32[0 63] attempt = 0;
+    stack mut u8[0 63] attempt = 0;
     while willexit (attempt < 64) {
         stack System.Net.IPv4Endpoint endpoint = LoopbackEndpoint(attempt);
         stack System.Net.NetResult<System.Net.Tcp.TcpListener> listening =
@@ -103,9 +103,9 @@ export unsafe ffi fn i32[min max] main() {
                                 return 3;
                             case System.Net.NetResult<System.Net.Tcp.TcpClient>.Ok(var serverValue):
                                 stack mut System.Net.Tcp.TcpClient server = serverValue;
-                                stack mut i64[0 max] totalRead = 0;
+                                stack mut u64[0 2 ** 63 - 1] totalRead = 0;
 
-                                for willexit (stack mut i32[0 256] iteration = 0; iteration < Iterations; iteration += 1) {
+                                for willexit (stack mut u16[0 256] iteration = 0; iteration < Iterations; iteration += 1) {
                                     if (!WriteVectorExact(client, writeFirstView, writeSecondView)) {
                                         server.Close();
                                         client.Close();

@@ -5,11 +5,11 @@ namespace compiler.StandardLibraryTests;
 public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
 {
     [Fact]
-    public void StdLibSourceExperimentalPathLowersThroughDynamicStorage()
+    public void StdLibSourcePromotedPathLowersThroughDynamicStorage()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibExperimentalPathLowering.stark");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibPromotedPathLowering.stark");
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(
                 """
@@ -27,7 +27,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn i64[0 max] BuildAndInspect() {
+                fn u64[0 2 ** 63 - 1] BuildAndInspect() {
                     stack mut System.Text.OwnedAscii path = new();
                     if (!Ok(System.IO.Path.TryJoin(path, "alpha/", "/beta.txt"))) {
                         return 0;
@@ -35,7 +35,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
 
                     stack ascii view = path.View();
                     stack System.IO.Path.PathFacts facts = System.IO.Path.GetFacts(view);
-                    return (i64[0 max])(path.Length()
+                    return (u64[0 2 ** 63 - 1])(path.Length()
                         + facts.ExtensionLength()
                         + facts.BaseNameLength()
                         + facts.DirectoryNameLength());
@@ -59,7 +59,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
     }
 
     [Fact]
-    public void StdLibSourceExperimentalPathTryJoinUsesTailRegionPointerCopies()
+    public void StdLibSourcePromotedPathTryJoinUsesTailRegionPointerCopies()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
@@ -76,27 +76,27 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
         var tryJoinBody = ExtractDefinedFunctionText(
             llvm,
             "define fastcc noundef %System_Memory_MemoryStatus @TryJoin(",
-            "Expected experimental TryJoin definition in path module.");
+            "Expected promoted TryJoin definition in path module.");
         var tryJoinPointerRangesBody = ExtractDefinedFunctionText(
             llvm,
             "define fastcc noundef %System_Memory_MemoryStatus @TryJoinPointerRanges(",
-            "Expected experimental TryJoinPointerRanges definition in path module.");
+            "Expected promoted TryJoinPointerRanges definition in path module.");
         var tryJoinConstBody = ExtractDefinedFunctionText(
             llvm,
             "define fastcc noundef %System_Memory_MemoryStatus @TryJoinConst(",
-            "Expected experimental TryJoinConst definition in path module.");
+            "Expected promoted TryJoinConst definition in path module.");
         var tryNormalizeBody = ExtractDefinedFunctionText(
             llvm,
             "define fastcc noundef %System_Memory_MemoryStatus @TryNormalizeSeparators(",
-            "Expected experimental TryNormalizeSeparators definition in path module.");
+            "Expected promoted TryNormalizeSeparators definition in path module.");
         var tryNormalizeConstBody = ExtractDefinedFunctionText(
             llvm,
             "define fastcc noundef %System_Memory_MemoryStatus @TryNormalizeSeparatorsConst(",
-            "Expected experimental TryNormalizeSeparatorsConst definition in path module.");
+            "Expected promoted TryNormalizeSeparatorsConst definition in path module.");
         var getConstFactsBody = ExtractDefinedFunctionText(
             llvm,
             "define fastcc void @GetConstFacts(",
-            "Expected experimental GetConstFacts definition in path module.");
+            "Expected promoted GetConstFacts definition in path module.");
 
         Assert.Contains("@TryJoinPointerRanges", tryJoinBody, StringComparison.Ordinal);
         Assert.Contains("@TryJoinPointerRanges", tryJoinConstBody, StringComparison.Ordinal);
@@ -114,11 +114,11 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
     }
 
     [Fact]
-    public void StdLibSourceExperimentalPathCorrectnessSurfaceCompiles()
+    public void StdLibSourcePromotedPathCorrectnessSurfaceCompiles()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibExperimentalPathCorrectness.stark");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibPromotedPathCorrectness.stark");
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(
                 """
@@ -266,7 +266,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
     }
 
     [Fact]
-    public async Task SourceStdLibExperimentalPathCorrectnessExecutableRuns()
+    public async Task SourceStdLibPromotedPathCorrectnessExecutableRuns()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
         {
@@ -275,7 +275,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
 
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-experimental-path-");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-promoted-path-");
         var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
 
@@ -302,9 +302,11 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                finite law i8[min max] UnitAt(ascii value, i64[0 max] index) {
-                    stack rawptr<i8[min max]> data = System.Text.AsciiData(value);
-                    return *(&data[index]);
+                finite law i8[min max] UnitAt(ascii value, u64[0 2 ** 63 - 1] index) {
+                    unsafe {
+                        stack rawptr<i8[min max]> data = System.Text.AsciiData(value);
+                        return *(&data[index]);
+                    }
                 }
 
                 finite law i8[min max] SeparatorUnit() {
@@ -562,7 +564,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         && IsNormalizedPath(normalizeAlias.View());
                 }
 
-                fn i32[min max] CheckTooLargeNormalization() {
+                unsafe fn i32[min max] CheckTooLargeNormalization() {
                     stack mut i8[min max][1] storage = { 47 };
                     stack Ascii huge = new Ascii() {
                         Data = &storage[0],
@@ -663,8 +665,6 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
         var libraryPath = Path.Combine(packageDirectory, "libSystem.a");
         var appPath = Path.Combine(appDirectory, "App.stark");
         var outputPath = Path.Combine(appDirectory, "app");
-        var zeroBytes = string.Join(", ", Enumerable.Repeat("0", 256));
-
         try
         {
             var buildStdout = new StringWriter();
@@ -682,6 +682,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 appPath,
                 $$"""
                 import System
+                import System.Text
                 module App
 
                 fn bool StatusOk(System.IO.IOStatus status) {
@@ -702,6 +703,15 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
+                fn bool MemoryOk(System.Memory.MemoryStatus status) {
+                    switch (status) {
+                        case System.Memory.MemoryStatus.Ok:
+                            return true;
+                        case System.Memory.MemoryStatus.Err(var error):
+                            return false;
+                    }
+                }
+
                 fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
                     switch (result) {
                         case System.IO.IOResult<System.IO.File.File>.Ok(var value):
@@ -712,22 +722,17 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 }
 
                 export unsafe ffi fn i32[min max] main() {
-                    stack mut i8[min max][256] buffer = { {{zeroBytes}} };
-                    stack mut Ascii owned = new Ascii() {
-                        Data = &buffer[0],
-                        Length = 0,
-                        Capacity = 256
-                    };
+                    stack mut System.Text.OwnedAscii owned = new();
 
-                    if (!System.IO.Path.CurrentDirectory(&owned)) {
+                    if (!MemoryOk(System.IO.Path.CurrentDirectory(owned))) {
                         return 1;
                     }
 
-                    if (owned.Length <= 0) {
+                    if (owned.Length() <= 0) {
                         return 2;
                     }
 
-                    stack System.IO.IOStatus status = System.Console.WriteLine(System.Text.AsciiView(owned));
+                    stack System.IO.IOStatus status = System.Console.WriteLine(owned.View());
                     switch (status) {
                         case System.IO.IOStatus.Ok:
                             return 0;
@@ -748,7 +753,9 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 stdout,
                 stderr);
 
-            Assert.Equal(0, exitCode);
+            Assert.True(
+                exitCode == 0,
+                stdout + Environment.NewLine + stderr);
             Assert.Contains("Emitted executable:", stdout.ToString());
             AssertCompilerLogsEmitted(stderr.ToString());
             Assert.True(File.Exists(outputPath));
@@ -806,8 +813,6 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
         var libraryPath = Path.Combine(packageDirectory, "libSystem.a");
         var appPath = Path.Combine(appDirectory, "App.stark");
         var outputPath = Path.Combine(appDirectory, "app");
-        var zeroBytes = string.Join(", ", Enumerable.Repeat("0", 64));
-
         try
         {
             var buildStdout = new StringWriter();
@@ -825,7 +830,17 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 appPath,
                 $$"""
                 import System
+                import System.Text
                 module App
+
+                fn bool MemoryOk(System.Memory.MemoryStatus status) {
+                    switch (status) {
+                        case System.Memory.MemoryStatus.Ok:
+                            return true;
+                        case System.Memory.MemoryStatus.Err(var error):
+                            return false;
+                    }
+                }
 
                 fn bool IsJoinedPath(ascii value) {
                     switch (value) {
@@ -873,59 +888,29 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 }
 
                 export unsafe ffi fn i32[min max] main() {
-                    stack mut i8[min max][64] buffer = { {{zeroBytes}} };
-                    stack mut Ascii joined = new Ascii() {
-                        Data = &buffer[0],
-                        Length = 0,
-                        Capacity = 64
-                    };
+                    stack mut System.Text.OwnedAscii joined = new();
 
-                    if (!System.IO.Path.TryJoin(&joined, "alpha", "beta.txt")) {
+                    if (!MemoryOk(System.IO.Path.TryJoin(joined, "alpha", "beta.txt"))) {
                         return 1;
                     }
 
-                    stack Ascii joinedPath = new Ascii() {
-                        Data = joined.Data,
-                        Length = joined.Length,
-                        Capacity = joined.Capacity
-                    };
-                    if (!IsJoinedPath(System.Text.AsciiView(joinedPath))) {
+                    if (!IsJoinedPath(joined.View())) {
                         return 2;
                     }
 
-                    stack Ascii joinedExtension = new Ascii() {
-                        Data = joined.Data,
-                        Length = joined.Length,
-                        Capacity = joined.Capacity
-                    };
-                    if (!IsTextExtension(System.IO.Path.Extension(System.Text.AsciiView(joinedExtension)))) {
+                    if (!IsTextExtension(System.IO.Path.Extension(joined.View()))) {
                         return 3;
                     }
 
-                    stack Ascii joinedBaseName = new Ascii() {
-                        Data = joined.Data,
-                        Length = joined.Length,
-                        Capacity = joined.Capacity
-                    };
-                    if (!IsBetaBaseName(System.IO.Path.BaseName(System.Text.AsciiView(joinedBaseName)))) {
+                    if (!IsBetaBaseName(System.IO.Path.BaseName(joined.View()))) {
                         return 4;
                     }
 
-                    stack Ascii joinedDirectory = new Ascii() {
-                        Data = joined.Data,
-                        Length = joined.Length,
-                        Capacity = joined.Capacity
-                    };
-                    if (!IsAlphaDirectory(System.IO.Path.DirectoryName(System.Text.AsciiView(joinedDirectory)))) {
+                    if (!IsAlphaDirectory(System.IO.Path.DirectoryName(joined.View()))) {
                         return 5;
                     }
 
-                    stack Ascii joinedFacts = new Ascii() {
-                        Data = joined.Data,
-                        Length = joined.Length,
-                        Capacity = joined.Capacity
-                    };
-                    stack System.IO.Path.PathFacts facts = System.IO.Path.GetFacts(System.Text.AsciiView(joinedFacts));
+                    stack System.IO.Path.PathFacts facts = System.IO.Path.GetFacts(joined.View());
                     if (!IsTextExtension(facts.Extension())) {
                         return 10;
                     }
@@ -942,16 +927,11 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         return 13;
                     }
 
-                    if (!System.IO.Path.TryJoin(&joined, "alpha/", "/beta.txt")) {
+                    if (!MemoryOk(System.IO.Path.TryJoin(joined, "alpha/", "/beta.txt"))) {
                         return 6;
                     }
 
-                    stack Ascii joinedNormalized = new Ascii() {
-                        Data = joined.Data,
-                        Length = joined.Length,
-                        Capacity = joined.Capacity
-                    };
-                    if (!IsJoinedPath(System.Text.AsciiView(joinedNormalized))) {
+                    if (!IsJoinedPath(joined.View())) {
                         return 7;
                     }
 
@@ -976,7 +956,9 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 stdout,
                 stderr);
 
-            Assert.Equal(0, exitCode);
+            Assert.True(
+                exitCode == 0,
+                stdout + Environment.NewLine + stderr);
             Assert.Contains("Emitted executable:", stdout.ToString());
             AssertCompilerLogsEmitted(stderr.ToString());
             Assert.True(File.Exists(outputPath));
@@ -1041,7 +1023,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
             var buildStdout = new StringWriter();
             var buildStderr = new StringWriter();
             var buildExitCode = await CompilerCli.RunAsync(
-                [systemPath, "--emit-lib", "-o", libraryPath],
+                [systemPath, "--emit-lib", "-O0", "-o", libraryPath],
                 new StringReader(string.Empty),
                 buildStdout,
                 buildStderr);
@@ -1053,6 +1035,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 appPath,
                 $$"""
                 import System
+                import System.Text
                 module App
 
                 fn bool StatusOk(System.IO.IOStatus status) {
@@ -1116,13 +1099,9 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         return 1;
                     }
 
-                    stack rawptr<i8[min max]> cwdHandle = System.IO.File.OpenWrite("cwd.txt");
-                    if (cwdHandle == null) {
-                        return 2;
-                    }
-
-                    System.IO.File.WriteLine(cwdHandle, cwd.View());
-                    if (System.IO.File.Close(cwdHandle) != 0) {
+                    stack mut System.IO.File.File cwdFile = OpenOrEmpty(System.IO.File.Open("cwd.txt", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.Line));
+                    cwdFile.WriteLine(cwd.View());
+                    if (!StatusOk(cwdFile.Close())) {
                         return 3;
                     }
 
@@ -1164,13 +1143,9 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         return 7;
                     }
 
-                    stack rawptr<i8[min max]> deleteHandle = System.IO.File.OpenWrite(System.Text.AsciiView(deleteName));
-                    if (deleteHandle == null) {
-                        return 8;
-                    }
-
-                    System.IO.File.WriteLine(deleteHandle, "Delete");
-                    if (System.IO.File.Close(deleteHandle) != 0) {
+                    stack mut System.IO.File.File deleteFile = OpenOrEmpty(System.IO.File.Open(System.Text.AsciiView(deleteName), System.IO.File.FileMode.Write, System.IO.File.FileBuffering.Line));
+                    deleteFile.WriteLine("Delete");
+                    if (!StatusOk(deleteFile.Close())) {
                         return 9;
                     }
 
@@ -1200,12 +1175,14 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
             var stderr = new StringWriter();
 
             var exitCode = await CompilerCli.RunAsync(
-                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath],
+                [appPath, "--emit-exe", "-O0", "-I", packageDirectory, "-o", outputPath],
                 new StringReader(string.Empty),
                 stdout,
                 stderr);
 
-            Assert.Equal(0, exitCode);
+            Assert.True(
+                exitCode == 0,
+                stdout + Environment.NewLine + stderr);
             Assert.Contains("Emitted executable:", stdout.ToString());
             AssertCompilerLogsEmitted(stderr.ToString());
             Assert.True(File.Exists(outputPath));

@@ -381,13 +381,13 @@ public sealed class FunctionSemanticsTests
 
             internal struct Allocation {
                 rawmutptr<i8[-128 127]> Pointer;
-                i64[0 max] ByteLength;
-                i64[1 max] Alignment;
+                u64[0 2 ** 63 - 1] ByteLength;
+                u64[1 2 ** 63 - 1] Alignment;
                 Allocator Allocator;
             }
 
-            internal unsafe fn Allocation Allocate(Allocator allocator, i64[0 max] byteLength, i64[1 max] alignment);
-            internal unsafe fn Allocation Reallocate(Allocation allocation, i64[0 max] byteLength, i64[1 max] alignment);
+            internal unsafe fn Allocation Allocate(Allocator allocator, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
+            internal unsafe fn Allocation Reallocate(Allocation allocation, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
             internal unsafe fn void Free(Allocation allocation);
             """);
 
@@ -411,11 +411,11 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            unsafe fn bool Reserve(mut borrow dynamic i32[0 max] values) {
+            unsafe fn bool Reserve(mut borrow dynamic u32[0 2 ** 31 - 1] values) {
                 return values.TryReserve(8);
             }
 
-            unsafe fn bool Append(mut borrow dynamic i32[0 max] values) {
+            unsafe fn bool Append(mut borrow dynamic u32[0 2 ** 31 - 1] values) {
                 if (!values.TryReserve(1)) {
                     return false;
                 }
@@ -522,7 +522,7 @@ public sealed class FunctionSemanticsTests
                             ascii Text;
                         }
 
-                        public unsafe fn System.Memory.MemoryResult<OwnedAscii> ConcatAscii(ascii left, i64[0 max] leftLength, System.Memory.MemoryResult<OwnedAscii> right);
+                        public unsafe fn System.Memory.MemoryResult<OwnedAscii> ConcatAscii(ascii left, u64[0 2 ** 63 - 1] leftLength, System.Memory.MemoryResult<OwnedAscii> right);
                         """,
                         "/virtual/System.Text.stark"
                     )

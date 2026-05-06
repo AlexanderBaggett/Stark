@@ -93,7 +93,7 @@ public sealed class PackageImageTypedRawPointerDereferenceIntegrationTests
                 import Facade
                 module Demo
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
                     stack mut i32[-2147483648 2147483647] current = 5;
                     stack i32[-2147483648 2147483647] tag = 0;
                     return Facade.Observe(&current, 3, tag);
@@ -246,7 +246,7 @@ public sealed class PackageImageTypedRawPointerDereferenceIntegrationTests
                 import Facade
                 module Demo
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
                     stack mut i32[-2147483648 2147483647][4] values = { 10, 20, 30, 40 };
                     stack mut Facade.Buffer buffer = { First = 5, Values = values };
                     stack i32[-2147483648 2147483647] tag = 0;
@@ -400,7 +400,7 @@ public sealed class PackageImageTypedRawPointerDereferenceIntegrationTests
                 import Facade
                 module Demo
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
                     stack i32[-2147483648 2147483647] tag = 0;
                     return Facade.Observe(5, tag);
                 }

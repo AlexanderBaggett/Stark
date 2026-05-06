@@ -660,7 +660,7 @@ public static class DefaultCompilerPipeline
         {
             foreach (var type in types)
             {
-                if (type.TemplateName is not ("System.Collections.Dictionary" or "System.Experimental.Collections.Dictionary")
+                if (type.TemplateName is not "System.Collections.Dictionary"
                     || type.TypeArguments.Count != 2)
                 {
                     continue;

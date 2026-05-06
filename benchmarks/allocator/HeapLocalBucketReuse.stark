@@ -1,4 +1,4 @@
-﻿module Benchmarks.Allocator.HeapLocalBucketReuse
+module Benchmarks.Allocator.HeapLocalBucketReuse
 
 struct Box {
     i64[min max] Value;
@@ -7,7 +7,7 @@ struct Box {
 export unsafe ffi fn i32[min max] main() {
     stack mut i64[min max] checksum = 0;
 
-    for willexit (stack mut i32[0 20000] i = 0; i < 20000; i += 1) {
+    for willexit (stack mut u16[0 20000] i = 0; i < 20000; i += 1) {
         heap Box box = new Box() {
             Value = (i64[min max])i
         };

@@ -97,7 +97,7 @@ public sealed class PackageImageTypedGroupedLocalDeclarationIntegrationTests
                 import Facade
                 module Demo
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[-2147483648 2147483647] main() {
                     return Facade.SumTo(5, 0);
                 }
                 """);

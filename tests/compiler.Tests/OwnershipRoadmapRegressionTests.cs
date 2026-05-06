@@ -905,8 +905,8 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            fn i32[0 max] Run() {
-                stack mut dynamic i32[0 max] values = new(4);
+            fn u32[0 2 ** 31 - 1] Run() {
+                stack mut dynamic u32[0 2 ** 31 - 1] values = new(4);
                 init values[0] = 10;
                 init values[1] = 20;
                 return values[1];
@@ -924,7 +924,7 @@ public sealed class OwnershipRoadmapRegressionTests
             module Demo
 
             fn void Run() {
-                stack mut dynamic i32[0 max] values = new(4);
+                stack mut dynamic u32[0 2 ** 31 - 1] values = new(4);
                 init values[1] = 20;
             }
             """);
@@ -941,10 +941,10 @@ public sealed class OwnershipRoadmapRegressionTests
             module Demo
 
             struct Buffer {
-                dynamic i32[0 max] Items;
+                dynamic u32[0 2 ** 31 - 1] Items;
             }
 
-            fn void Push(mut borrow Buffer self, i32[0 max] value) {
+            fn void Push(mut borrow Buffer self, u32[0 2 ** 31 - 1] value) {
                 init self.Items[self.Items.Length] = value;
             }
             """);
@@ -959,9 +959,9 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            fn i32[0 max] Run() {
-                stack mut dynamic i32[0 max] values = new(4);
-                stack init i32[0 max][] spare = init values[values.Length, 2];
+            fn u32[0 2 ** 31 - 1] Run() {
+                stack mut dynamic u32[0 2 ** 31 - 1] values = new(4);
+                stack init u32[0 2 ** 31 - 1][] spare = init values[values.Length, 2];
                 init spare[0] = 10;
                 init spare[1] = 20;
                 return values[1];
@@ -978,10 +978,10 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            fn i64[0 max] Run(i64[0 max] count) {
-                stack mut dynamic i64[0 max] values = new(8);
-                stack init i64[0 max][] spare = init values[values.Length, count];
-                for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
+            fn u64[0 2 ** 63 - 1] Run(u64[0 2 ** 63 - 1] count) {
+                stack mut dynamic u64[0 2 ** 63 - 1] values = new(8);
+                stack init u64[0 2 ** 63 - 1][] spare = init values[values.Length, count];
+                for willexit independent (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
                     init spare[index] = index;
                 }
 
@@ -999,10 +999,10 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            fn void Run(i64[0 max] count) {
-                stack mut dynamic i64[0 max] values = new(8);
-                stack init i64[0 max][] spare = init values[values.Length, count];
-                for willexit independent (stack mut i64[0 max] index = 0; index < count; index += 1) {
+            fn void Run(u64[0 2 ** 63 - 1] count) {
+                stack mut dynamic u64[0 2 ** 63 - 1] values = new(8);
+                stack init u64[0 2 ** 63 - 1][] spare = init values[values.Length, count];
+                for willexit independent (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
                     init spare[index] = index;
                     init spare[index] = index;
                 }
@@ -1021,8 +1021,8 @@ public sealed class OwnershipRoadmapRegressionTests
             module Demo
 
             fn void Run() {
-                stack mut dynamic i32[0 max] values = new(4);
-                stack init i32[0 max][] spare = init values[values.Length, 2];
+                stack mut dynamic u32[0 2 ** 31 - 1] values = new(4);
+                stack init u32[0 2 ** 31 - 1][] spare = init values[values.Length, 2];
                 init spare[1] = 20;
             }
             """);
@@ -1060,7 +1060,7 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            fn i32[0 max] Read(dynamic i32[0 max] values, i32[0 max] index) {
+            fn u32[0 2 ** 31 - 1] Read(dynamic u32[0 2 ** 31 - 1] values, u32[0 2 ** 31 - 1] index) {
                 unsafe {
                     return values[index];
                 }
@@ -1077,8 +1077,8 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            fn i32[0 max] Run() {
-                stack mut dynamic i32[0 max] values = new(4);
+            fn u32[0 2 ** 31 - 1] Run() {
+                stack mut dynamic u32[0 2 ** 31 - 1] values = new(4);
                 unsafe {
                     init values[2] = 30;
                     return values[2];
@@ -1096,8 +1096,8 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            fn i32[0 max] Run() {
-                stack mut dynamic i32[0 max] values = new(4);
+            fn u32[0 2 ** 31 - 1] Run() {
+                stack mut dynamic u32[0 2 ** 31 - 1] values = new(4);
                 unsafe {
                     init values[2] = 30;
                 }

@@ -16,7 +16,7 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
                 Some(T),
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 stack Option<i32[-2147483648 2147483647]> opt = Option<i32[-2147483648 2147483647]>.Some(42);
                 switch (opt) {
                     case Option<i32[-2147483648 2147483647]>.None:
@@ -41,7 +41,7 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
 
             record Pair<A, B>(A First, B Second) { }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 stack Pair<i32[-2147483648 2147483647], i32[-2147483648 2147483647]> p = new Pair<i32[-2147483648 2147483647], i32[-2147483648 2147483647]>(3, 7);
                 return p.First + p.Second;
             }
@@ -81,7 +81,7 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
                 }
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 stack Option<i32[-2147483648 2147483647]> a = Option<i32[-2147483648 2147483647]>.Some(5);
                 stack Option<bool> b = Option<bool>.Some(true);
                 stack i32[-2147483648 2147483647] sum = GetI32(a);

@@ -32,7 +32,7 @@ public sealed class FixedArrayOrderedComparisonRuntimeTests
                 return left >= right;
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 stack i32[-2147483648 2147483647][3] lessLeft = { 1, 2, 3 };
                 stack i32[-2147483648 2147483647][3] lessRight = { 1, 2, 4 };
                 stack i32[-2147483648 2147483647][3] lessOrEqualLeft = { 1, 2, 3 };

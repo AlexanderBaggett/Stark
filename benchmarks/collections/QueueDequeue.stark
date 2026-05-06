@@ -12,16 +12,16 @@ unsafe finite law bool Ok(MemoryStatus status) {
 }
 
 export unsafe ffi fn i32[min max] main() {
-    stack mut System.Collections.Queue<i32[0 max]> queue = new();
+    stack mut System.Collections.Queue<u32[0 2 ** 31 - 1]> queue = new();
     stack mut i64[min max] checksum = 0;
 
-    for willexit (stack mut i32[0 32768] i = 0; i < 32768; i += 1) {
+    for willexit (stack mut u16[0 32768] i = 0; i < 32768; i += 1) {
         if (!Ok(queue.Enqueue(i))) {
             return 1;
         }
     }
 
-    stack mut i32[0 max] value = 0;
+    stack mut u32[0 2 ** 31 - 1] value = 0;
     while willexit (!queue.IsEmpty()) {
         if (!queue.TryDequeue(value)) {
             return 2;

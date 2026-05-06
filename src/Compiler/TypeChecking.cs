@@ -11077,7 +11077,7 @@ internal sealed class TypeChecker
         if (!StarkTypeSymbols.IsGenericInstantiation(coreType)
             || coreType.NamedType is null
             || coreType.TypeArguments is not { Count: 2 }
-            || StarkTypeSymbols.GetGenericBaseName(coreType.NamedType) is not ("System.Collections.Dictionary" or "System.Experimental.Collections.Dictionary"))
+            || StarkTypeSymbols.GetGenericBaseName(coreType.NamedType) is not "System.Collections.Dictionary")
         {
             return false;
         }
