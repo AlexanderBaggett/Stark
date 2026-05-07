@@ -141,7 +141,7 @@ public inline fn MemoryStatus AppendCodePointsDisjoint(
         return MemoryStatus.Ok;
     }
 
-    if (count > 2 ** 61 - 1) {
+    if (count > (u64[0 2 ** 63 - 1])(2 ** 61 - 1)) {
         return MemoryStatus.Err(MemoryError.OutOfMemory);
     }
 
@@ -164,7 +164,7 @@ public fn MemoryStatus AppendCodePoints(
             return MemoryStatus.Ok;
         }
 
-        if (count > 2 ** 61 - 1) {
+        if (count > (u64[0 2 ** 63 - 1])(2 ** 61 - 1)) {
             return MemoryStatus.Err(MemoryError.OutOfMemory);
         }
 
@@ -201,7 +201,7 @@ public inline fn MemoryStatus AppendFillCodePoints(
         return MemoryStatus.Ok;
     }
 
-    if (count > 2 ** 61 - 1) {
+    if (count > (u64[0 2 ** 63 - 1])(2 ** 61 - 1)) {
         return MemoryStatus.Err(MemoryError.OutOfMemory);
     }
 
@@ -416,7 +416,7 @@ public inline finite MemoryStatus CopyCodePointsDisjoint(
     disjoint borrow i32[min max][] source,
     disjoint borrow mut i32[min max][] destination,
     u64[0 2 ** 63 - 1] count) {
-    if (count > 2 ** 61 - 1) {
+    if (count > (u64[0 2 ** 63 - 1])(2 ** 61 - 1)) {
         return MemoryStatus.Err(MemoryError.OutOfMemory);
     }
 
@@ -433,7 +433,7 @@ public fn MemoryStatus CopyCodePoints(
             return MemoryStatus.Ok;
         }
 
-        if (count > 2 ** 61 - 1) {
+        if (count > (u64[0 2 ** 63 - 1])(2 ** 61 - 1)) {
             return MemoryStatus.Err(MemoryError.OutOfMemory);
         }
 
@@ -497,7 +497,7 @@ public inline finite MemoryStatus MoveCodePoints(
     borrow i32[min max][] source,
     borrow mut i32[min max][] destination,
     u64[0 2 ** 63 - 1] count) {
-    if (count > 2 ** 61 - 1) {
+    if (count > (u64[0 2 ** 63 - 1])(2 ** 61 - 1)) {
         return MemoryStatus.Err(MemoryError.OutOfMemory);
     }
 
@@ -531,7 +531,7 @@ public inline finite MemoryStatus FillInitializedCodePoints(
     borrow mut i32[min max][] destination,
     i32[min max] value,
     u64[0 2 ** 63 - 1] count) {
-    if (count > 2 ** 61 - 1) {
+    if (count > (u64[0 2 ** 63 - 1])(2 ** 61 - 1)) {
         return MemoryStatus.Err(MemoryError.OutOfMemory);
     }
 

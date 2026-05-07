@@ -68,6 +68,11 @@ Completion rules:
   - [x] Update source, executable, lowering, package-image, and integration
         tests for collections, console, filesystem, IO, net, runtime buffer,
         text, and platform batches.
+  - [x] Preserve package-backed generic helper specialization for promoted
+        public generic APIs.
+    - Done: package images now publish the package-private generic helper
+      closure needed by API-visible generic template bodies, which keeps
+      promoted collections package-consumable without original source files.
   - [x] Verify package image manifests contain only canonical modules.
   - [x] Confirm no temporary compatibility shim is intentionally kept for this
         batch, so no shim-specific tests are required.
@@ -126,7 +131,7 @@ Completion rules:
   - [x] Remove experimental namespace aliases after all consumers are canonical.
   - [x] Remove temporary migration tests, docs, and benchmark gates that only
         existed to compare stable and experimental implementations.
-  - [ ] Audit promoted modules against the new unsafe, raw-pointer, and range
+  - [x] Audit promoted modules against the new unsafe, raw-pointer, and range
         rules before release.
 
 ## 2. Require `unsafe` For Raw Pointer Use
@@ -150,7 +155,7 @@ Completion rules:
 
 ## 3. Remove Unnecessary Raw Pointers From The Standard Library
 
-- [ ] Disallow unnecessary raw pointer use in the standard library.
+- [x] Disallow unnecessary raw pointer use in the standard library.
   - [x] Define allowed raw pointer zones: FFI declarations, OS platform modules,
         runtime allocation hooks, compiler-known ABI helpers, and carefully
         audited unsafe internals.
@@ -280,13 +285,16 @@ or a narrower explicitly unsafe boundary.
       platform code uses `System.Runtime.Platform.Linux` internal syscall
       shims, and packaged user code should go through safe modules such as
       `System.Process`.
-- [ ] `System.Text`
-  - [ ] Replace raw text storage with dynamic/owned text and slices.
-    - Partially done: `OwnedAscii` and `OwnedUnicode` provide owned/dynamic text
-      surfaces.
-    - Still open: public unsafe `AsciiData`, `UnicodeData`, caller-buffer
-      formatters, UTF-16 conversion helpers, and `rawmutptr<Ascii>` /
-      `rawmutptr<Unicode>` APIs remain in canonical text.
+- [x] `System.Text`
+  - [x] Replace raw text storage with dynamic/owned text and slices.
+    - Done: `OwnedAscii`, `OwnedUnicode`, and `OwnedUtf16` provide owned
+      dynamic text/code-unit surfaces; public UTF conversion helpers now use
+      owned destinations and `MemoryStatus`.
+    - Done: `AsciiData`, `UnicodeData`, and raw UTF conversion helpers are
+      internal standard-library/platform/compiler boundaries.
+    - Retained: explicitly unsafe public `TryConcat*` and `TryFormat*`
+      fixed-buffer hooks remain as the compiler-known no-allocation surface for
+      stack `Ascii`/`Unicode` concatenation and interpolation.
 - [x] `System.Threading`
   - [x] Hide thread handles behind owned thread types.
     - Verified: `Thread.Handle` is internal and public thread operations use the

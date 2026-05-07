@@ -30,11 +30,11 @@ public sealed class SystemPromotedConsoleStandardLibraryTests : StandardLibraryT
             }
         }
 
-        fn bool ReadCount(System.Memory.MemoryResult<i64[0 max]> result, i64[0 max] expected) {
+        fn bool ReadCount(System.Memory.MemoryResult<u64[0 2 ** 63 - 1]> result, u64[0 2 ** 63 - 1] expected) {
             switch (result) {
-                case System.Memory.MemoryResult<i64[0 max]>.Ok(var value):
+                case System.Memory.MemoryResult<u64[0 2 ** 63 - 1]>.Ok(var value):
                     return value == expected;
-                case System.Memory.MemoryResult<i64[0 max]>.Err(var error):
+                case System.Memory.MemoryResult<u64[0 2 ** 63 - 1]>.Err(var error):
                     return false;
             }
         }
@@ -124,7 +124,7 @@ public sealed class SystemPromotedConsoleStandardLibraryTests : StandardLibraryT
             if (!StatusOk(System.Console.Write("ascii:"))
                 || !StatusOk(System.Console.WriteLine(owned))
                 || !StatusOk(System.Console.Write((unicode)"unicode:"))
-                || !StatusOk(System.Console.WriteLine((unicode)"Î±"))
+                || !StatusOk(System.Console.WriteLine((unicode)"ÃƒÅ½Ã‚Â±"))
                 || !StatusOk(System.Console.WriteLine(fixedBuffer))
                 || !StatusOk(System.Console.WriteErrorLine("err"))) {
                 return 3;
@@ -295,8 +295,8 @@ public sealed class SystemPromotedConsoleStandardLibraryTests : StandardLibraryT
         await AssertSourceExecutableRunsAsync(
             PromotedConsoleProgram,
             "stark-stdlib-promoted-console-",
-            "alpha\r\ncafÃ©\nZ123" + new string('a', 8193),
-            "ascii:owned\nunicode:Î±\nBUF\n",
+            "alpha\r\ncafÃƒÆ’Ã‚Â©\nZ123" + new string('a', 8193),
+            "ascii:owned\nunicode:ÃƒÅ½Ã‚Â±\nBUF\n",
             "err\n",
             skipWindows: true);
     }

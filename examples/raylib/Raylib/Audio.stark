@@ -320,19 +320,19 @@ public fn void SetAudioStreamPan(AudioStream stream, f32 pan) {
 
 public unsafe ffi fn void SetAudioStreamBufferSizeDefault(i32[min max] size);
 internal unsafe ffi fn void stark_raylib_SetAudioStreamCallback(rawptr<AudioStream> stream, AudioCallback callback);
-public fn void SetAudioStreamCallback(AudioStream stream, AudioCallback callback) {
+public unsafe fn void SetAudioStreamCallback(AudioStream stream, AudioCallback callback) {
     stark_raylib_SetAudioStreamCallback(&stream, callback);
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_AttachAudioStreamProcessor(rawptr<AudioStream> stream, AudioCallback processor);
-public fn void AttachAudioStreamProcessor(AudioStream stream, AudioCallback processor) {
+public unsafe fn void AttachAudioStreamProcessor(AudioStream stream, AudioCallback processor) {
     stark_raylib_AttachAudioStreamProcessor(&stream, processor);
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_DetachAudioStreamProcessor(rawptr<AudioStream> stream, AudioCallback processor);
-public fn void DetachAudioStreamProcessor(AudioStream stream, AudioCallback processor) {
+public unsafe fn void DetachAudioStreamProcessor(AudioStream stream, AudioCallback processor) {
     stark_raylib_DetachAudioStreamProcessor(&stream, processor);
     return;
 }

@@ -499,7 +499,7 @@ Within an integer range, `min` and `max` are type relative endpoint names. For s
 
 Unsigned integer widths are real integer types, not aliases for signed integers with non negative ranges. For `uN`, `min` is `0` and `max` is `2 ** N - 1`. Negative endpoints and endpoints outside that width are rejected.
 
-Stark rejects non negative signed ranges and unnecessarily wide integer range storage by default. For example, write `u8[0 max]` instead of `i32[0 255]`, and use a narrower supported width when the declared range fits. `ffi` signatures and declarations annotated with `[Platform]` may preserve signedness and width when they mirror an external ABI.
+Stark rejects non negative signed ranges and unnecessarily wide integer range storage by default. For example, write `u8[0 max]` instead of `i32[0 255]`, and use a narrower supported width when the declared range fits. `ffi` signatures and declarations annotated with `[Platform]` may preserve signedness and width when they mirror an external platform ABI.  Stylistically we prefer [min max] over expoentiation for the same values. We prefer exponentiation for values > 1024 and values < -1024.
 
 Range endpoints support compile time integer arithmetic over literals and type relative endpoint names. Supported endpoint operators: `+`, `-`, `*`, `/`, `%`, `**`, unary `-`, and parentheses. Endpoint arithmetic is checked during compile time evaluation.
 
@@ -1158,7 +1158,7 @@ This is the required surface for conversions Stark keeps explicit:
 * fixed array to slice view conversions
 * ascii and unicode text conversions for compile time text constants
 
-Runtime conversion between `ascii`, UTF-16 buffers, and `unicode` values uses the explicit `System.Text` helper APIs such as `TryConvertAsciiToUnicode`, `TryConvertAsciiToUtf16`, `TryConvertUtf16ToUnicode`, `TryConvertUnicodeToAscii`, `TryConvertUnicodeToUtf16`, and `TryConvertUtf16ToAscii`, all with caller owned destination storage.
+Runtime conversion between `ascii`, owned UTF-16 buffers, and `unicode` values uses the explicit `System.Text` helper APIs such as `FromAsciiToUnicode`, `FromAsciiToUtf16`, `FromUtf16ToUnicode`, `FromUnicodeToAscii`, `FromUnicodeToUtf16`, and `FromUtf16ToAscii`. These use owned/dynamic destination storage and report allocation failure with `System.Memory.MemoryStatus`.
 
 These conversions may not strengthen mutability. Safe code may not use explicit conversions to turn a readonly raw pointer into `rawmutptr<T>`, and may not strip the readonly or frozen origin off a raw pointer to regain mutation later.
 

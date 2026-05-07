@@ -57,8 +57,8 @@ public sealed class MidLevelIrRuntimeTests
             public finite law i64[-9223372036854775808 9223372036854775807] AsciiLength(ascii source);
             public finite law unicode UnicodeView(Unicode source);
             public finite law i64[-9223372036854775808 9223372036854775807] UnicodeLength(unicode source);
-            public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
-            public fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
+            public unsafe fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+            public unsafe fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
 
             export unsafe ffi fn i32[-2147483648 2147483647] main() {
                 stack mut i8[-128 127][2] leftStorage = { 65, 0 };
@@ -107,10 +107,10 @@ public sealed class MidLevelIrRuntimeTests
             """
             module System.Text
 
-            public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
-            public fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
+            public unsafe fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+            public unsafe fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
 
-            fn bool RejectsAsciiNegativeCapacity() {
+            unsafe fn bool RejectsAsciiNegativeCapacity() {
                 stack mut i8[-128 127][4] storage = { 0, 0, 0, 0 };
                 stack mut Ascii destination = new Ascii() {
                     Data = &storage[0],
@@ -121,7 +121,7 @@ public sealed class MidLevelIrRuntimeTests
                 return !TryConcatAscii(&destination, "A", "B");
             }
 
-            fn bool RejectsUnicodeNegativeCapacity() {
+            unsafe fn bool RejectsUnicodeNegativeCapacity() {
                 stack mut i32[-2147483648 2147483647][4] storage = { 0, 0, 0, 0 };
                 stack mut Unicode destination = new Unicode() {
                     Data = &storage[0],
@@ -153,9 +153,9 @@ public sealed class MidLevelIrRuntimeTests
 
             public finite law ascii AsciiView(Ascii source);
             public finite law i64[-9223372036854775808 9223372036854775807] AsciiLength(ascii source);
-            public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+            public unsafe fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
 
-            public fn bool TryFormatI32Ascii(rawmutptr<Ascii> destination, i32[-2147483648 2147483647] value) {
+            public unsafe fn bool TryFormatI32Ascii(rawmutptr<Ascii> destination, i32[-2147483648 2147483647] value) {
                 if (value == 42) {
                     return TryConcatAscii(destination, "", "42");
                 }
@@ -186,9 +186,9 @@ public sealed class MidLevelIrRuntimeTests
 
             public finite law unicode UnicodeView(Unicode source);
             public finite law i64[-9223372036854775808 9223372036854775807] UnicodeLength(unicode source);
-            public fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
+            public unsafe fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
 
-            public fn bool TryFormatI32Unicode(rawmutptr<Unicode> destination, i32[-2147483648 2147483647] value) {
+            public unsafe fn bool TryFormatI32Unicode(rawmutptr<Unicode> destination, i32[-2147483648 2147483647] value) {
                 if (value == 42) {
                     return TryConcatUnicode(destination, (unicode)"", (unicode)"42");
                 }
@@ -331,13 +331,13 @@ public sealed class MidLevelIrRuntimeTests
 
             internal struct Allocation {
                 rawmutptr<i8[-128 127]> Pointer;
-                i64[0 max] ByteLength;
-                i64[1 max] Alignment;
+                u64[0 max] ByteLength;
+                u64[1 max] Alignment;
                 Allocator Allocator;
             }
 
-            internal fn Allocation Allocate(Allocator allocator, i64[0 max] byteLength, i64[1 max] alignment);
-            internal fn Allocation Reallocate(Allocation allocation, i64[0 max] byteLength, i64[1 max] alignment);
+            internal fn Allocation Allocate(Allocator allocator, u64[0 max] byteLength, u64[1 max] alignment);
+            internal fn Allocation Reallocate(Allocation allocation, u64[0 max] byteLength, u64[1 max] alignment);
             internal fn void Free(Allocation allocation);
 
             export unsafe ffi fn i32[-2147483648 2147483647] main() {
@@ -1130,7 +1130,7 @@ public sealed class MidLevelIrRuntimeTests
             module Demo
 
             struct Counter {
-                i32[0 max] Value;
+                u32[0 max] Value;
 
                 fn void Increment(mut borrow Counter self) {
                     self.Value += 1;
@@ -1144,7 +1144,7 @@ public sealed class MidLevelIrRuntimeTests
                     self.Inner.Increment();
                 }
 
-                finite law i32[0 max] Get(borrow Holder self) {
+                finite law u32[0 max] Get(borrow Holder self) {
                     return self.Inner.Value;
                 }
             }
@@ -1158,7 +1158,7 @@ public sealed class MidLevelIrRuntimeTests
 
                 holder.Bump();
                 holder.Bump();
-                return holder.Get();
+                return (i32[min max])holder.Get();
             }
             """);
 
@@ -1177,18 +1177,18 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            fn bool WriteValue(out i32[0 max] value) {
+            fn bool WriteValue(out u32[0 max] value) {
                 value = 7;
                 return true;
             }
 
             export unsafe ffi fn i32[min max] main() {
-                stack mut i32[0 max] value = 1;
+                stack mut u32[0 max] value = 1;
                 if (!WriteValue(value)) {
                     return 99;
                 }
 
-                return value;
+                return (i32[min max])value;
             }
             """);
 
@@ -1303,12 +1303,12 @@ public sealed class MidLevelIrRuntimeTests
                 i64[-9223372036854775808 9223372036854775807] WritePos;
             }
 
-            fn void Put(rawmutptr<Buffer> buffer, i64[-9223372036854775808 9223372036854775807] index, i8[-128 127] value) {
+            unsafe fn void Put(rawmutptr<Buffer> buffer, i64[-9223372036854775808 9223372036854775807] index, i8[-128 127] value) {
                 *(&(*buffer).Storage[index]) = value;
                 return;
             }
 
-            fn i32[-2147483648 2147483647] Read(rawmutptr<Buffer> buffer, i64[-9223372036854775808 9223372036854775807] index) {
+            unsafe fn i32[-2147483648 2147483647] Read(rawmutptr<Buffer> buffer, i64[-9223372036854775808 9223372036854775807] index) {
                 return (i32[-2147483648 2147483647])*(&(*buffer).Storage[index]);
             }
 
@@ -1334,12 +1334,12 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            fn void Put(rawmutptr<i8[-128 127]> data, i64[-9223372036854775808 9223372036854775807] index, i8[-128 127] value) {
+            unsafe fn void Put(rawmutptr<i8[-128 127]> data, i64[-9223372036854775808 9223372036854775807] index, i8[-128 127] value) {
                 *(&data[index]) = value;
                 return;
             }
 
-            fn i32[-2147483648 2147483647] Read(rawmutptr<i8[-128 127]> data, i64[-9223372036854775808 9223372036854775807] index) {
+            unsafe fn i32[-2147483648 2147483647] Read(rawmutptr<i8[-128 127]> data, i64[-9223372036854775808 9223372036854775807] index) {
                 return (i32[-2147483648 2147483647])*(&data[index]);
             }
 
@@ -1368,19 +1368,19 @@ public sealed class MidLevelIrRuntimeTests
             struct Buffer {
                 i8[-128 127][16] Storage;
 
-                fn void Put(borrow mut Buffer self, i64[-9223372036854775808 9223372036854775807] index, i8[-128 127] value) {
+                unsafe fn void Put(borrow mut Buffer self, u8[0 15] index, i8[min max] value) {
                     *(&self.Storage[index]) = value;
                     return;
                 }
 
-                fn i32[-2147483648 2147483647] Read(borrow Buffer self, i64[-9223372036854775808 9223372036854775807] index) {
-                    return (i32[-2147483648 2147483647])*(&self.Storage[index]);
+                unsafe fn i32[min max] Read(borrow Buffer self, u8[0 15] index) {
+                    return (i32[min max])*(&self.Storage[index]);
                 }
             }
 
-            export unsafe ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[min max] main() {
                 stack mut Buffer buffer = new Buffer();
-                buffer.Put(5, (i8[-128 127])65);
+                buffer.Put(5, (i8[min max])65);
                 return buffer.Read(5);
             }
             """);

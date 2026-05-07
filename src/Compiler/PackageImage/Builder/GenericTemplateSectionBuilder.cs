@@ -10,6 +10,12 @@ internal static partial class PackageImageBuilder
         int Ordinal,
         ObjectCreationTypingRecord? Record);
 
+    private sealed record GenericFunctionTemplateCandidate(
+        DeclaredFunctionSyntax Function,
+        string QualifiedResolvedName,
+        string LookupName,
+        TypedFunctionSignature Signature);
+
     private static readonly IReadOnlyDictionary<string, StarkTypeSymbol> EmptyTypeSubstitution =
         new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
 
@@ -112,9 +118,8 @@ internal static partial class PackageImageBuilder
                 static group => (IReadOnlyList<MemberCallTypingRecord>)group.ToArray(),
                 StringComparer.Ordinal);
 
-        return DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel)
+        var candidates = DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel)
             .Where(static function => function.HasBody)
-            .Where(static function => GenericTemplatePublicationPolicy.HasPublishedApiVisibility(function.Visibility))
             .Select(function =>
             {
                 var qualifiedResolvedName = $"{module.SyntaxModel.ModuleName}.{function.Name}";
@@ -124,6 +129,30 @@ internal static partial class PackageImageBuilder
                 {
                     return null;
                 }
+
+                return new GenericFunctionTemplateCandidate(
+                    function,
+                    qualifiedResolvedName,
+                    lookupName,
+                    functionSignature);
+            })
+            .Where(static candidate => candidate is not null)
+            .Cast<GenericFunctionTemplateCandidate>()
+            .ToArray();
+        var publishedLookupNames = CollectPublishedGenericTemplateLookupNames(
+            candidates,
+            deferredTriggersByFunction,
+            directCallsByFunction,
+            memberCallsByFunction);
+
+        return candidates
+            .Where(candidate => publishedLookupNames.Contains(candidate.LookupName))
+            .Select(candidate =>
+            {
+                var function = candidate.Function;
+                var qualifiedResolvedName = candidate.QualifiedResolvedName;
+                var lookupName = candidate.LookupName;
+                var functionSignature = candidate.Signature;
 
                 deferredTriggersByFunction.TryGetValue(lookupName, out var deferredTriggers);
                 deferredTypeTriggersByFunction.TryGetValue(lookupName, out var deferredTypeTriggers);
@@ -211,6 +240,89 @@ internal static partial class PackageImageBuilder
             .OrderBy(static template => template.QualifiedResolvedName, StringComparer.Ordinal)
             .ThenBy(static template => template.OverloadKey, StringComparer.Ordinal)
             .ToArray();
+    }
+
+    private static HashSet<string> CollectPublishedGenericTemplateLookupNames(
+        IReadOnlyList<GenericFunctionTemplateCandidate> candidates,
+        IReadOnlyDictionary<string, IReadOnlyList<DeferredFunctionInstantiationTriggerRecord>> deferredTriggersByFunction,
+        IReadOnlyDictionary<string, IReadOnlyList<DirectCallTypingRecord>> directCallsByFunction,
+        IReadOnlyDictionary<string, IReadOnlyList<MemberCallTypingRecord>> memberCallsByFunction)
+    {
+        var candidatesByLookupName = candidates.ToDictionary(
+            static candidate => candidate.LookupName,
+            StringComparer.Ordinal);
+        var lookupNameByQualifiedName = candidates.ToDictionary(
+            static candidate => candidate.QualifiedResolvedName,
+            static candidate => candidate.LookupName,
+            StringComparer.Ordinal);
+        var published = new HashSet<string>(StringComparer.Ordinal);
+        var pending = new Queue<string>();
+
+        foreach (var candidate in candidates)
+        {
+            if (GenericTemplatePublicationPolicy.HasPublishedApiVisibility(candidate.Function.Visibility))
+            {
+                Enqueue(candidate.LookupName);
+            }
+        }
+
+        while (pending.Count != 0)
+        {
+            var lookupName = pending.Dequeue();
+
+            if (deferredTriggersByFunction.TryGetValue(lookupName, out var deferredTriggers))
+            {
+                foreach (var trigger in deferredTriggers)
+                {
+                    EnqueueTemplate(trigger.Signature.TemplateName);
+                }
+            }
+
+            if (directCallsByFunction.TryGetValue(lookupName, out var directCalls))
+            {
+                foreach (var call in directCalls)
+                {
+                    EnqueueTemplate(call.Signature.TemplateName);
+                }
+            }
+
+            if (memberCallsByFunction.TryGetValue(lookupName, out var memberCalls))
+            {
+                foreach (var call in memberCalls)
+                {
+                    EnqueueTemplate(call.Signature.TemplateName);
+                }
+            }
+        }
+
+        return published;
+
+        void EnqueueTemplate(string? templateName)
+        {
+            if (templateName is null)
+            {
+                return;
+            }
+
+            if (candidatesByLookupName.ContainsKey(templateName))
+            {
+                Enqueue(templateName);
+                return;
+            }
+
+            if (lookupNameByQualifiedName.TryGetValue(templateName, out var lookupName))
+            {
+                Enqueue(lookupName);
+            }
+        }
+
+        void Enqueue(string lookupName)
+        {
+            if (published.Add(lookupName))
+            {
+                pending.Enqueue(lookupName);
+            }
+        }
     }
 
     private static StarkPackageTypedTemplateBodyManifest? BuildPublishedTypedTemplateBody(

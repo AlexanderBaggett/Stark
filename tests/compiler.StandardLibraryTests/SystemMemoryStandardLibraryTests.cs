@@ -33,7 +33,7 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
                 fn bool UsePromotedDynamicMemory() {
                     stack mut dynamic i8[min max] bytes = new();
                     stack mut i8[min max][4] source = { 1, 2, 3, 4 };
-                    stack i64[0 max] four = 4;
+                    stack u64[0 2 ** 63 - 1] four = 4;
                     if (!MemoryOk(System.Memory.ReserveBytes(bytes, four))) {
                         return false;
                     }
@@ -130,25 +130,25 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
 
                 internal struct Allocation {
                     rawmutptr<i8[min max]> Pointer;
-                    i64[0 max] ByteLength;
-                    i64[1 max] Alignment;
+                    u64[0 2 ** 63 - 1] ByteLength;
+                    u64[1 2 ** 63 - 1] Alignment;
                     Allocator Allocator;
                 }
 
-                internal fn Allocation Allocate(Allocator allocator, i64[0 max] byteLength, i64[1 max] alignment);
-                internal fn Allocation Reallocate(Allocation allocation, i64[0 max] byteLength, i64[1 max] alignment);
+                internal fn Allocation Allocate(Allocator allocator, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
+                internal fn Allocation Reallocate(Allocation allocation, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
                 internal fn void Free(Allocation allocation);
 
-                unsafe fn void Fill(borrow Allocation allocation, i64[0 max] count, i8[min max] value) {
+                unsafe fn void Fill(borrow Allocation allocation, u64[0 2 ** 63 - 1] count, i8[min max] value) {
                     stack rawmutptr<i8[min max]> data = allocation.Pointer;
-                    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+                    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
                         *(&data[index]) = value;
                     }
                 }
 
-                unsafe fn bool AllEqual(borrow Allocation allocation, i64[0 max] count, i8[min max] value) {
+                unsafe fn bool AllEqual(borrow Allocation allocation, u64[0 2 ** 63 - 1] count, i8[min max] value) {
                     stack rawmutptr<i8[min max]> data = allocation.Pointer;
-                    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+                    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
                         if (*(&data[index]) != value) {
                             return false;
                         }

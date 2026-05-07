@@ -26,7 +26,7 @@ public sealed class PackageImageTypedRawPointerDereferenceIntegrationTests
                 """
                 module Facade
 
-                public fn i32[-2147483648 2147483647] Observe<T>(rawmutptr<i32[-2147483648 2147483647]> ptr, i32[-2147483648 2147483647] value, T tag) {
+                public unsafe fn i32[-2147483648 2147483647] Observe<T>(rawmutptr<i32[-2147483648 2147483647]> ptr, i32[-2147483648 2147483647] value, T tag) {
                     stack mut i32[-2147483648 2147483647] copy = *ptr;
                     return *ptr += copy + value;
                 }
@@ -175,11 +175,11 @@ public sealed class PackageImageTypedRawPointerDereferenceIntegrationTests
 
                 public record Buffer(i32[-2147483648 2147483647] First, i32[-2147483648 2147483647][4] Values) { }
 
-                public fn rawmutptr<Buffer> Pick<T>(rawmutptr<Buffer> ptr, T tag) {
+                public unsafe fn rawmutptr<Buffer> Pick<T>(rawmutptr<Buffer> ptr, T tag) {
                     return ptr;
                 }
 
-                public fn i32[-2147483648 2147483647] Observe<T>(rawmutptr<Buffer> ptr, i32[-2147483648 2147483647] slot, i32[-2147483648 2147483647] value, T tag) {
+                public unsafe fn i32[-2147483648 2147483647] Observe<T>(rawmutptr<Buffer> ptr, i32[-2147483648 2147483647] slot, i32[-2147483648 2147483647] value, T tag) {
                     (*ptr).First += value;
                     return (*Pick(ptr, tag)).Values[slot] = (*ptr).First + value;
                 }
@@ -329,7 +329,7 @@ public sealed class PackageImageTypedRawPointerDereferenceIntegrationTests
 
                 public record Buffer(i32[-2147483648 2147483647] First, i32[-2147483648 2147483647][4] Values) { }
 
-                public fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, T tag) {
+                public unsafe fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, T tag) {
                     stack mut i32[-2147483648 2147483647][4] data = { 1, 2, 3, 4 };
                     stack mut Buffer buffer = { First = value, Values = data };
                     stack rawmutptr<i32[-2147483648 2147483647]> firstPtr = &buffer.First;

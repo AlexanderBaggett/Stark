@@ -26,6 +26,13 @@ public sealed class SystemRawPointerAuditStandardLibraryTests : StandardLibraryT
         "stdlib/src/System/Text.stark"
     ];
 
+    private static readonly string[] SystemTextAllowedPublicRawPointerPrefixes =
+    [
+        "public unsafe finite bool TryConcat",
+        "public unsafe finite bool TryFormat",
+        "public unsafe fn bool TryFormat"
+    ];
+
     [Fact]
     public void StdLibRawPointerUseStaysInDocumentedBoundaryFiles()
     {
@@ -82,6 +89,13 @@ public sealed class SystemRawPointerAuditStandardLibraryTests : StandardLibraryT
                 if (!ContainsUnsafeToken(declaration.Text))
                 {
                     violations.Add($"{relativePath}:{declaration.Line}: public raw pointer surface must be explicitly unsafe: {declaration.Text.Trim()}");
+                    continue;
+                }
+
+                if (relativePath.Equals("stdlib/src/System/Text.stark", StringComparison.OrdinalIgnoreCase)
+                    && !SystemTextAllowedPublicRawPointerPrefixes.Any(prefix => declaration.Text.TrimStart().StartsWith(prefix, StringComparison.Ordinal)))
+                {
+                    violations.Add($"{relativePath}:{declaration.Line}: System.Text public raw pointer surface must stay limited to fixed-buffer concat/format helpers: {declaration.Text.Trim()}");
                 }
             }
         }

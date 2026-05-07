@@ -745,7 +745,7 @@ public finite law Rectangle Rect(f32 x, f32 y, f32 width, f32 height) {
     return new Rectangle() { X = x, Y = y, Width = width, Height = height };
 }
 
-public finite law Color Rgba(i32[0 255] r, i32[0 255] g, i32[0 255] b, i32[0 255] a) {
+public finite law Color Rgba(u8[0 max] r, u8[0 max] g, u8[0 max] b, u8[0 max] a) {
     return new Color() { R = (u8[0 255])r, G = (u8[0 255])g, B = (u8[0 255])b, A = (u8[0 255])a };
 }
 

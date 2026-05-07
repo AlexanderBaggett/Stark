@@ -96,7 +96,7 @@ public sealed class CompilerCliTests
         Assert.Equal(string.Empty, stdout.ToString());
         var text = stderr.ToString();
         Assert.Contains("error STK3014 [semantic-validate]", text, StringComparison.Ordinal);
-        Assert.Contains("i32[0 10]", text, StringComparison.Ordinal);
+        Assert.Contains("u8[0 10]", text, StringComparison.Ordinal);
         Assert.Contains("Use `u8[0 10]`", text, StringComparison.Ordinal);
     }
 
@@ -123,7 +123,7 @@ public sealed class CompilerCliTests
         Assert.Equal(string.Empty, stdout.ToString());
         var text = stderr.ToString();
         Assert.Contains("error STK3014 [semantic-validate]", text, StringComparison.Ordinal);
-        Assert.Contains("i32[0 10]", text, StringComparison.Ordinal);
+        Assert.Contains("u8[0 10]", text, StringComparison.Ordinal);
         Assert.Contains("Use `u8[0 10]`", text, StringComparison.Ordinal);
     }
 
@@ -1018,7 +1018,7 @@ public sealed class CompilerCliTests
                 """
                 module Lib
 
-                public inline finite i32[0 102] SelectOrAdd(i32[0 100] value, bool add) {
+                public inline finite u8[0 102] SelectOrAdd(u8[0 100] value, bool add) {
                     if (add) {
                         return value + 1;
                     }
@@ -1032,7 +1032,7 @@ public sealed class CompilerCliTests
                 import Lib
                 module App
 
-                fn i32[0 102] Run(i32[0 100] value, bool add) {
+                fn u8[0 102] Run(u8[0 100] value, bool add) {
                     return Lib.SelectOrAdd(value, add);
                 }
                 """);
@@ -2127,7 +2127,7 @@ public sealed class CompilerCliTests
                 """
                 module Syscall
 
-                public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall0(i64[-9223372036854775808 9223372036854775807] number)
+                public unsafe ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall0(i64[-9223372036854775808 9223372036854775807] number)
                     in("rax") number,
                     out("rax") return,
                     clobber("rcx", "r11")

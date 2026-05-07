@@ -242,12 +242,27 @@ public struct OwnedUnicode {
     finite law i64 Length(borrow OwnedUnicode self);
 }
 
+public struct OwnedUtf16 {
+    finite law i64 Length(borrow OwnedUtf16 self);
+    finite i16[] AsSlice(borrow OwnedUtf16 self);
+}
+
 public finite law ascii AsciiView(Ascii source);
 public finite law unicode UnicodeView(Unicode source);
-public finite law rawptr<i8> AsciiData(ascii source);
 public finite law i64 AsciiLength(ascii source);
-public finite law rawptr<i32> UnicodeData(unicode source);
 public finite law i64 UnicodeLength(unicode source);
+public fn System.Memory.MemoryStatus FromAscii(out OwnedAscii destination, ascii source);
+public fn System.Memory.MemoryStatus FromConstAscii(out OwnedAscii destination, const ascii source);
+public fn System.Memory.MemoryStatus FromUnicode(out OwnedUnicode destination, unicode source);
+public fn System.Memory.MemoryStatus FromConstUnicode(out OwnedUnicode destination, const unicode source);
+public fn System.Memory.MemoryStatus FromAsciiToUnicode(out OwnedUnicode destination, ascii source);
+public fn System.Memory.MemoryStatus FromConstAsciiToUnicode(out OwnedUnicode destination, const ascii source);
+public fn System.Memory.MemoryStatus FromUnicodeToAscii(out OwnedAscii destination, unicode source);
+public fn System.Memory.MemoryStatus FromAsciiToUtf16(out OwnedUtf16 destination, ascii source);
+public fn System.Memory.MemoryStatus FromConstAsciiToUtf16(out OwnedUtf16 destination, const ascii source);
+public fn System.Memory.MemoryStatus FromUnicodeToUtf16(out OwnedUtf16 destination, unicode source);
+public fn System.Memory.MemoryStatus FromUtf16ToUnicode(out OwnedUnicode destination, borrow OwnedUtf16 source);
+public fn System.Memory.MemoryStatus FromUtf16ToAscii(out OwnedAscii destination, borrow OwnedUtf16 source);
 public finite TextResult<bool> ParseBoolAscii(ascii source);
 public finite TextResult<bool> ParseBoolUnicode(unicode source);
 public finite TextResult<i8> ParseI8Ascii(ascii source);
@@ -306,12 +321,6 @@ public finite TextResult<u768> ParseU768Ascii(ascii source);
 public finite TextResult<u768> ParseU768Unicode(unicode source);
 public finite TextResult<u1024> ParseU1024Ascii(ascii source);
 public finite TextResult<u1024> ParseU1024Unicode(unicode source);
-public fn bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
-public fn bool TryConvertAsciiToUtf16(rawmutptr<i16> destination, i64 capacity, ascii source, rawmutptr<i64> writtenLength);
-public fn bool TryConvertUtf16ToUnicode(rawmutptr<Unicode> destination, rawptr<i16> source, i64 sourceLength);
-public fn bool TryConvertUnicodeToAscii(rawmutptr<Ascii> destination, unicode source);
-public fn bool TryConvertUnicodeToUtf16(rawmutptr<i16> destination, i64 capacity, unicode source, rawmutptr<i64> writtenLength);
-public fn bool TryConvertUtf16ToAscii(rawmutptr<Ascii> destination, rawptr<i16> source, i64 sourceLength);
 public finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
 public finite bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
 public finite bool TryFormatBoolAscii(rawmutptr<Ascii> destination, bool value);
@@ -489,16 +498,16 @@ The semantics are:
 The currently implemented bridge APIs are:
 
 - `System.Text.AsciiView(Ascii)` and `System.Text.UnicodeView(Unicode)` for zero-copy immutable view projection
-- `System.Text.OwnedAscii` and `System.Text.OwnedUnicode` for allocation-backed owned text returned by convenience APIs with drop cleanup
-- `System.Text.AsciiData(ascii)`, `System.Text.AsciiLength(ascii)`, `System.Text.UnicodeData(unicode)`, and `System.Text.UnicodeLength(unicode)` for explicit pointer/length access when stdlib code needs exact view boundaries at low-level OS or FFI edges
+- `System.Text.OwnedAscii`, `System.Text.OwnedUnicode`, and `System.Text.OwnedUtf16` for allocation-backed owned text/code-unit buffers returned by convenience APIs with drop cleanup
+- `System.Text.AsciiLength(ascii)` and `System.Text.UnicodeLength(unicode)` for immutable view lengths; raw data extraction is internal to standard-library/platform boundaries
 - `System.Text.ParseBoolAscii(ascii)` and `System.Text.ParseBoolUnicode(unicode)` for exact lowercase bool parsing through `TextResult<bool>`
 - `System.Text.ParseI*Ascii`/`ParseI*Unicode` and `System.Text.ParseU*Ascii`/`ParseU*Unicode` through 1024-bit signed and unsigned widths for exact base-10 integer parsing through `TextResult<T>`
-- `System.Text.TryConvertAsciiToUnicode(rawmutptr<Unicode>, ascii)`, `System.Text.TryConvertUnicodeToAscii(rawmutptr<Ascii>, unicode)`, `System.Text.TryConvertAsciiToUtf16(rawmutptr<i16>, i64, ascii, rawmutptr<i64>)`, `System.Text.TryConvertUtf16ToUnicode(rawmutptr<Unicode>, rawptr<i16>, i64)`, `System.Text.TryConvertUnicodeToUtf16(rawmutptr<i16>, i64, unicode, rawmutptr<i64>)`, and `System.Text.TryConvertUtf16ToAscii(rawmutptr<Ascii>, rawptr<i16>, i64)` for explicit caller-owned UTF-8, UTF-16LE, and UTF-32 conversion
+- `System.Text.FromAsciiToUnicode`, `FromUnicodeToAscii`, `FromAsciiToUtf16`, `FromUnicodeToUtf16`, `FromUtf16ToUnicode`, and `FromUtf16ToAscii` for owned UTF-8, UTF-16LE, and UTF-32 conversion through `MemoryStatus`
 - `System.Text.TryConcatAscii(rawmutptr<Ascii>, ascii, ascii)` and `System.Text.TryConcatUnicode(rawmutptr<Unicode>, unicode, unicode)` for explicit concatenation into caller-provided storage
 - `System.Text.TryFormatBoolAscii`, fixed-width integer `Ascii` formatting helpers through 1024-bit widths, including Stark's non-power-of-two integer widths, the first fixed-six `f32`/`f64` formatting helpers, and the matching `Unicode` forms for explicit caller-owned value formatting
 - `System.Text.ToAscii` / `System.Text.ToUnicode` and method-style `value.ToAscii()` / `value.ToUnicode()` for allocation-visible owned text conversion of `bool`, all signed and unsigned integer widths from 8 bits through 1024 bits, `f32`, `f64`, `System.Text.Encoding`, and `System.Text.TextError` through `System.Memory.MemoryResult<T>`
 
-These APIs make allocation visible in user code: the caller owns the backing buffer, fills `Data` and `Capacity`, and conversion or concat returns `false` instead of allocating when the destination is too small.
+These APIs make allocation visible in user code: owned conversions return `MemoryStatus`, owned formatters return `MemoryResult<T>`, and the remaining unsafe `TryConcat*`/`TryFormat*` helpers are fixed-buffer compiler hooks for no-allocation text construction.
 
 For compile-time constants, `"left" + "right"` folds to one ordinary text
 constant with no runtime allocation.
@@ -812,14 +821,14 @@ The encoding conversions needed by the stdlib are:
 
 These are pure computational functions with no platform dependency. They live in `System.Text` and are shared by both the IO layer and user-facing text APIs.
 
-These are implemented today through the six caller-owned `System.Text` helpers:
+These are implemented today through owned `System.Text` helpers:
 
-- `TryConvertAsciiToUnicode`
-- `TryConvertAsciiToUtf16`
-- `TryConvertUtf16ToUnicode`
-- `TryConvertUnicodeToAscii`
-- `TryConvertUnicodeToUtf16`
-- `TryConvertUtf16ToAscii`
+- `FromAsciiToUnicode`
+- `FromAsciiToUtf16`
+- `FromUtf16ToUnicode`
+- `FromUnicodeToAscii`
+- `FromUnicodeToUtf16`
+- `FromUtf16ToAscii`
 
 Direct UTF-32 to UTF-16 conversion is preferred over routing through UTF-8 when performance matters.
 

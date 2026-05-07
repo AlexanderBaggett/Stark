@@ -609,10 +609,12 @@ public class StandardLibraryTestSuite
                 unsafe fn i32[min max] Use() {
                     stack mut System.Text.OwnedAscii owned = new();
                     stack mut System.Text.OwnedAscii joined = new();
+                    stack mut System.Text.OwnedAscii asciiOwned = new();
+                    stack mut System.Text.OwnedUnicode unicodeOwned = new();
 
-                    stack rawptr<i8[min max]> asciiData = System.Text.AsciiData("demo");
+                    stack bool asciiOwnedOk = MemoryOk(System.Text.FromAscii(asciiOwned, "demo"));
                     stack i64[min max] asciiLength = System.Text.AsciiLength("demo");
-                    stack rawptr<i32[min max]> unicodeData = System.Text.UnicodeData((unicode)"demo");
+                    stack bool unicodeOwnedOk = MemoryOk(System.Text.FromConstUnicode(unicodeOwned, (unicode)"demo"));
                     stack i64[min max] unicodeLength = System.Text.UnicodeLength((unicode)"demo");
                     stack bool status = MemoryOk(System.IO.Path.CurrentDirectory(owned));
                     stack bool joinedOk = MemoryOk(System.IO.Path.TryJoin(joined, "demo", "file.txt"));
@@ -620,11 +622,14 @@ public class StandardLibraryTestSuite
                     stack ascii baseName = System.IO.Path.BaseName("demo/file.txt");
                     stack ascii directory = System.IO.Path.DirectoryName("demo/file.txt");
 
-                    if (asciiData == null || unicodeData == null) {
+                    if (!asciiOwnedOk || !unicodeOwnedOk) {
                         return 1;
                     }
 
-                    if (asciiLength != 4 || unicodeLength != 4) {
+                    if (asciiLength != 4
+                        || unicodeLength != 4
+                        || asciiOwned.AsSlice()[0] != (i8[min max])100
+                        || unicodeOwned.AsSlice()[0] != 100) {
                         return 2;
                     }
 
@@ -2309,7 +2314,7 @@ public class StandardLibraryTestSuite
             export unsafe ffi fn i32[min max] main() {
                 stack mut i32[min max] checksum = 0;
 
-                for willexit (stack mut i32[0 128] i = 0; i < 128; i += 1) {
+                for willexit (stack mut u8[0 128] i = 0; i < 128; i += 1) {
                     heap Box box = new Box() {
                         Value = (i32[min max])i
                     };

@@ -61,10 +61,13 @@ justification and a test update.
     directory, memory, threading, and socket ABI calls. These functions are
     internal and explicitly unsafe.
 - `System.Text`
-  - `AsciiData` and `UnicodeData` are compiler-known text view data extractors.
-  - Caller-buffer formatting and conversion APIs expose `rawmutptr<Ascii>`,
-    `rawmutptr<Unicode>`, UTF-16 regions, and text data pointers so low-level
-    formatting can write into caller-owned storage without hidden allocation.
+  - `AsciiData` and `UnicodeData` are internal compiler-known text view data
+    extractors used by standard-library text, path, IO, and platform code.
+  - Public raw pointer use is limited to explicitly unsafe fixed-buffer
+    `TryConcat*` and `TryFormat*` helpers. These are compiler-known hooks for
+    stack `Ascii`/`Unicode` concatenation and interpolation where the caller
+    deliberately chooses no hidden allocation. General text conversion uses
+    `OwnedAscii`, `OwnedUnicode`, `OwnedUtf16`, and `MemoryStatus`.
 - `System.Threading`
   - Thread handles are internal platform ABI state hidden behind the owned
     `Thread` type.
@@ -74,8 +77,7 @@ justification and a test update.
 Public raw pointer APIs are allowed only in explicitly unsafe low-level
 surfaces:
 
-- `System.Text` for compiler-known text data,
-  caller-buffer formatting, and conversion helpers.
+- `System.Text` for compiler-known fixed-buffer concat and format helpers.
 
 `System.Text` is intentionally not re-exported by the root `System` module, so
 callers must opt into this low-level surface with `import System.Text`.

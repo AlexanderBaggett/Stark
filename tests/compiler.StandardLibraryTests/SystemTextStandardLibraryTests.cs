@@ -415,14 +415,10 @@ public sealed class SystemTextStandardLibraryTests
                 return 14;
             }
 
-            stack mut Unicode unicodeBuffer = new Unicode() {
-                Data = &unicodeStorage[0],
-                Length = 0,
-                Capacity = 320
-            };
-            if (!System.Text.TryConvertAsciiToUnicode(&unicodeBuffer, "caf\u00E9")
-                || unicodeBuffer.Length != 4
-                || *(&unicodeBuffer.Data[3]) != 233) {
+            stack mut System.Text.OwnedUnicode unicodeBuffer = new();
+            if (!Ok(System.Text.FromAsciiToUnicode(unicodeBuffer, "caf\u00E9"))
+                || unicodeBuffer.Length() != 4
+                || unicodeBuffer.AsSlice()[3] != 233) {
                 return 15;
             }
 
@@ -672,6 +668,7 @@ public sealed class SystemTextStandardLibraryTests
             var appSource =
                 """
                 import System
+                import System.Text
                 module App
 
                 unsafe fn bool ProbeAscii(rawmutptr<Ascii> destination) {
@@ -1111,6 +1108,7 @@ public sealed class SystemTextStandardLibraryTests
                 appPath,
                 """
                 import System
+                import System.Text
                 module Demo
 
                 fn bool ReadParsedBool(System.Text.TextResult<bool> result) {
@@ -1388,29 +1386,27 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                unsafe fn bool OwnedAsciiMatches(System.Memory.MemoryResult<System.Text.OwnedAscii> result, i64[min max] expectedLength, i8[min max] expectedFirst, i8[min max] expectedLast) {
+                fn bool OwnedAsciiMatches(System.Memory.MemoryResult<System.Text.OwnedAscii> result, u64[0 2 ** 63 - 1] expectedLength, i8[min max] expectedFirst, i8[min max] expectedLast) {
                     switch (result) {
                         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
-                            stack i64[min max] actualLength = value.Length();
-                            stack rawptr<i8[min max]> data = System.Text.AsciiData(value.View());
+                            stack u64[0 2 ** 63 - 1] actualLength = value.Length();
+                            stack i8[min max][] data = value.AsSlice();
                             return actualLength == expectedLength
-                                && data != null
-                                && *(&data[0]) == expectedFirst
-                                && *(&data[expectedLength - 1]) == expectedLast;
+                                && data[0] == expectedFirst
+                                && data[expectedLength - 1] == expectedLast;
                         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
                             return false;
                     }
                 }
 
-                unsafe fn bool OwnedUnicodeMatches(System.Memory.MemoryResult<System.Text.OwnedUnicode> result, i64[min max] expectedLength, i32[min max] expectedFirst, i32[min max] expectedLast) {
+                fn bool OwnedUnicodeMatches(System.Memory.MemoryResult<System.Text.OwnedUnicode> result, u64[0 2 ** 63 - 1] expectedLength, i32[min max] expectedFirst, i32[min max] expectedLast) {
                     switch (result) {
                         case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Ok(var value):
-                            stack i64[min max] actualLength = value.Length();
-                            stack rawptr<i32[min max]> data = System.Text.UnicodeData(value.View());
+                            stack u64[0 2 ** 63 - 1] actualLength = value.Length();
+                            stack i32[min max][] data = value.AsSlice();
                             return actualLength == expectedLength
-                                && data != null
-                                && *(&data[0]) == expectedFirst
-                                && *(&data[expectedLength - 1]) == expectedLast;
+                                && data[0] == expectedFirst
+                                && data[expectedLength - 1] == expectedLast;
                         case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Err(var error):
                             return false;
                     }

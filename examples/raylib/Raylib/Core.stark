@@ -275,7 +275,7 @@ public unsafe ffi fn void UnloadRandomSequence(rawmutptr<i32[min max]> sequence)
 public unsafe ffi fn void TakeScreenshot(ascii fileName);
 public unsafe ffi fn void SetConfigFlags(u32[0 max] flags);
 public unsafe ffi fn void OpenURL(ascii url);
-public ffi varargs fn void TraceLog(i32[min max] logLevel, ascii text);
+public unsafe ffi varargs fn void TraceLog(i32[min max] logLevel, ascii text);
 public unsafe ffi fn void SetTraceLogLevel(i32[min max] logLevel);
 public unsafe ffi fn rawmutptr<i8[min max]> MemAlloc(u32[0 max] size);
 public unsafe ffi fn rawmutptr<i8[min max]> MemRealloc(rawmutptr<i8[min max]> ptr, u32[0 max] size);

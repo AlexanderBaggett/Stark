@@ -29,11 +29,11 @@ public sealed class SystemPromotedIOFileSystemStandardLibraryTests : StandardLib
             }
         }
 
-        fn i64[min max] CountOrNegative(System.IO.IOResult<i64[0 max]> result) {
+        fn i64[min max] CountOrNegative(System.IO.IOResult<u64[0 2 ** 63 - 1]> result) {
             switch (result) {
-                case System.IO.IOResult<i64[0 max]>.Ok(var value):
+                case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Ok(var value):
                     return (i64[min max])value;
-                case System.IO.IOResult<i64[0 max]>.Err(var error):
+                case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(var error):
                     return -1;
             }
         }
@@ -133,7 +133,7 @@ public sealed class SystemPromotedIOFileSystemStandardLibraryTests : StandardLib
                     if (fixedReadCount != 9) {
                         return 22;
                     }
-                    readBuffer.AdvanceWrite((i64[0 max])fixedReadCount);
+                    readBuffer.AdvanceWrite((u64[0 2 ** 63 - 1])fixedReadCount);
 
                     stack i8[min max][] buffered = readBuffer.ReadSlice();
                     if (readBuffer.Readable() != 9 || buffered[0] != 65 || buffered[8] != 67) {

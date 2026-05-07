@@ -302,53 +302,37 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                finite law i8[min max] UnitAt(ascii value, u64[0 2 ** 63 - 1] index) {
-                    unsafe {
-                        stack rawptr<i8[min max]> data = System.Text.AsciiData(value);
-                        return *(&data[index]);
-                    }
-                }
-
-                finite law i8[min max] SeparatorUnit() {
-                    return UnitAt(System.IO.Path.DirectorySeparator(), 0);
-                }
-
-                finite law bool IsSeparatorUnit(i8[min max] value) {
-                    if (value == SeparatorUnit()) {
-                        return true;
-                    }
-
-                    stack ascii alternate = System.IO.Path.AlternateDirectorySeparator();
-                    if (System.Text.AsciiLength(alternate) <= 0) {
-                        return false;
-                    }
-
-                    return value == UnitAt(alternate, 0);
-                }
-
                 fn bool IsJoinedPath(ascii value) {
-                    if (System.Text.AsciiLength(value) != 14) {
-                        return false;
+                    switch (value) {
+                        case "alpha/beta.txt":
+                            return true;
+                        case "alpha\\beta.txt":
+                            return true;
+                        default:
+                            return false;
                     }
-
-                    return UnitAt(value, 0) == (i8[min max])97
-                        && UnitAt(value, 4) == (i8[min max])97
-                        && IsSeparatorUnit(UnitAt(value, 5))
-                        && UnitAt(value, 6) == (i8[min max])98
-                        && UnitAt(value, 10) == (i8[min max])46
-                        && UnitAt(value, 13) == (i8[min max])116;
                 }
 
                 fn bool IsNormalizedPath(ascii value) {
-                    if (System.Text.AsciiLength(value) != 20) {
-                        return false;
+                    switch (value) {
+                        case "alpha/beta/gamma.txt":
+                            return true;
+                        case "alpha\\beta\\gamma.txt":
+                            return true;
+                        default:
+                            return false;
                     }
+                }
 
-                    return UnitAt(value, 5) == SeparatorUnit()
-                        && UnitAt(value, 10) == SeparatorUnit()
-                        && UnitAt(value, 11) == (i8[min max])103
-                        && UnitAt(value, 16) == (i8[min max])46
-                        && UnitAt(value, 19) == (i8[min max])116;
+                fn bool IsSelfJoinedPath(ascii value) {
+                    switch (value) {
+                        case "alpha/alpha":
+                            return true;
+                        case "alpha\\alpha":
+                            return true;
+                        default:
+                            return false;
+                    }
                 }
 
                 fn bool IsTextExtension(ascii value) {
@@ -461,10 +445,6 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         return 7;
                     }
 
-                    if (!IsSeparatorUnit(UnitAt(joined.View(), 5))) {
-                        return 8;
-                    }
-
                     if (!IsJoinedPath(joined.View())) {
                         return 9;
                     }
@@ -539,8 +519,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
 
                     if (System.Text.AsciiLength(selfJoin.View()) != 11
-                        || UnitAt(selfJoin.View(), 5) != SeparatorUnit()
-                        || UnitAt(selfJoin.View(), 6) != (i8[min max])97) {
+                        || !IsSelfJoinedPath(selfJoin.View())) {
                         return false;
                     }
 

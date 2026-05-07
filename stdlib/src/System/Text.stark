@@ -21,9 +21,9 @@ public enum TextResult<T> {
 
 public finite law ascii AsciiView(Ascii source);
 public finite law unicode UnicodeView(Unicode source);
-public unsafe finite law rawptr<i8[min max]> AsciiData(ascii source);
+internal unsafe finite law rawptr<i8[min max]> AsciiData(ascii source);
 public finite law i64[min max] AsciiLength(ascii source);
-public unsafe finite law rawptr<i32[min max]> UnicodeData(unicode source);
+internal unsafe finite law rawptr<i32[min max]> UnicodeData(unicode source);
 public finite law i64[min max] UnicodeLength(unicode source);
 
 internal fn i32[min max] UnsignedByte(i8[min max] value) {
@@ -524,6 +524,86 @@ public struct OwnedAscii {
         return System.Memory.MemoryStatus.Ok;
     }
 
+    fn System.Memory.MemoryStatus AppendCodePointAsUtf8(mut borrow OwnedAscii self, i32[min max] codePoint) {
+        stack i32[min max] scalar = NormalizeUnicodeCodePoint(codePoint);
+        stack i64[min max] requiredLength = Utf8EncodedLength(scalar);
+        stack System.Memory.MemoryStatus status = self.Reserve((u64[0 2 ** 63 - 1])requiredLength);
+        switch (status) {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        if (scalar <= 127) {
+            init self.Bytes[self.Bytes.Length] = (i8[min max])scalar;
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (scalar <= 2047) {
+            init self.Bytes[self.Bytes.Length] = (i8[min max])((scalar >> 6) | 192);
+            init self.Bytes[self.Bytes.Length] = (i8[min max])((scalar & 63) | 128);
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        if (scalar <= (i32[min max])(2 ** 16 - 1)) {
+            init self.Bytes[self.Bytes.Length] = (i8[min max])((scalar >> 12) | 224);
+            init self.Bytes[self.Bytes.Length] = (i8[min max])(((scalar >> 6) & 63) | 128);
+            init self.Bytes[self.Bytes.Length] = (i8[min max])((scalar & 63) | 128);
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        init self.Bytes[self.Bytes.Length] = (i8[min max])((scalar >> 18) | 240);
+        init self.Bytes[self.Bytes.Length] = (i8[min max])(((scalar >> 12) & 63) | 128);
+        init self.Bytes[self.Bytes.Length] = (i8[min max])(((scalar >> 6) & 63) | 128);
+        init self.Bytes[self.Bytes.Length] = (i8[min max])((scalar & 63) | 128);
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    fn System.Memory.MemoryStatus AppendUnicodeAsUtf8(mut borrow OwnedAscii self, unicode source) {
+        unsafe {
+            stack i64[min max] signedLength = UnicodeLength(source);
+            if (signedLength < 0) {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+            }
+
+            stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])signedLength;
+            if (count == 0) {
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            stack rawptr<i32[min max]> data = UnicodeData(source);
+            if (data == null) {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+            }
+
+            stack mut i64[min max] required = 0;
+            for willexit (stack mut i64[min max] index = 0; index < signedLength; index += 1) {
+                required += Utf8EncodedLength(*(&data[index]));
+                if (required < 0) {
+                    return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+                }
+            }
+
+            stack System.Memory.MemoryStatus status = self.Reserve((u64[0 2 ** 63 - 1])required);
+            switch (status) {
+                case System.Memory.MemoryStatus.Err(var error):
+                    return System.Memory.MemoryStatus.Err(error);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            for willexit (stack mut i64[min max] index = 0; index < signedLength; index += 1) {
+                stack System.Memory.MemoryStatus appendStatus = self.AppendCodePointAsUtf8(*(&data[index]));
+                switch (appendStatus) {
+                    case System.Memory.MemoryStatus.Err(var appendError):
+                        return System.Memory.MemoryStatus.Err(appendError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            return System.Memory.MemoryStatus.Ok;
+        }
+    }
+
     fn void Clear(mut borrow OwnedAscii self) {
         while willexit (self.Bytes.Length > 0) {
             stack i8[min max] value = self.Bytes.MoveLast();
@@ -976,6 +1056,224 @@ public struct OwnedUnicode {
     }
 }
 
+public struct OwnedUtf16 {
+    internal dynamic i16[min max] CodeUnits;
+
+    OwnedUtf16() {
+        self.CodeUnits = new();
+    }
+
+    finite law u64[0 2 ** 63 - 1] Length(borrow OwnedUtf16 self) {
+        return self.CodeUnits.Length;
+    }
+
+    finite law u64[0 2 ** 63 - 1] Capacity(borrow OwnedUtf16 self) {
+        return self.CodeUnits.Capacity;
+    }
+
+    finite law bool IsEmpty(borrow OwnedUtf16 self) {
+        return self.CodeUnits.Length == 0;
+    }
+
+    finite retborrow i16[min max][] AsSlice(borrow OwnedUtf16 self) {
+        return self.CodeUnits[0, self.CodeUnits.Length];
+    }
+
+    finite retborrow mut i16[min max][] AsMutableSlice(mut borrow OwnedUtf16 self) {
+        return self.CodeUnits[0, self.CodeUnits.Length];
+    }
+
+    fn System.Memory.MemoryStatus Reserve(mut borrow OwnedUtf16 self, u64[0 2 ** 63 - 1] additional) {
+        if (additional > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) - self.CodeUnits.Length) {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+        }
+
+        if (!self.CodeUnits.TryReserve(additional)) {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
+        }
+
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    fn System.Memory.MemoryStatus AppendCodeUnit(mut borrow OwnedUtf16 self, i16[min max] value) {
+        stack System.Memory.MemoryStatus status = self.Reserve(1);
+        switch (status) {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        init self.CodeUnits[self.CodeUnits.Length] = value;
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    fn System.Memory.MemoryStatus AppendCodePoint(mut borrow OwnedUtf16 self, i32[min max] codePoint) {
+        stack i32[min max] scalar = NormalizeUnicodeCodePoint(codePoint);
+        stack i64[min max] requiredLength = Utf16EncodedLength(scalar);
+        stack System.Memory.MemoryStatus status = self.Reserve((u64[0 2 ** 63 - 1])requiredLength);
+        switch (status) {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        if (scalar <= (i32[min max])(2 ** 16 - 1)) {
+            init self.CodeUnits[self.CodeUnits.Length] = (i16[min max])scalar;
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        stack i32[min max] adjusted = scalar - (i32[min max])(2 ** 16);
+        init self.CodeUnits[self.CodeUnits.Length] = (i16[min max])((adjusted >> 10) + 55296);
+        init self.CodeUnits[self.CodeUnits.Length] = (i16[min max])((adjusted & 1023) + 56320);
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    fn System.Memory.MemoryStatus AppendAscii(mut borrow OwnedUtf16 self, ascii source) {
+        unsafe {
+            stack i64[min max] signedLength = AsciiLength(source);
+            if (signedLength < 0) {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+            }
+
+            stack u64[0 2 ** 63 - 1] byteLength = (u64[0 2 ** 63 - 1])signedLength;
+            if (byteLength == 0) {
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            stack rawptr<i8[min max]> data = AsciiData(source);
+            if (data == null) {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+            }
+
+            stack System.Memory.MemoryStatus reserveStatus = self.Reserve(byteLength);
+            switch (reserveStatus) {
+                case System.Memory.MemoryStatus.Err(var reserveError):
+                    return System.Memory.MemoryStatus.Err(reserveError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            stack mut i64[min max] readIndex = 0;
+            while willexit (readIndex < signedLength) {
+                stack i64[min max] start = readIndex;
+                stack mut i32[min max] codePoint = 65533;
+                stack mut bool decoded = false;
+                unsafe {
+                    decoded = TryDecodeUtf8CodePoint(data, byteLength, &readIndex, &codePoint);
+                }
+
+                if (!decoded) {
+                    readIndex = start + 1;
+                }
+
+                stack System.Memory.MemoryStatus appendStatus = self.AppendCodePoint(codePoint);
+                switch (appendStatus) {
+                    case System.Memory.MemoryStatus.Err(var appendError):
+                        return System.Memory.MemoryStatus.Err(appendError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            return System.Memory.MemoryStatus.Ok;
+        }
+    }
+
+    fn System.Memory.MemoryStatus AppendConstAscii(mut borrow OwnedUtf16 self, const ascii source) {
+        unsafe {
+            stack i64[min max] signedLength = AsciiLength(source);
+            if (signedLength < 0) {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+            }
+
+            stack u64[0 2 ** 63 - 1] byteLength = (u64[0 2 ** 63 - 1])signedLength;
+            if (byteLength == 0) {
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            stack rawptr<i8[min max]> data = AsciiData(source);
+            if (data == null) {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+            }
+
+            stack System.Memory.MemoryStatus reserveStatus = self.Reserve(byteLength);
+            switch (reserveStatus) {
+                case System.Memory.MemoryStatus.Err(var reserveError):
+                    return System.Memory.MemoryStatus.Err(reserveError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            stack mut i64[min max] readIndex = 0;
+            while willexit (readIndex < signedLength) {
+                stack i64[min max] start = readIndex;
+                stack mut i32[min max] codePoint = 65533;
+                stack mut bool decoded = false;
+                unsafe {
+                    decoded = TryDecodeUtf8CodePoint(data, byteLength, &readIndex, &codePoint);
+                }
+
+                if (!decoded) {
+                    readIndex = start + 1;
+                }
+
+                stack System.Memory.MemoryStatus appendStatus = self.AppendCodePoint(codePoint);
+                switch (appendStatus) {
+                    case System.Memory.MemoryStatus.Err(var appendError):
+                        return System.Memory.MemoryStatus.Err(appendError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            return System.Memory.MemoryStatus.Ok;
+        }
+    }
+
+    fn System.Memory.MemoryStatus AppendUnicode(mut borrow OwnedUtf16 self, unicode source) {
+        unsafe {
+            stack i64[min max] signedLength = UnicodeLength(source);
+            if (signedLength < 0) {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+            }
+
+            stack u64[0 2 ** 63 - 1] count = (u64[0 2 ** 63 - 1])signedLength;
+            if (count == 0) {
+                return System.Memory.MemoryStatus.Ok;
+            }
+
+            if (count > (u64[0 2 ** 63 - 1])(2 ** 62 - 1)) {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+            }
+
+            stack rawptr<i32[min max]> data = UnicodeData(source);
+            if (data == null) {
+                return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+            }
+
+            stack System.Memory.MemoryStatus reserveStatus = self.Reserve((u64[0 2 ** 63 - 1])(count * 2));
+            switch (reserveStatus) {
+                case System.Memory.MemoryStatus.Err(var reserveError):
+                    return System.Memory.MemoryStatus.Err(reserveError);
+                case System.Memory.MemoryStatus.Ok:
+            }
+
+            for willexit (stack mut i64[min max] index = 0; index < signedLength; index += 1) {
+                stack System.Memory.MemoryStatus appendStatus = self.AppendCodePoint(*(&data[index]));
+                switch (appendStatus) {
+                    case System.Memory.MemoryStatus.Err(var appendError):
+                        return System.Memory.MemoryStatus.Err(appendError);
+                    case System.Memory.MemoryStatus.Ok:
+                }
+            }
+
+            return System.Memory.MemoryStatus.Ok;
+        }
+    }
+
+    fn void Clear(mut borrow OwnedUtf16 self) {
+        while willexit (self.CodeUnits.Length > 0) {
+            stack i16[min max] value = self.CodeUnits.MoveLast();
+        }
+    }
+}
+
 public fn System.Memory.MemoryStatus FromAscii(out OwnedAscii destination, ascii source) {
     destination = new();
     return destination.AppendAscii(source);
@@ -1004,6 +1302,26 @@ public fn System.Memory.MemoryStatus FromAsciiToUnicode(out OwnedUnicode destina
 public fn System.Memory.MemoryStatus FromConstAsciiToUnicode(out OwnedUnicode destination, const ascii source) {
     destination = new();
     return destination.AppendConstAscii(source);
+}
+
+public fn System.Memory.MemoryStatus FromUnicodeToAscii(out OwnedAscii destination, unicode source) {
+    destination = new();
+    return destination.AppendUnicodeAsUtf8(source);
+}
+
+public fn System.Memory.MemoryStatus FromAsciiToUtf16(out OwnedUtf16 destination, ascii source) {
+    destination = new();
+    return destination.AppendAscii(source);
+}
+
+public fn System.Memory.MemoryStatus FromConstAsciiToUtf16(out OwnedUtf16 destination, const ascii source) {
+    destination = new();
+    return destination.AppendConstAscii(source);
+}
+
+public fn System.Memory.MemoryStatus FromUnicodeToUtf16(out OwnedUtf16 destination, unicode source) {
+    destination = new();
+    return destination.AppendUnicode(source);
 }
 
 internal fn i32[min max] UnsignedWide(i16[min max] value) {
@@ -2483,6 +2801,131 @@ unsafe fn bool TryDecodeUtf16CodePoint(
 
     *codePoint = first;
     return true;
+}
+
+internal fn bool TryDecodeUtf16SliceCodePoint(
+    borrow OwnedUtf16 data,
+    i64[min max] index,
+    out i64[min max] nextIndex,
+    out i32[min max] codePoint) {
+    nextIndex = index;
+    codePoint = 65533;
+    if (index < 0 || index >= data.CodeUnits.Length) {
+        return false;
+    }
+
+    stack i16[min max][] units = data.CodeUnits[0, data.CodeUnits.Length];
+    stack i32[min max] first = UnsignedWide(units[(u64[0 2 ** 63 - 1])index]);
+    if (55296 <= first && first <= 56319) {
+        if (index + 1 < data.CodeUnits.Length) {
+            stack i64[min max] secondIndex = index + 1;
+            stack i32[min max] second = UnsignedWide(units[(u64[0 2 ** 63 - 1])secondIndex]);
+            nextIndex = index + 2;
+            if (56320 <= second && second <= 57343) {
+                codePoint = (((first - 55296) << 10) | (second - 56320)) + (i32[min max])(2 ** 16);
+                return true;
+            }
+
+            codePoint = 65533;
+            return true;
+        }
+
+        nextIndex = index + 1;
+        codePoint = 65533;
+        return true;
+    }
+
+    nextIndex = index + 1;
+    if (56320 <= first && first <= 57343) {
+        codePoint = 65533;
+        return true;
+    }
+
+    codePoint = first;
+    return true;
+}
+
+public fn System.Memory.MemoryStatus FromUtf16ToUnicode(
+    out OwnedUnicode destination,
+    borrow OwnedUtf16 source) {
+    destination = new();
+    if (source.CodeUnits.Length == 0) {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack System.Memory.MemoryStatus reserveStatus = destination.Reserve(source.CodeUnits.Length);
+    switch (reserveStatus) {
+        case System.Memory.MemoryStatus.Err(var reserveError):
+            return System.Memory.MemoryStatus.Err(reserveError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack mut i64[min max] readIndex = 0;
+    while willexit (readIndex < source.CodeUnits.Length) {
+        stack mut i64[min max] nextIndex = readIndex;
+        stack mut i32[min max] codePoint = 65533;
+        if (!TryDecodeUtf16SliceCodePoint(source, readIndex, nextIndex, codePoint)) {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        init destination.CodePoints[destination.CodePoints.Length] = NormalizeUnicodeCodePoint(codePoint);
+        readIndex = nextIndex;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
+}
+
+public fn System.Memory.MemoryStatus FromUtf16ToAscii(
+    out OwnedAscii destination,
+    borrow OwnedUtf16 source) {
+    destination = new();
+    if (source.CodeUnits.Length == 0) {
+        return System.Memory.MemoryStatus.Ok;
+    }
+
+    stack mut i64[min max] readIndex = 0;
+    stack mut i64[min max] required = 0;
+    while willexit (readIndex < source.CodeUnits.Length) {
+        stack mut i64[min max] nextIndex = readIndex;
+        stack mut i32[min max] codePoint = 65533;
+        if (!TryDecodeUtf16SliceCodePoint(source, readIndex, nextIndex, codePoint)) {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        required += Utf8EncodedLength(codePoint);
+        if (required < 0) {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+        }
+
+        readIndex = nextIndex;
+    }
+
+    stack System.Memory.MemoryStatus reserveStatus = destination.Reserve((u64[0 2 ** 63 - 1])required);
+    switch (reserveStatus) {
+        case System.Memory.MemoryStatus.Err(var reserveError):
+            return System.Memory.MemoryStatus.Err(reserveError);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    readIndex = 0;
+    while willexit (readIndex < source.CodeUnits.Length) {
+        stack mut i64[min max] nextIndex = readIndex;
+        stack mut i32[min max] codePoint = 65533;
+        if (!TryDecodeUtf16SliceCodePoint(source, readIndex, nextIndex, codePoint)) {
+            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        }
+
+        stack System.Memory.MemoryStatus appendStatus = destination.AppendCodePointAsUtf8(codePoint);
+        switch (appendStatus) {
+            case System.Memory.MemoryStatus.Err(var appendError):
+                return System.Memory.MemoryStatus.Err(appendError);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        readIndex = nextIndex;
+    }
+
+    return System.Memory.MemoryStatus.Ok;
 }
 
 public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
@@ -4027,9 +4470,9 @@ public fn System.Memory.MemoryResult<OwnedUnicode> ConcatUnicode(unicode left, u
             return System.Memory.MemoryResult<OwnedUnicode>.Err(error);
     }
 }
-public unsafe inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
+internal unsafe inline finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
 
-public unsafe fn bool TryConvertAsciiToUtf16(
+internal unsafe fn bool TryConvertAsciiToUtf16(
     rawmutptr<i16[min max]>[capacity] destination,
     u64[0 2 ** 63 - 1] capacity,
     ascii source,
@@ -4079,7 +4522,7 @@ public unsafe fn bool TryConvertAsciiToUtf16(
     return true;
 }
 
-public unsafe fn bool TryConvertUtf16ToUnicode(
+internal unsafe fn bool TryConvertUtf16ToUnicode(
     rawmutptr<Unicode> destination,
     rawptr<i16[min max]>[sourceLength] source,
     u64[0 2 ** 63 - 1] sourceLength) {
@@ -4166,7 +4609,7 @@ public unsafe fn bool TryConvertUtf16ToUnicode(
     return true;
 }
 
-public unsafe fn bool TryConvertUnicodeToAscii(rawmutptr<Ascii> destination, unicode source) {
+internal unsafe fn bool TryConvertUnicodeToAscii(rawmutptr<Ascii> destination, unicode source) {
     if (destination == null) {
         return false;
     }
@@ -4246,7 +4689,7 @@ public unsafe fn bool TryConvertUnicodeToAscii(rawmutptr<Ascii> destination, uni
     return true;
 }
 
-public unsafe fn bool TryConvertUnicodeToUtf16(
+internal unsafe fn bool TryConvertUnicodeToUtf16(
     rawmutptr<i16[min max]>[capacity] destination,
     u64[0 2 ** 63 - 1] capacity,
     unicode source,
@@ -4293,7 +4736,7 @@ public unsafe fn bool TryConvertUnicodeToUtf16(
     return true;
 }
 
-public unsafe fn bool TryConvertUtf16ToAscii(
+internal unsafe fn bool TryConvertUtf16ToAscii(
     rawmutptr<Ascii> destination,
     rawptr<i16[min max]>[sourceLength] source,
     u64[0 2 ** 63 - 1] sourceLength) {

@@ -15,15 +15,21 @@ fn bool WriteMainRef() {
         return false;
     }
 
-    stack mut System.IO.File.File file =
+    stack System.IO.IOResult<System.IO.File.File> opened =
         System.IO.File.Open("starkgit-demo/.starkgit/refs/heads/main", System.IO.File.FileMode.Write);
 
-    if (!file.IsOpen()) {
-        return false;
-    }
+    switch (opened) {
+        case System.IO.IOResult<System.IO.File.File>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+            stack mut System.IO.File.File file = value;
+            if (!file.IsOpen()) {
+                return false;
+            }
 
-    file.WriteLine("demo-commit");
-    return file.Close() == 0;
+            file.WriteLine("demo-commit");
+            return file.Close() == System.IO.IOStatus.Ok;
+    }
 }
 
 export unsafe ffi fn i32[min max] main() {
