@@ -1399,6 +1399,63 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
+    public async Task EmitLibraryModeSuppressesRanlibEmptyObjectWarningsFromSuccessfulArchive()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-lib-ranlib-warning-");
+        var rootPath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, "libFacade.a");
+        var clangLogPath = Path.Combine(tempDirectory.FullName, "clang.log");
+        _ = await CreateUnixCaptureClangAsync(tempDirectory.FullName, clangLogPath);
+        var archiverPath = await CreateUnixRanlibWarningArchiverAsync(tempDirectory.FullName);
+        var originalPath = Environment.GetEnvironmentVariable("PATH");
+
+        try
+        {
+            Environment.SetEnvironmentVariable("PATH", $"{tempDirectory.FullName}{Path.PathSeparator}{originalPath}");
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                module Facade
+
+                public finite law i32[-2147483648 2147483647] Used() {
+                    return 1;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [rootPath, "--emit-lib", "-o", outputPath, "--archiver", archiverPath],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted static library:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", originalPath);
+
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public async Task EmitExecutableModeBuildsImportedAggregateDependencies()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
@@ -2734,6 +2791,22 @@ public sealed class CompilerCliTests
             set -euo pipefail
             printf '%s\n' "$@" > "{{logPath}}"
             out="${2:-}"
+            : > "$out"
+            """);
+        System.Diagnostics.Process.Start("chmod", $"+x {path}")!.WaitForExit();
+        return path;
+    }
+
+    private static async Task<string> CreateUnixRanlibWarningArchiverAsync(string directory)
+    {
+        var path = Path.Combine(directory, "ranlib-warning-archiver.sh");
+        await File.WriteAllTextAsync(
+            path,
+            """
+            #!/usr/bin/env bash
+            set -euo pipefail
+            out="${2:-}"
+            printf "ranlib: warning: '%s(Facade.o)' has no symbols\n" "$out" >&2
             : > "$out"
             """);
         System.Diagnostics.Process.Start("chmod", $"+x {path}")!.WaitForExit();

@@ -33,9 +33,15 @@ public sealed class SystemRuntimePlatformMacOSStandardLibraryTests
         Assert.Contains("declare i32 @close(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @fsync(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i64 @lseek(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @stat(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare ptr @getcwd(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare ptr @opendir(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare ptr @readdir(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @pthread_create(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @pthread_join(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @pthread_detach(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @sched_yield()", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare i32 @nanosleep(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @socket(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @poll(", llvm, StringComparison.Ordinal);
         Assert.Contains("@malloc(", llvm, StringComparison.Ordinal);
@@ -55,6 +61,65 @@ public sealed class SystemRuntimePlatformMacOSStandardLibraryTests
         Assert.DoesNotContain("@fopen(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@fread(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@fwrite(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@access(", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceMacOSPathMetadataUsesStatModeBits()
+    {
+        var result = CompileMacOSPlatformSource();
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+        var tryReadPathModeBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i1 @TryReadPathMode(",
+            "Expected TryReadPathMode definition in emitted LLVM.");
+        var pathExistsBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i1 @PathExists(",
+            "Expected PathExists definition in emitted LLVM.");
+        var isDirectoryBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i1 @IsDirectory(",
+            "Expected IsDirectory definition in emitted LLVM.");
+        var isFileBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i1 @IsFile(",
+            "Expected IsFile definition in emitted LLVM.");
+
+        Assert.Contains("call i32 @stat(", tryReadPathModeBody, StringComparison.Ordinal);
+        Assert.Contains("@MacOSStatModeOffset", tryReadPathModeBody, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i32 @UnsignedShort(", tryReadPathModeBody, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i1 @TryReadPathMode(", pathExistsBody, StringComparison.Ordinal);
+        Assert.Contains("@MacOSStatDirectoryType", isDirectoryBody, StringComparison.Ordinal);
+        Assert.Contains("@MacOSStatRegularType", isFileBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@opendir(", tryReadPathModeBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@access(", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourceMacOSThreadingPreservesEntryReturnCodeThroughPthreadJoin()
+    {
+        var result = CompileMacOSPlatformSource();
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+        var thunkBody = ExtractDefinedFunctionText(
+            llvm,
+            "define ptr @ThreadEntryThunk(",
+            "Expected ThreadEntryThunk definition in emitted LLVM.");
+        var joinBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i32 @JoinThread(",
+            "Expected JoinThread definition in emitted LLVM.");
+
+        Assert.Contains("inttoptr i32", thunkBody, StringComparison.Ordinal);
+        Assert.Contains("call i32 @pthread_join(", joinBody, StringComparison.Ordinal);
+        Assert.Contains("ptrtoint ptr", joinBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@malloc(", thunkBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("pthread_join(ptr %arg_handle, ptr null)", joinBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("store i32 0, ptr %arg_exitCode", joinBody, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -213,6 +278,35 @@ public sealed class SystemRuntimePlatformMacOSStandardLibraryTests
         return names
             .OrderBy(static name => name, StringComparer.Ordinal)
             .ToArray();
+    }
+
+    private static string ExtractDefinedFunctionText(string llvm, string signaturePrefix, string missingMessage)
+    {
+        var functionStart = llvm.IndexOf(signaturePrefix, StringComparison.Ordinal);
+        Assert.True(functionStart >= 0, missingMessage);
+
+        var bodyStart = llvm.IndexOf('{', functionStart);
+        Assert.True(bodyStart > functionStart, $"Expected '{signaturePrefix}' to include a function body.");
+
+        var depth = 0;
+        for (var index = bodyStart; index < llvm.Length; index++)
+        {
+            var current = llvm[index];
+            if (current == '{')
+            {
+                depth++;
+            }
+            else if (current == '}')
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    return llvm.Substring(functionStart, index - functionStart + 1);
+                }
+            }
+        }
+
+        throw new Xunit.Sdk.XunitException($"Expected '{signaturePrefix}' body to terminate in emitted LLVM.");
     }
 
     private static string FindRepositoryRoot()

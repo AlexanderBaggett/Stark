@@ -219,7 +219,7 @@ internal static class NativeToolchain
         if (!string.IsNullOrWhiteSpace(archiverTool))
         {
             var arguments = BuildStaticLibraryArguments(objectPaths, fullOutputPath);
-            return RunTool(archiverTool, arguments, fullOutputPath);
+            return SuppressHarmlessStaticLibraryWarnings(RunTool(archiverTool, arguments, fullOutputPath));
         }
 
         var tempOutputPath = Path.Combine(
@@ -239,6 +239,8 @@ internal static class NativeToolchain
             {
                 result = RunFirstAvailableTool(["llvm-ar", "ar"], arguments, tempOutputPath);
             }
+
+            result = SuppressHarmlessStaticLibraryWarnings(result);
 
             if (!result.Succeeded)
             {
@@ -267,6 +269,28 @@ internal static class NativeToolchain
                 // Best effort cleanup only.
             }
         }
+    }
+
+    private static NativeToolchainResult SuppressHarmlessStaticLibraryWarnings(NativeToolchainResult result)
+    {
+        if (!result.Succeeded || string.IsNullOrEmpty(result.StandardError))
+        {
+            return result;
+        }
+
+        var retainedLines = result.StandardError
+            .Replace("\r\n", "\n", StringComparison.Ordinal)
+            .Split('\n')
+            .Where(static line => line.Length != 0 && !IsHarmlessStaticLibraryWarning(line))
+            .ToArray();
+        return result with { StandardError = string.Join(Environment.NewLine, retainedLines) };
+    }
+
+    private static bool IsHarmlessStaticLibraryWarning(string line)
+    {
+        var trimmed = line.Trim();
+        return trimmed.StartsWith("ranlib: warning: '", StringComparison.Ordinal)
+            && trimmed.EndsWith("' has no symbols", StringComparison.Ordinal);
     }
 
     private static NativeToolchainResult CompileLlvmIr(

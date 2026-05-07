@@ -71,53 +71,21 @@ public sealed class SystemFileSystemStandardLibraryTests : StandardLibraryTestSu
                     }
                 }
 
-                fn bool IsChildFileName(Ascii name) {
-                    if (name.Length != 9) {
+                fn bool IsChildFileName(mut borrow System.FileSystem.FileSystemEntry entry) {
+                    if (entry.Name.Length() != 9) {
                         return false;
                     }
 
-                    stack rawptr<i8[min max]> data = name.Data;
-                    if (data == null) {
-                        return false;
-                    }
-
-                    if (*(&data[0]) != (i8[min max])99) {
-                        return false;
-                    }
-
-                    if (*(&data[1]) != (i8[min max])104) {
-                        return false;
-                    }
-
-                    if (*(&data[2]) != (i8[min max])105) {
-                        return false;
-                    }
-
-                    if (*(&data[3]) != (i8[min max])108) {
-                        return false;
-                    }
-
-                    if (*(&data[4]) != (i8[min max])100) {
-                        return false;
-                    }
-
-                    if (*(&data[5]) != (i8[min max])46) {
-                        return false;
-                    }
-
-                    if (*(&data[6]) != (i8[min max])116) {
-                        return false;
-                    }
-
-                    if (*(&data[7]) != (i8[min max])120) {
-                        return false;
-                    }
-
-                    if (*(&data[8]) != (i8[min max])116) {
-                        return false;
-                    }
-
-                    return true;
+                    stack i8[min max][] view = entry.Name.AsSlice();
+                    return view[0] == 99
+                        && view[1] == 104
+                        && view[2] == 105
+                        && view[3] == 108
+                        && view[4] == 100
+                        && view[5] == 46
+                        && view[6] == 116
+                        && view[7] == 120
+                        && view[8] == 116;
                 }
 
                 fn bool DirectoryReadResultIsChild(System.FileSystem.DirectoryReadResult next) {
@@ -127,7 +95,8 @@ public sealed class SystemFileSystemStandardLibraryTests : StandardLibraryTestSu
                         case System.FileSystem.DirectoryReadResult.Err(var error):
                             return false;
                         case System.FileSystem.DirectoryReadResult.Entry(var entry):
-                            return IsChildFileName(entry.Name);
+                            stack mut System.FileSystem.FileSystemEntry mutableEntry = entry;
+                            return IsChildFileName(mutableEntry);
                     }
                 }
 
@@ -250,4 +219,3 @@ public sealed class SystemFileSystemStandardLibraryTests : StandardLibraryTestSu
         }
     }
 }
-

@@ -651,7 +651,8 @@ Internal implementation:
 
 - On Linux, `Open` calls the internal platform open boundary backed by `openat(2)`. `Close` calls the internal close boundary backed by `close(2)`. `Read` calls the internal read boundary backed by `read(2)`. `Write` calls the internal write boundary backed by `write(2)`. `Flush` drains Stark userspace buffers. `Delete` calls the internal delete boundary backed by `unlinkat(2)`. `Move` calls the internal rename boundary backed by `renameat2(2)`. `Exists` uses `newfstatat(2)`.
 - On Windows, `Open` calls `CreateFileW`. `Close` calls `CloseHandle`. `Read` calls `ReadFile`. `Write` calls `WriteFile`. `Flush` drains Stark userspace buffers. `SyncAll` calls `FlushFileBuffers`. `Delete` calls `DeleteFileW`. `Move` calls `MoveFileExW`. `Exists` uses `GetFileAttributesW`.
-- Path strings are converted at the platform boundary. On Linux, `ascii` paths pass through as-is. On Windows, `ascii` paths are converted from UTF-8 to UTF-16LE before calling the `W` APIs, and `GetCurrentDirectoryW` results are converted back to UTF-8 for `System.IO.Path.CurrentDirectory`.
+- On macOS, `Open` calls `open`. `Close` calls `close`. `Read` calls `read`. `Write` calls `write`. `Flush` drains Stark userspace buffers. `SyncAll` calls `fsync`. `Delete` calls `unlink`. `Move` calls `rename`. `Exists` and file kind checks use `stat`.
+- Path strings are converted at the platform boundary. On Linux and macOS, `ascii` paths pass through as-is. On Windows, `ascii` paths are converted from UTF-8 to UTF-16LE before calling the `W` APIs, and `GetCurrentDirectoryW` results are converted back to UTF-8 for `System.IO.Path.CurrentDirectory`.
 
 ## Path API
 
@@ -676,7 +677,7 @@ public fn System.Memory.MemoryStatus CurrentDirectory(mut borrow System.Text.Own
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> CurrentDirectory();
 ```
 
-`DirectorySeparator` returns `"/"` on Linux and `"\\"` on Windows. `AlternateDirectorySeparator` returns `"/"` on Windows and `""` on Linux. `PathSeparator` returns `":"` on Linux and `";"` on Windows.
+`DirectorySeparator` returns `"/"` on Linux and macOS and `"\\"` on Windows. `AlternateDirectorySeparator` returns `"/"` on Windows and `""` on Linux and macOS. `PathSeparator` returns `":"` on Linux and macOS and `";"` on Windows.
 
 `Extension`, `BaseName`, and `DirectoryName` are `finite law` because they are pure, have no side effects, and always return.
 
@@ -768,7 +769,7 @@ The current macOS backend uses:
 | seek | `lseek` |
 | delete | `unlink` |
 | rename | `rename` |
-| exists | `access` |
+| exists and file kind | `stat` |
 | directories | `opendir`, `readdir`, `closedir`, `mkdir`, `rmdir` |
 | current directory | `getcwd` |
 | terminal detect | `isatty` |
@@ -780,8 +781,15 @@ The current macOS backend uses:
 | allocator OS backing | `malloc`, `realloc`, `free` under Stark's runtime allocator |
 
 Directory enumeration reads Darwin `dirent` entries directly from `readdir`,
-including the `d_type` byte when available. The current thread join path reports
-successful joins but does not yet preserve thread entry return codes on macOS.
+including the `d_type` byte when available. File existence and file/directory
+kind checks use Darwin `stat` mode bits. Thread joins preserve the `i32` returned
+by the Stark entry function through `pthread_join` without heap-allocating a
+return-code box.
+
+The public macOS metadata surface currently stops at existence, file/directory
+kind checks, and directory-entry kind during enumeration. Rich metadata such as
+timestamps, permissions, owners, symlink target reads, and a public monotonic
+clock API are not exposed yet; benchmark timing is currently host-harness driven.
 
 ### Windows Implementation
 

@@ -39,7 +39,7 @@ internal unsafe ffi fn i64[min max] write(i32[min max] fileDescriptor, rawptr<i8
 internal unsafe ffi fn i64[min max] lseek(i32[min max] fileDescriptor, i64[min max] offset, i32[min max] whence);
 internal unsafe ffi fn i32[min max] unlink(rawptr<i8[min max]> path);
 internal unsafe ffi fn i32[min max] rename(rawptr<i8[min max]> oldPath, rawptr<i8[min max]> newPath);
-internal unsafe ffi fn i32[min max] access(rawptr<i8[min max]> path, i32[min max] mode);
+internal unsafe ffi fn i32[min max] stat(rawptr<i8[min max]> path, rawmutptr<i8[min max]> buffer);
 internal unsafe ffi fn i32[min max] mkdir(rawptr<i8[min max]> path, i32[min max] mode);
 internal unsafe ffi fn i32[min max] rmdir(rawptr<i8[min max]> path);
 internal unsafe ffi fn rawmutptr<i8[min max]> getcwd(rawmutptr<i8[min max]> buffer, u64[0 2 ** 63 - 1] size);
@@ -50,9 +50,9 @@ internal unsafe ffi fn i32[min max] closedir(rawptr<i8[min max]> directory);
 internal unsafe ffi fn i32[min max] pthread_create(
     rawmutptr<rawptr<i8[min max]>> thread,
     rawptr<i8[min max]> attributes,
-    fnptr<fn rawptr<i8[min max]>(fnptr<fn i32[min max]()>)> start,
+    fnptr<fn rawmutptr<i8[min max]>(fnptr<fn i32[min max]()>)> start,
     fnptr<fn i32[min max]()> argument);
-internal unsafe ffi fn i32[min max] pthread_join(rawptr<i8[min max]> thread, rawmutptr<rawptr<i8[min max]>> value);
+internal unsafe ffi fn i32[min max] pthread_join(rawptr<i8[min max]> thread, rawmutptr<rawmutptr<i8[min max]>> value);
 internal unsafe ffi fn i32[min max] pthread_detach(rawptr<i8[min max]> thread);
 internal unsafe ffi fn i32[min max] sched_yield();
 internal unsafe ffi fn i32[min max] nanosleep(rawptr<MacOSTimespec> request, rawptr<MacOSTimespec> remaining);
@@ -83,7 +83,10 @@ const MacOSOpenTruncateFlag = 1024;
 const MacOSOpenCloseOnExecFlag = 16777216;
 const MacOSDefaultCreateMode = 420;
 const MacOSDefaultDirectoryMode = 493;
-const MacOSAccessExists = 0;
+const MacOSStatModeOffset = 4;
+const MacOSStatTypeMask = 61440;
+const MacOSStatRegularType = 32768;
+const MacOSStatDirectoryType = 16384;
 const MacOSAddressFamilyInet = 2;
 const MacOSSocketStream = 1;
 const MacOSSocketProtocolTcp = 6;
@@ -876,19 +879,40 @@ internal fn i32[min max] MoveFile(ascii oldPath, ascii newPath) {
     }
 }
 
+internal unsafe fn bool TryReadPathMode(ascii path, rawmutptr<i32[min max]> mode) {
+    if (mode == null) {
+        return false;
+    }
+
+    stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+    stack mut System.Runtime.Buffer.FixedByteBuffer512 statBuffer = new System.Runtime.Buffer.FixedByteBuffer512();
+    stack mut Ascii preparedPath = new Ascii();
+    preparedPath.Data = pathBuffer.WritePointer();
+    preparedPath.Length = 0;
+    preparedPath.Capacity = pathBuffer.Writable();
+
+    if (!TryBuildMacOSPath(&preparedPath, path)) {
+        return false;
+    }
+
+    stack rawmutptr<i8[min max]> statData = statBuffer.WritePointer();
+    if (statData == null) {
+        return false;
+    }
+
+    if (stat(preparedPath.Data, statData) != 0) {
+        return false;
+    }
+
+    stack rawptr<i16[min max]> modePointer = (rawptr<i16[min max]>)(&statData[MacOSStatModeOffset]);
+    *mode = UnsignedShort(*modePointer);
+    return true;
+}
+
 internal fn bool PathExists(ascii path) {
     unsafe {
-        stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
-        stack mut Ascii preparedPath = new Ascii();
-        preparedPath.Data = pathBuffer.WritePointer();
-        preparedPath.Length = 0;
-        preparedPath.Capacity = pathBuffer.Writable();
-
-        if (!TryBuildMacOSPath(&preparedPath, path)) {
-            return false;
-        }
-
-        return access(preparedPath.Data, MacOSAccessExists) == 0;
+        stack mut i32[min max] mode = 0;
+        return TryReadPathMode(path, &mode);
     }
 }
 
@@ -898,28 +922,24 @@ internal fn bool FileExists(ascii path) {
 
 internal fn bool IsDirectory(ascii path) {
     unsafe {
-        stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
-        stack mut Ascii preparedPath = new Ascii();
-        preparedPath.Data = pathBuffer.WritePointer();
-        preparedPath.Length = 0;
-        preparedPath.Capacity = pathBuffer.Writable();
-
-        if (!TryBuildMacOSPath(&preparedPath, path)) {
+        stack mut i32[min max] mode = 0;
+        if (!TryReadPathMode(path, &mode)) {
             return false;
         }
 
-        stack rawmutptr<i8[min max]> directory = opendir(preparedPath.Data);
-        if (directory == null) {
-            return false;
-        }
-
-        closedir((rawptr<i8[min max]>)directory);
-        return true;
+        return (mode & MacOSStatTypeMask) == MacOSStatDirectoryType;
     }
 }
 
 internal fn bool IsFile(ascii path) {
-    return PathExists(path) && !IsDirectory(path);
+    unsafe {
+        stack mut i32[min max] mode = 0;
+        if (!TryReadPathMode(path, &mode)) {
+            return false;
+        }
+
+        return (mode & MacOSStatTypeMask) == MacOSStatRegularType;
+    }
 }
 
 internal fn i32[min max] CreateDirectory(ascii path) {
@@ -1141,9 +1161,9 @@ internal unsafe fn bool TryCurrentDirectory(rawmutptr<Ascii> destination) {
     return true;
 }
 
-internal unsafe ffi fn rawptr<i8[min max]> ThreadEntryThunk(fnptr<fn i32[min max]()> entry) {
-    entry();
-    return null;
+internal unsafe ffi fn rawmutptr<i8[min max]> ThreadEntryThunk(fnptr<fn i32[min max]()> entry) {
+    stack i32[min max] exitCode = entry();
+    return (rawmutptr<i8[min max]>)exitCode;
 }
 
 internal unsafe fn rawptr<i8[min max]> StartThread(fnptr<fn i32[min max]()> entry) {
@@ -1161,12 +1181,13 @@ internal unsafe fn i32[min max] JoinThread(rawptr<i8[min max]> handle, rawmutptr
         return -1;
     }
 
-    stack i32[min max] status = pthread_join(handle, null);
+    stack mut rawmutptr<i8[min max]> threadResult = null;
+    stack i32[min max] status = pthread_join(handle, &threadResult);
     if (status != 0) {
         return -status;
     }
 
-    *exitCode = 0;
+    *exitCode = (i32[min max])threadResult;
     return 0;
 }
 

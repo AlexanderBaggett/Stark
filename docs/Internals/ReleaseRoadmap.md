@@ -451,8 +451,8 @@ strict range checks in `BenchmarkSourceTests`.
   - [x] Add target detection and package image support for macOS triples.
   - [x] Implement file open, read, write, seek, close, and flush.
   - [x] Implement directory create, delete, open, read, and close.
-  - [ ] Implement path normalization, current directory, existence, file kind,
-        and metadata APIs.
+  - [x] Implement path normalization, current directory, existence, file kind,
+        and the currently exposed metadata APIs.
   - [x] Implement console stdout, stderr, stdin, terminal detection, and Unicode
         handling.
   - [x] Implement memory allocation and reallocation using the chosen macOS
@@ -460,16 +460,23 @@ strict range checks in `BenchmarkSourceTests`.
   - [x] Support macOS object emission for runtime allocator helpers without
         Mach-O COMDATs and with an AArch64-compatible trap calling convention.
   - [x] Implement process exit and process ID.
-  - [ ] Implement threading: start, join, detach, yield, and sleep.
-    - [ ] Preserve thread entry return codes through `pthread_join`.
+  - [x] Implement threading: start, join, detach, yield, and sleep.
+    - [x] Preserve thread entry return codes through `pthread_join`.
   - [x] Implement TCP sockets and readiness behavior.
-  - [ ] Implement time or timing hooks needed by benchmarks.
+  - [x] Implement time or timing hooks needed by benchmarks.
+    - Done: standard-library sleep is `nanosleep`-backed on macOS; benchmark
+      timing remains host-harness driven until a public clock API lands.
   - [ ] Add macOS-specific correctness tests for each standard library module.
     - [x] Add focused compiler and stdlib coverage for macOS dispatch routing,
           libSystem/POSIX calls, allocator ABI, Mach-O IR shape, object
           emission, package manifests, and raw-pointer boundary documentation.
+    - [x] Add focused coverage for macOS `stat`-backed path metadata and
+          `pthread_join` return-code preservation.
   - [ ] Add macOS benchmark runs to compare Stark, C, and Rust.
-  - [ ] Document macOS platform behavior and unsupported APIs.
+    - [x] Run a batch-1 Stark-only benchmark sweep on macOS.
+    - [ ] Add cross-language C/Rust comparison once `rustc` is available in the
+          benchmark environment.
+  - [x] Document macOS platform behavior and unsupported APIs.
     - [x] Document the current libSystem/POSIX backend and the Apple SDK/Command
           Line Tools requirement for final native linking.
 
