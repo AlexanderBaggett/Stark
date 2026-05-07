@@ -117,7 +117,7 @@ export unsafe ffi fn i32[min max] main() {
         }
     }
 
-    if (checksum != 1296) {
+    if (checksum != 880) {
         return 10;
     }
 

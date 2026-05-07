@@ -27,6 +27,38 @@ public sealed partial class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void ConstantIntegerExponentComparisonOperandFoldsBeforeMirWidthSelection()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn bool Run(u64[0 2 ** 63 - 1] count) {
+                if (count > 2 ** 61 - 1) {
+                    return true;
+                }
+
+                return false;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.DoesNotContain(
+            statements,
+            static statement => statement.Value is MidLevelIrBinaryRValue { Operator: MidLevelIrBinaryOperator.Exponent });
+        var comparison = Assert.Single(
+            statements,
+            static statement => statement.Value is MidLevelIrBinaryRValue { Operator: MidLevelIrBinaryOperator.GreaterThan });
+        var greaterThan = Assert.IsType<MidLevelIrBinaryRValue>(comparison.Value);
+        var right = Assert.IsType<MidLevelIrIntegerConstantOperand>(greaterThan.Right);
+        Assert.Equal(BigInteger.Pow(new BigInteger(2), 61) - BigInteger.One, right.Value);
+        Assert.Equal(64, right.Type.BitWidth);
+    }
+
+    [Fact]
     public void ConstantLawCallsFoldToMirConstants()
     {
         var result = Compile(

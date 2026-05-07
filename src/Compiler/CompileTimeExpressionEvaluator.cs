@@ -87,6 +87,41 @@ internal static class CompileTimeExpressionEvaluator
         return TryEvaluateAssignmentExpression(expression, services, out constant);
     }
 
+    public static bool TryEvaluate(
+        ParserRuleContext expression,
+        out CompileTimeConstant constant,
+        CompileTimeEvaluationServices services = default)
+    {
+        return expression switch
+        {
+            StarkParser.ExpressionContext typed => TryEvaluate(typed, out constant, services),
+            StarkParser.AssignmentExpressionContext typed => TryEvaluateAssignmentExpression(typed, services, out constant),
+            StarkParser.ConditionalExpressionContext typed => TryEvaluateConditionalExpression(typed, services, out constant),
+            StarkParser.LogicalOrExpressionContext typed => TryEvaluateLogicalOrExpression(typed, services, out constant),
+            StarkParser.LogicalAndExpressionContext typed => TryEvaluateLogicalAndExpression(typed, services, out constant),
+            StarkParser.BitwiseOrExpressionContext typed => TryEvaluateBitwiseOrExpression(typed, services, out constant),
+            StarkParser.BitwiseXorExpressionContext typed => TryEvaluateBitwiseXorExpression(typed, services, out constant),
+            StarkParser.BitwiseAndExpressionContext typed => TryEvaluateBitwiseAndExpression(typed, services, out constant),
+            StarkParser.EqualityExpressionContext typed => TryEvaluateEqualityExpression(typed, services, out constant),
+            StarkParser.RelationalExpressionContext typed => TryEvaluateRelationalExpression(typed, services, out constant),
+            StarkParser.ShiftExpressionContext typed => TryEvaluateShiftExpression(typed, services, out constant),
+            StarkParser.AdditiveExpressionContext typed => TryEvaluateAdditiveExpression(typed, services, out constant),
+            StarkParser.MultiplicativeExpressionContext typed => TryEvaluateMultiplicativeExpression(typed, services, out constant),
+            StarkParser.UnaryExpressionContext typed => TryEvaluateUnaryExpression(typed, services, out constant),
+            StarkParser.PowerExpressionContext typed => TryEvaluatePowerExpression(typed, services, out constant),
+            StarkParser.PostfixExpressionContext typed => TryEvaluatePostfixExpression(typed, services, out constant),
+            StarkParser.PrimaryExpressionContext typed => TryEvaluatePrimaryExpression(typed, services, out constant),
+            StarkParser.LiteralContext typed => TryEvaluateLiteral(typed, services, out constant),
+            _ => Fail(out constant)
+        };
+
+        static bool Fail(out CompileTimeConstant constant)
+        {
+            constant = default;
+            return false;
+        }
+    }
+
     public static bool TryEvaluateInteger(
         StarkParser.ExpressionContext expression,
         out BigInteger value,

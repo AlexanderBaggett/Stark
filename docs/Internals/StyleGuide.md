@@ -13,6 +13,7 @@ This gives Stark a clear identity that matches its current design:
 - syntax visually close to C#
 - semantics stricter than Rust in several areas
 - explicit low-level boundaries inspired by C
+- Prefer Allman style braces
 
 ## Core Principles
 

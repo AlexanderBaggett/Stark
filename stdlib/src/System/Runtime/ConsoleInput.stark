@@ -190,7 +190,7 @@ unsafe fn bool TryReadInputByte(rawmutptr<i8[min max]> destination) {
         return false;
     }
 
-    stack i64[min max] readCount = System.IO.File.ReadBytes((rawptr<i8[min max]>)destination, 1, 1, handle);
+    stack i64[min max] readCount = System.IO.File.ReadBytes(destination, 1, 1, handle);
     System.IO.File.Close(handle);
     return readCount == 1;
 }

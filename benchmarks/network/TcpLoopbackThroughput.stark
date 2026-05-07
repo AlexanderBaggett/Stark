@@ -12,9 +12,9 @@ const ExpectedBytes = 1048576;
 
 unsafe fn System.Net.IPv4Endpoint LoopbackEndpoint(u8[0 63] attempt) {
     stack i32[min max] processId = System.Process.CurrentId();
-    stack mut u32[0 2 ** 31 - 1] positiveProcessId = 0;
+    stack mut u32[0 max] positiveProcessId = 0;
     if (processId > 0) {
-        positiveProcessId = (u32[0 2 ** 31 - 1])processId;
+        positiveProcessId = (u32[0 max])processId;
     }
 
     stack u16[0 65535] port = (u16[0 65535])(41000 + (positiveProcessId % 20000) + attempt);

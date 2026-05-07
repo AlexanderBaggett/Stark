@@ -39,7 +39,9 @@ The standard library provides:
 - explicit test-project assertion helpers
 - text encoding support
 - a small dynamic-memory contract for owned standard-library containers
-- a platform abstraction layer that talks directly to the OS without libc
+- a platform abstraction layer that avoids stdio and exposes direct backend
+  facts: Linux syscall shims, Windows Win32 calls, and macOS libSystem/POSIX
+  calls
 
 User code calls `System.Console` or `System.IO.*` and never touches platform syscalls or Win32 APIs directly. The platform boundary is an internal implementation detail hidden behind the library surface.
 
@@ -93,6 +95,7 @@ Repository source layout:
 - `stdlib/src/System/Runtime/ConsoleInput.stark`
 - `stdlib/src/System/Runtime/Platform.stark`
 - `stdlib/src/System/Runtime/Platform/Linux.stark`
+- `stdlib/src/System/Runtime/Platform/MacOS.stark`
 - `stdlib/src/System/Runtime/Platform/Windows.stark`
 - `stdlib/src/System/Syscall.stark`
 
@@ -121,6 +124,7 @@ Internal modules:
 - `System.Runtime.Buffer`
 - `System.Runtime.Platform`
 - `System.Runtime.Platform.Linux`
+- `System.Runtime.Platform.MacOS`
 - `System.Runtime.Platform.Windows`
 - `System.Syscall`
 
@@ -744,6 +748,41 @@ The current implementation status is:
 
 stdout and stderr are fd `1` and fd `2`. They exist at process start with no setup required.
 
+### macOS Implementation
+
+`System.Runtime.Platform.MacOS` calls libSystem/POSIX APIs directly for the OS
+backend. It does not route file, console, directory, or socket IO through C
+stdio. Native executable linking on macOS still needs Apple's SDK/Command Line
+Tools for platform libraries such as `libSystem`; standalone LLVM/Clang remains
+enough for LLVM IR and object emission.
+
+The current macOS backend uses:
+
+| Operation | macOS API |
+|---|---|
+| write | `write` |
+| read | `read` |
+| open | `open` |
+| close | `close` |
+| sync all | `fsync` |
+| seek | `lseek` |
+| delete | `unlink` |
+| rename | `rename` |
+| exists | `access` |
+| directories | `opendir`, `readdir`, `closedir`, `mkdir`, `rmdir` |
+| current directory | `getcwd` |
+| terminal detect | `isatty` |
+| process id | `getpid` |
+| exit | `exit` |
+| threads | `pthread_create`, `pthread_join`, `pthread_detach`, `sched_yield`, `nanosleep` |
+| sockets | `socket`, `connect`, `bind`, `listen`, `accept`, `recv`, `send`, `readv`, `writev`, `shutdown`, `poll` |
+| synchronization wait/wake | `os_sync_wait_on_address`, `os_sync_wake_by_address_any`, `os_sync_wake_by_address_all` |
+| allocator OS backing | `malloc`, `realloc`, `free` under Stark's runtime allocator |
+
+Directory enumeration reads Darwin `dirent` entries directly from `readdir`,
+including the `d_type` byte when available. The current thread join path reports
+successful joins but does not yet preserve thread entry return codes on macOS.
+
 ### Windows Implementation
 
 `System.Runtime.Platform.Windows` calls Win32 APIs from `kernel32.dll`. No CRT dependency exists.
@@ -866,7 +905,9 @@ Current explicit runtime dependency caveats:
 
 - The `System.Memory` allocator and compiler-emitted heap-local helper now
   lower through Stark-owned runtime helpers instead of explicit
-  `malloc`, `realloc`, or `free` calls.
+  `malloc`, `realloc`, or `free` calls in standard-library source. The macOS
+  runtime allocator backend intentionally maps those helpers to libSystem
+  `malloc`, `realloc`, and `free`.
 - Small and medium allocator buckets may satisfy `Reallocate` in place when the
   new size and alignment still fit the bucket; otherwise the runtime uses the
   conservative allocate-copy-free fallback.

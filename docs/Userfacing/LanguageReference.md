@@ -1167,8 +1167,8 @@ These conversions may not strengthen mutability. Safe code may not use explicit 
 From highest to lowest:
 
 1. postfix: calls, indexing, member access
-2. unary: explicit conversions, unary `+`, unary `-`, `!`, `~`, raw `&`, raw `*`
-3. exponentiation: `**` with right associative parsing
+2. exponentiation: `**` with right associative parsing
+3. unary: explicit conversions, unary `+`, unary `-`, `!`, `~`, raw `&`, raw `*`
 4. multiplicative: `*`, `/`, `%`
 5. additive: `+`, `-`
 6. shifts: `<<`, `>>`
@@ -1224,7 +1224,7 @@ Each adjacent comparison must be individually legal under Stark's ordinary compa
 Exponentiation uses `**`.
 
 * `**` is legal for floating point operands
-* integer `**` is legal for integer operands and is folded in compile time constant contexts such as const numeric initializers and range endpoints
+* integer `**` is legal for integer operands and compile time constant exponent expressions are folded before runtime lowering
 * ordinary runtime integer exponentiation is supported for integer operands
 
 ### 11.5 Floating Point Contract

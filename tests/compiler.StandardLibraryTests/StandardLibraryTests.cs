@@ -273,10 +273,18 @@ public class StandardLibraryTestSuite
             {
                 Assert.Contains(modules, module => module.ModuleName == "System.Runtime.Platform.Windows");
                 Assert.DoesNotContain(modules, module => module.ModuleName == "System.Runtime.Platform.Linux");
+                Assert.DoesNotContain(modules, module => module.ModuleName == "System.Runtime.Platform.MacOS");
+            }
+            else if (OperatingSystem.IsMacOS())
+            {
+                Assert.Contains(modules, module => module.ModuleName == "System.Runtime.Platform.MacOS");
+                Assert.DoesNotContain(modules, module => module.ModuleName == "System.Runtime.Platform.Linux");
+                Assert.DoesNotContain(modules, module => module.ModuleName == "System.Runtime.Platform.Windows");
             }
             else
             {
                 Assert.Contains(modules, module => module.ModuleName == "System.Runtime.Platform.Linux");
+                Assert.DoesNotContain(modules, module => module.ModuleName == "System.Runtime.Platform.MacOS");
                 Assert.DoesNotContain(modules, module => module.ModuleName == "System.Runtime.Platform.Windows");
             }
             Assert.Contains(modules, module => module.ModuleName == "System.Syscall");
@@ -956,6 +964,7 @@ public class StandardLibraryTestSuite
             Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform"));
             Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Windows"));
             Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Linux"));
+            Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.MacOS"));
 
             var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
             Assert.Contains("@GetStdHandle(", llvm, StringComparison.Ordinal);
@@ -998,6 +1007,7 @@ public class StandardLibraryTestSuite
         Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Linux"));
         Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.Windows"));
+        Assert.False(moduleGraph.ContainsLoadedModule("System.Runtime.Platform.MacOS"));
 
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
         Assert.Contains("@LinuxSyscall", llvm, StringComparison.Ordinal);
@@ -2709,4 +2719,3 @@ public class StandardLibraryTestSuite
         ];
     }
 }
-

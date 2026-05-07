@@ -8878,6 +8878,7 @@ internal sealed class SsaValueFactAnalyzer
     {
         return string.Equals(moduleName, "System.Text", StringComparison.Ordinal)
             || string.Equals(moduleName, "System.Runtime.Platform.Linux", StringComparison.Ordinal)
+            || string.Equals(moduleName, "System.Runtime.Platform.MacOS", StringComparison.Ordinal)
             || string.Equals(moduleName, "System.Runtime.Platform.Windows", StringComparison.Ordinal);
     }
 

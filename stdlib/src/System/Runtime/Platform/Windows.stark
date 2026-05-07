@@ -19,7 +19,7 @@ internal struct WinSocketBuffer {
 
 internal unsafe ffi fn rawmutptr<i8[min max]> GetStdHandle(i32[min max] nStdHandle);
 internal unsafe ffi fn i32[min max] WriteFile(rawptr<i8[min max]> hFile, rawptr<i8[min max]> buffer, i32[min max] bytesToWrite, rawmutptr<i32[min max]> bytesWritten, rawptr<i8[min max]> overlapped);
-internal unsafe ffi fn i32[min max] ReadFile(rawptr<i8[min max]> hFile, rawptr<i8[min max]> buffer, i32[min max] bytesToRead, rawmutptr<i32[min max]> bytesRead, rawptr<i8[min max]> overlapped);
+internal unsafe ffi fn i32[min max] ReadFile(rawptr<i8[min max]> hFile, rawmutptr<i8[min max]> buffer, i32[min max] bytesToRead, rawmutptr<i32[min max]> bytesRead, rawptr<i8[min max]> overlapped);
 internal unsafe ffi fn i32[min max] WriteConsoleW(rawptr<i8[min max]> consoleOutput, rawptr<i16[min max]> buffer, i32[min max] charsToWrite, rawmutptr<i32[min max]> charsWritten, rawptr<i8[min max]> reserved);
 internal unsafe ffi fn rawmutptr<i8[min max]> CreateFileW(rawptr<i16[min max]> fileName, i32[min max] desiredAccess, i32[min max] shareMode, rawptr<i8[min max]> securityAttributes, i32[min max] creationDisposition, i32[min max] flagsAndAttributes, rawptr<i8[min max]> templateFile);
 internal unsafe ffi fn i32[min max] CloseHandle(rawptr<i8[min max]> handle);
@@ -2192,7 +2192,7 @@ internal unsafe fn i32[min max] FlushFile(rawptr<i8[min max]> handle) {
     return 0;
 }
 
-internal unsafe fn i64[min max] ReadFile(rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
+internal unsafe fn i64[min max] ReadFile(rawmutptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
     if (handle == null || buffer == null || size <= 0 || count <= 0) {
         return 0;
     }

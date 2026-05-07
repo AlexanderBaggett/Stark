@@ -1553,7 +1553,7 @@ internal unsafe fn i64[min max] ReadStdin(rawmutptr<i8[min max]>[capacity] buffe
         return 0;
     }
 
-    stack i64[min max] readCount = ReadFile((rawptr<i8[min max]>)buffer, 1, capacity, handle);
+    stack i64[min max] readCount = ReadFile(buffer, 1, capacity, handle);
     CloseFile(handle);
     return readCount;
 }
@@ -1640,7 +1640,7 @@ internal unsafe fn i32[min max] FlushFile(rawptr<i8[min max]> handle) {
     return 0;
 }
 
-internal unsafe fn i64[min max] ReadFile(rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
+internal unsafe fn i64[min max] ReadFile(rawmutptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
     if (handle == null || buffer == null || size <= 0 || count <= 0) {
         return 0;
     }

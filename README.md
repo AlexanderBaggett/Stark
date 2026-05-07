@@ -46,6 +46,11 @@ If `clang` is not on `PATH`, `--check`, `--emit-mir`, `--emit-ssa`, and
 `--emit-llvm` are still useful, but native object/executable/library workflows
 will fail.
 
+On macOS, standalone LLVM/Clang is enough for host target detection and object
+emission, but final executable and library linking still needs Apple's SDK and
+Command Line Tools so the linker can resolve platform libraries such as
+`libSystem`.
+
 ## Getting Started With Stark
 
 Build the compiler first:

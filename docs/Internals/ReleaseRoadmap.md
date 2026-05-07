@@ -446,24 +446,32 @@ strict range checks in `BenchmarkSourceTests`.
 ## 7. Add macOS Standard Library Platform Backend
 
 - [ ] Create a macOS OS-backed platform implementation.
-  - [ ] Add `System.Runtime.Platform.MacOS.stark`.
-  - [ ] Add a macOS dispatch template.
-  - [ ] Add target detection and package image support for macOS triples.
-  - [ ] Implement file open, read, write, seek, close, and flush.
-  - [ ] Implement directory create, delete, open, read, and close.
+  - [x] Add `System.Runtime.Platform.MacOS.stark`.
+  - [x] Add a macOS dispatch template.
+  - [x] Add target detection and package image support for macOS triples.
+  - [x] Implement file open, read, write, seek, close, and flush.
+  - [x] Implement directory create, delete, open, read, and close.
   - [ ] Implement path normalization, current directory, existence, file kind,
         and metadata APIs.
-  - [ ] Implement console stdout, stderr, stdin, terminal detection, and Unicode
+  - [x] Implement console stdout, stderr, stdin, terminal detection, and Unicode
         handling.
-  - [ ] Implement memory allocation and reallocation using the chosen macOS
+  - [x] Implement memory allocation and reallocation using the chosen macOS
         backend.
-  - [ ] Implement process exit and process ID.
+  - [x] Support macOS object emission for runtime allocator helpers without
+        Mach-O COMDATs and with an AArch64-compatible trap calling convention.
+  - [x] Implement process exit and process ID.
   - [ ] Implement threading: start, join, detach, yield, and sleep.
-  - [ ] Implement TCP sockets and readiness behavior.
+    - [ ] Preserve thread entry return codes through `pthread_join`.
+  - [x] Implement TCP sockets and readiness behavior.
   - [ ] Implement time or timing hooks needed by benchmarks.
   - [ ] Add macOS-specific correctness tests for each standard library module.
+    - [x] Add focused compiler and stdlib coverage for macOS dispatch routing,
+          libSystem/POSIX calls, allocator ABI, Mach-O IR shape, object
+          emission, package manifests, and raw-pointer boundary documentation.
   - [ ] Add macOS benchmark runs to compare Stark, C, and Rust.
   - [ ] Document macOS platform behavior and unsupported APIs.
+    - [x] Document the current libSystem/POSIX backend and the Apple SDK/Command
+          Line Tools requirement for final native linking.
 
 ## 8. Update Website Book
 

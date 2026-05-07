@@ -5560,6 +5560,32 @@ internal sealed class TypeChecker
                 TryResolveCompileTimeConstant(scope, name, out constant));
     }
 
+    private bool TryEvaluateCompileTimeIntegerExpression(
+        ParserRuleContext expression,
+        Scope scope,
+        StarkTypeSymbol? expectedType,
+        out ExpressionBinding binding)
+    {
+        binding = null!;
+        if (!CompileTimeExpressionEvaluator.TryEvaluate(
+                expression,
+                out var constant,
+                CreateCompileTimeEvaluationServices(scope))
+            || constant.Kind != CompileTimeConstantKind.Integer)
+        {
+            return false;
+        }
+
+        if (expectedType is not null
+            && CompileTimeExpressionEvaluator.TryCoerce(constant, expectedType, out var coerced))
+        {
+            constant = coerced;
+        }
+
+        binding = new ExpressionBinding(constant.Type);
+        return true;
+    }
+
     private static bool TryResolveCompileTimeConstant(
         Scope scope,
         string name,
@@ -6963,6 +6989,11 @@ internal sealed class TypeChecker
 
         var operands = expressions.Select(item => EvaluateAdditiveExpression(item, scope, allowFunctionReference, expectedType: null)).ToArray();
 
+        if (TryEvaluateCompileTimeIntegerExpression(expression, scope, expectedType, out var constantBinding))
+        {
+            return constantBinding;
+        }
+
         var resultType = operands[0].Type;
         for (var index = 1; index < operands.Length; index++)
         {
@@ -6995,6 +7026,11 @@ internal sealed class TypeChecker
             return EvaluateTextConcatenationChain(operands, operators, expression, expectedType);
         }
 
+        if (TryEvaluateCompileTimeIntegerExpression(expression, scope, expectedType, out var constantBinding))
+        {
+            return constantBinding;
+        }
+
         return EvaluateArithmeticChain(operands, operators, expression, "Additive operator");
     }
 
@@ -7012,6 +7048,11 @@ internal sealed class TypeChecker
         }
 
         var operands = expressions.Select(item => EvaluateUnaryExpression(item, scope, allowFunctionReference, expectedType: null)).ToArray();
+        if (TryEvaluateCompileTimeIntegerExpression(expression, scope, expectedType, out var constantBinding))
+        {
+            return constantBinding;
+        }
+
         return EvaluateArithmeticChain(operands, operators, expression, "Multiplicative operator");
     }
 
@@ -7117,6 +7158,11 @@ internal sealed class TypeChecker
         {
             ReportError("STK3002", "Operator '**' requires integer or floating-point operands.", expression);
             return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        if (TryEvaluateCompileTimeIntegerExpression(expression, scope, expectedType, out var constantBinding))
+        {
+            return constantBinding;
         }
 
         return new ExpressionBinding(resultType);

@@ -1659,6 +1659,7 @@ internal sealed partial class MidLevelIrLowerer
             return string.Equals(functionName, "System.Process.Exit", StringComparison.Ordinal)
                 || string.Equals(functionName, "System.Runtime.Platform.ExitProcess", StringComparison.Ordinal)
                 || string.Equals(functionName, "System.Runtime.Platform.Linux.ExitProcess", StringComparison.Ordinal)
+                || string.Equals(functionName, "System.Runtime.Platform.MacOS.ExitProcess", StringComparison.Ordinal)
                 || string.Equals(functionName, "System.Runtime.Platform.Windows.ExitProcess", StringComparison.Ordinal);
         }
 
@@ -2767,6 +2768,33 @@ internal sealed partial class MidLevelIrLowerer
             return expectedType is null ? operand : CoerceOperand(operand, expectedType);
         }
 
+        private bool TryLowerCompileTimeIntegerExpression(
+            ParserRuleContext expression,
+            StarkTypeSymbol? expectedType,
+            out MidLevelIrOperand? operand)
+        {
+            operand = null;
+            if (!_compileTimeEvaluator.TryEvaluateExpressionNode(
+                    expression,
+                    CurrentModuleName,
+                    _compileTimeConstantState,
+                    activeCalls: null,
+                    out var constant)
+                || constant.Kind != CompileTimeConstantKind.Integer)
+            {
+                return false;
+            }
+
+            if (expectedType is not null
+                && CompileTimeExpressionEvaluator.TryCoerce(constant, expectedType, out var coerced))
+            {
+                constant = coerced;
+            }
+
+            operand = CreateCompileTimeOperand(constant);
+            return true;
+        }
+
         private MidLevelIrOperand? LowerAssignmentExpressionToOperand(
             StarkParser.AssignmentExpressionContext expression,
             StarkTypeSymbol? expectedType = null)
@@ -2973,6 +3001,12 @@ internal sealed partial class MidLevelIrLowerer
         {
             var operands = expression.additiveExpression();
             var operators = ExtractOperators<StarkParser.AdditiveExpressionContext>(expression);
+            if (operators.Count > 0
+                && TryLowerCompileTimeIntegerExpression(expression, expectedType, out var constant))
+            {
+                return constant;
+            }
+
             return LowerBinaryChain(
                 operands,
                 operators,
@@ -2993,6 +3027,11 @@ internal sealed partial class MidLevelIrLowerer
                 return LowerMultiplicativeExpression(operands[0], expectedType);
             }
 
+            if (TryLowerCompileTimeIntegerExpression(expression, expectedType, out var constant))
+            {
+                return constant;
+            }
+
             return LowerBinaryChain(
                 operands,
                 operators,
@@ -3008,6 +3047,12 @@ internal sealed partial class MidLevelIrLowerer
         {
             var operands = expression.unaryExpression();
             var operators = ExtractOperators<StarkParser.UnaryExpressionContext>(expression);
+            if (operators.Count > 0
+                && TryLowerCompileTimeIntegerExpression(expression, expectedType, out var constant))
+            {
+                return constant;
+            }
+
             return LowerBinaryChain(
                 operands,
                 operators,
@@ -3134,6 +3179,11 @@ internal sealed partial class MidLevelIrLowerer
             if (expression.unaryExpression() is not { } rightExpression)
             {
                 return LowerPostfixExpression(expression.postfixExpression(), expectedType);
+            }
+
+            if (TryLowerCompileTimeIntegerExpression(expression, expectedType, out var constant))
+            {
+                return constant;
             }
 
             var left = LowerPostfixExpression(expression.postfixExpression(), expectedType: null);

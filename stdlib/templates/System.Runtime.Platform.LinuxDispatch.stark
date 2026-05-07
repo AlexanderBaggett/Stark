@@ -157,7 +157,7 @@ internal unsafe fn i32[-2147483648 2147483647] FlushFile(rawptr<i8[-128 127]> ha
     }
 }
 
-internal unsafe fn i64[-9223372036854775808 9223372036854775807] ReadFile(rawptr<i8[-128 127]> buffer, i64[-9223372036854775808 9223372036854775807] size, i64[-9223372036854775808 9223372036854775807] count, rawptr<i8[-128 127]> handle) {
+internal unsafe fn i64[-9223372036854775808 9223372036854775807] ReadFile(rawmutptr<i8[-128 127]> buffer, i64[-9223372036854775808 9223372036854775807] size, i64[-9223372036854775808 9223372036854775807] count, rawptr<i8[-128 127]> handle) {
     unsafe {
         return System.Runtime.Platform.Linux.ReadFile(buffer, size, count, handle);
     }

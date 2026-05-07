@@ -16,6 +16,7 @@ public sealed class SystemRawPointerAuditStandardLibraryTests : StandardLibraryT
         "stdlib/src/System/Runtime/ConsoleInput.stark",
         "stdlib/src/System/Runtime/Platform.stark",
         "stdlib/src/System/Runtime/Platform/Linux.stark",
+        "stdlib/src/System/Runtime/Platform/MacOS.stark",
         "stdlib/src/System/Runtime/Platform/Windows.stark",
         "stdlib/src/System/Text.stark",
         "stdlib/src/System/Threading.stark"

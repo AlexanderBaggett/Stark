@@ -8621,7 +8621,7 @@ internal sealed class LlvmFunctionBodyEmitter
                 AppendLine($"  ret {MapType(_abiFunction.LlvmReturnType)} {FormatValue(terminator.Value)}");
                 return;
             case SsaTerminatorKind.Unreachable:
-                AppendLine($"  call coldcc void @{UnreachableTrapHelperName}()");
+                AppendLine($"  call {TrapCallingConventionPrefix()}void @{UnreachableTrapHelperName}()");
                 AppendLine("  unreachable");
                 return;
             default:
@@ -11719,6 +11719,19 @@ internal sealed class LlvmFunctionBodyEmitter
     private string AllocatorSizeType => _context.AllocatorSizeType;
 
     private string EmptyMetadataRef => _context.EmptyTupleMetadataRef;
+
+    private string TrapCallingConventionPrefix()
+    {
+        var triple = _context.TargetInfo?.Triple;
+        if (!string.IsNullOrWhiteSpace(triple)
+            && (triple.StartsWith("aarch64", StringComparison.OrdinalIgnoreCase)
+                || triple.StartsWith("arm64", StringComparison.OrdinalIgnoreCase)))
+        {
+            return string.Empty;
+        }
+
+        return "coldcc ";
+    }
 
     private string MapType(StarkTypeSymbol type) => _context.MapType(type);
 

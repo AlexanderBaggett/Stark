@@ -12,7 +12,7 @@ unsafe finite law bool Ok(MemoryStatus status) {
 }
 
 export unsafe ffi fn i32[min max] main() {
-    stack mut System.Collections.List<u32[0 2 ** 31 - 1]> values = new();
+    stack mut System.Collections.List<u32[0 max]> values = new();
 
     for willexit (stack mut u16[0 4096] i = 0; i < 4096; i += 1) {
         if (!Ok(values.Push(i))) {
