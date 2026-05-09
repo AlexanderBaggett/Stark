@@ -48,10 +48,10 @@ public struct Matrix {
 }
 
 public struct Color {
-    u8[0 255] R;
-    u8[0 255] G;
-    u8[0 255] B;
-    u8[0 255] A;
+    u8[0 max] R;
+    u8[0 max] G;
+    u8[0 max] B;
+    u8[0 max] A;
 }
 
 public struct Rectangle {
@@ -132,11 +132,11 @@ public struct Mesh {
     rawmutptr<f32> Texcoords2;
     rawmutptr<f32> Normals;
     rawmutptr<f32> Tangents;
-    rawmutptr<u8[0 255]> Colors;
+    rawmutptr<u8[0 max]> Colors;
     rawmutptr<u16[0 max]> Indices;
     rawmutptr<f32> AnimVertices;
     rawmutptr<f32> AnimNormals;
-    rawmutptr<u8[0 255]> BoneIds;
+    rawmutptr<u8[0 max]> BoneIds;
     rawmutptr<f32> BoneWeights;
     rawmutptr<Matrix> BoneMatrices;
     i32[min max] BoneCount;
@@ -746,7 +746,7 @@ public finite law Rectangle Rect(f32 x, f32 y, f32 width, f32 height) {
 }
 
 public finite law Color Rgba(u8[0 max] r, u8[0 max] g, u8[0 max] b, u8[0 max] a) {
-    return new Color() { R = (u8[0 255])r, G = (u8[0 255])g, B = (u8[0 255])b, A = (u8[0 255])a };
+    return new Color() { R = (u8[0 max])r, G = (u8[0 max])g, B = (u8[0 max])b, A = (u8[0 max])a };
 }
 
 public finite law Vector2 DefaultVector2() {
@@ -796,10 +796,10 @@ public finite law Matrix DefaultMatrix() {
 
 public finite law Color DefaultColor() {
     return new Color() {
-        R = (u8[0 255])0,
-        G = (u8[0 255])0,
-        B = (u8[0 255])0,
-        A = (u8[0 255])0
+        R = (u8[0 max])0,
+        G = (u8[0 max])0,
+        B = (u8[0 max])0,
+        A = (u8[0 max])0
     };
 }
 

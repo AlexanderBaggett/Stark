@@ -12,10 +12,10 @@ public sealed class OwnershipValidationTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            finite i32[-2147483648 2147483647] Run() {
+            finite i32[min max] Run() {
                 heap Box box = new Box() { Value = 1 };
                 return 1;
             }
@@ -34,14 +34,14 @@ public sealed class OwnershipValidationTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             finite law void Consume(Box value) {
                 return;
             }
 
-            finite law i32[-2147483648 2147483647] Run() {
+            finite law i32[min max] Run() {
                 stack Box box = new Box() { Value = 1 };
                 Consume(box);
                 return box.Value;
@@ -65,14 +65,14 @@ public sealed class OwnershipValidationTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             finite law void Consume(Box value) {
                 return;
             }
 
-            finite law i32[-2147483648 2147483647] Run() {
+            finite law i32[min max] Run() {
                 stack Box box = new Box() { Value = 1 };
                 Consume(box);
                 return box.Value;
@@ -102,14 +102,14 @@ public sealed class OwnershipValidationTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 finite law void Consume(Box box) {
                     return;
                 }
             }
 
-            finite law i32[-2147483648 2147483647] Run() {
+            finite law i32[min max] Run() {
                 stack Box box = new Box() { Value = 1 };
                 box.Consume();
                 return box.Value;
@@ -132,9 +132,9 @@ public sealed class OwnershipValidationTests
             """
             module Demo
 
-            finite law i32[-2147483648 2147483647] Run() {
-                stack i32[-2147483648 2147483647] x = 1;
-                stack i32[-2147483648 2147483647] y = x;
+            finite law i32[min max] Run() {
+                stack i32[min max] x = 1;
+                stack i32[min max] y = x;
                 return x + y;
             }
             """);
@@ -186,10 +186,10 @@ public sealed class OwnershipValidationTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            finite law i32[-2147483648 2147483647] Run() {
+            finite law i32[min max] Run() {
                 stack mut Box box = new Box() { Value = 1 };
                 box = new Box() { Value = 2 };
                 return box.Value;
@@ -209,14 +209,14 @@ public sealed class OwnershipValidationTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             finite law void Consume(Box value) {
                 return;
             }
 
-            finite law i32[-2147483648 2147483647] Run() {
+            finite law i32[min max] Run() {
                 stack Box box = new Box() { Value = 1 };
                 if (true) {
                     Consume(box);
@@ -238,7 +238,7 @@ public sealed class OwnershipValidationTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             finite law Box Make() {
@@ -261,7 +261,7 @@ public sealed class OwnershipValidationTests
             module Demo
 
             struct Name {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             struct Container {
@@ -292,7 +292,7 @@ public sealed class OwnershipValidationTests
             module Demo
 
             struct Name {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             struct NameBox {
@@ -325,7 +325,7 @@ public sealed class OwnershipValidationTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             doctrine Sink {
@@ -334,7 +334,7 @@ public sealed class OwnershipValidationTests
                 }
             }
 
-            finite law i32[-2147483648 2147483647] Run() {
+            finite law i32[min max] Run() {
                 stack Box box = new Box() { Value = 1 };
                 Sink.Consume(box);
                 return box.Value;
@@ -356,7 +356,7 @@ public sealed class OwnershipValidationTests
 
             fn System.Memory.MemoryResult<System.Text.OwnedAscii> Make();
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 stack System.Memory.MemoryResult<System.Text.OwnedAscii> result = Make();
                 stack System.Memory.MemoryResult<System.Text.OwnedAscii> joined = "Score: " + result;
                 stack System.Memory.MemoryResult<System.Text.OwnedAscii> second = result;
@@ -410,7 +410,7 @@ public sealed class OwnershipValidationTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             fn void Touch(disjoint borrow mut Box left, disjoint borrow mut Box right) {
@@ -419,7 +419,7 @@ public sealed class OwnershipValidationTests
                 return;
             }
 
-            fn i32[-2147483648 2147483647] Run(borrow mut Box left, borrow mut Box right) {
+            fn i32[min max] Run(borrow mut Box left, borrow mut Box right) {
                 Touch(left, right);
                 left.Value = left.Value + 1;
                 right.Value = right.Value + 1;

@@ -3,7 +3,7 @@ import System.Text
 module Benchmarks.Text.AsciiToUnicodeConversionTinyLiteral
 
 export unsafe ffi fn i32[min max] main() {
-    stack mut i32[-2147483648 2147483647][8] unicodeBuffer = {
+    stack mut i32[min max][8] unicodeBuffer = {
         0, 0, 0, 0, 0, 0, 0, 0
     };
     stack mut Unicode unicodeText = new Unicode() {

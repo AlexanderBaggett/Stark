@@ -93,10 +93,10 @@ public sealed class PackageImageCallableValueTests
                 """
                 module Facade
 
-                public alias Factory = fnptr<fn i32[-2147483648 2147483647]()>;
+                public alias Factory = fnptr<fn i32[min max]()>;
 
                 public struct Box {
-                    internal i32[-2147483648 2147483647] Value;
+                    internal i32[min max] Value;
 
                     Box(Factory factory) {
                         self.Value = factory();
@@ -117,11 +117,11 @@ public sealed class PackageImageCallableValueTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Make() {
+                    fn i32[min max] Make() {
                         return 11;
                     }
 
-                    fn i32[-2147483648 2147483647] Run() {
+                    fn i32[min max] Run() {
                         stack Facade.Box box = new(Make);
                         return 0;
                     }
@@ -234,9 +234,9 @@ public sealed class PackageImageCallableValueTests
                 """
                 module Facade
 
-                public fn i32[-2147483648 2147483647] Apply(
-                    fnptr<finite law i32[-2147483648 2147483647](i32[-2147483648 2147483647])> callback,
-                    i32[-2147483648 2147483647] value);
+                public fn i32[min max] Apply(
+                    fnptr<finite law i32[min max](i32[min max])> callback,
+                    i32[min max] value);
                 """,
                 sourcePath));
 
@@ -252,8 +252,8 @@ public sealed class PackageImageCallableValueTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
-                        return Facade.Apply((i32[-2147483648 2147483647] value) => value + 1, 41);
+                    fn i32[min max] Run() {
+                        return Facade.Apply((i32[min max] value) => value + 1, 41);
                     }
                     """,
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
@@ -313,7 +313,7 @@ public sealed class PackageImageCallableValueTests
                 """
                 module Facade
 
-                public fn void Register(fnptr<law i32[-2147483648 2147483647]()> callback);
+                public fn void Register(fnptr<law i32[min max]()> callback);
                 """,
                 sourcePath));
 
@@ -329,9 +329,9 @@ public sealed class PackageImageCallableValueTests
                     import Facade
                     module Demo
 
-                    static i32[-2147483648 2147483647] Counter = 1;
+                    static i32[min max] Counter = 1;
 
-                    fn i32[-2147483648 2147483647] Impure() {
+                    fn i32[min max] Impure() {
                         return Counter;
                     }
 
@@ -384,7 +384,7 @@ public sealed class PackageImageCallableValueTests
                 """
                 module Facade
 
-                public fn i32[-2147483648 2147483647] Make();
+                public fn i32[min max] Make();
                 """,
                 sourcePath));
 
@@ -400,8 +400,8 @@ public sealed class PackageImageCallableValueTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
-                        stack fnptr<fn i32[-2147483648 2147483647]()> callback = Facade.Make;
+                    fn i32[min max] Run() {
+                        stack fnptr<fn i32[min max]()> callback = Facade.Make;
                         return callback();
                     }
                     """,
@@ -447,10 +447,10 @@ public sealed class PackageImageCallableValueTests
                 """
                 module Facade
 
-                public fn i32[-2147483648 2147483647] Plain();
-                public finite i32[-2147483648 2147483647] FiniteOnly();
-                public law i32[-2147483648 2147483647] LawOnly();
-                public finite law i32[-2147483648 2147483647] Strict();
+                public fn i32[min max] Plain();
+                public finite i32[min max] FiniteOnly();
+                public law i32[min max] LawOnly();
+                public finite law i32[min max] Strict();
                 """,
                 sourcePath));
 
@@ -467,10 +467,10 @@ public sealed class PackageImageCallableValueTests
                     module Demo
 
                     fn void Run() {
-                        stack fnptr<fn i32[-2147483648 2147483647]()> plain = Facade.Plain;
-                        stack fnptr<finite i32[-2147483648 2147483647]()> finiteOnly = Facade.FiniteOnly;
-                        stack fnptr<law i32[-2147483648 2147483647]()> lawOnly = Facade.LawOnly;
-                        stack fnptr<finite law i32[-2147483648 2147483647]()> strict = Facade.Strict;
+                        stack fnptr<fn i32[min max]()> plain = Facade.Plain;
+                        stack fnptr<finite i32[min max]()> finiteOnly = Facade.FiniteOnly;
+                        stack fnptr<law i32[min max]()> lawOnly = Facade.LawOnly;
+                        stack fnptr<finite law i32[min max]()> strict = Facade.Strict;
                         return;
                     }
                     """,
@@ -524,8 +524,8 @@ public sealed class PackageImageCallableValueTests
                 """
                 module Facade
 
-                public fn i32[-2147483648 2147483647] Pick();
-                public fn i32[-2147483648 2147483647] Pick(i32[-2147483648 2147483647] value);
+                public fn i32[min max] Pick();
+                public fn i32[min max] Pick(i32[min max] value);
                 """,
                 sourcePath));
 
@@ -541,9 +541,9 @@ public sealed class PackageImageCallableValueTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
-                        stack fnptr<fn i32[-2147483648 2147483647]()> first = Facade.Pick;
-                        stack fnptr<fn i32[-2147483648 2147483647](i32[-2147483648 2147483647])> second = Facade.Pick;
+                    fn i32[min max] Run() {
+                        stack fnptr<fn i32[min max]()> first = Facade.Pick;
+                        stack fnptr<fn i32[min max](i32[min max])> second = Facade.Pick;
                         return first() + second(2);
                     }
                     """,
@@ -596,9 +596,9 @@ public sealed class PackageImageCallableValueTests
                 """
                 module Facade
 
-                public fn i32[-2147483648 2147483647] Plain();
-                public finite i32[-2147483648 2147483647] FiniteOnly();
-                public law i32[-2147483648 2147483647] LawOnly();
+                public fn i32[min max] Plain();
+                public finite i32[min max] FiniteOnly();
+                public law i32[min max] LawOnly();
                 """,
                 sourcePath));
 
@@ -615,10 +615,10 @@ public sealed class PackageImageCallableValueTests
                     module Demo
 
                     fn void Run() {
-                        stack fnptr<finite i32[-2147483648 2147483647]()> needsFinite = Facade.Plain;
-                        stack fnptr<law i32[-2147483648 2147483647]()> needsLaw = Facade.Plain;
-                        stack fnptr<finite law i32[-2147483648 2147483647]()> needsBothFromFinite = Facade.FiniteOnly;
-                        stack fnptr<finite law i32[-2147483648 2147483647]()> needsBothFromLaw = Facade.LawOnly;
+                        stack fnptr<finite i32[min max]()> needsFinite = Facade.Plain;
+                        stack fnptr<law i32[min max]()> needsLaw = Facade.Plain;
+                        stack fnptr<finite law i32[min max]()> needsBothFromFinite = Facade.FiniteOnly;
+                        stack fnptr<finite law i32[min max]()> needsBothFromLaw = Facade.LawOnly;
                         return;
                     }
                     """,
@@ -680,7 +680,7 @@ public sealed class PackageImageCallableValueTests
                 """
                 module Facade
 
-                public unsafe fn i32[-2147483648 2147483647] Touch();
+                public unsafe fn i32[min max] Touch();
                 """,
                 sourcePath));
 
@@ -697,7 +697,7 @@ public sealed class PackageImageCallableValueTests
                     module Demo
 
                     fn void Run() {
-                        stack fnptr<fn i32[-2147483648 2147483647]()> callback = Facade.Touch;
+                        stack fnptr<fn i32[min max]()> callback = Facade.Touch;
                         return;
                     }
                     """,

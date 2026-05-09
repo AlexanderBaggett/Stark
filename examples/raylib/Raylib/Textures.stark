@@ -23,15 +23,15 @@ public unsafe fn Image LoadImageAnim(ascii fileName, rawmutptr<i32[min max]> fra
     return result;
 }
 
-internal unsafe ffi fn void stark_raylib_LoadImageAnimFromMemory(rawmutptr<Image> result, ascii fileType, rawptr<u8[0 255]> fileData, i32[min max] dataSize, rawmutptr<i32[min max]> frames);
-public unsafe fn Image LoadImageAnimFromMemory(ascii fileType, rawptr<u8[0 255]> fileData, i32[min max] dataSize, rawmutptr<i32[min max]> frames) {
+internal unsafe ffi fn void stark_raylib_LoadImageAnimFromMemory(rawmutptr<Image> result, ascii fileType, rawptr<u8[0 max]> fileData, i32[min max] dataSize, rawmutptr<i32[min max]> frames);
+public unsafe fn Image LoadImageAnimFromMemory(ascii fileType, rawptr<u8[0 max]> fileData, i32[min max] dataSize, rawmutptr<i32[min max]> frames) {
     stack mut Image result = DefaultImage();
     stark_raylib_LoadImageAnimFromMemory(&result, fileType, fileData, dataSize, frames);
     return result;
 }
 
-internal unsafe ffi fn void stark_raylib_LoadImageFromMemory(rawmutptr<Image> result, ascii fileType, rawptr<u8[0 255]> fileData, i32[min max] dataSize);
-public unsafe fn Image LoadImageFromMemory(ascii fileType, rawptr<u8[0 255]> fileData, i32[min max] dataSize) {
+internal unsafe ffi fn void stark_raylib_LoadImageFromMemory(rawmutptr<Image> result, ascii fileType, rawptr<u8[0 max]> fileData, i32[min max] dataSize);
+public unsafe fn Image LoadImageFromMemory(ascii fileType, rawptr<u8[0 max]> fileData, i32[min max] dataSize) {
     stack mut Image result = DefaultImage();
     stark_raylib_LoadImageFromMemory(&result, fileType, fileData, dataSize);
     return result;
@@ -67,8 +67,8 @@ public fn bool ExportImage(Image image, ascii fileName) {
     return stark_raylib_ExportImage(&image, fileName);
 }
 
-internal unsafe ffi fn rawmutptr<u8[0 255]> stark_raylib_ExportImageToMemory(rawptr<Image> image, ascii fileType, rawmutptr<i32[min max]> fileSize);
-public unsafe fn rawmutptr<u8[0 255]> ExportImageToMemory(Image image, ascii fileType, rawmutptr<i32[min max]> fileSize) {
+internal unsafe ffi fn rawmutptr<u8[0 max]> stark_raylib_ExportImageToMemory(rawptr<Image> image, ascii fileType, rawmutptr<i32[min max]> fileSize);
+public unsafe fn rawmutptr<u8[0 max]> ExportImageToMemory(Image image, ascii fileType, rawmutptr<i32[min max]> fileSize) {
     return stark_raylib_ExportImageToMemory(&image, fileType, fileSize);
 }
 

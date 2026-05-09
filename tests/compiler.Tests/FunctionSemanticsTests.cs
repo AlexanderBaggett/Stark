@@ -12,10 +12,10 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right) {
                 return left + right;
             }
 
@@ -47,8 +47,8 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Count() {
-                stack mut i32[-2147483648 2147483647] value = 0;
+            unsafe fn i32[min max] Count() {
+                stack mut i32[min max] value = 0;
 
                 while willexit (value < 3) {
                     value += 1;
@@ -75,7 +75,7 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            unsafe law i32[-2147483648 2147483647] Bad(fnptr<fn i32[-2147483648 2147483647]()> op) {
+            unsafe law i32[min max] Bad(fnptr<fn i32[min max]()> op) {
                 return op();
             }
             """);
@@ -94,15 +94,15 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            unsafe finite i32[-2147483648 2147483647] UseFinite(fnptr<finite i32[-2147483648 2147483647]()> op) {
+            unsafe finite i32[min max] UseFinite(fnptr<finite i32[min max]()> op) {
                 return op();
             }
 
-            unsafe law i32[-2147483648 2147483647] UseLaw(fnptr<law i32[-2147483648 2147483647]()> op) {
+            unsafe law i32[min max] UseLaw(fnptr<law i32[min max]()> op) {
                 return op();
             }
 
-            unsafe finite law i32[-2147483648 2147483647] UseStrict(fnptr<finite law i32[-2147483648 2147483647]()> op) {
+            unsafe finite law i32[min max] UseStrict(fnptr<finite law i32[min max]()> op) {
                 return op();
             }
             """);
@@ -123,12 +123,12 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Pure() {
+            unsafe fn i32[min max] Pure() {
                 return 1;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
-                stack fnptr<law i32[-2147483648 2147483647]()> op = () => Pure();
+            unsafe fn i32[min max] Run() {
+                stack fnptr<law i32[min max]()> op = () => Pure();
                 return op();
             }
             """);
@@ -149,14 +149,14 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            static i32[-2147483648 2147483647] Counter = 1;
+            static i32[min max] Counter = 1;
 
-            unsafe fn i32[-2147483648 2147483647] Impure() {
+            unsafe fn i32[min max] Impure() {
                 return Counter;
             }
 
             unsafe fn void Run() {
-                stack fnptr<law i32[-2147483648 2147483647]()> op = () => Impure();
+                stack fnptr<law i32[min max]()> op = () => Impure();
                 return;
             }
             """);
@@ -177,7 +177,7 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             unsafe fn retborrow Box Echo(retborrow Box value) {
@@ -210,8 +210,8 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             struct Pair {
-                i8[-128 127] Tag;
-                i32[-2147483648 2147483647] Value;
+                i8[min max] Tag;
+                i32[min max] Value;
             }
 
             unsafe fn void Inspect(borrow Pair pair) {
@@ -238,7 +238,7 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             unsafe fn void TouchPrefix(disjoint borrow mut Box left, disjoint borrow mut Box right) {
@@ -274,7 +274,7 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            unsafe fn void Inspect(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
+            unsafe fn void Inspect(const rawmutptr<i32[min max]> ptr) {
                 return;
             }
             """);
@@ -296,7 +296,7 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             unsafe fn void Touch(borrow mut Box box) {
@@ -336,12 +336,12 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            unsafe fn i32[-2147483648 2147483647] ReadGlobal() {
+            unsafe fn i32[min max] ReadGlobal() {
                 return Counter;
             }
 
@@ -380,7 +380,7 @@ public sealed class FunctionSemanticsTests
             }
 
             internal struct Allocation {
-                rawmutptr<i8[-128 127]> Pointer;
+                rawmutptr<i8[min max]> Pointer;
                 u64[0 2 ** 63 - 1] ByteLength;
                 u64[1 2 ** 63 - 1] Alignment;
                 Allocator Allocator;
@@ -449,11 +449,11 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right) {
                 return left + right;
             }
 
-            unsafe law i32[-2147483648 2147483647] Use() {
+            unsafe law i32[min max] Use() {
                 return Add(1, 2);
             }
             """);
@@ -468,11 +468,11 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Step(i32[-2147483648 2147483647] value) {
+            unsafe fn i32[min max] Step(i32[min max] value) {
                 return value + 1;
             }
 
-            unsafe finite i32[-2147483648 2147483647] Use(i32[-2147483648 2147483647] value) {
+            unsafe finite i32[min max] Use(i32[min max] value) {
                 return Step(value);
             }
             """);
@@ -540,12 +540,12 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            unsafe law void Touch(mut i32[-2147483648 2147483647][] view) {
+            unsafe law void Touch(mut i32[min max][] view) {
                 view[0] = 1;
                 return;
             }
 
-            unsafe law void Outer(mut i32[-2147483648 2147483647][] view) {
+            unsafe law void Outer(mut i32[min max][] view) {
                 Touch(view);
                 return;
             }

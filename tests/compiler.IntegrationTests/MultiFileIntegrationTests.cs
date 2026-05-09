@@ -24,7 +24,7 @@ public sealed class MultiFileIntegrationTests
                 """
                 module Math
 
-                public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                     return left + right;
                 }
                 """);
@@ -35,7 +35,7 @@ public sealed class MultiFileIntegrationTests
                 import Math
                 module App
 
-                fn i32[-2147483648 2147483647] Run() {
+                fn i32[min max] Run() {
                     return Math.Add(3, 4);
                 }
                 """);
@@ -79,7 +79,7 @@ public sealed class MultiFileIntegrationTests
                 """
                 module Math
 
-                public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                     return left + right;
                 }
                 """);
@@ -90,7 +90,7 @@ public sealed class MultiFileIntegrationTests
                 export import Math
                 module Facade
 
-                public fn i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
+                public fn i32[min max] Double(i32[min max] value) {
                     return Math.Add(value, value);
                 }
                 """);
@@ -101,7 +101,7 @@ public sealed class MultiFileIntegrationTests
                 import Facade
                 module App
 
-                fn i32[-2147483648 2147483647] Run() {
+                fn i32[min max] Run() {
                     return Math.Add(Facade.Double(2), 3);
                 }
                 """);
@@ -168,7 +168,7 @@ public sealed class MultiFileIntegrationTests
                 import System
                 module App
 
-                fn i32[-2147483648 2147483647] Run() {
+                fn i32[min max] Run() {
                     stack System.Text.Encoding encoding = System.Text.Encoding.UTF8;
                     return 0;
                 }
@@ -213,11 +213,11 @@ public sealed class MultiFileIntegrationTests
                 """
                 module Math
 
-                fn i32[-2147483648 2147483647] HiddenAdd(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                fn i32[min max] HiddenAdd(i32[min max] left, i32[min max] right) {
                     return left + right;
                 }
 
-                public fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                public fn i32[min max] Add(i32[min max] left, i32[min max] right) {
                     return HiddenAdd(left, right);
                 }
                 """);
@@ -228,7 +228,7 @@ public sealed class MultiFileIntegrationTests
                 export import Math
                 module Facade
 
-                public fn i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
+                public fn i32[min max] Double(i32[min max] value) {
                     return Math.Add(value, value);
                 }
                 """);
@@ -239,7 +239,7 @@ public sealed class MultiFileIntegrationTests
                 import Facade
                 module App
 
-                fn i32[-2147483648 2147483647] Run() {
+                fn i32[min max] Run() {
                     return Math.HiddenAdd(Facade.Double(2), 3);
                 }
                 """);
@@ -290,7 +290,7 @@ public sealed class MultiFileIntegrationTests
                 """
                 module Math
 
-                public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                     return left + right;
                 }
                 """);
@@ -301,7 +301,7 @@ public sealed class MultiFileIntegrationTests
                 export import Math
                 module Facade
 
-                public finite law i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
+                public finite law i32[min max] Double(i32[min max] value) {
                     return Math.Add(value, value);
                 }
                 """);
@@ -349,7 +349,7 @@ public sealed class MultiFileIntegrationTests
                 import Facade
                 module App
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     return Math.Add(3, 4);
                 }
                 """);
@@ -445,7 +445,7 @@ public sealed class MultiFileIntegrationTests
                 import Globals
                 module App
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     return Globals.Answer;
                 }
                 """);
@@ -520,7 +520,7 @@ public sealed class MultiFileIntegrationTests
                     }
                 }
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     stack mut OwnedUnicode unicodeText = new();
                     if (!StatusOk(FromAsciiToUnicode(unicodeText, "caf\u00E9"))) {
                         return 1;

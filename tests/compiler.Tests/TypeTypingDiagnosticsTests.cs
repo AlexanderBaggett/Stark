@@ -44,7 +44,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
+            record Pair(i32[min max] Left, i32[min max] Right) { }
 
             fn void Run() {
                 stack Pair pair = new Pair(1, false);
@@ -62,7 +62,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
+            record Pair(i32[min max] Left, i32[min max] Right) { }
 
             fn void Run() {
                 stack Pair pair = new Pair(1);
@@ -81,9 +81,9 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
-                Box(i32[-2147483648 2147483647] value) {
+                Box(i32[min max] value) {
                     self.Value = value;
                 }
             }
@@ -107,7 +107,7 @@ public sealed class TypeTypingDiagnosticsTests
 
             enum Token {
                 End,
-                Pair(i32[-2147483648 2147483647], i32[-2147483648 2147483647]),
+                Pair(i32[min max], i32[min max]),
             }
 
             fn void Run() {
@@ -128,7 +128,7 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             fn void Run() {
@@ -147,7 +147,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
+            record Pair(i32[min max] Left, i32[min max] Right) { }
 
             fn void Run() {
                 stack Pair pair = new Pair(1, 2) { Left = 3 };
@@ -165,7 +165,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            fn i32[min max] Add(i32[min max] left, i32[min max] right) {
                 return left + right;
             }
 
@@ -188,7 +188,7 @@ public sealed class TypeTypingDiagnosticsTests
 
             enum Token {
                 End,
-                Integer(i32[-2147483648 2147483647]),
+                Integer(i32[min max]),
             }
 
             export fn Token Use(Token token);
@@ -226,7 +226,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            public unsafe ffi asm(x86_64) fn bool Broken(ascii text, i32[-2147483648 2147483647] count)
+            public unsafe ffi asm(x86_64) fn bool Broken(ascii text, i32[min max] count)
                 in("rdi") text,
                 in("rsi") count,
                 out("rax") return
@@ -292,7 +292,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            public unsafe ffi asm(x86_64) fn f32 Broken(f32 scale, i32[-2147483648 2147483647] count)
+            public unsafe ffi asm(x86_64) fn f32 Broken(f32 scale, i32[min max] count)
                 in("rdi") scale,
                 in("xmm1") count,
                 out("rax") return
@@ -319,7 +319,7 @@ public sealed class TypeTypingDiagnosticsTests
 
             enum Token {
                 End,
-                Integer(i32[-2147483648 2147483647]),
+                Integer(i32[min max]),
             }
 
             struct Inner {
@@ -346,13 +346,13 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            alias Score = i32[-2147483648 2147483647];
+            alias Score = i32[min max];
 
-            fn i32[-2147483648 2147483647] Parse(i32[-2147483648 2147483647] value) {
+            fn i32[min max] Parse(i32[min max] value) {
                 return value;
             }
 
-            fn i32[-2147483648 2147483647] Parse(Score value) {
+            fn i32[min max] Parse(Score value) {
                 return value;
             }
             """,
@@ -443,7 +443,7 @@ public sealed class TypeTypingDiagnosticsTests
                 Ascii Text;
             }
 
-            fn i32[-2147483648 2147483647] Run(Box value) {
+            fn i32[min max] Run(Box value) {
                 switch (value) {
                     case Box(var text):
                         return 1;
@@ -464,7 +464,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(bool value) {
+            fn i32[min max] Run(bool value) {
                 switch (value) {
                     case true:
                         return 1;
@@ -488,9 +488,9 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
+            record Pair(i32[min max] Left, i32[min max] Right) { }
 
-            fn i32[-2147483648 2147483647] Run(Pair value) {
+            fn i32[min max] Run(Pair value) {
                 switch (value) {
                     case Pair(_, _):
                         return 0;
@@ -512,9 +512,9 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
+            record Pair(i32[min max] Left, i32[min max] Right) { }
 
-            fn i32[-2147483648 2147483647] Run(Pair value) {
+            fn i32[min max] Run(Pair value) {
                 switch (value) {
                     case Pair(1, _):
                         return 0;
@@ -538,10 +538,10 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
-            record Outer(Pair Values, i32[-2147483648 2147483647] Tail) { }
+            record Pair(i32[min max] Left, i32[min max] Right) { }
+            record Outer(Pair Values, i32[min max] Tail) { }
 
-            fn i32[-2147483648 2147483647] Run(Outer value) {
+            fn i32[min max] Run(Outer value) {
                 switch (value) {
                     case Outer(Pair(1, _), _):
                         return 0;
@@ -567,11 +567,11 @@ public sealed class TypeTypingDiagnosticsTests
 
             enum Token {
                 End,
-                Integer(i32[-2147483648 2147483647]),
-                Move { X: i32[-2147483648 2147483647], Y: i32[-2147483648 2147483647] },
+                Integer(i32[min max]),
+                Move { X: i32[min max], Y: i32[min max] },
             }
 
-            fn i32[-2147483648 2147483647] Run(Token token) {
+            fn i32[min max] Run(Token token) {
                 switch (token) {
                     case Token.End:
                         return 0;
@@ -599,10 +599,10 @@ public sealed class TypeTypingDiagnosticsTests
 
             enum Token {
                 End,
-                Integer(i32[-2147483648 2147483647]),
+                Integer(i32[min max]),
             }
 
-            fn i32[-2147483648 2147483647] Run(Token token) {
+            fn i32[min max] Run(Token token) {
                 switch (token) {
                     case Token.Integer(_):
                         return 0;
@@ -627,7 +627,7 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             fn void Run() {
-                stack i32[-2147483648 2147483647][2] values = { 1, false };
+                stack i32[min max][2] values = { 1, false };
             }
             """);
 
@@ -643,7 +643,7 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             fn void Run() {
-                stack i32[-2147483648 2147483647][] view = { 1, 2, 3 };
+                stack i32[min max][] view = { 1, 2, 3 };
             }
             """);
 
@@ -659,7 +659,7 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Buffer {
-                i32[-2147483648 2147483647][] Values;
+                i32[min max][] Values;
             }
 
             fn void Run() {
@@ -678,7 +678,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 return 1.5;
             }
             """);
@@ -695,8 +695,8 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             fn void Run() {
-                stack i32[-2147483648 2147483647] value = 1;
-                stack rawmutptr<i32[-2147483648 2147483647]> ptr = &value;
+                stack i32[min max] value = 1;
+                stack rawmutptr<i32[min max]> ptr = &value;
             }
             """);
 
@@ -712,7 +712,7 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             fn void Run() {
-                stack i32[-2147483648 2147483647] value = 1;
+                stack i32[min max] value = 1;
                 value = 2;
             }
             """);
@@ -729,7 +729,7 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             fn void Run() {
@@ -750,8 +750,8 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             fn void Run() {
-                stack i32[-2147483648 2147483647] value = 1;
-                stack rawmutptr<i32[-2147483648 2147483647]> ptr = (rawmutptr<i32[-2147483648 2147483647]>)(&value);
+                stack i32[min max] value = 1;
+                stack rawmutptr<i32[min max]> ptr = (rawmutptr<i32[min max]>)(&value);
             }
             """);
 
@@ -766,10 +766,10 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            const i32[-2147483648 2147483647][3] Values = { 1, 2, 3 };
+            const i32[min max][3] Values = { 1, 2, 3 };
 
             fn void Run() {
-                stack rawmutptr<i32[-2147483648 2147483647]> ptr = (rawmutptr<i32[-2147483648 2147483647]>)(&Values[0]);
+                stack rawmutptr<i32[min max]> ptr = (rawmutptr<i32[min max]>)(&Values[0]);
             }
             """);
 
@@ -784,10 +784,10 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            const i32[-2147483648 2147483647][3] Values = { 1, 2, 3 };
+            const i32[min max][3] Values = { 1, 2, 3 };
 
             fn void Run() {
-                stack i64[-9223372036854775808 9223372036854775807] bits = (i64[-9223372036854775808 9223372036854775807])(&Values[0]);
+                stack i64[min max] bits = (i64[min max])(&Values[0]);
             }
             """);
 
@@ -803,13 +803,13 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             const Box Current = new Box() { Value = 1 };
 
             fn void Run() {
-                stack rawmutptr<i32[-2147483648 2147483647]> ptr = (rawmutptr<i32[-2147483648 2147483647]>)(&Current.Value);
+                stack rawmutptr<i32[min max]> ptr = (rawmutptr<i32[min max]>)(&Current.Value);
             }
             """);
 
@@ -825,13 +825,13 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             const Box Current = new Box() { Value = 1 };
 
             fn void Run() {
-                stack i64[-9223372036854775808 9223372036854775807] bits = (i64[-9223372036854775808 9223372036854775807])(&Current.Value);
+                stack i64[min max] bits = (i64[min max])(&Current.Value);
             }
             """);
 
@@ -847,7 +847,7 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             fn void Run(frozen Box box) {
@@ -866,7 +866,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn void Run(frozen i32[-2147483648 2147483647][] view) {
+            fn void Run(frozen i32[min max][] view) {
                 view[0] = 4;
             }
             """);
@@ -883,11 +883,11 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             fn void Run(frozen Box box) {
-                stack rawmutptr<i32[-2147483648 2147483647]> ptr = (rawmutptr<i32[-2147483648 2147483647]>)(&box.Value);
+                stack rawmutptr<i32[min max]> ptr = (rawmutptr<i32[min max]>)(&box.Value);
             }
             """);
 
@@ -903,11 +903,11 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             fn void Run(frozen Box box) {
-                stack i64[-9223372036854775808 9223372036854775807] bits = (i64[-9223372036854775808 9223372036854775807])(&box.Value);
+                stack i64[min max] bits = (i64[min max])(&box.Value);
             }
             """);
 
@@ -923,11 +923,11 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct PtrBox {
-                rawmutptr<i32[-2147483648 2147483647]> Ptr;
+                rawmutptr<i32[min max]> Ptr;
             }
 
             fn void Run(frozen PtrBox box) {
-                stack rawmutptr<i32[-2147483648 2147483647]> leaked = box.Ptr;
+                stack rawmutptr<i32[min max]> leaked = box.Ptr;
             }
             """);
 
@@ -942,7 +942,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            unsafe fn void Run(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
+            unsafe fn void Run(const rawmutptr<i32[min max]> ptr) {
                 *ptr = 1;
                 return;
             }
@@ -960,11 +960,11 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct PtrBox {
-                rawmutptr<i32[-2147483648 2147483647]> Ptr;
+                rawmutptr<i32[min max]> Ptr;
             }
 
             fn void Run(const PtrBox box) {
-                stack rawmutptr<i32[-2147483648 2147483647]> leaked = box.Ptr;
+                stack rawmutptr<i32[min max]> leaked = box.Ptr;
             }
             """);
 
@@ -980,7 +980,7 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             fn void Inspect(const Box box) {
@@ -1005,7 +1005,7 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             fn void Inspect(const Box box) {
@@ -1030,7 +1030,7 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Inner {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             struct Outer {
@@ -1059,10 +1059,10 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct PtrBox {
-                rawmutptr<i32[-2147483648 2147483647]> Ptr;
+                rawmutptr<i32[min max]> Ptr;
             }
 
-            unsafe fn void Inspect(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
+            unsafe fn void Inspect(const rawmutptr<i32[min max]> ptr) {
                 return;
             }
 
@@ -1083,15 +1083,15 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn void Inspect(const i32[-2147483648 2147483647][] view) {
+            fn void Inspect(const i32[min max][] view) {
                 return;
             }
 
             unsafe fn void Run(
-                frozen rawmutptr<i32[-2147483648 2147483647]>[count] pointer,
+                frozen rawmutptr<i32[min max]>[count] pointer,
                 u8[1 10] count) {
                 unsafe {
-                    stack frozen i32[-2147483648 2147483647][] view = slice(pointer, count);
+                    stack frozen i32[min max][] view = slice(pointer, count);
                     Inspect(view);
                 }
                 return;
@@ -1110,10 +1110,10 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 stack mut Box box = new Box() { Value = 1 };
                 box.Value = false;
                 return 0;
@@ -1131,11 +1131,11 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Echo(i32[-2147483648 2147483647] value) {
+            fn i32[min max] Echo(i32[min max] value) {
                 return value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 return Echo(false);
             }
             """);
@@ -1243,7 +1243,7 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             fn void Bad(u64[0 2 ** 63 - 1] size, Ascii left, Ascii right) {
-                stack i32[-2147483648 2147483647] number[4] = 0;
+                stack i32[min max] number[4] = 0;
                 heap Ascii heapText[16] = left + right;
                 stack Ascii dynamicText[size] = left + right;
             }
@@ -1263,7 +1263,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn ascii Label(i32[-2147483648 2147483647] score) {
+            fn ascii Label(i32[min max] score) {
                 return $"Score: {score}";
             }
             """,
@@ -1283,7 +1283,7 @@ public sealed class TypeTypingDiagnosticsTests
             public finite law ascii AsciiView(Ascii source);
             public unsafe fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
 
-            unsafe fn Ascii Label(rawptr<i8[-128 127]> pointer) {
+            unsafe fn Ascii Label(rawptr<i8[min max]> pointer) {
                 stack Ascii label[64] = $"Pointer: {pointer}";
                 return label;
             }
@@ -1339,8 +1339,8 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
-                stack i32[-2147483648 2147483647][2] values = { 1, 2 };
+            fn i32[min max] Run() {
+                stack i32[min max][2] values = { 1, 2 };
                 values[];
                 return 0;
             }
@@ -1358,10 +1358,10 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 stack Box box = new Box() { Value = 1 };
                 return box.Value();
             }
@@ -1379,10 +1379,10 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 stack Box box = new Box() { Value = 1 };
                 return box.Value[0];
             }
@@ -1399,7 +1399,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            unsafe fn rawptr<i32[-2147483648 2147483647]> Run() {
+            unsafe fn rawptr<i32[min max]> Run() {
                 return &(1 + 2);
             }
             """);
@@ -1415,7 +1415,7 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 return *1;
             }
             """);
@@ -1432,7 +1432,7 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             public doctrine Numbers {
-                law i32[-2147483648 2147483647] Zero();
+                law i32[min max] Zero();
             }
 
             struct Holder {
@@ -1469,7 +1469,7 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             public trait Comparable {
-                law i32[-2147483648 2147483647] Compare(i32[-2147483648 2147483647] other);
+                law i32[min max] Compare(i32[min max] other);
             }
 
             struct Holder {
@@ -1506,10 +1506,10 @@ public sealed class TypeTypingDiagnosticsTests
             module Demo
 
             public trait Comparable {
-                law i32[-2147483648 2147483647] Compare(i32[-2147483648 2147483647] other);
+                law i32[min max] Compare(i32[min max] other);
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 return Comparable.Compare(1);
             }
             """,
@@ -1526,15 +1526,15 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Convert(i32[-2147483648 2147483647] value) {
+            fn i32[min max] Convert(i32[min max] value) {
                 return value;
             }
 
-            fn i32[-2147483648 2147483647] Convert(ascii value) {
+            fn i32[min max] Convert(ascii value) {
                 return 0;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 return Convert(true);
             }
             """,
@@ -1555,7 +1555,7 @@ public sealed class TypeTypingDiagnosticsTests
 
             fn T Make<T>();
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 return Make();
             }
             """,
@@ -1573,16 +1573,16 @@ public sealed class TypeTypingDiagnosticsTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Measure(f32 value) {
+            fn i32[min max] Measure(f32 value) {
                 return 1;
             }
 
-            fn i32[-2147483648 2147483647] Measure(f64 value) {
+            fn i32[min max] Measure(f64 value) {
                 return 2;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
-                stack i32[-2147483648 2147483647] value = 1;
+            fn i32[min max] Run() {
+                stack i32[min max] value = 1;
                 return Measure(value);
             }
             """,

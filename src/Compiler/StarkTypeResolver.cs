@@ -421,6 +421,29 @@ internal sealed class StarkTypeResolver
             return StarkTypeSymbols.Integer(width, isUnsigned: isUnsigned);
         }
 
+        var styleIsValid = ValidateIntegerRangeEndpointStyle(
+            endpointTokens,
+            0,
+            upperEndpointStart,
+            lower.Value,
+            typeMin,
+            typeMax,
+            integerTypeText,
+            isUnsigned)
+            & ValidateIntegerRangeEndpointStyle(
+                endpointTokens,
+                upperEndpointStart,
+                endpointTokens.Length,
+                upper.Value,
+                typeMin,
+                typeMax,
+                integerTypeText,
+                isUnsigned);
+        if (!styleIsValid)
+        {
+            return StarkTypeSymbols.Integer(width, isUnsigned: isUnsigned);
+        }
+
         if ((isUnsigned || _context.Options.EnforceIntegerRangeStorageRules)
             && (lower.Value < typeMin || lower.Value > typeMax || upper.Value < typeMin || upper.Value > typeMax))
         {
@@ -444,6 +467,50 @@ internal sealed class StarkTypeResolver
         }
 
         return StarkTypeSymbols.Integer(width, lower.Value, upper.Value, isUnsigned);
+    }
+
+    private bool ValidateIntegerRangeEndpointStyle(
+        IReadOnlyList<IToken> tokens,
+        int start,
+        int end,
+        BigInteger value,
+        BigInteger containingTypeMin,
+        BigInteger containingTypeMax,
+        string integerTypeText,
+        bool isUnsigned)
+    {
+        if (value == containingTypeMax && !IsSingleIdentifierEndpoint(tokens, start, end, "max"))
+        {
+            ReportError(
+                "STK3014",
+                $"Integer range endpoint '{FormatIntegerRangeEndpoint(tokens, start, end)}' spells the maximum value for {integerTypeText}; use the `max` shorthand instead.",
+                start < end ? tokens[start] : tokens[Math.Max(0, end - 1)]);
+            return false;
+        }
+
+        if (!isUnsigned
+            && value == containingTypeMin
+            && !IsSingleIdentifierEndpoint(tokens, start, end, "min"))
+        {
+            ReportError(
+                "STK3014",
+                $"Integer range endpoint '{FormatIntegerRangeEndpoint(tokens, start, end)}' spells the minimum value for {integerTypeText}; use the `min` shorthand instead.",
+                start < end ? tokens[start] : tokens[Math.Max(0, end - 1)]);
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsSingleIdentifierEndpoint(
+        IReadOnlyList<IToken> tokens,
+        int start,
+        int end,
+        string expectedName)
+    {
+        return end == start + 1
+            && tokens[start].Type == StarkParser.Identifier
+            && string.Equals(tokens[start].Text, expectedName, StringComparison.Ordinal);
     }
 
     private BigInteger? ResolveIntegerRangeEndpoint(

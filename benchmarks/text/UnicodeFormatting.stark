@@ -10,7 +10,7 @@ unsafe fn i64[min max] UnicodeChecksum(borrow Unicode text) {
 }
 
 export unsafe ffi fn i32[min max] main() {
-    stack mut i32[-2147483648 2147483647][320] storage;
+    stack mut i32[min max][320] storage;
     stack mut Unicode text = new Unicode() {
         Data = &storage[0],
         Length = 0,
@@ -29,12 +29,12 @@ export unsafe ffi fn i32[min max] main() {
         }
         checksum += UnicodeChecksum(text);
 
-        if (!System.Text.TryFormatI1024Unicode(&text, -(2**1023))) {
+        if (!System.Text.TryFormatI1024Unicode(&text, (i1024[min max])(-(2 ** 1023)))) {
             return 3;
         }
         checksum += UnicodeChecksum(text);
 
-        if (!System.Text.TryFormatU1024Unicode(&text, (u1024[0 max])((2**1024) - 1))) {
+        if (!System.Text.TryFormatU1024Unicode(&text, (u1024[0 max])(2 ** 1024 - 1))) {
             return 4;
         }
         checksum += UnicodeChecksum(text);

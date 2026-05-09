@@ -4,13 +4,13 @@ module Benchmarks.Text.AsciiToUnicodeWideningKernel
 
 export unsafe ffi fn i32[min max] main() {
     stack ascii source = "alpha/beta.txt";
-    stack rawptr<i8[-128 127]> sourceData = System.Text.AsciiData(source);
-    stack i64[-9223372036854775808 9223372036854775807] sourceLength = System.Text.AsciiLength(source);
+    stack rawptr<i8[min max]> sourceData = System.Text.AsciiData(source);
+    stack i64[min max] sourceLength = System.Text.AsciiLength(source);
     if (sourceData == null || sourceLength != 14) {
         return 1;
     }
 
-    stack mut i32[-2147483648 2147483647][32] unicodeBuffer = {
+    stack mut i32[min max][32] unicodeBuffer = {
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
     };

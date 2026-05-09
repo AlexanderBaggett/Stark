@@ -9,7 +9,7 @@ public sealed class IntegerFeatureTests : FeatureLlvmTestBase
             """
             module Demo
 
-            finite law i32[-2147483648 2147483647] Run() {
+            finite law i32[min max] Run() {
                 return 1 + 2;
             }
             """);

@@ -138,7 +138,7 @@ public sealed class CompilerPipelineSyntaxModelTests
         """
         [Backend(Opaque)]
         [Backend(Opaque)]
-        record Cursor(i32[-(2 ** 31) 2 ** 31 - 1] Position) {
+        record Cursor(i32[min max] Position) {
         }
         """,
         "STK2111")]
@@ -147,7 +147,7 @@ public sealed class CompilerPipelineSyntaxModelTests
         [Backend(Opaque)]
         [Backend(Opaque)]
         doctrine Numbers {
-            finite law bool Equals(i32[-(2 ** 31) 2 ** 31 - 1] left, i32[-(2 ** 31) 2 ** 31 - 1] right);
+            finite law bool Equals(i32[min max] left, i32[min max] right);
         }
         """,
         "STK2111")]
@@ -155,7 +155,7 @@ public sealed class CompilerPipelineSyntaxModelTests
         """
         struct Box {
             [Backend(Opaque)]
-            i32[-(2 ** 31) 2 ** 31 - 1] Value;
+            i32[min max] Value;
         }
         """,
         "STK2110")]
@@ -193,16 +193,16 @@ public sealed class CompilerPipelineSyntaxModelTests
 
                 [Backend(Opaque)]
                 struct Box {
-                    i32[-(2 ** 31) 2 ** 31 - 1] Value;
+                    i32[min max] Value;
 
-                    fn i32[-(2 ** 31) 2 ** 31 - 1] Read() {
+                    fn i32[min max] Read() {
                         return self.Value;
                     }
                 }
 
                 [Backend(Opaque)]
-                record Cursor(i32[-(2 ** 31) 2 ** 31 - 1] Position) {
-                    fn i32[-(2 ** 31) 2 ** 31 - 1] Read() {
+                record Cursor(i32[min max] Position) {
+                    fn i32[min max] Read() {
                         return self.Position;
                     }
                 }
@@ -252,7 +252,7 @@ public sealed class CompilerPipelineSyntaxModelTests
                 module Demo
 
                 [Backend(Opaque)]
-                finite law i32[-(2 ** 31) 2 ** 31 - 1] Read() {
+                finite law i32[min max] Read() {
                     return 1;
                 }
                 """),
@@ -278,15 +278,15 @@ public sealed class CompilerPipelineSyntaxModelTests
                 module Demo
 
                 [Backend(Opaque)]
-                finite law i32[-(2 ** 31) 2 ** 31 - 1] Read() {
+                finite law i32[min max] Read() {
                     return 1;
                 }
 
-                finite law i32[-(2 ** 31) 2 ** 31 - 1] Fast() {
+                finite law i32[min max] Fast() {
                     return 2;
                 }
 
-                export unsafe ffi fn i32[-(2 ** 31) 2 ** 31 - 1] main() {
+                export unsafe ffi fn i32[min max] main() {
                     return Read() + Fast();
                 }
                 """),
@@ -312,14 +312,14 @@ public sealed class CompilerPipelineSyntaxModelTests
                 module Demo
 
                 struct Buffer {
-                    i32[-(2 ** 31) 2 ** 31 - 1] Value;
+                    i32[min max] Value;
 
                     drop {
                         ;
                     }
                 }
 
-                record Cursor(i32[-(2 ** 31) 2 ** 31 - 1] Position) {
+                record Cursor(i32[min max] Position) {
                     mut drop {
                         self.Position = 0;
                     }
@@ -351,7 +351,7 @@ public sealed class CompilerPipelineSyntaxModelTests
                 """
                 module Demo
 
-                public alias Byte = i8[-(2 ** 7) 2 ** 7 - 1];
+                public alias Byte = i8[min max];
                 alias BufferView<T> = borrow T[];
                 """),
             new CompilerOptions(StopAfterPassId: "syntax-model"));
@@ -363,7 +363,7 @@ public sealed class CompilerPipelineSyntaxModelTests
         var byteAlias = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Kind == DeclarationKind.TypeAlias && declaration.Name == "Byte");
         Assert.Equal(StarkVisibility.Public, byteAlias.Visibility);
         Assert.NotNull(byteAlias.TypeAlias);
-        Assert.Equal("i8[-(2**7)2**7-1]", byteAlias.TypeAlias!.AliasedType);
+        Assert.Equal("i8[minmax]", byteAlias.TypeAlias!.AliasedType);
         Assert.Empty(byteAlias.TypeAlias.GenericParameters);
 
         var bufferViewAlias = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Kind == DeclarationKind.TypeAlias && declaration.Name == "BufferView");

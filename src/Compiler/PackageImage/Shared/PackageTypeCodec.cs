@@ -493,9 +493,31 @@ file static class PackageImageIntegerTypeText
 
         if (rangeMin is not null && rangeMax is not null)
         {
-            return $"{prefix}{normalizedBitWidth}[{rangeMin} {rangeMax}]";
+            var renderedMin = RenderEndpoint(rangeMin, min, isLowerEndpoint: true, isUnsigned);
+            var renderedMax = RenderEndpoint(rangeMax, max, isLowerEndpoint: false, isUnsigned);
+            return $"{prefix}{normalizedBitWidth}[{renderedMin} {renderedMax}]";
         }
 
         return $"{prefix}{normalizedBitWidth}[{min} {max}]";
+    }
+
+    private static string RenderEndpoint(
+        string endpoint,
+        BigInteger typeBoundary,
+        bool isLowerEndpoint,
+        bool isUnsigned)
+    {
+        if (!BigInteger.TryParse(endpoint, out var value)
+            || value != typeBoundary)
+        {
+            return endpoint;
+        }
+
+        if (!isLowerEndpoint)
+        {
+            return "max";
+        }
+
+        return isUnsigned ? "0" : "min";
     }
 }

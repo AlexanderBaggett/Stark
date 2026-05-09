@@ -38,7 +38,7 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(Facade.Crate<i32[-2147483648 2147483647]> crate) {
+                    fn i32[min max] Run(Facade.Crate<i32[min max]> crate) {
                         return 0;
                     }
                     """,
@@ -84,7 +84,7 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
 
                 public record Pair<T>(T Value) { }
 
-                public record Box(i32[-2147483648 2147483647] Dummy) {
+                public record Box(i32[min max] Dummy) {
                     fn Pair<T> MakePair<T>(borrow Box self, T value) {
                         stack Pair<T> pair = new Pair<T>(value);
                         return pair;
@@ -131,8 +131,8 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(Facade.Box box, i32[-2147483648 2147483647] value) {
-                        stack Facade.Pair<i32[-2147483648 2147483647]> pair = Facade.Relay(box, value);
+                    fn i32[min max] Run(Facade.Box box, i32[min max] value) {
+                        stack Facade.Pair<i32[min max]> pair = Facade.Relay(box, value);
                         return value;
                     }
                     """,
@@ -189,7 +189,7 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
 
                 public record Pair<T>(T Value) { }
 
-                public record Box(i32[-2147483648 2147483647] Dummy) {
+                public record Box(i32[min max] Dummy) {
                     fn Pair<T> MakePair<T>(borrow Box self, T value) {
                         stack Pair<T> pair = new Pair<T>(value);
                         return pair;
@@ -223,8 +223,8 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(Facade.Box box, i32[-2147483648 2147483647] value) {
-                        stack Facade.Pair<i32[-2147483648 2147483647]> pair = Facade.Relay(box, value);
+                    fn i32[min max] Run(Facade.Box box, i32[min max] value) {
+                        stack Facade.Pair<i32[min max]> pair = Facade.Relay(box, value);
                         return value;
                     }
                     """,
@@ -275,9 +275,9 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                 """
                 module Facade
 
-                public fn i32[-2147483648 2147483647] SumWhileControl<T>(i32[-2147483648 2147483647] count, i32[-2147483648 2147483647] stopAt, T tag) {
-                    stack mut i32[-2147483648 2147483647] sum = 0;
-                    stack mut i32[-2147483648 2147483647] index = 0;
+                public fn i32[min max] SumWhileControl<T>(i32[min max] count, i32[min max] stopAt, T tag) {
+                    stack mut i32[min max] sum = 0;
+                    stack mut i32[min max] index = 0;
                     while willexit (index < count) {
                         index = index + 1;
                         if (index < 2) {
@@ -291,9 +291,9 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                     return sum;
                 }
 
-                public fn i32[-2147483648 2147483647] SumForControl<T>(i32[-2147483648 2147483647] count, i32[-2147483648 2147483647] stopAt, T tag) {
-                    stack mut i32[-2147483648 2147483647] sum = 0;
-                    for willexit (stack mut i32[-2147483648 2147483647] index = 0; index < count; index = index + 1) {
+                public fn i32[min max] SumForControl<T>(i32[min max] count, i32[min max] stopAt, T tag) {
+                    stack mut i32[min max] sum = 0;
+                    for willexit (stack mut i32[min max] index = 0; index < count; index = index + 1) {
                         if (index < 2) {
                             continue;
                         }
@@ -328,7 +328,7 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] count, i32[-2147483648 2147483647] stopAt, i32[-2147483648 2147483647] tag) {
+                    fn i32[min max] Run(i32[min max] count, i32[min max] stopAt, i32[min max] tag) {
                         return Facade.SumWhileControl(count, stopAt, tag) + Facade.SumForControl(count, stopAt, tag);
                     }
                     """,
@@ -343,8 +343,8 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
             Assert.True(loadedModules.TryGet("Facade", out var importedModule));
             Assert.NotNull(importedModule);
             Assert.DoesNotContain("this is not valid Stark", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
-            Assert.Contains("public fn i32[-2147483648 2147483647] SumWhileControl<T>(i32[-2147483648 2147483647] count, i32[-2147483648 2147483647] stopAt, T tag);", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
-            Assert.Contains("public fn i32[-2147483648 2147483647] SumForControl<T>(i32[-2147483648 2147483647] count, i32[-2147483648 2147483647] stopAt, T tag);", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("public fn i32[min max] SumWhileControl<T>(i32[min max] count, i32[min max] stopAt, T tag);", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("public fn i32[min max] SumForControl<T>(i32[min max] count, i32[min max] stopAt, T tag);", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("while willexit (index < count)", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("for willexit (stack mut i32 index = 0; index < count; index = index + 1)", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("continue;", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
@@ -431,9 +431,9 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                 import Facade
                 module Demo
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
-                    stack i32[-2147483648 2147483647] left = 3;
-                    stack i32[-2147483648 2147483647] right = 7;
+                export unsafe ffi fn i32[min max] main() {
+                    stack i32[min max] left = 3;
+                    stack i32[min max] right = 7;
                     return Facade.Choose(left, right, true);
                 }
                 """);
@@ -503,7 +503,7 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                 """
                 module Facade
 
-                public alias BufferView = i32[-2147483648 2147483647][];
+                public alias BufferView = i32[min max][];
 
                 public fn BufferView Relay<T>(BufferView view, T tag) {
                     return view;
@@ -535,8 +535,8 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647][] values) {
-                        stack i32[-2147483648 2147483647][] copy = Facade.Relay(values, 0);
+                    fn i32[min max] Run(i32[min max][] values) {
+                        stack i32[min max][] copy = Facade.Relay(values, 0);
                         return copy[0];
                     }
                     """,
@@ -550,7 +550,7 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
             Assert.NotNull(loadedModules);
             Assert.True(loadedModules.TryGet("Facade", out var importedModule));
             Assert.NotNull(importedModule);
-            Assert.Contains("public alias BufferView = i32[-2147483648 2147483647][];", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
+            Assert.Contains("public alias BufferView = i32[min max][];", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
             Assert.Contains("Relay<T>", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
             Assert.Contains("return", importedModule.ParseResult.SourceText, StringComparison.Ordinal);
             Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
@@ -628,7 +628,7 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                    fn i32[min max] Run(i32[min max] left, i32[min max] right) {
                         return Facade.Relay(left) + Facade.Relay(right);
                     }
                     """,
@@ -679,7 +679,7 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                     return pair;
                 }
 
-                public fn i32[-2147483648 2147483647] Relay<T>(T value, bool flag) {
+                public fn i32[min max] Relay<T>(T value, bool flag) {
                     stack Pair<T, bool> pair = MakePair(value, flag);
                     return pair.Second ? 1 : 0;
                 }
@@ -709,7 +709,7 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, bool flag) {
+                    fn i32[min max] Run(i32[min max] value, bool flag) {
                         return Facade.Relay(value, flag);
                     }
                     """,

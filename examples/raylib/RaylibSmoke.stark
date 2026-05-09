@@ -11,7 +11,7 @@ export unsafe ffi fn i32[min max] main() {
         return 1;
     }
 
-    if (color.A != (u8[0 255])255) {
+    if (color.A != (u8[0 max])255) {
         return 2;
     }
 
@@ -24,7 +24,7 @@ export unsafe ffi fn i32[min max] main() {
     }
 
     stack Color faded = Fade(color, 0.5f);
-    if (faded.A == (u8[0 255])255) {
+    if (faded.A == (u8[0 max])255) {
         return 5;
     }
 

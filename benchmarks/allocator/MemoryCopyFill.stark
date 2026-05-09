@@ -13,7 +13,7 @@ unsafe fn bool Ok(System.Memory.MemoryStatus status) {
     }
 }
 
-unsafe fn i64[min max] SumBytes(borrow i8[-128 127][] values, u64[0 2 ** 63 - 1] count) {
+unsafe fn i64[min max] SumBytes(borrow i8[min max][] values, u64[0 2 ** 63 - 1] count) {
     stack mut i64[min max] checksum = 0;
     for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
         checksum += (i64[min max])values[index];
@@ -22,7 +22,7 @@ unsafe fn i64[min max] SumBytes(borrow i8[-128 127][] values, u64[0 2 ** 63 - 1]
     return checksum;
 }
 
-unsafe fn i64[min max] SumCodePoints(borrow i32[-2147483648 2147483647][] values, u64[0 2 ** 63 - 1] count) {
+unsafe fn i64[min max] SumCodePoints(borrow i32[min max][] values, u64[0 2 ** 63 - 1] count) {
     stack mut i64[min max] checksum = 0;
     for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
         checksum += (i64[min max])values[index];
@@ -36,32 +36,32 @@ export unsafe ffi fn i32[min max] main() {
     stack u64[0 2 ** 61 - 1] codePointCount = 32;
     stack u64[0 2 ** 61 - 1] moveCount = 16;
     stack u64[0 2 ** 63 - 1] moveDestinationStart = 8;
-    stack mut i8[-128 127][32] byteSource = {
+    stack mut i8[min max][32] byteSource = {
         3, 3, 3, 3, 3, 3, 3, 3,
         3, 3, 3, 3, 3, 3, 3, 3,
         3, 3, 3, 3, 3, 3, 3, 3,
         3, 3, 3, 3, 3, 3, 3, 3
     };
-    stack mut i8[-128 127][32] byteDestination = {
+    stack mut i8[min max][32] byteDestination = {
         0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0
     };
-    stack mut dynamic i8[-128 127] byteMoveBuffer = new();
-    stack mut i32[-2147483648 2147483647][32] codePointSource = {
+    stack mut dynamic i8[min max] byteMoveBuffer = new();
+    stack mut i32[min max][32] codePointSource = {
         65, 65, 65, 65, 65, 65, 65, 65,
         65, 65, 65, 65, 65, 65, 65, 65,
         65, 65, 65, 65, 65, 65, 65, 65,
         65, 65, 65, 65, 65, 65, 65, 65
     };
-    stack mut i32[-2147483648 2147483647][32] codePointDestination = {
+    stack mut i32[min max][32] codePointDestination = {
         0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0
     };
-    stack mut dynamic i32[-2147483648 2147483647] codePointMoveBuffer = new();
+    stack mut dynamic i32[min max] codePointMoveBuffer = new();
     stack mut i64[min max] checksum = 0;
     if (!Ok(System.Memory.ReserveBytes(byteMoveBuffer, byteCount))) {
         return 1;
@@ -84,7 +84,7 @@ export unsafe ffi fn i32[min max] main() {
 
         checksum += SumBytes(byteDestination, byteCount);
 
-        stack i8[-128 127] byteFill = (i8[-128 127])((iteration % 17) + 1);
+        stack i8[min max] byteFill = (i8[min max])((iteration % 17) + 1);
         System.Memory.FillInitializedBytesInfallible(byteDestination, byteFill, byteCount);
 
         checksum += SumBytes(byteDestination, byteCount);
@@ -96,7 +96,7 @@ export unsafe ffi fn i32[min max] main() {
 
         checksum += SumCodePoints(codePointDestination, codePointCount);
 
-        stack i32[-2147483648 2147483647] codePointFill = (i32[-2147483648 2147483647])(90 + (iteration % 11));
+        stack i32[min max] codePointFill = (i32[min max])(90 + (iteration % 11));
         System.Memory.FillInitializedCodePointsInfallible(codePointDestination, codePointFill, codePointCount);
 
         checksum += SumCodePoints(codePointDestination, codePointCount);
@@ -104,8 +104,8 @@ export unsafe ffi fn i32[min max] main() {
         stack u64[0 2 ** 63 - 1] iteration64 = (u64[0 2 ** 63 - 1])iteration;
         for willexit (stack mut u64[0 2 ** 63 - 1] setupIndex = 0; setupIndex < byteCount; setupIndex += 1) {
             unsafe {
-                byteMoveBuffer[setupIndex] = (i8[-128 127])((setupIndex + iteration64) % 97);
-                codePointMoveBuffer[setupIndex] = (i32[-2147483648 2147483647])(65 + ((setupIndex + iteration64) % 17));
+                byteMoveBuffer[setupIndex] = (i8[min max])((setupIndex + iteration64) % 97);
+                codePointMoveBuffer[setupIndex] = (i32[min max])(65 + ((setupIndex + iteration64) % 17));
             }
         }
 

@@ -34,36 +34,43 @@ public sealed class SystemRangeNotationStandardLibraryTests : StandardLibraryTes
     public void StdLibSourceUsesCanonicalRangeNotation()
     {
         var repositoryRoot = FindRepositoryRoot();
-        var stdlibRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var stdlibRoots = new[]
+        {
+            Path.Combine(repositoryRoot, "stdlib", "src"),
+            Path.Combine(repositoryRoot, "stdlib", "templates")
+        };
         var failures = new List<string>();
 
-        foreach (var path in Directory.EnumerateFiles(stdlibRoot, "*.stark", SearchOption.AllDirectories))
+        foreach (var stdlibRoot in stdlibRoots)
         {
-            var relativePath = Path.GetRelativePath(repositoryRoot, path);
-            var source = File.ReadAllText(path);
-            var codeOnly = StripStringLiterals(source);
-
-            foreach (var forbiddenRange in ForbiddenRangeSpellings)
+            foreach (var path in Directory.EnumerateFiles(stdlibRoot, "*.stark", SearchOption.AllDirectories))
             {
-                if (codeOnly.Contains(forbiddenRange, StringComparison.Ordinal))
+                var relativePath = Path.GetRelativePath(repositoryRoot, path);
+                var source = File.ReadAllText(path);
+                var codeOnly = StripStringLiterals(source);
+
+                foreach (var forbiddenRange in ForbiddenRangeSpellings)
                 {
-                    failures.Add($"{relativePath}: replace `{forbiddenRange}` with `[min max]`, `[0 max]`, or exponent notation.");
+                    if (codeOnly.Contains(forbiddenRange, StringComparison.Ordinal))
+                    {
+                        failures.Add($"{relativePath}: replace `{forbiddenRange}` with `[min max]`, `[0 max]`, or exponent notation.");
+                    }
                 }
-            }
 
-            foreach (Match match in ForbiddenBoundaryLiteralPattern.Matches(codeOnly))
-            {
-                failures.Add($"{relativePath}: replace decimal boundary literal `{match.Value}` with exponent notation.");
-            }
+                foreach (Match match in ForbiddenBoundaryLiteralPattern.Matches(codeOnly))
+                {
+                    failures.Add($"{relativePath}: replace decimal boundary literal `{match.Value}` with exponent notation.");
+                }
 
-            foreach (Match match in ParenthesizedPositivePowerPattern.Matches(codeOnly))
-            {
-                failures.Add($"{relativePath}: remove unnecessary parentheses around exponent `{match.Value}`.");
-            }
+                foreach (Match match in ParenthesizedPositivePowerPattern.Matches(codeOnly))
+                {
+                    failures.Add($"{relativePath}: remove unnecessary parentheses around exponent `{match.Value}`.");
+                }
 
-            foreach (Match match in CompactExponentPattern.Matches(codeOnly))
-            {
-                failures.Add($"{relativePath}: write exponent `{match.Value}` with spaces as `2 ** n`.");
+                foreach (Match match in CompactExponentPattern.Matches(codeOnly))
+                {
+                    failures.Add($"{relativePath}: write exponent `{match.Value}` with spaces as `2 ** n`.");
+                }
             }
         }
 

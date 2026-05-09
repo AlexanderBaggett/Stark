@@ -19,7 +19,7 @@ public sealed class CompilerPipelineSpecializationPlanTests
                     return value;
                 }
 
-                fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                fn i32[min max] Run(i32[min max] value) {
                     return Identity(value);
                 }
                 """),
@@ -64,7 +64,7 @@ public sealed class CompilerPipelineSpecializationPlanTests
                     import Math
                     module Demo
 
-                    finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                    finite law i32[min max] Run(i32[min max] value) {
                         return Math.Numbers.Identity(value);
                     }
                     """,
@@ -127,7 +127,7 @@ public sealed class CompilerPipelineSpecializationPlanTests
                     import Math
                     module Demo
 
-                    finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                    finite law i32[min max] Run(i32[min max] value) {
                         return Math.Identity(value);
                     }
                     """,
@@ -192,7 +192,7 @@ public sealed class CompilerPipelineSpecializationPlanTests
                     import Math
                     module Demo
 
-                    finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                    finite law i32[min max] Run(i32[min max] value) {
                         return Math.Numbers.Identity(value);
                     }
                     """,
@@ -243,7 +243,7 @@ public sealed class CompilerPipelineSpecializationPlanTests
                 module Math
 
                 public doctrine Numbers {
-                    law i32[-2147483648 2147483647] AddTag<T>(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right, T tag) {
+                    law i32[min max] AddTag<T>(i32[min max] left, i32[min max] right, T tag) {
                         return left + right;
                     }
                 }
@@ -283,7 +283,7 @@ public sealed class CompilerPipelineSpecializationPlanTests
                     import Math
                     module Demo
 
-                    law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                    law i32[min max] Run(i32[min max] left, i32[min max] right) {
                         return Math.Numbers.AddTag(left, right, left);
                     }
                     """,
@@ -343,7 +343,7 @@ public sealed class CompilerPipelineSpecializationPlanTests
                 """
                 module Math
 
-                public fn i32[-2147483648 2147483647] AddTag<T>(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right, T tag) {
+                public fn i32[min max] AddTag<T>(i32[min max] left, i32[min max] right, T tag) {
                     return left + right;
                 }
                 """,
@@ -381,7 +381,7 @@ public sealed class CompilerPipelineSpecializationPlanTests
                     import Math
                     module Demo
 
-                    law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                    law i32[min max] Run(i32[min max] left, i32[min max] right) {
                         return Math.AddTag(left, right, left);
                     }
                     """,
@@ -452,7 +452,7 @@ public sealed class CompilerPipelineSpecializationPlanTests
                 module Math
 
                 public doctrine Numbers {
-                    law i32[-2147483648 2147483647] CountDown<T>(i32[-2147483648 2147483647] value, T tag) {
+                    law i32[min max] CountDown<T>(i32[min max] value, T tag) {
                         if (value == 0) {
                             return 0;
                         }
@@ -495,7 +495,7 @@ public sealed class CompilerPipelineSpecializationPlanTests
                     import Math
                     module Demo
 
-                    law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                    law i32[min max] Run(i32[min max] value) {
                         return Math.Numbers.CountDown(value, value);
                     }
                     """,
@@ -564,7 +564,7 @@ public sealed class CompilerPipelineSpecializationPlanTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                    fn i32[min max] Run(i32[min max] value) {
                         return Facade.Identity(value);
                     }
                     """,
@@ -650,7 +650,7 @@ public sealed class CompilerPipelineSpecializationPlanTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                    fn i32[min max] Run(i32[min max] value) {
                         return Facade.Identity(value);
                     }
                     """,
@@ -713,8 +713,8 @@ public sealed class CompilerPipelineSpecializationPlanTests
                     import Math
                     module Demo
 
-                    finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
-                        stack i32[-2147483648 2147483647] left = Math.Numbers_Identity(value);
+                    finite law i32[min max] Run(i32[min max] value) {
+                        stack i32[min max] left = Math.Numbers_Identity(value);
                         return Math.Numbers.Identity(left);
                     }
                     """,

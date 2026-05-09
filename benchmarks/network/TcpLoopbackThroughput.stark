@@ -17,7 +17,7 @@ unsafe fn System.Net.IPv4Endpoint LoopbackEndpoint(u8[0 63] attempt) {
         positiveProcessId = (u32[0 max])processId;
     }
 
-    stack u16[0 65535] port = (u16[0 65535])(41000 + (positiveProcessId % 20000) + attempt);
+    stack u16[0 max] port = (u16[0 max])(41000 + (positiveProcessId % 20000) + attempt);
     return new System.Net.IPv4Endpoint() {
         Address = new System.Net.IPv4Address() {
             A = 127,

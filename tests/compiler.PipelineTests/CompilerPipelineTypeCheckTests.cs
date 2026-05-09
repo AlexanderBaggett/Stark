@@ -21,7 +21,7 @@ public sealed class CompilerPipelineTypeCheckTests
 
                 public enum IOResult<T> {
                     Ok(T),
-                    Err(i32[-2147483648 2147483647]),
+                    Err(i32[min max]),
                 }
                 """,
                 Path.Combine(tempDirectory.FullName, "Facade.stark")));
@@ -39,11 +39,11 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    finite law i32[-2147483648 2147483647] Unwrap(Facade.IOResult<i32[-2147483648 2147483647]> result) {
+                    finite law i32[min max] Unwrap(Facade.IOResult<i32[min max]> result) {
                         switch (result) {
-                            case Facade.IOResult<i32[-2147483648 2147483647]>.Ok(var value):
+                            case Facade.IOResult<i32[min max]>.Ok(var value):
                                 return value;
-                            case Facade.IOResult<i32[-2147483648 2147483647]>.Err(var code):
+                            case Facade.IOResult<i32[min max]>.Err(var code):
                                 return code;
                         }
                     }
@@ -102,8 +102,8 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    unsafe fn i32[-2147483648 2147483647] Run() {
-                        stack i32[-2147483648 2147483647] value = 4;
+                    unsafe fn i32[min max] Run() {
+                        stack i32[min max] value = 4;
                         return Facade.Identity(value);
                     }
                     """,
@@ -300,7 +300,7 @@ public sealed class CompilerPipelineTypeCheckTests
                 module Facade
 
                 public const Answer = 42;
-                public static mut i32[-2147483648 2147483647] Counter = 0;
+                public static mut i32[min max] Counter = 0;
                 """,
                 facadePath));
 
@@ -337,7 +337,7 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    unsafe fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[min max] Run() {
                         return Facade.Answer;
                     }
                     """,
@@ -382,7 +382,7 @@ public sealed class CompilerPipelineTypeCheckTests
                 module Facade
 
                 public struct Box {
-                    i32[-2147483648 2147483647] Value;
+                    i32[min max] Value;
                 }
                 """,
                 facadePath));
@@ -422,7 +422,7 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    unsafe fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[min max] Run() {
                         stack Facade.Box box = new Facade.Box() { Value = 3 };
                         return box.Value;
                     }
@@ -465,8 +465,8 @@ public sealed class CompilerPipelineTypeCheckTests
                 """
                 module Facade
 
-                public record Counter(i32[-2147483648 2147483647] Value) {
-                    i32[-2147483648 2147483647] Count;
+                public record Counter(i32[min max] Value) {
+                    i32[min max] Count;
                 }
                 """,
                 facadePath));
@@ -507,7 +507,7 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                    fn i32[min max] Run(i32[min max] value) {
                         stack Facade.Counter counter = new Facade.Counter(value);
                         return counter.Value;
                     }
@@ -554,9 +554,9 @@ public sealed class CompilerPipelineTypeCheckTests
                 module Facade
 
                 public struct Box {
-                    i32[-2147483648 2147483647] Value;
+                    i32[min max] Value;
 
-                    Box(i32[-2147483648 2147483647] value) {
+                    Box(i32[min max] value) {
                     }
                 }
                 """,
@@ -591,7 +591,7 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    fn void Run(i32[-2147483648 2147483647] value) {
+                    fn void Run(i32[min max] value) {
                         stack Facade.Box box = new Facade.Box(value);
                     }
                     """,
@@ -636,10 +636,10 @@ public sealed class CompilerPipelineTypeCheckTests
                 """
                 module Facade
 
-                public record Counter(i32[-2147483648 2147483647] Value) {
-                    i32[-2147483648 2147483647] Count;
+                public record Counter(i32[min max] Value) {
+                    i32[min max] Count;
 
-                    Counter(i32[-2147483648 2147483647] value, i32[-2147483648 2147483647] count) {
+                    Counter(i32[min max] value, i32[min max] count) {
                     }
                 }
                 """,
@@ -684,7 +684,7 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                    fn i32[min max] Run(i32[min max] value) {
                         stack Facade.Counter counter = new Facade.Counter(value, 7);
                         return counter.Value;
                     }

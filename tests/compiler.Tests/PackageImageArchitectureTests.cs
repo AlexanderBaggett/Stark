@@ -19,7 +19,7 @@ public sealed class PackageImageArchitectureTests
                     [Backend(Opaque)]
                     module Facade
 
-                    public fn i32[-2147483648 2147483647] Identity(i32[-2147483648 2147483647] value) {
+                    public fn i32[min max] Identity(i32[min max] value) {
                         return value;
                     }
                     """,
@@ -83,7 +83,7 @@ public sealed class PackageImageArchitectureTests
                     module Facade
 
                     [Backend(Opaque)]
-                    public finite law i32[-2147483648 2147483647] Identity(i32[-2147483648 2147483647] value) {
+                    public finite law i32[min max] Identity(i32[min max] value) {
                         return value;
                     }
 
@@ -94,9 +94,9 @@ public sealed class PackageImageArchitectureTests
 
                     [Backend(Opaque)]
                     public struct Box {
-                        i32[-2147483648 2147483647] Value;
+                        i32[min max] Value;
 
-                        public finite law i32[-2147483648 2147483647] Read(borrow Box self) {
+                        public finite law i32[min max] Read(borrow Box self) {
                             return self.Value;
                         }
                     }
@@ -201,7 +201,7 @@ public sealed class PackageImageArchitectureTests
             """
             module Helpers
 
-            public finite law i32[-2147483648 2147483647] Identity(i32[-2147483648 2147483647] value) {
+            public finite law i32[min max] Identity(i32[min max] value) {
                 return value;
             }
             """);
@@ -414,8 +414,8 @@ public sealed class PackageImageArchitectureTests
                     """
                     module Facade
 
-                    public fn i32[-2147483648 2147483647] CountIndependent<T>(i32[-2147483648 2147483647] limit, T tag) {
-                        stack mut i32[-2147483648 2147483647] value = 0;
+                    public fn i32[min max] CountIndependent<T>(i32[min max] limit, T tag) {
+                        stack mut i32[min max] value = 0;
                         while willexit independent (value < limit) {
                             value += 1;
                         }
@@ -581,8 +581,8 @@ public sealed class PackageImageArchitectureTests
 
             Assert.True(PackageImageLoader.TryBuildModuleSource(CreateResolvedPackageModule(module), out var sourceText));
             Assert.Contains("public fn u8[0 127] Keep(u8[0 127] value)", sourceText, StringComparison.Ordinal);
-            Assert.Contains("public fn u32[0 4294967295] Keep32(u32[0 4294967295] value)", sourceText, StringComparison.Ordinal);
-            Assert.Contains("public fn u96[0 79228162514264337593543950335] Keep96(u96[0 79228162514264337593543950335] value)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public fn u32[0 max] Keep32(u32[0 max] value)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public fn u96[0 max] Keep96(u96[0 max] value)", sourceText, StringComparison.Ordinal);
         }
         finally
         {
@@ -610,7 +610,7 @@ public sealed class PackageImageArchitectureTests
                 """
                 module Bits
 
-                public record Token(i32[-2147483648 2147483647] value) {
+                public record Token(i32[min max] value) {
                 }
                 """);
             File.WriteAllText(
@@ -618,7 +618,7 @@ public sealed class PackageImageArchitectureTests
                 """
                 module Math
 
-                public fn i32[-2147483648 2147483647] Id(i32[-2147483648 2147483647] value) {
+                public fn i32[min max] Id(i32[min max] value) {
                     return value;
                 }
                 """);
@@ -679,7 +679,7 @@ public sealed class PackageImageArchitectureTests
                 """
                 module Runtime
 
-                internal fn i32[-2147483648 2147483647] Hidden() {
+                internal fn i32[min max] Hidden() {
                     return 7;
                 }
                 """);
@@ -691,7 +691,7 @@ public sealed class PackageImageArchitectureTests
                     import Runtime
                     module Facade
 
-                    public fn i32[-2147483648 2147483647] Run() {
+                    public fn i32[min max] Run() {
                         return Runtime.Hidden();
                     }
                     """,
@@ -747,7 +747,7 @@ public sealed class PackageImageArchitectureTests
                 """
                 module Runtime
 
-                internal fn i32[-2147483648 2147483647] Hidden() {
+                internal fn i32[min max] Hidden() {
                     return 7;
                 }
                 """);
@@ -759,7 +759,7 @@ public sealed class PackageImageArchitectureTests
                     import Runtime
                     module Facade
 
-                    public fn i32[-2147483648 2147483647] Run() {
+                    public fn i32[min max] Run() {
                         return Runtime.Hidden();
                     }
                     """,

@@ -70,7 +70,7 @@ standard library:
 
 ```stark
 internal struct Allocation {
-    rawmutptr<i8[-128 127]> Pointer;
+    rawmutptr<i8[min max]> Pointer;
     i64[0 max] ByteLength;
     i64[1 max] Alignment;
     Allocator Allocator;

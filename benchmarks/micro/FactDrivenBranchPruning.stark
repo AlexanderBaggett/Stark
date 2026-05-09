@@ -10,7 +10,7 @@ unsafe finite law i64[min max] Score(u8[0 10] value, i64[min max] salt) {
 }
 
 unsafe finite law i64[min max] SwitchScore(u8[10 12] value, i64[min max] salt) {
-    stack i32[-2147483648 2147483647] widened = (i32[-2147483648 2147483647])value;
+    stack i32[min max] widened = (i32[min max])value;
     switch (widened) {
         case 10:
             return salt + 10;

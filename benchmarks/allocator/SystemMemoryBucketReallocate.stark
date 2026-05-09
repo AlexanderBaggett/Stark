@@ -11,7 +11,7 @@ public struct Allocator {
 }
 
 internal struct Allocation {
-    rawmutptr<i8[-128 127]> Pointer;
+    rawmutptr<i8[min max]> Pointer;
     u64[0 2 ** 63 - 1] ByteLength;
     u64[1 2 ** 63 - 1] Alignment;
     Allocator Allocator;

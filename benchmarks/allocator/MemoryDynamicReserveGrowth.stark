@@ -14,7 +14,7 @@ unsafe fn bool Ok(System.Memory.MemoryStatus status) {
     }
 }
 
-unsafe fn i64[min max] SumBytes(borrow i8[-128 127][] values, u64[0 2 ** 63 - 1] count) {
+unsafe fn i64[min max] SumBytes(borrow i8[min max][] values, u64[0 2 ** 63 - 1] count) {
     stack mut i64[min max] checksum = count;
     for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
         checksum += (i64[min max])values[index];
@@ -23,7 +23,7 @@ unsafe fn i64[min max] SumBytes(borrow i8[-128 127][] values, u64[0 2 ** 63 - 1]
     return checksum;
 }
 
-unsafe fn i64[min max] SumCodePoints(borrow i32[-2147483648 2147483647][] values, u64[0 2 ** 63 - 1] count) {
+unsafe fn i64[min max] SumCodePoints(borrow i32[min max][] values, u64[0 2 ** 63 - 1] count) {
     stack mut i64[min max] checksum = count;
     for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
         checksum += (i64[min max])values[index];
@@ -34,13 +34,13 @@ unsafe fn i64[min max] SumCodePoints(borrow i32[-2147483648 2147483647][] values
 
 export unsafe ffi fn i32[min max] main() {
     stack mut i64[min max] checksum = 0;
-    stack mut i8[-128 127][16] byteSource = {
+    stack mut i8[min max][16] byteSource = {
         1, 2, 3, 4,
         5, 6, 7, 8,
         9, 10, 11, 12,
         13, 14, 15, 16
     };
-    stack mut i32[-2147483648 2147483647][8] codePointSource = {
+    stack mut i32[min max][8] codePointSource = {
         65, 66, 67, 68,
         69, 70, 71, 72
     };
@@ -49,8 +49,8 @@ export unsafe ffi fn i32[min max] main() {
     stack u64[0 2 ** 63 - 1] fillLength = 32;
 
     for willexit (stack mut u16[0 800] iteration = 0; iteration < Iterations; iteration += 1) {
-        stack mut dynamic i8[-128 127] bytes = new();
-        stack mut dynamic i32[-2147483648 2147483647] codePoints = new();
+        stack mut dynamic i8[min max] bytes = new();
+        stack mut dynamic i32[min max] codePoints = new();
 
         for willexit (stack mut u8[0 32] chunk = 0; chunk < Chunks; chunk += 1) {
             unsafe {

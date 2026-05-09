@@ -1814,7 +1814,7 @@ public sealed class SsaOptimizationTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+            fn i32[min max] Run(i32[min max] value) {
                 switch (value) {
                     case 1:
                         return 10;
@@ -1849,7 +1849,7 @@ public sealed class SsaOptimizationTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+            fn i32[min max] Run(i32[min max] value) {
                 switch (value) {
                     case 9:
                         return 90;
@@ -1884,7 +1884,7 @@ public sealed class SsaOptimizationTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+            fn i32[min max] Run(i32[min max] value) {
                 switch (value) {
                     case 1:
                         return 10;
@@ -1990,8 +1990,8 @@ public sealed class SsaOptimizationTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(bool flag, i32[-2147483648 2147483647] value) {
-                stack mut i32[-2147483648 2147483647] result = value;
+            fn i32[min max] Run(bool flag, i32[min max] value) {
+                stack mut i32[min max] result = value;
                 if (flag) {
                     result = result + 1;
                 } else {
@@ -2127,9 +2127,9 @@ public sealed class SsaOptimizationTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] n) {
-                stack mut i32[-2147483648 2147483647] sum = 0;
-                stack mut i32[-2147483648 2147483647] i = 0;
+            fn i32[min max] Run(i32[min max] n) {
+                stack mut i32[min max] sum = 0;
+                stack mut i32[min max] i = 0;
                 while willexit (i < n) {
                     sum = sum + i;
                     i = i + 1;
@@ -2162,7 +2162,7 @@ public sealed class SsaOptimizationTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(bool flag) {
+            fn i32[min max] Run(bool flag) {
                 if (flag == true) {
                     return 1;
                 }
@@ -2205,7 +2205,7 @@ public sealed class SsaOptimizationTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 return (1 + 2) * 3;
             }
             """);
@@ -2227,11 +2227,11 @@ public sealed class SsaOptimizationTests
             module Demo
 
             struct Pair {
-                i32[-2147483648 2147483647] Left;
-                i32[-2147483648 2147483647] Right;
+                i32[min max] Left;
+                i32[min max] Right;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 stack Pair pair = new Pair() { Left = 1 + 2, Right = 3 * 4 };
                 return pair.Left + pair.Right;
             }
@@ -2259,8 +2259,8 @@ public sealed class SsaOptimizationTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
-                stack i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
+            fn i32[min max] Run() {
+                stack i32[min max][3] values = { 1, 2, 3 };
                 return 4;
             }
             """);
@@ -2291,7 +2291,7 @@ public sealed class SsaOptimizationTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647][] view, i32[-2147483648 2147483647] index) {
+            fn i32[min max] Run(i32[min max][] view, i32[min max] index) {
                 return view[index] + view[index];
             }
             """);
@@ -5966,8 +5966,8 @@ public sealed class SsaOptimizationTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
-                stack i32[-2147483648 2147483647] x = 1;
+            fn i32[min max] Run() {
+                stack i32[min max] x = 1;
                 if (x == 1) {
                     return 7;
                 } else {
@@ -5991,8 +5991,8 @@ public sealed class SsaOptimizationTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
-                stack i32[-2147483648 2147483647] value = 2;
+            fn i32[min max] Run() {
+                stack i32[min max] value = 2;
                 switch (value) {
                     case 1:
                         return 1;

@@ -12,8 +12,8 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe finite law i32[-2147483648 2147483647] Run() {
-                stack mut i32[-2147483648 2147483647] value = 1;
+            unsafe finite law i32[min max] Run() {
+                stack mut i32[min max] value = 1;
                 value = value + 1;
                 return value;
             }
@@ -36,12 +36,12 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right) {
                 return left + right;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
-                stack fnptr<fn i32[-2147483648 2147483647](i32[-2147483648 2147483647], i32[-2147483648 2147483647])> op = Add;
+            unsafe fn i32[min max] Run() {
+                stack fnptr<fn i32[min max](i32[min max], i32[min max])> op = Add;
                 return op(40, 2);
             }
             """,
@@ -464,8 +464,8 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
-                stack fnptr<fn i32[-2147483648 2147483647](i32[-2147483648 2147483647])> increment = (i32[-2147483648 2147483647] value) => value + 1;
+            unsafe fn i32[min max] Run() {
+                stack fnptr<fn i32[min max](i32[min max])> increment = (i32[min max] value) => value + 1;
                 return increment(41);
             }
             """,
@@ -486,12 +486,12 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Apply(fnptr<fn i32[-2147483648 2147483647](i32[-2147483648 2147483647])> op) {
+            unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op) {
                 return op(41);
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
-                return Apply((i32[-2147483648 2147483647] value) => value + 1);
+            unsafe fn i32[min max] Run() {
+                return Apply((i32[min max] value) => value + 1);
             }
             """,
             options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
@@ -510,9 +510,9 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] input) {
-                stack mut i32[-2147483648 2147483647] value = input;
-                stack rawmutptr<i32[-2147483648 2147483647]> ptr = &value;
+            unsafe fn i32[min max] Run(i32[min max] input) {
+                stack mut i32[min max] value = input;
+                stack rawmutptr<i32[min max]> ptr = &value;
                 *ptr = input + 1;
                 return value;
             }
@@ -542,7 +542,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 return 1;
             }
             """);
@@ -550,7 +550,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 return 1;
             }
             """,
@@ -570,7 +570,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe finite law i32[-2147483648 2147483647] Run() {
+            unsafe finite law i32[min max] Run() {
                 if (true) {
                     return 1;
                 }
@@ -594,8 +594,8 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe finite law i32[-2147483648 2147483647] Run(bool flag) {
-                stack mut i32[-2147483648 2147483647] value = 0;
+            unsafe finite law i32[min max] Run(bool flag) {
+                stack mut i32[min max] value = 0;
                 if (flag) {
                     value = 1;
                 } else {
@@ -622,8 +622,8 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe finite law i32[-2147483648 2147483647] Run(bool flag) {
-                stack mut i32[-2147483648 2147483647] value = 0;
+            unsafe finite law i32[min max] Run(bool flag) {
+                stack mut i32[min max] value = 0;
                 if w99 (flag) {
                     value = 1;
                 } else {
@@ -648,7 +648,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe finite law i32[-2147483648 2147483647] Pick(u8[0 5] value) {
+            unsafe finite law i32[min max] Pick(u8[0 5] value) {
                 switch w75 (value) {
                     case 0:
                         return 10;
@@ -680,11 +680,11 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            cold noinline unsafe fn i32[-2147483648 2147483647] Slow(i32[-2147483648 2147483647] value) {
+            cold noinline unsafe fn i32[min max] Slow(i32[min max] value) {
                 return value + 1;
             }
 
-            unsafe finite law i32[-2147483648 2147483647] Run(bool fail, i32[-2147483648 2147483647] value) {
+            unsafe finite law i32[min max] Run(bool fail, i32[min max] value) {
                 if (fail) {
                     return Slow(value);
                 }
@@ -708,10 +708,10 @@ public sealed class LlvmIrEmissionTests
             module Globals
 
             public const Answer = 42;
-            internal static rawptr<i8[-128 127]> Buffer = null;
-            export static mut rawptr<i8[-128 127]> Visible = null;
+            internal static rawptr<i8[min max]> Buffer = null;
+            export static mut rawptr<i8[min max]> Visible = null;
 
-            unsafe finite law i32[-2147483648 2147483647] Run() {
+            unsafe finite law i32[min max] Run() {
                 return 0;
             }
             """);
@@ -734,9 +734,9 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            unsafe finite i32[-2147483648 2147483647] Run() {
+            unsafe finite i32[min max] Run() {
                 Counter = Counter + 7;
                 return Counter;
             }
@@ -758,11 +758,11 @@ public sealed class LlvmIrEmissionTests
             module Math
 
             public const Answer = 42;
-            internal static mut i32[-2147483648 2147483647] Counter = 0;
-            static i32[-2147483648 2147483647] Hidden = 1;
-            export static mut i32[-2147483648 2147483647] Visible = 0;
+            internal static mut i32[min max] Counter = 0;
+            static i32[min max] Hidden = 1;
+            export static mut i32[min max] Visible = 0;
 
-            unsafe finite i32[-2147483648 2147483647] Run() {
+            unsafe finite i32[min max] Run() {
                 Counter = Counter + 7;
                 return Counter;
             }
@@ -789,11 +789,11 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            noinline unsafe fn i32[-2147483648 2147483647] Helper(i32[-2147483648 2147483647] value) {
+            noinline unsafe fn i32[min max] Helper(i32[min max] value) {
                 return value + 1;
             }
 
-            export unsafe ffi fn i32[-2147483648 2147483647] main(i32[-2147483648 2147483647] value) {
+            export unsafe ffi fn i32[min max] main(i32[min max] value) {
                 return Helper(value);
             }
             """,
@@ -818,7 +818,7 @@ public sealed class LlvmIrEmissionTests
             import Win32
             module System.Runtime.Platform
 
-            internal unsafe fn void ExitProcess(i32[-2147483648 2147483647] code) {
+            internal unsafe fn void ExitProcess(i32[min max] code) {
                 Win32.ExitProcess(code);
                 return;
             }
@@ -832,7 +832,7 @@ public sealed class LlvmIrEmissionTests
                         """
                         module Win32
 
-                        internal unsafe ffi fn void ExitProcess(i32[-2147483648 2147483647] code);
+                        internal unsafe ffi fn void ExitProcess(i32[min max] code);
                         """,
                         "/virtual/Win32.stark"
                     )
@@ -880,10 +880,10 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            static i32[-2147483648 2147483647] Hidden = 1;
-            static i32[-2147483648 2147483647] Exposed = 2;
+            static i32[min max] Hidden = 1;
+            static i32[min max] Exposed = 2;
 
-            unsafe fn rawptr<i32[-2147483648 2147483647]> ExposedPtr() {
+            unsafe fn rawptr<i32[min max]> ExposedPtr() {
                 return &Exposed;
             }
             """,
@@ -909,14 +909,14 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Pair {
-                i32[-2147483648 2147483647] Left;
-                i32[-2147483648 2147483647] Right;
+                i32[min max] Left;
+                i32[min max] Right;
             }
 
             const Pair Origin = new Pair() { Left = 1, Right = 2 };
-            static i32[-2147483648 2147483647][3] Values = { 4, 7, 9 };
+            static i32[min max][3] Values = { 4, 7, 9 };
 
-            unsafe finite i32[-2147483648 2147483647] Run() {
+            unsafe finite i32[min max] Run() {
                 return Origin.Right + Values[1];
             }
             """);
@@ -937,19 +937,19 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Pair {
-                i32[-2147483648 2147483647] Left;
-                i32[-2147483648 2147483647] Right;
+                i32[min max] Left;
+                i32[min max] Right;
             }
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
             const Pair Origin = new Pair() { Left = 1, Right = 2 };
-            const i32[-2147483648 2147483647][3] Values = { 4, 7, 9 };
+            const i32[min max][3] Values = { 4, 7, 9 };
 
             unsafe finite law unicode Greek() {
                 return (unicode)"\u03B1";
             }
 
-            unsafe finite i32[-2147483648 2147483647] Run() {
+            unsafe finite i32[min max] Run() {
                 return Counter + Origin.Right + Values[1];
             }
             """);
@@ -988,10 +988,10 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            static rawptr<i8[-128 127]> Buffer = null;
+            static rawptr<i8[min max]> Buffer = null;
             const ascii Label = "Hi";
 
-            unsafe finite i32[-2147483648 2147483647] Run() {
+            unsafe finite i32[min max] Run() {
                 return 0;
             }
             """,
@@ -1019,7 +1019,7 @@ public sealed class LlvmIrEmissionTests
             const Bits = 7;
             const Value = 3.5;
             const FloatValue = 3.5f;
-            static rawptr<i8[-128 127]> Buffer = null;
+            static rawptr<i8[min max]> Buffer = null;
             const ascii Label = "Hi";
             """,
             new CompilerOptions(
@@ -1047,14 +1047,14 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Pair {
-                i32[-2147483648 2147483647] Left;
-                i32[-2147483648 2147483647] Right;
+                i32[min max] Left;
+                i32[min max] Right;
             }
 
             internal const Pair Origin = new Pair() { Left = 1, Right = 2 };
-            internal static i32[-2147483648 2147483647][3] Values = { 4, 7, 9 };
+            internal static i32[min max][3] Values = { 4, 7, 9 };
 
-            unsafe finite i32[-2147483648 2147483647] Run() {
+            unsafe finite i32[min max] Run() {
                 return Origin.Right + Values[1];
             }
             """,
@@ -1077,9 +1077,9 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             const Answer = (1 + 2) * 3;
-            const i32[-2147483648 2147483647][1 + 2] Values = { 4, 7, 9 };
+            const i32[min max][1 + 2] Values = { 4, 7, 9 };
 
-            unsafe finite i32[-2147483648 2147483647] Run() {
+            unsafe finite i32[min max] Run() {
                 return Answer + Values[2];
             }
             """);
@@ -1098,13 +1098,13 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Point(i32[-2147483648 2147483647] X) {
-                i32[-2147483648 2147483647] Y;
+            record Point(i32[min max] X) {
+                i32[min max] Y;
             }
 
             const Point Origin = new Point(3) { Y = 9 };
 
-            unsafe finite i32[-2147483648 2147483647] Run() {
+            unsafe finite i32[min max] Run() {
                 return Origin.Y;
             }
             """);
@@ -1123,9 +1123,9 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            const i32[-2147483648 2147483647][3] Values = { 4, 7, 9 };
+            const i32[min max][3] Values = { 4, 7, 9 };
 
-            unsafe finite i32[-2147483648 2147483647] Run() {
+            unsafe finite i32[min max] Run() {
                 return Values[1];
             }
             """);
@@ -1144,7 +1144,7 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Inner {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             struct Outer {
@@ -1157,7 +1157,7 @@ public sealed class LlvmIrEmissionTests
                 Label = "ok"
             };
 
-            unsafe finite i32[-2147483648 2147483647] Run() {
+            unsafe finite i32[min max] Run() {
                 return Graph.Item.Value;
             }
             """);
@@ -1180,12 +1180,12 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Inner {
-                i32[-2147483648 2147483647][2] Pair;
+                i32[min max][2] Pair;
             }
 
             struct Outer {
                 Inner Node;
-                i32[-2147483648 2147483647][3] View;
+                i32[min max][3] View;
             }
 
             const Outer Frozen = {
@@ -1193,7 +1193,7 @@ public sealed class LlvmIrEmissionTests
                 View = { 1, 2, 3 }
             };
 
-            unsafe finite i32[-2147483648 2147483647] Run() {
+            unsafe finite i32[min max] Run() {
                 return Frozen.Node.Pair[1] + Frozen.View[0];
             }
             """);
@@ -1214,14 +1214,14 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Pair {
-                i32[-2147483648 2147483647] Left;
-                i32[-2147483648 2147483647] Right;
+                i32[min max] Left;
+                i32[min max] Right;
             }
 
             static mut Pair Current = new Pair() { Left = 5, Right = 8 };
-            static mut i32[-2147483648 2147483647][3] Values = { 1, 2, 3 };
+            static mut i32[min max][3] Values = { 1, 2, 3 };
 
-            unsafe finite i32[-2147483648 2147483647] Run() {
+            unsafe finite i32[min max] Run() {
                 Current.Right = 9;
                 Values[1] = 7;
                 return Current.Right + Values[1];
@@ -1250,12 +1250,12 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Buffer {
-                i32[-2147483648 2147483647][2] Values;
+                i32[min max][2] Values;
             }
 
             static Buffer Shared = { Values = { 5, 8 } };
 
-            unsafe finite i32[-2147483648 2147483647] Run() {
+            unsafe finite i32[min max] Run() {
                 return Shared.Values[1];
             }
             """);
@@ -1275,27 +1275,27 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             static Box Current = new Box() { Value = 5 };
             const Box Frozen = new Box() { Value = 7 };
-            static i32[-2147483648 2147483647][3] Values = { 1, 2, 3 };
-            static mut i32[-2147483648 2147483647] Counter = 1;
+            static i32[min max][3] Values = { 1, 2, 3 };
+            static mut i32[min max] Counter = 1;
 
-            unsafe fn i32[-2147483648 2147483647] ReadStatic() {
+            unsafe fn i32[min max] ReadStatic() {
                 return Current.Value;
             }
 
-            unsafe fn i32[-2147483648 2147483647] ReadConst() {
+            unsafe fn i32[min max] ReadConst() {
                 return Frozen.Value;
             }
 
-            unsafe fn i32[-2147483648 2147483647] ReadIndex(u8[0 2] index) {
+            unsafe fn i32[min max] ReadIndex(u8[0 2] index) {
                 return Values[index];
             }
 
-            unsafe fn i32[-2147483648 2147483647] ReadMutable() {
+            unsafe fn i32[min max] ReadMutable() {
                 return Counter;
             }
             """);
@@ -1316,26 +1316,26 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn void Observe(rawptr<i32[-2147483648 2147483647]> ptr) {
-                stack i32[-2147483648 2147483647] ignored = *ptr;
+            unsafe fn void Observe(rawptr<i32[min max]> ptr) {
+                stack i32[min max] ignored = *ptr;
                 return;
             }
 
-            unsafe fn i32[-2147483648 2147483647] ReadOnce(i32[-2147483648 2147483647] input) {
-                stack i32[-2147483648 2147483647] value = input;
-                stack rawptr<i32[-2147483648 2147483647]> ptr = &value;
+            unsafe fn i32[min max] ReadOnce(i32[min max] input) {
+                stack i32[min max] value = input;
+                stack rawptr<i32[min max]> ptr = &value;
                 return *ptr;
             }
 
-            unsafe fn i32[-2147483648 2147483647] ReadEscaped(i32[-2147483648 2147483647] input) {
-                stack i32[-2147483648 2147483647] escaped = input;
+            unsafe fn i32[min max] ReadEscaped(i32[min max] input) {
+                stack i32[min max] escaped = input;
                 Observe(&escaped);
                 return *(&escaped);
             }
 
-            unsafe fn i32[-2147483648 2147483647] ReadMutable(i32[-2147483648 2147483647] input) {
-                stack mut i32[-2147483648 2147483647] mutable = input;
-                stack rawmutptr<i32[-2147483648 2147483647]> ptr = &mutable;
+            unsafe fn i32[min max] ReadMutable(i32[min max] input) {
+                stack mut i32[min max] mutable = input;
+                stack rawmutptr<i32[min max]> ptr = &mutable;
                 *ptr = input + 1;
                 return *ptr;
             }
@@ -1364,12 +1364,12 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Big {
-                i64[-9223372036854775808 9223372036854775807] A;
-                i64[-9223372036854775808 9223372036854775807] B;
-                i64[-9223372036854775808 9223372036854775807] C;
+                i64[min max] A;
+                i64[min max] B;
+                i64[min max] C;
             }
 
-            unsafe fn i64[-9223372036854775808 9223372036854775807] Read(rawptr<frozen Big> box) {
+            unsafe fn i64[min max] Read(rawptr<frozen Big> box) {
                 return (*box).B;
             }
             """);
@@ -1483,7 +1483,7 @@ public sealed class LlvmIrEmissionTests
             unsafe fn u8[0 10] ReadEscaped() {
                 stack mut u8[0 10] value = 1;
                 stack rawmutptr<u8[0 10]> ptr = &value;
-                if ((i64[-9223372036854775808 9223372036854775807])ptr == 0) {
+                if ((i64[min max])ptr == 0) {
                     return 0;
                 }
 
@@ -1582,9 +1582,9 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            const rawptr<i8[-128 127]> stdout = null;
+            const rawptr<i8[min max]> stdout = null;
 
-            unsafe finite law i32[-2147483648 2147483647] Run() {
+            unsafe finite law i32[min max] Run() {
                 return 0;
             }
             """);
@@ -1602,7 +1602,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right) {
                 return left ^ right;
             }
             """);
@@ -1621,7 +1621,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right, i32[-2147483648 2147483647] mask) {
+            unsafe fn i32[min max] Run(i32[min max] left, i32[min max] middle, i32[min max] right, i32[min max] mask) {
                 return left | middle ^ right & mask << 1 >> 1;
             }
             """);
@@ -1643,15 +1643,15 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right) {
                 return left + right;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Sub(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[min max] Sub(i32[min max] left, i32[min max] right) {
                 return left - right;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Mul(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[min max] Mul(i32[min max] left, i32[min max] right) {
                 return left * right;
             }
             """);
@@ -1674,15 +1674,15 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Add(u8[0 10] left, u8[0 20] right) {
+            unsafe fn i32[min max] Add(u8[0 10] left, u8[0 20] right) {
                 return left + right;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Sub(u8[20 30] left, u8[0 10] right) {
+            unsafe fn i32[min max] Sub(u8[20 30] left, u8[0 10] right) {
                 return left - right;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Mul(u8[0 10] left, u8[0 5] right) {
+            unsafe fn i32[min max] Mul(u8[0 10] left, u8[0 5] right) {
                 return left * right;
             }
             """);
@@ -1722,8 +1722,8 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] AddAfterJoin(bool flag, u8[0 10] left, u8[20 30] right) {
-                stack mut i32[-2147483648 2147483647] value = left;
+            unsafe fn i32[min max] AddAfterJoin(bool flag, u8[0 10] left, u8[20 30] right) {
+                stack mut i32[min max] value = left;
                 if (flag) {
                     value = right;
                 }
@@ -1745,7 +1745,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Mask(u8[0 15] value) {
+            unsafe fn i32[min max] Mask(u8[0 15] value) {
                 return value & 7;
             }
             """);
@@ -1763,19 +1763,19 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] DivideMasked(i32[-2147483648 2147483647] value, u8[1 10] divisor) {
+            unsafe fn i32[min max] DivideMasked(i32[min max] value, u8[1 10] divisor) {
                 return (value & 255) / divisor;
             }
 
-            unsafe fn i32[-2147483648 2147483647] ModuloMasked(i32[-2147483648 2147483647] value, u8[1 10] divisor) {
+            unsafe fn i32[min max] ModuloMasked(i32[min max] value, u8[1 10] divisor) {
                 return (value & 255) % divisor;
             }
 
-            unsafe fn bool LessMasked(i32[-2147483648 2147483647] value, u8[0 255] threshold) {
+            unsafe fn bool LessMasked(i32[min max] value, u8[0 max] threshold) {
                 return (value & 255) < threshold;
             }
 
-            unsafe fn bool GreaterMasked(i32[-2147483648 2147483647] value, u8[0 255] threshold) {
+            unsafe fn bool GreaterMasked(i32[min max] value, u8[0 max] threshold) {
                 return (value & 255) > threshold;
             }
             """);
@@ -1802,7 +1802,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Add(i8[-1 10] left, u8[0 20] right) {
+            unsafe fn i32[min max] Add(i8[-1 10] left, u8[0 20] right) {
                 return left + right;
             }
             """);
@@ -1821,15 +1821,15 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Both(u32[0 2 ** 30 - 1] value) {
+            unsafe fn i32[min max] Both(u32[0 2 ** 30 - 1] value) {
                 return value << 1;
             }
 
-            unsafe fn i32[-2147483648 2147483647] UnsignedOnly(u32[0 2 ** 31 - 1] value) {
+            unsafe fn i32[min max] UnsignedOnly(u32[0 2 ** 31 - 1] value) {
                 return value << 1;
             }
 
-            unsafe fn i32[-2147483648 2147483647] SignedOnly(i8[-4 -1] value) {
+            unsafe fn i32[min max] SignedOnly(i8[-4 -1] value) {
                 return value << 1;
             }
             """);
@@ -1897,15 +1897,15 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] ShiftBack(i32[-536870912 536870911] value) {
+            unsafe fn i32[min max] ShiftBack(i32[-536870912 536870911] value) {
                 return (value << 2) >> 1;
             }
 
-            unsafe fn i32[-2147483648 2147483647] DivideProduct(i16[-1000 1000] value) {
+            unsafe fn i32[min max] DivideProduct(i16[-1000 1000] value) {
                 return (value * 6) / 3;
             }
 
-            unsafe fn i32[-2147483648 2147483647] DivideShift(i16[-1000 1000] value) {
+            unsafe fn i32[min max] DivideShift(i16[-1000 1000] value) {
                 return (value << 3) / 8;
             }
             """);
@@ -1924,19 +1924,19 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] ShiftLeft(i32[-2147483648 2147483647] value) {
+            unsafe fn i32[min max] ShiftLeft(i32[min max] value) {
                 return value << 1;
             }
 
-            unsafe fn i32[-2147483648 2147483647] ShiftRight(i32[-2147483648 2147483647] value) {
+            unsafe fn i32[min max] ShiftRight(i32[min max] value) {
                 return value >> 1;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Divide(i32[-2147483648 2147483647] value, u8[2 2] divisor) {
+            unsafe fn i32[min max] Divide(i32[min max] value, u8[2 2] divisor) {
                 return value / divisor;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Remainder(i32[-2147483648 2147483647] value, u8[2 2] divisor) {
+            unsafe fn i32[min max] Remainder(i32[min max] value, u8[2 2] divisor) {
                 return value % divisor;
             }
             """);
@@ -1961,7 +1961,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right) {
                 return -%left +% right *% 2 -% right;
             }
             """);
@@ -1987,7 +1987,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right) {
                 return left +| right *| 2 -| 1;
             }
             """);
@@ -2018,11 +2018,11 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Wrap(u8[0 10] left, u8[0 5] right) {
+            unsafe fn i32[min max] Wrap(u8[0 10] left, u8[0 5] right) {
                 return left +% right *% 2 -% 1;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Sat(u8[0 10] left, u8[0 5] right) {
+            unsafe fn i32[min max] Sat(u8[0 10] left, u8[0 5] right) {
                 return left +| right *| 2 -| 1;
             }
             """);
@@ -2048,15 +2048,15 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Wrap() {
+            unsafe fn i32[min max] Wrap() {
                 return 2147483647 +% 1;
             }
 
-            unsafe fn i32[-2147483648 2147483647] SatAdd() {
+            unsafe fn i32[min max] SatAdd() {
                 return 2147483647 +| 1;
             }
 
-            unsafe fn i32[-2147483648 2147483647] SatMul() {
+            unsafe fn i32[min max] SatMul() {
                 return 1073741824 *| 4;
             }
             """);
@@ -2099,7 +2099,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right) {
                 return left ** right;
             }
             """);
@@ -2125,7 +2125,7 @@ public sealed class LlvmIrEmissionTests
                 return value;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 if (Echo(0.0) != 0.0) {
                     return 1;
                 }
@@ -2157,8 +2157,8 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
-                stack mut i32[-2147483648 2147483647] i = 0;
+            unsafe fn i32[min max] Run() {
+                stack mut i32[min max] i = 0;
                 while willexit (i < 4) {
                     i = i + 1;
                 }
@@ -2182,8 +2182,8 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
-                stack i32[-2147483648 2147483647] value = 1;
+            unsafe fn i32[min max] Run() {
+                stack i32[min max] value = 1;
                 switch (value) {
                     case 1:
                         return 1;
@@ -2210,7 +2210,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, bool allow) {
+            unsafe fn i32[min max] Run(i32[min max] value, bool allow) {
                 switch (value) {
                     case 1 when allow:
                         return 1;
@@ -2240,14 +2240,14 @@ public sealed class LlvmIrEmissionTests
 
             enum Status {
                 Ok,
-                Err(i32[-2147483648 2147483647]),
+                Err(i32[min max]),
             }
 
             unsafe fn Status Next() {
                 return Status.Ok;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 switch (Next()) {
                     case Status.Ok:
                         return 1;
@@ -2271,7 +2271,7 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             enum Token {
-                Full(i32[-2147483648 2147483647], i32[-2147483648 2147483647], i32[-2147483648 2147483647], i32[-2147483648 2147483647], i32[-2147483648 2147483647]),
+                Full(i32[min max], i32[min max], i32[min max], i32[min max], i32[min max]),
                 Empty,
             }
 
@@ -2279,11 +2279,11 @@ public sealed class LlvmIrEmissionTests
                 return Token.Empty;
             }
 
-            unsafe fn Token MakeFull(i32[-2147483648 2147483647] value) {
+            unsafe fn Token MakeFull(i32[min max] value) {
                 return Token.Full(value, value, value, value, value);
             }
 
-            unsafe fn i32[-2147483648 2147483647] Score(Token token) {
+            unsafe fn i32[min max] Score(Token token) {
                 switch (token) {
                     case Token.Empty:
                         return 0;
@@ -2312,7 +2312,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, bool allow) {
+            unsafe fn i32[min max] Run(i32[min max] value, bool allow) {
                 switch (value) {
                     case var capture when allow:
                         return capture;
@@ -2340,7 +2340,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, bool allow) {
+            unsafe fn i32[min max] Run(i32[min max] value, bool allow) {
                 switch (value) {
                     case 1:
                     case 2 when allow:
@@ -2368,7 +2368,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            noinline unsafe fn i32[-2147483648 2147483647] Next() {
+            noinline unsafe fn i32[min max] Next() {
                 return 1;
             }
 
@@ -2413,7 +2413,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run(ascii value, bool allow) {
+            unsafe fn i32[min max] Run(ascii value, bool allow) {
                 switch (value) {
                     case "ab":
                         return 1;
@@ -2444,7 +2444,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run(ascii value) {
+            unsafe fn i32[min max] Run(ascii value) {
                 switch (value) {
                     case "":
                         return 0;
@@ -2488,7 +2488,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run(unicode value) {
+            unsafe fn i32[min max] Run(unicode value) {
                 switch (value) {
                     case "\u03c0":
                         return 1;
@@ -2516,11 +2516,11 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn ascii SliceAscii(ascii text, i32[-2147483648 2147483647] start, i32[-2147483648 2147483647] length) {
+            unsafe fn ascii SliceAscii(ascii text, i32[min max] start, i32[min max] length) {
                 return text[start, length];
             }
 
-            unsafe fn unicode SliceUnicode(unicode text, i32[-2147483648 2147483647] start, i32[-2147483648 2147483647] length) {
+            unsafe fn unicode SliceUnicode(unicode text, i32[min max] start, i32[min max] length) {
                 return text[start, length];
             }
             """);
@@ -2614,14 +2614,14 @@ public sealed class LlvmIrEmissionTests
             public unsafe fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
 
             public unsafe fn unicode Run() {
-                stack mut i8[-128 127][16] asciiBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut i8[min max][16] asciiBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
                 stack mut Ascii ownedAscii = new Ascii() {
                     Data = &asciiBuffer[0],
                     Length = 0,
                     Capacity = 16
                 };
 
-                stack mut i32[-2147483648 2147483647][8] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut i32[min max][8] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0 };
                 stack mut Unicode ownedUnicode = new Unicode() {
                     Data = &unicodeBuffer[0],
                     Length = 0,
@@ -2672,7 +2672,7 @@ public sealed class LlvmIrEmissionTests
             public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
 
             public unsafe fn bool Run() {
-                stack mut i32[-2147483648 2147483647][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut i32[min max][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
                 stack mut Unicode ownedUnicode = new Unicode() {
                     Data = &unicodeBuffer[0],
                     Length = 0,
@@ -2710,7 +2710,7 @@ public sealed class LlvmIrEmissionTests
             public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
 
             public unsafe fn bool Run() {
-                stack mut i32[-2147483648 2147483647][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut i32[min max][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
                 stack mut Unicode ownedUnicode = new Unicode() {
                     Data = &unicodeBuffer[0],
                     Length = 0,
@@ -2742,7 +2742,7 @@ public sealed class LlvmIrEmissionTests
             public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
 
             public unsafe fn bool Run() {
-                stack mut i32[-2147483648 2147483647][64] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut i32[min max][64] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
                 stack mut Unicode ownedUnicode = new Unicode() {
                     Data = &unicodeBuffer[0],
                     Length = 0,
@@ -2776,7 +2776,7 @@ public sealed class LlvmIrEmissionTests
             public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
 
             public unsafe fn bool Run(ascii source) {
-                stack mut i32[-2147483648 2147483647][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut i32[min max][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
                 stack mut Unicode ownedUnicode = new Unicode() {
                     Data = &unicodeBuffer[0],
                     Length = 0,
@@ -2805,7 +2805,7 @@ public sealed class LlvmIrEmissionTests
             public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
 
             public unsafe fn bool Run() {
-                stack mut i32[-2147483648 2147483647][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut i32[min max][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
                 stack mut Unicode ownedUnicode = new Unicode() {
                     Data = &unicodeBuffer[0],
                     Length = 0,
@@ -2837,7 +2837,7 @@ public sealed class LlvmIrEmissionTests
             public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
 
             public unsafe fn bool Run() {
-                stack mut i32[-2147483648 2147483647][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut i32[min max][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
                 stack mut Unicode ownedUnicode = new Unicode() {
                     Data = &unicodeBuffer[0],
                     Length = 0,
@@ -2869,7 +2869,7 @@ public sealed class LlvmIrEmissionTests
             public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
 
             public unsafe fn bool Run(bool choose) {
-                stack mut i32[-2147483648 2147483647][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut i32[min max][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
                 stack mut Unicode ownedUnicode = new Unicode() {
                     Data = &unicodeBuffer[0],
                     Length = 0,
@@ -2901,7 +2901,7 @@ public sealed class LlvmIrEmissionTests
             public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
 
             public unsafe fn bool Run() {
-                stack mut i32[-2147483648 2147483647][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut i32[min max][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
                 stack mut Unicode ownedUnicode = new Unicode() {
                     Data = &unicodeBuffer[0],
                     Length = 0,
@@ -2988,7 +2988,7 @@ public sealed class LlvmIrEmissionTests
             public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
 
             public unsafe fn bool Run() {
-                stack mut i32[-2147483648 2147483647][4] unicodeBuffer = { 0, 0, 0, 0 };
+                stack mut i32[min max][4] unicodeBuffer = { 0, 0, 0, 0 };
                 stack mut Unicode ownedUnicode = new Unicode() {
                     Data = &unicodeBuffer[0],
                     Length = 7,
@@ -3047,14 +3047,14 @@ public sealed class LlvmIrEmissionTests
 
             public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
 
-            public unsafe fn i32[-2147483648 2147483647] Run(bool choose) {
-                stack mut i32[-2147483648 2147483647][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+            public unsafe fn i32[min max] Run(bool choose) {
+                stack mut i32[min max][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
                 stack mut Unicode ownedUnicode = new Unicode() {
                     Data = &unicodeBuffer[0],
                     Length = 0,
                     Capacity = 16
                 };
-                stack mut i32[-2147483648 2147483647] result = 0;
+                stack mut i32[min max] result = 0;
                 if (choose) {
                     TryConvertAsciiToUnicode(&ownedUnicode, "Stark");
                     result = 2;
@@ -3085,7 +3085,7 @@ public sealed class LlvmIrEmissionTests
             public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
 
             public unsafe fn bool Run() {
-                stack mut i32[-2147483648 2147483647][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut i32[min max][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
                 stack mut Unicode ownedUnicode = new Unicode() {
                     Data = &unicodeBuffer[0],
                     Length = 0,
@@ -3174,11 +3174,11 @@ public sealed class LlvmIrEmissionTests
             """
             module System.BitOperations
 
-            public unsafe finite law i32[-2147483648 2147483647] LeadingZeroCount(i32[-2147483648 2147483647] value);
-            public unsafe finite law i64[-9223372036854775808 9223372036854775807] TrailingZeroCount(i64[-9223372036854775808 9223372036854775807] value);
-            public unsafe finite law i32[-2147483648 2147483647] PopCount(i32[-2147483648 2147483647] value);
-            public unsafe finite law i64[-9223372036854775808 9223372036854775807] RotateLeft(i64[-9223372036854775808 9223372036854775807] value, i64[-9223372036854775808 9223372036854775807] amount);
-            public unsafe finite law i32[-2147483648 2147483647] RotateRight(i32[-2147483648 2147483647] value, i32[-2147483648 2147483647] amount);
+            public unsafe finite law i32[min max] LeadingZeroCount(i32[min max] value);
+            public unsafe finite law i64[min max] TrailingZeroCount(i64[min max] value);
+            public unsafe finite law i32[min max] PopCount(i32[min max] value);
+            public unsafe finite law i64[min max] RotateLeft(i64[min max] value, i64[min max] amount);
+            public unsafe finite law i32[min max] RotateRight(i32[min max] value, i32[min max] amount);
             """);
 
         Assert.True(result.Succeeded);
@@ -3328,7 +3328,7 @@ public sealed class LlvmIrEmissionTests
             import System.Math
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 return 0;
             }
             """,
@@ -3365,7 +3365,7 @@ public sealed class LlvmIrEmissionTests
             import System.BitOperations
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+            unsafe fn i32[min max] Run(i32[min max] value) {
                 return System.BitOperations.PopCount(value);
             }
             """,
@@ -3378,7 +3378,7 @@ public sealed class LlvmIrEmissionTests
                         """
                         module System.BitOperations
 
-                        public unsafe finite law i32[-2147483648 2147483647] PopCount(i32[-2147483648 2147483647] value);
+                        public unsafe finite law i32[min max] PopCount(i32[min max] value);
                         """,
                         "/virtual/System/BitOperations.stark"
                     )
@@ -3401,8 +3401,8 @@ public sealed class LlvmIrEmissionTests
             """
             module Hello
 
-            unsafe ffi fn i32[-2147483648 2147483647] puts(ascii text);
-            export unsafe ffi fn i32[-2147483648 2147483647] main() {
+            unsafe ffi fn i32[min max] puts(ascii text);
+            export unsafe ffi fn i32[min max] main() {
                 puts("Hello, world!\n");
                 return 0;
             }
@@ -3553,14 +3553,14 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right) {
                 return left + right;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Read(borrow Box box) {
+            unsafe fn i32[min max] Read(borrow Box box) {
                 return box.Value;
             }
             """);
@@ -3580,7 +3580,7 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             unsafe fn retborrow Box Echo(retborrow Box value) {
@@ -3602,14 +3602,14 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
-                unsafe fn retborrow mut i32[-2147483648 2147483647] Field(mut borrow Box self) {
+                unsafe fn retborrow mut i32[min max] Field(mut borrow Box self) {
                     return self.Value;
                 }
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack mut Box box = new Box() { Value = 0 };
                 box.Field() = 7;
                 return box.Field();
@@ -3633,7 +3633,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, bool allow) {
+            unsafe fn i32[min max] Run(i32[min max] value, bool allow) {
                 if (allow) {
                     return value;
                 }
@@ -3658,10 +3658,10 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Read(borrow Box box) {
+            unsafe fn i32[min max] Read(borrow Box box) {
                 return box.Value;
             }
             """);
@@ -3683,11 +3683,11 @@ public sealed class LlvmIrEmissionTests
 
             record Pair(u8[0 10] Left, u8[0 10] Right) { }
             record Big(
-                i64[-9223372036854775808 9223372036854775807] A,
-                i64[-9223372036854775808 9223372036854775807] B,
-                i64[-9223372036854775808 9223372036854775807] C) { }
+                i64[min max] A,
+                i64[min max] B,
+                i64[min max] C) { }
 
-            unsafe fn rawptr<i8[-128 127]> Pick(rawptr<i8[-128 127]> ptr) {
+            unsafe fn rawptr<i8[min max]> Pick(rawptr<i8[min max]> ptr) {
                 return ptr;
             }
 
@@ -3725,14 +3725,14 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            unsafe fn i32[-2147483648 2147483647] ReadBorrow(borrow Box box) {
+            unsafe fn i32[min max] ReadBorrow(borrow Box box) {
                 return box.Value;
             }
 
-            unsafe fn i32[-2147483648 2147483647] ReadView(borrow i32[-2147483648 2147483647][] view, i32[-2147483648 2147483647] index) {
+            unsafe fn i32[min max] ReadView(borrow i32[min max][] view, i32[min max] index) {
                 return view[index];
             }
 
@@ -3772,9 +3772,9 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn void Fill(rawmutptr<i32[-2147483648 2147483647]> ptr);
+            unsafe fn void Fill(rawmutptr<i32[min max]> ptr);
 
-            unsafe fn void Run(rawmutptr<i32[-2147483648 2147483647]> ptr) {
+            unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
                 Fill(ptr);
                 return;
             }
@@ -3799,9 +3799,9 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe ffi fn i32[-2147483648 2147483647] Fill(rawmutptr<i32[-2147483648 2147483647]> ptr);
+            unsafe ffi fn i32[min max] Fill(rawmutptr<i32[min max]> ptr);
 
-            unsafe fn i32[-2147483648 2147483647] Run(rawmutptr<i32[-2147483648 2147483647]> ptr) {
+            unsafe fn i32[min max] Run(rawmutptr<i32[min max]> ptr) {
                 return Fill(ptr);
             }
             """);
@@ -3885,7 +3885,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Range(i32[-2147483648 2147483647] value) {
+            unsafe fn i32[min max] Range(i32[min max] value) {
                 if (value >= 0) {
                     return value;
                 }
@@ -3911,7 +3911,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Read(rawptr<i32[-2147483648 2147483647]> ptr) {
+            unsafe fn i32[min max] Read(rawptr<i32[min max]> ptr) {
                 if (ptr != null) {
                     return *ptr;
                 }
@@ -3937,8 +3937,8 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i64[-9223372036854775808 9223372036854775807] ReadIfSame(rawptr<i64[-9223372036854775808 9223372036854775807]> ptr) {
-                stack i64[-9223372036854775808 9223372036854775807] value = 9;
+            unsafe fn i64[min max] ReadIfSame(rawptr<i64[min max]> ptr) {
+                stack i64[min max] value = 9;
                 if (ptr == &value) {
                     return *ptr;
                 }
@@ -3966,7 +3966,7 @@ public sealed class LlvmIrEmissionTests
                 return value;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Plain(bool flag, i32[-2147483648 2147483647] value) {
+            unsafe fn i32[min max] Plain(bool flag, i32[min max] value) {
                 if (flag) {
                     return value;
                 }
@@ -4013,12 +4013,12 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            unsafe fn i32[-2147483648 2147483647] ReadGlobal() {
+            unsafe fn i32[min max] ReadGlobal() {
                 return Counter;
             }
 
@@ -4046,10 +4046,10 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Big {
-                i64[-9223372036854775808 9223372036854775807] A;
-                i64[-9223372036854775808 9223372036854775807] B;
-                i64[-9223372036854775808 9223372036854775807] C;
-                i64[-9223372036854775808 9223372036854775807] D;
+                i64[min max] A;
+                i64[min max] B;
+                i64[min max] C;
+                i64[min max] D;
             }
 
             struct Box {
@@ -4113,13 +4113,13 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe ffi fn i32[-2147483648 2147483647] puts(ascii text);
+            unsafe ffi fn i32[min max] puts(ascii text);
 
             unsafe fn ascii Message() {
                 return "Hello";
             }
 
-            export unsafe ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[min max] main() {
                 stack ascii message = Message();
                 puts(message);
                 return 0;
@@ -4145,10 +4145,10 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack Box box = new Box() { Value = 41 };
                 return box.Value;
             }
@@ -4170,10 +4170,10 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack mut Box box = new Box() { Value = 1 };
                 box.Value = 2;
                 return box.Value;
@@ -4196,10 +4196,10 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 register Box box = new Box() { Value = 7 };
                 return box.Value;
             }
@@ -4246,11 +4246,11 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            noinline unsafe fn i32[-2147483648 2147483647] Step(i32[-2147483648 2147483647] value) {
+            noinline unsafe fn i32[min max] Step(i32[min max] value) {
                 return value + 1;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+            unsafe fn i32[min max] Run(i32[min max] value) {
                 return Step(value);
             }
             """);
@@ -4397,11 +4397,11 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            strictfp fn f64 Run(f32 small, f64 wide, i32[-2147483648 2147483647] integer) {
+            strictfp fn f64 Run(f32 small, f64 wide, i32[min max] integer) {
                 stack f64 promoted = (f64)small;
                 stack f32 narrowed = (f32)wide;
                 stack f64 fromInteger = (f64)integer;
-                stack i32[-2147483648 2147483647] backToInteger = (i32[-2147483648 2147483647])narrowed;
+                stack i32[min max] backToInteger = (i32[min max])narrowed;
                 return promoted + fromInteger + backToInteger;
             }
             """);
@@ -4425,7 +4425,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run(bool fail) {
+            unsafe fn i32[min max] Run(bool fail) {
                 if (fail) {
                     return 1;
                 }
@@ -4455,10 +4455,10 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 heap Box box = new Box() { Value = 7 };
                 return box.Value;
             }
@@ -4518,11 +4518,11 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Pair {
-                i32[-2147483648 2147483647] Left;
-                i32[-2147483648 2147483647] Right;
+                i32[min max] Left;
+                i32[min max] Right;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right) {
                 heap mut Pair pair;
                 pair.Left = left;
                 pair.Right = right;
@@ -4565,7 +4565,7 @@ public sealed class LlvmIrEmissionTests
             }
 
             internal struct Allocation {
-                rawmutptr<i8[-128 127]> Pointer;
+                rawmutptr<i8[min max]> Pointer;
                 u64[0 2 ** 63 - 1] ByteLength;
                 u64[1 2 ** 63 - 1] Alignment;
                 Allocator Allocator;
@@ -4575,7 +4575,7 @@ public sealed class LlvmIrEmissionTests
             internal unsafe fn Allocation Reallocate(Allocation allocation, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
             internal unsafe fn void Free(Allocation allocation);
 
-            export unsafe ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[min max] main() {
                 stack Allocator allocator = Allocator.Default();
                 stack Allocation allocation = Allocate(allocator, 16, 8);
                 stack Allocation grown = Reallocate(allocation, 32, 8);
@@ -4638,10 +4638,10 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 heap Box box = new Box() { Value = 7 };
                 return box.Value;
             }
@@ -4681,10 +4681,10 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 heap Box box = new Box() { Value = 7 };
                 return box.Value;
             }
@@ -4725,7 +4725,7 @@ public sealed class LlvmIrEmissionTests
             }
 
             internal struct Allocation {
-                rawmutptr<i8[-128 127]> Pointer;
+                rawmutptr<i8[min max]> Pointer;
                 u64[0 2 ** 63 - 1] ByteLength;
                 u64[1 2 ** 63 - 1] Alignment;
                 Allocator Allocator;
@@ -4735,7 +4735,7 @@ public sealed class LlvmIrEmissionTests
             internal unsafe fn Allocation Reallocate(Allocation allocation, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
             internal unsafe fn void Free(Allocation allocation);
 
-            export unsafe ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[min max] main() {
                 stack Allocator allocator = Allocator.Default();
                 stack Allocation allocation = Allocate(allocator, 16, 8);
                 stack Allocation grown = Reallocate(allocation, 32, 8);
@@ -4769,9 +4769,9 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] input) {
-                stack mut i32[-2147483648 2147483647] value = input;
-                stack rawmutptr<i32[-2147483648 2147483647]> ptr = &value;
+            unsafe fn i32[min max] Run(i32[min max] input) {
+                stack mut i32[min max] value = input;
+                stack rawmutptr<i32[min max]> ptr = &value;
                 *ptr = input + 1;
                 return value;
             }
@@ -4793,9 +4793,9 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i64[-9223372036854775808 9223372036854775807] Read() {
-                stack mut i64[-9223372036854775808 9223372036854775807] value = 7;
-                stack rawmutptr<i64[-9223372036854775808 9223372036854775807]> ptr = &value;
+            unsafe fn i64[min max] Read() {
+                stack mut i64[min max] value = 7;
+                stack rawmutptr<i64[min max]> ptr = &value;
                 return *ptr;
             }
             """);
@@ -4813,7 +4813,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Read(rawptr<i32[-2147483648 2147483647]> ptr) {
+            unsafe fn i32[min max] Read(rawptr<i32[min max]> ptr) {
                 return *ptr;
             }
             """);
@@ -4832,7 +4832,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Probe(ascii input) {
+            unsafe fn i32[min max] Probe(ascii input) {
                 stack ascii slot = input;
                 stack rawptr<ascii> ptr = &slot;
                 return 0;
@@ -4860,17 +4860,17 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] ReadStack(
-                i32[-2147483648 2147483647][4] input,
+            unsafe fn i32[min max] ReadStack(
+                i32[min max][4] input,
                 u8[0 3] index) {
-                stack mut i32[-2147483648 2147483647][4] stackValues = input;
+                stack mut i32[min max][4] stackValues = input;
                 return stackValues[index];
             }
 
-            unsafe fn i32[-2147483648 2147483647] ReadHeap(
-                i32[-2147483648 2147483647][4] input,
+            unsafe fn i32[min max] ReadHeap(
+                i32[min max][4] input,
                 u8[0 3] index) {
-                heap i32[-2147483648 2147483647][4] heapValues = input;
+                heap i32[min max][4] heapValues = input;
                 return heapValues[index];
             }
             """);
@@ -4893,21 +4893,21 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Big {
-                i64[-9223372036854775808 9223372036854775807] A;
-                i64[-9223372036854775808 9223372036854775807] B;
-                i64[-9223372036854775808 9223372036854775807] C;
+                i64[min max] A;
+                i64[min max] B;
+                i64[min max] C;
             }
 
             unsafe fn Big Make() {
                 return new Big() { A = 1, B = 2, C = 3 };
             }
 
-            unsafe fn i64[-9223372036854775808 9223372036854775807] Run(bool flag) {
+            unsafe fn i64[min max] Run(bool flag) {
                 if (flag) {
-                    stack mut i32[-2147483648 2147483647] value = 41;
-                    stack rawmutptr<i32[-2147483648 2147483647]> ptr = &value;
+                    stack mut i32[min max] value = 41;
+                    stack rawmutptr<i32[min max]> ptr = &value;
                     stack Big made = Make();
-                    return (i64[-9223372036854775808 9223372036854775807])*ptr + made.A;
+                    return (i64[min max])*ptr + made.A;
                 }
 
                 return 0;
@@ -4941,7 +4941,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
+            record Pair(i32[min max] Left, i32[min max] Right) { }
 
             unsafe fn bool Equal(Pair left, Pair right) {
                 return left == right;
@@ -4974,11 +4974,11 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn bool Equal(i32[-2147483648 2147483647][2] left, i32[-2147483648 2147483647][2] right) {
+            unsafe fn bool Equal(i32[min max][2] left, i32[min max][2] right) {
                 return left == right;
             }
 
-            unsafe fn bool NotEqual(i32[-2147483648 2147483647][2] left, i32[-2147483648 2147483647][2] right) {
+            unsafe fn bool NotEqual(i32[min max][2] left, i32[min max][2] right) {
                 return left != right;
             }
             """);
@@ -5007,7 +5007,7 @@ public sealed class LlvmIrEmissionTests
 
             enum Token {
                 None,
-                Number(i32[-2147483648 2147483647]),
+                Number(i32[min max]),
             }
 
             unsafe fn bool Equal(Token left, Token right) {
@@ -5044,7 +5044,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Many(i32[-2147483648 2147483647] A, i32[-2147483648 2147483647] B, i32[-2147483648 2147483647] C, i32[-2147483648 2147483647] D, i32[-2147483648 2147483647] E) { }
+            record Many(i32[min max] A, i32[min max] B, i32[min max] C, i32[min max] D, i32[min max] E) { }
 
             unsafe fn bool Equal(Many left, Many right) {
                 return left == right;
@@ -5075,7 +5075,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Many(i32[-2147483648 2147483647] A, i32[-2147483648 2147483647] B, i32[-2147483648 2147483647] C, i32[-2147483648 2147483647] D, i32[-2147483648 2147483647] E) { }
+            record Many(i32[min max] A, i32[min max] B, i32[min max] C, i32[min max] D, i32[min max] E) { }
 
             unsafe fn bool Less(Many left, Many right) {
                 return left < right;
@@ -5118,7 +5118,7 @@ public sealed class LlvmIrEmissionTests
 
             enum Token {
                 None,
-                Many(i32[-2147483648 2147483647], i32[-2147483648 2147483647], i32[-2147483648 2147483647], i32[-2147483648 2147483647], i32[-2147483648 2147483647]),
+                Many(i32[min max], i32[min max], i32[min max], i32[min max], i32[min max]),
             }
 
             unsafe fn bool Less(Token left, Token right) {
@@ -5162,11 +5162,11 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn bool Equal(i32[-2147483648 2147483647][5] left, i32[-2147483648 2147483647][5] right) {
+            unsafe fn bool Equal(i32[min max][5] left, i32[min max][5] right) {
                 return left == right;
             }
 
-            unsafe fn bool NotEqual(i32[-2147483648 2147483647][5] left, i32[-2147483648 2147483647][5] right) {
+            unsafe fn bool NotEqual(i32[min max][5] left, i32[min max][5] right) {
                 return left != right;
             }
             """);
@@ -5193,7 +5193,7 @@ public sealed class LlvmIrEmissionTests
 
             enum Token {
                 None,
-                Many(i32[-2147483648 2147483647], i32[-2147483648 2147483647], i32[-2147483648 2147483647], i32[-2147483648 2147483647], i32[-2147483648 2147483647]),
+                Many(i32[min max], i32[min max], i32[min max], i32[min max], i32[min max]),
             }
 
             unsafe fn bool Equal(Token left, Token right) {
@@ -5290,11 +5290,11 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn bool Same(i32[-2147483648 2147483647][] left, i32[-2147483648 2147483647][] right) {
+            unsafe fn bool Same(i32[min max][] left, i32[min max][] right) {
                 return left == right;
             }
 
-            unsafe fn bool Different(i32[-2147483648 2147483647][] left, i32[-2147483648 2147483647][] right) {
+            unsafe fn bool Different(i32[min max][] left, i32[min max][] right) {
                 return left != right;
             }
             """);
@@ -5323,7 +5323,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Window(i32[-2147483648 2147483647][] Items, i32[-2147483648 2147483647] Count) { }
+            record Window(i32[min max][] Items, i32[min max] Count) { }
 
             unsafe fn bool Same(Window left, Window right) {
                 return left == right;
@@ -5357,7 +5357,7 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Cell {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             struct Holder {
@@ -5370,7 +5370,7 @@ public sealed class LlvmIrEmissionTests
                 };
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 return Make().Cells[1].Value;
             }
             """);
@@ -5393,9 +5393,9 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Point(i32[-2147483648 2147483647] X, i32[-2147483648 2147483647] Y) { }
+            record Point(i32[min max] X, i32[min max] Y) { }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack Point point = new Point(3, 4);
                 return point.Y;
             }
@@ -5416,7 +5416,7 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             unsafe fn Box Make() {
@@ -5438,8 +5438,8 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Point(i32[-2147483648 2147483647] X) {
-                i32[-2147483648 2147483647] Y;
+            record Point(i32[min max] X) {
+                i32[min max] Y;
             }
 
             unsafe fn Point Make() {
@@ -5464,14 +5464,14 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Read(Box box) {
+            unsafe fn i32[min max] Read(Box box) {
                 return box.Value;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 return Read(new Box() { Value = 7 });
             }
             """);
@@ -5493,8 +5493,8 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Pair {
-                i8[-128 127] Tag;
-                i32[-2147483648 2147483647] Value;
+                i8[min max] Tag;
+                i32[min max] Value;
             }
 
             unsafe fn void Touch(borrow Pair pair) {
@@ -5516,8 +5516,8 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Pair {
-                i64[-9223372036854775808 9223372036854775807] Left;
-                i64[-9223372036854775808 9223372036854775807] Right;
+                i64[min max] Left;
+                i64[min max] Right;
             }
 
             alias PairAlias = Pair;
@@ -5544,11 +5544,11 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Pair {
-                i32[-2147483648 2147483647] Left;
-                i32[-2147483648 2147483647] Right;
+                i32[min max] Left;
+                i32[min max] Right;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack mut Pair source = new Pair() { Left = 1, Right = 2 };
                 stack mut Pair dest = new Pair() { Left = 0, Right = 0 };
                 stack rawptr<Pair> sourcePtr = &source;
@@ -5577,11 +5577,11 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Pair {
-                i8[-128 127] Tag;
-                i32[-2147483648 2147483647] Value;
+                i8[min max] Tag;
+                i32[min max] Value;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack Pair source = new Pair() { Tag = 1, Value = 2 };
                 stack mut Pair dest = new Pair() { Tag = 0, Value = 0 };
                 stack rawptr<Pair> sourcePtr = &source;
@@ -5608,18 +5608,18 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Large {
-                i32[-2147483648 2147483647] A0;
-                i32[-2147483648 2147483647] A1;
-                i32[-2147483648 2147483647] A2;
-                i32[-2147483648 2147483647] A3;
-                i32[-2147483648 2147483647] A4;
-                i32[-2147483648 2147483647] A5;
-                i32[-2147483648 2147483647] A6;
-                i32[-2147483648 2147483647] A7;
-                i32[-2147483648 2147483647] A8;
+                i32[min max] A0;
+                i32[min max] A1;
+                i32[min max] A2;
+                i32[min max] A3;
+                i32[min max] A4;
+                i32[min max] A5;
+                i32[min max] A6;
+                i32[min max] A7;
+                i32[min max] A8;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack Large source = new Large() {
                     A0 = 1,
                     A1 = 2,
@@ -5665,7 +5665,7 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Big {
-                i32[-2147483648 2147483647][128] Data;
+                i32[min max][128] Data;
             }
 
             unsafe ffi fn void Consume(rawptr<Big> value);
@@ -5696,7 +5696,7 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Buffer {
-                i32[-2147483648 2147483647][16] Data;
+                i32[min max][16] Data;
             }
 
             unsafe ffi fn void Consume(rawptr<Buffer> buffer);
@@ -5723,11 +5723,11 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Pair {
-                i32[-2147483648 2147483647] Left;
-                i32[-2147483648 2147483647] Right;
+                i32[min max] Left;
+                i32[min max] Right;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack mut Pair source = new Pair() { Left = 1, Right = 2 };
                 stack mut Pair dest = new Pair() { Left = 0, Right = 0 };
                 stack rawptr<Pair> sourcePtr = &source;
@@ -5752,11 +5752,11 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Pair {
-                i32[-2147483648 2147483647] Left;
-                i32[-2147483648 2147483647] Right;
+                i32[min max] Left;
+                i32[min max] Right;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run(bool flag) {
+            unsafe fn i32[min max] Run(bool flag) {
                 stack Pair value = flag ? new Pair() { Left = 1, Right = 2 } : new Pair() { Left = 3, Right = 4 };
                 stack rawptr<Pair> ptr = &value;
                 return value.Right;
@@ -5778,14 +5778,14 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             unsafe fn Box Make() {
                 return new Box() { Value = 7 };
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack Box box = Make();
                 return box.Value;
             }
@@ -5808,18 +5808,18 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Big {
-                i64[-9223372036854775808 9223372036854775807] A;
-                i64[-9223372036854775808 9223372036854775807] B;
-                i64[-9223372036854775808 9223372036854775807] C;
+                i64[min max] A;
+                i64[min max] B;
+                i64[min max] C;
             }
 
             unsafe fn Big Make() {
                 return new Big() { A = 1, B = 2, C = 3 };
             }
 
-            unsafe fn i64[-9223372036854775808 9223372036854775807] Run() {
+            unsafe fn i64[min max] Run() {
                 stack Big value = Make();
-                return (i64[-9223372036854775808 9223372036854775807])value.C;
+                return (i64[min max])value.C;
             }
             """);
 
@@ -5840,9 +5840,9 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Big {
-                i64[-9223372036854775808 9223372036854775807] A;
-                i64[-9223372036854775808 9223372036854775807] B;
-                i64[-9223372036854775808 9223372036854775807] C;
+                i64[min max] A;
+                i64[min max] B;
+                i64[min max] C;
             }
 
             unsafe fn Big Make() {
@@ -5869,11 +5869,11 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Big {
-                i64[-9223372036854775808 9223372036854775807] A;
-                i64[-9223372036854775808 9223372036854775807] B;
-                i64[-9223372036854775808 9223372036854775807] C;
-                i64[-9223372036854775808 9223372036854775807] D;
-                i64[-9223372036854775808 9223372036854775807] E;
+                i64[min max] A;
+                i64[min max] B;
+                i64[min max] C;
+                i64[min max] D;
+                i64[min max] E;
             }
 
             unsafe fn Big Make() {
@@ -5908,10 +5908,10 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Big {
-                i64[-9223372036854775808 9223372036854775807] A;
-                i64[-9223372036854775808 9223372036854775807] B;
-                i64[-9223372036854775808 9223372036854775807] C;
-                i64[-9223372036854775808 9223372036854775807] D;
+                i64[min max] A;
+                i64[min max] B;
+                i64[min max] C;
+                i64[min max] D;
             }
 
             unsafe fn Big Forward(Big value) {
@@ -5942,10 +5942,10 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Big {
-                i64[-9223372036854775808 9223372036854775807] A;
-                i64[-9223372036854775808 9223372036854775807] B;
-                i64[-9223372036854775808 9223372036854775807] C;
-                i64[-9223372036854775808 9223372036854775807] D;
+                i64[min max] A;
+                i64[min max] B;
+                i64[min max] C;
+                i64[min max] D;
             }
 
             unsafe fn Big Step(Big value) {
@@ -5982,16 +5982,16 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Big {
-                i64[-9223372036854775808 9223372036854775807] A;
-                i64[-9223372036854775808 9223372036854775807] B;
-                i64[-9223372036854775808 9223372036854775807] C;
+                i64[min max] A;
+                i64[min max] B;
+                i64[min max] C;
             }
 
-            unsafe fn i64[-9223372036854775808 9223372036854775807] Read(Big value) {
+            unsafe fn i64[min max] Read(Big value) {
                 return value.A + value.C;
             }
 
-            unsafe fn i64[-9223372036854775808 9223372036854775807] Run() {
+            unsafe fn i64[min max] Run() {
                 return Read(new Big() { A = 1, B = 2, C = 3 });
             }
             """);
@@ -6014,18 +6014,18 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Pair {
-                i32[-2147483648 2147483647] Left;
-                i32[-2147483648 2147483647] Right;
+                i32[min max] Left;
+                i32[min max] Right;
             }
 
-            unsafe fn Pair Step(Pair value, i32[-2147483648 2147483647] delta) {
+            unsafe fn Pair Step(Pair value, i32[min max] delta) {
                 return new Pair() {
                     Left = value.Left + delta,
                     Right = value.Right + delta
                 };
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack Pair current = Step(
                     Step(
                         Step(new Pair() { Left = 1, Right = 2 }, 1),
@@ -6052,13 +6052,13 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Big {
-                i64[-9223372036854775808 9223372036854775807] A;
-                i64[-9223372036854775808 9223372036854775807] B;
-                i64[-9223372036854775808 9223372036854775807] C;
-                i64[-9223372036854775808 9223372036854775807] D;
+                i64[min max] A;
+                i64[min max] B;
+                i64[min max] C;
+                i64[min max] D;
             }
 
-            unsafe fn Big Step(Big value, i64[-9223372036854775808 9223372036854775807] delta) {
+            unsafe fn Big Step(Big value, i64[min max] delta) {
                 return new Big() {
                     A = value.A + delta,
                     B = value.B + delta,
@@ -6067,7 +6067,7 @@ public sealed class LlvmIrEmissionTests
                 };
             }
 
-            unsafe fn i64[-9223372036854775808 9223372036854775807] Run() {
+            unsafe fn i64[min max] Run() {
                 stack Big current = Step(
                     Step(
                         new Big() { A = 1, B = 2, C = 3, D = 4 },
@@ -6094,10 +6094,10 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run(bool flag) {
+            unsafe fn i32[min max] Run(bool flag) {
                 stack mut Box box = new Box() { Value = 0 };
                 if (flag) {
                     box = new Box() { Value = 1 };
@@ -6125,14 +6125,14 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
-                unsafe fn i32[-2147483648 2147483647] Read(Box box) {
+                unsafe fn i32[min max] Read(Box box) {
                     return box.Value;
                 }
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack Box box = new Box() { Value = 7 };
                 return box.Read();
             }
@@ -6155,14 +6155,14 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
-                unsafe fn i32[-2147483648 2147483647] Read(borrow Box box) {
+                unsafe fn i32[min max] Read(borrow Box box) {
                     return box.Value;
                 }
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run(borrow Box box) {
+            unsafe fn i32[min max] Run(borrow Box box) {
                 return box.Read();
             }
             """);
@@ -6184,13 +6184,13 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Buffer {
-                i8[-128 127][16] Storage;
-                i64[-9223372036854775808 9223372036854775807] WritePos;
+                i8[min max][16] Storage;
+                i64[min max] WritePos;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Touch(rawmutptr<Buffer> buffer, i64[-9223372036854775808 9223372036854775807] index, i8[-128 127] value) {
+            unsafe fn i32[min max] Touch(rawmutptr<Buffer> buffer, i64[min max] index, i8[min max] value) {
                 *(&(*buffer).Storage[index]) = value;
-                return (i32[-2147483648 2147483647])*(&(*buffer).Storage[index]);
+                return (i32[min max])*(&(*buffer).Storage[index]);
             }
             """);
 
@@ -6212,9 +6212,9 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Touch(rawmutptr<i8[-128 127]> data, i64[-9223372036854775808 9223372036854775807] index, i8[-128 127] value) {
+            unsafe fn i32[min max] Touch(rawmutptr<i8[min max]> data, i64[min max] index, i8[min max] value) {
                 *(&data[index]) = value;
-                return (i32[-2147483648 2147483647])*(&data[index]);
+                return (i32[min max])*(&data[index]);
             }
             """);
 
@@ -6235,15 +6235,15 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Buffer {
-                i8[-128 127][16] Storage;
+                i8[min max][16] Storage;
 
-                unsafe fn void Put(borrow mut Buffer self, i64[-9223372036854775808 9223372036854775807] index, i8[-128 127] value) {
+                unsafe fn void Put(borrow mut Buffer self, i64[min max] index, i8[min max] value) {
                     *(&self.Storage[index]) = value;
                     return;
                 }
 
-                unsafe fn i32[-2147483648 2147483647] Read(borrow Buffer self, i64[-9223372036854775808 9223372036854775807] index) {
-                    return (i32[-2147483648 2147483647])*(&self.Storage[index]);
+                unsafe fn i32[min max] Read(borrow Buffer self, i64[min max] index) {
+                    return (i32[min max])*(&self.Storage[index]);
                 }
             }
             """);
@@ -6266,7 +6266,7 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             unsafe fn void Touch(borrow mut Box box) {
@@ -6290,9 +6290,9 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Buffer {
-                i8[-128 127][8] Storage;
+                i8[min max][8] Storage;
 
-                unsafe fn retborrow mut i8[-128 127][] View(borrow mut Buffer self) {
+                unsafe fn retborrow mut i8[min max][] View(borrow mut Buffer self) {
                     unsafe {
                         return slice(&self.Storage[0], 8);
                     }
@@ -6320,8 +6320,8 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
-                stack i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
+            unsafe fn i32[min max] Run() {
+                stack i32[min max][3] values = { 1, 2, 3 };
                 return values[1];
             }
             """);
@@ -6342,8 +6342,8 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
-                stack mut i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
+            unsafe fn i32[min max] Run() {
+                stack mut i32[min max][3] values = { 1, 2, 3 };
                 values[1] = 9;
                 return values[1];
             }
@@ -6363,8 +6363,8 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
-                stack i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
+            unsafe fn i32[min max] Run(i32[min max] index) {
+                stack i32[min max][3] values = { 1, 2, 3 };
                 return values[index];
             }
             """);
@@ -6393,7 +6393,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Read(i32[-2147483648 2147483647][] view, i32[-2147483648 2147483647] index) {
+            unsafe fn i32[min max] Read(i32[min max][] view, i32[min max] index) {
                 return view[index];
             }
             """);
@@ -6415,9 +6415,9 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] ReadView(i32[-2147483648 2147483647][3] values, u8[0 2] index) {
-                stack i32[-2147483648 2147483647][3] local = values;
-                stack i32[-2147483648 2147483647][] view = local;
+            unsafe fn i32[min max] ReadView(i32[min max][3] values, u8[0 2] index) {
+                stack i32[min max][3] local = values;
+                stack i32[min max][] view = local;
                 return view[index];
             }
 
@@ -6441,10 +6441,10 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] ReadJoinedSlice(bool flag, u8[0 1] index) {
-                stack i32[-2147483648 2147483647][3] left = { 1, 2, 3 };
-                stack i32[-2147483648 2147483647][5] right = { 4, 5, 6, 7, 8 };
-                stack mut i32[-2147483648 2147483647][] view = left;
+            unsafe fn i32[min max] ReadJoinedSlice(bool flag, u8[0 1] index) {
+                stack i32[min max][3] left = { 1, 2, 3 };
+                stack i32[min max][5] right = { 4, 5, 6, 7, 8 };
+                stack mut i32[min max][] view = left;
                 if (flag) {
                     view = right;
                 }
@@ -6472,12 +6472,12 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Read(i32[-2147483648 2147483647][2] values) {
+            unsafe fn i32[min max] Read(i32[min max][2] values) {
                 return values[0] + values[1];
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
-                stack i32[-2147483648 2147483647][2] values = { 4, 7 };
+            unsafe fn i32[min max] Run() {
+                stack i32[min max][2] values = { 4, 7 };
                 return Read(values);
             }
             """);
@@ -6498,7 +6498,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Read(i32[-2147483648 2147483647][3] values, i32[-2147483648 2147483647] index) {
+            unsafe fn i32[min max] Read(i32[min max][3] values, i32[min max] index) {
                 return values[index];
             }
             """);
@@ -6523,13 +6523,13 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Bounded(u8[0 2] index) {
-                stack i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
+            unsafe fn i32[min max] Bounded(u8[0 2] index) {
+                stack i32[min max][3] values = { 1, 2, 3 };
                 return values[index];
             }
 
-            unsafe fn i32[-2147483648 2147483647] Unbounded(i32[-2147483648 2147483647] index) {
-                stack i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
+            unsafe fn i32[min max] Unbounded(i32[min max] index) {
+                stack i32[min max][3] values = { 1, 2, 3 };
                 return values[index];
             }
             """);
@@ -6550,13 +6550,13 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647][2] Make() {
-                stack i32[-2147483648 2147483647][2] values = { 4, 7 };
+            unsafe fn i32[min max][2] Make() {
+                stack i32[min max][2] values = { 4, 7 };
                 return values;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
-                stack i32[-2147483648 2147483647][2] values = Make();
+            unsafe fn i32[min max] Run() {
+                stack i32[min max][2] values = Make();
                 return values[1];
             }
             """);
@@ -6576,8 +6576,8 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
-                stack mut i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
+            unsafe fn i32[min max] Run(i32[min max] index) {
+                stack mut i32[min max][3] values = { 1, 2, 3 };
                 values[index] = 9;
                 return values[index];
             }
@@ -6605,7 +6605,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run(mut i32[-2147483648 2147483647][] view, i32[-2147483648 2147483647] index) {
+            unsafe fn i32[min max] Run(mut i32[min max][] view, i32[min max] index) {
                 view[index] = 9;
                 return view[index];
             }
@@ -6630,7 +6630,7 @@ public sealed class LlvmIrEmissionTests
 
             unsafe ffi fn void Touch();
 
-            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right) {
                 Touch();
                 return Math.Add(left, right);
             }
@@ -6643,7 +6643,7 @@ public sealed class LlvmIrEmissionTests
                         """
                         module Math
 
-                        public unsafe finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                        public unsafe finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                             return left + right;
                         }
                         """,
@@ -6665,7 +6665,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            public unsafe ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall2(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> path)
+            public unsafe ffi asm(x86_64) fn i64[min max] Syscall2(i64[min max] number, rawptr<i8[min max]> path)
                 in("rax") number,
                 in("rdi") path,
                 out("rax") return,
@@ -6674,7 +6674,7 @@ public sealed class LlvmIrEmissionTests
                 "syscall"
             }
 
-            unsafe fn i64[-9223372036854775808 9223372036854775807] Run(rawptr<i8[-128 127]> path) {
+            unsafe fn i64[min max] Run(rawptr<i8[min max]> path) {
                 return Syscall2(2, path);
             }
             """,
@@ -6698,7 +6698,7 @@ public sealed class LlvmIrEmissionTests
             import Syscall
             module Demo
 
-            unsafe fn i64[-9223372036854775808 9223372036854775807] Run(rawptr<i8[-128 127]> path) {
+            unsafe fn i64[min max] Run(rawptr<i8[min max]> path) {
                 return Syscall.Syscall2(2, path);
             }
             """,
@@ -6711,7 +6711,7 @@ public sealed class LlvmIrEmissionTests
                         """
                         module Syscall
 
-                        public unsafe ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall2(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> path)
+                        public unsafe ffi asm(x86_64) fn i64[min max] Syscall2(i64[min max] number, rawptr<i8[min max]> path)
                             in("rax") number,
                             in("rdi") path,
                             out("rax") return,
@@ -6771,7 +6771,7 @@ public sealed class LlvmIrEmissionTests
             import Math
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 Math.Counter = Math.Counter + 7;
                 return Math.Counter + Math.Answer + Math.Hidden;
             }
@@ -6785,8 +6785,8 @@ public sealed class LlvmIrEmissionTests
                         module Math
 
                         public const Answer = 3;
-                        public static i32[-2147483648 2147483647] Hidden = 2;
-                        public static mut i32[-2147483648 2147483647] Counter = 1;
+                        public static i32[min max] Hidden = 2;
+                        public static mut i32[min max] Counter = 1;
                         """,
                         "/virtual/Math.stark"
                     )
@@ -6814,7 +6814,7 @@ public sealed class LlvmIrEmissionTests
             import Tables
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Read(u8[0 3] index) {
+            unsafe fn i32[min max] Read(u8[0 3] index) {
                 return Tables.Lookup[index];
             }
             """,
@@ -6826,7 +6826,7 @@ public sealed class LlvmIrEmissionTests
                         """
                         module Tables
 
-                        public static i32[-2147483648 2147483647][4] Lookup = { 1, 2, 3, 4 };
+                        public static i32[min max][4] Lookup = { 1, 2, 3, 4 };
                         """,
                         "/virtual/Tables.stark"
                     )
@@ -6853,8 +6853,8 @@ public sealed class LlvmIrEmissionTests
                 """
                 module Facade
 
-                public static i32[-2147483648 2147483647][3] Values = { 1, 2, 3 };
-                public static mut i32[-2147483648 2147483647] Counter = 1;
+                public static i32[min max][3] Values = { 1, 2, 3 };
+                public static mut i32[min max] Counter = 1;
                 """,
                 facadePath));
 
@@ -6873,7 +6873,7 @@ public sealed class LlvmIrEmissionTests
                     import Facade
                     module Demo
 
-                    unsafe fn i32[-2147483648 2147483647] Read(u8[0 2] index) {
+                    unsafe fn i32[min max] Read(u8[0 2] index) {
                         return Facade.Values[index] + Facade.Counter;
                     }
                     """,
@@ -6911,17 +6911,17 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            static i32[-2147483648 2147483647] Counter = 0;
+            static i32[min max] Counter = 0;
             static Box Current = new Box() { Value = 5 };
 
-            unsafe fn rawptr<i32[-2147483648 2147483647]> CounterPtr() {
+            unsafe fn rawptr<i32[min max]> CounterPtr() {
                 return &Counter;
             }
 
-            unsafe fn rawptr<i32[-2147483648 2147483647]> FieldPtr() {
+            unsafe fn rawptr<i32[min max]> FieldPtr() {
                 return &(Current.Value);
             }
             """);
@@ -6946,7 +6946,7 @@ public sealed class LlvmIrEmissionTests
             import Geometry
             module Demo
 
-            export unsafe ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[min max] main() {
                 return Geometry.Read(Geometry.Make());
             }
             """,
@@ -6959,14 +6959,14 @@ public sealed class LlvmIrEmissionTests
                         module Geometry
 
                         public struct Box {
-                            i32[-2147483648 2147483647] Value;
+                            i32[min max] Value;
                         }
 
                         public unsafe fn Box Make() {
                             return new Box() { Value = 7 };
                         }
 
-                        public unsafe fn i32[-2147483648 2147483647] Read(Box box) {
+                        public unsafe fn i32[min max] Read(Box box) {
                             return box.Value;
                         }
                         """,
@@ -6991,7 +6991,7 @@ public sealed class LlvmIrEmissionTests
             import Math
             module Demo
 
-            unsafe law i32[-2147483648 2147483647] Use() {
+            unsafe law i32[min max] Use() {
                 return Math.UseLaw();
             }
             """,
@@ -7003,11 +7003,11 @@ public sealed class LlvmIrEmissionTests
                         """
                         module Math
 
-                        unsafe law i32[-2147483648 2147483647] LawOnly() {
+                        unsafe law i32[min max] LawOnly() {
                             return 1;
                         }
 
-                        public unsafe law i32[-2147483648 2147483647] UseLaw() {
+                        public unsafe law i32[min max] UseLaw() {
                             return LawOnly();
                         }
                         """,
@@ -7031,11 +7031,11 @@ public sealed class LlvmIrEmissionTests
             import Math
             module Demo
 
-            unsafe law i32[-2147483648 2147483647] UseLawClone() {
+            unsafe law i32[min max] UseLawClone() {
                 return Math.UseLaw();
             }
 
-            unsafe fn i32[-2147483648 2147483647] UseDirect() {
+            unsafe fn i32[min max] UseDirect() {
                 Touch();
                 return Math.UseLaw();
             }
@@ -7050,7 +7050,7 @@ public sealed class LlvmIrEmissionTests
                         """
                         module Math
 
-                        public unsafe law i32[-2147483648 2147483647] UseLaw() {
+                        public unsafe law i32[min max] UseLaw() {
                             return 1;
                         }
                         """,
@@ -7075,11 +7075,11 @@ public sealed class LlvmIrEmissionTests
             import Math
             module Demo
 
-            unsafe law i32[-2147483648 2147483647] UseLawClone(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe law i32[min max] UseLawClone(i32[min max] left, i32[min max] right) {
                 return Math.Numbers.Add(left, right);
             }
 
-            unsafe fn i32[-2147483648 2147483647] UseDirect(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[min max] UseDirect(i32[min max] left, i32[min max] right) {
                 Touch();
                 return Math.Numbers.Add(left, right);
             }
@@ -7095,7 +7095,7 @@ public sealed class LlvmIrEmissionTests
                         module Math
 
                         public doctrine Numbers {
-                            unsafe finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                            unsafe finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                                 return left + right;
                             }
                         }
@@ -7120,11 +7120,11 @@ public sealed class LlvmIrEmissionTests
             import Math
             module Demo
 
-            unsafe law i32[-2147483648 2147483647] UseLawClone(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe law i32[min max] UseLawClone(i32[min max] left, i32[min max] right) {
                 return Math.Add(left, right);
             }
 
-            unsafe fn i32[-2147483648 2147483647] UseDirect(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[min max] UseDirect(i32[min max] left, i32[min max] right) {
                 Touch();
                 return Math.Add(left, right);
             }
@@ -7139,7 +7139,7 @@ public sealed class LlvmIrEmissionTests
                         """
                         module Math
 
-                        public unsafe finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                        public unsafe finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                             return left + right;
                         }
                         """,
@@ -7163,7 +7163,7 @@ public sealed class LlvmIrEmissionTests
             import Math
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Use(i32[-2147483648 2147483647] value) {
+            unsafe fn i32[min max] Use(i32[min max] value) {
                 Touch();
                 return Math.UseLaw(value);
             }
@@ -7178,11 +7178,11 @@ public sealed class LlvmIrEmissionTests
                         """
                         module Math
 
-                        unsafe law i32[-2147483648 2147483647] LawOnly(i32[-2147483648 2147483647] value) {
+                        unsafe law i32[min max] LawOnly(i32[min max] value) {
                             return value + 1;
                         }
 
-                        public unsafe law i32[-2147483648 2147483647] UseLaw(i32[-2147483648 2147483647] value) {
+                        public unsafe law i32[min max] UseLaw(i32[min max] value) {
                             return LawOnly(value);
                         }
                         """,
@@ -7205,7 +7205,7 @@ public sealed class LlvmIrEmissionTests
             import Math
             module Demo
 
-            unsafe law i32[-2147483648 2147483647] Use(i32[-2147483648 2147483647] value) {
+            unsafe law i32[min max] Use(i32[min max] value) {
                 return Math.UseLaw(value);
             }
             """,
@@ -7217,7 +7217,7 @@ public sealed class LlvmIrEmissionTests
                         """
                         module Math
 
-                        public inlinehint unsafe law i32[-2147483648 2147483647] UseLaw(i32[-2147483648 2147483647] value) {
+                        public inlinehint unsafe law i32[min max] UseLaw(i32[min max] value) {
                             return value + 1;
                         }
                         """,
@@ -7239,11 +7239,11 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right) {
                 return left + right;
             }
 
-            unsafe law i32[-2147483648 2147483647] Use() {
+            unsafe law i32[min max] Use() {
                 return Add(1, 2);
             }
             """);
@@ -7264,15 +7264,15 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Core(i32[-2147483648 2147483647] value) {
+            unsafe fn i32[min max] Core(i32[min max] value) {
                 return value + 1;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Forward(i32[-2147483648 2147483647] value) {
+            unsafe fn i32[min max] Forward(i32[min max] value) {
                 return Core(value);
             }
 
-            unsafe fn i32[-2147483648 2147483647] Use(i32[-2147483648 2147483647] value) {
+            unsafe fn i32[min max] Use(i32[min max] value) {
                 return Forward(value);
             }
             """);
@@ -7297,17 +7297,17 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Box(i32[-2147483648 2147483647] Value) {
-                unsafe fn i32[-2147483648 2147483647] Bump(borrow Box self, i32[-2147483648 2147483647] delta) {
+            record Box(i32[min max] Value) {
+                unsafe fn i32[min max] Bump(borrow Box self, i32[min max] delta) {
                     return self.Value + delta;
                 }
             }
 
-            unsafe fn i32[-2147483648 2147483647] Forward(borrow Box box, i32[-2147483648 2147483647] delta) {
+            unsafe fn i32[min max] Forward(borrow Box box, i32[min max] delta) {
                 return box.Bump(delta);
             }
 
-            unsafe fn i32[-2147483648 2147483647] Use(borrow Box box, i32[-2147483648 2147483647] delta) {
+            unsafe fn i32[min max] Use(borrow Box box, i32[min max] delta) {
                 return Forward(box, delta);
             }
             """);
@@ -7331,14 +7331,14 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Inner(i32[-2147483648 2147483647] Value) { }
+            record Inner(i32[min max] Value) { }
             record Box(Inner Inner) { }
 
-            unsafe fn i32[-2147483648 2147483647] Read(borrow Box box) {
+            unsafe fn i32[min max] Read(borrow Box box) {
                 return box.Inner.Value;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Use(borrow Box box) {
+            unsafe fn i32[min max] Use(borrow Box box) {
                 return Read(box);
             }
             """);
@@ -7362,13 +7362,13 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Box(i32[-2147483648 2147483647] Value) { }
+            record Box(i32[min max] Value) { }
 
-            unsafe fn i32[-2147483648 2147483647] Read(Box[2] boxes, i32[-2147483648 2147483647] index) {
+            unsafe fn i32[min max] Read(Box[2] boxes, i32[min max] index) {
                 return boxes[index].Value;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Use(Box[2] boxes, i32[-2147483648 2147483647] index) {
+            unsafe fn i32[min max] Use(Box[2] boxes, i32[min max] index) {
                 return Read(boxes, index);
             }
             """);
@@ -7392,14 +7392,14 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Inner(i32[-2147483648 2147483647] Value) { }
+            record Inner(i32[min max] Value) { }
             record Box(Inner Inner) { }
 
-            unsafe fn i64[-9223372036854775808 9223372036854775807] Read(borrow Box box) {
-                return (i64[-9223372036854775808 9223372036854775807])box.Inner.Value;
+            unsafe fn i64[min max] Read(borrow Box box) {
+                return (i64[min max])box.Inner.Value;
             }
 
-            unsafe fn i64[-9223372036854775808 9223372036854775807] Use(borrow Box box) {
+            unsafe fn i64[min max] Use(borrow Box box) {
                 return Read(box);
             }
             """);
@@ -7423,13 +7423,13 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Buffer(i32[-2147483648 2147483647][2] Values) { }
+            record Buffer(i32[min max][2] Values) { }
 
-            unsafe fn rawptr<i32[-2147483648 2147483647]> Pin(borrow Buffer buffer, i32[-2147483648 2147483647] index) {
+            unsafe fn rawptr<i32[min max]> Pin(borrow Buffer buffer, i32[min max] index) {
                 return &buffer.Values[index];
             }
 
-            unsafe fn rawptr<i32[-2147483648 2147483647]> Use(borrow Buffer buffer, i32[-2147483648 2147483647] index) {
+            unsafe fn rawptr<i32[min max]> Use(borrow Buffer buffer, i32[min max] index) {
                 return Pin(buffer, index);
             }
             """);
@@ -7453,14 +7453,14 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Inner(i32[-2147483648 2147483647] Value) { }
+            record Inner(i32[min max] Value) { }
             record Box(Inner Inner) { }
 
-            unsafe fn i32[-2147483648 2147483647] AddDelta(borrow Box box, i32[-2147483648 2147483647] delta) {
+            unsafe fn i32[min max] AddDelta(borrow Box box, i32[min max] delta) {
                 return box.Inner.Value + delta;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Use(borrow Box box, i32[-2147483648 2147483647] delta) {
+            unsafe fn i32[min max] Use(borrow Box box, i32[min max] delta) {
                 return AddDelta(box, delta);
             }
             """);
@@ -7484,14 +7484,14 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Inner(i32[-2147483648 2147483647] Value) { }
+            record Inner(i32[min max] Value) { }
             record Box(Inner Inner) { }
 
-            unsafe fn bool IsBelow(borrow Box box, i32[-2147483648 2147483647] limit) {
+            unsafe fn bool IsBelow(borrow Box box, i32[min max] limit) {
                 return box.Inner.Value < limit;
             }
 
-            unsafe fn bool Use(borrow Box box, i32[-2147483648 2147483647] limit) {
+            unsafe fn bool Use(borrow Box box, i32[min max] limit) {
                 return IsBelow(box, limit);
             }
             """);
@@ -7515,7 +7515,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] ChooseBranch(bool takeLeft, bool takeMiddle, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[min max] ChooseBranch(bool takeLeft, bool takeMiddle, i32[min max] left, i32[min max] middle, i32[min max] right) {
                 if (takeLeft) {
                     return left;
                 } else if (takeMiddle) {
@@ -7525,7 +7525,7 @@ public sealed class LlvmIrEmissionTests
                 }
             }
 
-            unsafe fn i32[-2147483648 2147483647] Use(bool takeLeft, bool takeMiddle, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[min max] Use(bool takeLeft, bool takeMiddle, i32[min max] left, i32[min max] middle, i32[min max] right) {
                 return ChooseBranch(takeLeft, takeMiddle, left, middle, right);
             }
             """);
@@ -7549,7 +7549,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] ChooseSwitch(i32[-2147483648 2147483647] selector, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[min max] ChooseSwitch(i32[min max] selector, i32[min max] left, i32[min max] middle, i32[min max] right) {
                 switch (selector) {
                     case 0:
                         return left;
@@ -7560,7 +7560,7 @@ public sealed class LlvmIrEmissionTests
                 }
             }
 
-            unsafe fn i32[-2147483648 2147483647] Use(i32[-2147483648 2147483647] selector, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[min max] Use(i32[min max] selector, i32[min max] left, i32[min max] middle, i32[min max] right) {
                 return ChooseSwitch(selector, left, middle, right);
             }
             """);
@@ -7585,22 +7585,22 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Inner {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             struct Outer {
                 Inner Item;
-                i32[-2147483648 2147483647] Count;
+                i32[min max] Count;
             }
 
-            unsafe fn Outer Wrap(i32[-2147483648 2147483647] value, i32[-2147483648 2147483647] count) {
+            unsafe fn Outer Wrap(i32[min max] value, i32[min max] count) {
                 return new Outer() {
                     Item = { Value = value },
                     Count = count
                 };
             }
 
-            unsafe fn Outer Use(i32[-2147483648 2147483647] value, i32[-2147483648 2147483647] count) {
+            unsafe fn Outer Use(i32[min max] value, i32[min max] count) {
                 return Wrap(value, count);
             }
             """);
@@ -7625,14 +7625,14 @@ public sealed class LlvmIrEmissionTests
 
             enum Boxed {
                 None,
-                Value { Data: i32[-2147483648 2147483647], Tag: i32[-2147483648 2147483647] },
+                Value { Data: i32[min max], Tag: i32[min max] },
             }
 
-            unsafe fn Boxed Wrap(i32[-2147483648 2147483647] value, i32[-2147483648 2147483647] tag) {
+            unsafe fn Boxed Wrap(i32[min max] value, i32[min max] tag) {
                 return Boxed.Value { Data: value, Tag: tag };
             }
 
-            unsafe fn Boxed Use(i32[-2147483648 2147483647] value, i32[-2147483648 2147483647] tag) {
+            unsafe fn Boxed Use(i32[min max] value, i32[min max] tag) {
                 return Wrap(value, tag);
             }
             """);
@@ -7655,16 +7655,16 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            record Inner(i32[-2147483648 2147483647] Value) { }
+            record Inner(i32[min max] Value) { }
             record Box(Inner Inner) { }
 
-            unsafe fn i32[-2147483648 2147483647] Bump(borrow Box box, i32[-2147483648 2147483647] delta) {
-                stack mut i32[-2147483648 2147483647] current = box.Inner.Value;
+            unsafe fn i32[min max] Bump(borrow Box box, i32[min max] delta) {
+                stack mut i32[min max] current = box.Inner.Value;
                 current += delta;
                 return current;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Use(borrow Box box, i32[-2147483648 2147483647] delta) {
+            unsafe fn i32[min max] Use(borrow Box box, i32[min max] delta) {
                 return Bump(box, delta);
             }
             """);
@@ -7687,7 +7687,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            hot unsafe fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            hot unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right) {
                 return left + right;
             }
             """);
@@ -7706,7 +7706,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Math
 
-            public unsafe finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            public unsafe finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                 return left + right;
             }
             """,
@@ -7727,7 +7727,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Helper() {
+            unsafe fn i32[min max] Helper() {
                 return 7;
             }
             """,
@@ -7754,7 +7754,7 @@ public sealed class LlvmIrEmissionTests
                 return value;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+            unsafe fn i32[min max] Run(i32[min max] value) {
                 return Identity(value);
             }
             """);
@@ -7780,7 +7780,7 @@ public sealed class LlvmIrEmissionTests
                 return value;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+            unsafe fn i32[min max] Run(i32[min max] value) {
                 return Identity(value);
             }
             """);
@@ -7811,8 +7811,8 @@ public sealed class LlvmIrEmissionTests
                 }
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
-                stack Box<i32[-2147483648 2147483647]> box = new Box<i32[-2147483648 2147483647]>() { Value = 7 };
+            unsafe fn i32[min max] Run() {
+                stack Box<i32[min max]> box = new Box<i32[min max]>() { Value = 7 };
                 return box.Read();
             }
             """);
@@ -7843,35 +7843,35 @@ public sealed class LlvmIrEmissionTests
 
             [Backend(Opaque)]
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
-                unsafe finite law i32[-2147483648 2147483647] Read(borrow Box self) {
+                unsafe finite law i32[min max] Read(borrow Box self) {
                     return self.Value;
                 }
             }
 
             struct FastBox {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
-                unsafe finite law i32[-2147483648 2147483647] Read(borrow FastBox self) {
+                unsafe finite law i32[min max] Read(borrow FastBox self) {
                     return self.Value;
                 }
             }
 
             [Backend(Opaque)]
-            record Point(i32[-2147483648 2147483647] X) {
-                unsafe finite law i32[-2147483648 2147483647] Read(borrow Point self) {
+            record Point(i32[min max] X) {
+                unsafe finite law i32[min max] Read(borrow Point self) {
                     return self.X;
                 }
             }
 
-            record FastPoint(i32[-2147483648 2147483647] X) {
-                unsafe finite law i32[-2147483648 2147483647] Read(borrow FastPoint self) {
+            record FastPoint(i32[min max] X) {
+                unsafe finite law i32[min max] Read(borrow FastPoint self) {
                     return self.X;
                 }
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack Box box = new Box() { Value = 7 };
                 stack FastBox fastBox = new FastBox() { Value = 3 };
                 stack Point point = new Point(11);
@@ -7913,18 +7913,18 @@ public sealed class LlvmIrEmissionTests
 
             [Backend(Opaque)]
             doctrine SlowNumbers {
-                unsafe finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                unsafe finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                     return left + right;
                 }
             }
 
             doctrine FastNumbers {
-                unsafe finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                unsafe finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                     return left + right;
                 }
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+            unsafe fn i32[min max] Run(i32[min max] value) {
                 return SlowNumbers.Add(value, 1) + FastNumbers.Add(value, 2);
             }
             """);
@@ -7959,7 +7959,7 @@ public sealed class LlvmIrEmissionTests
                 return Identity(value);
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+            unsafe fn i32[min max] Run(i32[min max] value) {
                 return Forward(value);
             }
             """);
@@ -7983,7 +7983,7 @@ public sealed class LlvmIrEmissionTests
             import Facade
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+            unsafe fn i32[min max] Run(i32[min max] value) {
                 return Facade.Identity(value);
             }
             """,
@@ -8024,7 +8024,7 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             unsafe fn void Run() {
-                stack mut Facade.Box<i32[-2147483648 2147483647]> box = new Facade.Box<i32[-2147483648 2147483647]>() { Value = 1 };
+                stack mut Facade.Box<i32[min max]> box = new Facade.Box<i32[min max]>() { Value = 1 };
                 box.Store(2);
                 return;
             }
@@ -8118,7 +8118,7 @@ public sealed class LlvmIrEmissionTests
                     import Facade
                     module Demo
 
-                    unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                    unsafe fn i32[min max] Run(i32[min max] value) {
                         return Facade.Identity(value);
                     }
                     """,
@@ -8210,7 +8210,7 @@ public sealed class LlvmIrEmissionTests
                     import Facade
                     module Demo
 
-                    unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                    unsafe fn i32[min max] Run(i32[min max] value) {
                         return Facade.Forward(value);
                     }
                     """,
@@ -8310,9 +8310,9 @@ public sealed class LlvmIrEmissionTests
                     import Facade
                     module Demo
 
-                    unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
-                        stack i32[-2147483648 2147483647] first = Facade.Forward(left);
-                        stack i32[-2147483648 2147483647] second = Facade.Forward(right);
+                    unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right) {
+                        stack i32[min max] first = Facade.Forward(left);
+                        stack i32[min max] second = Facade.Forward(right);
                         return first + second;
                     }
                     """,
@@ -8364,12 +8364,12 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Read(i32[-2147483648 2147483647][] view, i32[-2147483648 2147483647] index) {
+            unsafe fn i32[min max] Read(i32[min max][] view, i32[min max] index) {
                 return view[index];
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
-                stack i32[-2147483648 2147483647][3] values = { 4, 7, 9 };
+            unsafe fn i32[min max] Run(i32[min max] index) {
+                stack i32[min max][3] values = { 4, 7, 9 };
                 return Read(values, index);
             }
             """);
@@ -8392,18 +8392,18 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn void Fill(borrow mut i32[-2147483648 2147483647][] view) {
+            unsafe fn void Fill(borrow mut i32[min max][] view) {
                 view[0] = 9;
                 return;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Read(borrow i32[-2147483648 2147483647][] view) {
+            unsafe fn i32[min max] Read(borrow i32[min max][] view) {
                 return view[0];
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
-                stack mut i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
-                stack mut i32[-2147483648 2147483647][] view = values;
+            unsafe fn i32[min max] Run() {
+                stack mut i32[min max][3] values = { 1, 2, 3 };
+                stack mut i32[min max][] view = values;
                 Fill(view);
                 Fill(values);
                 return Read(view);
@@ -8427,7 +8427,7 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             unsafe fn void Touch(borrow Box box) {
@@ -8459,14 +8459,14 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Counter {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 unsafe fn void Reset(borrow mut Counter self) {
                     self.Value = 0;
                     return;
                 }
 
-                unsafe fn void ResetThenAdd(borrow mut Counter self, i32[-2147483648 2147483647] value) {
+                unsafe fn void ResetThenAdd(borrow mut Counter self, i32[min max] value) {
                     self.Reset();
                     self.Value += value;
                     return;
@@ -8491,9 +8491,9 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Inner {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
-                unsafe fn void Set(borrow mut Inner self, i32[-2147483648 2147483647] value) {
+                unsafe fn void Set(borrow mut Inner self, i32[min max] value) {
                     self.Value = value;
                     return;
                 }
@@ -8502,7 +8502,7 @@ public sealed class LlvmIrEmissionTests
             struct Outer {
                 Inner Item;
 
-                unsafe fn void SetItem(borrow mut Outer self, i32[-2147483648 2147483647] value) {
+                unsafe fn void SetItem(borrow mut Outer self, i32[min max] value) {
                     self.Item.Set(value);
                     return;
                 }
@@ -8534,7 +8534,7 @@ public sealed class LlvmIrEmissionTests
                 stack mut rawmutptr<Node> current = head;
                 while willexit (current != null) {
                     stack rawmutptr<Node> next = (*current).Next;
-                    stack rawmutptr<i8[-128 127]> erased = (rawmutptr<i8[-128 127]>)next;
+                    stack rawmutptr<i8[min max]> erased = (rawmutptr<i8[min max]>)next;
                     current = (rawmutptr<Node>)erased;
                 }
 
@@ -8565,7 +8565,7 @@ public sealed class LlvmIrEmissionTests
                 module Facade
 
                 public struct Counter {
-                    i32[-2147483648 2147483647] Value;
+                    i32[min max] Value;
 
                     unsafe fn void Reset(borrow mut Counter self) {
                         self.Value = 0;
@@ -8633,16 +8633,16 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             doctrine Inspect {
-                unsafe finite law i32[-2147483648 2147483647] Read(borrow mut Box box) {
+                unsafe finite law i32[min max] Read(borrow mut Box box) {
                     return box.Value;
                 }
             }
 
-            unsafe finite law i32[-2147483648 2147483647] Run(borrow mut Box box) {
+            unsafe finite law i32[min max] Run(borrow mut Box box) {
                 return Inspect.Read(box);
             }
             """);
@@ -8662,7 +8662,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 return 1;
             }
             """,
@@ -8686,7 +8686,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run(bool left, bool right) {
+            unsafe fn i32[min max] Run(bool left, bool right) {
                 return left && right ? 1 : 2;
             }
             """);
@@ -8708,13 +8708,13 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            unsafe fn i32[-2147483648 2147483647] Run(i64[-9223372036854775808 9223372036854775807] bits) {
-                stack mut i32[-2147483648 2147483647] value = 1;
-                stack rawmutptr<i32[-2147483648 2147483647]> ptr = &value;
-                stack rawptr<i32[-2147483648 2147483647]> readonlyPtr = (rawptr<i32[-2147483648 2147483647]>)ptr;
-                *ptr = (i32[-2147483648 2147483647])bits;
+            unsafe fn i32[min max] Run(i64[min max] bits) {
+                stack mut i32[min max] value = 1;
+                stack rawmutptr<i32[min max]> ptr = &value;
+                stack rawptr<i32[min max]> readonlyPtr = (rawptr<i32[min max]>)ptr;
+                *ptr = (i32[min max])bits;
                 Counter = *readonlyPtr;
                 return *(&Counter);
             }
@@ -8750,7 +8750,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn u8[0 1] Check(rawptr<i32[-2147483648 2147483647]> left, rawptr<i32[-2147483648 2147483647]> right) {
+            unsafe fn u8[0 1] Check(rawptr<i32[min max]> left, rawptr<i32[min max]> right) {
                 if disjoint(left, right) {
                     return 1;
                 }
@@ -8777,8 +8777,8 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             unsafe fn bool Check(
-                rawptr<i32[-2147483648 2147483647]>[count] left,
-                rawptr<i32[-2147483648 2147483647]>[count] right,
+                rawptr<i32[min max]>[count] left,
+                rawptr<i32[min max]>[count] right,
                 u8[0 10] count) {
                 if disjoint(left[0, count], right[0, count]) {
                     return true;
@@ -8806,7 +8806,7 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             unsafe fn u8[0 1] Check(borrow Box left, borrow Box right) {
@@ -8835,7 +8835,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn bool Check(i32[-2147483648 2147483647][] left, i32[-2147483648 2147483647][] right) {
+            unsafe fn bool Check(i32[min max][] left, i32[min max][] right) {
                 if disjoint(left, right) {
                     return true;
                 }
@@ -8861,9 +8861,9 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Check(
-                rawmutptr<i32[-2147483648 2147483647]> left,
-                rawmutptr<i32[-2147483648 2147483647]> right) {
+            unsafe fn i32[min max] Check(
+                rawmutptr<i32[min max]> left,
+                rawmutptr<i32[min max]> right) {
                 if disjoint(left, right) {
                     *left = 7;
                     return *right;
@@ -8890,7 +8890,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn void Touch(disjoint rawmutptr<i32[-2147483648 2147483647]> left, disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
+            unsafe fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
                 return;
             }
             """,
@@ -8910,7 +8910,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn void Touch(rawptr<i32[-2147483648 2147483647]>[4] input) {
+            unsafe fn void Touch(rawptr<i32[min max]>[4] input) {
                 return;
             }
             """,
@@ -8929,9 +8929,9 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Touch(
-                disjoint rawmutptr<i32[-2147483648 2147483647]> left,
-                disjoint rawmutptr<i32[-2147483648 2147483647]> right) {
+            unsafe fn i32[min max] Touch(
+                disjoint rawmutptr<i32[min max]> left,
+                disjoint rawmutptr<i32[min max]> right) {
                 *left = 11;
                 return *right;
             }
@@ -8954,7 +8954,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn void Inspect(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
+            unsafe fn void Inspect(const rawmutptr<i32[min max]> ptr) {
                 return;
             }
             """,
@@ -8973,7 +8973,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Read(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
+            unsafe fn i32[min max] Read(const rawmutptr<i32[min max]> ptr) {
                 return *ptr;
             }
             """,
@@ -8992,14 +8992,14 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] CopyFirst(
-                rawmutptr<i32[-2147483648 2147483647]>[count] left,
-                rawptr<i32[-2147483648 2147483647]>[count] right,
+            unsafe fn i32[min max] CopyFirst(
+                rawmutptr<i32[min max]>[count] left,
+                rawptr<i32[min max]>[count] right,
                 u8[1 10] count) {
                 if disjoint(left[0, count], right[0, count]) {
                     unsafe {
-                        stack mut mut i32[-2147483648 2147483647][] leftView = slice(left, count);
-                        stack i32[-2147483648 2147483647][] rightView = slice(right, count);
+                        stack mut mut i32[min max][] leftView = slice(left, count);
+                        stack i32[min max][] rightView = slice(right, count);
                         leftView[0] = rightView[0];
                         return rightView[0];
                     }
@@ -9026,11 +9026,11 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Read(
-                const rawmutptr<i32[-2147483648 2147483647]>[count] pointer,
+            unsafe fn i32[min max] Read(
+                const rawmutptr<i32[min max]>[count] pointer,
                 u8[1 10] count) {
                 unsafe {
-                    stack frozen i32[-2147483648 2147483647][] view = slice(pointer, count);
+                    stack frozen i32[min max][] view = slice(pointer, count);
                     return view[0];
                 }
             }
@@ -9050,12 +9050,12 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Read(
-                const rawmutptr<i32[-2147483648 2147483647]>[count] pointer,
+            unsafe fn i32[min max] Read(
+                const rawmutptr<i32[min max]>[count] pointer,
                 u8[1 10] count) {
-                stack rawptr<frozen i32[-2147483648 2147483647]> local = pointer;
+                stack rawptr<frozen i32[min max]> local = pointer;
                 unsafe {
-                    stack frozen i32[-2147483648 2147483647][] view = slice(local, count);
+                    stack frozen i32[min max][] view = slice(local, count);
                     return view[0];
                 }
             }
@@ -9126,9 +9126,9 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             unsafe fn void Add(
-                disjoint borrow i32[-2147483648 2147483647][] left,
-                disjoint borrow i32[-2147483648 2147483647][] right,
-                disjoint borrow mut i32[-2147483648 2147483647][] output,
+                disjoint borrow i32[min max][] left,
+                disjoint borrow i32[min max][] right,
+                disjoint borrow mut i32[min max][] output,
                 u8[0 10] count) {
                 for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     output[index] = left[index] + right[index];
@@ -9154,12 +9154,12 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn void Touch(borrow i64[-9223372036854775808 9223372036854775807][] values) {
+            unsafe fn void Touch(borrow i64[min max][] values) {
                 return;
             }
 
             unsafe fn void Run() {
-                stack mut i64[-9223372036854775808 9223372036854775807][2] values = { 1, 2 };
+                stack mut i64[min max][2] values = { 1, 2 };
                 Touch(values);
                 return;
             }
@@ -9182,9 +9182,9 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             unsafe fn void SelectPositive(
-                disjoint borrow i32[-2147483648 2147483647][] left,
-                disjoint borrow i32[-2147483648 2147483647][] right,
-                disjoint borrow mut i32[-2147483648 2147483647][] output,
+                disjoint borrow i32[min max][] left,
+                disjoint borrow i32[min max][] right,
+                disjoint borrow mut i32[min max][] output,
                 u8[0 10] count) {
                 for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     if (left[index] > 0) {
@@ -9215,7 +9215,7 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             struct Cell {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             unsafe fn void Copy(
@@ -9247,8 +9247,8 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             unsafe fn void Copy(
-                disjoint rawptr<i32[-2147483648 2147483647]>[count] input,
-                disjoint rawmutptr<i32[-2147483648 2147483647]>[count] output,
+                disjoint rawptr<i32[min max]>[count] input,
+                disjoint rawmutptr<i32[min max]>[count] output,
                 u8[0 10] count)
                 where disjoint(input[0, count], output[0, count]) {
                 for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
@@ -9276,8 +9276,8 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             unsafe fn void Copy(
-                rawptr<i32[-2147483648 2147483647]>[count] input,
-                rawmutptr<i32[-2147483648 2147483647]>[count] output,
+                rawptr<i32[min max]>[count] input,
+                rawmutptr<i32[min max]>[count] output,
                 u8[0 10] count) {
                 if disjoint(input[0, count], output[0, count]) {
                     for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
@@ -9307,8 +9307,8 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             unsafe fn void Copy(
-                rawptr<i32[-2147483648 2147483647]>[count] input,
-                rawmutptr<i32[-2147483648 2147483647]>[count] output,
+                rawptr<i32[min max]>[count] input,
+                rawmutptr<i32[min max]>[count] output,
                 u8[0 10] count)
                 where disjoint(input[0, count], output[0, count]) {
                 for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
@@ -9339,8 +9339,8 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             unsafe fn void Copy(
-                rawptr<i32[-2147483648 2147483647]>[count] input,
-                rawmutptr<i32[-2147483648 2147483647]>[count] output,
+                rawptr<i32[min max]>[count] input,
+                rawmutptr<i32[min max]>[count] output,
                 u8[0 10] count)
                 where disjoint(input[0, count], output[0, count]) {
                 for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
@@ -9372,8 +9372,8 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             unsafe fn void Copy(
-                rawptr<i32[-2147483648 2147483647]>[count] input,
-                rawmutptr<i32[-2147483648 2147483647]>[count] output,
+                rawptr<i32[min max]>[count] input,
+                rawmutptr<i32[min max]>[count] output,
                 u8[0 10] count) {
                 for willexit (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     *(&output[index]) = *(&input[index]);
@@ -9400,8 +9400,8 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             unsafe fn void Copy(
-                rawptr<i32[-2147483648 2147483647]>[count] input,
-                rawmutptr<i32[-2147483648 2147483647]>[count] output,
+                rawptr<i32[min max]>[count] input,
+                rawmutptr<i32[min max]>[count] output,
                 u8[0 10] count) {
                 for willexit (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     *(&output[index]) = *(&input[index]);
@@ -9432,9 +9432,9 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             unsafe fn void CopyOverlapSafe(
-                rawptr<i32[-2147483648 2147483647]>[4] input,
-                rawmutptr<i32[-2147483648 2147483647]>[4] output) {
-                stack mut i32[-2147483648 2147483647][4] temporary = { 0, 0, 0, 0 };
+                rawptr<i32[min max]>[4] input,
+                rawmutptr<i32[min max]>[4] output) {
+                stack mut i32[min max][4] temporary = { 0, 0, 0, 0 };
 
                 for willexit (stack mut u8[0 4] index = 0; index < 4; index += 1) {
                     temporary[index] = *(&input[index]);
@@ -9466,9 +9466,9 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             unsafe fn void CopyOverlapSafe(
-                rawptr<i32[-2147483648 2147483647]>[4] input,
-                rawmutptr<i32[-2147483648 2147483647]>[4] output) {
-                stack mut i32[-2147483648 2147483647][4] temporary = { 0, 0, 0, 0 };
+                rawptr<i32[min max]>[4] input,
+                rawmutptr<i32[min max]>[4] output) {
+                stack mut i32[min max][4] temporary = { 0, 0, 0, 0 };
 
                 for willexit (stack mut u8[0 4] index = 0; index < 4; index += 1) {
                     temporary[index] = *(&input[index]);
@@ -9501,15 +9501,15 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             unsafe fn void MoveOverlapSafe(
-                rawptr<i32[-2147483648 2147483647]>[count] input,
-                rawmutptr<i32[-2147483648 2147483647]>[count] output,
+                rawptr<i32[min max]>[count] input,
+                rawmutptr<i32[min max]>[count] output,
                 u8[0 10] count) {
                 if (count == 0) {
                     return;
                 }
 
-                stack rawptr<i32[-2147483648 2147483647]> sourceStart = input;
-                stack rawptr<i32[-2147483648 2147483647]> destinationStart = (rawptr<i32[-2147483648 2147483647]>)output;
+                stack rawptr<i32[min max]> sourceStart = input;
+                stack rawptr<i32[min max]> destinationStart = (rawptr<i32[min max]>)output;
                 if (destinationStart < sourceStart) {
                     for willexit (stack mut u8[0 10] index = 0; index < count; index += 1) {
                         *(&output[index]) = *(&input[index]);
@@ -9547,15 +9547,15 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             unsafe fn void MoveOverlapSafe(
-                borrow i32[-2147483648 2147483647][] input,
-                borrow mut i32[-2147483648 2147483647][] output,
+                borrow i32[min max][] input,
+                borrow mut i32[min max][] output,
                 u64[0 2 ** 61 - 1] count) {
                 if (count == 0) {
                     return;
                 }
 
-                stack rawptr<i32[-2147483648 2147483647]> sourceStart = &input[0];
-                stack rawptr<i32[-2147483648 2147483647]> destinationStart = (rawptr<i32[-2147483648 2147483647]>)(&output[0]);
+                stack rawptr<i32[min max]> sourceStart = &input[0];
+                stack rawptr<i32[min max]> destinationStart = (rawptr<i32[min max]>)(&output[0]);
                 if (destinationStart < sourceStart) {
                     for willexit (stack mut u64[0 2 ** 61 - 1] index = 0; index < count; index += 1) {
                         output[index] = input[index];
@@ -9593,9 +9593,9 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             unsafe fn void CopyOverlapSafe(
-                rawptr<i32[-2147483648 2147483647]>[4] input,
-                rawmutptr<i32[-2147483648 2147483647]>[4] output) {
-                stack mut i32[-2147483648 2147483647][4] temporary = { 0, 0, 0, 0 };
+                rawptr<i32[min max]>[4] input,
+                rawmutptr<i32[min max]>[4] output) {
+                stack mut i32[min max][4] temporary = { 0, 0, 0, 0 };
 
                 for willexit (stack mut u8[0 4] index = 0; index < 4; index += 1) {
                     temporary[index] = *(&input[index]);
@@ -9627,8 +9627,8 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             unsafe fn void Fill(
-                rawmutptr<i8[-128 127]>[count] output,
-                i8[-128 127] value,
+                rawmutptr<i8[min max]>[count] output,
+                i8[min max] value,
                 u8[0 10] count) {
                 for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     *(&output[index]) = value;
@@ -9655,7 +9655,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn void Fill(init i8[-128 127][] output, i8[-128 127] value, u8[0 10] count) {
+            unsafe fn void Fill(init i8[min max][] output, i8[min max] value, u8[0 10] count) {
                 for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     init output[index] = value;
                 }
@@ -9682,8 +9682,8 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             unsafe fn void Copy(
-                disjoint borrow i32[-2147483648 2147483647][] input,
-                disjoint init i32[-2147483648 2147483647][] output,
+                disjoint borrow i32[min max][] input,
+                disjoint init i32[min max][] output,
                 u8[0 10] count) {
                 for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     init output[index] = input[index];
@@ -9711,9 +9711,9 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             unsafe fn void CopyOverlapSafe(
-                borrow i32[-2147483648 2147483647][] input,
-                init i32[-2147483648 2147483647][] output) {
-                stack mut i32[-2147483648 2147483647][4] temporary = { 0, 0, 0, 0 };
+                borrow i32[min max][] input,
+                init i32[min max][] output) {
+                stack mut i32[min max][4] temporary = { 0, 0, 0, 0 };
 
                 for willexit (stack mut u8[0 4] index = 0; index < 4; index += 1) {
                     temporary[index] = input[index];
@@ -9744,8 +9744,8 @@ public sealed class LlvmIrEmissionTests
             module Demo
 
             unsafe fn void Fill(
-                rawmutptr<i8[-128 127]>[count] output,
-                i8[-128 127] value,
+                rawmutptr<i8[min max]>[count] output,
+                i8[min max] value,
                 u8[0 10] count) {
                 for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     *(&output[index]) = value;
@@ -9775,7 +9775,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn void Fill(rawmutptr<i64[-9223372036854775808 9223372036854775807]>[32] output, i64[-9223372036854775808 9223372036854775807] value) {
+            unsafe fn void Fill(rawmutptr<i64[min max]>[32] output, i64[min max] value) {
                 for willexit independent (stack mut u8[0 32] index = 0; index < 32; index += 1) {
                     *(&output[index]) = value;
                 }
@@ -9784,8 +9784,8 @@ public sealed class LlvmIrEmissionTests
             }
 
             unsafe fn void Transform(
-                disjoint rawptr<i64[-9223372036854775808 9223372036854775807]>[32] input,
-                disjoint rawmutptr<i64[-9223372036854775808 9223372036854775807]>[32] output)
+                disjoint rawptr<i64[min max]>[32] input,
+                disjoint rawmutptr<i64[min max]>[32] output)
                 where disjoint(input[0, 32], output[0, 32]) {
                 for willexit independent (stack mut u8[0 32] index = 0; index < 32; index += 1) {
                     *(&output[index]) = *(&input[index]) + 1;

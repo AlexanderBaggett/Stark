@@ -26,13 +26,13 @@ public sealed class PackageImageTypedSwitchPatternIntegrationTests
                 """
                 module Facade
 
-                public record Counter(i32[-2147483648 2147483647] Value, i32[-2147483648 2147483647] Count) { }
+                public record Counter(i32[min max] Value, i32[min max] Count) { }
 
                 public enum Wrapped<T> {
-                    Value { Data: Counter, Marker: i32[-2147483648 2147483647] },
+                    Value { Data: Counter, Marker: i32[min max] },
                 }
 
-                public fn i32[-2147483648 2147483647] ReadNestedCount<T>(Wrapped<T> wrapped, T tag) {
+                public fn i32[min max] ReadNestedCount<T>(Wrapped<T> wrapped, T tag) {
                     switch (wrapped) {
                         case Wrapped<T>.Value { Data: Counter(7, var count), Marker: 1 }:
                             return count;
@@ -103,10 +103,10 @@ public sealed class PackageImageTypedSwitchPatternIntegrationTests
                 import Facade
                 module Demo
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
-                    stack i32[-2147483648 2147483647] tag = 0;
-                    stack Facade.Wrapped<i32[-2147483648 2147483647]> wrapped =
-                        Facade.Wrapped<i32[-2147483648 2147483647]>.Value { Data: new Facade.Counter(7, 11), Marker: 1 };
+                export unsafe ffi fn i32[min max] main() {
+                    stack i32[min max] tag = 0;
+                    stack Facade.Wrapped<i32[min max]> wrapped =
+                        Facade.Wrapped<i32[min max]>.Value { Data: new Facade.Counter(7, 11), Marker: 1 };
                     return Facade.ReadNestedCount(wrapped, tag);
                 }
                 """);
@@ -184,9 +184,9 @@ public sealed class PackageImageTypedSwitchPatternIntegrationTests
                 """
                 module Facade
 
-                public record Counter(i32[-2147483648 2147483647] Value, i32[-2147483648 2147483647] Count) { }
+                public record Counter(i32[min max] Value, i32[min max] Count) { }
 
-                public fn i32[-2147483648 2147483647] ReadWhole<T>(Counter counter, T tag) {
+                public fn i32[min max] ReadWhole<T>(Counter counter, T tag) {
                     switch (counter) {
                         case Counter capture:
                             return capture.Count + 1;
@@ -255,8 +255,8 @@ public sealed class PackageImageTypedSwitchPatternIntegrationTests
                 import Facade
                 module Demo
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
-                    stack i32[-2147483648 2147483647] tag = 0;
+                export unsafe ffi fn i32[min max] main() {
+                    stack i32[min max] tag = 0;
                     return Facade.ReadWhole(new Facade.Counter(7, 11), tag);
                 }
                 """);
@@ -336,10 +336,10 @@ public sealed class PackageImageTypedSwitchPatternIntegrationTests
 
                 public enum Wrapped<T> {
                     None,
-                    Pair(i32[-2147483648 2147483647], i32[-2147483648 2147483647]),
+                    Pair(i32[min max], i32[min max]),
                 }
 
-                public fn i32[-2147483648 2147483647] ReadEnumWhole<T>(Wrapped<T> wrapped, T tag) {
+                public fn i32[min max] ReadEnumWhole<T>(Wrapped<T> wrapped, T tag) {
                     switch (wrapped) {
                         case Wrapped<T>.Pair capture:
                             return 5;
@@ -411,10 +411,10 @@ public sealed class PackageImageTypedSwitchPatternIntegrationTests
                 import Facade
                 module Demo
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
-                    stack Facade.Wrapped<i32[-2147483648 2147483647]> wrapped =
-                        Facade.Wrapped<i32[-2147483648 2147483647]>.Pair(2, 3);
-                    stack i32[-2147483648 2147483647] tag = 0;
+                export unsafe ffi fn i32[min max] main() {
+                    stack Facade.Wrapped<i32[min max]> wrapped =
+                        Facade.Wrapped<i32[min max]>.Pair(2, 3);
+                    stack i32[min max] tag = 0;
                     return Facade.ReadEnumWhole(wrapped, tag);
                 }
                 """);

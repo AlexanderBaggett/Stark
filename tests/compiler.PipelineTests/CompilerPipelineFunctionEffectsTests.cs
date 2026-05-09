@@ -21,7 +21,7 @@ public sealed class CompilerPipelineFunctionEffectsTests
                 module Facade
 
                 public strictfp hot noinline finite law f32 Precise(f32 value);
-                export cold unsafe ffi fn void Sink(rawptr<i8[-128 127]> value);
+                export cold unsafe ffi fn void Sink(rawptr<i8[min max]> value);
                 """,
                 facadePath));
 

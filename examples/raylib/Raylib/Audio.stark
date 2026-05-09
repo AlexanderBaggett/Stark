@@ -14,8 +14,8 @@ public fn Wave LoadWave(ascii fileName) {
     return result;
 }
 
-internal unsafe ffi fn void stark_raylib_LoadWaveFromMemory(rawmutptr<Wave> result, ascii fileType, rawptr<u8[0 255]> fileData, i32[min max] dataSize);
-public unsafe fn Wave LoadWaveFromMemory(ascii fileType, rawptr<u8[0 255]> fileData, i32[min max] dataSize) {
+internal unsafe ffi fn void stark_raylib_LoadWaveFromMemory(rawmutptr<Wave> result, ascii fileType, rawptr<u8[0 max]> fileData, i32[min max] dataSize);
+public unsafe fn Wave LoadWaveFromMemory(ascii fileType, rawptr<u8[0 max]> fileData, i32[min max] dataSize) {
     stack mut Wave result = DefaultWave();
     stark_raylib_LoadWaveFromMemory(&result, fileType, fileData, dataSize);
     return result;
@@ -155,8 +155,8 @@ public fn Music LoadMusicStream(ascii fileName) {
     return result;
 }
 
-internal unsafe ffi fn void stark_raylib_LoadMusicStreamFromMemory(rawmutptr<Music> result, ascii fileType, rawptr<u8[0 255]> data, i32[min max] dataSize);
-public unsafe fn Music LoadMusicStreamFromMemory(ascii fileType, rawptr<u8[0 255]> data, i32[min max] dataSize) {
+internal unsafe ffi fn void stark_raylib_LoadMusicStreamFromMemory(rawmutptr<Music> result, ascii fileType, rawptr<u8[0 max]> data, i32[min max] dataSize);
+public unsafe fn Music LoadMusicStreamFromMemory(ascii fileType, rawptr<u8[0 max]> data, i32[min max] dataSize) {
     stack mut Music result = DefaultMusic();
     stark_raylib_LoadMusicStreamFromMemory(&result, fileType, data, dataSize);
     return result;

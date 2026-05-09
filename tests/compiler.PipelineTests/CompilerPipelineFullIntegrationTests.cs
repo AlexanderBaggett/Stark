@@ -63,9 +63,9 @@ public sealed class CompilerPipelineFullIntegrationTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(bool flag, i32[-2147483648 2147483647] limit) {
-                stack mut i32[-2147483648 2147483647] sum = 0;
-                stack mut i32[-2147483648 2147483647] i = 0;
+            fn i32[min max] Run(bool flag, i32[min max] limit) {
+                stack mut i32[min max] sum = 0;
+                stack mut i32[min max] i = 0;
 
                 while willexit (i < limit) {
                     switch (flag) {
@@ -112,7 +112,7 @@ public sealed class CompilerPipelineFullIntegrationTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 return (1 + 2) * 3;
             }
             """));
@@ -146,8 +146,8 @@ public sealed class CompilerPipelineFullIntegrationTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] input) {
-                stack mut i32[-2147483648 2147483647] value = input;
+            fn i32[min max] Run(i32[min max] input) {
+                stack mut i32[min max] value = input;
                 value = value + 1;
                 return value;
             }
@@ -204,8 +204,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(bool flag) {
-                    stack mut i32[-2147483648 2147483647] value = 0;
+                fn i32[min max] Run(bool flag) {
+                    stack mut i32[min max] value = 0;
                     if (flag) {
                         value = 1;
                     } else {
@@ -240,8 +240,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(bool flag) {
-                    stack mut i32[-2147483648 2147483647] value = 0;
+                fn i32[min max] Run(bool flag) {
+                    stack mut i32[min max] value = 0;
                     if (flag) {
                         value = 1;
                     } else {
@@ -278,7 +278,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Lib
                 module Demo
 
-                unsafe fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[min max] Run() {
                     return Lib.Adjust(4);
                 }
                 """,
@@ -291,8 +291,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Lib
 
-                        public finite law i32[-2147483648 2147483647] Adjust(i32[-2147483648 2147483647] value) {
-                            stack mut i32[-2147483648 2147483647] current = value;
+                        public finite law i32[min max] Adjust(i32[min max] value) {
+                            stack mut i32[min max] current = value;
                             if (current < 10) {
                                 current = current + 3;
                             }
@@ -364,10 +364,10 @@ public sealed class CompilerPipelineFullIntegrationTests
             """
             module Effects
 
-            public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right);
+            public finite law i32[min max] Add(i32[min max] left, i32[min max] right);
             public strictfp finite law f32 Precise(f32 left, f32 right);
-            export cold unsafe ffi fn void Accept(rawptr<i8[-128 127]> value);
-            internal hot fn i32[-2147483648 2147483647] Warm(i32[-2147483648 2147483647] value);
+            export cold unsafe ffi fn void Accept(rawptr<i8[min max]> value);
+            internal hot fn i32[min max] Warm(i32[min max] value);
             """));
 
         Assert.True(result.Succeeded);
@@ -429,7 +429,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import System.Syscall
                 module Demo
 
-                unsafe fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[min max] Run() {
                     return 0;
                 }
                 """,
@@ -443,7 +443,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module System.Syscall
 
-                        public unsafe ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall3(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3)
+                        public unsafe ffi asm(x86_64) fn i64[min max] Syscall3(i64[min max] number, i64[min max] arg1, i64[min max] arg2, i64[min max] arg3)
                             in("rax") number,
                             in("rdi") arg1,
                             in("rsi") arg2,
@@ -454,7 +454,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                             "syscall"
                         }
 
-                        public unsafe ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] Syscall3(i64[-9223372036854775808 9223372036854775807] number, i64[-9223372036854775808 9223372036854775807] arg1, i64[-9223372036854775808 9223372036854775807] arg2, i64[-9223372036854775808 9223372036854775807] arg3)
+                        public unsafe ffi asm(aarch64) fn i64[min max] Syscall3(i64[min max] number, i64[min max] arg1, i64[min max] arg2, i64[min max] arg3)
                             in("x8") number,
                             in("x0") arg1,
                             in("x1") arg2,
@@ -517,13 +517,13 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Demo
 
-                public asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] MissingFfi(i64[-9223372036854775808 9223372036854775807] number)
+                public asm(x86_64) fn i64[min max] MissingFfi(i64[min max] number)
                     out("rax") return
                 {
                     "syscall"
                 }
 
-                public unsafe ffi asm(aarch64) fn i64[-9223372036854775808 9223372036854775807] NoMatch(i64[-9223372036854775808 9223372036854775807] number)
+                public unsafe ffi asm(aarch64) fn i64[min max] NoMatch(i64[min max] number)
                     out("x0") return
                 {
                     "svc #0"
@@ -547,13 +547,13 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Demo
 
-                public unsafe ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall0()
+                public unsafe ffi asm(x86_64) fn i64[min max] Syscall0()
                     out("rax") return
                 {
                     "syscall"
                 }
 
-                public unsafe ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall0()
+                public unsafe ffi asm(x86_64) fn i64[min max] Syscall0()
                     out("rax") return
                 {
                     "syscall"
@@ -576,7 +576,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Demo
 
-                public unsafe ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Broken(i64[-9223372036854775808 9223372036854775807] number, out i64[-9223372036854775808 9223372036854775807] result)
+                public unsafe ffi asm(x86_64) fn i64[min max] Broken(i64[min max] number, out i64[min max] result)
                     in("x0") number,
                     in("rsi") result,
                     out("rax") result,
@@ -604,7 +604,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Demo
 
-                public unsafe ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall2(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> path)
+                public unsafe ffi asm(x86_64) fn i64[min max] Syscall2(i64[min max] number, rawptr<i8[min max]> path)
                     in("rax") number,
                     in("rdi") path,
                     out("rax") return,
@@ -663,7 +663,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Syscall
                 module Demo
 
-                unsafe fn i64[-9223372036854775808 9223372036854775807] Run(rawptr<i8[-128 127]> path) {
+                unsafe fn i64[min max] Run(rawptr<i8[min max]> path) {
                     return Syscall.Syscall2(2, path);
                 }
                 """,
@@ -677,7 +677,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Syscall
 
-                        public unsafe ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall2(i64[-9223372036854775808 9223372036854775807] number, rawptr<i8[-128 127]> path)
+                        public unsafe ffi asm(x86_64) fn i64[min max] Syscall2(i64[min max] number, rawptr<i8[min max]> path)
                             in("rax") number,
                             in("rdi") path,
                             out("rax") return,
@@ -732,16 +732,16 @@ public sealed class CompilerPipelineFullIntegrationTests
             module Demo
 
             struct Big {
-                i64[-9223372036854775808 9223372036854775807] A;
-                i64[-9223372036854775808 9223372036854775807] B;
-                i64[-9223372036854775808 9223372036854775807] C;
+                i64[min max] A;
+                i64[min max] B;
+                i64[min max] C;
             }
 
             fn Big Make() {
                 return new Big() { A = 1, B = 2, C = 3 };
             }
 
-            fn i64[-9223372036854775808 9223372036854775807] Read(Big value) {
+            fn i64[min max] Read(Big value) {
                 return value.A + value.C;
             }
             """));
@@ -773,14 +773,14 @@ public sealed class CompilerPipelineFullIntegrationTests
             module Effects
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            fn i32[min max] Add(i32[min max] left, i32[min max] right) {
                 return left + right;
             }
 
-            fn i32[-2147483648 2147483647] Read(borrow Box box) {
+            fn i32[min max] Read(borrow Box box) {
                 return box.Value;
             }
             """));
@@ -879,15 +879,15 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Demo
 
-                static mut i32[-2147483648 2147483647] Counter = 0;
+                static mut i32[min max] Counter = 0;
 
-                fn void Bump(i32[-2147483648 2147483647] value) {
+                fn void Bump(i32[min max] value) {
                     Counter = Counter + value;
                     return;
                 }
 
                 struct Resource {
-                    i32[-2147483648 2147483647] Value;
+                    i32[min max] Value;
 
                     drop {
                         Bump(self.Value);
@@ -904,7 +904,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     Resource Backup;
                 }
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     {
                         stack Holder holder = new Holder() {
                             Token = Token.Text(new Resource() { Value = 3 }),
@@ -940,33 +940,33 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Demo
 
                 struct Inner {
-                    i32[-2147483648 2147483647][2] Pair;
+                    i32[min max][2] Pair;
                 }
 
                 struct Outer {
-                    i32[-2147483648 2147483647] Score;
+                    i32[min max] Score;
                     Inner Node;
                 }
 
-                fn i32[-2147483648 2147483647] MakeScore() {
+                fn i32[min max] MakeScore() {
                     return 9;
                 }
 
-                fn i32[-2147483648 2147483647] MakeLeft() {
+                fn i32[min max] MakeLeft() {
                     return 4;
                 }
 
-                fn i32[-2147483648 2147483647] MakeRight() {
+                fn i32[min max] MakeRight() {
                     return 7;
                 }
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     stack Outer outer = new Outer() {
                         Score = MakeScore(),
                         Node = { Pair = { MakeLeft(), MakeRight() } }
                     };
-                    stack i32[-2147483648 2147483647][3] buffer = { 1, 2, 3 };
-                    stack i32[-2147483648 2147483647] total = outer.Node.Pair[0] + outer.Node.Pair[1] + outer.Score + buffer[2];
+                    stack i32[min max][3] buffer = { 1, 2, 3 };
+                    stack i32[min max] total = outer.Node.Pair[0] + outer.Node.Pair[1] + outer.Score + buffer[2];
                     return total;
                 }
                 """),
@@ -993,10 +993,10 @@ public sealed class CompilerPipelineFullIntegrationTests
             """
             module Demo
 
-            const i32[-2147483648 2147483647][4] Lookup = { 1, 2, 3, 4 };
-            static mut i32[-2147483648 2147483647][4] Scratch = { 5, 6, 7, 8 };
+            const i32[min max][4] Lookup = { 1, 2, 3, 4 };
+            static mut i32[min max][4] Scratch = { 5, 6, 7, 8 };
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
+            fn i32[min max] Run(i32[min max] index) {
                 return Lookup[index] + Scratch[index];
             }
             """));
@@ -1018,27 +1018,27 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Demo
 
-                record Many(i32[-2147483648 2147483647] A, i32[-2147483648 2147483647] B, i32[-2147483648 2147483647] C, i32[-2147483648 2147483647] D, i32[-2147483648 2147483647] E) { }
+                record Many(i32[min max] A, i32[min max] B, i32[min max] C, i32[min max] D, i32[min max] E) { }
                 record Label(ascii Tag, unicode Word) { }
 
                 enum Token {
                     None,
-                    Pair(i32[-2147483648 2147483647], i32[-2147483648 2147483647]),
+                    Pair(i32[min max], i32[min max]),
                 }
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     stack Many lessLeft = new Many(1, 2, 3, 4, 5);
                     stack Many lessRight = new Many(1, 2, 3, 4, 6);
 
-                    stack i32[-2147483648 2147483647][3] sameLeft = { 1, 2, 3 };
-                    stack i32[-2147483648 2147483647][3] sameRight = { 1, 2, 3 };
-                    stack i32[-2147483648 2147483647][3] greaterLeft = { 1, 2, 4 };
-                    stack i32[-2147483648 2147483647][3] greaterRight = { 1, 2, 3 };
+                    stack i32[min max][3] sameLeft = { 1, 2, 3 };
+                    stack i32[min max][3] sameRight = { 1, 2, 3 };
+                    stack i32[min max][3] greaterLeft = { 1, 2, 4 };
+                    stack i32[min max][3] greaterRight = { 1, 2, 3 };
 
-                    stack i32[-2147483648 2147483647][3] leftValues = { 1, 2, 3 };
-                    stack i32[-2147483648 2147483647][3] rightValues = { 1, 2, 3 };
-                    stack i32[-2147483648 2147483647][] leftView = leftValues;
-                    stack i32[-2147483648 2147483647][] rightView = rightValues;
+                    stack i32[min max][3] leftValues = { 1, 2, 3 };
+                    stack i32[min max][3] rightValues = { 1, 2, 3 };
+                    stack i32[min max][] leftView = leftValues;
+                    stack i32[min max][] rightView = rightValues;
 
                     if (lessLeft < lessRight
                         && sameLeft == sameRight
@@ -1081,18 +1081,18 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Demo
 
                 struct Box {
-                    i32[-2147483648 2147483647] Value;
+                    i32[min max] Value;
                 }
 
-                fn i32[-2147483648 2147483647] Next() {
+                fn i32[min max] Next() {
                     return 7;
                 }
 
-                fn Box MakeBox(i32[-2147483648 2147483647] value) {
+                fn Box MakeBox(i32[min max] value) {
                     return new Box() { Value = value };
                 }
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     stack mut Box box = new Box() { Value = 1 };
                     box.Value + 2;
                     MakeBox(Next());
@@ -1126,22 +1126,22 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Demo
 
                 struct Cell {
-                    i32[-2147483648 2147483647] Value;
+                    i32[min max] Value;
                 }
 
                 struct Holder {
                     Cell[2] Cells;
                 }
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     stack mut Holder holder = new Holder() {
                         Cells = { new Cell() { Value = 1 }, new Cell() { Value = 2 } }
                     };
-                    stack i32[-2147483648 2147483647] index = 1;
+                    stack i32[min max] index = 1;
                     holder.Cells[index].Value += 4;
 
-                    stack mut mut i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
-                    stack mut mut i32[-2147483648 2147483647][] view = values;
+                    stack mut mut i32[min max][3] values = { 1, 2, 3 };
+                    stack mut mut i32[min max][] view = values;
                     view[0] = holder.Cells[index].Value;
 
                     return holder.Cells[index].Value + view[0];
@@ -1172,10 +1172,10 @@ public sealed class CompilerPipelineFullIntegrationTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 heap Box box = new Box() { Value = 7 };
                 return box.Value;
             }
@@ -1204,11 +1204,11 @@ public sealed class CompilerPipelineFullIntegrationTests
             """
             module Effects
 
-            fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            fn i32[min max] Add(i32[min max] left, i32[min max] right) {
                 return left + right;
             }
 
-            law i32[-2147483648 2147483647] Use() {
+            law i32[min max] Use() {
                 return Add(1, 2);
             }
             """));
@@ -1235,15 +1235,15 @@ public sealed class CompilerPipelineFullIntegrationTests
             """
             module Effects
 
-            inlinehint fn i32[-2147483648 2147483647] Hint(i32[-2147483648 2147483647] value) {
+            inlinehint fn i32[min max] Hint(i32[min max] value) {
                 return value + 1;
             }
 
-            noinline fn i32[-2147483648 2147483647] Stop(i32[-2147483648 2147483647] value) {
+            noinline fn i32[min max] Stop(i32[min max] value) {
                 return value + 1;
             }
 
-            fn i32[-2147483648 2147483647] Loop(i32[-2147483648 2147483647] value) {
+            fn i32[min max] Loop(i32[min max] value) {
                 if (value == 0) {
                     return 0;
                 }
@@ -1251,7 +1251,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 return Loop(value - 1);
             }
 
-            law i32[-2147483648 2147483647] Use(i32[-2147483648 2147483647] value) {
+            law i32[min max] Use(i32[min max] value) {
                 return Hint(Stop(Loop(value)));
             }
             """));
@@ -1277,7 +1277,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Math
                 module Demo
 
-                unsafe fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[min max] Run() {
                     return Math.UseLaw();
                 }
                 """,
@@ -1290,19 +1290,19 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Math
 
-                        law i32[-2147483648 2147483647] LawOnly() {
+                        law i32[min max] LawOnly() {
                             return 1;
                         }
 
-                        law i32[-2147483648 2147483647] LawBlocked() {
+                        law i32[min max] LawBlocked() {
                             return 2;
                         }
 
-                        public law i32[-2147483648 2147483647] UseLaw() {
+                        public law i32[min max] UseLaw() {
                             return LawOnly();
                         }
 
-                        public fn i32[-2147483648 2147483647] UseFn() {
+                        public fn i32[min max] UseFn() {
                             return LawBlocked();
                         }
                         """,
@@ -1331,7 +1331,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Math
                 module Demo
 
-                law i32[-2147483648 2147483647] Run() {
+                law i32[min max] Run() {
                     return Math.UseLaw();
                 }
                 """,
@@ -1344,11 +1344,11 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Math
 
-                        law i32[-2147483648 2147483647] LawOnly() {
+                        law i32[min max] LawOnly() {
                             return 1;
                         }
 
-                        public law i32[-2147483648 2147483647] UseLaw() {
+                        public law i32[min max] UseLaw() {
                             return LawOnly();
                         }
                         """,
@@ -1376,11 +1376,11 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Math
                 module Demo
 
-                law i32[-2147483648 2147483647] LawRun() {
+                law i32[min max] LawRun() {
                     return Math.UseLaw();
                 }
 
-                fn i32[-2147483648 2147483647] FnRun() {
+                fn i32[min max] FnRun() {
                     unsafe {
                         Touch();
                     }
@@ -1399,7 +1399,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Math
 
-                        public law i32[-2147483648 2147483647] UseLaw() {
+                        public law i32[min max] UseLaw() {
                             return 1;
                         }
                         """,
@@ -1426,7 +1426,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Math
                 module Demo
 
-                law i32[-2147483648 2147483647] Run() {
+                law i32[min max] Run() {
                     return Math.UseLaw();
                 }
                 """,
@@ -1439,11 +1439,11 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Math
 
-                        law i32[-2147483648 2147483647] LawOnly() {
+                        law i32[min max] LawOnly() {
                             return 1;
                         }
 
-                        public law i32[-2147483648 2147483647] UseLaw() {
+                        public law i32[min max] UseLaw() {
                             return LawOnly();
                         }
                         """,
@@ -1510,7 +1510,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Math
                 module Demo
 
-                unsafe fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[min max] Run() {
                     return Math.Add(3, 4);
                 }
                 """,
@@ -1523,7 +1523,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Math
 
-                        public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                        public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                             return left + right;
                         }
                         """,
@@ -1553,7 +1553,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Math
                 module Demo
 
-                unsafe fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[min max] Run() {
                     return Math.Add(3, 4);
                 }
                 """,
@@ -1566,7 +1566,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Math
 
-                        public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                        public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                             return left + right;
                         }
                         """,
@@ -1614,8 +1614,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Path
 
-                        unsafe ffi fn i32[-2147483648 2147483647] fputs(ascii text, rawptr<i8[-128 127]> stream);
-                        const rawptr<i8[-128 127]> stdout = null;
+                        unsafe ffi fn i32[min max] fputs(ascii text, rawptr<i8[min max]> stream);
+                        const rawptr<i8[min max]> stdout = null;
 
                         public fn ascii DirectorySeparator() {
                             return "/";
@@ -1659,12 +1659,12 @@ public sealed class CompilerPipelineFullIntegrationTests
             module Laws
 
             public doctrine Numbers {
-                finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                     return left + right;
                 }
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 return Numbers.Add(1, 2);
             }
             """));
@@ -1698,10 +1698,10 @@ public sealed class CompilerPipelineFullIntegrationTests
             module Contracts
 
             public trait Comparable {
-                law i32[-2147483648 2147483647] Compare(i32[-2147483648 2147483647] other);
+                law i32[min max] Compare(i32[min max] other);
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 return 0;
             }
             """));
@@ -1735,9 +1735,9 @@ public sealed class CompilerPipelineFullIntegrationTests
             """
             module Demo
 
-            alias Byte = i8[-128 127];
+            alias Byte = i8[min max];
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 return 0;
             }
             """));
@@ -1762,7 +1762,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Math
                 module Demo
 
-                unsafe fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[min max] Run() {
                     return Math.Numbers.Add(3, 4);
                 }
                 """,
@@ -1776,7 +1776,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         module Math
 
                         public doctrine Numbers {
-                            finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                            finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                                 return left + right;
                             }
                         }
@@ -1808,7 +1808,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Math
                 module Demo
 
-                unsafe fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[min max] Run() {
                     return 0;
                 }
                 """,
@@ -1822,7 +1822,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         module Math
 
                         public trait Comparable {
-                            law i32[-2147483648 2147483647] Compare(i32[-2147483648 2147483647] other);
+                            law i32[min max] Compare(i32[min max] other);
                         }
                         """,
                         "/virtual/Math.stark"
@@ -1852,20 +1852,20 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Demo
 
                 public doctrine Numbers {
-                    finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                    finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                         return left + right;
                     }
                 }
 
                 public trait Comparable {
-                    law i32[-2147483648 2147483647] Compare(i32[-2147483648 2147483647] other);
+                    law i32[min max] Compare(i32[min max] other);
                 }
 
-                law i32[-2147483648 2147483647] UseLaw() {
+                law i32[min max] UseLaw() {
                     return Math.Numbers.Add(1, 2);
                 }
 
-                fn i32[-2147483648 2147483647] UseFn() {
+                fn i32[min max] UseFn() {
                     unsafe {
                         Touch();
                     }
@@ -1885,13 +1885,13 @@ public sealed class CompilerPipelineFullIntegrationTests
                         module Math
 
                         public doctrine Numbers {
-                            finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                            finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                                 return left + right;
                             }
                         }
 
                         public trait Comparable {
-                            law i32[-2147483648 2147483647] Compare(i32[-2147483648 2147483647] other);
+                            law i32[min max] Compare(i32[min max] other);
                         }
                         """,
                         "/virtual/Math.stark"
@@ -1950,11 +1950,11 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Math
                 module Demo
 
-                law i32[-2147483648 2147483647] UseLawClone(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                law i32[min max] UseLawClone(i32[min max] left, i32[min max] right) {
                     return Math.Add(left, right);
                 }
 
-                fn i32[-2147483648 2147483647] UseDirect(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                fn i32[min max] UseDirect(i32[min max] left, i32[min max] right) {
                     unsafe {
                         Touch();
                     }
@@ -1973,7 +1973,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Math
 
-                        public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                        public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                             return left + right;
                         }
                         """,
@@ -2008,7 +2008,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Math
                 module Demo
 
-                law i32[-2147483648 2147483647] UseLaw(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                law i32[min max] UseLaw(i32[min max] left, i32[min max] right) {
                     return Math.Add(left, right);
                 }
                 """,
@@ -2022,7 +2022,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         module Math
 
                         [Backend(Opaque)]
-                        public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                        public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                             return left + right;
                         }
                         """,
@@ -2053,7 +2053,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Facade
                 module Demo
 
-                unsafe fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[min max] Run() {
                     return Math.Add(3, 4);
                 }
                 """,
@@ -2067,7 +2067,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         import Math
                         module Facade
 
-                        public fn i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
+                        public fn i32[min max] Double(i32[min max] value) {
                             return Math.Add(value, value);
                         }
                         """,
@@ -2078,7 +2078,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Math
 
-                        public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                        public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                             return left + right;
                         }
                         """,
@@ -2106,7 +2106,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 import Facade
                 module Demo
 
-                unsafe fn i32[-2147483648 2147483647] Run() {
+                unsafe fn i32[min max] Run() {
                     return Math.Add(3, 4);
                 }
                 """,
@@ -2120,7 +2120,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         export import Math
                         module Facade
 
-                        public fn i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
+                        public fn i32[min max] Double(i32[min max] value) {
                             return Math.Add(value, value);
                         }
                         """,
@@ -2131,7 +2131,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         """
                         module Math
 
-                        public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                        public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                             return left + right;
                         }
                         """,
@@ -2168,7 +2168,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     """
                     module Syscall
 
-                    public unsafe ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall0(i64[-9223372036854775808 9223372036854775807] number)
+                    public unsafe ffi asm(x86_64) fn i64[min max] Syscall0(i64[min max] number)
                         in("rax") number,
                         out("rax") return,
                         clobber("rcx", "r11")
@@ -2191,7 +2191,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Syscall
                     module Demo
 
-                    fn i64[-9223372036854775808 9223372036854775807] Run() {
+                    fn i64[min max] Run() {
                         unsafe {
                             return Syscall.Syscall0(39);
                         }
@@ -2258,7 +2258,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     """
                     module Syscall
 
-                    public unsafe ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall0(i64[-9223372036854775808 9223372036854775807] number)
+                    public unsafe ffi asm(x86_64) fn i64[min max] Syscall0(i64[min max] number)
                         in("rax") number,
                         out("rax") return,
                         clobber("rcx", "r11")
@@ -2281,7 +2281,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Syscall
                     module Demo
 
-                    fn i64[-9223372036854775808 9223372036854775807] Run() {
+                    fn i64[min max] Run() {
                         return 0;
                     }
                     """,
@@ -2400,7 +2400,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public doctrine Numbers {
-                    finite law i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
+                    finite law i32[min max] Double(i32[min max] value) {
                         return value + value;
                     }
                 }
@@ -2421,7 +2421,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    unsafe fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[min max] Run() {
                         return Facade.Numbers.Double(3);
                     }
                     """,
@@ -2465,7 +2465,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public doctrine Numbers {
-                    finite law i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
+                    finite law i32[min max] Double(i32[min max] value) {
                         return value + value;
                     }
                 }
@@ -2505,7 +2505,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    unsafe fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[min max] Run() {
                         return Facade.Numbers.Double(3);
                     }
                     """,
@@ -2548,7 +2548,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public trait Comparable {
-                    law i32[-2147483648 2147483647] Compare(i32[-2147483648 2147483647] other);
+                    law i32[min max] Compare(i32[min max] other);
                 }
                 """,
                 facadePath));
@@ -2567,7 +2567,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    unsafe fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[min max] Run() {
                         return 0;
                     }
                     """,
@@ -2611,7 +2611,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public trait Comparable {
-                    law i32[-2147483648 2147483647] Compare(i32[-2147483648 2147483647] other);
+                    law i32[min max] Compare(i32[min max] other);
                 }
                 """,
                 facadePath));
@@ -2649,7 +2649,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    unsafe fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[min max] Run() {
                         return 0;
                     }
                     """,
@@ -2692,13 +2692,13 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public doctrine Numbers {
-                    finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                    finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                         return left + right;
                     }
                 }
 
                 public trait Comparable {
-                    law i32[-2147483648 2147483647] Compare(i32[-2147483648 2147483647] other);
+                    law i32[min max] Compare(i32[min max] other);
                 }
                 """,
                 facadePath));
@@ -2717,7 +2717,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    unsafe fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[min max] Run() {
                         return Facade.Numbers.Add(1, 2);
                     }
                     """,
@@ -2775,8 +2775,8 @@ public sealed class CompilerPipelineFullIntegrationTests
 
                 public enum Token {
                     End,
-                    Integer(i32[-2147483648 2147483647]),
-                    Move { X: i32[-2147483648 2147483647], Y: i32[-2147483648 2147483647] },
+                    Integer(i32[min max]),
+                    Move { X: i32[min max], Y: i32[min max] },
                 }
 
                 fn void Touch() {
@@ -2849,7 +2849,7 @@ public sealed class CompilerPipelineFullIntegrationTests
 
                 public enum IOResult<T> {
                     Ok(T),
-                    Err(i32[-2147483648 2147483647]),
+                    Err(i32[min max]),
                 }
 
                 fn void Touch() {
@@ -2875,11 +2875,11 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    finite law i32[-2147483648 2147483647] Unwrap(Facade.IOResult<i32[-2147483648 2147483647]> result) {
+                    finite law i32[min max] Unwrap(Facade.IOResult<i32[min max]> result) {
                         switch (result) {
-                            case Facade.IOResult<i32[-2147483648 2147483647]>.Ok(var value):
+                            case Facade.IOResult<i32[min max]>.Ok(var value):
                                 return value;
-                            case Facade.IOResult<i32[-2147483648 2147483647]>.Err(var code):
+                            case Facade.IOResult<i32[min max]>.Err(var code):
                                 return code;
                         }
                     }
@@ -2925,15 +2925,15 @@ public sealed class CompilerPipelineFullIntegrationTests
             module Types
 
             struct Widget {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             public const Answer = 42;
-            internal static rawptr<i8[-128 127]> Buffer = null;
+            internal static rawptr<i8[min max]> Buffer = null;
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack Widget widget = new Widget() { Value = 1 };
-                stack i32[-2147483648 2147483647] value = widget.Value + 2;
+                stack i32[min max] value = widget.Value + 2;
                 return value;
             }
             """));
@@ -2966,8 +2966,8 @@ public sealed class CompilerPipelineFullIntegrationTests
 
             enum Token {
                 End,
-                Integer(i32[-2147483648 2147483647]),
-                Move { X: i32[-2147483648 2147483647], Y: i32[-2147483648 2147483647] },
+                Integer(i32[min max]),
+                Move { X: i32[min max], Y: i32[min max] },
             }
 
             fn void Run() {
@@ -3014,11 +3014,11 @@ public sealed class CompilerPipelineFullIntegrationTests
 
             enum Token {
                 End,
-                Integer(i32[-2147483648 2147483647]),
-                Move { X: i32[-2147483648 2147483647], Y: i32[-2147483648 2147483647] },
+                Integer(i32[min max]),
+                Move { X: i32[min max], Y: i32[min max] },
             }
 
-            fn Token Make(i32[-2147483648 2147483647] value) {
+            fn Token Make(i32[min max] value) {
                 if (value == 0) {
                     return Token.End;
                 }
@@ -3034,7 +3034,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 return token;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack Token first = Token.Integer(5);
                 stack Token second = Token.Move { X: 1, Y: 2 };
                 stack Token third = Make(0);
@@ -3116,7 +3116,7 @@ public sealed class CompilerPipelineFullIntegrationTests
             """
             module Demo
 
-            public const i32[-2147483648 2147483647] Value = null;
+            public const i32[min max] Value = null;
             """));
 
         Assert.False(result.Succeeded);
@@ -3135,7 +3135,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Math
 
                 public doctrine Numbers {
-                    finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                    finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                         return left + right;
                     }
                 }
@@ -3159,13 +3159,13 @@ public sealed class CompilerPipelineFullIntegrationTests
             module Demo
 
             struct Buffer {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
-                fn i32[-2147483648 2147483647] Scale(borrow Buffer self, i32[-2147483648 2147483647] factor) {
+                fn i32[min max] Scale(borrow Buffer self, i32[min max] factor) {
                     return self.Value * factor;
                 }
 
-                fn i32[-2147483648 2147483647] Scale(borrow Buffer self, bool doubleIt) {
+                fn i32[min max] Scale(borrow Buffer self, bool doubleIt) {
                     if (doubleIt) {
                         return self.Value * 2;
                     }
@@ -3174,7 +3174,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 }
             }
 
-            unsafe fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack Buffer buffer = new Buffer() { Value = 3 };
                 return buffer.Scale(4) + buffer.Scale(true);
             }
@@ -3213,11 +3213,11 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public finite law i32[-2147483648 2147483647] Parse(i32[-2147483648 2147483647] value) {
+                public finite law i32[min max] Parse(i32[min max] value) {
                     return value;
                 }
 
-                public finite law i32[-2147483648 2147483647] Parse(bool value) {
+                public finite law i32[min max] Parse(bool value) {
                     if (value) {
                         return 1;
                     }
@@ -3252,7 +3252,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    unsafe fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[min max] Run() {
                         return Facade.Parse(4) + Facade.Parse(true);
                     }
                     """,
@@ -3371,7 +3371,7 @@ public sealed class CompilerPipelineFullIntegrationTests
 
                 public record Pair<T>(T Value) { }
                 public alias BufferView<T> = Pair<T>[];
-                public fn Pair<i32[-2147483648 2147483647]> First(BufferView<i32[-2147483648 2147483647]> view);
+                public fn Pair<i32[min max]> First(BufferView<i32[min max]> view);
                 """,
                 Path.Combine(tempDirectory.FullName, "Facade.stark")));
 
@@ -3439,14 +3439,14 @@ public sealed class CompilerPipelineFullIntegrationTests
 
                 public record Pair<T>(T Value) { }
                 public alias BufferView<T> = Pair<T>[];
-                public alias IntBufferView = Pair<i32[-2147483648 2147483647]>[];
+                public alias IntBufferView = Pair<i32[min max]>[];
                 public record Holder(IntBufferView View) {
                     IntBufferView Cached;
 
                     fn IntBufferView Echo(IntBufferView value);
                 }
 
-                public fn BufferView<i32[-2147483648 2147483647]> First(BufferView<i32[-2147483648 2147483647]> view);
+                public fn BufferView<i32[min max]> First(BufferView<i32[min max]> view);
                 """,
                 Path.Combine(tempDirectory.FullName, "Facade.stark")));
 
@@ -3922,7 +3922,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public alias Count = i32[-2147483648 2147483647];
+                public alias Count = i32[min max];
 
                 public fn Count Identity<T>(Count value) {
                     return value + 0;
@@ -3983,9 +3983,9 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public fn i32[-2147483648 2147483647] SumWhileControl<T>(i32[-2147483648 2147483647] count, i32[-2147483648 2147483647] stopAt, T tag) {
-                    stack mut i32[-2147483648 2147483647] sum = 0;
-                    stack mut i32[-2147483648 2147483647] index = 0;
+                public fn i32[min max] SumWhileControl<T>(i32[min max] count, i32[min max] stopAt, T tag) {
+                    stack mut i32[min max] sum = 0;
+                    stack mut i32[min max] index = 0;
                     while willexit (index < count) {
                         index = index + 1;
                         if (index < 2) {
@@ -3999,9 +3999,9 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return sum;
                 }
 
-                public fn i32[-2147483648 2147483647] SumForControl<T>(i32[-2147483648 2147483647] count, i32[-2147483648 2147483647] stopAt, T tag) {
-                    stack mut i32[-2147483648 2147483647] sum = 0;
-                    for willexit (stack mut i32[-2147483648 2147483647] index = 0; index < count; index = index + 1) {
+                public fn i32[min max] SumForControl<T>(i32[min max] count, i32[min max] stopAt, T tag) {
+                    stack mut i32[min max] sum = 0;
+                    for willexit (stack mut i32[min max] index = 0; index < count; index = index + 1) {
                         if (index < 2) {
                             continue;
                         }
@@ -4554,7 +4554,7 @@ public sealed class CompilerPipelineFullIntegrationTests
             """
             module Facade
 
-            public alias BufferView = i32[-2147483648 2147483647][];
+            public alias BufferView = i32[min max][];
 
             public fn BufferView First(BufferView view);
 
@@ -4664,7 +4664,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                         ],
                         Modifiers: Modifiers(),
                         HasBody: false,
-                        PublishedOverloadKey: "(rawptr<i8[-128127]>,ascii)")),
+                        PublishedOverloadKey: "(rawptr<i8[minmax]>,ascii)")),
                 new TopLevelDeclarationModel(
                     "WriteLine",
                     DeclarationKind.Function,
@@ -4680,17 +4680,17 @@ public sealed class CompilerPipelineFullIntegrationTests
                         ],
                         Modifiers: Modifiers(),
                         HasBody: false,
-                        PublishedOverloadKey: "(rawptr<i8[-128127]>,unicode)"))
+                        PublishedOverloadKey: "(rawptr<i8[minmax]>,unicode)"))
             ]);
 
         var ascii = syntaxModel.Declarations[0];
         var unicode = syntaxModel.Declarations[1];
 
         Assert.Equal(
-            "WriteLine#(rawptr<i8[-128127]>,ascii)",
+            "WriteLine#(rawptr<i8[minmax]>,ascii)",
             FunctionOverloadFacts.GetResolvedLocalName(syntaxModel, ascii));
         Assert.Equal(
-            "WriteLine#(rawptr<i8[-128127]>,unicode)",
+            "WriteLine#(rawptr<i8[minmax]>,unicode)",
             FunctionOverloadFacts.GetResolvedLocalName(syntaxModel, unicode));
     }
 
@@ -4814,7 +4814,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public strictfp hot noinline finite law f32 Precise(f32 value);
-                export cold unsafe ffi fn void Sink(rawptr<i8[-128 127]> value);
+                export cold unsafe ffi fn void Sink(rawptr<i8[min max]> value);
                 """,
                 Path.Combine(tempDirectory.FullName, "Facade.stark")));
 
@@ -4866,13 +4866,13 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public struct Big {
-                    i64[-9223372036854775808 9223372036854775807] A;
-                    i64[-9223372036854775808 9223372036854775807] B;
-                    i64[-9223372036854775808 9223372036854775807] C;
+                    i64[min max] A;
+                    i64[min max] B;
+                    i64[min max] C;
                 }
 
                 public fn Big Make();
-                public fn i64[-9223372036854775808 9223372036854775807] Read(Big value);
+                public fn i64[min max] Read(Big value);
                 """,
                 Path.Combine(tempDirectory.FullName, "Facade.stark")));
 
@@ -4923,13 +4923,13 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public struct Padded {
-                    i8[-128 127] Small;
-                    i32[-2147483648 2147483647] Value;
+                    i8[min max] Small;
+                    i32[min max] Value;
                 }
 
                 public enum Token {
                     End,
-                    Move { X: i32[-2147483648 2147483647], Y: i32[-2147483648 2147483647] },
+                    Move { X: i32[min max], Y: i32[min max] },
                 }
                 """,
                 Path.Combine(tempDirectory.FullName, "Facade.stark")));
@@ -4982,7 +4982,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public struct Box {
-                    i32[-2147483648 2147483647] Value;
+                    i32[min max] Value;
                 }
 
                 public fn retborrow Box Echo(retborrow Box value) {
@@ -5050,7 +5050,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public struct Box {
-                    i32[-2147483648 2147483647] Value;
+                    i32[min max] Value;
                 }
 
                 public fn void Touch(borrow mut Box box) {
@@ -5125,7 +5125,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return value;
                 }
 
-                public fn i32[-2147483648 2147483647] ConcreteIdentity(i32[-2147483648 2147483647] value) {
+                public fn i32[min max] ConcreteIdentity(i32[min max] value) {
                     return value;
                 }
 
@@ -5363,11 +5363,11 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public struct Box {
-                    i32[-2147483648 2147483647] Value;
+                    i32[min max] Value;
                 }
 
                 public fn void Touch<T>(borrow Box box, T tag) {
-                    stack i32[-2147483648 2147483647] copy = box.Value;
+                    stack i32[min max] copy = box.Value;
                     return;
                 }
                 """,
@@ -5416,7 +5416,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public struct Box {
-                    i32[-2147483648 2147483647] Value;
+                    i32[min max] Value;
                 }
 
                 public fn void Reset(borrow mut Box box) {
@@ -5477,7 +5477,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public fn i32[-2147483648 2147483647] AddTag<T>(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right, T tag) {
+                public fn i32[min max] AddTag<T>(i32[min max] left, i32[min max] right, T tag) {
                     return left + right;
                 }
                 """,
@@ -5521,14 +5521,14 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public fn i32[-2147483648 2147483647] SumPair<T>(i32[-2147483648 2147483647] value, T tag) {
-                    stack i32[-2147483648 2147483647] first = value, second = value + 1;
+                public fn i32[min max] SumPair<T>(i32[min max] value, T tag) {
+                    stack i32[min max] first = value, second = value + 1;
                     return first + second;
                 }
 
-                public fn i32[-2147483648 2147483647] SumTo<T>(i32[-2147483648 2147483647] limit, T tag) {
-                    stack mut i32[-2147483648 2147483647] total = 0, stop = limit;
-                    for willexit (stack mut i32[-2147483648 2147483647] index = 0, max = stop; index < max; index += 1) {
+                public fn i32[min max] SumTo<T>(i32[min max] limit, T tag) {
+                    stack mut i32[min max] total = 0, stop = limit;
+                    for willexit (stack mut i32[min max] index = 0, max = stop; index < max; index += 1) {
                         total += index;
                     }
 
@@ -5612,7 +5612,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public fn void Observe<T>(i32[-2147483648 2147483647] value, T tag) {
+                public fn void Observe<T>(i32[min max] value, T tag) {
                     value + 1;
                     return;
                 }
@@ -5665,8 +5665,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, T tag) {
-                    stack mut i32[-2147483648 2147483647] current, next = value + 1;
+                public fn i32[min max] Observe<T>(i32[min max] value, T tag) {
+                    stack mut i32[min max] current, next = value + 1;
                     current = value;
                     return current + next;
                 }
@@ -5724,9 +5724,9 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public record Pair(i32[-2147483648 2147483647] First, i32[-2147483648 2147483647] Second) { }
+                public record Pair(i32[min max] First, i32[min max] Second) { }
 
-                public fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, T tag) {
+                public fn i32[min max] Observe<T>(i32[min max] value, T tag) {
                     stack Pair pair = { First = value, Second = value + 1 };
                     return pair.First + pair.Second;
                 }
@@ -5784,12 +5784,12 @@ public sealed class CompilerPipelineFullIntegrationTests
 
                 public fn void NoOp<T>(T tag) { }
 
-                public fn i32[-2147483648 2147483647] KeepValue<T>(i32[-2147483648 2147483647] value, T tag) {
+                public fn i32[min max] KeepValue<T>(i32[min max] value, T tag) {
                     ;
                     return value;
                 }
 
-                public fn i32[-2147483648 2147483647] NestedScope<T>(i32[-2147483648 2147483647] value, T tag) {
+                public fn i32[min max] NestedScope<T>(i32[min max] value, T tag) {
                     {
                         ;
                     }
@@ -5797,8 +5797,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return value;
                 }
 
-                public fn i32[-2147483648 2147483647] CountTo<T>(i32[-2147483648 2147483647] count, T tag) {
-                    stack mut i32[-2147483648 2147483647] index = 0;
+                public fn i32[min max] CountTo<T>(i32[min max] count, T tag) {
+                    stack mut i32[min max] index = 0;
                     for willexit (;;) {
                         if (index == count) {
                             break;
@@ -5810,7 +5810,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return index;
                 }
 
-                public fn i32[-2147483648 2147483647] EmptySwitch<T>(i32[-2147483648 2147483647] value, T tag) {
+                public fn i32[min max] EmptySwitch<T>(i32[min max] value, T tag) {
                     switch (value) {
                         case 0:
                     }
@@ -5888,7 +5888,7 @@ public sealed class CompilerPipelineFullIntegrationTests
 
                 public struct Outer<T> {
                     Inner<T> Item;
-                    i32[-2147483648 2147483647][2] Values;
+                    i32[min max][2] Values;
                 }
 
                 public fn Outer<T> Wrap<T>(T value, T tag) {
@@ -5949,8 +5949,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, T tag) {
-                    stack mut i32[-2147483648 2147483647] current = 1;
+                public fn i32[min max] Observe<T>(i32[min max] value, T tag) {
+                    stack mut i32[min max] current = 1;
                     return current += value;
                 }
                 """,
@@ -6006,8 +6006,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public unsafe fn i32[-2147483648 2147483647] Observe<T>(rawmutptr<i32[-2147483648 2147483647]> ptr, i32[-2147483648 2147483647] value, T tag) {
-                    stack mut i32[-2147483648 2147483647] copy = *ptr;
+                public unsafe fn i32[min max] Observe<T>(rawmutptr<i32[min max]> ptr, i32[min max] value, T tag) {
+                    stack mut i32[min max] copy = *ptr;
                     return *ptr += copy + value;
                 }
                 """,
@@ -6064,13 +6064,13 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public record Buffer(i32[-2147483648 2147483647] First, i32[-2147483648 2147483647][4] Values) { }
+                public record Buffer(i32[min max] First, i32[min max][4] Values) { }
 
                 public unsafe fn rawmutptr<Buffer> Pick<T>(rawmutptr<Buffer> ptr, T tag) {
                     return ptr;
                 }
 
-                public unsafe fn i32[-2147483648 2147483647] Observe<T>(rawmutptr<Buffer> ptr, i32[-2147483648 2147483647] slot, i32[-2147483648 2147483647] value, T tag) {
+                public unsafe fn i32[min max] Observe<T>(rawmutptr<Buffer> ptr, i32[min max] slot, i32[min max] value, T tag) {
                     (*ptr).First += value;
                     return (*Pick(ptr, tag)).Values[slot] = (*ptr).First + value;
                 }
@@ -6145,14 +6145,14 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public record Buffer(i32[-2147483648 2147483647] First, i32[-2147483648 2147483647][4] Values) { }
+                public record Buffer(i32[min max] First, i32[min max][4] Values) { }
 
-                public unsafe fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, T tag) {
-                    stack mut i32[-2147483648 2147483647][4] data = { 1, 2, 3, 4 };
+                public unsafe fn i32[min max] Observe<T>(i32[min max] value, T tag) {
+                    stack mut i32[min max][4] data = { 1, 2, 3, 4 };
                     stack mut Buffer buffer = { First = value, Values = data };
-                    stack rawmutptr<i32[-2147483648 2147483647]> firstPtr = &buffer.First;
-                    stack rawmutptr<i32[-2147483648 2147483647]> slotPtr = &buffer.Values[2];
-                    stack rawmutptr<i32[-2147483648 2147483647]> aliasPtr = &*slotPtr;
+                    stack rawmutptr<i32[min max]> firstPtr = &buffer.First;
+                    stack rawmutptr<i32[min max]> slotPtr = &buffer.Values[2];
+                    stack rawmutptr<i32[min max]> aliasPtr = &*slotPtr;
                     return *aliasPtr = *firstPtr + value;
                 }
                 """,
@@ -6223,7 +6223,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, i32[-2147483648 2147483647] exponent, T tag) {
+                public fn i32[min max] Observe<T>(i32[min max] value, i32[min max] exponent, T tag) {
                     return value ** exponent;
                 }
                 """,
@@ -6275,7 +6275,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                fn i32[-2147483648 2147483647] Next() {
+                fn i32[min max] Next() {
                     return 1;
                 }
 
@@ -6554,7 +6554,7 @@ public sealed class CompilerPipelineFullIntegrationTests
 
                 public struct Pair<T> {
                     T Value;
-                    i32[-2147483648 2147483647] Count;
+                    i32[min max] Count;
                 }
 
                 public fn Pair<T> MakePair<T>(T value) {
@@ -6691,18 +6691,18 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return echoed;
                 }
 
-                public fn i32[-2147483648 2147483647] TruncateTyped<T>(f32 value, T tag) {
-                    return (i32[-2147483648 2147483647])value;
+                public fn i32[min max] TruncateTyped<T>(f32 value, T tag) {
+                    return (i32[min max])value;
                 }
 
-                public fn i32[-2147483648 2147483647] AddViaAssign<T>(T tag, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
-                    stack mut i32[-2147483648 2147483647] sum = left;
+                public fn i32[min max] AddViaAssign<T>(T tag, i32[min max] left, i32[min max] right) {
+                    stack mut i32[min max] sum = left;
                     sum = sum + right;
                     return sum;
                 }
 
-                public fn i32[-2147483648 2147483647] ChooseBranch<T>(bool takeLeft, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right, T tag) {
-                    stack mut i32[-2147483648 2147483647] result = 0;
+                public fn i32[min max] ChooseBranch<T>(bool takeLeft, i32[min max] left, i32[min max] right, T tag) {
+                    stack mut i32[min max] result = 0;
                     if (takeLeft) {
                         result = left;
                     } else {
@@ -6711,9 +6711,9 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return result;
                 }
 
-                public fn i32[-2147483648 2147483647] SumTo<T>(i32[-2147483648 2147483647] count, T tag) {
-                    stack mut i32[-2147483648 2147483647] index = 0;
-                    stack mut i32[-2147483648 2147483647] sum = 0;
+                public fn i32[min max] SumTo<T>(i32[min max] count, T tag) {
+                    stack mut i32[min max] index = 0;
+                    stack mut i32[min max] sum = 0;
                     while willexit (index < count) {
                         sum = sum + index;
                         index = index + 1;
@@ -6721,17 +6721,17 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return sum;
                 }
 
-                public fn i32[-2147483648 2147483647] SumFor<T>(i32[-2147483648 2147483647] count, T tag) {
-                    stack mut i32[-2147483648 2147483647] sum = 0;
-                    for willexit (stack mut i32[-2147483648 2147483647] index = 0; index < count; index = index + 1) {
+                public fn i32[min max] SumFor<T>(i32[min max] count, T tag) {
+                    stack mut i32[min max] sum = 0;
+                    for willexit (stack mut i32[min max] index = 0; index < count; index = index + 1) {
                         sum = sum + index;
                     }
                     return sum;
                 }
 
-                public fn i32[-2147483648 2147483647] SumForControl<T>(i32[-2147483648 2147483647] count, i32[-2147483648 2147483647] stopAt, T tag) {
-                    stack mut i32[-2147483648 2147483647] sum = 0;
-                    for willexit (stack mut i32[-2147483648 2147483647] index = 0; index < count; index = index + 1) {
+                public fn i32[min max] SumForControl<T>(i32[min max] count, i32[min max] stopAt, T tag) {
+                    stack mut i32[min max] sum = 0;
+                    for willexit (stack mut i32[min max] index = 0; index < count; index = index + 1) {
                         if (index < 2) {
                             continue;
                         }
@@ -6743,7 +6743,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return sum;
                 }
 
-                public fn i8[-128 127] One<T>(T tag) {
+                public fn i8[min max] One<T>(T tag) {
                     return 1;
                 }
 
@@ -6751,7 +6751,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return !flag;
                 }
 
-                public fn i32[-2147483648 2147483647] AddTagged<T>(T tag, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                public fn i32[min max] AddTagged<T>(T tag, i32[min max] left, i32[min max] right) {
                     return left + right;
                 }
 
@@ -6767,17 +6767,17 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return box.Value;
                 }
 
-                public record EchoBox(i32[-2147483648 2147483647] Dummy) {
-                    fn i32[-2147483648 2147483647] Echo(borrow EchoBox self, i32[-2147483648 2147483647] value) {
+                public record EchoBox(i32[min max] Dummy) {
+                    fn i32[min max] Echo(borrow EchoBox self, i32[min max] value) {
                         return value;
                     }
                 }
 
-                public fn EchoBox MakeEchoBox(i32[-2147483648 2147483647] dummy) {
+                public fn EchoBox MakeEchoBox(i32[min max] dummy) {
                     return new EchoBox(dummy);
                 }
 
-                public fn i32[-2147483648 2147483647] CallEcho<T>(EchoBox box, i32[-2147483648 2147483647] value, T tag) {
+                public fn i32[min max] CallEcho<T>(EchoBox box, i32[min max] value, T tag) {
                     return box.Echo(value);
                 }
 
@@ -6785,72 +6785,72 @@ public sealed class CompilerPipelineFullIntegrationTests
                     EchoBox Box;
                 }
 
-                public fn i32[-2147483648 2147483647] CallHeldEcho<T>(EchoHolder holder, i32[-2147483648 2147483647] value, T tag) {
+                public fn i32[min max] CallHeldEcho<T>(EchoHolder holder, i32[min max] value, T tag) {
                     return holder.Box.Echo(value);
                 }
 
-                public fn i32[-2147483648 2147483647] CallIndexedEcho<T>(EchoBox[] boxes, i32[-2147483648 2147483647] index, i32[-2147483648 2147483647] value, T tag) {
+                public fn i32[min max] CallIndexedEcho<T>(EchoBox[] boxes, i32[min max] index, i32[min max] value, T tag) {
                     return boxes[index].Echo(value);
                 }
 
-                public fn i32[-2147483648 2147483647] CallMadeEcho<T>(i32[-2147483648 2147483647] value, T tag) {
+                public fn i32[min max] CallMadeEcho<T>(i32[min max] value, T tag) {
                     return MakeEchoBox(1).Echo(value);
                 }
 
                 public struct IntBox {
-                    i32[-2147483648 2147483647] Value;
+                    i32[min max] Value;
                 }
 
-                public fn IntBox MakeIntBox(i32[-2147483648 2147483647] value) {
+                public fn IntBox MakeIntBox(i32[min max] value) {
                     return new IntBox() { Value = value };
                 }
 
-                public fn i32[-2147483648 2147483647] ReadMadeValue<T>(i32[-2147483648 2147483647] value, T tag) {
+                public fn i32[min max] ReadMadeValue<T>(i32[min max] value, T tag) {
                     return MakeIntBox(value).Value;
                 }
 
-                public fn i32[-2147483648 2147483647] CallConstructedEcho<T>(i32[-2147483648 2147483647] value, T tag) {
+                public fn i32[min max] CallConstructedEcho<T>(i32[min max] value, T tag) {
                     return new EchoBox(1).Echo(value);
                 }
 
-                public fn i32[-2147483648 2147483647] ReadConstructedValue<T>(i32[-2147483648 2147483647] value, T tag) {
+                public fn i32[min max] ReadConstructedValue<T>(i32[min max] value, T tag) {
                     return new IntBox() { Value = value }.Value;
                 }
 
-                public fn i32[-2147483648 2147483647] ChooseBoxValue<T>(bool takeLeft, IntBox left, IntBox right, T tag) {
+                public fn i32[min max] ChooseBoxValue<T>(bool takeLeft, IntBox left, IntBox right, T tag) {
                     return (takeLeft ? left : right).Value;
                 }
 
-                public fn i32[-2147483648 2147483647] ChooseEcho<T>(bool takeLeft, EchoBox left, EchoBox right, i32[-2147483648 2147483647] value, T tag) {
+                public fn i32[min max] ChooseEcho<T>(bool takeLeft, EchoBox left, EchoBox right, i32[min max] value, T tag) {
                     return (takeLeft ? left : right).Echo(value);
                 }
 
-                public fn i32[-2147483648 2147483647] ReadSliceAt<T>(i32[-2147483648 2147483647][] view, i32[-2147483648 2147483647] index, T tag) {
+                public fn i32[min max] ReadSliceAt<T>(i32[min max][] view, i32[min max] index, T tag) {
                     return view[index];
                 }
 
-                public fn ascii SliceAsciiWindow<T>(ascii text, i32[-2147483648 2147483647] start, i32[-2147483648 2147483647] length, T tag) {
+                public fn ascii SliceAsciiWindow<T>(ascii text, i32[min max] start, i32[min max] length, T tag) {
                     return text[start, length];
                 }
 
                 public struct SliceBox<T> {
-                    i32[-2147483648 2147483647][] Values;
+                    i32[min max][] Values;
                 }
 
-                public fn i32[-2147483648 2147483647] ReadBoxSliceAt<T>(SliceBox<T> box, i32[-2147483648 2147483647] index, T tag) {
+                public fn i32[min max] ReadBoxSliceAt<T>(SliceBox<T> box, i32[min max] index, T tag) {
                     return box.Values[index];
                 }
 
                 public struct Counted<T> {
                     T Value;
-                    i32[-2147483648 2147483647] Count;
+                    i32[min max] Count;
                 }
 
-                public fn i32[-2147483648 2147483647] ReadIndexedCount<T>(Counted<T>[] pairs, i32[-2147483648 2147483647] index, T tag) {
+                public fn i32[min max] ReadIndexedCount<T>(Counted<T>[] pairs, i32[min max] index, T tag) {
                     return pairs[index].Count;
                 }
 
-                public record ResetBox(i32[-2147483648 2147483647] Value) {
+                public record ResetBox(i32[min max] Value) {
                     fn void Reset(borrow mut ResetBox self) {
                         self.Value = 0;
                     }
@@ -6896,10 +6896,10 @@ public sealed class CompilerPipelineFullIntegrationTests
                 }
 
                 public enum Boxed<T> {
-                    Value { Data: T, Tag: i32[-2147483648 2147483647] },
+                    Value { Data: T, Tag: i32[min max] },
                 }
 
-                public fn Boxed<T> WrapNamed<T>(T value, i32[-2147483648 2147483647] tag) {
+                public fn Boxed<T> WrapNamed<T>(T value, i32[min max] tag) {
                     return Boxed<T>.Value { Data: value, Tag: tag };
                 }
 
@@ -6911,7 +6911,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return takeLeft ? left : right;
                 }
 
-                public fn i32[-2147483648 2147483647] MinTagged<T>(T tag, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                public fn i32[min max] MinTagged<T>(T tag, i32[min max] left, i32[min max] right) {
                     return left < right ? left : right;
                 }
                 """,
@@ -7550,16 +7550,16 @@ public sealed class CompilerPipelineFullIntegrationTests
                 }
 
                 public enum Boxed<T> {
-                    Value { Data: T, Tag: i32[-2147483648 2147483647] },
+                    Value { Data: T, Tag: i32[min max] },
                 }
 
                 public enum Wrapped<T> {
-                    Value { Data: Counter, Marker: i32[-2147483648 2147483647] },
+                    Value { Data: Counter, Marker: i32[min max] },
                 }
 
-                public record Counter(i32[-2147483648 2147483647] Value, i32[-2147483648 2147483647] Count) { }
+                public record Counter(i32[min max] Value, i32[min max] Count) { }
 
-                public fn i32[-2147483648 2147483647] HasValueSwitch<T>(Option<T> value) {
+                public fn i32[min max] HasValueSwitch<T>(Option<T> value) {
                     switch (value) {
                         case Option<T>.Some(var payload):
                             return 1;
@@ -7568,21 +7568,21 @@ public sealed class CompilerPipelineFullIntegrationTests
                     }
                 }
 
-                public fn i32[-2147483648 2147483647] ReadTagSwitch<T>(Boxed<T> boxed) {
+                public fn i32[min max] ReadTagSwitch<T>(Boxed<T> boxed) {
                     switch (boxed) {
                         case Boxed<T>.Value { Data: _, Tag: var tag }:
                             return tag;
                     }
                 }
 
-                public fn i32[-2147483648 2147483647] ReadCountSwitch<T>(Counter counter, T tag) {
+                public fn i32[min max] ReadCountSwitch<T>(Counter counter, T tag) {
                     switch (counter) {
                         case Counter(_, var count):
                             return count;
                     }
                 }
 
-                public fn i32[-2147483648 2147483647] ClassifySwitch<T>(i32[-2147483648 2147483647] value, T tag) {
+                public fn i32[min max] ClassifySwitch<T>(i32[min max] value, T tag) {
                     switch (value) {
                         case 0:
                         case 1:
@@ -7594,7 +7594,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     }
                 }
 
-                public fn i32[-2147483648 2147483647] ReadNestedCountSwitch<T>(Wrapped<T> wrapped, T tag) {
+                public fn i32[min max] ReadNestedCountSwitch<T>(Wrapped<T> wrapped, T tag) {
                     switch (wrapped) {
                         case Wrapped<T>.Value { Data: Counter(7, var count), Marker: 1 }:
                             return count;
@@ -7726,8 +7726,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public fn i32[-2147483648 2147483647] Truncate<T>(f32 value, T tag) {
-                    return (i32[-2147483648 2147483647])value;
+                public fn i32[min max] Truncate<T>(f32 value, T tag) {
+                    return (i32[min max])value;
                 }
                 """,
                 Path.Combine(tempDirectory.FullName, "Facade.stark")));
@@ -7772,7 +7772,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public enum Boxed<T> {
-                    Value { Data: T, Tag: i8[-128 127] },
+                    Value { Data: T, Tag: i8[min max] },
                 }
 
                 public fn Boxed<T> Wrap<T>(T value) {
@@ -7944,7 +7944,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     Some(T),
                 }
 
-                public fn i32[-2147483648 2147483647] HasValue<T>(Option<T> value) {
+                public fn i32[min max] HasValue<T>(Option<T> value) {
                     switch (value) {
                         case Option<T>.Some(var payload):
                             return 1;
@@ -8011,10 +8011,10 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public enum Boxed<T> {
-                    Value { Data: T, Tag: i32[-2147483648 2147483647] },
+                    Value { Data: T, Tag: i32[min max] },
                 }
 
-                public fn i32[-2147483648 2147483647] ReadTag<T>(Boxed<T> boxed) {
+                public fn i32[min max] ReadTag<T>(Boxed<T> boxed) {
                     switch (boxed) {
                         case Boxed<T>.Value { Data: _, Tag: var tag }:
                             return tag;
@@ -8080,9 +8080,9 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public record Counter(i32[-2147483648 2147483647] Value, i32[-2147483648 2147483647] Count) { }
+                public record Counter(i32[min max] Value, i32[min max] Count) { }
 
-                public fn i32[-2147483648 2147483647] ReadCount<T>(Counter counter, T tag) {
+                public fn i32[min max] ReadCount<T>(Counter counter, T tag) {
                     switch (counter) {
                         case Counter(_, var count):
                             return count;
@@ -8240,13 +8240,13 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                public record Box(i32[-2147483648 2147483647] Dummy) {
-                    fn i32[-2147483648 2147483647] Echo(borrow Box self, i32[-2147483648 2147483647] value) {
+                public record Box(i32[min max] Dummy) {
+                    fn i32[min max] Echo(borrow Box self, i32[min max] value) {
                         return value;
                     }
                 }
 
-                public fn i32[-2147483648 2147483647] Forward<T>(T tag, Box box, i32[-2147483648 2147483647] value) {
+                public fn i32[min max] Forward<T>(T tag, Box box, i32[min max] value) {
                     return box.Echo(value);
                 }
                 """,
@@ -8299,7 +8299,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public record Counter<T>(T Value) {
-                    i32[-2147483648 2147483647] Tag;
+                    i32[min max] Tag;
                 }
                 """,
                 Path.Combine(tempDirectory.FullName, "Facade.stark")));
@@ -8402,7 +8402,7 @@ public sealed class CompilerPipelineFullIntegrationTests
 
                 public record Pair<A, B>(A First, B Second) { }
 
-                public fn i32[-2147483648 2147483647] Forward<T>(T value, bool flag) {
+                public fn i32[min max] Forward<T>(T value, bool flag) {
                     stack Pair<T, bool> pair = new Pair<T, bool>(value, flag);
                     return pair.Second ? 1 : 0;
                 }
@@ -8524,8 +8524,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public struct Pair {
-                    i32[-2147483648 2147483647] Left;
-                    i32[-2147483648 2147483647] Right;
+                    i32[min max] Left;
+                    i32[min max] Right;
                 }
 
                 alias HiddenPair = Pair;
@@ -8533,7 +8533,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 export alias ExportedPair = HiddenPair;
                 public alias BufferView<T> = T[];
 
-                public finite law i32[-2147483648 2147483647] Left(PublicPair value, BufferView<i32[-2147483648 2147483647]> view) {
+                public finite law i32[min max] Left(PublicPair value, BufferView<i32[min max]> view) {
                     return value.Left + view[0];
                 }
                 """,
@@ -8577,11 +8577,11 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    unsafe fn i32[-2147483648 2147483647] Run() {
-                        stack i32[-2147483648 2147483647][1] values = { 4 };
+                    unsafe fn i32[min max] Run() {
+                        stack i32[min max][1] values = { 4 };
                         stack Facade.ExportedPair exported = new Facade.Pair() { Left = 3, Right = 0 };
                         stack Facade.PublicPair pair = exported;
-                        stack Facade.BufferView<i32[-2147483648 2147483647]> view = (i32[-2147483648 2147483647][])values;
+                        stack Facade.BufferView<i32[min max]> view = (i32[min max][])values;
                         return Facade.Left(pair, view);
                     }
                     """,
@@ -8655,8 +8655,8 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public struct Pair {
-                    i32[-2147483648 2147483647] Left;
-                    i32[-2147483648 2147483647] Right;
+                    i32[min max] Left;
+                    i32[min max] Right;
                 }
 
                 public alias PublicPair = Pair;
@@ -8696,7 +8696,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    unsafe fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[min max] Run() {
                         stack Facade.PublicPair pair = new Facade.Pair() { Left = 3, Right = 4 };
                         return pair.Left;
                     }
@@ -8739,20 +8739,20 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public struct Pair {
-                    i32[-2147483648 2147483647] Left;
-                    i32[-2147483648 2147483647] Right;
+                    i32[min max] Left;
+                    i32[min max] Right;
                 }
 
                 public alias PublicPair = Pair;
 
                 public doctrine Numbers {
-                    finite law i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
+                    finite law i32[min max] Double(i32[min max] value) {
                         return value + value;
                     }
                 }
 
                 public trait Comparable {
-                    law i32[-2147483648 2147483647] Compare(i32[-2147483648 2147483647] other);
+                    law i32[min max] Compare(i32[min max] other);
                 }
                 """,
                 facadePath));
@@ -8789,7 +8789,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    unsafe fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[min max] Run() {
                         stack Facade.PublicPair pair = new Facade.Pair() { Left = 3, Right = 4 };
                         return Facade.Numbers.Double(pair.Left);
                     }
@@ -8844,9 +8844,9 @@ public sealed class CompilerPipelineFullIntegrationTests
                 """
                 module Facade
 
-                internal alias Hidden = i32[-2147483648 2147483647];
+                internal alias Hidden = i32[min max];
 
-                public finite law i32[-2147483648 2147483647] Id(i32[-2147483648 2147483647] value) {
+                public finite law i32[min max] Id(i32[min max] value) {
                     return value;
                 }
                 """,
@@ -8869,7 +8869,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    unsafe fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[min max] Run() {
                         stack Facade.Hidden value = 3;
                         return Facade.Id(value);
                     }
@@ -8940,7 +8940,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                 module Facade
 
                 public struct Counter {
-                    i32[-2147483648 2147483647] Value;
+                    i32[min max] Value;
 
                     mut drop {
                         self.Value = 0;
@@ -8969,7 +8969,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     import Facade
                     module Demo
 
-                    unsafe fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[min max] Run() {
                         stack mut Facade.Counter value = new Facade.Counter() { Value = 1 };
                         return 0;
                     }

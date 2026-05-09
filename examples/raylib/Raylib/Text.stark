@@ -30,8 +30,8 @@ public fn Font LoadFontFromImage(Image image, Color key, i32[min max] firstChar)
     return result;
 }
 
-internal unsafe ffi fn void stark_raylib_LoadFontFromMemory(rawmutptr<Font> result, ascii fileType, rawptr<u8[0 255]> fileData, i32[min max] dataSize, i32[min max] fontSize, rawmutptr<i32[min max]> codepoints, i32[min max] codepointCount);
-public unsafe fn Font LoadFontFromMemory(ascii fileType, rawptr<u8[0 255]> fileData, i32[min max] dataSize, i32[min max] fontSize, rawmutptr<i32[min max]> codepoints, i32[min max] codepointCount) {
+internal unsafe ffi fn void stark_raylib_LoadFontFromMemory(rawmutptr<Font> result, ascii fileType, rawptr<u8[0 max]> fileData, i32[min max] dataSize, i32[min max] fontSize, rawmutptr<i32[min max]> codepoints, i32[min max] codepointCount);
+public unsafe fn Font LoadFontFromMemory(ascii fileType, rawptr<u8[0 max]> fileData, i32[min max] dataSize, i32[min max] fontSize, rawmutptr<i32[min max]> codepoints, i32[min max] codepointCount) {
     stack mut Font result = DefaultFont();
     stark_raylib_LoadFontFromMemory(&result, fileType, fileData, dataSize, fontSize, codepoints, codepointCount);
     return result;
@@ -42,7 +42,7 @@ public fn bool IsFontValid(Font font) {
     return stark_raylib_IsFontValid(&font);
 }
 
-public unsafe ffi fn rawmutptr<GlyphInfo> LoadFontData(rawptr<u8[0 255]> fileData, i32[min max] dataSize, i32[min max] fontSize, rawmutptr<i32[min max]> codepoints, i32[min max] codepointCount, i32[min max] type);
+public unsafe ffi fn rawmutptr<GlyphInfo> LoadFontData(rawptr<u8[0 max]> fileData, i32[min max] dataSize, i32[min max] fontSize, rawmutptr<i32[min max]> codepoints, i32[min max] codepointCount, i32[min max] type);
 internal unsafe ffi fn void stark_raylib_GenImageFontAtlas(rawmutptr<Image> result, rawptr<GlyphInfo> glyphs, rawmutptr<i8[min max]> glyphRecs, i32[min max] glyphCount, i32[min max] fontSize, i32[min max] padding, i32[min max] packMethod);
 public unsafe fn Image GenImageFontAtlas(rawptr<GlyphInfo> glyphs, rawmutptr<i8[min max]> glyphRecs, i32[min max] glyphCount, i32[min max] fontSize, i32[min max] padding, i32[min max] packMethod) {
     stack mut Image result = DefaultImage();

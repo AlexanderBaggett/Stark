@@ -285,10 +285,10 @@ public unsafe ffi fn void SetLoadFileDataCallback(LoadFileDataCallback callback)
 public unsafe ffi fn void SetSaveFileDataCallback(SaveFileDataCallback callback);
 public unsafe ffi fn void SetLoadFileTextCallback(LoadFileTextCallback callback);
 public unsafe ffi fn void SetSaveFileTextCallback(SaveFileTextCallback callback);
-public unsafe ffi fn rawmutptr<u8[0 255]> LoadFileData(ascii fileName, rawmutptr<i32[min max]> dataSize);
-public unsafe ffi fn void UnloadFileData(rawmutptr<u8[0 255]> data);
+public unsafe ffi fn rawmutptr<u8[0 max]> LoadFileData(ascii fileName, rawmutptr<i32[min max]> dataSize);
+public unsafe ffi fn void UnloadFileData(rawmutptr<u8[0 max]> data);
 public unsafe ffi fn bool SaveFileData(ascii fileName, rawmutptr<i8[min max]> data, i32[min max] dataSize);
-public unsafe ffi fn bool ExportDataAsCode(rawptr<u8[0 255]> data, i32[min max] dataSize, ascii fileName);
+public unsafe ffi fn bool ExportDataAsCode(rawptr<u8[0 max]> data, i32[min max] dataSize, ascii fileName);
 public unsafe ffi fn rawmutptr<i8[min max]> LoadFileText(ascii fileName);
 public unsafe ffi fn void UnloadFileText(rawmutptr<i8[min max]> text);
 public unsafe ffi fn bool SaveFileText(ascii fileName, rawmutptr<i8[min max]> text);
@@ -345,13 +345,13 @@ internal unsafe ffi fn i64[min max] stark_raylib_GetFileModTime(ascii fileName);
 public fn i64[min max] GetFileModTime(ascii fileName) {
     return stark_raylib_GetFileModTime(fileName);
 }
-public unsafe ffi fn rawmutptr<u8[0 255]> CompressData(rawptr<u8[0 255]> data, i32[min max] dataSize, rawmutptr<i32[min max]> compDataSize);
-public unsafe ffi fn rawmutptr<u8[0 255]> DecompressData(rawptr<u8[0 255]> compData, i32[min max] compDataSize, rawmutptr<i32[min max]> dataSize);
-public unsafe ffi fn rawmutptr<i8[min max]> EncodeDataBase64(rawptr<u8[0 255]> data, i32[min max] dataSize, rawmutptr<i32[min max]> outputSize);
-public unsafe ffi fn rawmutptr<u8[0 255]> DecodeDataBase64(rawptr<u8[0 255]> data, rawmutptr<i32[min max]> outputSize);
-public unsafe ffi fn u32[0 max] ComputeCRC32(rawmutptr<u8[0 255]> data, i32[min max] dataSize);
-public unsafe ffi fn rawmutptr<u32[0 max]> ComputeMD5(rawmutptr<u8[0 255]> data, i32[min max] dataSize);
-public unsafe ffi fn rawmutptr<u32[0 max]> ComputeSHA1(rawmutptr<u8[0 255]> data, i32[min max] dataSize);
+public unsafe ffi fn rawmutptr<u8[0 max]> CompressData(rawptr<u8[0 max]> data, i32[min max] dataSize, rawmutptr<i32[min max]> compDataSize);
+public unsafe ffi fn rawmutptr<u8[0 max]> DecompressData(rawptr<u8[0 max]> compData, i32[min max] compDataSize, rawmutptr<i32[min max]> dataSize);
+public unsafe ffi fn rawmutptr<i8[min max]> EncodeDataBase64(rawptr<u8[0 max]> data, i32[min max] dataSize, rawmutptr<i32[min max]> outputSize);
+public unsafe ffi fn rawmutptr<u8[0 max]> DecodeDataBase64(rawptr<u8[0 max]> data, rawmutptr<i32[min max]> outputSize);
+public unsafe ffi fn u32[0 max] ComputeCRC32(rawmutptr<u8[0 max]> data, i32[min max] dataSize);
+public unsafe ffi fn rawmutptr<u32[0 max]> ComputeMD5(rawmutptr<u8[0 max]> data, i32[min max] dataSize);
+public unsafe ffi fn rawmutptr<u32[0 max]> ComputeSHA1(rawmutptr<u8[0 max]> data, i32[min max] dataSize);
 internal unsafe ffi fn void stark_raylib_LoadAutomationEventList(rawmutptr<AutomationEventList> result, ascii fileName);
 public fn AutomationEventList LoadAutomationEventList(ascii fileName) {
     stack mut AutomationEventList result = DefaultAutomationEventList();

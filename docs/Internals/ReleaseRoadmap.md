@@ -369,6 +369,14 @@ strict range checks in `BenchmarkSourceTests`.
   - [x] Prefer the narrowest integer type that expresses the range.
   - [x] Add format/lint tests that prevent regression to giant literal bounds.
   - [x] Update docs and examples to model the new style.
+  - [x] Enforce full-width endpoint shorthand style in the compiler: the maximum
+        endpoint of a ranged integer type must be written as `max`, the minimum
+        endpoint of a signed integer type must be written as `min`, and unsigned
+        ranges may still use `0` as the lower bound.
+  - [x] Run the compiler, pipeline, integration, feature, benchmark,
+        docs/examples searches, and focused standard-library range/platform/text
+        surfaces after the diagnostic lands, then replace any newly reported
+        manual full-width endpoint spellings with `min`/`max`.
 
 ### Range Notation Module Checklist
 

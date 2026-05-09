@@ -16,12 +16,12 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
                 Some(T),
             }
 
-            export unsafe ffi fn i32[-2147483648 2147483647] main() {
-                stack Option<i32[-2147483648 2147483647]> opt = Option<i32[-2147483648 2147483647]>.Some(42);
+            export unsafe ffi fn i32[min max] main() {
+                stack Option<i32[min max]> opt = Option<i32[min max]>.Some(42);
                 switch (opt) {
-                    case Option<i32[-2147483648 2147483647]>.None:
+                    case Option<i32[min max]>.None:
                         return 0;
-                    case Option<i32[-2147483648 2147483647]>.Some(var value):
+                    case Option<i32[min max]>.Some(var value):
                         return value;
                 }
             }
@@ -41,8 +41,8 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
 
             record Pair<A, B>(A First, B Second) { }
 
-            export unsafe ffi fn i32[-2147483648 2147483647] main() {
-                stack Pair<i32[-2147483648 2147483647], i32[-2147483648 2147483647]> p = new Pair<i32[-2147483648 2147483647], i32[-2147483648 2147483647]>(3, 7);
+            export unsafe ffi fn i32[min max] main() {
+                stack Pair<i32[min max], i32[min max]> p = new Pair<i32[min max], i32[min max]>(3, 7);
                 return p.First + p.Second;
             }
             """);
@@ -63,11 +63,11 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
                 Some(T),
             }
 
-            finite law i32[-2147483648 2147483647] GetI32(Option<i32[-2147483648 2147483647]> opt) {
+            finite law i32[min max] GetI32(Option<i32[min max]> opt) {
                 switch (opt) {
-                    case Option<i32[-2147483648 2147483647]>.None:
+                    case Option<i32[min max]>.None:
                         return 0;
-                    case Option<i32[-2147483648 2147483647]>.Some(var value):
+                    case Option<i32[min max]>.Some(var value):
                         return value;
                 }
             }
@@ -81,10 +81,10 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
                 }
             }
 
-            export unsafe ffi fn i32[-2147483648 2147483647] main() {
-                stack Option<i32[-2147483648 2147483647]> a = Option<i32[-2147483648 2147483647]>.Some(5);
+            export unsafe ffi fn i32[min max] main() {
+                stack Option<i32[min max]> a = Option<i32[min max]>.Some(5);
                 stack Option<bool> b = Option<bool>.Some(true);
-                stack i32[-2147483648 2147483647] sum = GetI32(a);
+                stack i32[min max] sum = GetI32(a);
                 stack bool flag = GetBool(b);
                 return flag ? sum : 0;
             }
@@ -108,11 +108,11 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
                 Some(T),
             }
 
-            finite law bool IsPresent(Option<Option<i32[-2147483648 2147483647]>> outer) {
+            finite law bool IsPresent(Option<Option<i32[min max]>> outer) {
                 switch (outer) {
-                    case Option<Option<i32[-2147483648 2147483647]>>.None:
+                    case Option<Option<i32[min max]>>.None:
                         return false;
-                    case Option<Option<i32[-2147483648 2147483647]>>.Some(var inner):
+                    case Option<Option<i32[min max]>>.Some(var inner):
                         return true;
                 }
             }

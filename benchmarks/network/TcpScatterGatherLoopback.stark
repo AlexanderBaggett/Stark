@@ -17,7 +17,7 @@ unsafe fn System.Net.IPv4Endpoint LoopbackEndpoint(u8[0 63] attempt) {
         positiveProcessId = (u32[0 max])processId;
     }
 
-    stack u16[0 65535] port = (u16[0 65535])(41000 + (positiveProcessId % 20000) + attempt);
+    stack u16[0 max] port = (u16[0 max])(41000 + (positiveProcessId % 20000) + attempt);
     return new System.Net.IPv4Endpoint() {
         Address = new System.Net.IPv4Address() {
             A = 127,
@@ -31,8 +31,8 @@ unsafe fn System.Net.IPv4Endpoint LoopbackEndpoint(u8[0 63] attempt) {
 
 unsafe fn bool WriteVectorExact(
     mut borrow System.Net.Tcp.TcpClient client,
-    borrow i8[-128 127][] firstSource,
-    borrow i8[-128 127][] secondSource) {
+    borrow i8[min max][] firstSource,
+    borrow i8[min max][] secondSource) {
     stack System.Net.NetResult<u64[0 2 ** 63 - 1]> written = client.WriteVectored(firstSource, secondSource);
     switch (written) {
         case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var writeError):
@@ -44,8 +44,8 @@ unsafe fn bool WriteVectorExact(
 
 unsafe fn bool ReadVectorExact(
     mut borrow System.Net.Tcp.TcpClient server,
-    mut borrow i8[-128 127][] firstDestination,
-    mut borrow i8[-128 127][] secondDestination) {
+    mut borrow i8[min max][] firstDestination,
+    mut borrow i8[min max][] secondDestination) {
     stack mut u64[0 2 ** 63 - 1] readTotal = 0;
     while willexit (readTotal < ChunkBytes) {
         stack System.Net.NetResult<u64[0 2 ** 63 - 1]> read = server.ReadVectored(firstDestination, secondDestination);
@@ -65,14 +65,14 @@ unsafe fn bool ReadVectorExact(
 }
 
 export unsafe ffi fn i32[min max] main() {
-    stack mut i8[-128 127][1536] writeFirst = { 0 };
-    stack mut i8[-128 127][2560] writeSecond = { 0 };
-    stack mut i8[-128 127][1536] readFirst = { 0 };
-    stack mut i8[-128 127][2560] readSecond = { 0 };
-    stack i8[-128 127][] writeFirstView = writeFirst;
-    stack i8[-128 127][] writeSecondView = writeSecond;
-    stack mut i8[-128 127][] readFirstView = readFirst;
-    stack mut i8[-128 127][] readSecondView = readSecond;
+    stack mut i8[min max][1536] writeFirst = { 0 };
+    stack mut i8[min max][2560] writeSecond = { 0 };
+    stack mut i8[min max][1536] readFirst = { 0 };
+    stack mut i8[min max][2560] readSecond = { 0 };
+    stack i8[min max][] writeFirstView = writeFirst;
+    stack i8[min max][] writeSecondView = writeSecond;
+    stack mut i8[min max][] readFirstView = readFirst;
+    stack mut i8[min max][] readSecondView = readSecond;
 
     stack mut u8[0 63] attempt = 0;
     while willexit (attempt < 64) {

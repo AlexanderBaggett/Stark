@@ -9,19 +9,19 @@ public sealed class FunctionClassesFeatureTests : FeatureLlvmTestBase
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Plain(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            fn i32[min max] Plain(i32[min max] left, i32[min max] right) {
                 return left + right;
             }
 
-            law i32[-2147483648 2147483647] Pure() {
+            law i32[min max] Pure() {
                 return Plain(1, 2);
             }
 
-            finite i32[-2147483648 2147483647] Bounded() {
+            finite i32[min max] Bounded() {
                 return 4;
             }
 
-            finite law i32[-2147483648 2147483647] Run() {
+            finite law i32[min max] Run() {
                 return Pure() + Bounded();
             }
             """);

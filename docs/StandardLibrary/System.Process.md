@@ -8,8 +8,8 @@ platform layer.
 ```stark
 module System.Process
 
-public fn i32[-2147483648 2147483647] CurrentId();
-public fn void Exit(i32[-2147483648 2147483647] code);
+public fn i32[min max] CurrentId();
+public fn void Exit(i32[min max] code);
 ```
 
 `CurrentId` returns the operating-system process id for the current process.
@@ -29,7 +29,7 @@ system boundary.
 import System.Process
 module App
 
-export unsafe ffi fn i32[-2147483648 2147483647] main() {
+export unsafe ffi fn i32[min max] main() {
     if (System.Process.CurrentId() <= 0) {
         return 1;
     }

@@ -73,7 +73,7 @@ internal static class CompilerPipelineTestSupport
 
     private static string StrictIntegerTypeText(int bitWidth)
     {
-        return $"i{bitWidth}[{SignedIntegerRangeMin(bitWidth)} {SignedIntegerRangeMax(bitWidth)}]";
+        return $"i{bitWidth}[min max]";
     }
 
     private static string SignedIntegerRangeMin(int bitWidth)

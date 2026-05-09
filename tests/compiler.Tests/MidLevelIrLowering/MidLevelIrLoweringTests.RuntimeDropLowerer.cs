@@ -11,15 +11,15 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            unsafe fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[min max] value) {
                 Counter = Counter + value;
                 return;
             }
 
             struct Buffer {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 drop {
                     Bump(self.Value);
@@ -54,15 +54,15 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            unsafe fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[min max] value) {
                 Counter = Counter + value;
                 return;
             }
 
             struct Buffer {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 drop {
                     Bump(self.Value);
@@ -96,15 +96,15 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            unsafe fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[min max] value) {
                 Counter = Counter + value;
                 return;
             }
 
             struct Buffer {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 drop {
                     Bump(self.Value);
@@ -144,15 +144,15 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            unsafe fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[min max] value) {
                 Counter = Counter + value;
                 return;
             }
 
             struct Token {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 drop {
                     Bump(self.Value);
@@ -185,15 +185,15 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            unsafe fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[min max] value) {
                 Counter = Counter + value;
                 return;
             }
 
             struct Resource {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 drop {
                     Bump(self.Value);
@@ -234,15 +234,15 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            unsafe fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[min max] value) {
                 Counter = Counter + value;
                 return;
             }
 
             struct Resource {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 drop {
                     Bump(self.Value);
@@ -276,15 +276,15 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            unsafe fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[min max] value) {
                 Counter = Counter + value;
                 return;
             }
 
             struct Resource {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 drop {
                     Bump(self.Value);
@@ -323,15 +323,15 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            unsafe fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[min max] value) {
                 Counter = Counter + value;
                 return;
             }
 
             struct Resource {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 drop {
                     Bump(self.Value);
@@ -363,15 +363,15 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            unsafe fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[min max] value) {
                 Counter = Counter + value;
                 return;
             }
 
             struct Resource {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 drop {
                     Bump(self.Value);
@@ -424,12 +424,12 @@ public sealed partial class MidLevelIrLoweringTests
                         """
                         module Lib
 
-                        unsafe fn void Bump(i32[-2147483648 2147483647] value) {
+                        unsafe fn void Bump(i32[min max] value) {
                             return;
                         }
 
                         public struct Buffer {
-                            i32[-2147483648 2147483647] Value;
+                            i32[min max] Value;
 
                             drop {
                                 Bump(self.Value);
@@ -456,15 +456,15 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            unsafe fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[min max] value) {
                 Counter = Counter + value;
                 return;
             }
 
             struct Resource {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 drop {
                     Bump(self.Value);

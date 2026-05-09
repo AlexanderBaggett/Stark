@@ -1498,7 +1498,7 @@ public finite TextResult<TextError> ParseTextErrorUnicode(unicode source) {
 finite TextResult<i64[min max]> FinishParsedI64(bool negative, u64[0 max] magnitude) {
     if (negative) {
         if (magnitude == (u64[0 max])(2 ** 63)) {
-            return TextResult<i64[min max]>.Ok((i64[min max])(-9223372036854775808));
+            return TextResult<i64[min max]>.Ok((i64[min max])(-(2 ** 63)));
         }
 
         return TextResult<i64[min max]>.Ok(

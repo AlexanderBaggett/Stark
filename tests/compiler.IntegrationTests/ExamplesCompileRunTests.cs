@@ -780,7 +780,7 @@ public sealed class ExamplesCompileRunTests
                 import Facade
                 module App
 
-                export unsafe ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe ffi fn i32[min max] main() {
                     return Facade.Quadruple(5);
                 }
                 """);

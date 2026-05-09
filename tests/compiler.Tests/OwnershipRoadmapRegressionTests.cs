@@ -12,14 +12,14 @@ public sealed class OwnershipRoadmapRegressionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             fn void Consume(Box value) {
                 return;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 stack mut Box box = new Box() { Value = 1 };
                 Consume(box);
                 box = new Box() { Value = 2 };
@@ -42,14 +42,14 @@ public sealed class OwnershipRoadmapRegressionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             fn void Consume(Box value) {
                 return;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 stack mut Box box = new Box() { Value = 1 };
 
                 if (true) {
@@ -74,16 +74,16 @@ public sealed class OwnershipRoadmapRegressionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             fn void Consume(Box value) {
                 return;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 stack mut Box box = new Box() { Value = 1 };
-                stack mut i32[-2147483648 2147483647] count = 0;
+                stack mut i32[min max] count = 0;
 
                 while willexit (count < 1) {
                     Consume(box);
@@ -108,14 +108,14 @@ public sealed class OwnershipRoadmapRegressionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             fn void Consume(Box value) {
                 return;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 stack mut Box box = new Box() { Value = 1 };
 
                 if (true) {
@@ -141,10 +141,10 @@ public sealed class OwnershipRoadmapRegressionTests
 
             enum Token {
                 End,
-                Integer(i32[-2147483648 2147483647]),
+                Integer(i32[min max]),
             }
 
-            fn i32[-2147483648 2147483647] Run(bool choose) {
+            fn i32[min max] Run(bool choose) {
                 stack mut Token token;
 
                 if (choose) {
@@ -172,10 +172,10 @@ public sealed class OwnershipRoadmapRegressionTests
 
             enum Token {
                 End,
-                Integer(i32[-2147483648 2147483647]),
+                Integer(i32[min max]),
             }
 
-            fn i32[-2147483648 2147483647] Run(bool choose) {
+            fn i32[min max] Run(bool choose) {
                 stack mut Token token;
 
                 if (choose) {
@@ -208,7 +208,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 Text(Payload),
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 stack Token token = Token.Text(new Payload() { Text = "hello" });
                 return 0;
             }
@@ -236,7 +236,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 Text(Payload),
             }
 
-            fn i32[-2147483648 2147483647] Run(bool choose) {
+            fn i32[min max] Run(bool choose) {
                 stack Token token = choose ? Token.Text(new Payload() { Text = "hello" }) : Token.End;
                 return 0;
             }
@@ -265,7 +265,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 Text(Payload),
             }
 
-            fn i32[-2147483648 2147483647] Run(bool choose) {
+            fn i32[min max] Run(bool choose) {
                 stack mut Token token;
 
                 if (choose) {
@@ -288,7 +288,7 @@ public sealed class OwnershipRoadmapRegressionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             enum Token {
@@ -300,7 +300,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 return;
             }
 
-            fn i32[-2147483648 2147483647] Run(bool choose) {
+            fn i32[min max] Run(bool choose) {
                 stack mut Token token = choose ? Token.Full(new Box() { Value = 1 }) : Token.Empty;
 
                 switch (token) {
@@ -329,7 +329,7 @@ public sealed class OwnershipRoadmapRegressionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             enum Token {
@@ -341,7 +341,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 return;
             }
 
-            fn i32[-2147483648 2147483647] Run(bool choose) {
+            fn i32[min max] Run(bool choose) {
                 stack mut Token token = choose ? Token.Full(new Box() { Value = 1 }) : Token.Empty;
 
                 switch (token) {
@@ -371,7 +371,7 @@ public sealed class OwnershipRoadmapRegressionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             enum Token {
@@ -387,7 +387,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 return;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 stack Wrapper wrapper = new Wrapper() { Value = Token.Full(new Box() { Value = 1 }) };
 
                 switch (wrapper.Value) {
@@ -421,7 +421,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 Text(Payload),
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 stack mut Token token = Token.Text(new Payload() { Text = "hello" });
                 token = Token.End;
                 return 0;
@@ -455,7 +455,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 return;
             }
 
-            fn i32[-2147483648 2147483647] Run(Token token) {
+            fn i32[min max] Run(Token token) {
                 switch (token) {
                     case Token.Text(var text):
                         Consume(text);
@@ -482,10 +482,10 @@ public sealed class OwnershipRoadmapRegressionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 stack Box box;
                 return 1;
             }
@@ -504,10 +504,10 @@ public sealed class OwnershipRoadmapRegressionTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 stack Box box;
                 return box.Value;
             }
@@ -525,11 +525,11 @@ public sealed class OwnershipRoadmapRegressionTests
             module Demo
 
             struct Pair {
-                i32[-2147483648 2147483647] Left;
-                i32[-2147483648 2147483647] Right;
+                i32[min max] Left;
+                i32[min max] Right;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 stack mut Pair pair;
                 pair.Left = 1;
                 pair.Right = 2;
@@ -550,15 +550,15 @@ public sealed class OwnershipRoadmapRegressionTests
             module Demo
 
             struct Pair {
-                i32[-2147483648 2147483647] Left;
-                i32[-2147483648 2147483647] Right;
+                i32[min max] Left;
+                i32[min max] Right;
             }
 
             fn void Consume(Pair value) {
                 return;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 stack mut Pair pair;
                 pair.Left = 1;
                 Consume(pair);
@@ -578,11 +578,11 @@ public sealed class OwnershipRoadmapRegressionTests
             module Demo
 
             struct Pair {
-                i32[-2147483648 2147483647] Left;
-                i32[-2147483648 2147483647] Right;
+                i32[min max] Left;
+                i32[min max] Right;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 stack mut Pair pair;
                 pair.Left = 1;
                 return 0;
@@ -613,7 +613,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 return;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 stack mut Pair pair = new Pair() { Left = new Payload() { Text = "a" }, Right = new Payload() { Text = "b" } };
                 stack Payload left = pair.Left;
                 Consume(pair);
@@ -650,7 +650,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 return;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 stack mut Pair pair = new Pair() { Left = new Payload() { Text = "a" }, Right = new Payload() { Text = "b" } };
                 stack Payload left = pair.Left;
                 pair.Left = new Payload() { Text = "c" };
@@ -680,7 +680,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 Payload Right;
             }
 
-            fn i32[-2147483648 2147483647] Run(bool choose) {
+            fn i32[min max] Run(bool choose) {
                 stack mut Pair pair = new Pair() { Left = new Payload() { Text = "a" }, Right = new Payload() { Text = "b" } };
 
                 if (choose) {
@@ -712,7 +712,7 @@ public sealed class OwnershipRoadmapRegressionTests
                 Payload Right;
             }
 
-            fn i32[-2147483648 2147483647] Run(bool choose) {
+            fn i32[min max] Run(bool choose) {
                 stack mut Pair pair = new Pair() { Left = new Payload() { Text = "a" }, Right = new Payload() { Text = "b" } };
 
                 if (choose) {
@@ -738,11 +738,11 @@ public sealed class OwnershipRoadmapRegressionTests
             module Demo
 
             struct Pair {
-                i32[-2147483648 2147483647] Left;
-                i32[-2147483648 2147483647] Right;
+                i32[min max] Left;
+                i32[min max] Right;
             }
 
-            fn i32[-2147483648 2147483647] Run(bool choose) {
+            fn i32[min max] Run(bool choose) {
                 stack mut Pair pair;
 
                 if (choose) {
@@ -769,11 +769,11 @@ public sealed class OwnershipRoadmapRegressionTests
             module Demo
 
             struct Pair {
-                i32[-2147483648 2147483647] Left;
-                i32[-2147483648 2147483647] Right;
+                i32[min max] Left;
+                i32[min max] Right;
             }
 
-            fn i32[-2147483648 2147483647] Run(bool choose) {
+            fn i32[min max] Run(bool choose) {
                 stack mut Pair pair;
 
                 if (choose) {
@@ -797,9 +797,9 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            fn retborrow i32[-2147483648 2147483647] Source();
+            fn retborrow i32[min max] Source();
 
-            fn retborrow i32[-2147483648 2147483647] Leak() {
+            fn retborrow i32[min max] Leak() {
                 return Source();
             }
             """);
@@ -815,10 +815,10 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            fn retborrow i32[-2147483648 2147483647] Source();
-            fn retborrow i32[-2147483648 2147483647] Other();
+            fn retborrow i32[min max] Source();
+            fn retborrow i32[min max] Other();
 
-            fn retborrow i32[-2147483648 2147483647] Leak(bool choose) {
+            fn retborrow i32[min max] Leak(bool choose) {
                 if (choose) {
                     return Source();
                 }
@@ -838,10 +838,10 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            fn retborrow i32[-2147483648 2147483647] Source();
+            fn retborrow i32[min max] Source();
 
             fn void Run() {
-                stack mut retborrow i32[-2147483648 2147483647] borrowAlias = Source();
+                stack mut retborrow i32[min max] borrowAlias = Source();
                 borrowAlias = Source();
 
                 return;
@@ -859,13 +859,13 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            fn retborrow i32[-2147483648 2147483647] Source();
+            fn retborrow i32[min max] Source();
 
             fn void Run() {
-                stack mut retborrow i32[-2147483648 2147483647] outer;
+                stack mut retborrow i32[min max] outer;
 
                 {
-                    stack retborrow i32[-2147483648 2147483647] innerAlias = Source();
+                    stack retborrow i32[min max] innerAlias = Source();
                     outer = innerAlias;
                 }
 
@@ -884,11 +884,11 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            fn retborrow i32[-2147483648 2147483647] Source();
+            fn retborrow i32[min max] Source();
 
-            fn retborrow i32[-2147483648 2147483647] Run() {
+            fn retborrow i32[min max] Run() {
                 {
-                    stack retborrow i32[-2147483648 2147483647] borrowAlias = Source();
+                    stack retborrow i32[min max] borrowAlias = Source();
                     return borrowAlias;
                 }
             }

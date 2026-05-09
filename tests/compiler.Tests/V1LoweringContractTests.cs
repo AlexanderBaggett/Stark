@@ -11,7 +11,7 @@ public sealed class V1LoweringContractTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right) {
                 return left + right;
             }
             """);
@@ -38,7 +38,7 @@ public sealed class V1LoweringContractTests
                 return text;
             }
 
-            unsafe fn i32[-2147483648 2147483647] Read(i32[-2147483648 2147483647][] view, i32[-2147483648 2147483647] index) {
+            unsafe fn i32[min max] Read(i32[min max][] view, i32[min max] index) {
                 return view[index];
             }
             """);
@@ -60,9 +60,9 @@ public sealed class V1LoweringContractTests
             """
             module Demo
 
-            unsafe ffi fn i32[-2147483648 2147483647] puts(ascii text);
+            unsafe ffi fn i32[min max] puts(ascii text);
 
-            export unsafe ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe ffi fn i32[min max] main() {
                 puts("Hello");
                 return 0;
             }
@@ -85,8 +85,8 @@ public sealed class V1LoweringContractTests
             module Demo
 
             struct Pair {
-                i8[-128 127] Tag;
-                i32[-2147483648 2147483647] Value;
+                i8[min max] Tag;
+                i32[min max] Value;
             }
 
             unsafe fn void Inspect(borrow Pair pair) {
@@ -109,8 +109,8 @@ public sealed class V1LoweringContractTests
             module Demo
 
             struct Pair {
-                i64[-9223372036854775808 9223372036854775807] Left;
-                i64[-9223372036854775808 9223372036854775807] Right;
+                i64[min max] Left;
+                i64[min max] Right;
             }
 
             unsafe fn Pair Step(Pair value) {
@@ -135,9 +135,9 @@ public sealed class V1LoweringContractTests
             module Demo
 
             struct Big {
-                i64[-9223372036854775808 9223372036854775807] A;
-                i64[-9223372036854775808 9223372036854775807] B;
-                i64[-9223372036854775808 9223372036854775807] C;
+                i64[min max] A;
+                i64[min max] B;
+                i64[min max] C;
             }
 
             unsafe fn Big Step(Big value) {
@@ -160,11 +160,11 @@ public sealed class V1LoweringContractTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Read4(i32[-2147483648 2147483647][4] values) {
+            unsafe fn i32[min max] Read4(i32[min max][4] values) {
                 return values[0];
             }
 
-            unsafe fn i32[-2147483648 2147483647] Read5(i32[-2147483648 2147483647][5] values) {
+            unsafe fn i32[min max] Read5(i32[min max][5] values) {
                 return values[0];
             }
             """);
