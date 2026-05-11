@@ -456,11 +456,13 @@ public static class DefaultCompilerPipeline
             ResolvedModuleReference graphReference,
             SourceModuleParse cachedParse)
         {
-            AddParsedSourceModule(
-                context,
-                modules,
-                graphReference with { FilePath = cachedParse.Reference.FilePath ?? graphReference.FilePath },
-                cachedParse.ParseResult);
+            var reference = graphReference with { FilePath = cachedParse.Reference.FilePath ?? graphReference.FilePath };
+            AddParseDiagnostics(context, reference, cachedParse.ParseResult);
+
+            modules[reference.ModuleName] = new LoadedModuleDocument(
+                reference,
+                cachedParse.ParseResult,
+                cachedParse.SyntaxModel);
         }
 
         private void AddParsedSourceModule(
@@ -469,14 +471,7 @@ public static class DefaultCompilerPipeline
             ResolvedModuleReference reference,
             ParseResult importedParse)
         {
-            foreach (var diagnostic in importedParse.Diagnostics)
-            {
-                context.Diagnostics.Error(
-                    "STK1000",
-                    diagnostic.Message,
-                    Id,
-                    new SourceLocation(reference.FilePath, diagnostic.Line, diagnostic.Column));
-            }
+            AddParseDiagnostics(context, reference, importedParse);
 
             var importedBuildResult = SyntaxModelFactory.CreateWithDiagnostics(importedParse, context.Options.TargetInfo);
             foreach (var diagnostic in importedBuildResult.Diagnostics)
@@ -492,6 +487,21 @@ public static class DefaultCompilerPipeline
                 reference,
                 importedParse,
                 importedBuildResult.Model);
+        }
+
+        private void AddParseDiagnostics(
+            CompilerPassContext context,
+            ResolvedModuleReference reference,
+            ParseResult importedParse)
+        {
+            foreach (var diagnostic in importedParse.Diagnostics)
+            {
+                context.Diagnostics.Error(
+                    "STK1000",
+                    diagnostic.Message,
+                    Id,
+                    new SourceLocation(reference.FilePath, diagnostic.Line, diagnostic.Column));
+            }
         }
     }
 

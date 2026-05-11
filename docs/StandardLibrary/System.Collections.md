@@ -96,7 +96,9 @@ The first implementation can share the same contiguous backing strategy as
 
 ## `Queue<T>`
 
-`Queue<T>` is a first-in, first-out collection backed by an owned ring buffer.
+`Queue<T>` is a first-in, first-out collection backed by owned sparse slot
+storage. Dequeue and peek are O(1): the implementation keeps head/length
+metadata and moves only the occupied slot being removed.
 
 ```stark
 public struct Queue<T> {
@@ -106,6 +108,22 @@ public struct Queue<T> {
     fn bool TryDequeue(mut borrow Queue<T> self, out T value);
     law retborrow T Peek(borrow Queue<T> self);
     fn void Clear(mut borrow Queue<T> self);
+}
+```
+
+`RingQueue<T>` exposes the same ring-buffer strategy directly for callers that
+need an explicit capacity check while keeping FIFO operations O(1).
+
+```stark
+public struct RingQueue<T> {
+    finite law i64[0 max] Count(borrow RingQueue<T> self);
+    finite law i64[0 max] Capacity(borrow RingQueue<T> self);
+    finite law bool IsEmpty(borrow RingQueue<T> self);
+    fn System.Memory.MemoryStatus Reserve(mut borrow RingQueue<T> self, i64[0 max] additional);
+    fn System.Memory.MemoryStatus Enqueue(mut borrow RingQueue<T> self, T value);
+    fn bool TryDequeue(mut borrow RingQueue<T> self, out T value);
+    law retborrow T Peek(borrow RingQueue<T> self);
+    fn void Clear(mut borrow RingQueue<T> self);
 }
 ```
 
@@ -222,8 +240,9 @@ records, text, or other richer values can become dictionary keys.
 - `TryPop`, `TryDequeue`, `TryRemoveFirst`, and `TryRemoveLast` now have
   source-level `out T` bodies.
 - `Get`, `GetMut`, and `Peek` now return safe retborrows from addressable
-  storage, and `AsSlice`/`AsMutableSlice` lower to slice views over `List<T>`
-  backing storage.
+  storage. Queue and ring-queue peeks borrow from sparse slots, and
+  `AsSlice`/`AsMutableSlice` lower to slice views over `List<T>` backing
+  storage.
 - `LinkedList<T>` now uses one allocation per internal node. Each node stores
   next/previous links and the element value together.
 - `Equatable<T>`, `Hashable<T>`, and `DictionaryKey<T>` are present as the

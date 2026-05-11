@@ -1,24 +1,148 @@
+#include <limits.h>
 #include <stdint.h>
-#include <string.h>
+#include <stdio.h>
 
-static const char I64_MIN_TEXT[] = "-9223372036854775808";
-static const char U64_MAX_TEXT[] = "18446744073709551615";
-static const char I1024_MIN_TEXT[] = "-89884656743115795386465259539451236680898848947115328636715040578866337902750481566354238661203768010560056939935696678829394884407208311246423715319737062188883946712432742638151109800623047059726541476042502884419075341171231440736956555270413618581675255342293149119973622969239858152417678164812112068608";
-static const char U1024_MAX_TEXT[] = "179769313486231590772930519078902473361797697894230657273430081157732675805500963132708477322407536021120113879871393357658789768814416622492847430639474124377767893424865485276302219601246094119453082952085005768838150682342462881473913110540827237163350510684586298239947245938479716304835356329624224137215";
+#define U1024_LIMBS 16
+#define TEXT_CAPACITY 320
 
-static int64_t checksum_text(const char *text) {
-    size_t length = strlen(text);
+typedef struct {
+    uint64_t words[U1024_LIMBS];
+} U1024;
+
+static const U1024 I1024_MIN_MAGNITUDE = {{
+    0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, UINT64_C(0x8000000000000000)
+}};
+
+static const U1024 U1024_MAX_VALUE = {{
+    UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX,
+    UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX,
+    UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX,
+    UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX
+}};
+
+static int u1024_is_zero(const U1024 *value) {
+    for (size_t i = 0; i < U1024_LIMBS; i += 1) {
+        if (value->words[i] != 0) {
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
+static uint8_t u1024_divide_by_10(U1024 *value) {
+    unsigned __int128 carry = 0;
+
+    for (size_t offset = 0; offset < U1024_LIMBS; offset += 1) {
+        size_t index = U1024_LIMBS - 1 - offset;
+        unsigned __int128 current = (carry << 64) | value->words[index];
+        value->words[index] = (uint64_t)(current / 10);
+        carry = current % 10;
+    }
+
+    return (uint8_t)carry;
+}
+
+static size_t format_u1024_ascii(char *destination, size_t capacity, U1024 value) {
+    char reversed_digits[TEXT_CAPACITY];
+    size_t length = 0;
+
+    if (u1024_is_zero(&value)) {
+        if (capacity < 2) {
+            return 0;
+        }
+
+        destination[0] = '0';
+        destination[1] = '\0';
+        return 1;
+    }
+
+    while (!u1024_is_zero(&value)) {
+        if (length >= sizeof(reversed_digits)) {
+            return 0;
+        }
+
+        reversed_digits[length] = (char)('0' + u1024_divide_by_10(&value));
+        length += 1;
+    }
+
+    if (length + 1 > capacity) {
+        return 0;
+    }
+
+    for (size_t i = 0; i < length; i += 1) {
+        destination[i] = reversed_digits[length - 1 - i];
+    }
+
+    destination[length] = '\0';
+    return length;
+}
+
+static size_t format_i1024_ascii(char *destination, size_t capacity, U1024 magnitude) {
+    if (capacity < 3) {
+        return 0;
+    }
+
+    destination[0] = '-';
+    size_t magnitude_length = format_u1024_ascii(destination + 1, capacity - 1, magnitude);
+    if (magnitude_length == 0) {
+        return 0;
+    }
+
+    return magnitude_length + 1;
+}
+
+static size_t format_i64_ascii(char *destination, size_t capacity, long long value) {
+    int written = snprintf(destination, capacity, "%lld", value);
+    if (written < 0 || (size_t)written >= capacity) {
+        return 0;
+    }
+
+    return (size_t)written;
+}
+
+static size_t format_u64_ascii(char *destination, size_t capacity, unsigned long long value) {
+    int written = snprintf(destination, capacity, "%llu", value);
+    if (written < 0 || (size_t)written >= capacity) {
+        return 0;
+    }
+
+    return (size_t)written;
+}
+
+static int64_t checksum_text(const char *text, size_t length) {
     return (int64_t)length + (int64_t)text[0] + (int64_t)text[length - 1];
 }
 
 int main(void) {
+    char text[TEXT_CAPACITY];
     int64_t checksum = 0;
 
     for (int32_t i = 0; i < 50; i += 1) {
-        checksum += checksum_text(I64_MIN_TEXT);
-        checksum += checksum_text(U64_MAX_TEXT);
-        checksum += checksum_text(I1024_MIN_TEXT);
-        checksum += checksum_text(U1024_MAX_TEXT);
+        size_t length = format_i64_ascii(text, sizeof(text), LLONG_MIN);
+        if (length == 0) {
+            return 1;
+        }
+        checksum += checksum_text(text, length);
+
+        length = format_u64_ascii(text, sizeof(text), ULLONG_MAX);
+        if (length == 0) {
+            return 2;
+        }
+        checksum += checksum_text(text, length);
+
+        length = format_i1024_ascii(text, sizeof(text), I1024_MIN_MAGNITUDE);
+        if (length == 0) {
+            return 3;
+        }
+        checksum += checksum_text(text, length);
+
+        length = format_u1024_ascii(text, sizeof(text), U1024_MAX_VALUE);
+        if (length == 0) {
+            return 4;
+        }
+        checksum += checksum_text(text, length);
     }
 
     return checksum == 53200 ? 0 : 5;

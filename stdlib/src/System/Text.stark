@@ -1994,12 +1994,11 @@ public finite TextResult<i1024[min max]> ParseI1024Ascii(ascii source) {
             index = 1;
         }
 
-        stack mut u1024[0 max] limit = (u1024[0 max])(2 ** 1023 - 1);
+        stack u1024[0 max] cutoff = (u1024[0 max])8988465674311579538646525953945123668089884894711532863671504057886633790275048156635423866120376801056005693993569667882939488440720831124642371531973706218888394671243274263815110980062304705972654147604250288441907534117123144073695655527041361858167525534229314911997362296923985815241767816481211206860;
+        stack mut u1024[0 max] cutlim = 7;
         if (negative) {
-            limit = (u1024[0 max])(2 ** 1023);
+            cutlim = 8;
         }
-        stack u1024[0 max] cutoff = limit / (u1024[0 max])10;
-        stack u1024[0 max] cutlim = limit % (u1024[0 max])10;
         stack mut u1024[0 max] value = 0;
         while willexit (index < length) {
             stack i8[-1 9] digit = AsciiDecimalDigitAt(data, index);
@@ -2043,12 +2042,11 @@ public finite TextResult<i1024[min max]> ParseI1024Unicode(unicode source) {
             index = 1;
         }
 
-        stack mut u1024[0 max] limit = (u1024[0 max])(2 ** 1023 - 1);
+        stack u1024[0 max] cutoff = (u1024[0 max])8988465674311579538646525953945123668089884894711532863671504057886633790275048156635423866120376801056005693993569667882939488440720831124642371531973706218888394671243274263815110980062304705972654147604250288441907534117123144073695655527041361858167525534229314911997362296923985815241767816481211206860;
+        stack mut u1024[0 max] cutlim = 7;
         if (negative) {
-            limit = (u1024[0 max])(2 ** 1023);
+            cutlim = 8;
         }
-        stack u1024[0 max] cutoff = limit / (u1024[0 max])10;
-        stack u1024[0 max] cutlim = limit % (u1024[0 max])10;
         stack mut u1024[0 max] value = 0;
         while willexit (index < length) {
             stack i8[-1 9] digit = UnicodeDecimalDigitAt(data, index);
@@ -2081,9 +2079,8 @@ public finite TextResult<u1024[0 max]> ParseU1024Ascii(ascii source) {
             return TextResult<u1024[0 max]>.Err(TextError.InvalidFormat);
         }
 
-        stack u1024[0 max] limit = (u1024[0 max])(2 ** 1024 - 1);
-        stack u1024[0 max] cutoff = limit / (u1024[0 max])10;
-        stack u1024[0 max] cutlim = limit % (u1024[0 max])10;
+        stack u1024[0 max] cutoff = (u1024[0 max])17976931348623159077293051907890247336179769789423065727343008115773267580550096313270847732240753602112011387987139335765878976881441662249284743063947412437776789342486548527630221960124609411945308295208500576883815068234246288147391311054082723716335051068458629823994724593847971630483535632962422413721;
+        stack u1024[0 max] cutlim = 5;
         stack mut u1024[0 max] value = 0;
         stack mut i64[min max] index = 0;
         while willexit (index < length) {
@@ -2117,9 +2114,8 @@ public finite TextResult<u1024[0 max]> ParseU1024Unicode(unicode source) {
             return TextResult<u1024[0 max]>.Err(TextError.InvalidFormat);
         }
 
-        stack u1024[0 max] limit = (u1024[0 max])(2 ** 1024 - 1);
-        stack u1024[0 max] cutoff = limit / (u1024[0 max])10;
-        stack u1024[0 max] cutlim = limit % (u1024[0 max])10;
+        stack u1024[0 max] cutoff = (u1024[0 max])17976931348623159077293051907890247336179769789423065727343008115773267580550096313270847732240753602112011387987139335765878976881441662249284743063947412437776789342486548527630221960124609411945308295208500576883815068234246288147391311054082723716335051068458629823994724593847971630483535632962422413721;
+        stack u1024[0 max] cutlim = 5;
         stack mut u1024[0 max] value = 0;
         stack mut i64[min max] index = 0;
         while willexit (index < length) {
@@ -3031,6 +3027,69 @@ public unsafe finite bool TryFormatI64Ascii(rawmutptr<Ascii> destination, i64[mi
     return true;
 }
 
+unsafe finite void LoadU1024FormatLimbs(rawmutptr<u64[0 max]>[16] limbs, u1024[0 max] value) {
+    stack u1024[0 max] mask = (u1024[0 max])(2 ** 64 - 1);
+    *(&limbs[0]) = (u64[0 max])(value & mask);
+    *(&limbs[1]) = (u64[0 max])((value >> 64) & mask);
+    *(&limbs[2]) = (u64[0 max])((value >> 128) & mask);
+    *(&limbs[3]) = (u64[0 max])((value >> 192) & mask);
+    *(&limbs[4]) = (u64[0 max])((value >> 256) & mask);
+    *(&limbs[5]) = (u64[0 max])((value >> 320) & mask);
+    *(&limbs[6]) = (u64[0 max])((value >> 384) & mask);
+    *(&limbs[7]) = (u64[0 max])((value >> 448) & mask);
+    *(&limbs[8]) = (u64[0 max])((value >> 512) & mask);
+    *(&limbs[9]) = (u64[0 max])((value >> 576) & mask);
+    *(&limbs[10]) = (u64[0 max])((value >> 640) & mask);
+    *(&limbs[11]) = (u64[0 max])((value >> 704) & mask);
+    *(&limbs[12]) = (u64[0 max])((value >> 768) & mask);
+    *(&limbs[13]) = (u64[0 max])((value >> 832) & mask);
+    *(&limbs[14]) = (u64[0 max])((value >> 896) & mask);
+    *(&limbs[15]) = (u64[0 max])((value >> 960) & mask);
+    return;
+}
+
+unsafe finite bool U1024FormatLimbsAreZero(rawptr<u64[0 max]>[16] limbs) {
+    for willexit (stack mut u8[0 16] index = 0; index < 16; index += 1) {
+        if (*(&limbs[index]) != 0) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+unsafe finite u8[0 9] DivideU1024FormatLimbsBy10(rawmutptr<u64[0 max]>[16] limbs) {
+    stack mut u128[0 max] carry = 0;
+    for willexit (stack mut u8[0 16] offset = 0; offset < 16; offset += 1) {
+        stack u8[0 15] index = (u8[0 15])(15 - offset);
+        stack u128[0 max] current = (carry << 64) | (u128[0 max])(*(&limbs[index]));
+        *(&limbs[index]) = (u64[0 max])(current / (u128[0 max])10);
+        carry = current % (u128[0 max])10;
+    }
+
+    return (u8[0 9])carry;
+}
+
+unsafe finite i64[min max] WriteReversedU1024AsciiDigits(rawmutptr<i8[min max]>[320] destination, u1024[0 max] magnitude) {
+    if (magnitude == 0) {
+        *(&destination[0]) = (i8[min max])48;
+        return 1;
+    }
+
+    stack mut u64[0 max][16] limbs = { 0 };
+    LoadU1024FormatLimbs(&limbs[0], magnitude);
+
+    stack mut i64[min max] digitCount = 0;
+    while willexit (!U1024FormatLimbsAreZero(&limbs[0])) {
+        stack u8[0 9] digit = DivideU1024FormatLimbsBy10(&limbs[0]);
+        stack i64[min max] digitValue = (i64[min max])digit;
+        *(&destination[digitCount]) = (i8[min max])(48 + digitValue);
+        digitCount += 1;
+    }
+
+    return digitCount;
+}
+
 unsafe finite bool TryFormatSignedU1024Ascii(rawmutptr<Ascii> destination, bool negative, u1024[0 max] magnitude) {
     if (destination == null) {
         return false;
@@ -3047,13 +3106,8 @@ unsafe finite bool TryFormatSignedU1024Ascii(rawmutptr<Ascii> destination, bool 
         return false;
     }
 
-    stack mut i64[min max] digitCount = 1;
-    stack mut u1024[0 max] scan = magnitude;
-    while willexit (scan >= (u1024[0 max])10) {
-        scan = scan / (u1024[0 max])10;
-        digitCount += 1;
-    }
-
+    stack mut i8[min max][320] reversedDigits = { 0 };
+    stack i64[min max] digitCount = WriteReversedU1024AsciiDigits(&reversedDigits[0], magnitude);
     stack mut i64[min max] required = digitCount;
     if (negative) {
         required += 1;
@@ -3068,21 +3122,18 @@ unsafe finite bool TryFormatSignedU1024Ascii(rawmutptr<Ascii> destination, bool 
         return false;
     }
 
-    stack mut i64[min max] writeIndex = required - 1;
-    stack mut u1024[0 max] remaining = magnitude;
-    while willexit (remaining >= (u1024[0 max])10) {
-        stack u8[0 9] digit = (u8[0 9])(remaining % (u1024[0 max])10);
-        stack i64[min max] digitValue = (i64[min max])digit;
-        *(&data[writeIndex]) = (i8[min max])(48 + digitValue);
-        remaining = remaining / (u1024[0 max])10;
-        writeIndex -= 1;
-    }
-
-    stack u8[0 9] finalDigit = (u8[0 9])remaining;
-    stack i64[min max] finalDigitValue = (i64[min max])finalDigit;
-    *(&data[writeIndex]) = (i8[min max])(48 + finalDigitValue);
     if (negative) {
         *(&data[0]) = (i8[min max])45;
+    }
+
+    for willexit (stack mut i64[min max] digitIndex = 0; digitIndex < digitCount; digitIndex += 1) {
+        stack i64[min max] sourceIndex = digitCount - 1 - digitIndex;
+        stack mut i64[min max] destinationIndex = digitIndex;
+        if (negative) {
+            destinationIndex += 1;
+        }
+
+        *(&data[destinationIndex]) = reversedDigits[sourceIndex];
     }
 
     *destination = new Ascii() {
@@ -3610,13 +3661,8 @@ unsafe finite bool TryFormatSignedU1024Unicode(rawmutptr<Unicode> destination, b
         return false;
     }
 
-    stack mut i64[min max] digitCount = 1;
-    stack mut u1024[0 max] scan = magnitude;
-    while willexit (scan >= (u1024[0 max])10) {
-        scan = scan / (u1024[0 max])10;
-        digitCount += 1;
-    }
-
+    stack mut i8[min max][320] reversedDigits = { 0 };
+    stack i64[min max] digitCount = WriteReversedU1024AsciiDigits(&reversedDigits[0], magnitude);
     stack mut i64[min max] required = digitCount;
     if (negative) {
         required += 1;
@@ -3631,21 +3677,18 @@ unsafe finite bool TryFormatSignedU1024Unicode(rawmutptr<Unicode> destination, b
         return false;
     }
 
-    stack mut i64[min max] writeIndex = required - 1;
-    stack mut u1024[0 max] remaining = magnitude;
-    while willexit (remaining >= (u1024[0 max])10) {
-        stack u8[0 9] digit = (u8[0 9])(remaining % (u1024[0 max])10);
-        stack i32[min max] digitValue = (i32[min max])digit;
-        *(&data[writeIndex]) = 48 + digitValue;
-        remaining = remaining / (u1024[0 max])10;
-        writeIndex -= 1;
-    }
-
-    stack u8[0 9] finalDigit = (u8[0 9])remaining;
-    stack i32[min max] finalDigitValue = (i32[min max])finalDigit;
-    *(&data[writeIndex]) = 48 + finalDigitValue;
     if (negative) {
         *(&data[0]) = 45;
+    }
+
+    for willexit (stack mut i64[min max] digitIndex = 0; digitIndex < digitCount; digitIndex += 1) {
+        stack i64[min max] sourceIndex = digitCount - 1 - digitIndex;
+        stack mut i64[min max] destinationIndex = digitIndex;
+        if (negative) {
+            destinationIndex += 1;
+        }
+
+        *(&data[destinationIndex]) = (i32[min max])reversedDigits[sourceIndex];
     }
 
     *destination = new Unicode() {

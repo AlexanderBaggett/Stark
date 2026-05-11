@@ -58,6 +58,12 @@ public sealed class CompilerPipelineLoadModulesTests
         Assert.NotNull(facadeModule);
         Assert.True(loadedModules.TryGet("Bits", out var bitsModule));
         Assert.NotNull(bitsModule);
+        Assert.True(cache.TryGet("Facade", out var cachedFacade));
+        Assert.NotNull(cachedFacade);
+        Assert.Same(cachedFacade.SyntaxModel, facadeModule.SyntaxModel);
+        Assert.True(cache.TryGet("Bits", out var cachedBits));
+        Assert.NotNull(cachedBits);
+        Assert.Same(cachedBits.SyntaxModel, bitsModule.SyntaxModel);
     }
 
     [Fact]

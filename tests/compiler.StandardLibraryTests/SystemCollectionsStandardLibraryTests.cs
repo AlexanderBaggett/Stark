@@ -549,6 +549,10 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 }
             }
 
+            if (ring.Peek() != 0) {
+                return 14;
+            }
+
             stack mut i64[min max] checksum = 0;
             for willexit (stack mut u8[0 32] i = 0; i < 32; i += 1) {
                 stack mut u32[0 2 ** 31 - 1] stableValue = 0;
@@ -572,6 +576,10 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
 
             if (stable.Count() != ring.Count() || ring.Capacity() < ring.Count()) {
                 return 5;
+            }
+
+            if (ring.Peek() != 32) {
+                return 15;
             }
 
             while willexit (!ring.IsEmpty()) {
@@ -866,6 +874,38 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             stack u32[0 2 ** 31 - 1] tombstoneKey = 4096;
             if (!Ok(dictionary.Set(tombstoneKey, 12345)) || !dictionary.TryGet(tombstoneKey, found) || found != 12345) {
                 return 10;
+            }
+
+            {
+                stack mut System.Collections.Dictionary<u32[0 2 ** 31 - 1], u32[0 2 ** 31 - 1]> clustered = new();
+                stack u32[0 2 ** 31 - 1] clusterKeyOne = 1;
+                stack u32[0 2 ** 31 - 1] clusterKeyTwo = 9;
+                stack u32[0 2 ** 31 - 1] clusterKeyThree = 17;
+                stack u32[0 2 ** 31 - 1] clusterKeyFour = 25;
+                if (!Ok(clustered.Reserve(4))
+                    || !Ok(clustered.Set(clusterKeyOne, 10))
+                    || !Ok(clustered.Set(clusterKeyTwo, 90))
+                    || !Ok(clustered.Set(clusterKeyThree, 170))) {
+                    return 27;
+                }
+
+                if (!clustered.Remove(clusterKeyOne)
+                    || clustered.ContainsKey(clusterKeyOne)
+                    || !clustered.ContainsIndex(1)
+                    || !clustered.TryGet(clusterKeyTwo, found)
+                    || found != 90
+                    || !clustered.TryGet(clusterKeyThree, found)
+                    || found != 170
+                    || clustered.Count() != 2) {
+                    return 28;
+                }
+
+                if (!Ok(clustered.Set(clusterKeyFour, 250))
+                    || !clustered.TryGet(clusterKeyFour, found)
+                    || found != 250
+                    || clustered.Count() != 3) {
+                    return 29;
+                }
             }
 
             dictionary.Clear();
@@ -1914,7 +1954,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
     }
 
     [Fact]
-    public void StdLibSourcePromotedCollectionReservesUseTailInitializationRegions()
+    public void StdLibSourcePromotedCollectionReservesUseSparseSlotStorage()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
@@ -1953,21 +1993,26 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
 
         var ringQueueReserveBody = ExtractDefinedFunctionText(
             llvm.Text,
-            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_RingQueue_Reserve__u32_0_2147483647(",
-            "Expected RingQueue.Reserve specialization to be emitted.");
+            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_RingQueue_Reserve__u32_0_2147483647(");
+        var sparseReserveBody = ExtractDefinedFunctionText(
+            llvm.Text,
+            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_SparseSlots_ReserveRing__u32_0_2147483647(");
         var dictionaryReserveBody = ExtractDefinedFunctionText(
             llvm.Text,
-            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_Dictionary_Reserve__u32_0_2147483647__u32_0_2147483647(",
-            "Expected Dictionary.Reserve specialization to be emitted.");
+            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_Dictionary_Reserve__u32_0_2147483647__u32_0_2147483647(");
 
-        Assert.Contains("%slot_addedSlots", ringQueueReserveBody, StringComparison.Ordinal);
+        Assert.Contains("SparseSlots_ReserveRing__u32", ringQueueReserveBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Memory_Allocate(", sparseReserveBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Memory_Free(", sparseReserveBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("QueueSlot", ringQueueReserveBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("%slot_addedSlots", ringQueueReserveBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("dynamic_try_reserve", ringQueueReserveBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("llvm.memmove", sparseReserveBody, StringComparison.Ordinal);
         Assert.Contains("@System_Memory_Allocate(", dictionaryReserveBody, StringComparison.Ordinal);
         Assert.Contains("@System_Memory_Free(", dictionaryReserveBody, StringComparison.Ordinal);
         Assert.DoesNotContain("DictionaryValueSlot", dictionaryReserveBody, StringComparison.Ordinal);
         Assert.DoesNotContain("%slot_nextValueSlots", dictionaryReserveBody, StringComparison.Ordinal);
         Assert.DoesNotContain("dynamic_try_reserve", dictionaryReserveBody, StringComparison.Ordinal);
-        Assert.Contains("!llvm.access.group", ringQueueReserveBody, StringComparison.Ordinal);
-        Assert.Contains("!\"llvm.loop.parallel_accesses\"", llvm.Text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -2366,7 +2411,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
     }
 
     [Fact]
-    public void PromotedQueueTryDequeueUsesDynamicStorageMoveAtPath()
+    public void PromotedQueueTryDequeueUsesSparseSlotRingPath()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
@@ -2387,13 +2432,19 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
         var tryDequeueBody = ExtractDefinedFunctionText(
             llvm,
-            "define linkonce_odr dso_local fastcc noundef i1 @__stark_mono_fn_System_Collections__System_Collections_Queue_TryDequeue__u32_0_2147483647(");
+            "define linkonce_odr dso_local fastcc noundef i1 @__stark_mono_fn_System_Collections__System_Collections_Queue_TryDequeue__u32(");
 
-        Assert.Contains("dynamic_move_at", tryDequeueBody, StringComparison.Ordinal);
-        Assert.Contains("llvm.memmove", tryDequeueBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("i32 0, i32 2", tryDequeueBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("i32 0, i32 3", tryDequeueBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("i32 0, i32 4", tryDequeueBody, StringComparison.Ordinal);
+        var sparseMoveBody = ExtractDefinedFunctionText(
+            llvm,
+            "define linkonce_odr dso_local fastcc noundef i32 @__stark_mono_fn_System_Collections__System_Collections_SparseSlots_MoveAt__u32(");
+
+        Assert.Contains("SparseSlots_MoveAt__u32", tryDequeueBody, StringComparison.Ordinal);
+        Assert.Contains("store i32", tryDequeueBody, StringComparison.Ordinal);
+        Assert.Contains("getelementptr i32", sparseMoveBody, StringComparison.Ordinal);
+        Assert.Contains("load i32", sparseMoveBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("System_Collections_QueueSlot_u32_", tryDequeueBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("dynamic_move_at", tryDequeueBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("llvm.memmove", tryDequeueBody, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -2595,4 +2646,3 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         throw new Xunit.Sdk.XunitException($"Expected '{signaturePrefix}' body to terminate in emitted LLVM.");
     }
 }
-

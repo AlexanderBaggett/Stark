@@ -581,3 +581,208 @@ strict range checks in `BenchmarkSourceTests`.
         compile a small Stark program on each OS.
 - [x] Cache toolchains and dependencies without making release outputs depend
         on stale caches.
+
+
+## 10. Performance Tuning
+
+### Investigate/Triage, Output is tasks in Fix
+
+#### Slower than Rust
+- [ ] benchmarks/collections/DictionaryMixed — 2026-05-11 rerun: Rust `984 us`, Stark `1210 us`; active, see fix task below.
+- [x] benchmarks/collections/QueueDequeue — stale after queue storage fix; 2026-05-11 rerun: Rust `975 us`, Stark `945 us`.
+- [x] benchmarks/collections/QueueGrowth — stale after queue storage fix; 2026-05-11 rerun: Rust `922 us`, Stark `864 us`.
+- [ ] benchmarks/io/DirectoryEnumeration — 2026-05-11 rerun: Rust `3783 us`, Stark `4016 us`; active, with compile/IR size larger than runtime gap.
+- [x] benchmarks/io/FileBufferedReadWrite — stale after byte-write buffering fix; 2026-05-11 rerun: Rust `2103 us`, Stark `2087 us`.
+- [ ] benchmarks/io/FileSystemPathTranscode — rust 1.104452, stark 1.208904
+- [ ] benchmarks/micro/AggregatePhiFieldForwarding — rust 0.974632, stark 0.997971
+- [ ] benchmarks/micro/AlgebraicIdentitySimplification — rust 1.014934, stark 1.022554
+- [ ] benchmarks/micro/ExplicitArithmeticRangePruning — rust 0.990526, stark 1.014211
+- [ ] benchmarks/micro/FunctionPointerDevirtualization — rust 1.007611, stark 1.01945
+- [ ] benchmarks/network/TcpScatterGatherLoopback — rust 0.970315, stark 1.196042
+- [ ] benchmarks/text/IntegerFormatting — rust 1.106406, stark 627.29316
+- [ ] benchmarks/text/PathJoin — rust 1.075163, stark 1.094771
+- [ ] benchmarks/text/PathRepeatedSmallOps — rust 1.029443, stark 1.07571
+- [ ] benchmarks/text/TextParsing — rust 1.092818, stark 1.319337
+- [ ] benchmarks/text/UnicodeFormatting — rust 1.047867, stark 594.463059
+
+
+
+#### Slower than C
+- [ ] benchmarks/collections/DictionaryInsert — stark 1.01573
+- [ ] benchmarks/collections/DictionaryLookup — stark 1.063474
+- [ ] benchmarks/collections/DictionaryMixed — stark 1.059754
+- [ ] benchmarks/collections/LinkedListBuildClear — stark 1.022678
+- [ ] benchmarks/collections/LinkedListPush — stark 1.020937
+- [ ] benchmarks/collections/ListIteration — stark 1.099882
+- [ ] benchmarks/collections/QueueChurn — stark 1.060086
+- [ ] benchmarks/collections/QueueDequeue — 2026-05-11 rerun: C `961 us`, Stark `999 us`
+- [ ] benchmarks/collections/QueueGrowth — 2026-05-11 rerun: C `860 us`, Stark `890 us`
+- [ ] benchmarks/console/ConsoleWrites — stark 1.096863
+- [ ] benchmarks/io/DirectoryEnumeration — stark 1.295304
+- [ ] benchmarks/io/FileBufferedReadWrite — stark 1.893304
+- [ ] benchmarks/io/FileSystemPathTranscode — stark 1.208904
+- [ ] benchmarks/micro/AbstractionGenericWrapper — stark 1.002597
+- [ ] benchmarks/micro/AbstractionHandWritten — stark 1.008162
+- [ ] benchmarks/micro/AlgebraicIdentitySimplification — stark 1.022554
+- [ ] benchmarks/micro/BitwiseRangePruning — stark 1.01355
+- [ ] benchmarks/micro/BranchSelectPredication — stark 1.063505
+- [ ] benchmarks/micro/Branching — stark 1.018312
+- [ ] benchmarks/micro/Calls — stark 1.01224
+- [ ] benchmarks/micro/DirectCallInlining — stark 1.001287
+- [ ] benchmarks/micro/ExplicitArithmeticRangePruning — stark 1.014211
+- [ ] benchmarks/micro/FunctionPointerDevirtualization — stark 1.01945
+- [ ] benchmarks/micro/StackFieldBranchForwarding — stark 1.001637
+- [ ] benchmarks/micro/StackFieldLoadForwarding — stark 1.017903
+- [ ] benchmarks/micro/StackNestedFieldForwarding — stark 1.006009
+- [ ] benchmarks/micro/StackScalarLoadForwarding — stark 1.015369
+- [ ] benchmarks/network/TcpScatterGatherLoopback — stark 1.196042
+- [ ] benchmarks/runtime/RuntimeBufferDynamic — stark 1.05191
+- [ ] benchmarks/text/AsciiToUnicodeConversion — stark 1.0301
+- [ ] benchmarks/text/AsciiToUnicodeConversionRuntime — stark 1.082843
+- [ ] benchmarks/text/AsciiToUnicodeWideningKernel — stark 1.018182
+- [ ] benchmarks/text/IntegerFormatting — stark 627.29316
+- [ ] benchmarks/text/OwnedPathAllocation — stark 1.009137
+- [ ] benchmarks/text/PathJoin — stark 1.094771
+- [ ] benchmarks/text/PathNormalize — stark 1.095768
+- [ ] benchmarks/text/PathQueries — stark 1.002167
+- [ ] benchmarks/text/PathRepeatedSmallOps — stark 1.07571
+- [ ] benchmarks/text/TextConcatCopy — stark 1.070156
+- [ ] benchmarks/text/TextParsing — stark 1.319337
+- [ ] benchmarks/text/UnicodeFormatting — stark 594.463059
+
+### Fix
+  
+- [ ] Elide large owned aggregate moves in `DirectoryEnumeration` IO paths.
+  - IR comparison: optimized Stark `DirectoryEnumeration` IR is `131017` lines
+    and `12016664` bytes, while Rust is `2006` lines and `147102` bytes. Stark
+    scalarizes the `IOResult<Directory>` success payload and inline 8192-byte
+    directory buffer into thousands of per-byte field loads after
+    `System.FileSystem.OpenDirectory`, plus large `File`/`Directory` drop
+    temporaries; Rust keeps the hot path around compact `ReadDir` and `DirEntry`
+    values.
+  - Fix: teach ABI/ownership lowering to construct large returned aggregates
+    directly into the final local when an `IOResult<T>.Ok(var value)` payload is
+    immediately moved, and lower large fixed-buffer moves as one `memcpy` or a
+    true move instead of scalar field extraction. If compiler-side move elision
+    is not enough, add internal out-parameter fast paths for `OpenDirectory` and
+    owned `File` creation so the stdlib can initialize caller storage without
+    materializing and dropping extra 8KB temporaries.
+  - Verify with an IR gate on `benchmarks/io/DirectoryEnumeration.stark`: the
+    optimized `EnumerateOnce` body should not contain thousands of
+    `fca.5.0.*.load` operations for the directory buffer and should not copy or
+    drop extra `%System_FileSystem_Directory` temporaries around the success
+    payload. Rerun `STARK_BENCH_RUNS=100 STARK_BENCH_FILTER=DirectoryEnumeration scripts/run-benchmarks.sh`
+    and record the Stark/Rust/C averages here.
+
+- [x] Fix byte-level owned `File.Write` to honor userspace buffering.
+  - Context: `benchmarks/io/FileBufferedReadWrite` opened the writer with
+    `FileBuffering.Full`, then performed many 32-byte byte-slice writes.
+    `WriteTextRaw` used the owned `File` buffer, but byte-level `Write` bypassed
+    it and called the platform write path for each small slice.
+  - Completed on 2026-05-11 by adding a byte-buffer append path to
+    `System.IO.File.File` and routing buffered byte writes through the existing
+    `WriteBufferStorage`/`FlushRaw` mechanism. The focused 10-run benchmark
+    averaged Stark `2087 us` and Rust `2103 us`, so the Rust-slower runtime row
+    is stale. The remaining issue for IO benchmarks is compile/toolchain time
+    and very large IR from owned `File`/`Directory` value copies and drop
+    temporaries.
+
+- [x] Fix `System.Collections.Queue<T>` front-dequeue performance.
+  - Context: the 100-run full benchmark sweep on 2026-05-10 showed
+    `benchmarks/collections/QueueDequeue` at Stark `11694 us`, C `1004 us`,
+    and Rust `1083 us`. The current `Queue<T>.TryDequeue` implementation moves
+    from index 0 with `self.Items.MoveAt(0)`, which makes repeated dequeues
+    from the front expensive for large queues.
+  - Replace the contiguous front-removal implementation with ring-buffer
+    storage, or promote `RingQueue<T>` as the implementation behind
+    `Queue<T>`. The existing `RingQueue<T>` code already tracks `Head` and
+    `Length`, grows while preserving logical order, and dequeues without
+    shifting all remaining elements.
+  - Preserve the public `Queue<T>` API and drop semantics: `Count`,
+    `IsEmpty`, `Reserve`, `Enqueue`, `TryDequeue`, `Peek`, and `Clear` should
+    keep their behavior for plain values and values with destructors. Reuse the
+    existing queue/ring-queue parity and drop tests as the starting point.
+  - Rerun collection-focused standard-library tests and
+    `STARK_BENCH_RUNS=100 STARK_BENCH_FILTER=Queue scripts/run-benchmarks.sh`.
+    The expected outcome is that `QueueDequeue` is close to C/Rust and no
+    longer scales with an O(n) shift per dequeue.
+  - Completed on 2026-05-11 by converting `Queue<T>` and `RingQueue<T>` to the
+    internal `SparseSlots<T>` storage view while preserving the public API.
+    Focused IR tests confirm promoted `TryDequeue<u32>` moves through
+    `SparseSlots.MoveAt`, whose specialization is a direct slot load, and
+    contains no `QueueSlot<T>`, `dynamic_move_at`, or `llvm.memmove`. The final
+    100-run queue benchmark pass averaged: `QueueChurn` Stark `915 us`,
+    C `913 us`, Rust `954 us`; `QueueDequeue` Stark `999 us`, C `961 us`,
+    Rust `987 us`; `QueueGrowth` Stark `890 us`, C `860 us`, Rust `969 us`.
+
+- [x] Fix `benchmarks/text/TextParsing` native baselines so they perform the
+      same source-level work as Stark.
+  - Context: the Stark benchmark parses bool, i64, u64, signed i1024 Unicode,
+    and unsigned u1024 Unicode values. The C variant currently validates the
+    1024-bit cases with `strcmp(I1024_MIN_TEXT, I1024_MIN_TEXT)` and
+    `strcmp(U1024_MAX_TEXT, U1024_MAX_TEXT)`. The Rust variant compares each
+    1024-bit string constant with itself. At `-O3`, clang reduces the C
+    benchmark body to setting `errno` and returning 0, and rustc reduces the
+    Rust benchmark body to `retq`, so the benchmark mostly measures process
+    startup instead of parsing.
+  - Replace the C/Rust 1024-bit checks with real decimal parsing. A fair C
+    baseline can use a 16-limb `u1024` parser that multiplies the current value
+    by 10 and adds the next digit with overflow checks, then compares against
+    the expected limb arrays. A fair Rust baseline can use an idiomatic helper
+    type with `FromStr` or a small `parse_u1024_decimal` helper over `[u64; 16]`
+    and compare parsed values against expected constants.
+  - Keep the bool, i64, and u64 parse cases real as well. Avoid comparing a
+    constant to itself or parsing only compile-time constants in a way the
+    optimizer can fold away. If needed, route inputs through a small static
+    slice/table and consume the parsed result in the checksum.
+  - Verify by inspecting optimized assembly or LLVM IR before trusting the
+    numbers: C/Rust `main` must still contain parse loops or helper calls after
+    optimization. Then rerun
+    `STARK_BENCH_RUNS=100 STARK_BENCH_FILTER=TextParsing scripts/run-benchmarks.sh`.
+  - Completed on 2026-05-11. The C/Rust variants now parse the 1024-bit decimal
+    inputs into 16-limb values and compare against expected limbs; optimized
+    native output still contains parsing helper calls/loops. The Stark parser
+    also had runtime `u1024 / 10` and `u1024 % 10` cutoff calculations in
+    `ParseI1024*`/`ParseU1024*`; those were replaced with precomputed decimal
+    cutoffs and covered by a focused IR test. The 100-run pass averaged
+    `TextParsing` Stark `1179 us`, C `1108 us`, Rust `1139 us`.
+
+- [x] Replace generic `u1024 / 10` and `u1024 % 10` loops in text formatting
+      with limb-wise decimal formatting.
+  - Context: after fixing the C/Rust `IntegerFormatting` and
+    `UnicodeFormatting` benchmarks to perform real formatting work, Stark still
+    measured roughly 250x slower than C/Rust on 2026-05-11:
+    `IntegerFormatting` Stark `577490 us`, C `2235 us`, Rust `2302 us`;
+    `UnicodeFormatting` Stark `571553 us`, C `2276 us`, Rust `2276 us`.
+  - The hot path is `System.Text.TryFormatSignedU1024Ascii` and
+    `System.Text.TryFormatSignedU1024Unicode`. They first count digits by
+    repeatedly dividing a `u1024` by 10, then write digits by repeatedly using
+    `remaining % 10` and `remaining / 10`. Saved LLVM IR contains
+    `udiv i1024` and `urem i1024`; the generated native code for the 1024-bit
+    formatter is very large.
+  - Implement a fixed-width limb formatter for `u1024` instead. Use 16
+    64-bit limbs and a carry-based divide-by-10 pass:
+    `current = (carry << 64) | limb`, `limb = current / 10`,
+    `carry = current % 10`, walking from the most significant limb to the least
+    significant limb. Emit digits into a stack scratch buffer in reverse, then
+    copy them to the destination. Share the core helper between ASCII and
+    Unicode so the two paths do not drift.
+  - Remove the separate digit-count pass if possible. The reverse scratch
+    buffer already yields the digit count, so capacity can be checked once
+    before copying into the destination. Preserve current failure behavior for
+    null destinations, negative capacity, insufficient capacity, and signed
+    i1024 minimum formatting.
+  - Add focused standard-library tests for `i1024::min`, `u1024::max`, zero,
+    single digit, and a mid-size value for both ASCII and Unicode formatting.
+    Rerun the formatting benchmarks with
+    `STARK_BENCH_RUNS=100 STARK_BENCH_FILTER=Formatting scripts/run-benchmarks.sh`
+    and inspect LLVM IR to confirm no hot `udiv i1024`/`urem i1024` remains in
+    the formatting helper.
+  - Completed on 2026-05-11. `TryFormatSignedU1024Ascii` and
+    `TryFormatSignedU1024Unicode` now share a 16-limb decimal digit generator
+    and copy reversed digits into ASCII/Unicode destinations. Focused IR tests
+    confirm the formatting bodies no longer contain `udiv i1024`/`urem i1024`;
+    only the limb helper divides `i128` intermediates by 10. The 100-run
+    formatting pass averaged `IntegerFormatting` Stark `2259 us`, C `2290 us`,
+    Rust `2338 us`; `UnicodeFormatting` Stark `2329 us`, C `2325 us`,
+    Rust `2389 us`.

@@ -1,7 +1,87 @@
-const I64_MIN_TEXT: &str = "-9223372036854775808";
-const U64_MAX_TEXT: &str = "18446744073709551615";
-const I1024_MIN_TEXT: &str = "-89884656743115795386465259539451236680898848947115328636715040578866337902750481566354238661203768010560056939935696678829394884407208311246423715319737062188883946712432742638151109800623047059726541476042502884419075341171231440736956555270413618581675255342293149119973622969239858152417678164812112068608";
-const U1024_MAX_TEXT: &str = "179769313486231590772930519078902473361797697894230657273430081157732675805500963132708477322407536021120113879871393357658789768814416622492847430639474124377767893424865485276302219601246094119453082952085005768838150682342462881473913110540827237163350510684586298239947245938479716304835356329624224137215";
+use std::fmt::{self, Write};
+
+const U1024_LIMBS: usize = 16;
+const TEXT_CAPACITY: usize = 320;
+
+#[derive(Clone, Copy)]
+struct U1024([u64; U1024_LIMBS]);
+
+#[derive(Clone, Copy)]
+struct I1024 {
+    magnitude: U1024,
+}
+
+const I1024_MIN_VALUE: I1024 = I1024 {
+    magnitude: U1024([
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0x8000_0000_0000_0000,
+    ]),
+};
+
+const U1024_MAX_VALUE: U1024 = U1024([u64::MAX; U1024_LIMBS]);
+
+impl U1024 {
+    fn is_zero(self) -> bool {
+        self.0.iter().all(|word| *word == 0)
+    }
+
+    fn divide_by_10(&mut self) -> u8 {
+        let mut carry = 0_u128;
+
+        for word in self.0.iter_mut().rev() {
+            let current = (carry << 64) | u128::from(*word);
+            *word = (current / 10) as u64;
+            carry = current % 10;
+        }
+
+        carry as u8
+    }
+}
+
+impl fmt::Display for U1024 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut value = *self;
+        if value.is_zero() {
+            return formatter.write_char('0');
+        }
+
+        let mut reversed_digits = [0_u8; TEXT_CAPACITY];
+        let mut length = 0_usize;
+        while !value.is_zero() {
+            reversed_digits[length] = b'0' + value.divide_by_10();
+            length += 1;
+        }
+
+        let mut digits = [0_u8; TEXT_CAPACITY];
+        for index in 0..length {
+            digits[index] = reversed_digits[length - 1 - index];
+        }
+
+        let text = std::str::from_utf8(&digits[..length]).map_err(|_| fmt::Error)?;
+        formatter.write_str(text)
+    }
+}
+
+impl fmt::Display for I1024 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_char('-')?;
+        self.magnitude.fmt(formatter)
+    }
+}
 
 fn checksum_text(text: &str) -> i64 {
     let bytes = text.as_bytes();
@@ -9,13 +89,25 @@ fn checksum_text(text: &str) -> i64 {
 }
 
 fn main() {
+    let mut text = String::with_capacity(TEXT_CAPACITY);
     let mut checksum = 0_i64;
 
     for _ in 0_i32..50 {
-        checksum += checksum_text(I64_MIN_TEXT);
-        checksum += checksum_text(U64_MAX_TEXT);
-        checksum += checksum_text(I1024_MIN_TEXT);
-        checksum += checksum_text(U1024_MAX_TEXT);
+        text.clear();
+        write!(&mut text, "{}", i64::MIN).unwrap();
+        checksum += checksum_text(&text);
+
+        text.clear();
+        write!(&mut text, "{}", u64::MAX).unwrap();
+        checksum += checksum_text(&text);
+
+        text.clear();
+        write!(&mut text, "{I1024_MIN_VALUE}").unwrap();
+        checksum += checksum_text(&text);
+
+        text.clear();
+        write!(&mut text, "{U1024_MAX_VALUE}").unwrap();
+        checksum += checksum_text(&text);
     }
 
     if checksum != 53_200 {

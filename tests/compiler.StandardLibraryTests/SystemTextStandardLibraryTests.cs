@@ -374,6 +374,29 @@ public sealed class SystemTextStandardLibraryTests
                 return 12;
             }
 
+            if (!System.Text.TryFormatU1024Ascii(&formattedAscii, (u1024[0 max])7)) {
+                return 70;
+            }
+
+            stack rawptr<i8[min max]> asciiSingleDigit = formattedAscii.Data;
+            if (formattedAscii.Length != 1
+                || asciiSingleDigit == null
+                || *(&asciiSingleDigit[0]) != (i8[min max])55) {
+                return 71;
+            }
+
+            if (!System.Text.TryFormatU1024Ascii(&formattedAscii, (u1024[0 max])(10**100))) {
+                return 72;
+            }
+
+            stack rawptr<i8[min max]> asciiMidSize = formattedAscii.Data;
+            if (formattedAscii.Length != 101
+                || asciiMidSize == null
+                || *(&asciiMidSize[0]) != (i8[min max])49
+                || *(&asciiMidSize[100]) != (i8[min max])48) {
+                return 73;
+            }
+
             stack mut i32[min max][320] unicodeStorage;
             stack mut Unicode formattedUnicode = new Unicode() {
                 Data = &unicodeStorage[0],
@@ -406,6 +429,29 @@ public sealed class SystemTextStandardLibraryTests
                 || *(&formattedUnicode.Data[0]) != 49
                 || *(&formattedUnicode.Data[300]) != 48) {
                 return 13;
+            }
+
+            if (!System.Text.TryFormatU1024Unicode(&formattedUnicode, (u1024[0 max])7)) {
+                return 74;
+            }
+
+            stack rawmutptr<i32[min max]> unicodeSingleDigit = formattedUnicode.Data;
+            if (formattedUnicode.Length != 1
+                || unicodeSingleDigit == null
+                || *(&unicodeSingleDigit[0]) != 55) {
+                return 75;
+            }
+
+            if (!System.Text.TryFormatU1024Unicode(&formattedUnicode, (u1024[0 max])(10**100))) {
+                return 76;
+            }
+
+            stack rawmutptr<i32[min max]> unicodeMidSize = formattedUnicode.Data;
+            if (formattedUnicode.Length != 101
+                || unicodeMidSize == null
+                || *(&unicodeMidSize[0]) != 49
+                || *(&unicodeMidSize[100]) != 48) {
+                return 77;
             }
 
             if (!OwnedAsciiLength(System.Text.ToAscii((i32[min max])(-(2 ** 31))), 11)
@@ -606,6 +652,18 @@ public sealed class SystemTextStandardLibraryTests
             llvm,
             "define fastcc noundef i1 @TryFormatU128Unicode(",
             "Expected TryFormatU128Unicode to lower as a defined function.");
+        var signedAsciiU1024Body = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i1 @TryFormatSignedU1024Ascii(",
+            "Expected TryFormatSignedU1024Ascii to lower as a defined function.");
+        var signedUnicodeU1024Body = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i1 @TryFormatSignedU1024Unicode(",
+            "Expected TryFormatSignedU1024Unicode to lower as a defined function.");
+        var writeReversedU1024Body = ExtractDefinedFunctionText(
+            llvm,
+            "@WriteReversedU1024AsciiDigits(",
+            "Expected WriteReversedU1024AsciiDigits to lower as a defined function.");
 
         Assert.Contains("@TryFormatSignedU1024Unicode", i1024Body, StringComparison.Ordinal);
         Assert.Contains("@TryFormatSignedU1024Unicode", u1024Body, StringComparison.Ordinal);
@@ -621,6 +679,42 @@ public sealed class SystemTextStandardLibraryTests
         Assert.DoesNotContain("@TryConvertAsciiToUnicode", u128Body, StringComparison.Ordinal);
         Assert.DoesNotContain("alloca [309 x i8]", u1024Body, StringComparison.Ordinal);
         Assert.DoesNotContain("alloca [39 x i8]", u128Body, StringComparison.Ordinal);
+        Assert.Contains("@WriteReversedU1024AsciiDigits", signedAsciiU1024Body, StringComparison.Ordinal);
+        Assert.Contains("@WriteReversedU1024AsciiDigits", signedUnicodeU1024Body, StringComparison.Ordinal);
+        Assert.Contains("@DivideU1024FormatLimbsBy10", writeReversedU1024Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("udiv i1024", signedAsciiU1024Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("urem i1024", signedAsciiU1024Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("udiv i1024", signedUnicodeU1024Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("urem i1024", signedUnicodeU1024Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("udiv i1024", writeReversedU1024Body, StringComparison.Ordinal);
+        Assert.DoesNotContain("urem i1024", writeReversedU1024Body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StdLibSourcePromotedWideIntegerParsingUsesConstantCutoffs()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var modulePath = Path.Combine(sourceRoot, "System", "Text.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(File.ReadAllText(modulePath), modulePath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                EmitLlvmIr: true,
+                OptimizationLevel: CompilerOptimizationLevel.O3));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+        foreach (var functionName in new[] { "ParseI1024Ascii", "ParseI1024Unicode", "ParseU1024Ascii", "ParseU1024Unicode" })
+        {
+            var body = ExtractDefinedFunctionText(
+                llvm,
+                $"define fastcc void @{functionName}(",
+                $"Expected {functionName} to lower as a defined function.");
+
+            Assert.DoesNotContain("udiv i1024", body, StringComparison.Ordinal);
+            Assert.DoesNotContain("urem i1024", body, StringComparison.Ordinal);
+        }
     }
 
     [Fact]
@@ -2143,4 +2237,3 @@ public sealed class SystemTextStandardLibraryTests
         throw new Xunit.Sdk.XunitException($"Expected '{signaturePrefix}' body to terminate in emitted LLVM.");
     }
 }
-

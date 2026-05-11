@@ -230,6 +230,12 @@ Backend facts from dynamic storage include:
 
 Sparse data structures use explicit source facts for initialized slots. When the compiler can see the initialized range or slot identity, reads, moves, and drops are safe. When a data structure keeps a dynamic sparse state that the type checker cannot prove from control flow, the proof boundary is explicit and unsafe; it does not require converting the storage to a raw pointer. Code that uses an unsafe sparse proof is responsible for preserving the runtime dynamic owner invariant before ordinary safe code observes or drops the owner.
 
+The standard library's `System.Collections.SparseSlots<T>` is the current
+internal sparse initialized-slot view for ring-shaped collections. It owns the
+allocation, moves only the caller-declared live ring range during growth, and
+exposes direct slot move/borrow helpers so `Queue<T>` and `RingQueue<T>` avoid
+per-slot enum tags in their hot paths.
+
 ### 2.5 Standard Library Promotion Status
 
 The release standard library exposes only canonical `System.*` modules. The

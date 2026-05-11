@@ -523,6 +523,36 @@ public struct File {
         }
     }
 
+    unsafe fn bool TryAppendBufferedBytes(
+        mut borrow File self,
+        rawptr<i8[min max]>[count] data,
+        u64[0 2 ** 63 - 1] count) {
+        unsafe {
+            if (count == 0) {
+                return true;
+            }
+
+            if (data == null) {
+                return false;
+            }
+
+            stack i64[min max] existingLength = self.WriteBufferLength;
+            stack i64[min max] capacity = 8192;
+            if (existingLength < 0 || existingLength > capacity) {
+                return false;
+            }
+
+            stack i64[min max] available = capacity - existingLength;
+            if ((i64[min max])count > available) {
+                return false;
+            }
+
+            CopyAsciiBytes(&self.WriteBufferStorage[existingLength], data, (i32[min max])count);
+            self.WriteBufferLength = existingLength + (i64[min max])count;
+            return true;
+        }
+    }
+
     internal fn i32[min max] CloseRaw(mut borrow File self) {
         unsafe {
             if (self.Closed || self.Handle == null) {
@@ -937,6 +967,37 @@ public struct File {
             }
 
             stack mut u64[0 2 ** 63 - 1] totalWritten = 0;
+            stack i64[min max] bufferCapacity = 8192;
+            if (self.BufferWrites) {
+                while willexit (totalWritten < sourceParts.Length) {
+                    if (self.WriteBufferLength >= bufferCapacity) {
+                        if (self.FlushRaw() != 0) {
+                            return System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(System.IO.IOError.BrokenPipe);
+                        }
+
+                        continue;
+                    }
+
+                    stack u64[0 2 ** 63 - 1] remaining =
+                        (u64[0 2 ** 63 - 1])(sourceParts.Length - totalWritten);
+                    stack u64[0 2 ** 63 - 1] available =
+                        (u64[0 2 ** 63 - 1])(bufferCapacity - self.WriteBufferLength);
+                    stack mut u64[0 2 ** 63 - 1] chunkLength = remaining;
+                    if (chunkLength > available) {
+                        chunkLength = available;
+                    }
+
+                    stack rawptr<i8[min max]> chunk = &sourceParts.Data[totalWritten];
+                    if (!self.TryAppendBufferedBytes(chunk, chunkLength)) {
+                        return System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(System.IO.IOError.BrokenPipe);
+                    }
+
+                    totalWritten += chunkLength;
+                }
+
+                return System.IO.IOResult<u64[0 2 ** 63 - 1]>.Ok(totalWritten);
+            }
+
             while willexit (totalWritten < sourceParts.Length) {
                 stack rawptr<i8[min max]> chunk = &sourceParts.Data[totalWritten];
                 stack mut i64[min max] written = 0;

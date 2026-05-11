@@ -257,48 +257,55 @@ public struct Stack<T> {
     }
 }
 
-internal enum QueueSlot<T> {
-    Empty,
-    Full(T),
-}
-
-public struct Queue<T> {
-    internal dynamic T Items;
+internal struct SparseSlots<T> {
+    internal rawmutptr<T> Items;
+    internal System.Memory.Allocation Allocation;
     internal System.Memory.Allocator Allocator;
+    internal u64[0 2 ** 63 - 1] StorageCapacity;
 
-    Queue() {
-        self.Items = new();
+    SparseSlots() {
         self.Allocator = System.Memory.Allocator.Default();
+        self.Items = null;
+        self.Allocation = new System.Memory.Allocation() {
+            Pointer = null,
+            ByteLength = 0,
+            Alignment = alignof(T),
+            Allocator = self.Allocator
+        };
+        self.StorageCapacity = 0;
     }
 
-    Queue(System.Memory.Allocator allocator) {
-        self.Items = new();
+    SparseSlots(System.Memory.Allocator allocator) {
         self.Allocator = allocator;
+        self.Items = null;
+        self.Allocation = new System.Memory.Allocation() {
+            Pointer = null,
+            ByteLength = 0,
+            Alignment = alignof(T),
+            Allocator = allocator
+        };
+        self.StorageCapacity = 0;
     }
 
     mut drop {
-        self.Clear();
-    }
-
-    finite law u64[0 2 ** 63 - 1] Count(borrow Queue<T> self) {
-        return self.Items.Length;
-    }
-
-    finite law bool IsEmpty(borrow Queue<T> self) {
-        return self.Items.Length == 0;
-    }
-
-    fn System.Memory.MemoryStatus Reserve(mut borrow Queue<T> self, u64[0 2 ** 63 - 1] additional) {
-        stack mut u64[0 2 ** 63 - 1] nextCapacity = self.Items.Capacity;
-        stack System.Memory.MemoryStatus capacityStatus =
-            ComputeContiguousGrowthCapacity(self.Items.Length, self.Items.Capacity, additional, 4, nextCapacity);
-        switch (capacityStatus) {
-            case System.Memory.MemoryStatus.Err(var error):
-                return System.Memory.MemoryStatus.Err(error);
-            case System.Memory.MemoryStatus.Ok:
+        if (self.Allocation.Pointer != null) {
+            System.Memory.Free(self.Allocation);
         }
 
-        if (nextCapacity <= self.Items.Capacity) {
+        self.Items = null;
+        self.StorageCapacity = 0;
+    }
+
+    finite law u64[0 2 ** 63 - 1] Capacity(borrow SparseSlots<T> self) {
+        return self.StorageCapacity;
+    }
+
+    unsafe inline fn System.Memory.MemoryStatus ReserveRing(
+        mut borrow SparseSlots<T> self,
+        rawmutptr<u64[0 2 ** 63 - 1]> head,
+        u64[0 2 ** 63 - 1] length,
+        u64[0 2 ** 63 - 1] nextCapacity) {
+        if (nextCapacity <= self.StorageCapacity) {
             return System.Memory.MemoryStatus.Ok;
         }
 
@@ -311,11 +318,96 @@ public struct Queue<T> {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
         }
 
-        if (!self.Items.TryReserveCapacity(nextCapacity)) {
+        stack u64[0 2 ** 63 - 1] oldCapacity = self.StorageCapacity;
+        stack u64[0 2 ** 63 - 1] oldHead = *head;
+        stack rawmutptr<T> oldItems = self.Items;
+        stack u64[0 2 ** 63 - 1] byteLength = (u64[0 2 ** 63 - 1])(nextCapacity * elementSize);
+        stack System.Memory.Allocation nextAllocation = System.Memory.Allocate(self.Allocator, byteLength, alignof(T));
+        if (nextAllocation.Pointer == null) {
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
         }
 
+        stack rawmutptr<T> nextItems = (rawmutptr<T>)nextAllocation.Pointer;
+        for willexit (stack mut u64[0 2 ** 63 - 1] offset = 0; offset < length; offset += 1) {
+            stack mut u64[0 2 ** 63 - 1] sourceIndex = (u64[0 2 ** 63 - 1])(oldHead + offset);
+            if (sourceIndex >= oldCapacity) {
+                sourceIndex = (u64[0 2 ** 63 - 1])(sourceIndex - oldCapacity);
+            }
+
+            *(&nextItems[offset]) = *(&oldItems[sourceIndex]);
+        }
+
+        if (self.Allocation.Pointer != null) {
+            System.Memory.Free(self.Allocation);
+        }
+
+        self.Allocation = nextAllocation;
+        self.Items = nextItems;
+        self.StorageCapacity = nextCapacity;
+        *head = 0;
         return System.Memory.MemoryStatus.Ok;
+    }
+
+    unsafe inline fn void Write(mut borrow SparseSlots<T> self, u64[0 2 ** 63 - 1] index, T value) {
+        *(&self.Items[index]) = value;
+        return;
+    }
+
+    unsafe inline fn T MoveAt(mut borrow SparseSlots<T> self, u64[0 2 ** 63 - 1] index) {
+        return *(&self.Items[index]);
+    }
+
+    unsafe inline law retborrow T Get(borrow SparseSlots<T> self, u64[0 2 ** 63 - 1] index) {
+        return self.Items[index];
+    }
+}
+
+public struct Queue<T> {
+    internal SparseSlots<T> Items;
+    internal u64[0 2 ** 63 - 1] Head;
+    internal u64[0 2 ** 63 - 1] Length;
+
+    Queue() {
+        self.Items = new();
+        self.Head = 0;
+        self.Length = 0;
+    }
+
+    Queue(System.Memory.Allocator allocator) {
+        self.Items = new(allocator);
+        self.Head = 0;
+        self.Length = 0;
+    }
+
+    mut drop {
+        self.Clear();
+    }
+
+    finite law u64[0 2 ** 63 - 1] Count(borrow Queue<T> self) {
+        return self.Length;
+    }
+
+    finite law bool IsEmpty(borrow Queue<T> self) {
+        return self.Length == 0;
+    }
+
+    fn System.Memory.MemoryStatus Reserve(mut borrow Queue<T> self, u64[0 2 ** 63 - 1] additional) {
+        stack mut u64[0 2 ** 63 - 1] nextCapacity = self.Items.Capacity();
+        stack System.Memory.MemoryStatus capacityStatus =
+            ComputeContiguousGrowthCapacity(self.Length, self.Items.Capacity(), additional, 4, nextCapacity);
+        switch (capacityStatus) {
+            case System.Memory.MemoryStatus.Err(var error):
+                return System.Memory.MemoryStatus.Err(error);
+            case System.Memory.MemoryStatus.Ok:
+        }
+
+        if (nextCapacity <= self.Items.Capacity()) {
+            return System.Memory.MemoryStatus.Ok;
+        }
+
+        unsafe {
+            return self.Items.ReserveRing(&self.Head, self.Length, nextCapacity);
+        }
     }
 
     fn System.Memory.MemoryStatus Enqueue(mut borrow Queue<T> self, T value) {
@@ -326,34 +418,68 @@ public struct Queue<T> {
             case System.Memory.MemoryStatus.Ok:
         }
 
-        init self.Items[self.Items.Length] = value;
+        unsafe {
+            stack mut u64[0 2 ** 63 - 1] tail = (u64[0 2 ** 63 - 1])(self.Head + self.Length);
+            if (tail >= self.Items.Capacity()) {
+                tail = (u64[0 2 ** 63 - 1])(tail - self.Items.Capacity());
+            }
+
+            self.Items.Write(tail, value);
+        }
+
+        self.Length += 1;
         return System.Memory.MemoryStatus.Ok;
     }
 
     fn bool TryDequeue(mut borrow Queue<T> self, out T value) {
-        if (self.Items.Length == 0) {
+        if (self.Length == 0) {
             return false;
         }
 
-        value = self.Items.MoveAt(0);
+        unsafe {
+            value = self.Items.MoveAt(self.Head);
+        }
+
+        self.Head += 1;
+        if (self.Head >= self.Items.Capacity()) {
+            self.Head = 0;
+        }
+
+        self.Length -= 1;
+        if (self.Length == 0) {
+            self.Head = 0;
+        }
+
         return true;
     }
 
     law retborrow T Peek(borrow Queue<T> self) {
-        return self.Items[0];
+        unsafe {
+            return self.Items.Get(self.Head);
+        }
     }
 
     fn void Clear(mut borrow Queue<T> self) {
-        while willexit (self.Items.Length > 0) {
-            stack T value = self.Items.MoveLast();
+        unsafe {
+            while willexit (self.Length > 0) {
+                stack T slot = self.Items.MoveAt(self.Head);
+
+                self.Head += 1;
+                if (self.Head >= self.Items.Capacity()) {
+                    self.Head = 0;
+                }
+
+                self.Length -= 1;
+            }
         }
 
+        self.Head = 0;
         return;
     }
 }
 
 public struct RingQueue<T> {
-    internal dynamic QueueSlot<T> Slots;
+    internal SparseSlots<T> Slots;
     internal u64[0 2 ** 63 - 1] Head;
     internal u64[0 2 ** 63 - 1] Length;
 
@@ -372,7 +498,7 @@ public struct RingQueue<T> {
     }
 
     finite law u64[0 2 ** 63 - 1] Capacity(borrow RingQueue<T> self) {
-        return self.Slots.Length;
+        return self.Slots.Capacity();
     }
 
     finite law bool IsEmpty(borrow RingQueue<T> self) {
@@ -380,54 +506,22 @@ public struct RingQueue<T> {
     }
 
     fn System.Memory.MemoryStatus Reserve(mut borrow RingQueue<T> self, u64[0 2 ** 63 - 1] additional) {
-        stack mut u64[0 2 ** 63 - 1] nextCapacity = self.Slots.Length;
+        stack mut u64[0 2 ** 63 - 1] nextCapacity = self.Slots.Capacity();
         stack System.Memory.MemoryStatus capacityStatus =
-            ComputeContiguousGrowthCapacity(self.Length, self.Slots.Length, additional, 4, nextCapacity);
+            ComputeContiguousGrowthCapacity(self.Length, self.Slots.Capacity(), additional, 4, nextCapacity);
         switch (capacityStatus) {
             case System.Memory.MemoryStatus.Err(var error):
                 return System.Memory.MemoryStatus.Err(error);
             case System.Memory.MemoryStatus.Ok:
         }
 
-        if (nextCapacity <= self.Slots.Length) {
+        if (nextCapacity <= self.Slots.Capacity()) {
             return System.Memory.MemoryStatus.Ok;
         }
 
-        stack u64[0 2 ** 63 - 1] elementSize = sizeof(QueueSlot<T>);
-        if (elementSize == 0) {
-            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
+        unsafe {
+            return self.Slots.ReserveRing(&self.Head, self.Length, nextCapacity);
         }
-
-        if (nextCapacity > (u64[0 2 ** 63 - 1])(2 ** 63 - 1) / elementSize) {
-            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
-        }
-
-        stack u64[0 2 ** 63 - 1] oldCapacity = self.Slots.Length;
-        if (!self.Slots.TryReserve((u64[0 2 ** 63 - 1])(nextCapacity - oldCapacity))) {
-            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.OutOfMemory);
-        }
-
-        stack u64[0 2 ** 63 - 1] addedCapacity = (u64[0 2 ** 63 - 1])(nextCapacity - oldCapacity);
-        stack init QueueSlot<T>[] addedSlots = init self.Slots[oldCapacity, addedCapacity];
-        for willexit independent (stack mut u64[0 2 ** 63 - 1] addedIndex = 0; addedIndex < addedCapacity; addedIndex += 1) {
-            init addedSlots[addedIndex] = QueueSlot<T>.Empty;
-        }
-
-        if (self.Head > 0) {
-            stack u64[0 2 ** 63 - 1] suffixCount = (u64[0 2 ** 63 - 1])(oldCapacity - self.Head);
-            if (self.Length > suffixCount) {
-                stack u64[0 2 ** 63 - 1] prefixCount = (u64[0 2 ** 63 - 1])(self.Length - suffixCount);
-                for willexit (stack mut u64[0 2 ** 63 - 1] prefixIndex = 0; prefixIndex < prefixCount; prefixIndex += 1) {
-                    unsafe {
-                        stack QueueSlot<T> slot = self.Slots[prefixIndex];
-                        self.Slots[prefixIndex] = QueueSlot<T>.Empty;
-                        self.Slots[(u64[0 2 ** 63 - 1])(oldCapacity + prefixIndex)] = slot;
-                    }
-                }
-            }
-        }
-
-        return System.Memory.MemoryStatus.Ok;
     }
 
     fn System.Memory.MemoryStatus Enqueue(mut borrow RingQueue<T> self, T value) {
@@ -439,12 +533,12 @@ public struct RingQueue<T> {
         }
 
         stack mut u64[0 2 ** 63 - 1] tail = (u64[0 2 ** 63 - 1])(self.Head + self.Length);
-        if (tail >= self.Slots.Length) {
-            tail = (u64[0 2 ** 63 - 1])(tail - self.Slots.Length);
+        if (tail >= self.Slots.Capacity()) {
+            tail = (u64[0 2 ** 63 - 1])(tail - self.Slots.Capacity());
         }
 
         unsafe {
-            self.Slots[tail] = QueueSlot<T>.Full(value);
+            self.Slots.Write(tail, value);
         }
 
         self.Length += 1;
@@ -457,19 +551,11 @@ public struct RingQueue<T> {
         }
 
         unsafe {
-            stack QueueSlot<T> slot = self.Slots[self.Head];
-            switch (slot) {
-                case QueueSlot<T>.Full(var payload):
-                    value = payload;
-                case QueueSlot<T>.Empty:
-                    return false;
-            }
-
-            self.Slots[self.Head] = QueueSlot<T>.Empty;
+            value = self.Slots.MoveAt(self.Head);
         }
 
         self.Head += 1;
-        if (self.Head >= self.Slots.Length) {
+        if (self.Head >= self.Slots.Capacity()) {
             self.Head = 0;
         }
 
@@ -481,19 +567,24 @@ public struct RingQueue<T> {
         return true;
     }
 
+    law retborrow T Peek(borrow RingQueue<T> self) {
+        unsafe {
+            return self.Slots.Get(self.Head);
+        }
+    }
+
     fn void Clear(mut borrow RingQueue<T> self) {
-        while willexit (self.Length > 0) {
-            unsafe {
-                stack QueueSlot<T> slot = self.Slots[self.Head];
-                self.Slots[self.Head] = QueueSlot<T>.Empty;
-            }
+        unsafe {
+            while willexit (self.Length > 0) {
+                stack T slot = self.Slots.MoveAt(self.Head);
 
-            self.Head += 1;
-            if (self.Head >= self.Slots.Length) {
-                self.Head = 0;
-            }
+                self.Head += 1;
+                if (self.Head >= self.Slots.Capacity()) {
+                    self.Head = 0;
+                }
 
-            self.Length -= 1;
+                self.Length -= 1;
+            }
         }
 
         self.Head = 0;
@@ -636,75 +727,44 @@ public struct Dictionary<K, V> {
         }
     }
 
-    internal unsafe inline finite u64[0 2 ** 63 - 1] FindEmptyStateIndex(
-        borrow Dictionary<K, V> self,
+    internal unsafe inline fn void InsertEntryIntoStorage(
+        mut borrow Dictionary<K, V> self,
         u64[0 2 ** 63 - 1] capacity,
-        rawptr<u8[0 2]> states,
-        u64[0 2 ** 63 - 1] startIndex) {
-        stack mut u64[0 2 ** 63 - 1] index = startIndex;
+        rawmutptr<K> keys,
+        rawmutptr<V> values,
+        rawmutptr<u8[0 2]> states,
+        K key,
+        V value) {
+        stack u64[0 2 ** 63 - 1] storageMask = (u64[0 2 ** 63 - 1])(capacity - 1);
+        stack mut K pendingKey = key;
+        stack mut V pendingValue = value;
+        stack mut u64[0 2 ** 63 - 1] index =
+            (u64[0 2 ** 63 - 1])(DictionaryKey.Hash(pendingKey) & (u64[0 max])storageMask);
+        stack mut u64[0 2 ** 63 - 1] distance = 0;
         stack mut u64[0 2 ** 63 - 1] probe = 0;
 
-        stack mut bool scanScalarPrefix = true;
-        while willexit (scanScalarPrefix) {
-            if (probe >= capacity) {
-                scanScalarPrefix = false;
-            }
-            else if ((index & 7) == 0) {
-                scanScalarPrefix = false;
-            }
-            else {
-                if (*(&states[index]) == 0) {
-                    return index;
-                }
-
-                index += 1;
-                if (index >= capacity) {
-                    index = 0;
-                }
-
-                probe += 1;
-            }
-        }
-
-        stack mut bool scanGroups = true;
-        while willexit (scanGroups) {
-            if (probe + 16 > capacity) {
-                scanGroups = false;
-            }
-            else if (index + 16 > capacity) {
-                scanGroups = false;
-            }
-            else {
-                stack rawptr<i64[min max]> lowerStateWord =
-                    (rawptr<i64[min max]>)(&states[index]);
-                stack i64[min max] lowerWord = *lowerStateWord;
-                stack i64[min max] lowerEmptyMask =
-                    DictionaryStateMatchMask(lowerWord, 0);
-                if (lowerEmptyMask != 0) {
-                    return (u64[0 2 ** 63 - 1])(index + DictionaryStateMaskByteOffset(lowerEmptyMask));
-                }
-
-                stack rawptr<i64[min max]> upperStateWord =
-                    (rawptr<i64[min max]>)(&states[(u64[0 2 ** 63 - 1])(index + 8)]);
-                stack i64[min max] upperWord = *upperStateWord;
-                stack i64[min max] upperEmptyMask =
-                    DictionaryStateMatchMask(upperWord, 0);
-                if (upperEmptyMask != 0) {
-                    return (u64[0 2 ** 63 - 1])(index + 8 + DictionaryStateMaskByteOffset(upperEmptyMask));
-                }
-
-                index += 16;
-                if (index >= capacity) {
-                    index = 0;
-                }
-
-                probe += 16;
-            }
-        }
-
         while willexit (probe < capacity) {
-            if (*(&states[index]) == 0) {
-                return index;
+            stack u8[0 2] state = *(&states[index]);
+            if (state != 1) {
+                *(&keys[index]) = pendingKey;
+                *(&values[index]) = pendingValue;
+                *(&states[index]) = 1;
+                return;
+            }
+
+            stack u64[0 2 ** 63 - 1] existingHomeIndex =
+                (u64[0 2 ** 63 - 1])(DictionaryKey.Hash(keys[index]) & (u64[0 max])storageMask);
+            stack u64[0 2 ** 63 - 1] existingDistance =
+                (u64[0 2 ** 63 - 1])(((index + capacity) - existingHomeIndex) & storageMask);
+
+            if (existingDistance < distance) {
+                stack K displacedKey = *(&keys[index]);
+                stack V displacedValue = *(&values[index]);
+                *(&keys[index]) = pendingKey;
+                *(&values[index]) = pendingValue;
+                pendingKey = displacedKey;
+                pendingValue = displacedValue;
+                distance = existingDistance;
             }
 
             index += 1;
@@ -712,10 +772,11 @@ public struct Dictionary<K, V> {
                 index = 0;
             }
 
+            distance += 1;
             probe += 1;
         }
 
-        return capacity;
+        return;
     }
 
     inline finite law u64[0 2 ** 63 - 1] FindIndex(borrow Dictionary<K, V> self, borrow K key) {
@@ -1113,14 +1174,7 @@ public struct Dictionary<K, V> {
                 if (*(&self.States[oldIndex]) == 1) {
                     stack K movedKey = *(&self.Keys[oldIndex]);
                     stack V movedValue = *(&self.Values[oldIndex]);
-                    stack u64[0 2 ** 63 - 1] nextMask = (u64[0 2 ** 63 - 1])(nextCapacity - 1);
-                    stack u64[0 2 ** 63 - 1] nextIndex =
-                        (u64[0 2 ** 63 - 1])(DictionaryKey.Hash(movedKey) & (u64[0 max])nextMask);
-                    stack u64[0 2 ** 63 - 1] targetIndex =
-                        self.FindEmptyStateIndex(nextCapacity, nextStates, nextIndex);
-                    *(&nextKeys[targetIndex]) = movedKey;
-                    *(&nextValues[targetIndex]) = movedValue;
-                    *(&nextStates[targetIndex]) = 1;
+                    self.InsertEntryIntoStorage(nextCapacity, nextKeys, nextValues, nextStates, movedKey, movedValue);
                 }
 
                 oldIndex += 1;
@@ -1157,12 +1211,11 @@ public struct Dictionary<K, V> {
 
             stack u64[0 max] keyHash = DictionaryKey.Hash(key);
             stack mut bool foundExisting = false;
-            stack mut u64[0 2 ** 63 - 1] insertionIndex = self.StorageCapacity;
             if (self.StorageCapacity > 0) {
-                insertionIndex = self.FindInsertionIndex(key, keyHash, foundExisting);
+                stack u64[0 2 ** 63 - 1] existingIndex = self.FindInsertionIndex(key, keyHash, foundExisting);
                 if (foundExisting) {
-                    stack V oldValue = *(&self.Values[insertionIndex]);
-                    *(&self.Values[insertionIndex]) = value;
+                    stack V oldValue = *(&self.Values[existingIndex]);
+                    *(&self.Values[existingIndex]) = value;
                     return System.Memory.MemoryStatus.Ok;
                 }
             }
@@ -1185,28 +1238,11 @@ public struct Dictionary<K, V> {
                         return System.Memory.MemoryStatus.Err(error);
                     case System.Memory.MemoryStatus.Ok:
                 }
-
-                insertionIndex = self.StorageCapacity;
             }
 
-            if (insertionIndex >= self.StorageCapacity) {
-                insertionIndex = self.FindInsertionIndex(key, keyHash, foundExisting);
-                if (foundExisting) {
-                    stack V oldValue = *(&self.Values[insertionIndex]);
-                    *(&self.Values[insertionIndex]) = value;
-                    return System.Memory.MemoryStatus.Ok;
-                }
-            }
-
-            if (insertionIndex < self.StorageCapacity) {
-                *(&self.Keys[insertionIndex]) = key;
-                *(&self.Values[insertionIndex]) = value;
-                *(&self.States[insertionIndex]) = 1;
-                self.Length += 1;
-                return System.Memory.MemoryStatus.Ok;
-            }
-
-            return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.TooLarge);
+            self.InsertEntryIntoStorage(self.StorageCapacity, self.Keys, self.Values, self.States, key, value);
+            self.Length += 1;
+            return System.Memory.MemoryStatus.Ok;
         }
     }
 
@@ -1235,7 +1271,7 @@ public struct Dictionary<K, V> {
 
             stack K removedKey = *(&self.Keys[index]);
             stack V removedValue = *(&self.Values[index]);
-            *(&self.States[index]) = 2;
+            self.BackwardShiftDelete(index);
             self.Length -= 1;
             return DictionaryRemoveResult<V>.Removed(removedValue);
         }
@@ -1251,7 +1287,7 @@ public struct Dictionary<K, V> {
             stack K removedKey = *(&self.Keys[index]);
             stack V removedValue = *(&self.Values[index]);
             init value = removedValue;
-            *(&self.States[index]) = 2;
+            self.BackwardShiftDelete(index);
             self.Length -= 1;
             return true;
         }
@@ -1266,10 +1302,61 @@ public struct Dictionary<K, V> {
 
             stack K removedKey = *(&self.Keys[index]);
             stack V removedValue = *(&self.Values[index]);
-            *(&self.States[index]) = 2;
+            self.BackwardShiftDelete(index);
             self.Length -= 1;
             return true;
         }
+    }
+
+    internal inline fn void BackwardShiftDelete(
+        mut borrow Dictionary<K, V> self,
+        u64[0 2 ** 63 - 1] removedIndex) {
+            unsafe {
+            stack u64[0 2 ** 63 - 1] storageMask = (u64[0 2 ** 63 - 1])(self.StorageCapacity - 1);
+            stack mut u64[0 2 ** 63 - 1] holeIndex = removedIndex;
+            stack mut u64[0 2 ** 63 - 1] scanIndex = (u64[0 2 ** 63 - 1])(removedIndex + 1);
+            if (scanIndex >= self.StorageCapacity) {
+                scanIndex = 0;
+            }
+
+            stack mut u64[0 2 ** 63 - 1] probe = 1;
+            while willexit (probe < self.StorageCapacity) {
+                stack u8[0 2] state = *(&self.States[scanIndex]);
+                if (state == 0) {
+                    *(&self.States[holeIndex]) = 0;
+                    return;
+                }
+
+                if (state == 1) {
+                    stack u64[0 2 ** 63 - 1] homeIndex =
+                        (u64[0 2 ** 63 - 1])(DictionaryKey.Hash(self.Keys[scanIndex]) & (u64[0 max])storageMask);
+                    stack u64[0 2 ** 63 - 1] scanDistance =
+                        (u64[0 2 ** 63 - 1])(((scanIndex + self.StorageCapacity) - homeIndex) & storageMask);
+
+                    if (scanDistance == 0) {
+                        *(&self.States[holeIndex]) = 0;
+                        return;
+                    }
+
+                    stack K shiftedKey = *(&self.Keys[scanIndex]);
+                    stack V shiftedValue = *(&self.Values[scanIndex]);
+                    *(&self.Keys[holeIndex]) = shiftedKey;
+                    *(&self.Values[holeIndex]) = shiftedValue;
+                    *(&self.States[holeIndex]) = 1;
+                    holeIndex = scanIndex;
+                }
+
+                scanIndex += 1;
+                if (scanIndex >= self.StorageCapacity) {
+                    scanIndex = 0;
+                }
+
+                probe += 1;
+            }
+
+            *(&self.States[holeIndex]) = 0;
+            return;
+            }
     }
 
     fn void Clear(mut borrow Dictionary<K, V> self) {
