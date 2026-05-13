@@ -683,6 +683,93 @@ public sealed class FunctionSemanticsTests
     }
 
     [Fact]
+    public void LawBodiesRejectExternallyVisibleImplicitDropEffects()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            static mut i32[min max] Counter = 0;
+
+            struct Resource {
+                drop {
+                    Counter = Counter + 1;
+                }
+            }
+
+            unsafe law void Bad() {
+                stack Resource resource = new Resource();
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "STK4104"
+                && diagnostic.Message.Contains("Bad", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("dropping 'Resource'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void LawBodiesRejectExternallyVisibleImplicitDropEffectsThroughDestructorCalls()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            static mut i32[min max] Counter = 0;
+
+            unsafe fn void Bump() {
+                Counter = Counter + 1;
+                return;
+            }
+
+            struct Resource {
+                drop {
+                    Bump();
+                }
+            }
+
+            unsafe law void Bad() {
+                stack Resource resource = new Resource();
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "STK4104"
+                && diagnostic.Message.Contains("Bad", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("dropping 'Resource'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void LawBodiesAllowImplicitDropThatOnlyMutatesDroppedValue()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Resource {
+                i32[min max] Value;
+
+                mut drop {
+                    self.Value = 0;
+                }
+            }
+
+            unsafe law void Good() {
+                stack Resource resource = new Resource() { Value = 1 };
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
     public void MemberFunctionVisibilityInheritsNarrowsAndAvoidsAccidentalExport()
     {
         var result = Compile(

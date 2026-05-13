@@ -135,6 +135,70 @@ public sealed partial class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void LargeFixedArrayConstantIndexReadsAndWritesUseAddressBasedMemoryAccess()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn i8[min max] Run() {
+                stack mut i8[min max][256] values;
+                values[7] = 42;
+                return values[7];
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(function.Locals, static local => local.Name == "values" && local.IsAddressable);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrAddressOfLocalRValue { LocalName: "values" });
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrElementAddressRValue { ConstantIndex: 7 });
+        Assert.Contains(statements, static statement => statement.Kind == MidLevelIrStatementKind.StoreIndirect);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrLoadIndirectRValue);
+        Assert.DoesNotContain(
+            statements,
+            static statement => statement.Value is MidLevelIrInsertIndexRValue && statement.Text.Contains("values[7] = 42", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void LargeAggregateFieldAndConstantIndexReadsAndWritesUseAddressBasedMemoryAccess()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Big {
+                i8[min max][256] Data;
+                i32[min max] Count;
+            }
+
+            unsafe fn i8[min max] Run() {
+                stack mut Big big = new Big() { Data = { 0 }, Count = 0 };
+                big.Data[7] = 42;
+                return big.Data[7];
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(function.Locals, static local => local.Name == "big" && local.IsAddressable);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrAddressOfLocalRValue { LocalName: "big" });
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrFieldAddressRValue { FieldName: "Data" });
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrElementAddressRValue { ConstantIndex: 7 });
+        Assert.Contains(statements, static statement => statement.Kind == MidLevelIrStatementKind.StoreIndirect);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrLoadIndirectRValue);
+        Assert.DoesNotContain(
+            statements,
+            static statement => statement.Value is MidLevelIrInsertFieldRValue && statement.Text.Contains("big.Data[7] = 42", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void LocalFixedArrayCanLowerToSliceAndDynamicSliceRead()
     {
         var result = Compile(

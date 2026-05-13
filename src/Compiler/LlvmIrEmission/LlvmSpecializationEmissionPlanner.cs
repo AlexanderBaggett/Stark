@@ -147,7 +147,8 @@ internal static class LlvmSpecializationEmissionPlanner
         BuildLlvmDeclarationSignatureDelegate buildDeclarationSignature,
         EmitLlvmFunctionDefinitionDelegate emitFunctionDefinition,
         LogLlvmFallbackDelegate logLlvmFallback,
-        Func<string, string> escapeIdentifier)
+        Func<string, string> escapeIdentifier,
+        bool emitFallbackDeclarationsForSourceBodies = true)
     {
         if (specializationCodegenStrategy is null)
         {
@@ -220,6 +221,12 @@ internal static class LlvmSpecializationEmissionPlanner
                         exception.Message,
                         ssaFunction.BodyLoweringKind,
                         ssaFunction.SupportsDirectCodeGeneration);
+                    if (!emitFallbackDeclarationsForSourceBodies)
+                    {
+                        builder.AppendLine($"; declaration omitted for materialized source body '{strategy.SymbolName}' because LLVM body fallback is disabled for accepted source functions.");
+                        builder.AppendLine();
+                        continue;
+                    }
                 }
             }
             else if (hasBody)
@@ -231,6 +238,12 @@ internal static class LlvmSpecializationEmissionPlanner
                     "SSA lowering did not leave this function in a direct-codegen-capable form, so LLVM emitted only a declaration.",
                     ssaFunction!.BodyLoweringKind,
                     ssaFunction.SupportsDirectCodeGeneration);
+                if (!emitFallbackDeclarationsForSourceBodies)
+                {
+                    builder.AppendLine($"; declaration omitted for materialized source body '{strategy.SymbolName}' because LLVM body fallback is disabled for accepted source functions.");
+                    builder.AppendLine();
+                    continue;
+                }
             }
 
             builder.AppendLine(buildDeclarationSignature(definitionInternalize, signature, abiSignature, effects, memoryEffects, parameterEffects));
@@ -370,7 +383,8 @@ internal static class LlvmSpecializationEmissionPlanner
         TypeCheckModel typeModel,
         EnumLayoutModel enumLayoutModel,
         IReadOnlyDictionary<string, FunctionEffectProfile> allFunctionEffects,
-        IReadOnlyDictionary<string, TypedFunctionSignature> allFunctionSignatures)
+        IReadOnlyDictionary<string, TypedFunctionSignature> allFunctionSignatures,
+        IReadOnlySet<string>? seedFunctionNames = null)
     {
         var importedDeclarations = CollectSourceBackedImportedFunctionDeclarations(loadedModules);
         if (importedDeclarations.Count == 0)
@@ -383,10 +397,10 @@ internal static class LlvmSpecializationEmissionPlanner
         var recursiveImportedInlineFunctions = FindRecursiveFunctions(
             callsByFunction,
             functionName => IsPotentialImportedInlineBody(functionName, importedDeclarations, allFunctionEffects));
-        var rootFunctions = syntaxModel.Declarations
-            .Where(static declaration => declaration.Function is not null)
-            .Select(declaration => FunctionOverloadFacts.GetResolvedLocalName(syntaxModel, declaration))
-            .ToArray();
+        var rootFunctions = ResolveImportedInlineSeedFunctions(
+            syntaxModel,
+            allFunctionEffects,
+            seedFunctionNames);
         var clones = new Dictionary<string, ImportedInlineBodyPlan>(StringComparer.Ordinal);
         var visited = new HashSet<string>(StringComparer.Ordinal);
         var pending = new Queue<string>();
@@ -400,7 +414,7 @@ internal static class LlvmSpecializationEmissionPlanner
 
             foreach (var callee in callees)
             {
-                EnqueueIfEligible(callee);
+                EnqueueIfEligibleInlineDependency(callee);
             }
         }
 
@@ -430,27 +444,35 @@ internal static class LlvmSpecializationEmissionPlanner
 
             foreach (var callee in importedCallees)
             {
-                EnqueueIfEligible(callee);
+                EnqueueIfEligibleInlineDependency(callee);
             }
         }
 
         return clones;
 
-        void EnqueueIfEligible(string functionName)
+        void EnqueueIfEligibleInlineDependency(string functionName)
         {
-            if (!visited.Add(functionName)
-                || !IsImportedInlineBodyEligible(
+            if (!visited.Add(functionName))
+            {
+                return;
+            }
+
+            if (IsImportedInlineBodyEligible(
                     functionName,
                     importedDeclarations,
                     ssaByName,
                     recursiveImportedInlineFunctions,
                     allFunctionEffects,
+                    allFunctionSignatures)
+                || IsImportedModulePrivateInlineDependencyEligible(
+                    functionName,
+                    importedDeclarations,
+                    ssaByName,
+                    allFunctionEffects,
                     allFunctionSignatures))
             {
-                return;
+                pending.Enqueue(functionName);
             }
-
-            pending.Enqueue(functionName);
         }
     }
 
@@ -613,6 +635,60 @@ internal static class LlvmSpecializationEmissionPlanner
             && module.Reference.LibraryPath is null;
     }
 
+    private static IReadOnlyList<string> ResolveImportedInlineSeedFunctions(
+        SyntaxModel syntaxModel,
+        IReadOnlyDictionary<string, FunctionEffectProfile> allFunctionEffects,
+        IReadOnlySet<string>? seedFunctionNames)
+    {
+        var declarations = syntaxModel.Declarations
+            .Where(static declaration => declaration.Function is not null)
+            .Select(declaration => new
+            {
+                Name = FunctionOverloadFacts.GetResolvedLocalName(syntaxModel, declaration),
+                Declaration = declaration
+            })
+            .ToArray();
+
+        if (seedFunctionNames is not null)
+        {
+            return declarations
+                .Where(function => seedFunctionNames.Contains(function.Name))
+                .Select(static function => function.Name)
+                .ToArray();
+        }
+
+        var hotFunctions = declarations
+            .Where(function =>
+                allFunctionEffects.TryGetValue(function.Name, out var effects)
+                && effects.IsHot
+                && !effects.IsCold)
+            .Select(static function => function.Name)
+            .ToArray();
+        if (hotFunctions.Length != 0)
+        {
+            return hotFunctions;
+        }
+
+        var exportedFunctions = declarations
+            .Where(function =>
+                function.Declaration.Visibility == StarkVisibility.Export
+                && allFunctionEffects.TryGetValue(function.Name, out var effects)
+                && !effects.IsCold)
+            .Select(static function => function.Name)
+            .ToArray();
+        if (exportedFunctions.Length != 0)
+        {
+            return exportedFunctions;
+        }
+
+        return declarations
+            .Where(function =>
+                !allFunctionEffects.TryGetValue(function.Name, out var effects)
+                || !effects.IsCold)
+            .Select(static function => function.Name)
+            .ToArray();
+    }
+
     private static FunctionEffectProfile BuildLawCloneEffectProfile(
         string functionName,
         IReadOnlyDictionary<string, FunctionEffectProfile> allFunctionEffects)
@@ -686,6 +762,29 @@ internal static class LlvmSpecializationEmissionPlanner
     {
         return IsPotentialImportedInlineBody(functionName, importedDeclarations, allFunctionEffects)
             && !recursiveImportedInlineFunctions.Contains(functionName)
+            && allFunctionSignatures.ContainsKey(functionName)
+            && ssaByName.TryGetValue(functionName, out var ssaFunction)
+            && ssaFunction.HasBody
+            && ssaFunction.SupportsDirectCodeGeneration;
+    }
+
+    private static bool IsImportedModulePrivateInlineDependencyEligible(
+        string functionName,
+        IReadOnlyDictionary<string, TopLevelDeclarationModel> importedDeclarations,
+        IReadOnlyDictionary<string, SsaFunction> ssaByName,
+        IReadOnlyDictionary<string, FunctionEffectProfile> allFunctionEffects,
+        IReadOnlyDictionary<string, TypedFunctionSignature> allFunctionSignatures)
+    {
+        return importedDeclarations.TryGetValue(functionName, out var declaration)
+            && declaration.Visibility == StarkVisibility.Module
+            && declaration.Function is { HasBody: true } function
+            && function.BackendOptimizationMode != ModuleBackendOptimizationMode.Opaque
+            && !function.Modifiers.IsFfi
+            && !function.Modifiers.IsCold
+            && allFunctionEffects.TryGetValue(functionName, out var effects)
+            && effects.BackendOptimizationMode != ModuleBackendOptimizationMode.Opaque
+            && !effects.IsFfi
+            && !effects.IsCold
             && allFunctionSignatures.ContainsKey(functionName)
             && ssaByName.TryGetValue(functionName, out var ssaFunction)
             && ssaFunction.HasBody

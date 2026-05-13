@@ -252,7 +252,7 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             if (IsBorrowParameterRoot(root)
-                || ShouldUseHeapProjectionAddressModel(root, path))
+                || ShouldUseProjectionAddressModel(root, path))
             {
                 usesAddressModel = true;
             }
@@ -574,6 +574,129 @@ internal sealed partial class MidLevelIrLowerer
             return true;
         }
 
+        private bool TryAppendIndexPlaceTarget(
+            PlaceTarget target,
+            StarkParser.ExpressionListContext expressionList,
+            out PlaceTarget updated)
+        {
+            updated = target;
+            var path = target.Path.ToList();
+            var currentType = target.Type;
+            var usesAddressModel = target.UsesAddressModel;
+
+            foreach (var indexExpression in expressionList.expression())
+            {
+                if (currentType.Kind == StarkTypeKind.FixedArray
+                    && TryResolveConstantArrayIndex(currentType, indexExpression, out var constantIndex, out var elementType))
+                {
+                    elementType = ProjectAddressProjectionType(currentType, elementType);
+                    path.Add(new PlacePathSegment(
+                        PlacePathKind.ConstantArrayIndex,
+                        FieldName: null,
+                        ConstantIndex: constantIndex,
+                        IndexOperand: null,
+                        ParentType: currentType,
+                        SegmentType: elementType));
+                    currentType = elementType;
+                    continue;
+                }
+
+                if (currentType.Kind == StarkTypeKind.FixedArray && currentType.ElementType is not null)
+                {
+                    var indexOperand = LowerExpressionToOperand(indexExpression);
+                    if (indexOperand is null || indexOperand.Type.Kind != StarkTypeKind.Integer)
+                    {
+                        return false;
+                    }
+
+                    var dynamicElementType = ProjectAddressProjectionType(currentType, currentType.ElementType);
+                    path.Add(new PlacePathSegment(
+                        PlacePathKind.DynamicArrayIndex,
+                        FieldName: null,
+                        ConstantIndex: null,
+                        IndexOperand: indexOperand,
+                        ParentType: currentType,
+                        SegmentType: dynamicElementType));
+                    currentType = dynamicElementType;
+                    usesAddressModel = true;
+                    continue;
+                }
+
+                if (currentType.Kind == StarkTypeKind.Slice && currentType.ElementType is not null)
+                {
+                    var indexOperand = LowerExpressionToOperand(indexExpression);
+                    if (indexOperand is null || indexOperand.Type.Kind != StarkTypeKind.Integer)
+                    {
+                        return false;
+                    }
+
+                    var sliceElementType = ProjectAddressProjectionType(currentType, currentType.ElementType);
+                    path.Add(new PlacePathSegment(
+                        PlacePathKind.SliceIndex,
+                        FieldName: null,
+                        ConstantIndex: null,
+                        IndexOperand: indexOperand,
+                        ParentType: currentType,
+                        SegmentType: sliceElementType));
+                    currentType = sliceElementType;
+                    usesAddressModel = true;
+                    continue;
+                }
+
+                if (currentType.Kind == StarkTypeKind.Dynamic && currentType.ElementType is not null)
+                {
+                    var indexOperand = LowerExpressionToOperand(indexExpression);
+                    if (indexOperand is null || indexOperand.Type.Kind != StarkTypeKind.Integer)
+                    {
+                        return false;
+                    }
+
+                    var dynamicStorageElementType = ProjectAddressProjectionType(currentType, currentType.ElementType);
+                    path.Add(new PlacePathSegment(
+                        PlacePathKind.DynamicStorageIndex,
+                        FieldName: null,
+                        ConstantIndex: null,
+                        IndexOperand: indexOperand,
+                        ParentType: currentType,
+                        SegmentType: dynamicStorageElementType));
+                    currentType = dynamicStorageElementType;
+                    usesAddressModel = true;
+                    continue;
+                }
+
+                if (currentType.Kind == StarkTypeKind.RawPointer && currentType.ElementType is not null)
+                {
+                    var indexOperand = LowerExpressionToOperand(indexExpression);
+                    if (indexOperand is null || indexOperand.Type.Kind != StarkTypeKind.Integer)
+                    {
+                        return false;
+                    }
+
+                    path.Add(new PlacePathSegment(
+                        PlacePathKind.RawPointerIndex,
+                        FieldName: null,
+                        ConstantIndex: null,
+                        IndexOperand: indexOperand,
+                        ParentType: currentType,
+                        SegmentType: currentType.ElementType));
+                    currentType = currentType.ElementType;
+                    usesAddressModel = true;
+                    continue;
+                }
+
+                return false;
+            }
+
+            updated = target with
+            {
+                Type = currentType,
+                Path = path,
+                UsesAddressModel = usesAddressModel
+                    || ShouldUseProjectionAddressModel(target.RootName, path)
+            };
+            return true;
+        }
+
         private bool TryResolvePointerBackedAssignmentTarget(
             StarkParser.PostfixExpressionContext postfixExpression,
             StarkParser.UnaryExpressionContext groupedUnary,
@@ -845,10 +968,9 @@ internal sealed partial class MidLevelIrLowerer
                 var address = BuildAddressCore(target);
                 if (address is null)
                 {
-                    MarkUnsupported();
-                    return target.RootName is not null
-                        ? ResolveNamedOperand(target.RootName) ?? new MidLevelIrLocalOperand(target.RootName, target.RootType)
-                        : new MidLevelIrZeroInitializerOperand(target.Type);
+                    throw LoweringInvariantViolation(
+                        null,
+                        $"Address-model place '{DescribePlaceTarget(target)}' could not resolve an address.");
                 }
 
                 return EmitTemporary(
@@ -859,8 +981,9 @@ internal sealed partial class MidLevelIrLowerer
 
             if (target.RootName is null)
             {
-                MarkUnsupported();
-                return new MidLevelIrZeroInitializerOperand(target.Type);
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Value-model place '{DescribePlaceTarget(target)}' has no named root to read.");
             }
 
             var current = ResolveNamedOperand(target.RootName) ?? new MidLevelIrLocalOperand(target.RootName, target.RootType);
@@ -871,8 +994,9 @@ internal sealed partial class MidLevelIrLowerer
                     : LowerFieldAccess(current, segment.FieldName!);
                 if (extracted is null)
                 {
-                    MarkUnsupported();
-                    return current;
+                    throw LoweringInvariantViolation(
+                        null,
+                        $"Value-model place '{DescribePlaceTarget(target)}' could not read path segment '{DescribePlacePathSegment(segment)}'.");
                 }
 
                 current = extracted;
@@ -887,6 +1011,13 @@ internal sealed partial class MidLevelIrLowerer
             if (target.UsesAddressModel)
             {
                 var address = BuildAddressCore(target);
+                if (address is null)
+                {
+                    throw LoweringInvariantViolation(
+                        null,
+                        $"Address-model assignment target '{DescribePlaceTarget(target)}' could not resolve an address.");
+                }
+
                 return new LoweredAssignment(
                     text,
                     TargetName: null,
@@ -901,15 +1032,9 @@ internal sealed partial class MidLevelIrLowerer
             {
                 if (target.RootName is null)
                 {
-                    MarkUnsupported();
-                    return new LoweredAssignment(
-                        text,
-                        TargetName: null,
-                        target.RootType,
-                        DirectValue: null,
-                        ResultValue: assignedValue,
-                        Address: null,
-                        ReplacesWholeValue: false);
+                    throw LoweringInvariantViolation(
+                        null,
+                        $"Value-model assignment target '{DescribePlaceTarget(target)}' has no named root.");
                 }
 
                 return new LoweredAssignment(
@@ -924,24 +1049,25 @@ internal sealed partial class MidLevelIrLowerer
 
             if (target.RootName is null)
             {
-                MarkUnsupported();
-                return new LoweredAssignment(
-                    text,
-                    TargetName: null,
-                    target.RootType,
-                    DirectValue: null,
-                    ResultValue: assignedValue,
-                    Address: null,
-                    ReplacesWholeValue: false);
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Aggregate assignment target '{DescribePlaceTarget(target)}' has no named root.");
             }
 
             var root = ResolveNamedOperand(target.RootName) ?? new MidLevelIrLocalOperand(target.RootName, target.RootType);
             var updatedRoot = ApplyAggregatePathUpdate(root, target.Path, 0, assignedValue, text);
+            if (updatedRoot is null)
+            {
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Aggregate assignment target '{DescribePlaceTarget(target)}' could not update its path.");
+            }
+
             return new LoweredAssignment(
                 text,
                 target.RootName,
                 target.RootType,
-                updatedRoot is null ? null : new MidLevelIrUseRValue(updatedRoot),
+                new MidLevelIrUseRValue(updatedRoot),
                 assignedValue,
                 Address: null,
                 ReplacesWholeValue: false);
@@ -1184,7 +1310,7 @@ internal sealed partial class MidLevelIrLowerer
 
             if (targetType.Kind != StarkTypeKind.Named
                 || targetType.NamedType is null
-                || !_typeModel.NamedTypes.TryGetValue(targetType.NamedType, out var namedType))
+                || !_namedTypes.TryGetValue(targetType.NamedType, out var namedType))
             {
                 return false;
             }
@@ -1243,6 +1369,34 @@ internal sealed partial class MidLevelIrLowerer
             return sourceType.AccessKind == StarkAccessKind.Frozen
                 ? StarkTypeSymbols.FreezeAddressPointeeType(projectedType)
                 : projectedType;
+        }
+
+        private static string DescribePlaceTarget(PlaceTarget target)
+        {
+            var root = target.RootName
+                ?? target.RootValue?.Text
+                ?? target.RootAddress?.Text
+                ?? "<rootless>";
+            if (target.Path.Count == 0)
+            {
+                return root;
+            }
+
+            return root + string.Concat(target.Path.Select(DescribePlacePathSegment));
+        }
+
+        private static string DescribePlacePathSegment(PlacePathSegment segment)
+        {
+            return segment.Kind switch
+            {
+                PlacePathKind.Field => $".{segment.FieldName}",
+                PlacePathKind.ConstantArrayIndex => $"[{segment.ConstantIndex}]",
+                PlacePathKind.DynamicArrayIndex
+                    or PlacePathKind.DynamicStorageIndex
+                    or PlacePathKind.RawPointerIndex
+                    or PlacePathKind.SliceIndex => $"[{segment.IndexOperand?.Text ?? "?"}]",
+                _ => "<?>"
+            };
         }
 
         private sealed class PlaceLowerer
@@ -1325,7 +1479,9 @@ internal sealed partial class MidLevelIrLowerer
                         "dynamic_index");
                     if (initializedIndex is null)
                     {
-                        return false;
+                        throw _builder.LoweringInvariantViolation(
+                            null,
+                            $"Dynamic init-slice assignment target '{DescribePlaceTarget(target)}' could not compute the initialized owner index.");
                     }
 
                     update = new DynamicStorageLengthUpdate(
@@ -1351,7 +1507,9 @@ internal sealed partial class MidLevelIrLowerer
                 var storageAddress = _builder.BuildAddressCore(parentTarget);
                 if (storageAddress is null)
                 {
-                    return false;
+                    throw _builder.LoweringInvariantViolation(
+                        null,
+                        $"Dynamic storage initialization target '{DescribePlaceTarget(target)}' could not resolve the owner address for length update.");
                 }
 
                 update = new DynamicStorageLengthUpdate(

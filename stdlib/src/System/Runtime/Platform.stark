@@ -74,23 +74,23 @@ internal unsafe fn i64[min max] ReadStdin(rawmutptr<i8[min max]>[capacity] buffe
     return System.Runtime.Platform.Linux.ReadStdin(buffer, capacity);
 }
 
-internal unsafe fn i32[min max] WriteAscii(rawptr<i8[min max]> handle, ascii text) {
+internal unsafe inline fn i32[min max] WriteAscii(rawptr<i8[min max]> handle, ascii text) {
     return System.Runtime.Platform.Linux.WriteAscii(handle, text);
 }
 
-internal finite law ascii DirectorySeparator() {
+internal inline finite law ascii DirectorySeparator() {
     return System.Runtime.Platform.Linux.DirectorySeparator();
 }
 
-internal finite law ascii AlternateDirectorySeparator() {
+internal inline finite law ascii AlternateDirectorySeparator() {
     return System.Runtime.Platform.Linux.AlternateDirectorySeparator();
 }
 
-internal finite law ascii PathSeparator() {
+internal inline finite law ascii PathSeparator() {
     return System.Runtime.Platform.Linux.PathSeparator();
 }
 
-internal finite law bool IsDirectorySeparator(ascii value) {
+internal inline finite law bool IsDirectorySeparator(ascii value) {
     return System.Runtime.Platform.Linux.IsDirectorySeparator(value);
 }
 
@@ -98,7 +98,7 @@ internal unsafe fn bool IsTerminal(rawptr<i8[min max]> handle) {
     return System.Runtime.Platform.Linux.IsTerminal(handle);
 }
 
-internal unsafe fn i32[min max] WriteUnicode(rawptr<i8[min max]> handle, unicode text) {
+internal unsafe inline fn i32[min max] WriteUnicode(rawptr<i8[min max]> handle, unicode text) {
     return System.Runtime.Platform.Linux.WriteUnicode(handle, text);
 }
 
@@ -118,7 +118,7 @@ internal unsafe fn rawptr<i8[min max]> OpenFileReadWrite(ascii path) {
     return System.Runtime.Platform.Linux.OpenFileReadWrite(path);
 }
 
-internal unsafe fn i32[min max] CloseFile(rawptr<i8[min max]> handle) {
+internal unsafe inline fn i32[min max] CloseFile(rawptr<i8[min max]> handle) {
     return System.Runtime.Platform.Linux.CloseFile(handle);
 }
 
@@ -126,31 +126,31 @@ internal unsafe fn i32[min max] FlushFile(rawptr<i8[min max]> handle) {
     return System.Runtime.Platform.Linux.FlushFile(handle);
 }
 
-internal unsafe fn i64[min max] ReadFile(rawmutptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
+internal unsafe inline fn i64[min max] ReadFile(rawmutptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
     return System.Runtime.Platform.Linux.ReadFile(buffer, size, count, handle);
 }
 
-internal unsafe fn i64[min max] WriteFile(rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
+internal unsafe inline fn i64[min max] WriteFile(rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
     return System.Runtime.Platform.Linux.WriteFile(buffer, size, count, handle);
 }
 
-internal unsafe fn i64[min max] ReadFileBytes(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
+internal unsafe inline fn i64[min max] ReadFileBytes(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
     return System.Runtime.Platform.Linux.ReadFileBytes(buffer, length, handle);
 }
 
-internal unsafe fn i64[min max] WriteFileBytes(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
+internal unsafe inline fn i64[min max] WriteFileBytes(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
     return System.Runtime.Platform.Linux.WriteFileBytes(buffer, length, handle);
 }
 
-internal unsafe fn i64[min max] ReadFileBytesFast(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
+internal unsafe inline fn i64[min max] ReadFileBytesFast(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
     return System.Runtime.Platform.Linux.ReadFileBytes(buffer, length, handle);
 }
 
-internal unsafe fn i64[min max] WriteFileBytesFast(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
+internal unsafe inline fn i64[min max] WriteFileBytesFast(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
     return System.Runtime.Platform.Linux.WriteFileBytes(buffer, length, handle);
 }
 
-internal unsafe fn i64[min max] SeekFile(rawptr<i8[min max]> handle, i64[min max] offset, i32[min max] origin) {
+internal unsafe inline fn i64[min max] SeekFile(rawptr<i8[min max]> handle, i64[min max] offset, i32[min max] origin) {
     return System.Runtime.Platform.Linux.SeekFile(handle, offset, origin);
 }
 
@@ -196,7 +196,7 @@ internal unsafe fn rawptr<i8[min max]> OpenDirectoryFast(ascii path)
     return System.Runtime.Platform.Linux.OpenDirectory(path);
 }
 
-internal unsafe fn rawptr<i8[min max]> OpenDirectoryFastInto(
+internal unsafe inline fn rawptr<i8[min max]> OpenDirectoryFastInto(
     ascii path,
     rawmutptr<i8[min max]>[capacity] buffer,
     u64[0 2 ** 63 - 1] capacity,
@@ -205,15 +205,15 @@ internal unsafe fn rawptr<i8[min max]> OpenDirectoryFastInto(
     return System.Runtime.Platform.Linux.OpenDirectoryInto(path, buffer, capacity, initialLength);
 }
 
-internal fn u64[0 2 ** 63 - 1] DirectoryBufferCapacity() {
+internal inline fn u64[0 2 ** 63 - 1] DirectoryBufferCapacity() {
     return System.Runtime.Platform.Linux.DirectoryBufferCapacity();
 }
 
-internal unsafe fn i32[min max] CloseDirectory(rawptr<i8[min max]> handle) {
+internal unsafe inline fn i32[min max] CloseDirectory(rawptr<i8[min max]> handle) {
     return System.Runtime.Platform.Linux.CloseDirectory(handle);
 }
 
-internal unsafe fn i32[min max] ReadDirectoryEntry(
+internal unsafe inline fn i32[min max] ReadDirectoryEntry(
     rawptr<i8[min max]> handle,
     rawmutptr<i8[min max]>[capacity] buffer,
     u64[0 2 ** 63 - 1] capacity,
@@ -225,7 +225,7 @@ internal unsafe fn i32[min max] ReadDirectoryEntry(
     return System.Runtime.Platform.Linux.ReadDirectoryEntry(handle, buffer, capacity, readPos, readLength, name, kind);
 }
 
-internal unsafe fn i32[min max] ReadDirectoryEntryInfo(
+internal unsafe inline fn i32[min max] ReadDirectoryEntryInfo(
     rawptr<i8[min max]> handle,
     rawmutptr<i8[min max]>[capacity] buffer,
     u64[0 2 ** 63 - 1] capacity,
@@ -235,6 +235,17 @@ internal unsafe fn i32[min max] ReadDirectoryEntryInfo(
     rawmutptr<i32[min max]> kind)
 {
     return System.Runtime.Platform.Linux.ReadDirectoryEntryInfo(handle, buffer, capacity, readPos, readLength, nameLength, kind);
+}
+
+internal unsafe inline fn i64[min max] ReadDirectoryNameLengthChecksum(
+    rawptr<i8[min max]> handle,
+    rawmutptr<i8[min max]>[capacity] buffer,
+    u64[0 2 ** 63 - 1] capacity,
+    rawmutptr<i64[min max]> readPos,
+    rawmutptr<i64[min max]> readLength,
+    i64[min max] expectedCount)
+{
+    return System.Runtime.Platform.Linux.ReadDirectoryNameLengthChecksum(handle, buffer, capacity, readPos, readLength, expectedCount);
 }
 
 internal unsafe fn bool TryCurrentDirectory(rawmutptr<Ascii> destination) {

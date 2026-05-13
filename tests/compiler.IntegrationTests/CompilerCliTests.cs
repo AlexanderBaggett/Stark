@@ -1846,11 +1846,9 @@ public sealed class CompilerCliTests
                 static line => line.Contains("System_Collections.ll", StringComparison.Ordinal)
                     && line.Contains("-flto=thin", StringComparison.Ordinal)
                     && !line.Contains("-disable-llvm-passes", StringComparison.Ordinal));
-            Assert.Contains(
+            Assert.DoesNotContain(
                 clangLogLines,
-                static line => line.Contains("System_Memory.ll", StringComparison.Ordinal)
-                    && line.Contains("-flto=thin", StringComparison.Ordinal)
-                    && !line.Contains("-disable-llvm-passes", StringComparison.Ordinal));
+                static line => line.Contains("System_Memory.ll", StringComparison.Ordinal));
         }
         finally
         {

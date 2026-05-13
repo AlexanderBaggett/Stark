@@ -132,28 +132,6 @@ unsafe fn bool CreateEntries() {
     return true;
 }
 
-unsafe fn i64[min max] EntryLength(System.FileSystem.DirectoryReadInfoResult result) {
-    switch (result) {
-        case System.FileSystem.DirectoryReadInfoResult.Entry(var entry):
-            return (i64[min max])entry.NameLength;
-        case System.FileSystem.DirectoryReadInfoResult.End:
-            return -1;
-        case System.FileSystem.DirectoryReadInfoResult.Err(var error):
-            return -1;
-    }
-}
-
-unsafe fn bool IsEnd(System.FileSystem.DirectoryReadInfoResult result) {
-    switch (result) {
-        case System.FileSystem.DirectoryReadInfoResult.Entry(var entry):
-            return false;
-        case System.FileSystem.DirectoryReadInfoResult.End:
-            return true;
-        case System.FileSystem.DirectoryReadInfoResult.Err(var error):
-            return false;
-    }
-}
-
 unsafe fn i64[min max] EnumerateOnce() {
     stack System.IO.IOResult<System.FileSystem.Directory> opened = System.FileSystem.OpenDirectory(RootName);
     switch (opened) {
@@ -161,30 +139,7 @@ unsafe fn i64[min max] EnumerateOnce() {
             return -1;
         case System.IO.IOResult<System.FileSystem.Directory>.Ok(var directoryValue):
             stack mut System.FileSystem.Directory directory = directoryValue;
-            stack mut i64[min max] checksum = 0;
-            stack mut i64[min max] count = 0;
-
-            for willexit (stack mut u8[0 128] index = 0; index < Entries; index += 1) {
-                stack i64[min max] length = EntryLength(directory.ReadNextInfo());
-                if (length < 0) {
-                    directory.Close();
-                    return -1;
-                }
-
-                checksum += length;
-                count += 1;
-            }
-
-            if (count != Entries || !IsEnd(directory.ReadNextInfo())) {
-                directory.Close();
-                return -1;
-            }
-
-            if (!IOOk(directory.Close())) {
-                return -1;
-            }
-
-            return checksum;
+            return directory.ReadRemainingNameLengthChecksumRaw(Entries);
     }
 }
 

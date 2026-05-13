@@ -294,7 +294,7 @@ public sealed class SemanticValidationTests
             result.Diagnostics,
             static diagnostic => diagnostic.Code == "STK4017"
                 && diagnostic.Message.Contains("Local 'arena' storage", StringComparison.Ordinal)
-                && diagnostic.Message.Contains("arena lowering is not implemented yet", StringComparison.Ordinal));
+                && diagnostic.Message.Contains("not a valid executable local storage class", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -317,7 +317,7 @@ public sealed class SemanticValidationTests
             result.Diagnostics,
             static diagnostic => diagnostic.Code == "STK4017"
                 && diagnostic.Message.Contains("Function-local 'static' storage", StringComparison.Ordinal)
-                && diagnostic.Message.Contains("not implemented yet", StringComparison.Ordinal));
+                && diagnostic.Message.Contains("not a valid local storage class", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -345,6 +345,22 @@ public sealed class SemanticValidationTests
             """);
 
         Assert.True(result.Succeeded);
+    }
+
+    [Fact]
+    public void NestedRawPointersAreAllowedInPlatformAggregateFields()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [Platform]
+            struct NativeList {
+                rawmutptr<rawptr<i8[min max]>> Items;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
 
     [Fact]

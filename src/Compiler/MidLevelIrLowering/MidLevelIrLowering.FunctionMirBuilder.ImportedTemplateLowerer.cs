@@ -1717,7 +1717,9 @@ internal sealed partial class MidLevelIrLowerer
         {
             if (expression.Type is null || expression.Name is null)
             {
-                return null;
+                throw LoweringInvariantViolation(
+                    null,
+                    "Imported typed-template type-layout expression is missing its operation name or target type.");
             }
 
             var targetType = ApplyGenericSubstitution(expression.Type);
@@ -1727,7 +1729,9 @@ internal sealed partial class MidLevelIrLowerer
                 _enumLayoutModel.Layouts);
             if (layout is null)
             {
-                return null;
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Imported typed-template {expression.Name}({targetType.DisplayName}) requires a concrete runtime layout after generic substitution.");
             }
 
             var value = string.Equals(expression.Name, "alignof", StringComparison.Ordinal)
@@ -1779,8 +1783,9 @@ internal sealed partial class MidLevelIrLowerer
 
                 if (expression.Args.Count != 3)
                 {
-                    MarkUnsupported(reason: "Imported typed template-body text postfix brackets currently support full-view, single-index, or start-and-length access.");
-                    return null;
+                    throw LoweringInvariantViolation(
+                        null,
+                        "Imported text indexing requires full-view, single-index, or start-and-length access.");
                 }
 
                 var sliceStart = LowerImportedTypedTemplateExpressionCore(expression.Args[1], expectedType: null);
@@ -1839,8 +1844,9 @@ internal sealed partial class MidLevelIrLowerer
                     var baseAddress = TryCreateDynamicFixedArrayBaseAddress(current);
                     if (baseAddress is null)
                     {
-                        MarkUnsupported(reason: "Dynamic fixed-array indexing from imported typed template bodies currently requires an addressable fixed-array source.");
-                        return null;
+                        throw LoweringInvariantViolation(
+                            null,
+                            "Dynamic fixed-array indexing from imported typed template bodies requires an addressable fixed-array source.");
                     }
 
                     var elementAddress = EmitTemporary(
@@ -1934,8 +1940,9 @@ internal sealed partial class MidLevelIrLowerer
                     continue;
                 }
 
-                MarkUnsupported(reason: "Imported typed template-body indexing is currently limited to fixed arrays, raw pointers, and slices, and text slicing with two integer indices.");
-                return null;
+                throw LoweringInvariantViolation(
+                    null,
+                    "Imported typed-template indexing is only supported for fixed arrays, raw pointers, slices, ascii, unicode, and dynamic storage values.");
             }
 
             return current;
@@ -1948,8 +1955,9 @@ internal sealed partial class MidLevelIrLowerer
             if (expression.Args.Count is not (2 or 3)
                 || target.Type.ElementType is null)
             {
-                MarkUnsupported(reason: "Imported typed template-body dynamic storage indexing requires one integer index or a start/count pair.");
-                return null;
+                throw LoweringInvariantViolation(
+                    null,
+                    "Imported dynamic storage indexing requires one integer index or a start/count pair.");
             }
 
             var start = LowerImportedTypedTemplateExpressionCore(expression.Args[1], expectedType: null);
@@ -2200,15 +2208,17 @@ internal sealed partial class MidLevelIrLowerer
                     : FindCommonType(left.Type, right.Type);
                 if (resultType.Kind == StarkTypeKind.Error)
                 {
-                    MarkUnsupported();
-                    return null;
+                    throw LoweringInvariantViolation(
+                        null,
+                        $"Imported binary expression '{text}' reached MIR without a common result type for '{left.Type.DisplayName}' and '{right.Type.DisplayName}'.");
                 }
 
                 if (operatorText is "&" or "^" or "|" or "<<" or ">>"
                     && resultType.Kind != StarkTypeKind.Integer)
                 {
-                    MarkUnsupported();
-                    return null;
+                    throw LoweringInvariantViolation(
+                        null,
+                        $"Imported bitwise/shift expression '{text}' reached MIR with non-integer result type '{resultType.DisplayName}'.");
                 }
 
                 var coercedLeft = CoerceOperand(left, resultType);
@@ -2429,8 +2439,9 @@ internal sealed partial class MidLevelIrLowerer
             var resultType = expectedType ?? FindCommonType(trueValue.Type, falseValue.Type);
             if (resultType.Kind == StarkTypeKind.Error)
             {
-                MarkUnsupported();
-                return null;
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Imported conditional expression reached MIR without a common result type for '{trueValue.Type.DisplayName}' and '{falseValue.Type.DisplayName}'.");
             }
 
             var result = CreateTemporaryLocal(resultType, "typed_cond");
@@ -2571,23 +2582,29 @@ internal sealed partial class MidLevelIrLowerer
 
             if (publishedObjectCreation.Constructor is { } constructor)
             {
-                current = LowerImportedTypedTemplatePrimaryConstructorObjectCreation(
+                var constructed = LowerImportedTypedTemplatePrimaryConstructorObjectCreation(
                     createdType,
                     constructor,
                     expression.Args.Take(constructor.Parameters.Count).ToArray());
-                if (current is null)
+                if (constructed is null)
                 {
                     return null;
                 }
 
+                current = constructed;
                 argumentOffset = constructor.Parameters.Count;
             }
 
             if (publishedObjectCreation.InitializerMembers.Count != expression.Args.Count - argumentOffset)
             {
-                return publishedObjectCreation.InitializerMembers.Count == 0 && expression.Args.Count == argumentOffset
-                    ? current
-                    : null;
+                if (publishedObjectCreation.InitializerMembers.Count == 0 && expression.Args.Count == argumentOffset)
+                {
+                    return current;
+                }
+
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Imported object creation summary for '{createdType.DisplayName}' expects {publishedObjectCreation.InitializerMembers.Count} initializer argument(s), but typed template supplied {expression.Args.Count - argumentOffset}.");
             }
 
             if (publishedObjectCreation.InitializerMembers.Count == 0)
@@ -2617,8 +2634,9 @@ internal sealed partial class MidLevelIrLowerer
                 || variant.UsesNamedFields
                 || variant.Fields.Count != expression.Args.Count)
             {
-                MarkUnsupported();
-                return null;
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Imported positional enum constructor '{publishedCaseName}' reached MIR without matching positional enum layout facts.");
             }
 
             var loweredArguments = new MidLevelIrOperand[variant.Fields.Count];
@@ -2658,8 +2676,9 @@ internal sealed partial class MidLevelIrLowerer
                 || !variant.UsesNamedFields
                 || publishedEnumConstructor.Members.Count != expression.Args.Count)
             {
-                MarkUnsupported();
-                return null;
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Imported named-field enum constructor '{enumType.DisplayName}.{publishedEnumConstructor.VariantName}' reached MIR without matching named-field enum layout facts.");
             }
 
             var orderedValues = new MidLevelIrOperand[variant.Fields.Count];
@@ -2671,8 +2690,9 @@ internal sealed partial class MidLevelIrLowerer
                 if (publishedMember.FieldIndex < 0
                     || publishedMember.FieldIndex >= variant.Fields.Count)
                 {
-                    MarkUnsupported();
-                    return null;
+                    throw LoweringInvariantViolation(
+                        null,
+                        $"Imported enum constructor member '{publishedMember.FieldName}' has invalid field index {publishedMember.FieldIndex} for '{enumType.DisplayName}.{publishedEnumConstructor.VariantName}'.");
                 }
 
                 var layoutField = variant.Fields[publishedMember.FieldIndex];
@@ -2694,8 +2714,9 @@ internal sealed partial class MidLevelIrLowerer
 
             if (assigned.Any(static value => !value))
             {
-                MarkUnsupported();
-                return null;
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Imported enum constructor '{enumType.DisplayName}.{publishedEnumConstructor.VariantName}' did not provide every payload field.");
             }
 
             return LowerDirectTagEnumConstructor(enumType, layout, variant, orderedValues, RenderImportedTypedTemplateExpressionCore(expression));
@@ -2716,8 +2737,9 @@ internal sealed partial class MidLevelIrLowerer
             if (!TryResolveEnumCaseReference(publishedCaseName, out var enumType, out var layout, out var variant)
                 || variant.Fields.Count != 0)
             {
-                MarkUnsupported();
-                return null;
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Imported unit enum value '{publishedCaseName}' reached MIR without unit enum layout facts.");
             }
 
             return LowerDirectTagEnumConstructor(enumType, layout, variant, [], publishedCaseName);
@@ -2734,8 +2756,9 @@ internal sealed partial class MidLevelIrLowerer
                 || !constructor.IsPrimaryShape
                 || constructor.Parameters.Count != arguments.Count)
             {
-                MarkUnsupported();
-                return null;
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Imported object creation for '{createdType.DisplayName}' requires a primary constructor shape and matching argument count.");
             }
 
             MidLevelIrOperand current = new MidLevelIrZeroInitializerOperand(createdType);
@@ -2744,8 +2767,9 @@ internal sealed partial class MidLevelIrLowerer
                 var parameter = constructor.Parameters[index];
                 if (!namedType.TryGetField(parameter.Name, out var field, out var fieldIndex))
                 {
-                    MarkUnsupported();
-                    return null;
+                    throw LoweringInvariantViolation(
+                        null,
+                        $"Imported primary constructor parameter '{parameter.Name}' was accepted without a matching field on '{createdType.DisplayName}'.");
                 }
 
                 var loweredArgument = LowerImportedTypedTemplateExpressionCore(arguments[index], ApplyGenericSubstitution(parameter.Type));

@@ -53,7 +53,7 @@ fn System.IO.IOError IOErrorFromPlatformResult(i32[min max] result) {
     return System.IO.IOError.Unknown(result);
 }
 
-fn System.IO.IOStatus StatusFromPlatformResult(i32[min max] result) {
+inline fn System.IO.IOStatus StatusFromPlatformResult(i32[min max] result) {
     if (result < 0) {
         return System.IO.IOStatus.Err(IOErrorFromPlatformResult(result));
     }
@@ -61,7 +61,7 @@ fn System.IO.IOStatus StatusFromPlatformResult(i32[min max] result) {
     return System.IO.IOStatus.Ok;
 }
 
-fn System.IO.IOResult<u64[0 2 ** 63 - 1]> ByteCountFromPlatformResult(i64[min max] result) {
+inline fn System.IO.IOResult<u64[0 2 ** 63 - 1]> ByteCountFromPlatformResult(i64[min max] result) {
     if (result < 0) {
         return System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(IOErrorFromPlatformResult((i32[min max])result));
     }
@@ -461,11 +461,11 @@ public struct File {
     i64[min max] WriteBufferLength;
     i8[min max][8192] WriteBufferStorage;
 
-    fn bool IsOpen(borrow File self) {
+    inline fn bool IsOpen(borrow File self) {
         return !self.Closed;
     }
 
-    fn ascii BufferedAscii(mut borrow File self) {
+    inline fn ascii BufferedAscii(mut borrow File self) {
         unsafe {
             stack i64[min max] length = self.WriteBufferLength;
             if (length <= 0) {
@@ -481,7 +481,7 @@ public struct File {
         }
     }
 
-    fn i32[min max] FlushBufferedWrite(mut borrow File self) {
+    inline fn i32[min max] FlushBufferedWrite(mut borrow File self) {
         unsafe {
             if (self.Handle == null || self.WriteBufferLength <= 0) {
                 return 0;
@@ -497,7 +497,7 @@ public struct File {
         }
     }
 
-    fn bool TryAppendBufferedAscii(mut borrow File self, ascii text) {
+    inline fn bool TryAppendBufferedAscii(mut borrow File self, ascii text) {
         unsafe {
             stack i64[min max] textLength = System.Text.AsciiLength(text);
             if (textLength <= 0) {
@@ -523,7 +523,7 @@ public struct File {
         }
     }
 
-    unsafe fn bool TryAppendBufferedBytes(
+    unsafe inline fn bool TryAppendBufferedBytes(
         mut borrow File self,
         rawptr<i8[min max]>[count] data,
         u64[0 2 ** 63 - 1] count) {
@@ -553,7 +553,7 @@ public struct File {
         }
     }
 
-    internal fn i32[min max] CloseRaw(mut borrow File self) {
+    internal inline fn i32[min max] CloseRaw(mut borrow File self) {
         unsafe {
             if (self.Closed || self.Handle == null) {
                 self.Handle = null;
@@ -574,7 +574,7 @@ public struct File {
         }
     }
 
-    internal fn i32[min max] FlushRaw(mut borrow File self) {
+    internal inline fn i32[min max] FlushRaw(mut borrow File self) {
         if (self.Closed || self.Handle == null) {
             return 0;
         }
@@ -645,7 +645,7 @@ public struct File {
         return System.Runtime.Platform.WriteFileBytes(buffer, count, self.Handle);
     }
 
-    internal unsafe fn i64[min max] ReadByteRegionFast(mut borrow File self, rawmutptr<i8[min max]>[count] buffer, u64[0 2 ** 63 - 1] count) {
+    internal unsafe inline fn i64[min max] ReadByteRegionFast(mut borrow File self, rawmutptr<i8[min max]>[count] buffer, u64[0 2 ** 63 - 1] count) {
         if (self.Closed || self.Handle == null) {
             return 0;
         }
@@ -657,7 +657,7 @@ public struct File {
         return System.Runtime.Platform.ReadFileBytesFast(buffer, count, self.Handle);
     }
 
-    internal unsafe fn i64[min max] WriteByteRegionFast(mut borrow File self, rawptr<i8[min max]>[count] buffer, u64[0 2 ** 63 - 1] count) {
+    internal unsafe inline fn i64[min max] WriteByteRegionFast(mut borrow File self, rawptr<i8[min max]>[count] buffer, u64[0 2 ** 63 - 1] count) {
         if (self.Closed || self.Handle == null) {
             return 0;
         }
@@ -669,7 +669,7 @@ public struct File {
         return System.Runtime.Platform.WriteFileBytesFast(buffer, count, self.Handle);
     }
 
-    internal fn i64[min max] SeekRaw(mut borrow File self, i64[min max] offset, SeekOrigin origin) {
+    internal inline fn i64[min max] SeekRaw(mut borrow File self, i64[min max] offset, SeekOrigin origin) {
         unsafe {
             if (self.Closed || self.Handle == null) {
                 return -1;
@@ -911,23 +911,23 @@ public struct File {
         }
     }
 
-    fn System.IO.IOStatus Close(mut borrow File self) {
+    inline fn System.IO.IOStatus Close(mut borrow File self) {
         return StatusFromPlatformResult(self.CloseRaw());
     }
 
-    fn System.IO.IOStatus Flush(mut borrow File self) {
+    inline fn System.IO.IOStatus Flush(mut borrow File self) {
         return StatusFromPlatformResult(self.FlushRaw());
     }
 
-    fn System.IO.IOStatus SyncAll(mut borrow File self) {
+    inline fn System.IO.IOStatus SyncAll(mut borrow File self) {
         return StatusFromPlatformResult(self.SyncAllRaw());
     }
 
-    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Seek(mut borrow File self, i64[min max] offset, SeekOrigin origin) {
+    inline fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Seek(mut borrow File self, i64[min max] offset, SeekOrigin origin) {
         return ByteCountFromPlatformResult(self.SeekRaw(offset, origin));
     }
 
-    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Read(mut borrow File self, mut borrow i8[min max][] destination) {
+    inline fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Read(mut borrow File self, mut borrow i8[min max][] destination) {
         unsafe {
             if (!self.IsOpen()) {
                 return System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(System.IO.IOError.Unknown(-1));
@@ -951,7 +951,7 @@ public struct File {
         }
     }
 
-    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Write(mut borrow File self, borrow i8[min max][] source) {
+    inline fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Write(mut borrow File self, borrow i8[min max][] source) {
         unsafe {
             if (!self.IsOpen()) {
                 return System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(System.IO.IOError.Unknown(-1));
@@ -1016,25 +1016,25 @@ public struct File {
         }
     }
 
-    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Write(
+    inline fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Write(
         mut borrow File self,
         borrow System.Runtime.Buffer.DynamicByteBuffer source) {
         return self.Write(source.ReadSlice());
     }
 
-    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Write(
+    inline fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Write(
         mut borrow File self,
         borrow System.Runtime.Buffer.FixedByteBuffer512 source) {
         return self.Write(source.ReadSlice());
     }
 
-    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Write(
+    inline fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Write(
         mut borrow File self,
         borrow System.Runtime.Buffer.FixedByteBuffer4096 source) {
         return self.Write(source.ReadSlice());
     }
 
-    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Write(
+    inline fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Write(
         mut borrow File self,
         borrow System.Runtime.Buffer.FixedByteBuffer8192 source) {
         return self.Write(source.ReadSlice());

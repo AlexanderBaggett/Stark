@@ -81,6 +81,208 @@ public sealed class CompilerPipelineEmitLlvmTests
     }
 
     [Fact]
+    public void SourceBackedImportedInlineFunctionsDeclareModulePrivateConstsUsedByClone()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-source-imported-inline-const-llvm-pipeline-");
+        var libPath = Path.Combine(tempDirectory.FullName, "Lib.stark");
+        var demoPath = Path.Combine(tempDirectory.FullName, "Demo.stark");
+
+        try
+        {
+            File.WriteAllText(
+                libPath,
+                """
+                module Lib
+
+                const Offset = 7;
+
+                export inline fn i32[min max] AddOffset(i32[min max] value) {
+                    return value + Offset;
+                }
+                """);
+
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    import Lib
+                    module Demo
+
+                    fn i32[min max] Run(i32[min max] value) {
+                        return Lib.AddOffset(value);
+                    }
+                    """,
+                    demoPath),
+                new CompilerOptions(
+                    StopAfterPassId: "emit-llvm",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+            Assert.Contains("; closed-world imported inline body: Lib.AddOffset", llvm, StringComparison.Ordinal);
+            Assert.Contains("; imported inline const definition: Lib.Offset", llvm, StringComparison.Ordinal);
+            Assert.True(
+                System.Text.RegularExpressions.Regex.IsMatch(
+                    llvm,
+                    @"@Lib_Offset = internal (?:unnamed_addr )?constant i\d+ 7",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+                "Expected the imported inline clone to bring in the module-private const definition it references.");
+            Assert.Contains("ptr @Lib_Offset", llvm, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void SourceBackedImportedInlineFunctionsCloneModulePrivateCalleeDependencies()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-source-imported-inline-private-callee-llvm-pipeline-");
+        var libPath = Path.Combine(tempDirectory.FullName, "Lib.stark");
+        var demoPath = Path.Combine(tempDirectory.FullName, "Demo.stark");
+
+        try
+        {
+            File.WriteAllText(
+                libPath,
+                """
+                module Lib
+
+                const Offset = 7;
+
+                fn u8[0 100] ApplyOffset(u8[0 93] value) {
+                    return value + Offset;
+                }
+
+                export inline fn u8[0 100] AddOffset(u8[0 93] value) {
+                    return ApplyOffset(value);
+                }
+                """);
+
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    import Lib
+                    module Demo
+
+                    fn u8[0 100] Run(u8[0 93] value) {
+                        return Lib.AddOffset(value);
+                    }
+                    """,
+                    demoPath),
+                new CompilerOptions(
+                    StopAfterPassId: "emit-llvm",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+            Assert.Contains("; closed-world imported inline body: Lib.ApplyOffset", llvm, StringComparison.Ordinal);
+            Assert.True(
+                System.Text.RegularExpressions.Regex.IsMatch(
+                    llvm,
+                    @"call fastcc[^\r\n]*@__stark_inline_clone_Lib_ApplyOffset\(",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+                "Expected the imported inline clone to call an internal clone for its module-private helper.");
+            Assert.DoesNotContain("call fastcc i8 @Lib_ApplyOffset(", llvm, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void SourceBackedImportedInlineCloneSeedsRestrictEmissionToReachableRootPath()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-source-imported-inline-seed-llvm-pipeline-");
+        var basePath = Path.Combine(tempDirectory.FullName, "Base.stark");
+        var wrapperPath = Path.Combine(tempDirectory.FullName, "Wrapper.stark");
+
+        try
+        {
+            File.WriteAllText(
+                basePath,
+                """
+                module Base
+
+                export inline fn i32[min max] Used(i32[min max] value, bool add) {
+                    if (add) {
+                        return value + 1;
+                    }
+
+                    return value + 3;
+                }
+
+                export inline fn i32[min max] Unused(i32[min max] value, bool add) {
+                    if (add) {
+                        return value + 2;
+                    }
+
+                    return value + 4;
+                }
+                """);
+
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    import Base
+                    module Wrapper
+
+                    export fn i32[min max] UsedEntry(i32[min max] value, bool add) {
+                        return Base.Used(value, add);
+                    }
+
+                    export fn i32[min max] UnusedEntry(i32[min max] value, bool add) {
+                        return Base.Unused(value, add);
+                    }
+                    """,
+                    wrapperPath),
+                new CompilerOptions(
+                    StopAfterPassId: "emit-llvm",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    ImportedInlineCloneSeedFunctions: new HashSet<string>(StringComparer.Ordinal)
+                    {
+                        "UsedEntry"
+                    }));
+
+            Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+            Assert.Contains("; closed-world imported inline body: Base.Used", llvm, StringComparison.Ordinal);
+            Assert.DoesNotContain("; closed-world imported inline body: Base.Unused", llvm, StringComparison.Ordinal);
+            Assert.Contains("@__stark_inline_clone_Base_Used(", llvm, StringComparison.Ordinal);
+            Assert.DoesNotContain("@__stark_inline_clone_Base_Unused(", llvm, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void SourceBackedImportedNoInlineFunctionsStayAbiDeclarations()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-source-imported-noinline-body-llvm-pipeline-");

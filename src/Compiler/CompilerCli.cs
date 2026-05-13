@@ -587,6 +587,7 @@ internal static class CompilerCli
                     sourceDependencyModules.Add(module);
                 }
 
+                var importedInlineCloneSeedsByModule = BuildImportedInlineCloneSeedsByModule(result);
                 var sourceDependencyResult = CompileAndEmitReferencedDependencyObjects(
                     sourceDependencyModules,
                     llvmModule.Text,
@@ -594,7 +595,8 @@ internal static class CompilerCli
                     intermediateDirectory,
                     preserveTemps: toolchainOptions.SaveTempsDirectory is not null,
                     toolchainMetrics: toolchainMetrics,
-                    enableLto: enableDependencyLto);
+                    enableLto: enableDependencyLto,
+                    importedInlineCloneSeedsByModule);
                 if (!sourceDependencyResult.Success)
                 {
                     await WriteDiagnosticsAsync(stderr, sourceDependencyResult.Diagnostics, diagnosticFormat, succeeded: false);
@@ -2029,7 +2031,7 @@ internal static class CompilerCli
         ToolchainMetrics? toolchainMetrics = null,
         bool enableLto = false)
     {
-        var dependencyResult = CompileDependencyLlvm(module, rootOptions);
+        var dependencyResult = CompileDependencyLlvm(module, rootOptions, importedInlineCloneSeedFunctions: null);
         if (!dependencyResult.Success)
         {
             return new DependencyCompileResult(
@@ -2058,12 +2060,16 @@ internal static class CompilerCli
         string intermediateDirectory,
         bool preserveTemps,
         ToolchainMetrics? toolchainMetrics,
-        bool enableLto)
+        bool enableLto,
+        IReadOnlyDictionary<string, IReadOnlySet<string>>? importedInlineCloneSeedsByModule)
     {
         var compiledModules = new List<DependencyLlvmCompileResult>(modules.Count);
         foreach (var module in modules)
         {
-            var dependencyResult = CompileDependencyLlvm(module, rootOptions);
+            var dependencyResult = CompileDependencyLlvm(
+                module,
+                rootOptions,
+                ResolveImportedInlineCloneSeedFunctions(module, importedInlineCloneSeedsByModule));
             if (!dependencyResult.Success)
             {
                 return new SourceDependencyLinkResult(
@@ -2173,9 +2179,165 @@ internal static class CompilerCli
         return llvmText.Contains("__stark_mono_", StringComparison.Ordinal);
     }
 
+    private static IReadOnlyDictionary<string, IReadOnlySet<string>>? BuildImportedInlineCloneSeedsByModule(
+        CompilationResult rootResult)
+    {
+        if (!rootResult.Artifacts.TryGet(CompilerArtifactKeys.SyntaxModel, out SyntaxModel? syntaxModel)
+            || syntaxModel is null
+            || !rootResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules)
+            || loadedModules is null
+            || !rootResult.Artifacts.TryGet(CompilerArtifactKeys.FunctionEffects, out FunctionEffectModel? effects)
+            || effects is null
+            || !rootResult.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa)
+            || ssa is null)
+        {
+            return null;
+        }
+
+        var entryFunctions = CollectRootHotPathEntryFunctions(syntaxModel, loadedModules, effects);
+        var reachableFunctions = CollectHotPathReachableFunctions(entryFunctions, ssa, effects);
+        var seedsByModule = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);
+
+        foreach (var module in loadedModules.ImportedModules.Where(static module => !module.Reference.IsExternal))
+        {
+            var seeds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var declaration in module.SyntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
+            {
+                var localName = FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration);
+                var qualifiedName = FunctionOverloadFacts.QualifyResolvedName(module, localName);
+                if (reachableFunctions.Contains(qualifiedName))
+                {
+                    seeds.Add(localName);
+                }
+            }
+
+            if (seeds.Count != 0)
+            {
+                seedsByModule[module.SyntaxModel.ModuleName] = seeds;
+            }
+        }
+
+        return seedsByModule;
+    }
+
+    private static IReadOnlySet<string>? ResolveImportedInlineCloneSeedFunctions(
+        LoadedModuleDocument module,
+        IReadOnlyDictionary<string, IReadOnlySet<string>>? importedInlineCloneSeedsByModule)
+    {
+        if (importedInlineCloneSeedsByModule is null)
+        {
+            return null;
+        }
+
+        return importedInlineCloneSeedsByModule.TryGetValue(module.SyntaxModel.ModuleName, out var seeds)
+            ? seeds
+            : new HashSet<string>(StringComparer.Ordinal);
+    }
+
+    private static IReadOnlySet<string> CollectRootHotPathEntryFunctions(
+        SyntaxModel syntaxModel,
+        LoadedModuleSet loadedModules,
+        FunctionEffectModel effects)
+    {
+        if (!loadedModules.TryGet(loadedModules.RootModuleName, out var rootModule) || rootModule is null)
+        {
+            return new HashSet<string>(StringComparer.Ordinal);
+        }
+
+        var rootFunctions = rootModule.SyntaxModel.Declarations
+            .Where(static declaration => declaration.Function is not null)
+            .Select(declaration => new
+            {
+                Name = FunctionOverloadFacts.GetResolvedLocalName(syntaxModel, declaration),
+                Declaration = declaration
+            })
+            .ToArray();
+
+        var hotFunctions = rootFunctions
+            .Where(function =>
+                effects.Functions.TryGetValue(function.Name, out var functionEffects)
+                && functionEffects.IsHot
+                && !functionEffects.IsCold)
+            .Select(static function => function.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        if (hotFunctions.Count != 0)
+        {
+            return hotFunctions;
+        }
+
+        var exportedFunctions = rootFunctions
+            .Where(function =>
+                function.Declaration.Visibility == StarkVisibility.Export
+                && effects.Functions.TryGetValue(function.Name, out var functionEffects)
+                && !functionEffects.IsCold)
+            .Select(static function => function.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        if (exportedFunctions.Count != 0)
+        {
+            return exportedFunctions;
+        }
+
+        return rootFunctions
+            .Where(function =>
+                !effects.Functions.TryGetValue(function.Name, out var functionEffects)
+                || !functionEffects.IsCold)
+            .Select(static function => function.Name)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    private static IReadOnlySet<string> CollectHotPathReachableFunctions(
+        IReadOnlySet<string> entryFunctions,
+        SsaIrModule ssa,
+        FunctionEffectModel effects)
+    {
+        var callsByFunction = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (var function in ssa.Functions)
+        {
+            var callees = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var block in function.Blocks)
+            {
+                foreach (var instruction in block.Instructions.OfType<SsaValueInstruction>())
+                {
+                    if (instruction.Value is SsaCallRValue call)
+                    {
+                        callees.Add(call.FunctionName);
+                    }
+                }
+            }
+
+            callsByFunction[function.Name] = callees;
+        }
+
+        var reachable = new HashSet<string>(StringComparer.Ordinal);
+        var pending = new Queue<string>(entryFunctions);
+        while (pending.Count != 0)
+        {
+            var functionName = pending.Dequeue();
+            if (effects.Functions.TryGetValue(functionName, out var functionEffects)
+                && functionEffects.IsCold)
+            {
+                continue;
+            }
+
+            if (!reachable.Add(functionName)
+                || !callsByFunction.TryGetValue(functionName, out var callees))
+            {
+                continue;
+            }
+
+            foreach (var callee in callees)
+            {
+                pending.Enqueue(callee);
+            }
+        }
+
+        return reachable;
+    }
+
     private static DependencyLlvmCompileResult CompileDependencyLlvm(
         LoadedModuleDocument module,
-        CompilerOptions rootOptions)
+        CompilerOptions rootOptions,
+        IReadOnlySet<string>? importedInlineCloneSeedFunctions)
     {
         if (rootOptions.ModuleResolver is not IModuleSourceResolver sourceResolver
             || !sourceResolver.TryLoadModuleSource(module.Reference, out var sourceText, out var sourceFilePath))
@@ -2198,7 +2360,8 @@ internal static class CompilerCli
             {
                 EmitLlvmIr = true,
                 StopAfterPassId = null,
-                QualifyModuleSymbols = true
+                QualifyModuleSymbols = true,
+                ImportedInlineCloneSeedFunctions = importedInlineCloneSeedFunctions
             });
 
         if (!dependencyResult.Succeeded)

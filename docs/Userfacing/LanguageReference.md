@@ -431,6 +431,9 @@ stack fnptr<fn i32[min max](rawmutptr<State>)> worker =
 A lambda with no capture list is non capturing. It may be used where a matching function pointer is expected.
 
 Capturing lambdas use an explicit capture list. Capture is never implicit.
+Capture lists are checked, but a lambda converted to `fnptr<...>` cannot capture
+local state because a function pointer does not carry closure storage. Use a
+named function item or pass captured state explicitly.
 
 ```stark
 UseTransform(capture(copy scale, read table) (i32[0 max] index) => {
@@ -951,14 +954,14 @@ The storage classes:
 
 `register` is a local only value style storage class. A `register` local has no stable source visible address: safe code may not take `&local`, form a slice view from it, or otherwise require something with an address. It is not a promise that a hardware register will be allocated; it is a request to keep the value in registers when possible. Use `stack` when a stable address is required.
 
-Function local `static` storage is reserved until Stark defines how static duration locals are initialized, identified, and torn down. Use a top level `static` global for global lifetime storage.
+Function local `static` storage is not a valid local storage class. Use a top level `static` global for global lifetime storage.
 
 `dynamic T` is not a storage class. It is an owned dynamic storage type. A declaration such as `stack mut dynamic i32[0 max] values = new();` places the dynamic owner/header in the stack local, while the dynamic value manages its own capacity-bearing backing storage.
 
 The standardized allocation backed storage classes:
 
 * `heap`: uses the default global general purpose allocator. Safe Stark code does not manually free `heap` values; ownership and scope still govern destruction.
-* `arena`: reserved for a region allocator intended for fast bump style allocation with bulk reclamation when the lexical arena region ends. The current compiler rejects `arena` locals until arena support is implemented.
+* `arena`: reserved for future allocator-backed region storage. It is not a valid executable local storage class; use `stack` or `heap`.
 
 Mutability remains opt in:
 

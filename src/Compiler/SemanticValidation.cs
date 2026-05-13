@@ -23,8 +23,12 @@ internal sealed class SemanticValidator
     private readonly Dictionary<string, DeclaredFunctionSyntax> _functionDeclarations;
     private readonly IReadOnlyDictionary<ObjectCreationKey, ObjectCreationTypingRecord> _objectCreations;
     private readonly Dictionary<string, FunctionValidationBuilder> _summaries = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, FunctionValidationBuilder> _destructorSummaries = new(StringComparer.Ordinal);
     private ISet<string>? _currentFunctionGenericParameters;
     private string? _currentFunctionName;
+    private string? _currentModuleName;
+
+    private string CurrentModuleName => _currentModuleName ?? _syntaxModel.ModuleName;
 
     public SemanticValidator(
         CompilerPassContext context,
@@ -136,14 +140,14 @@ internal sealed class SemanticValidator
             case LocalStorageClass.Arena:
                 _context.Diagnostics.Error(
                     "STK4017",
-                    "Local 'arena' storage is reserved for allocator-backed region storage, but arena lowering is not implemented yet. Use 'stack' or 'heap' storage for now.",
+                    "Local 'arena' storage is reserved for allocator-backed region storage and is not a valid executable local storage class. Use 'stack' or 'heap' storage.",
                     "semantic-validate",
                     Location(context));
                 break;
             case LocalStorageClass.Static:
                 _context.Diagnostics.Error(
                     "STK4017",
-                    "Function-local 'static' storage is not implemented yet. Use a top-level 'static' global for global lifetime storage, or use 'stack'/'heap' for locals.",
+                    "Function-local 'static' storage is not a valid local storage class. Use a top-level 'static' global for global lifetime storage, or use 'stack'/'heap' for locals.",
                     "semantic-validate",
                     Location(context));
                 break;
@@ -214,6 +218,83 @@ internal sealed class SemanticValidator
                 "semantic-validate",
                 Location(destructor.Declaration.Start));
         }
+
+        AnalyzeDestructorMemoryEffects(qualifiedTypeName, destructor);
+    }
+
+    private void AnalyzeDestructorMemoryEffects(string qualifiedTypeName, DeclaredDestructorSyntax destructor)
+    {
+        if (!_typeModel.NamedTypes.TryGetValue(qualifiedTypeName, out _))
+        {
+            return;
+        }
+
+        var summary = new FunctionValidationBuilder($"{qualifiedTypeName}.drop");
+        var selfType = StarkTypeSymbols.Named(qualifiedTypeName);
+        var selfParameter = new TypedParameterSymbol("self", selfType, IsConst: !destructor.IsMutable);
+        summary.Configure(StarkTypeSymbols.Void, hasBody: true, StarkFunctionKind.Fn);
+        summary.SetParameters([selfParameter], [], _typeModel.NamedTypes, _enumLayoutModel.Layouts);
+
+        var declaration = new FunctionDeclarationModel(
+            summary.Name,
+            StarkFunctionKind.Fn,
+            StarkTypeSymbols.Void.DisplayName,
+            [new ParameterModel("self", selfType.DisplayName, IsConst: !destructor.IsMutable)],
+            new FunctionModifierSet(
+                InlinePreference.InlineHint,
+                HasExplicitInlinePreference: false,
+                IsHot: false,
+                IsCold: false,
+                IsFfi: false,
+                IsVarargs: false,
+                IsStrictFp: false),
+            HasBody: true);
+        var effects = new FunctionEffectProfile(
+            summary.Name,
+            StarkFunctionKind.Fn,
+            ReadsArgumentMemory: true,
+            IsPure: false,
+            NoSync: false,
+            NoFree: false,
+            NoUnwind: false,
+            WillReturn: true,
+            MustProgress: true,
+            UseFastCallingConvention: true,
+            IsFfi: false,
+            IsVarargs: false,
+            IsHot: false,
+            IsCold: false,
+            InlinePreference: InlinePreference.InlineHint,
+            IsStrictFp: false);
+        var scope = ValidationScope.CreateRoot();
+        scope.Declare(new VariableSymbol(
+            "self",
+            selfType,
+            SymbolOrigin.Parameter,
+            LocalStorageClass.None,
+            IsMutable: destructor.IsMutable,
+            IsConstant: false,
+            HasConstProvenance: !destructor.IsMutable));
+
+        var previousGenericParameters = _currentFunctionGenericParameters;
+        var previousFunctionName = _currentFunctionName;
+        var previousModuleName = _currentModuleName;
+        _currentFunctionGenericParameters = null;
+        _currentFunctionName = summary.Name;
+        _currentModuleName = destructor.ModuleName;
+
+        try
+        {
+            CheckBlock(destructor.Body, scope, declaration, effects, summary, ControlFlowContext.Root);
+        }
+        finally
+        {
+            _currentFunctionGenericParameters = previousGenericParameters;
+            _currentFunctionName = previousFunctionName;
+            _currentModuleName = previousModuleName;
+        }
+
+        _destructorSummaries[qualifiedTypeName] = summary;
     }
 
     private static bool BlockMutatesSelf(StarkParser.BlockContext block)
@@ -340,7 +421,47 @@ internal sealed class SemanticValidator
 
     private StarkTypeSymbol ResolveType(StarkParser.Type_Context type, ISet<string>? genericParameters)
     {
-        return _typeResolver.ResolveType(type, genericParameters, _syntaxModel.ModuleName);
+        return _typeResolver.ResolveType(type, genericParameters, CurrentModuleName);
+    }
+
+    private bool TypeContainsOpenCurrentFunctionGenericParameter(StarkTypeSymbol type)
+    {
+        if (_currentFunctionGenericParameters is not { Count: > 0 })
+        {
+            return false;
+        }
+
+        var coreType = StarkTypeSymbols.WithQualifiers(
+            type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+
+        if (coreType.Kind == StarkTypeKind.Named && coreType.NamedType is { } name)
+        {
+            if (_currentFunctionGenericParameters.Contains(name))
+            {
+                return true;
+            }
+
+            if (coreType.TypeArguments is { Count: > 0 }
+                && coreType.TypeArguments.Any(TypeContainsOpenCurrentFunctionGenericParameter))
+            {
+                return true;
+            }
+        }
+
+        if (coreType.Kind == StarkTypeKind.FunctionPointer)
+        {
+            return coreType.FunctionPointerReturnType is not null
+                && TypeContainsOpenCurrentFunctionGenericParameter(coreType.FunctionPointerReturnType)
+                || coreType.FunctionPointerParameterTypes is { Count: > 0 }
+                && coreType.FunctionPointerParameterTypes.Any(TypeContainsOpenCurrentFunctionGenericParameter);
+        }
+
+        return coreType.ElementType is not null
+            && TypeContainsOpenCurrentFunctionGenericParameter(coreType.ElementType);
     }
 
     private StarkTypeSymbol ResolveLocalConstantDeclarationType(StarkParser.LocalConstantDeclarationContext declaration)
@@ -360,6 +481,19 @@ internal sealed class SemanticValidator
         return declaration.type_() is { } typeContext
             ? ResolveType(typeContext)
             : StarkTypeSymbols.Error;
+    }
+
+    private void DeclareVariable(
+        ValidationScope scope,
+        VariableSymbol symbol,
+        FunctionValidationBuilder summary,
+        IToken location)
+    {
+        scope.Declare(symbol);
+        if (RequiresRuntimeDrop(symbol.Type, new HashSet<string>(StringComparer.Ordinal)))
+        {
+            summary.AddPotentialDropType(symbol.Type, location);
+        }
     }
 
     private void ValidateFunction(DeclaredFunctionSyntax functionDeclaration)
@@ -399,14 +533,18 @@ internal sealed class SemanticValidator
             for (var index = 0; index < signature.Parameters.Count; index++)
             {
                 var parameter = signature.Parameters[index];
-                scope.Declare(new VariableSymbol(
-                    parameter.Name,
-                    parameter.Type,
-                    SymbolOrigin.Parameter,
-                    LocalStorageClass.None,
-                    IsMutable: false,
-                    IsConstant: false,
-                    HasConstProvenance: parameter.IsConst));
+                DeclareVariable(
+                    scope,
+                    new VariableSymbol(
+                        parameter.Name,
+                        parameter.Type,
+                        SymbolOrigin.Parameter,
+                        LocalStorageClass.None,
+                        IsMutable: false,
+                        IsConstant: false,
+                        HasConstProvenance: parameter.IsConst),
+                    summary,
+                    functionDeclaration.ParameterList.parameter(index).Start);
             }
 
             CheckBlock(block, scope, syntaxDeclaration.Function, effects, summary, ControlFlowContext.Root);
@@ -782,14 +920,18 @@ internal sealed class SemanticValidator
                     hasConstProvenance = CheckVariableInitializer(initializer, scope, function, effects, summary, declaredType);
                 }
 
-                scope.Declare(new VariableSymbol(
-                    declarator.Identifier().GetText(),
-                    declaredType,
-                    SymbolOrigin.Local,
-                    LocalStorageClass.None,
-                    IsMutable: false,
-                    IsConstant: true,
-                    HasConstProvenance: hasConstProvenance));
+                DeclareVariable(
+                    scope,
+                    new VariableSymbol(
+                        declarator.Identifier().GetText(),
+                        declaredType,
+                        SymbolOrigin.Local,
+                        LocalStorageClass.None,
+                        IsMutable: false,
+                        IsConstant: true,
+                        HasConstProvenance: hasConstProvenance),
+                    summary,
+                    declarator.Identifier().Symbol);
             }
 
             return;
@@ -820,14 +962,18 @@ internal sealed class SemanticValidator
                     hasConstProvenance = CheckVariableInitializer(initializer, scope, function, effects, summary, declaredType);
                 }
 
-                scope.Declare(new VariableSymbol(
-                    declarator.Identifier().GetText(),
-                    declaredType,
-                    SymbolOrigin.Local,
-                    storageClass,
-                    IsMutable: localVariable.MUT() is not null,
-                    IsConstant: false,
-                    HasConstProvenance: localVariable.MUT() is null && hasConstProvenance));
+                DeclareVariable(
+                    scope,
+                    new VariableSymbol(
+                        declarator.Identifier().GetText(),
+                        declaredType,
+                        SymbolOrigin.Local,
+                        storageClass,
+                        IsMutable: localVariable.MUT() is not null,
+                        IsConstant: false,
+                        HasConstProvenance: localVariable.MUT() is null && hasConstProvenance),
+                    summary,
+                    declarator.Identifier().Symbol);
             }
 
             return;
@@ -873,7 +1019,7 @@ internal sealed class SemanticValidator
                 {
                     if (label.pattern() is { } pattern)
                     {
-                        BindSwitchPattern(pattern, switchValue.Type, sectionScope);
+                            BindSwitchPattern(pattern, switchValue.Type, sectionScope, summary);
                     }
 
                     if (label.whenClause() is { } whenClause)
@@ -951,14 +1097,18 @@ internal sealed class SemanticValidator
                         hasConstProvenance = CheckVariableInitializer(initializer, loopScope, function, effects, summary, declaredType);
                     }
 
-                    loopScope.Declare(new VariableSymbol(
-                        declarator.Identifier().GetText(),
-                        declaredType,
-                        SymbolOrigin.Local,
-                        storageClass,
-                        IsMutable: localForDeclaration.MUT() is not null,
-                        IsConstant: false,
-                        HasConstProvenance: localForDeclaration.MUT() is null && hasConstProvenance));
+                    DeclareVariable(
+                        loopScope,
+                        new VariableSymbol(
+                            declarator.Identifier().GetText(),
+                            declaredType,
+                            SymbolOrigin.Local,
+                            storageClass,
+                            IsMutable: localForDeclaration.MUT() is not null,
+                            IsConstant: false,
+                            HasConstProvenance: localForDeclaration.MUT() is null && hasConstProvenance),
+                        summary,
+                        declarator.Identifier().Symbol);
                 }
             }
             else if (forStatement.forInitializer()?.expressionList() is { } initializerExpressions)
@@ -1693,7 +1843,7 @@ internal sealed class SemanticValidator
         if (expression.conversionType() is { } conversionType)
         {
             var operand = EvaluateUnaryExpression(expression.unaryExpression(), scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
-            var targetType = _typeResolver.ResolveConversionType(conversionType, _currentFunctionGenericParameters, _syntaxModel.ModuleName);
+            var targetType = _typeResolver.ResolveConversionType(conversionType, _currentFunctionGenericParameters, CurrentModuleName);
             ValidateTypeUsage(conversionType, targetType, TypeUsage.Conversion);
             return CreateConvertedValidationValue(targetType, operand, expression);
         }
@@ -1905,7 +2055,7 @@ internal sealed class SemanticValidator
 
         if (expression.SIZEOF() is not null || expression.ALIGNOF() is not null)
         {
-            _ = ResolveType(expression.type_());
+            ValidateTypeLayoutExpression(expression);
             return new ValidationValue(
                 expression.ALIGNOF() is not null
                     ? StarkTypeSymbols.Integer(64, BigInteger.One, new BigInteger(long.MaxValue))
@@ -1943,6 +2093,28 @@ internal sealed class SemanticValidator
         }
 
         return EvaluateExpression(expression.expression(), scope, function, effects, summary, allowFunctionReference: false, observation);
+    }
+
+    private void ValidateTypeLayoutExpression(StarkParser.PrimaryExpressionContext expression)
+    {
+        var targetType = ResolveType(expression.type_());
+        if (targetType.Kind == StarkTypeKind.Error
+            || TypeContainsOpenCurrentFunctionGenericParameter(targetType))
+        {
+            return;
+        }
+
+        if (ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(targetType, _typeModel.NamedTypes, _enumLayoutModel.Layouts) is not null)
+        {
+            return;
+        }
+
+        var kind = expression.ALIGNOF() is not null ? "alignof" : "sizeof";
+        _context.Diagnostics.Error(
+            "STK3008",
+            $"{kind} requires a concrete runtime layout, but '{targetType.DisplayName}' has no concrete layout in this context.",
+            "semantic-validate",
+            Location(expression.type_() ?? (ParserRuleContext)expression));
     }
 
     private ValidationValue EvaluateLambdaExpression(
@@ -1998,14 +2170,18 @@ internal sealed class SemanticValidator
             var scope = ValidationScope.CreateRoot();
             foreach (var parameter in signature.Parameters)
             {
-                scope.Declare(new VariableSymbol(
-                    parameter.Name,
-                    parameter.Type,
-                    SymbolOrigin.Parameter,
-                    LocalStorageClass.None,
-                    IsMutable: false,
-                    IsConstant: false,
-                    HasConstProvenance: parameter.IsConst));
+                DeclareVariable(
+                    scope,
+                    new VariableSymbol(
+                        parameter.Name,
+                        parameter.Type,
+                        SymbolOrigin.Parameter,
+                        LocalStorageClass.None,
+                        IsMutable: false,
+                        IsConstant: false,
+                        HasConstProvenance: parameter.IsConst),
+                    summary,
+                    expression.Start);
             }
 
             if (expression.expression() is { } bodyExpression)
@@ -2244,12 +2420,12 @@ internal sealed class SemanticValidator
             return new ValidationValue(StarkTypeSymbols.Error, NamespaceName: namedType.Name);
         }
 
-        if (_moduleGraph.CanAccessModule(_syntaxModel.ModuleName, name))
+            if (_moduleGraph.CanAccessModule(CurrentModuleName, name))
         {
             return new ValidationValue(StarkTypeSymbols.Error, NamespaceName: name);
         }
 
-        if (_moduleGraph.CanAccessModuleNamespace(_syntaxModel.ModuleName, name))
+            if (_moduleGraph.CanAccessModuleNamespace(CurrentModuleName, name))
         {
             return new ValidationValue(StarkTypeSymbols.Error, NamespaceName: name);
         }
@@ -2275,13 +2451,21 @@ internal sealed class SemanticValidator
         return new ValidationValue(StarkTypeSymbols.Error);
     }
 
-    private void BindSwitchPattern(StarkParser.PatternContext pattern, StarkTypeSymbol switchType, ValidationScope scope)
+    private void BindSwitchPattern(
+        StarkParser.PatternContext pattern,
+        StarkTypeSymbol switchType,
+        ValidationScope scope,
+        FunctionValidationBuilder summary)
     {
         if (pattern.VAR() is not null && pattern.Identifier() is { } capture)
         {
             if (!IsEnumSwitchType(switchType))
             {
-                scope.Declare(new VariableSymbol(capture.GetText(), switchType, SymbolOrigin.Local, LocalStorageClass.None, IsMutable: false, IsConstant: false));
+                DeclareVariable(
+                    scope,
+                    new VariableSymbol(capture.GetText(), switchType, SymbolOrigin.Local, LocalStorageClass.None, IsMutable: false, IsConstant: false),
+                    summary,
+                    capture.Symbol);
             }
 
             return;
@@ -2289,28 +2473,32 @@ internal sealed class SemanticValidator
 
         if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
         {
-            BindEnumNamedFieldPattern(enumNamedFieldPattern, switchType, scope);
+            BindEnumNamedFieldPattern(enumNamedFieldPattern, switchType, scope, summary);
             return;
         }
 
         if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern)
         {
-            TryBindEnumAggregateSwitchPattern(genericEnumAggregatePattern, switchType, scope);
+            TryBindEnumAggregateSwitchPattern(genericEnumAggregatePattern, switchType, scope, summary);
             return;
         }
 
         if (pattern.aggregatePattern() is { } aggregatePattern)
         {
-            if (TryBindEnumAggregateSwitchPattern(aggregatePattern, switchType, scope))
+            if (TryBindEnumAggregateSwitchPattern(aggregatePattern, switchType, scope, summary))
             {
                 return;
             }
 
-            BindAggregateSwitchPattern(aggregatePattern, switchType, scope);
+            BindAggregateSwitchPattern(aggregatePattern, switchType, scope, summary);
         }
     }
 
-    private void BindAggregateSwitchPattern(StarkParser.AggregatePatternContext aggregatePattern, StarkTypeSymbol switchType, ValidationScope scope)
+    private void BindAggregateSwitchPattern(
+        StarkParser.AggregatePatternContext aggregatePattern,
+        StarkTypeSymbol switchType,
+        ValidationScope scope,
+        FunctionValidationBuilder summary)
     {
         var patternType = ResolvePatternSimpleType(aggregatePattern.simpleType());
         if (switchType.Kind != StarkTypeKind.Named
@@ -2331,7 +2519,11 @@ internal sealed class SemanticValidator
 
         if (suffix.Identifier() is { } capture)
         {
-            scope.Declare(new VariableSymbol(capture.GetText(), switchType, SymbolOrigin.Local, LocalStorageClass.None, IsMutable: false, IsConstant: false));
+            DeclareVariable(
+                scope,
+                new VariableSymbol(capture.GetText(), switchType, SymbolOrigin.Local, LocalStorageClass.None, IsMutable: false, IsConstant: false),
+                summary,
+                capture.Symbol);
             return;
         }
 
@@ -2343,28 +2535,38 @@ internal sealed class SemanticValidator
 
         for (var index = 0; index < fieldPatterns.Length; index++)
         {
-            BindAggregateFieldPattern(fieldPatterns[index], namedType.OrderedFields[index], scope);
+            BindAggregateFieldPattern(fieldPatterns[index], namedType.OrderedFields[index], scope, summary);
         }
     }
 
-    private bool TryBindEnumAggregateSwitchPattern(StarkParser.AggregatePatternContext aggregatePattern, StarkTypeSymbol switchType, ValidationScope scope)
+    private bool TryBindEnumAggregateSwitchPattern(
+        StarkParser.AggregatePatternContext aggregatePattern,
+        StarkTypeSymbol switchType,
+        ValidationScope scope,
+        FunctionValidationBuilder summary)
     {
         return TryBindResolvedEnumAggregateSwitchPattern(
             aggregatePattern.simpleType().GetText(),
             aggregatePattern.aggregatePatternSuffix(),
             switchType,
             scope,
+            summary,
             out var matched)
             && matched;
     }
 
-    private bool TryBindEnumAggregateSwitchPattern(StarkParser.GenericEnumAggregatePatternContext aggregatePattern, StarkTypeSymbol switchType, ValidationScope scope)
+    private bool TryBindEnumAggregateSwitchPattern(
+        StarkParser.GenericEnumAggregatePatternContext aggregatePattern,
+        StarkTypeSymbol switchType,
+        ValidationScope scope,
+        FunctionValidationBuilder summary)
     {
         return TryBindResolvedEnumAggregateSwitchPattern(
             aggregatePattern.genericEnumCaseReference().GetText(),
             aggregatePattern.aggregatePatternSuffix(),
             switchType,
             scope,
+            summary,
             out var matched)
             && matched;
     }
@@ -2374,6 +2576,7 @@ internal sealed class SemanticValidator
         StarkParser.AggregatePatternSuffixContext? suffix,
         StarkTypeSymbol switchType,
         ValidationScope scope,
+        FunctionValidationBuilder summary,
         out bool matched)
     {
         matched = false;
@@ -2398,7 +2601,11 @@ internal sealed class SemanticValidator
 
         if (suffix.Identifier() is { } capture)
         {
-            scope.Declare(new VariableSymbol(capture.GetText(), switchType, SymbolOrigin.Local, LocalStorageClass.None, IsMutable: false, IsConstant: false));
+            DeclareVariable(
+                scope,
+                new VariableSymbol(capture.GetText(), switchType, SymbolOrigin.Local, LocalStorageClass.None, IsMutable: false, IsConstant: false),
+                summary,
+                capture.Symbol);
             return true;
         }
 
@@ -2410,7 +2617,7 @@ internal sealed class SemanticValidator
 
         for (var index = 0; index < fieldPatterns.Length; index++)
         {
-            BindEnumVariantFieldPattern(fieldPatterns[index], variant.Fields[index], scope);
+            BindEnumVariantFieldPattern(fieldPatterns[index], variant.Fields[index], scope, summary);
         }
 
         return true;
@@ -2419,7 +2626,8 @@ internal sealed class SemanticValidator
     private void BindEnumNamedFieldPattern(
         StarkParser.EnumNamedFieldPatternContext enumNamedFieldPattern,
         StarkTypeSymbol switchType,
-        ValidationScope scope)
+        ValidationScope scope,
+        FunctionValidationBuilder summary)
     {
         if (!TryResolveEnumCaseReference(enumNamedFieldPattern.enumCaseTarget().GetText(), out var enumType, out _, out var variant)
             || switchType.Kind != StarkTypeKind.Named
@@ -2440,66 +2648,82 @@ internal sealed class SemanticValidator
                 continue;
             }
 
-            BindEnumVariantFieldPattern(member.pattern(), field, scope);
+            BindEnumVariantFieldPattern(member.pattern(), field, scope, summary);
         }
     }
 
-    private void BindEnumVariantFieldPattern(StarkParser.PatternContext pattern, EnumVariantFieldSymbol field, ValidationScope scope)
+    private void BindEnumVariantFieldPattern(
+        StarkParser.PatternContext pattern,
+        EnumVariantFieldSymbol field,
+        ValidationScope scope,
+        FunctionValidationBuilder summary)
     {
         if (pattern.VAR() is not null
             && pattern.Identifier() is { } capture)
         {
-            scope.Declare(new VariableSymbol(capture.GetText(), field.Type, SymbolOrigin.Local, LocalStorageClass.None, IsMutable: false, IsConstant: false));
+            DeclareVariable(
+                scope,
+                new VariableSymbol(capture.GetText(), field.Type, SymbolOrigin.Local, LocalStorageClass.None, IsMutable: false, IsConstant: false),
+                summary,
+                capture.Symbol);
             return;
         }
 
         if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
         {
-            BindEnumNamedFieldPattern(enumNamedFieldPattern, field.Type, scope);
+            BindEnumNamedFieldPattern(enumNamedFieldPattern, field.Type, scope, summary);
             return;
         }
 
         if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern)
         {
-            TryBindEnumAggregateSwitchPattern(genericEnumAggregatePattern, field.Type, scope);
+            TryBindEnumAggregateSwitchPattern(genericEnumAggregatePattern, field.Type, scope, summary);
             return;
         }
 
         if (pattern.aggregatePattern() is { } aggregatePattern)
         {
-            if (TryBindEnumAggregateSwitchPattern(aggregatePattern, field.Type, scope))
+            if (TryBindEnumAggregateSwitchPattern(aggregatePattern, field.Type, scope, summary))
             {
                 return;
             }
 
-            BindAggregateSwitchPattern(aggregatePattern, field.Type, scope);
+            BindAggregateSwitchPattern(aggregatePattern, field.Type, scope, summary);
         }
     }
 
-    private void BindAggregateFieldPattern(StarkParser.PatternContext pattern, FieldSymbol field, ValidationScope scope)
+    private void BindAggregateFieldPattern(
+        StarkParser.PatternContext pattern,
+        FieldSymbol field,
+        ValidationScope scope,
+        FunctionValidationBuilder summary)
     {
         if (pattern.VAR() is not null
             && pattern.Identifier() is { } capture
             && SupportsAggregateFieldSubpattern(field.Type))
         {
-            scope.Declare(new VariableSymbol(capture.GetText(), field.Type, SymbolOrigin.Local, LocalStorageClass.None, IsMutable: false, IsConstant: false));
+            DeclareVariable(
+                scope,
+                new VariableSymbol(capture.GetText(), field.Type, SymbolOrigin.Local, LocalStorageClass.None, IsMutable: false, IsConstant: false),
+                summary,
+                capture.Symbol);
             return;
         }
 
         if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
         {
-            BindEnumNamedFieldPattern(enumNamedFieldPattern, field.Type, scope);
+            BindEnumNamedFieldPattern(enumNamedFieldPattern, field.Type, scope, summary);
             return;
         }
 
         if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern
-            && TryBindEnumAggregateSwitchPattern(genericEnumAggregatePattern, field.Type, scope))
+            && TryBindEnumAggregateSwitchPattern(genericEnumAggregatePattern, field.Type, scope, summary))
         {
             return;
         }
 
         if (pattern.aggregatePattern() is { } enumAggregatePattern
-            && TryBindEnumAggregateSwitchPattern(enumAggregatePattern, field.Type, scope))
+            && TryBindEnumAggregateSwitchPattern(enumAggregatePattern, field.Type, scope, summary))
         {
             return;
         }
@@ -2528,7 +2752,11 @@ internal sealed class SemanticValidator
 
         if (suffix.Identifier() is { } wholeCapture)
         {
-            scope.Declare(new VariableSymbol(wholeCapture.GetText(), field.Type, SymbolOrigin.Local, LocalStorageClass.None, IsMutable: false, IsConstant: false));
+            DeclareVariable(
+                scope,
+                new VariableSymbol(wholeCapture.GetText(), field.Type, SymbolOrigin.Local, LocalStorageClass.None, IsMutable: false, IsConstant: false),
+                summary,
+                wholeCapture.Symbol);
             return;
         }
 
@@ -2540,13 +2768,13 @@ internal sealed class SemanticValidator
 
         for (var index = 0; index < fieldPatterns.Length; index++)
         {
-            BindAggregateFieldPattern(fieldPatterns[index], namedType.OrderedFields[index], scope);
+            BindAggregateFieldPattern(fieldPatterns[index], namedType.OrderedFields[index], scope, summary);
         }
     }
 
     private StarkTypeSymbol ResolvePatternSimpleType(StarkParser.SimpleTypeContext simpleType)
     {
-        return _typeResolver.ResolveSimpleType(simpleType, currentModuleName: _syntaxModel.ModuleName);
+        return _typeResolver.ResolveSimpleType(simpleType, currentModuleName: CurrentModuleName);
     }
 
     private bool IsEnumSwitchType(StarkTypeSymbol switchType)
@@ -2973,12 +3201,12 @@ internal sealed class SemanticValidator
         if (target.NamespaceName is not null)
         {
             var qualifiedName = $"{target.NamespaceName}.{memberName}";
-            if (_moduleGraph.CanAccessModule(_syntaxModel.ModuleName, qualifiedName))
+            if (_moduleGraph.CanAccessModule(CurrentModuleName, qualifiedName))
             {
                 return new ValidationValue(StarkTypeSymbols.Error, NamespaceName: qualifiedName);
             }
 
-            if (_moduleGraph.CanAccessModuleNamespace(_syntaxModel.ModuleName, qualifiedName))
+            if (_moduleGraph.CanAccessModuleNamespace(CurrentModuleName, qualifiedName))
             {
                 return new ValidationValue(StarkTypeSymbols.Error, NamespaceName: qualifiedName);
             }
@@ -3232,7 +3460,7 @@ internal sealed class SemanticValidator
         }
 
         if (!sourceName.Contains('.', StringComparison.Ordinal)
-            && _typeModel.Overloads.TryGetValue($"{_syntaxModel.ModuleName}.{sourceName}", out overloads!))
+            && _typeModel.Overloads.TryGetValue($"{CurrentModuleName}.{sourceName}", out overloads!))
         {
             return true;
         }
@@ -3240,7 +3468,7 @@ internal sealed class SemanticValidator
         if (!sourceName.Contains('.', StringComparison.Ordinal))
         {
             var importedCandidates = new List<TypedFunctionSignature>();
-            foreach (var candidateName in _moduleGraph.EnumerateAccessibleModuleQualifiedNames(_syntaxModel.ModuleName, sourceName))
+            foreach (var candidateName in _moduleGraph.EnumerateAccessibleModuleQualifiedNames(CurrentModuleName, sourceName))
             {
                 if (_typeModel.Overloads.TryGetValue(candidateName, out var candidates))
                 {
@@ -3261,7 +3489,7 @@ internal sealed class SemanticValidator
 
     private string GetSystemTextFunctionName(string name)
     {
-        return string.Equals(_syntaxModel.ModuleName, "System.Text", StringComparison.Ordinal)
+        return string.Equals(CurrentModuleName, "System.Text", StringComparison.Ordinal)
             ? name
             : $"System.Text.{name}";
     }
@@ -3346,14 +3574,14 @@ internal sealed class SemanticValidator
         }
 
         if (!name.Contains('.', StringComparison.Ordinal)
-            && _typeModel.Globals.TryGetValue($"{_syntaxModel.ModuleName}.{name}", out global!))
+            && _typeModel.Globals.TryGetValue($"{CurrentModuleName}.{name}", out global!))
         {
             return true;
         }
 
         if (!name.Contains('.', StringComparison.Ordinal))
         {
-            var importedMatches = _moduleGraph.EnumerateAccessibleModuleQualifiedNames(_syntaxModel.ModuleName, name)
+            var importedMatches = _moduleGraph.EnumerateAccessibleModuleQualifiedNames(CurrentModuleName, name)
                 .Where(_typeModel.Globals.ContainsKey)
                 .ToArray();
             if (importedMatches.Length == 1)
@@ -3375,14 +3603,14 @@ internal sealed class SemanticValidator
         }
 
         if (!typeName.Contains('.', StringComparison.Ordinal)
-            && _typeModel.NamedTypes.TryGetValue($"{_syntaxModel.ModuleName}.{typeName}", out namedType!))
+            && _typeModel.NamedTypes.TryGetValue($"{CurrentModuleName}.{typeName}", out namedType!))
         {
             return true;
         }
 
         if (!typeName.Contains('.', StringComparison.Ordinal))
         {
-            var importedMatches = _moduleGraph.EnumerateAccessibleModuleQualifiedNames(_syntaxModel.ModuleName, typeName)
+            var importedMatches = _moduleGraph.EnumerateAccessibleModuleQualifiedNames(CurrentModuleName, typeName)
                 .Where(_typeModel.NamedTypes.ContainsKey)
                 .ToArray();
             if (importedMatches.Length == 1)
@@ -3525,7 +3753,7 @@ internal sealed class SemanticValidator
         {
             changed = false;
 
-            foreach (var summary in _summaries.Values)
+            foreach (var summary in AllEffectSummaries())
             {
                 foreach (var pendingCall in summary.PendingCalls)
                 {
@@ -3551,12 +3779,24 @@ internal sealed class SemanticValidator
                         }
                     }
                 }
+
+                foreach (var potentialDrop in summary.PotentialDropTypes)
+                {
+                    if (TryGetDropMemoryEffects(
+                            potentialDrop.Type,
+                            new HashSet<string>(StringComparer.Ordinal),
+                            out var dropEffects))
+                    {
+                        changed |= summary.ApplyFunctionMemoryEffects(dropEffects);
+                    }
+                }
             }
         }
 
         foreach (var summary in _summaries.Values)
         {
             var declaredLaw = FunctionKindFacts.IsLaw(summary.DeclaredKind);
+            ValidateImplicitDropEffects(summary, declaredLaw);
 
             foreach (var pendingCall in summary.PendingCalls)
             {
@@ -3600,6 +3840,50 @@ internal sealed class SemanticValidator
 
             summary.BuildResolvedCalls(call =>
                 BuildResolvedCallSummary(call));
+        }
+    }
+
+    private IEnumerable<FunctionValidationBuilder> AllEffectSummaries()
+    {
+        foreach (var summary in _summaries.Values)
+        {
+            yield return summary;
+        }
+
+        foreach (var summary in _destructorSummaries.Values)
+        {
+            yield return summary;
+        }
+    }
+
+    private void ValidateImplicitDropEffects(FunctionValidationBuilder summary, bool declaredLaw)
+    {
+        foreach (var potentialDrop in summary.PotentialDropTypes)
+        {
+            if (!TryGetDropMemoryEffects(
+                    potentialDrop.Type,
+                    new HashSet<string>(StringComparer.Ordinal),
+                    out var dropEffects)
+                || !dropEffects.ReadsOtherMemory && !dropEffects.WritesOtherMemory)
+            {
+                continue;
+            }
+
+            summary.DisqualifyLaw();
+            if (!declaredLaw || !summary.MarkImplicitDropDiagnosticReported(potentialDrop.Type))
+            {
+                continue;
+            }
+
+            var code = dropEffects.WritesOtherMemory ? "STK4104" : "STK4105";
+            var operation = dropEffects.WritesOtherMemory
+                ? "perform externally visible writes"
+                : "read externally visible memory";
+            EffectError(
+                summary,
+                code,
+                $"Law '{summary.Name}' cannot implicitly {operation} by dropping '{potentialDrop.Type.DisplayName}'. The destructor for that type or a nested owned field has externally visible memory effects.",
+                potentialDrop.Location);
         }
     }
 
@@ -3697,6 +3981,114 @@ internal sealed class SemanticValidator
             CapturesArgumentMemory: false,
             ReadsOtherMemory: true,
             WritesOtherMemory: true);
+    }
+
+    private bool TryGetDropMemoryEffects(
+        StarkTypeSymbol type,
+        ISet<string> activeNamedTypes,
+        out FunctionMemoryEffectSummary effects)
+    {
+        effects = new FunctionMemoryEffectSummary(false, false, false);
+
+        if (type.BorrowKind != StarkBorrowKind.None
+            || type.InitializationKind != StarkInitializationKind.None
+            || type.Kind == StarkTypeKind.Error)
+        {
+            return false;
+        }
+
+        if (type.Kind == StarkTypeKind.Dynamic)
+        {
+            effects = new FunctionMemoryEffectSummary(
+                ReadsArgumentMemory: false,
+                WritesArgumentMemory: false,
+                CapturesArgumentMemory: false,
+                ReadsOtherMemory: true,
+                WritesOtherMemory: true);
+            return true;
+        }
+
+        if (type.Kind == StarkTypeKind.FixedArray && type.ElementType is not null)
+        {
+            return TryGetDropMemoryEffects(type.ElementType, activeNamedTypes, out effects);
+        }
+
+        if (type.Kind != StarkTypeKind.Named || type.NamedType is null)
+        {
+            return false;
+        }
+
+        var namedTypeName = type.NamedType;
+        if (!activeNamedTypes.Add(namedTypeName))
+        {
+            return false;
+        }
+
+        try
+        {
+            var found = false;
+            var combined = new FunctionMemoryEffectSummary(false, false, false);
+            if (TryGetDestructorSummary(namedTypeName, out var destructorSummary))
+            {
+                combined = CombineMemoryEffects(combined, destructorSummary.GetCurrentMemoryEffects());
+                found = true;
+            }
+
+            if (_typeModel.NamedTypes.TryGetValue(namedTypeName, out var namedType))
+            {
+                foreach (var field in namedType.OrderedFields)
+                {
+                    if (TryGetDropMemoryEffects(field.Type, activeNamedTypes, out var fieldEffects))
+                    {
+                        combined = CombineMemoryEffects(combined, fieldEffects);
+                        found = true;
+                    }
+                }
+
+                foreach (var variant in namedType.Variants)
+                {
+                    foreach (var field in variant.Fields)
+                    {
+                        if (TryGetDropMemoryEffects(field.Type, activeNamedTypes, out var fieldEffects))
+                        {
+                            combined = CombineMemoryEffects(combined, fieldEffects);
+                            found = true;
+                        }
+                    }
+                }
+            }
+
+            effects = combined;
+            return found;
+        }
+        finally
+        {
+            activeNamedTypes.Remove(namedTypeName);
+        }
+    }
+
+    private bool TryGetDestructorSummary(string namedTypeName, out FunctionValidationBuilder summary)
+    {
+        if (_destructorSummaries.TryGetValue(namedTypeName, out summary!))
+        {
+            return true;
+        }
+
+        var genericBaseName = StarkTypeSymbols.GetGenericBaseName(namedTypeName);
+        return !string.Equals(genericBaseName, namedTypeName, StringComparison.Ordinal)
+            && _destructorSummaries.TryGetValue(genericBaseName, out summary!);
+    }
+
+    private static FunctionMemoryEffectSummary CombineMemoryEffects(
+        FunctionMemoryEffectSummary left,
+        FunctionMemoryEffectSummary right)
+    {
+        return new FunctionMemoryEffectSummary(
+            left.ReadsArgumentMemory || right.ReadsArgumentMemory,
+            left.WritesArgumentMemory || right.WritesArgumentMemory,
+            left.CapturesArgumentMemory || right.CapturesArgumentMemory,
+            left.ReadsOtherMemory || right.ReadsOtherMemory,
+            left.WritesOtherMemory || right.WritesOtherMemory);
     }
 
     private void InferEffectiveFunctionKindsAndValidateDeclaredContracts()
@@ -3899,11 +4291,13 @@ internal sealed class SemanticValidator
                 Location(context.Start));
         }
 
-        if (ContainsNestedRawPointer(type) && (!isFfiBoundary || usage is not (TypeUsage.Parameter or TypeUsage.Return)))
+        if (ContainsNestedRawPointer(type)
+            && !((isFfiBoundary && usage is TypeUsage.Parameter or TypeUsage.Return)
+                || (isPlatformAbiBoundary && usage == TypeUsage.Field)))
         {
             _context.Diagnostics.Error(
                 "STK4006",
-                "Pointers to pointers are only permitted on 'ffi' function boundaries through raw pointer types.",
+                "Pointers to pointers are only permitted on 'ffi' function boundaries or fields of '[Platform]' ABI aggregates through raw pointer types.",
                 "semantic-validate",
                 Location(context.Start));
         }
@@ -4054,7 +4448,8 @@ internal sealed class SemanticValidator
             return false;
         }
 
-        if (_syntaxDeclarations.TryGetValue(type.NamedType, out var declaration)
+        if (TryGetDestructorSummary(type.NamedType, out _)
+            || _syntaxDeclarations.TryGetValue(type.NamedType, out var declaration)
             && declaration.Destructor is not null)
         {
             return true;
@@ -5307,7 +5702,7 @@ internal sealed class SemanticValidator
 
     private bool IsSystemMemoryAllocatorBuiltin(FunctionDeclarationModel declaration)
     {
-        if (!string.Equals(_syntaxModel.ModuleName, "System.Memory", StringComparison.Ordinal))
+        if (!string.Equals(CurrentModuleName, "System.Memory", StringComparison.Ordinal))
         {
             return false;
         }
@@ -5506,6 +5901,10 @@ internal sealed class SemanticValidator
         IReadOnlyList<PendingCallArgument> Arguments,
         IToken Location);
 
+    private sealed record PotentialDropType(
+        StarkTypeSymbol Type,
+        IToken Location);
+
     private sealed class ParameterSummaryBuilder
     {
         public ParameterSummaryBuilder(
@@ -5646,7 +6045,11 @@ internal sealed class SemanticValidator
 
         public List<PendingCall> PendingCalls { get; } = [];
 
+        public List<PotentialDropType> PotentialDropTypes { get; } = [];
+
         public List<CallMemoryEffectSummary> ResolvedCalls { get; } = [];
+
+        private HashSet<string> ReportedImplicitDropEffectTypes { get; } = new(StringComparer.Ordinal);
 
         public bool ReadsOtherMemory { get; private set; }
 
@@ -5679,6 +6082,16 @@ internal sealed class SemanticValidator
         public void SetOptimizationSummary(FunctionOptimizationSummary? summary)
         {
             OptimizationSummary = summary;
+        }
+
+        public void AddPotentialDropType(StarkTypeSymbol type, IToken location)
+        {
+            PotentialDropTypes.Add(new PotentialDropType(type, location));
+        }
+
+        public bool MarkImplicitDropDiagnosticReported(StarkTypeSymbol type)
+        {
+            return ReportedImplicitDropEffectTypes.Add(type.DisplayName);
         }
 
         public void MarkParameterRead(string name)

@@ -532,6 +532,44 @@ public sealed class SsaLoweringTests
     }
 
     [Fact]
+    public void NonAddressableFixedArrayDynamicIndexAllocatesCompilerGeneratedScratchLocalInSsa()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn i32[min max][3] Make(i32[min max] left, i32[min max] middle, i32[min max] right) {
+                stack i32[min max][3] values = { left, middle, right };
+                return values;
+            }
+
+            unsafe fn i32[min max] Run(i32[min max] index, i32[min max] seed) {
+                return Make(seed, seed + 1, seed + 2)[index];
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetSsa(result).Functions, static function => function.Name == "Run");
+        var instructions = function.Blocks.SelectMany(static block => block.Instructions).ToArray();
+
+        Assert.Contains(
+            instructions,
+            instruction => instruction is SsaAllocateLocalInstruction
+            {
+                StorageClass: "stack",
+                LocalType.Kind: StarkTypeKind.FixedArray
+            } allocate && allocate.LocalName.StartsWith("$tmp", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            instructions,
+            instruction => instruction is SsaLifetimeStartInstruction lifetimeStart
+                && lifetimeStart.LocalName.StartsWith("$tmp", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            instructions,
+            instruction => instruction is SsaLifetimeEndInstruction lifetimeEnd
+                && lifetimeEnd.LocalName.StartsWith("$tmp", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void FixedArrayIndexOperationsLowerToSsaExtractAndInsert()
     {
         var result = Compile(

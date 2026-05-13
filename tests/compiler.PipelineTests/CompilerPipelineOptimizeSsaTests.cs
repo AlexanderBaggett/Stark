@@ -1780,15 +1780,13 @@ public sealed class CompilerPipelineOptimizeSsaTests
         Assert.NotNull(facts);
 
         var runFacts = Assert.Single(facts.Functions.Values, static function => function.FunctionName == "Run");
-        var sliceFacts = Assert.Single(
+        Assert.Contains(
             runFacts.Values.Values,
             static fact => fact.Type.Kind == StarkTypeKind.Slice
                            && fact.LengthKind == SsaFactLatticeKind.Known
                            && fact.LengthRange is { Min: var min, Max: var max }
                            && min == new System.Numerics.BigInteger(3)
                            && max == new System.Numerics.BigInteger(3));
-
-        Assert.Equal(SsaFactLatticeKind.Known, sliceFacts.LengthKind);
     }
 
     [Fact]

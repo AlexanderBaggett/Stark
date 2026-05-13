@@ -6,6 +6,45 @@ For syntax, source rules, and the user-facing language contract, see [LanguageRe
 The goal of this document is explanatory rather than normative.
 If there is ever a conflict, the source-level contract belongs in the language reference.
 
+## 0. Compiler Layer Contract
+
+The compiler pipeline has one central validity rule: MIR lowering is not a
+language-validity filter. If source text is grammatically invalid, parsing must
+reject it. If source text is grammatically valid but not a valid Stark program,
+the declaration, symbol, type-checking, semantic validation, ownership
+validation, or explicit pre-MIR contract validation stages must reject it before
+MIR is built.
+
+Once a function reaches MIR lowering without diagnostics, the compiler has
+accepted the program's executable semantics. From that point forward, lowering
+and backend code generation are obligated to preserve those semantics or report
+an internal compiler invariant failure. They must not silently turn accepted
+source constructs into declaration-only functions, fallback bodies, or
+`unsupported-lowering` artifacts.
+
+In practice this means each layer has a narrow responsibility:
+
+- parsing rejects malformed token and grammar shapes only
+- declaration and symbol stages resolve modules, names, overload sets,
+  visibility, and function/type ownership of declarations
+- type checking records executable operation facts such as call targets,
+  receiver binding, argument coercions, indexing kind, constructor shape,
+  enum layout use, dynamic-storage operation shape, function-pointer ABI shape,
+  and `sizeof`/`alignof` target types
+- semantic and ownership validation reject effect, borrowing, drop, lifetime,
+  mutability, and memory-contract violations
+- MIR lowering consumes the accepted typed facts and constructs MIR directly
+- SSA, optimization, ABI lowering, LLVM emission, package-image lowering, and
+  imported-template lowering must preserve the same accepted-program contract
+
+Lowering invariant violations are compiler bugs, not user diagnostics. They are
+still useful guardrails, but every invariant that can be reached by
+grammatically valid invalid source should also have an earlier diagnostic test.
+The long-term direction is to make invalid states unrepresentable at the MIR
+boundary by carrying a typed executable expression model through source modules,
+package images, generic template bodies, monomorphization, and inline clone
+planning.
+
 ## 1. Backend Relationship
 
 Stark is intentionally stricter than mainstream systems languages in a number of places because those restrictions let the compiler prove more about a program.

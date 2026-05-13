@@ -216,15 +216,15 @@ public struct OwnedAscii {
         self.Bytes = new();
     }
 
-    finite law u64[0 2 ** 63 - 1] Length(borrow OwnedAscii self) {
+    inline finite law u64[0 2 ** 63 - 1] Length(borrow OwnedAscii self) {
         return self.Bytes.Length;
     }
 
-    finite law u64[0 2 ** 63 - 1] Capacity(borrow OwnedAscii self) {
+    inline finite law u64[0 2 ** 63 - 1] Capacity(borrow OwnedAscii self) {
         return self.Bytes.Capacity;
     }
 
-    finite law bool IsEmpty(borrow OwnedAscii self) {
+    inline finite law bool IsEmpty(borrow OwnedAscii self) {
         return self.Bytes.Length == 0;
     }
 
@@ -618,15 +618,15 @@ public struct OwnedUnicode {
         self.CodePoints = new();
     }
 
-    finite law u64[0 2 ** 63 - 1] Length(borrow OwnedUnicode self) {
+    inline finite law u64[0 2 ** 63 - 1] Length(borrow OwnedUnicode self) {
         return self.CodePoints.Length;
     }
 
-    finite law u64[0 2 ** 63 - 1] Capacity(borrow OwnedUnicode self) {
+    inline finite law u64[0 2 ** 63 - 1] Capacity(borrow OwnedUnicode self) {
         return self.CodePoints.Capacity;
     }
 
-    finite law bool IsEmpty(borrow OwnedUnicode self) {
+    inline finite law bool IsEmpty(borrow OwnedUnicode self) {
         return self.CodePoints.Length == 0;
     }
 
@@ -1063,15 +1063,15 @@ public struct OwnedUtf16 {
         self.CodeUnits = new();
     }
 
-    finite law u64[0 2 ** 63 - 1] Length(borrow OwnedUtf16 self) {
+    inline finite law u64[0 2 ** 63 - 1] Length(borrow OwnedUtf16 self) {
         return self.CodeUnits.Length;
     }
 
-    finite law u64[0 2 ** 63 - 1] Capacity(borrow OwnedUtf16 self) {
+    inline finite law u64[0 2 ** 63 - 1] Capacity(borrow OwnedUtf16 self) {
         return self.CodeUnits.Capacity;
     }
 
-    finite law bool IsEmpty(borrow OwnedUtf16 self) {
+    inline finite law bool IsEmpty(borrow OwnedUtf16 self) {
         return self.CodeUnits.Length == 0;
     }
 

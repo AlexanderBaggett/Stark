@@ -3149,8 +3149,23 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         var receiverPointer = $"%{EscapeIdentifier(receiver.LlvmName)}";
 
         builder.AppendLine("entry:");
-        builder.AppendLine($"  %list_data_addr = getelementptr{GetProvenInObjectGepFlags()} {listType}, ptr {receiverPointer}, i32 0, i32 {listShape.DataFieldIndex}");
-        builder.AppendLine($"  %list_length_addr = getelementptr{GetProvenInObjectGepFlags()} {listType}, ptr {receiverPointer}, i32 0, i32 {listShape.LengthFieldIndex}");
+        if (listShape.ItemsFieldIndex is int itemsFieldIndex && listShape.ItemsFieldType is { } itemsFieldType)
+        {
+            var itemsType = MapType(itemsFieldType);
+            builder.AppendLine($"  %list_items_addr = getelementptr{GetProvenInObjectGepFlags()} {listType}, ptr {receiverPointer}, i32 0, i32 {itemsFieldIndex}");
+            builder.AppendLine($"  %list_data_addr = getelementptr{GetProvenInObjectGepFlags()} {itemsType}, ptr %list_items_addr, i32 0, i32 0");
+            builder.AppendLine($"  %list_length_addr = getelementptr{GetProvenInObjectGepFlags()} {itemsType}, ptr %list_items_addr, i32 0, i32 1");
+        }
+        else if (listShape.DataFieldIndex is int dataFieldIndex && listShape.LengthFieldIndex is int lengthFieldIndex)
+        {
+            builder.AppendLine($"  %list_data_addr = getelementptr{GetProvenInObjectGepFlags()} {listType}, ptr {receiverPointer}, i32 0, i32 {dataFieldIndex}");
+            builder.AppendLine($"  %list_length_addr = getelementptr{GetProvenInObjectGepFlags()} {listType}, ptr {receiverPointer}, i32 0, i32 {lengthFieldIndex}");
+        }
+        else
+        {
+            throw new InvalidOperationException("System.Collections List<T> slice-view builtin is missing a supported list storage shape.");
+        }
+
         builder.AppendLine("  %list_data = load ptr, ptr %list_data_addr");
         builder.AppendLine("  %list_length = load i64, ptr %list_length_addr");
         builder.AppendLine($"  %slice_with_ptr = insertvalue {resultType} zeroinitializer, ptr %list_data, 0");
@@ -4995,10 +5010,25 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             || !listType.TryGetField("Length", out var lengthField, out var lengthFieldIndex)
             || lengthField.Type.Kind != StarkTypeKind.Integer)
         {
-            throw new InvalidOperationException("System.Collections List<T> must contain Data and Length fields for slice-view builtins.");
+            if (!listType.TryGetField("Items", out var itemsField, out var itemsFieldIndex)
+                || itemsField.Type.Kind != StarkTypeKind.Dynamic
+                || itemsField.Type.ElementType is null)
+            {
+                throw new InvalidOperationException("System.Collections List<T> must contain Data/Length fields or a dynamic Items field for slice-view builtins.");
+            }
+
+            return new SystemCollectionsListShape(
+                DataFieldIndex: null,
+                LengthFieldIndex: null,
+                ItemsFieldIndex: itemsFieldIndex,
+                ItemsFieldType: itemsField.Type);
         }
 
-        return new SystemCollectionsListShape(dataFieldIndex, lengthFieldIndex);
+        return new SystemCollectionsListShape(
+            DataFieldIndex: dataFieldIndex,
+            LengthFieldIndex: lengthFieldIndex,
+            ItemsFieldIndex: null,
+            ItemsFieldType: null);
     }
 
     private static StarkTypeSymbol ValidateSystemCollectionsDictionaryKeySignature(
@@ -5222,8 +5252,10 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     }
 
     private readonly record struct SystemCollectionsListShape(
-        int DataFieldIndex,
-        int LengthFieldIndex);
+        int? DataFieldIndex,
+        int? LengthFieldIndex,
+        int? ItemsFieldIndex,
+        StarkTypeSymbol? ItemsFieldType);
 
     private readonly record struct SystemMathSinCosSignature(
         StarkTypeSymbol ScalarType,

@@ -134,7 +134,7 @@ internal unsafe fn rawptr<i8[min max]> FdToHandle(i32[min max] fileDescriptor) {
     return (rawptr<i8[min max]>)handle;
 }
 
-internal unsafe finite law i32[min max] HandleToFd(rawptr<i8[min max]> handle) {
+internal unsafe inline finite law i32[min max] HandleToFd(rawptr<i8[min max]> handle) {
     if (handle == null) {
         return -1;
     }
@@ -196,7 +196,7 @@ internal unsafe finite law bool IsDotDirectoryEntry(rawptr<i8[min max]> data, i6
     return false;
 }
 
-internal fn i32[min max] DirectoryEntryKindFromMacOSType(i32[min max] entryType) {
+internal inline fn i32[min max] DirectoryEntryKindFromMacOSType(i32[min max] entryType) {
     if (entryType == MacOSDirectoryEntryFileType) {
         return 1;
     }
@@ -669,23 +669,23 @@ internal unsafe fn i64[min max] ReadStdin(rawmutptr<i8[min max]>[capacity] buffe
     return readCount;
 }
 
-internal unsafe fn i32[min max] WriteAscii(rawptr<i8[min max]> handle, ascii text) {
+internal unsafe inline fn i32[min max] WriteAscii(rawptr<i8[min max]> handle, ascii text) {
     return WriteAsciiToHandle(handle, text);
 }
 
-internal finite law ascii DirectorySeparator() {
+internal inline finite law ascii DirectorySeparator() {
     return "/";
 }
 
-internal finite law ascii AlternateDirectorySeparator() {
+internal inline finite law ascii AlternateDirectorySeparator() {
     return "";
 }
 
-internal finite law ascii PathSeparator() {
+internal inline finite law ascii PathSeparator() {
     return ":";
 }
 
-internal finite law bool IsDirectorySeparator(ascii value) {
+internal inline finite law bool IsDirectorySeparator(ascii value) {
     unsafe {
         return *AsciiData(value) == (i8[min max])47;
     }
@@ -699,7 +699,7 @@ internal unsafe fn bool IsTerminal(rawptr<i8[min max]> handle) {
     return isatty(HandleToFd(handle)) != 0;
 }
 
-internal unsafe fn i32[min max] WriteUnicode(rawptr<i8[min max]> handle, unicode text) {
+internal unsafe inline fn i32[min max] WriteUnicode(rawptr<i8[min max]> handle, unicode text) {
     return WriteUnicodeToHandle(handle, text);
 }
 
@@ -725,7 +725,7 @@ internal unsafe fn rawptr<i8[min max]> OpenFileReadWrite(ascii path) {
     return OpenFileWithFlags(path, (i32[min max])(MacOSOpenReadWriteFlag | MacOSOpenCloseOnExecFlag), 0);
 }
 
-internal unsafe fn i32[min max] CloseFile(rawptr<i8[min max]> handle) {
+internal unsafe inline fn i32[min max] CloseFile(rawptr<i8[min max]> handle) {
     if (handle == null) {
         return 0;
     }
@@ -786,7 +786,7 @@ internal unsafe fn i64[min max] WriteFile(rawptr<i8[min max]> buffer, i64[min ma
     return result / size;
 }
 
-internal unsafe fn i64[min max] ReadFileBytes(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
+internal unsafe inline fn i64[min max] ReadFileBytes(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
     if (handle == null || buffer == null || length == 0) {
         return 0;
     }
@@ -799,7 +799,7 @@ internal unsafe fn i64[min max] ReadFileBytes(rawmutptr<i8[min max]>[length] buf
     return result;
 }
 
-internal unsafe fn i64[min max] WriteFileBytes(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
+internal unsafe inline fn i64[min max] WriteFileBytes(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
     if (handle == null || buffer == null || length == 0) {
         return 0;
     }
@@ -812,15 +812,15 @@ internal unsafe fn i64[min max] WriteFileBytes(rawptr<i8[min max]>[length] buffe
     return result;
 }
 
-internal unsafe fn i64[min max] ReadFileBytesFast(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
+internal unsafe inline fn i64[min max] ReadFileBytesFast(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
     return ReadFileBytes(buffer, length, handle);
 }
 
-internal unsafe fn i64[min max] WriteFileBytesFast(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
+internal unsafe inline fn i64[min max] WriteFileBytesFast(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
     return WriteFileBytes(buffer, length, handle);
 }
 
-internal unsafe fn i64[min max] SeekFile(rawptr<i8[min max]> handle, i64[min max] offset, i32[min max] origin) {
+internal unsafe inline fn i64[min max] SeekFile(rawptr<i8[min max]> handle, i64[min max] offset, i32[min max] origin) {
     if (handle == null) {
         return -1;
     }
@@ -1015,11 +1015,11 @@ internal unsafe fn rawptr<i8[min max]> OpenDirectoryFastInto(
     return OpenDirectory(path);
 }
 
-internal fn u64[0 2 ** 63 - 1] DirectoryBufferCapacity() {
+internal inline fn u64[0 2 ** 63 - 1] DirectoryBufferCapacity() {
     return 1;
 }
 
-internal unsafe fn i32[min max] CloseDirectory(rawptr<i8[min max]> handle) {
+internal unsafe inline fn i32[min max] CloseDirectory(rawptr<i8[min max]> handle) {
     if (handle == null) {
         return 0;
     }
@@ -1094,7 +1094,7 @@ internal unsafe fn i32[min max] ReadDirectoryEntry(
     }
 }
 
-internal unsafe fn i32[min max] ReadDirectoryEntryInfo(
+internal unsafe inline fn i32[min max] ReadDirectoryEntryInfo(
     rawptr<i8[min max]> handle,
     rawmutptr<i8[min max]>[capacity] buffer,
     u64[0 2 ** 63 - 1] capacity,
@@ -1127,6 +1127,44 @@ internal unsafe fn i32[min max] ReadDirectoryEntryInfo(
         *nameLength = entryNameLength;
         *kind = DirectoryEntryKindFromMacOSType(UnsignedByte(rawEntryType));
         return 1;
+    }
+}
+
+internal unsafe inline fn i64[min max] ReadDirectoryNameLengthChecksum(
+    rawptr<i8[min max]> handle,
+    rawmutptr<i8[min max]>[capacity] buffer,
+    u64[0 2 ** 63 - 1] capacity,
+    rawmutptr<i64[min max]> readPos,
+    rawmutptr<i64[min max]> readLength,
+    i64[min max] expectedCount)
+{
+    if (expectedCount < 0) {
+        return -1;
+    }
+
+    stack mut i64[min max] checksum = 0;
+    stack mut i64[min max] count = 0;
+    while willexit (true) {
+        stack mut i64[min max] nameLength = 0;
+        stack mut i32[min max] kind = 0;
+        stack i32[min max] status = ReadDirectoryEntryInfo(handle, buffer, capacity, readPos, readLength, &nameLength, &kind);
+        if (status == 0) {
+            if (count == expectedCount) {
+                return checksum;
+            }
+
+            return -1;
+        }
+
+        if (status != 1 || nameLength < 0) {
+            return -1;
+        }
+
+        checksum += nameLength;
+        count += 1;
+        if (count > expectedCount) {
+            return -1;
+        }
     }
 }
 

@@ -184,6 +184,7 @@ public struct Model {
     rawmutptr<Transform> BindPose;
 }
 
+[Platform]
 public struct ModelAnimation {
     i32[min max] BoneCount;
     i32[min max] FrameCount;
@@ -261,6 +262,7 @@ public struct VrStereoConfig {
     f32[2] ScaleIn;
 }
 
+[Platform]
 public struct FilePathList {
     u32[0 max] Capacity;
     u32[0 max] Count;

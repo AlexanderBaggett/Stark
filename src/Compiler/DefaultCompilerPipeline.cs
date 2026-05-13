@@ -1,10 +1,24 @@
 using System.Globalization;
+using Stark.Compiler.LlvmIrEmission;
 using Stark.Parsing;
 
 namespace Stark.Compiler;
 
 public static class DefaultCompilerPipeline
 {
+    private static readonly IReadOnlySet<string> LoweringFallbackEventIds = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "unsupported-lowering",
+        "missing-function-body"
+    };
+
+    private static readonly IReadOnlySet<string> BackendFallbackEventIds = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "llvm-body-fallback",
+        "llvm-asm-fallback",
+        "llvm-body-pending"
+    };
+
     public static CompilerPipeline Create()
     {
         return new CompilerPipelineBuilder()
@@ -24,6 +38,7 @@ public static class DefaultCompilerPipeline
             .Add(new SpecializationPlanPass())
             .Add(new SpecializationCodegenStrategyPass())
             .Add(new OwnershipValidationPass())
+            .Add(new ValidateLoweringContractPass())
             .Add(new LowerToHighLevelIrPass())
             .Add(new LowerToMidLevelIrPass())
             .Add(new NonLexicalBorrowLifetimeValidationPass())
@@ -39,8 +54,43 @@ public static class DefaultCompilerPipeline
             .Add(new ScalarReplaceSsaAggregatesPass())
             .Add(new ShapeSsaBranchesPass())
             .Add(new LowerToAbiPass())
+            .Add(new ValidateSsaIrPass())
             .Add(new EmitLlvmIrPass())
             .Build();
+    }
+
+    private static bool EmitFallbackLogDiagnostics(
+        CompilerPassContext context,
+        string diagnosticCode,
+        IReadOnlySet<string> eventIds)
+    {
+        var emittedKeys = new HashSet<(string Stage, string EventId, string SymbolName, string Message, SourceLocation Location)>();
+        var emittedAny = false;
+
+        foreach (var log in context.Logs.Items)
+        {
+            if (log.Kind != CompilerLogKind.Gap
+                || !eventIds.Contains(log.EventId))
+            {
+                continue;
+            }
+
+            var message = log.Data.TryGetValue("reason", out var reason) && !string.IsNullOrWhiteSpace(reason)
+                ? reason
+                : log.Data.TryGetValue("feature", out var feature) && !string.IsNullOrWhiteSpace(feature)
+                    ? $"Code generation does not yet support this construct ({feature})."
+                    : log.Message;
+
+            if (!emittedKeys.Add((log.Stage, log.EventId, log.SymbolName, message, log.Location)))
+            {
+                continue;
+            }
+
+            emittedAny = true;
+            context.Diagnostics.Error(diagnosticCode, message, log.Stage, log.Location);
+        }
+
+        return emittedAny;
     }
 
     private sealed class ParsePass : ICompilerPass
@@ -689,7 +739,7 @@ public static class DefaultCompilerPipeline
 
                 context.Diagnostics.Error(
                     "STK3023",
-                    $"Dictionary key type '{keyType.DisplayName}' must satisfy 'System.Collections.DictionaryKey<{keyType.DisplayName}>'. The current compiler can prove that contract for 'bool' and Stark integer key types; add an explicit hash/equality contract before using this key type.",
+                    $"Dictionary key type '{keyType.DisplayName}' must satisfy 'System.Collections.DictionaryKey<{keyType.DisplayName}>'. Built-in dictionary key contracts are available for 'bool' and Stark integer key types; add an explicit hash/equality contract before using this key type.",
                     "instantiation-ownership",
                     type.FirstUseLocation);
             }
@@ -1435,8 +1485,9 @@ public static class DefaultCompilerPipeline
                 return false;
             }
 
-            if (typeModel.NamedTypes.TryGetValue(coreType.NamedType, out namedType))
+            if (typeModel.NamedTypes.TryGetValue(coreType.NamedType, out var directNamedType))
             {
+                namedType = directNamedType;
                 if (coreType.TypeArguments is { Count: > 0 })
                 {
                     typeArguments = coreType.TypeArguments;
@@ -1451,11 +1502,12 @@ public static class DefaultCompilerPipeline
             }
 
             var baseName = StarkTypeSymbols.GetGenericBaseName(coreType.NamedType);
-            if (!typeModel.NamedTypes.TryGetValue(baseName, out namedType))
+            if (!typeModel.NamedTypes.TryGetValue(baseName, out var genericNamedType))
             {
                 return false;
             }
 
+            namedType = genericNamedType;
             typeArguments = coreType.TypeArguments;
             return true;
         }
@@ -2227,6 +2279,26 @@ public static class DefaultCompilerPipeline
 
             var ownershipModel = new OwnershipValidator(context, parseResult, syntaxModel, moduleGraph, typeModel).Validate();
             context.Artifacts.Set(CompilerArtifactKeys.OwnershipValidation, ownershipModel);
+        }
+    }
+
+    private sealed class ValidateLoweringContractPass : ICompilerPass
+    {
+        public string Id => "validate-lowering-contract";
+
+        public CompilerPhase Phase => CompilerPhase.Semantics;
+
+        public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
+
+        public IReadOnlyList<string> Dependencies => ["parse", "load-modules", "type-check", "enum-layout", "semantic-validate", "ownership-validate"];
+
+        public void Execute(CompilerPassContext context)
+        {
+            var loadedModules = context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules);
+            var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
+            var enumLayoutModel = context.Artifacts.GetRequired(CompilerArtifactKeys.EnumLayoutModel);
+            var validation = new LoweringContractValidator(context, loadedModules, typeModel, enumLayoutModel).Validate();
+            context.Artifacts.Set(CompilerArtifactKeys.LoweringContractValidation, validation);
         }
     }
 
@@ -3180,7 +3252,7 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["syntax-model", "load-modules", "module-graph", "refine-function-effects", "type-check", "semantic-validate", "ownership-validate", "specialization-codegen-strategy"];
+        public IReadOnlyList<string> Dependencies => ["syntax-model", "load-modules", "module-graph", "refine-function-effects", "type-check", "semantic-validate", "ownership-validate", "validate-lowering-contract", "specialization-codegen-strategy"];
 
         public void Execute(CompilerPassContext context)
         {
@@ -3441,6 +3513,7 @@ public static class DefaultCompilerPipeline
             var hir = context.Artifacts.GetRequired(CompilerArtifactKeys.HighLevelIr);
             var mir = new MidLevelIrLowerer(context, loadedModules, moduleGraph, typeModel, enumLayoutModel).Lower(hir);
             context.Artifacts.Set(CompilerArtifactKeys.MidLevelIr, mir);
+            EmitFallbackLogDiagnostics(context, "STK5000", LoweringFallbackEventIds);
         }
     }
 
@@ -3473,7 +3546,7 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["syntax-model", "refine-function-effects", "type-check", "enum-layout", "semantic-validate", "memory-opt-ssa", "lower-abi", "specialization-codegen-strategy"];
+        public IReadOnlyList<string> Dependencies => ["syntax-model", "refine-function-effects", "type-check", "enum-layout", "semantic-validate", "memory-opt-ssa", "lower-abi", "validate-ssa", "specialization-codegen-strategy"];
 
         public void Execute(CompilerPassContext context)
         {
@@ -3498,12 +3571,6 @@ public static class DefaultCompilerPipeline
                 ssaValueFacts = facts;
             }
 
-            if (context.Options.EmitLlvmIr
-                && EmitUnsupportedLoweringDiagnostics(context))
-            {
-                return;
-            }
-
             var llvmModule = new LlvmIrEmitter(
                 context.Input,
                 parseResult,
@@ -3524,42 +3591,11 @@ public static class DefaultCompilerPipeline
                 closedWorldModel: closedWorldModel,
                 specializationCodegenStrategy: specializationCodegenStrategy,
                 logs: context.Logs,
-                ssaValueFacts: ssaValueFacts).Emit();
+                ssaValueFacts: ssaValueFacts,
+                importedInlineCloneSeedFunctions: context.Options.ImportedInlineCloneSeedFunctions,
+                emitFallbackDeclarationsForSourceBodies: false).Emit();
             context.Artifacts.Set(CompilerArtifactKeys.LlvmIrModule, llvmModule);
-        }
-
-        private static bool EmitUnsupportedLoweringDiagnostics(CompilerPassContext context)
-        {
-            var emittedKeys = new HashSet<(string SymbolName, string Message, SourceLocation Location)>();
-            var emittedAny = false;
-
-            foreach (var log in context.Logs.Items)
-            {
-                if (log.Kind != CompilerLogKind.Gap
-                    || log.Outcome != CompilerLogOutcome.Unsupported
-                    || !string.Equals(log.Category, "lowering", StringComparison.Ordinal)
-                    || !string.Equals(log.EventId, "unsupported-lowering", StringComparison.Ordinal)
-                    || !string.Equals(log.Stage, "lower-mir", StringComparison.Ordinal))
-                {
-                    continue;
-                }
-
-                var message = log.Data.TryGetValue("reason", out var reason) && !string.IsNullOrWhiteSpace(reason)
-                    ? reason
-                    : log.Data.TryGetValue("feature", out var feature) && !string.IsNullOrWhiteSpace(feature)
-                        ? $"Code generation does not yet support this construct ({feature})."
-                        : "Code generation does not yet support this construct.";
-
-                if (!emittedKeys.Add((log.SymbolName, message, log.Location)))
-                {
-                    continue;
-                }
-
-                emittedAny = true;
-                context.Diagnostics.Error("STK5000", message, "lower-mir", log.Location);
-            }
-
-            return emittedAny;
+            EmitFallbackLogDiagnostics(context, "STK5001", BackendFallbackEventIds);
         }
     }
 
@@ -4026,6 +4062,29 @@ public static class DefaultCompilerPipeline
             var hir = context.Artifacts.GetRequired(CompilerArtifactKeys.HighLevelIr);
             var abiModel = new AbiLowerer(syntaxModel, loadedModules, typeModel, enumLayoutModel, effectModel, hir, context.Options).Lower();
             context.Artifacts.Set(CompilerArtifactKeys.AbiModel, abiModel);
+        }
+    }
+
+    private sealed class ValidateSsaIrPass : ICompilerPass
+    {
+        public string Id => "validate-ssa";
+
+        public CompilerPhase Phase => CompilerPhase.Lowering;
+
+        public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
+
+        public IReadOnlyList<string> Dependencies => ["type-check", "load-modules", "enum-layout", "shape-branches", "lower-abi", "specialization-codegen-strategy"];
+
+        public void Execute(CompilerPassContext context)
+        {
+            var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
+            var abiModel = context.Artifacts.GetRequired(CompilerArtifactKeys.AbiModel);
+            var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
+            var enumLayoutModel = context.Artifacts.GetRequired(CompilerArtifactKeys.EnumLayoutModel);
+            var loadedModules = context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules);
+            var specializationCodegenStrategy = context.Artifacts.GetRequired(CompilerArtifactKeys.SpecializationCodegenStrategy);
+            var publishedConcreteLayouts = LlvmSpecializationEmissionPlanner.BuildPublishedConcreteLayouts(loadedModules);
+            new SsaIrValidator(context, ssa, abiModel, typeModel, enumLayoutModel, publishedConcreteLayouts, specializationCodegenStrategy, loadedModules).Validate();
         }
     }
 

@@ -47,6 +47,76 @@ public sealed class SsaOptimizationTests
     }
 
     [Fact]
+    public void CleanupPrunesPhiIncomingsForRemovedCfgEdges()
+    {
+        var valueType = StarkTypeSymbols.Integer(32);
+        var boolType = StarkTypeSymbols.Bool;
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    valueType,
+                    [new TypedParameterSymbol("flag", boolType)],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Branch,
+                                [1, 3],
+                                Condition: new SsaValueReference("arg_flag", boolType))),
+                        new SsaBasicBlock(
+                            1,
+                            "bb1_live_predecessor",
+                            [],
+                            [],
+                            new SsaTerminator(SsaTerminatorKind.Goto, [2])),
+                        new SsaBasicBlock(
+                            2,
+                            "bb2_join",
+                            [
+                                new SsaPhi(
+                                    "v0",
+                                    "value",
+                                    valueType,
+                                    [
+                                        new SsaPhiIncoming(0, new SsaIntegerConstant(10, valueType)),
+                                        new SsaPhiIncoming(1, new SsaIntegerConstant(20, valueType))
+                                    ])
+                            ],
+                            [],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("v0", valueType))),
+                        new SsaBasicBlock(
+                            3,
+                            "bb3_exit",
+                            [],
+                            [],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaIntegerConstant(0, valueType)))
+                    ])
+            ]);
+
+        var optimized = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(module);
+        var function = Assert.Single(optimized.Functions);
+
+        Assert.DoesNotContain(
+            function.Blocks.SelectMany(static block => block.Phis.SelectMany(static phi => phi.Incomings)),
+            static incoming => incoming.PredecessorBlockId == 0);
+    }
+
+    [Fact]
     public void CleanupRemovesUnusedPureTemporaries()
     {
         var valueType = StarkTypeSymbols.Integer(32);

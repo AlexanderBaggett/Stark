@@ -52,6 +52,17 @@ internal sealed class TypeChecker
         AggregateCoveragePattern? AggregatePattern,
         EnumCoveragePattern? EnumPattern);
 
+    private readonly record struct SwitchSourceShape(
+        int SectionCount,
+        int LabelCount,
+        int ExplicitDefaultLabelCount,
+        int LoweredDefaultLabelCount,
+        int LiteralLabelCount,
+        int MatchAllLabelCount,
+        int CaptureLabelCount,
+        int StructuredPatternLabelCount,
+        int GuardedLabelCount);
+
     private readonly CompilerPassContext _context;
     private readonly ParseResult _parseResult;
     private readonly SyntaxModel _syntaxModel;
@@ -85,6 +96,9 @@ internal sealed class TypeChecker
     private readonly List<MemberCallTypingRecord> _memberCalls = [];
     private readonly List<ObjectCreationTypingRecord> _objectCreations = [];
     private readonly List<TypeLayoutExpressionTypingRecord> _typeLayoutExpressions = [];
+    private readonly List<IndexAccessTypingRecord> _indexAccesses = [];
+    private readonly List<DynamicStorageOperationTypingRecord> _dynamicStorageOperations = [];
+    private readonly List<SwitchTypingRecord> _switches = [];
     private readonly List<FunctionInstantiationTriggerRecord> _functionInstantiationTriggers = [];
     private readonly List<DeferredFunctionInstantiationTriggerRecord> _deferredFunctionInstantiationTriggers = [];
     private readonly List<DeferredTypeInstantiationTriggerRecord> _deferredTypeInstantiationTriggers = [];
@@ -102,6 +116,7 @@ internal sealed class TypeChecker
     private ISet<string>? _currentFunctionGenericParameters;
     private string? _currentFunctionName;
     private string? _currentFunctionModuleName;
+    private bool _insideConstructorBody;
     private int _unsafeDepth;
     private readonly Dictionary<string, ImportedFunctionTemplateSummary> _importedFunctionTemplates;
     private IReadOnlyList<ImportedTemplateObjectCreationSummary>? _currentImportedTemplateObjectCreations;
@@ -193,7 +208,10 @@ internal sealed class TypeChecker
             _typeLayoutExpressions,
             _lambdas,
             _lambdaCaptures,
-            _addressTakenFunctions);
+            _addressTakenFunctions,
+            _indexAccesses,
+            _dynamicStorageOperations,
+            _switches);
     }
 
     private void CollectTypeAliasSources()
@@ -680,6 +698,14 @@ internal sealed class TypeChecker
                             "STK3024",
                             $"FFI and assembly function '{localName}' must be declared 'unsafe' because callers cross a raw platform or ABI boundary.",
                             functionSyntax.DeclarationContext);
+                    }
+
+                    if (isFfi && IsTextType(returnType))
+                    {
+                        ReportError(
+                            "STK3008",
+                            $"FFI function '{localName}' cannot return text view type '{returnType.DisplayName}'. Return a raw pointer plus explicit length/status from the platform boundary, then construct an explicit Stark text view or owned buffer in wrapper code.",
+                            functionSyntax.ReturnType);
                     }
 
                     if (isAbiBoundary)
@@ -1462,6 +1488,11 @@ internal sealed class TypeChecker
             return false;
         }
 
+        if (TryGetRawPointerRegionExpressionList(expression) is { } expressionList)
+        {
+            RecordIndexAccess("raw-pointer-region", symbol.Type, symbol.Type, 2, expressionList);
+        }
+
         var baseRootKey = symbol.MemoryRootKey ?? rootName;
         rootKey = AppendMemoryRootTextRangeKey(baseRootKey, startExpression, lengthExpression, scope) ?? baseRootKey;
         return true;
@@ -1549,10 +1580,12 @@ internal sealed class TypeChecker
             var previousGenericParameters = _currentFunctionGenericParameters;
             var previousFunctionName = _currentFunctionName;
             var previousFunctionModuleName = _currentFunctionModuleName;
+            var previousInsideConstructorBody = _insideConstructorBody;
 
             _currentFunctionGenericParameters = genericParameters;
             _currentFunctionName = null;
             _currentFunctionModuleName = module.SyntaxModel.ModuleName;
+            _insideConstructorBody = true;
 
             try
             {
@@ -1563,6 +1596,7 @@ internal sealed class TypeChecker
                 _currentFunctionGenericParameters = previousGenericParameters;
                 _currentFunctionName = previousFunctionName;
                 _currentFunctionModuleName = previousFunctionModuleName;
+                _insideConstructorBody = previousInsideConstructorBody;
             }
         }
     }
@@ -2053,6 +2087,7 @@ internal sealed class TypeChecker
         {
             var switchType = EvaluateExpression(switchStatement.expression(), scope, allowFunctionReference: false).Type;
             ValidateImplementedSwitchShape(switchStatement, switchType);
+            RecordSwitch(switchStatement, switchType);
 
             foreach (var section in switchStatement.switchSection())
             {
@@ -2148,6 +2183,12 @@ internal sealed class TypeChecker
                     ReportError("STK3002", $"Function must return '{returnType.DisplayName}'.", returnStatement);
                 }
 
+                return;
+            }
+
+            if (_insideConstructorBody)
+            {
+                ReportError("STK3002", "Constructor bodies cannot return a value.", returnStatement.expression());
                 return;
             }
 
@@ -3563,7 +3604,7 @@ internal sealed class TypeChecker
         {
             ReportError(
                 "STK3008",
-                $"Switch over '{switchType.DisplayName}' is not implemented in the current compiler yet. The current switch subset supports integers, floating-point values, bool, raw pointers, and text literals over ascii/unicode; richer non-text domains remain out of scope for now.",
+                $"Switch expression type '{switchType.DisplayName}' is not a valid switch domain. Stark switch domains are integers, floating-point values, bool, raw pointers, ascii/unicode text literals, named aggregates, and enum case patterns.",
                 switchStatement.expression());
             return;
         }
@@ -3605,6 +3646,133 @@ internal sealed class TypeChecker
         }
 
         AnalyzeSwitchCoverage(switchStatement, switchType);
+    }
+
+    private void RecordSwitch(StarkParser.SwitchStatementContext switchStatement, StarkTypeSymbol switchType)
+    {
+        var shape = InspectSwitchShape(switchStatement);
+        _switches.Add(new SwitchTypingRecord(
+            ClassifySwitchFamily(switchType, shape),
+            switchType,
+            shape.SectionCount,
+            shape.LabelCount,
+            shape.ExplicitDefaultLabelCount,
+            shape.LoweredDefaultLabelCount,
+            shape.LiteralLabelCount,
+            shape.MatchAllLabelCount,
+            shape.CaptureLabelCount,
+            shape.StructuredPatternLabelCount,
+            shape.GuardedLabelCount,
+            Location(switchStatement),
+            _currentFunctionName));
+    }
+
+    private static string ClassifySwitchFamily(StarkTypeSymbol switchType, SwitchSourceShape shape)
+    {
+        if (CanUseFastLiteralSwitch(shape))
+        {
+            if (switchType.Kind is StarkTypeKind.Integer or StarkTypeKind.Bool)
+            {
+                return SwitchLoweringFamilies.Native;
+            }
+
+            if (switchType.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode)
+            {
+                return SwitchLoweringFamilies.PartitionedText;
+            }
+        }
+
+        return SwitchLoweringFamilies.Guarded;
+    }
+
+    private static bool CanUseFastLiteralSwitch(SwitchSourceShape shape)
+    {
+        return shape.LoweredDefaultLabelCount <= 1
+            && shape.GuardedLabelCount == 0
+            && shape.CaptureLabelCount == 0
+            && shape.StructuredPatternLabelCount == 0
+            && shape.LiteralLabelCount > 0
+            && shape.LabelCount - shape.LoweredDefaultLabelCount == shape.LiteralLabelCount;
+    }
+
+    private static SwitchSourceShape InspectSwitchShape(StarkParser.SwitchStatementContext switchStatement)
+    {
+        var sectionCount = switchStatement.switchSection().Length;
+        var labelCount = 0;
+        var explicitDefaultLabelCount = 0;
+        var loweredDefaultLabelCount = 0;
+        var literalLabelCount = 0;
+        var matchAllLabelCount = 0;
+        var captureLabelCount = 0;
+        var structuredPatternLabelCount = 0;
+        var guardedLabelCount = 0;
+
+        foreach (var section in switchStatement.switchSection())
+        {
+            foreach (var label in section.switchLabel())
+            {
+                labelCount++;
+                if (label.DEFAULT() is not null)
+                {
+                    explicitDefaultLabelCount++;
+                    loweredDefaultLabelCount++;
+                    continue;
+                }
+
+                if (label.whenClause() is not null)
+                {
+                    guardedLabelCount++;
+                }
+
+                var pattern = label.pattern();
+                if (pattern is null)
+                {
+                    continue;
+                }
+
+                if (pattern.literal() is not null)
+                {
+                    literalLabelCount++;
+                    continue;
+                }
+
+                if (pattern.DISCARD() is not null)
+                {
+                    matchAllLabelCount++;
+                    if (label.whenClause() is null)
+                    {
+                        loweredDefaultLabelCount++;
+                    }
+
+                    continue;
+                }
+
+                if (pattern.VAR() is not null)
+                {
+                    matchAllLabelCount++;
+                    captureLabelCount++;
+                    continue;
+                }
+
+                if (pattern.aggregatePattern() is not null
+                    || pattern.enumNamedFieldPattern() is not null
+                    || pattern.genericEnumAggregatePattern() is not null)
+                {
+                    structuredPatternLabelCount++;
+                }
+            }
+        }
+
+        return new SwitchSourceShape(
+            sectionCount,
+            labelCount,
+            explicitDefaultLabelCount,
+            loweredDefaultLabelCount,
+            literalLabelCount,
+            matchAllLabelCount,
+            captureLabelCount,
+            structuredPatternLabelCount,
+            guardedLabelCount);
     }
 
     private void AnalyzeSwitchCoverage(StarkParser.SwitchStatementContext switchStatement, StarkTypeSymbol switchType)
@@ -4498,7 +4666,7 @@ internal sealed class TypeChecker
             {
                 ReportError(
                     "STK3008",
-                    $"Switch over enum '{switchType.DisplayName}' currently supports case patterns, '_', and 'default'. Whole-value capture patterns remain unsupported for enum switch values.",
+                    $"Switch over enum '{switchType.DisplayName}' cannot use a whole-value capture pattern. Match an enum case, '_', or 'default' instead.",
                     pattern);
                 return;
             }
@@ -5039,6 +5207,8 @@ internal sealed class TypeChecker
                 aggregatePattern);
             return;
         }
+
+        RecordAggregatePattern(field.Type, aggregatePattern);
 
         var suffix = aggregatePattern.aggregatePatternSuffix();
         if (suffix is null)
@@ -6198,12 +6368,14 @@ internal sealed class TypeChecker
 
     private void RecordDirectCall(
         TypedFunctionSignature signature,
-        ParserRuleContext callContext)
+        ParserRuleContext callContext,
+        IReadOnlyList<CallArgumentTypingRecord>? arguments = null)
     {
         _directCalls.Add(new DirectCallTypingRecord(
             signature,
             Location(callContext),
-            _currentFunctionName));
+            _currentFunctionName,
+            arguments));
     }
 
     private void RecordConversion(
@@ -6232,12 +6404,125 @@ internal sealed class TypeChecker
 
     private void RecordMemberCall(
         TypedFunctionSignature signature,
-        ParserRuleContext callContext)
+        ParserRuleContext callContext,
+        IReadOnlyList<CallArgumentTypingRecord>? arguments = null)
     {
         _memberCalls.Add(new MemberCallTypingRecord(
             signature,
             Location(callContext),
+            _currentFunctionName,
+            arguments));
+    }
+
+    private void RecordIndexAccess(
+        string kind,
+        StarkTypeSymbol sourceType,
+        StarkTypeSymbol resultType,
+        int indexCount,
+        ParserRuleContext context)
+    {
+        _indexAccesses.Add(new IndexAccessTypingRecord(
+            kind,
+            sourceType,
+            resultType,
+            indexCount,
+            Location(context),
             _currentFunctionName));
+    }
+
+    private void RecordDynamicStorageOperation(
+        string operationName,
+        ExpressionBinding receiver,
+        StarkTypeSymbol resultType,
+        int argumentCount,
+        ParserRuleContext context)
+    {
+        _dynamicStorageOperations.Add(new DynamicStorageOperationTypingRecord(
+            operationName,
+            receiver.Type,
+            resultType,
+            argumentCount,
+            Location(context),
+            _currentFunctionName,
+            ReceiverIsAddressable: receiver.IsAddressable,
+            ReceiverIsMutable: receiver.IsAddressMutable));
+    }
+
+    private IReadOnlyList<CallArgumentTypingRecord> BuildCallArgumentRecords(
+        IReadOnlyList<TypedParameterSymbol> parameters,
+        ExpressionBinding? receiver,
+        IReadOnlyList<ExpressionBinding> explicitArguments,
+        int receiverOffset)
+    {
+        var records = new List<CallArgumentTypingRecord>(Math.Min(parameters.Count, explicitArguments.Count + receiverOffset));
+        if (receiver is not null && parameters.Count > 0)
+        {
+            records.Add(BuildCallArgumentRecord(
+                parameterIndex: 0,
+                sourceArgumentIndex: -1,
+                parameters[0],
+                receiver,
+                isReceiver: true));
+        }
+
+        var explicitParameterCount = Math.Max(0, parameters.Count - receiverOffset);
+        for (var index = 0; index < Math.Min(explicitParameterCount, explicitArguments.Count); index++)
+        {
+            var parameterIndex = index + receiverOffset;
+            records.Add(BuildCallArgumentRecord(
+                parameterIndex,
+                index,
+                parameters[parameterIndex],
+                explicitArguments[index],
+                isReceiver: false));
+        }
+
+        return records;
+    }
+
+    private static CallArgumentTypingRecord BuildCallArgumentRecord(
+        int parameterIndex,
+        int sourceArgumentIndex,
+        TypedParameterSymbol parameter,
+        ExpressionBinding argument,
+        bool isReceiver)
+    {
+        return new CallArgumentTypingRecord(
+            parameterIndex,
+            sourceArgumentIndex,
+            parameter.Type,
+            argument.Type,
+            isReceiver,
+            RequiresAddressableCallArgument(parameter, isReceiver),
+            RequiresMutableCallArgument(parameter, isReceiver),
+            parameter.IsConst,
+            argument.IsAddressable,
+            argument.IsAddressMutable,
+            HasConstArgumentProvenance(argument));
+    }
+
+    private static bool RequiresAddressableCallArgument(TypedParameterSymbol parameter, bool isReceiver)
+    {
+        if (isReceiver)
+        {
+            return false;
+        }
+
+        return !parameter.IsConst
+            && (parameter.Type.InitializationKind != StarkInitializationKind.None
+                || parameter.Type.BorrowKind != StarkBorrowKind.None);
+    }
+
+    private static bool RequiresMutableCallArgument(TypedParameterSymbol parameter, bool isReceiver)
+    {
+        if (isReceiver)
+        {
+            return false;
+        }
+
+        return !parameter.IsConst
+            && (parameter.Type.InitializationKind != StarkInitializationKind.None
+                || parameter.Type.BorrowKind != StarkBorrowKind.None && parameter.Type.IsMutableView);
     }
 
     private static IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int> CollectTrackedObjectCreationOrdinals(
@@ -7295,13 +7580,7 @@ internal sealed class TypeChecker
 
         if (string.Equals(memberName, "MoveLast", StringComparison.Ordinal))
         {
-            if (!receiver.IsAddressMutable)
-            {
-                ReportError(
-                    "STK3007",
-                    receiver.AssignmentErrorMessage ?? $"Dynamic storage MoveLast requires a mutable dynamic owner, but {DescribeExpressionTarget(receiver)} is not mutable.",
-                    context);
-            }
+            ReportDynamicStorageOwnerDiagnostic(receiver, "MoveLast", context);
 
             var moveLastArguments = arguments.argument();
             if (moveLastArguments.Length != 0)
@@ -7317,18 +7596,13 @@ internal sealed class TypeChecker
                 elementType,
                 NamedType: ResolveNamedTypeSymbol(elementType),
                 DiagnosticName: "dynamic storage MoveLast result");
+            RecordDynamicStorageOperation("MoveLast", receiver, elementType, moveLastArguments.Length, arguments);
             return true;
         }
 
         if (string.Equals(memberName, "MoveAt", StringComparison.Ordinal))
         {
-            if (!receiver.IsAddressMutable)
-            {
-                ReportError(
-                    "STK3007",
-                    receiver.AssignmentErrorMessage ?? $"Dynamic storage MoveAt requires a mutable dynamic owner, but {DescribeExpressionTarget(receiver)} is not mutable.",
-                    context);
-            }
+            ReportDynamicStorageOwnerDiagnostic(receiver, "MoveAt", context);
 
             var moveAtArguments = arguments.argument();
             if (moveAtArguments.Length != 1)
@@ -7366,6 +7640,7 @@ internal sealed class TypeChecker
                 elementType,
                 NamedType: ResolveNamedTypeSymbol(elementType),
                 DiagnosticName: "dynamic storage MoveAt result");
+            RecordDynamicStorageOperation("MoveAt", receiver, elementType, moveAtArguments.Length, arguments);
             return true;
         }
 
@@ -7380,13 +7655,7 @@ internal sealed class TypeChecker
         var methodResultType = isReserve ? StarkTypeSymbols.Void : StarkTypeSymbols.Bool;
         result = new ExpressionBinding(methodResultType, DiagnosticName: $"dynamic storage {memberName}");
 
-        if (!receiver.IsAddressMutable)
-        {
-            ReportError(
-                "STK3007",
-                receiver.AssignmentErrorMessage ?? $"Dynamic storage {memberName} requires a mutable dynamic owner, but {DescribeExpressionTarget(receiver)} is not mutable.",
-                context);
-        }
+        ReportDynamicStorageOwnerDiagnostic(receiver, memberName, context);
 
         var suppliedArguments = arguments.argument();
         if (suppliedArguments.Length != 1)
@@ -7420,7 +7689,25 @@ internal sealed class TypeChecker
                 suppliedArguments[0].expression());
         }
 
+        RecordDynamicStorageOperation(memberName, receiver, methodResultType, suppliedArguments.Length, arguments);
         return true;
+    }
+
+    private void ReportDynamicStorageOwnerDiagnostic(
+        ExpressionBinding receiver,
+        string memberName,
+        ParserRuleContext context)
+    {
+        if (receiver.IsAddressable && receiver.IsAddressMutable)
+        {
+            return;
+        }
+
+        ReportError(
+            "STK3007",
+            receiver.AssignmentErrorMessage
+                ?? $"Dynamic storage {memberName} requires a mutable addressable dynamic owner, but {DescribeExpressionTarget(receiver)} is not a mutable addressable owner.",
+            context);
     }
 
     private bool TryEvaluateUnsafeRawSliceConstructionPrefix(
@@ -7691,7 +7978,7 @@ internal sealed class TypeChecker
         {
             ReportError(
                 "STK3008",
-                $"Object creation for enum '{namedType.Name}' is not implemented in the current compiler yet. Enum constructors and runtime layout remain undefined.",
+                $"Cannot create enum '{namedType.Name}' with object creation syntax. Use an enum constructor such as '{namedType.Name}.Variant(...)'.",
                 expression);
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
@@ -7706,7 +7993,15 @@ internal sealed class TypeChecker
 
         matchedConstructor = CheckObjectCreationArguments(expression.argumentList(), expression, createdType, scope);
 
-        if (expression.objectInitializer() is { } objectInitializer)
+        if (createdType.Kind == StarkTypeKind.Dynamic
+            && expression.objectInitializer() is { } dynamicObjectInitializer)
+        {
+            ReportError(
+                "STK3008",
+                "Dynamic storage creation does not support object initializers. Use `new()` or `new(capacity)` and initialize elements through indexed `init` assignments.",
+                dynamicObjectInitializer);
+        }
+        else if (expression.objectInitializer() is { } objectInitializer)
         {
             initializerMembers = CheckObjectInitializer(
                 objectInitializer,
@@ -7847,27 +8142,55 @@ internal sealed class TypeChecker
             lambdaScope.Declare(new VariableSymbol(parameter.Identifier().GetText(), parameterType, IsMutable: false, IsConstant: false));
         }
 
-        if (expression.expression() is { } bodyExpression)
+        LambdaTypingRecord? lambda = null;
+        if (lambdaParameters.Length == parameterTypes.Count && _currentFunctionName is { } enclosingFunctionName)
         {
-            var bodyValue = EvaluateExpression(bodyExpression, lambdaScope, allowFunctionReference: false, expectedType: returnType);
-            if (!CanAssign(returnType, bodyValue.Type))
+            lambda = new LambdaTypingRecord(
+                CallableValueFacts.BuildLambdaFunctionName(enclosingFunctionName, lambdaLocation),
+                expectedType,
+                parameterNames,
+                lambdaLocation,
+                enclosingFunctionName);
+        }
+
+        var previousFunctionName = _currentFunctionName;
+        var typeBodyAsLambdaFunction = lambda is not null
+            && captureBindings.Count == 0
+            && !TypeContainsOpenCurrentFunctionGenericParameter(expectedType)
+            && parametersExactlyMatchTarget;
+        if (typeBodyAsLambdaFunction)
+        {
+            _currentFunctionName = lambda!.FunctionName;
+        }
+
+        try
+        {
+            if (expression.expression() is { } bodyExpression)
             {
-                ReportError(
-                    "STK3002",
-                    $"Lambda body expects '{returnType.DisplayName}' but found '{bodyValue.Type.DisplayName}'.{GetExplicitConversionHint(returnType, bodyValue.Type)}",
-                    bodyExpression);
+                var bodyValue = EvaluateExpression(bodyExpression, lambdaScope, allowFunctionReference: false, expectedType: returnType);
+                if (!CanAssign(returnType, bodyValue.Type))
+                {
+                    ReportError(
+                        "STK3002",
+                        $"Lambda body expects '{returnType.DisplayName}' but found '{bodyValue.Type.DisplayName}'.{GetExplicitConversionHint(returnType, bodyValue.Type)}",
+                        bodyExpression);
+                }
+            }
+            else if (expression.block() is { } block)
+            {
+                CheckBlock(block, lambdaScope, returnType);
             }
         }
-        else if (expression.block() is { } block)
+        finally
         {
-            CheckBlock(block, lambdaScope, returnType);
+            _currentFunctionName = previousFunctionName;
         }
 
         if (captureBindings.Count > 0)
         {
             ReportError(
                 "STK3008",
-                "Capturing lambdas are parsed and capture-checked, but closure environment lowering is not implemented yet. Use a named function item promoted to 'fnptr<...>' for callable values in this compiler slice.",
+                "A lambda converted to 'fnptr<...>' cannot capture local state because function pointers do not carry closure storage. Use a named function item or pass captured state explicitly.",
                 (ParserRuleContext?)expression.captureClause() ?? expression);
             return new ExpressionBinding(expectedType, DiagnosticName: "lambda");
         }
@@ -7876,7 +8199,7 @@ internal sealed class TypeChecker
         {
             ReportError(
                 "STK3008",
-                "Non-capturing lambda lowering for open generic function-pointer targets is not implemented yet. Use a named generic function item for this callable value.",
+                "A lambda converted to 'fnptr<...>' requires a concrete function-pointer target type. Use a named generic function item when the target function-pointer type still contains open generic parameters.",
                 expression);
             return new ExpressionBinding(expectedType, DiagnosticName: "lambda");
         }
@@ -7890,14 +8213,8 @@ internal sealed class TypeChecker
             return new ExpressionBinding(expectedType, DiagnosticName: "lambda");
         }
 
-        if (lambdaParameters.Length == parameterTypes.Count && _currentFunctionName is { } enclosingFunctionName)
+        if (lambda is not null)
         {
-            var lambda = new LambdaTypingRecord(
-                CallableValueFacts.BuildLambdaFunctionName(enclosingFunctionName, lambdaLocation),
-                expectedType,
-                parameterNames,
-                lambdaLocation,
-                enclosingFunctionName);
             _lambdas.Add(lambda);
             _functions.TryAdd(lambda.FunctionName, CallableValueFacts.BuildLambdaSignature(lambda));
         }
@@ -8325,13 +8642,19 @@ internal sealed class TypeChecker
             }
         }
 
+        var callArgumentRecords = BuildCallArgumentRecords(
+            target.Function.Parameters,
+            target.Receiver,
+            argumentBindings,
+            receiverOffset);
+
         if (target.Receiver is null)
         {
-            RecordDirectCall(target.Function, arguments);
+            RecordDirectCall(target.Function, arguments, callArgumentRecords);
         }
         else
         {
-            RecordMemberCall(target.Function, arguments);
+            RecordMemberCall(target.Function, arguments, callArgumentRecords);
         }
 
         var returnType = target.Function.ReturnType;
@@ -9380,6 +9703,17 @@ internal sealed class TypeChecker
         return true;
     }
 
+    private static StarkParser.ExpressionListContext? TryGetRawPointerRegionExpressionList(StarkParser.ExpressionContext expression)
+    {
+        if (TryGetSimplePostfixExpression(expression) is not { } postfix
+            || postfix.postfixPart() is not [var indexPart])
+        {
+            return null;
+        }
+
+        return indexPart.expressionList();
+    }
+
     private static StarkParser.PostfixExpressionContext? TryGetSimplePostfixExpression(StarkParser.ExpressionContext expression)
     {
         return TryGetSimpleUnaryExpression(expression) is { } unary
@@ -9621,7 +9955,11 @@ internal sealed class TypeChecker
                 arguments.argument(index).expression());
         }
 
-        _indirectCalls.Add(new IndirectCallTypingRecord(target.Type, Location(arguments), _currentFunctionName));
+        _indirectCalls.Add(new IndirectCallTypingRecord(
+            target.Type,
+            Location(arguments),
+            _currentFunctionName,
+            BuildCallArgumentRecords(expectedParameters, null, argumentBindings, 0)));
 
         if (returnType.BorrowKind != StarkBorrowKind.None)
         {
@@ -9704,7 +10042,7 @@ internal sealed class TypeChecker
             var indexExpressions = indexes.expression();
             if (indexExpressions.Length == 0)
             {
-                return new ExpressionBinding(
+                var result = new ExpressionBinding(
                     target.Type,
                     IsAssignable: false,
                     NamedType: ResolveNamedTypeSymbol(target.Type),
@@ -9715,6 +10053,8 @@ internal sealed class TypeChecker
                     HasConstProvenance: HasConstProvenance(target),
                     MemoryRootKey: target.MemoryRootKey,
                     MemoryRootIsIndependentStorage: target.MemoryRootIsIndependentStorage);
+                RecordIndexAccess("text-slice", target.Type, result.Type, 0, indexes);
+                return result;
             }
 
             if (indexExpressions.Length == 1)
@@ -9728,7 +10068,7 @@ internal sealed class TypeChecker
                         indexExpressions[0]);
                 }
 
-                return new ExpressionBinding(
+                var result = new ExpressionBinding(
                     target.Type,
                     IsAssignable: false,
                     NamedType: ResolveNamedTypeSymbol(target.Type),
@@ -9741,6 +10081,8 @@ internal sealed class TypeChecker
                         ? AppendMemoryRootIndexKey(elementMemoryRootKey, indexExpressions[0])
                         : null,
                     MemoryRootIsIndependentStorage: target.MemoryRootIsIndependentStorage);
+                RecordIndexAccess("text-element", target.Type, result.Type, 1, indexes);
+                return result;
             }
 
             if (indexExpressions.Length != 2)
@@ -9761,7 +10103,7 @@ internal sealed class TypeChecker
                 }
             }
 
-            return new ExpressionBinding(
+            var textSlice = new ExpressionBinding(
                 target.Type,
                 IsAssignable: false,
                 NamedType: ResolveNamedTypeSymbol(target.Type),
@@ -9774,6 +10116,8 @@ internal sealed class TypeChecker
                     ? AppendMemoryRootTextRangeKey(sliceMemoryRootKey, indexExpressions[0], indexExpressions[1], scope)
                     : null,
                 MemoryRootIsIndependentStorage: target.MemoryRootIsIndependentStorage);
+            RecordIndexAccess("text-slice", target.Type, textSlice.Type, 2, indexes);
+            return textSlice;
         }
 
         var currentType = target.Type;
@@ -9832,7 +10176,7 @@ internal sealed class TypeChecker
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
 
-        return new ExpressionBinding(
+        var indexed = new ExpressionBinding(
             currentType,
             IsAssignable: currentIsAddressMutable,
             NamedType: ResolveNamedTypeSymbol(currentType),
@@ -9852,6 +10196,8 @@ internal sealed class TypeChecker
             HasConstProvenance: currentHasConstProvenance,
             MemoryRootKey: currentMemoryRootKey,
             MemoryRootIsIndependentStorage: target.MemoryRootIsIndependentStorage);
+        RecordIndexAccess("element", target.Type, indexed.Type, indexes.expression().Length, indexes);
+        return indexed;
     }
 
     private ExpressionBinding ApplyMemberAccess(ExpressionBinding target, string memberName, ParserRuleContext context)
@@ -10161,7 +10507,7 @@ internal sealed class TypeChecker
 
         if (indexExpressions.Length == 1)
         {
-            return new ExpressionBinding(
+            var element = new ExpressionBinding(
                 elementType,
                 IsAssignable: isAddressMutable,
                 NamedType: ResolveNamedTypeSymbol(elementType),
@@ -10184,12 +10530,14 @@ internal sealed class TypeChecker
                     ? AppendMemoryRootIndexKey(elementMemoryRootKey, indexExpressions[0])
                     : null,
                 MemoryRootIsIndependentStorage: target.MemoryRootIsIndependentStorage);
+            RecordIndexAccess("dynamic-element", target.Type, element.Type, 1, indexes);
+            return element;
         }
 
         var sliceType = StarkTypeSymbols.ApplyQualifiers(
             StarkTypeSymbols.Slice(elementType),
             isMutableView: isAddressMutable);
-        return new ExpressionBinding(
+        var range = new ExpressionBinding(
             sliceType,
             IsAssignable: false,
             NamedType: ResolveNamedTypeSymbol(sliceType),
@@ -10205,6 +10553,8 @@ internal sealed class TypeChecker
                 ? AppendMemoryRootTextRangeKey(rangeMemoryRootKey, indexExpressions[0], indexExpressions[1], scope)
                 : null,
             MemoryRootIsIndependentStorage: target.MemoryRootIsIndependentStorage);
+        RecordIndexAccess("dynamic-slice", target.Type, range.Type, 2, indexes);
+        return range;
     }
 
     private bool TryApplyValueTextConversionMemberAccess(
@@ -11106,7 +11456,7 @@ internal sealed class TypeChecker
 
         ReportError(
             "STK3023",
-            $"Dictionary key type '{keyType.DisplayName}' must satisfy 'System.Collections.DictionaryKey<{keyType.DisplayName}>'. The current compiler can prove that contract for 'bool' and Stark integer key types; add an explicit hash/equality contract before using this key type.",
+            $"Dictionary key type '{keyType.DisplayName}' must satisfy 'System.Collections.DictionaryKey<{keyType.DisplayName}>'. Built-in dictionary key contracts are available for 'bool' and Stark integer key types; add an explicit hash/equality contract before using this key type.",
             triggerLocation ?? SourceLocation.Synthetic());
     }
 
@@ -11435,9 +11785,9 @@ internal sealed class TypeChecker
         enumTypeSymbol = ResolveGenericQualifiedName(genericEnumCaseReference.genericQualifiedName());
         if (enumTypeSymbol.Kind != StarkTypeKind.Named
             || enumTypeSymbol.NamedType is null
-            || !_namedTypes.TryGetValue(enumTypeSymbol.NamedType, out enumType)
-            || enumType.Kind != DeclarationKind.Enum
-            || !enumType.TryGetVariant(genericEnumCaseReference.Identifier().GetText(), out variant, out _))
+            || !_namedTypes.TryGetValue(enumTypeSymbol.NamedType, out var resolvedEnumType)
+            || resolvedEnumType.Kind != DeclarationKind.Enum
+            || !resolvedEnumType.TryGetVariant(genericEnumCaseReference.Identifier().GetText(), out var resolvedVariant, out _))
         {
             enumType = null!;
             enumTypeSymbol = StarkTypeSymbols.Error;
@@ -11445,6 +11795,8 @@ internal sealed class TypeChecker
             return false;
         }
 
+        enumType = resolvedEnumType;
+        variant = resolvedVariant;
         return true;
     }
 
@@ -12977,7 +13329,7 @@ internal sealed class TypeChecker
         if (source.TextLiteral is null || source.TextLiteralKind is null)
         {
             message =
-                $"Explicit conversion from '{source.Type.DisplayName}' to '{targetType.DisplayName}' is not supported because text widening and narrowing currently require a compile-time text constant or a future explicit owning-text construction path.";
+                $"Explicit conversion from '{source.Type.DisplayName}' to '{targetType.DisplayName}' requires a compile-time text constant. For runtime text transcoding, write into caller-owned storage with System.Text APIs.";
             return true;
         }
 
@@ -13664,7 +14016,7 @@ internal sealed class TypeChecker
         {
             ReportError(
                 "STK3008",
-                $"Type '{type.DisplayName}' depends on enum '{enumName}', but enums are not yet supported in {usage}.",
+                $"Type '{type.DisplayName}' depends on enum '{enumName}', but enum-dependent runtime layout is not valid in {usage}.",
                 context);
         }
     }
@@ -14171,6 +14523,7 @@ internal sealed class TypeChecker
     {
         return field.DeclaringModuleName is null
             || !_loadedModules.TryGet(field.DeclaringModuleName, out var declaringModule)
+            || declaringModule is null
             || !declaringModule.Reference.IsExternal;
     }
 

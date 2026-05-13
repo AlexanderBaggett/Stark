@@ -106,6 +106,7 @@ public sealed class PackageImageCallableValueTests
                 sourcePath));
 
             Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(libraryResult, "Package-image library builds", sourcePath);
 
             var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
             File.WriteAllText(manifestPath, manifest.ToJson());
@@ -174,6 +175,7 @@ public sealed class PackageImageCallableValueTests
                 sourcePath));
 
             Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(libraryResult, "Package-image library builds", sourcePath);
 
             var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
             var module = Assert.Single(manifest.Modules, static item => item.ModuleName == "Facade");
@@ -241,6 +243,7 @@ public sealed class PackageImageCallableValueTests
                 sourcePath));
 
             Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(libraryResult, "Package-image library builds", sourcePath);
 
             var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
             File.WriteAllText(manifestPath, manifest.ToJson());
@@ -318,6 +321,7 @@ public sealed class PackageImageCallableValueTests
                 sourcePath));
 
             Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(libraryResult, "Package-image library builds", sourcePath);
 
             var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
             File.WriteAllText(manifestPath, manifest.ToJson());
@@ -792,6 +796,79 @@ public sealed class PackageImageCallableValueTests
                     StopAfterPassId: "type-check"));
 
             Assert.True(good.Succeeded, string.Join(", ", good.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImageBackedAcceptedProgramEmitsLlvmWithoutFallbackLogs()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-fallback-gate-");
+        var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public fn T Choose<T>(T left, T right, bool takeRight) {
+                    stack mut T current = left;
+                    if (takeRight) {
+                        current = right;
+                    }
+
+                    return current;
+                }
+
+                public fn i32[min max] Twice(i32[min max] value) {
+                    return value + value;
+                }
+                """,
+                sourcePath),
+                new CompilerOptions(
+                    EmitLlvmIr: true,
+                    TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(libraryResult, "Package-image library builds", sourcePath);
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(sourcePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32[min max] Run(i32[min max] left, i32[min max] right, bool takeRight) {
+                        return Facade.Choose(left, right, takeRight) + Facade.Twice(5);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    EmitLlvmIr: true,
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(Environment.NewLine, consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(consumerResult, "Accepted package-image-backed consumer builds");
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+            Assert.NotNull(llvmModule);
         }
         finally
         {

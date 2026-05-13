@@ -5,199 +5,259 @@ module Raylib.Textures
 internal unsafe ffi fn void stark_raylib_LoadImage(rawmutptr<Image> result, ascii fileName);
 public fn Image LoadImage(ascii fileName) {
     stack mut Image result = DefaultImage();
-    stark_raylib_LoadImage(&result, fileName);
+    unsafe {
+        stark_raylib_LoadImage(&result, fileName);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_LoadImageRaw(rawmutptr<Image> result, ascii fileName, i32[min max] width, i32[min max] height, i32[min max] format, i32[min max] headerSize);
 public fn Image LoadImageRaw(ascii fileName, i32[min max] width, i32[min max] height, i32[min max] format, i32[min max] headerSize) {
     stack mut Image result = DefaultImage();
-    stark_raylib_LoadImageRaw(&result, fileName, width, height, format, headerSize);
+    unsafe {
+        stark_raylib_LoadImageRaw(&result, fileName, width, height, format, headerSize);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_LoadImageAnim(rawmutptr<Image> result, ascii fileName, rawmutptr<i32[min max]> frames);
 public unsafe fn Image LoadImageAnim(ascii fileName, rawmutptr<i32[min max]> frames) {
     stack mut Image result = DefaultImage();
-    stark_raylib_LoadImageAnim(&result, fileName, frames);
+    unsafe {
+        stark_raylib_LoadImageAnim(&result, fileName, frames);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_LoadImageAnimFromMemory(rawmutptr<Image> result, ascii fileType, rawptr<u8[0 max]> fileData, i32[min max] dataSize, rawmutptr<i32[min max]> frames);
 public unsafe fn Image LoadImageAnimFromMemory(ascii fileType, rawptr<u8[0 max]> fileData, i32[min max] dataSize, rawmutptr<i32[min max]> frames) {
     stack mut Image result = DefaultImage();
-    stark_raylib_LoadImageAnimFromMemory(&result, fileType, fileData, dataSize, frames);
+    unsafe {
+        stark_raylib_LoadImageAnimFromMemory(&result, fileType, fileData, dataSize, frames);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_LoadImageFromMemory(rawmutptr<Image> result, ascii fileType, rawptr<u8[0 max]> fileData, i32[min max] dataSize);
 public unsafe fn Image LoadImageFromMemory(ascii fileType, rawptr<u8[0 max]> fileData, i32[min max] dataSize) {
     stack mut Image result = DefaultImage();
-    stark_raylib_LoadImageFromMemory(&result, fileType, fileData, dataSize);
+    unsafe {
+        stark_raylib_LoadImageFromMemory(&result, fileType, fileData, dataSize);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_LoadImageFromTexture(rawmutptr<Image> result, rawptr<Texture2D> texture);
 public fn Image LoadImageFromTexture(Texture2D texture) {
     stack mut Image result = DefaultImage();
-    stark_raylib_LoadImageFromTexture(&result, &texture);
+    unsafe {
+        stark_raylib_LoadImageFromTexture(&result, &texture);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_LoadImageFromScreen(rawmutptr<Image> result);
 public fn Image LoadImageFromScreen() {
     stack mut Image result = DefaultImage();
-    stark_raylib_LoadImageFromScreen(&result);
+    unsafe {
+        stark_raylib_LoadImageFromScreen(&result);
+    }
     return result;
 }
 
 internal unsafe ffi fn bool stark_raylib_IsImageValid(rawptr<Image> image);
 public fn bool IsImageValid(Image image) {
-    return stark_raylib_IsImageValid(&image);
+    unsafe {
+        return stark_raylib_IsImageValid(&image);
+    }
 }
 
 internal unsafe ffi fn void stark_raylib_UnloadImage(rawptr<Image> image);
 public fn void UnloadImage(Image image) {
-    stark_raylib_UnloadImage(&image);
+    unsafe {
+        stark_raylib_UnloadImage(&image);
+    }
     return;
 }
 
 internal unsafe ffi fn bool stark_raylib_ExportImage(rawptr<Image> image, ascii fileName);
 public fn bool ExportImage(Image image, ascii fileName) {
-    return stark_raylib_ExportImage(&image, fileName);
+    unsafe {
+        return stark_raylib_ExportImage(&image, fileName);
+    }
 }
 
 internal unsafe ffi fn rawmutptr<u8[0 max]> stark_raylib_ExportImageToMemory(rawptr<Image> image, ascii fileType, rawmutptr<i32[min max]> fileSize);
 public unsafe fn rawmutptr<u8[0 max]> ExportImageToMemory(Image image, ascii fileType, rawmutptr<i32[min max]> fileSize) {
-    return stark_raylib_ExportImageToMemory(&image, fileType, fileSize);
+    unsafe {
+        return stark_raylib_ExportImageToMemory(&image, fileType, fileSize);
+    }
 }
 
 internal unsafe ffi fn bool stark_raylib_ExportImageAsCode(rawptr<Image> image, ascii fileName);
 public fn bool ExportImageAsCode(Image image, ascii fileName) {
-    return stark_raylib_ExportImageAsCode(&image, fileName);
+    unsafe {
+        return stark_raylib_ExportImageAsCode(&image, fileName);
+    }
 }
 
 internal unsafe ffi fn void stark_raylib_GenImageColor(rawmutptr<Image> result, i32[min max] width, i32[min max] height, rawptr<Color> color);
 public fn Image GenImageColor(i32[min max] width, i32[min max] height, Color color) {
     stack mut Image result = DefaultImage();
-    stark_raylib_GenImageColor(&result, width, height, &color);
+    unsafe {
+        stark_raylib_GenImageColor(&result, width, height, &color);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_GenImageGradientLinear(rawmutptr<Image> result, i32[min max] width, i32[min max] height, i32[min max] direction, rawptr<Color> start, rawptr<Color> end);
 public fn Image GenImageGradientLinear(i32[min max] width, i32[min max] height, i32[min max] direction, Color start, Color end) {
     stack mut Image result = DefaultImage();
-    stark_raylib_GenImageGradientLinear(&result, width, height, direction, &start, &end);
+    unsafe {
+        stark_raylib_GenImageGradientLinear(&result, width, height, direction, &start, &end);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_GenImageGradientRadial(rawmutptr<Image> result, i32[min max] width, i32[min max] height, f32 density, rawptr<Color> inner, rawptr<Color> outer);
 public fn Image GenImageGradientRadial(i32[min max] width, i32[min max] height, f32 density, Color inner, Color outer) {
     stack mut Image result = DefaultImage();
-    stark_raylib_GenImageGradientRadial(&result, width, height, density, &inner, &outer);
+    unsafe {
+        stark_raylib_GenImageGradientRadial(&result, width, height, density, &inner, &outer);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_GenImageGradientSquare(rawmutptr<Image> result, i32[min max] width, i32[min max] height, f32 density, rawptr<Color> inner, rawptr<Color> outer);
 public fn Image GenImageGradientSquare(i32[min max] width, i32[min max] height, f32 density, Color inner, Color outer) {
     stack mut Image result = DefaultImage();
-    stark_raylib_GenImageGradientSquare(&result, width, height, density, &inner, &outer);
+    unsafe {
+        stark_raylib_GenImageGradientSquare(&result, width, height, density, &inner, &outer);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_GenImageChecked(rawmutptr<Image> result, i32[min max] width, i32[min max] height, i32[min max] checksX, i32[min max] checksY, rawptr<Color> col1, rawptr<Color> col2);
 public fn Image GenImageChecked(i32[min max] width, i32[min max] height, i32[min max] checksX, i32[min max] checksY, Color col1, Color col2) {
     stack mut Image result = DefaultImage();
-    stark_raylib_GenImageChecked(&result, width, height, checksX, checksY, &col1, &col2);
+    unsafe {
+        stark_raylib_GenImageChecked(&result, width, height, checksX, checksY, &col1, &col2);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_GenImageWhiteNoise(rawmutptr<Image> result, i32[min max] width, i32[min max] height, f32 factor);
 public fn Image GenImageWhiteNoise(i32[min max] width, i32[min max] height, f32 factor) {
     stack mut Image result = DefaultImage();
-    stark_raylib_GenImageWhiteNoise(&result, width, height, factor);
+    unsafe {
+        stark_raylib_GenImageWhiteNoise(&result, width, height, factor);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_GenImagePerlinNoise(rawmutptr<Image> result, i32[min max] width, i32[min max] height, i32[min max] offsetX, i32[min max] offsetY, f32 scale);
 public fn Image GenImagePerlinNoise(i32[min max] width, i32[min max] height, i32[min max] offsetX, i32[min max] offsetY, f32 scale) {
     stack mut Image result = DefaultImage();
-    stark_raylib_GenImagePerlinNoise(&result, width, height, offsetX, offsetY, scale);
+    unsafe {
+        stark_raylib_GenImagePerlinNoise(&result, width, height, offsetX, offsetY, scale);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_GenImageCellular(rawmutptr<Image> result, i32[min max] width, i32[min max] height, i32[min max] tileSize);
 public fn Image GenImageCellular(i32[min max] width, i32[min max] height, i32[min max] tileSize) {
     stack mut Image result = DefaultImage();
-    stark_raylib_GenImageCellular(&result, width, height, tileSize);
+    unsafe {
+        stark_raylib_GenImageCellular(&result, width, height, tileSize);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_GenImageText(rawmutptr<Image> result, i32[min max] width, i32[min max] height, ascii text);
 public fn Image GenImageText(i32[min max] width, i32[min max] height, ascii text) {
     stack mut Image result = DefaultImage();
-    stark_raylib_GenImageText(&result, width, height, text);
+    unsafe {
+        stark_raylib_GenImageText(&result, width, height, text);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageCopy(rawmutptr<Image> result, rawptr<Image> image);
 public fn Image ImageCopy(Image image) {
     stack mut Image result = DefaultImage();
-    stark_raylib_ImageCopy(&result, &image);
+    unsafe {
+        stark_raylib_ImageCopy(&result, &image);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageFromImage(rawmutptr<Image> result, rawptr<Image> image, rawptr<Rectangle> rec);
 public fn Image ImageFromImage(Image image, Rectangle rec) {
     stack mut Image result = DefaultImage();
-    stark_raylib_ImageFromImage(&result, &image, &rec);
+    unsafe {
+        stark_raylib_ImageFromImage(&result, &image, &rec);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageFromChannel(rawmutptr<Image> result, rawptr<Image> image, i32[min max] selectedChannel);
 public fn Image ImageFromChannel(Image image, i32[min max] selectedChannel) {
     stack mut Image result = DefaultImage();
-    stark_raylib_ImageFromChannel(&result, &image, selectedChannel);
+    unsafe {
+        stark_raylib_ImageFromChannel(&result, &image, selectedChannel);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageText(rawmutptr<Image> result, ascii text, i32[min max] fontSize, rawptr<Color> color);
 public fn Image ImageText(ascii text, i32[min max] fontSize, Color color) {
     stack mut Image result = DefaultImage();
-    stark_raylib_ImageText(&result, text, fontSize, &color);
+    unsafe {
+        stark_raylib_ImageText(&result, text, fontSize, &color);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageTextEx(rawmutptr<Image> result, rawptr<Font> font, ascii text, f32 fontSize, f32 spacing, rawptr<Color> tint);
 public fn Image ImageTextEx(Font font, ascii text, f32 fontSize, f32 spacing, Color tint) {
     stack mut Image result = DefaultImage();
-    stark_raylib_ImageTextEx(&result, &font, text, fontSize, spacing, &tint);
+    unsafe {
+        stark_raylib_ImageTextEx(&result, &font, text, fontSize, spacing, &tint);
+    }
     return result;
 }
 
 public unsafe ffi fn void ImageFormat(rawmutptr<Image> image, i32[min max] newFormat);
 internal unsafe ffi fn void stark_raylib_ImageToPOT(rawmutptr<Image> image, rawptr<Color> fill);
 public unsafe fn void ImageToPOT(rawmutptr<Image> image, Color fill) {
-    stark_raylib_ImageToPOT(image, &fill);
+    unsafe {
+        stark_raylib_ImageToPOT(image, &fill);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageCrop(rawmutptr<Image> image, rawptr<Rectangle> crop);
 public unsafe fn void ImageCrop(rawmutptr<Image> image, Rectangle crop) {
-    stark_raylib_ImageCrop(image, &crop);
+    unsafe {
+        stark_raylib_ImageCrop(image, &crop);
+    }
     return;
 }
 
 public unsafe ffi fn void ImageAlphaCrop(rawmutptr<Image> image, f32 threshold);
 internal unsafe ffi fn void stark_raylib_ImageAlphaClear(rawmutptr<Image> image, rawptr<Color> color, f32 threshold);
 public unsafe fn void ImageAlphaClear(rawmutptr<Image> image, Color color, f32 threshold) {
-    stark_raylib_ImageAlphaClear(image, &color, threshold);
+    unsafe {
+        stark_raylib_ImageAlphaClear(image, &color, threshold);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageAlphaMask(rawmutptr<Image> image, rawptr<Image> alphaMask);
 public unsafe fn void ImageAlphaMask(rawmutptr<Image> image, Image alphaMask) {
-    stark_raylib_ImageAlphaMask(image, &alphaMask);
+    unsafe {
+        stark_raylib_ImageAlphaMask(image, &alphaMask);
+    }
     return;
 }
 
@@ -208,7 +268,9 @@ public unsafe ffi fn void ImageResize(rawmutptr<Image> image, i32[min max] newWi
 public unsafe ffi fn void ImageResizeNN(rawmutptr<Image> image, i32[min max] newWidth, i32[min max] newHeight);
 internal unsafe ffi fn void stark_raylib_ImageResizeCanvas(rawmutptr<Image> image, i32[min max] newWidth, i32[min max] newHeight, i32[min max] offsetX, i32[min max] offsetY, rawptr<Color> fill);
 public unsafe fn void ImageResizeCanvas(rawmutptr<Image> image, i32[min max] newWidth, i32[min max] newHeight, i32[min max] offsetX, i32[min max] offsetY, Color fill) {
-    stark_raylib_ImageResizeCanvas(image, newWidth, newHeight, offsetX, offsetY, &fill);
+    unsafe {
+        stark_raylib_ImageResizeCanvas(image, newWidth, newHeight, offsetX, offsetY, &fill);
+    }
     return;
 }
 
@@ -221,7 +283,9 @@ public unsafe ffi fn void ImageRotateCW(rawmutptr<Image> image);
 public unsafe ffi fn void ImageRotateCCW(rawmutptr<Image> image);
 internal unsafe ffi fn void stark_raylib_ImageColorTint(rawmutptr<Image> image, rawptr<Color> color);
 public unsafe fn void ImageColorTint(rawmutptr<Image> image, Color color) {
-    stark_raylib_ImageColorTint(image, &color);
+    unsafe {
+        stark_raylib_ImageColorTint(image, &color);
+    }
     return;
 }
 
@@ -231,18 +295,24 @@ public unsafe ffi fn void ImageColorContrast(rawmutptr<Image> image, f32 contras
 public unsafe ffi fn void ImageColorBrightness(rawmutptr<Image> image, i32[min max] brightness);
 internal unsafe ffi fn void stark_raylib_ImageColorReplace(rawmutptr<Image> image, rawptr<Color> color, rawptr<Color> replace);
 public unsafe fn void ImageColorReplace(rawmutptr<Image> image, Color color, Color replace) {
-    stark_raylib_ImageColorReplace(image, &color, &replace);
+    unsafe {
+        stark_raylib_ImageColorReplace(image, &color, &replace);
+    }
     return;
 }
 
 internal unsafe ffi fn rawmutptr<Color> stark_raylib_LoadImageColors(rawptr<Image> image);
 public unsafe fn rawmutptr<Color> LoadImageColors(Image image) {
-    return stark_raylib_LoadImageColors(&image);
+    unsafe {
+        return stark_raylib_LoadImageColors(&image);
+    }
 }
 
 internal unsafe ffi fn rawmutptr<Color> stark_raylib_LoadImagePalette(rawptr<Image> image, i32[min max] maxPaletteSize, rawmutptr<i32[min max]> colorCount);
 public unsafe fn rawmutptr<Color> LoadImagePalette(Image image, i32[min max] maxPaletteSize, rawmutptr<i32[min max]> colorCount) {
-    return stark_raylib_LoadImagePalette(&image, maxPaletteSize, colorCount);
+    unsafe {
+        return stark_raylib_LoadImagePalette(&image, maxPaletteSize, colorCount);
+    }
 }
 
 public unsafe ffi fn void UnloadImageColors(rawmutptr<Color> colors);
@@ -250,364 +320,480 @@ public unsafe ffi fn void UnloadImagePalette(rawmutptr<Color> colors);
 internal unsafe ffi fn void stark_raylib_GetImageAlphaBorder(rawmutptr<Rectangle> result, rawptr<Image> image, f32 threshold);
 public fn Rectangle GetImageAlphaBorder(Image image, f32 threshold) {
     stack mut Rectangle result = DefaultRectangle();
-    stark_raylib_GetImageAlphaBorder(&result, &image, threshold);
+    unsafe {
+        stark_raylib_GetImageAlphaBorder(&result, &image, threshold);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_GetImageColor(rawmutptr<Color> result, rawptr<Image> image, i32[min max] x, i32[min max] y);
 public fn Color GetImageColor(Image image, i32[min max] x, i32[min max] y) {
     stack mut Color result = DefaultColor();
-    stark_raylib_GetImageColor(&result, &image, x, y);
+    unsafe {
+        stark_raylib_GetImageColor(&result, &image, x, y);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageClearBackground(rawmutptr<Image> dst, rawptr<Color> color);
 public unsafe fn void ImageClearBackground(rawmutptr<Image> dst, Color color) {
-    stark_raylib_ImageClearBackground(dst, &color);
+    unsafe {
+        stark_raylib_ImageClearBackground(dst, &color);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageDrawPixel(rawmutptr<Image> dst, i32[min max] posX, i32[min max] posY, rawptr<Color> color);
 public unsafe fn void ImageDrawPixel(rawmutptr<Image> dst, i32[min max] posX, i32[min max] posY, Color color) {
-    stark_raylib_ImageDrawPixel(dst, posX, posY, &color);
+    unsafe {
+        stark_raylib_ImageDrawPixel(dst, posX, posY, &color);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageDrawPixelV(rawmutptr<Image> dst, rawptr<Vector2> position, rawptr<Color> color);
 public unsafe fn void ImageDrawPixelV(rawmutptr<Image> dst, Vector2 position, Color color) {
-    stark_raylib_ImageDrawPixelV(dst, &position, &color);
+    unsafe {
+        stark_raylib_ImageDrawPixelV(dst, &position, &color);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageDrawLine(rawmutptr<Image> dst, i32[min max] startPosX, i32[min max] startPosY, i32[min max] endPosX, i32[min max] endPosY, rawptr<Color> color);
 public unsafe fn void ImageDrawLine(rawmutptr<Image> dst, i32[min max] startPosX, i32[min max] startPosY, i32[min max] endPosX, i32[min max] endPosY, Color color) {
-    stark_raylib_ImageDrawLine(dst, startPosX, startPosY, endPosX, endPosY, &color);
+    unsafe {
+        stark_raylib_ImageDrawLine(dst, startPosX, startPosY, endPosX, endPosY, &color);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageDrawLineV(rawmutptr<Image> dst, rawptr<Vector2> start, rawptr<Vector2> end, rawptr<Color> color);
 public unsafe fn void ImageDrawLineV(rawmutptr<Image> dst, Vector2 start, Vector2 end, Color color) {
-    stark_raylib_ImageDrawLineV(dst, &start, &end, &color);
+    unsafe {
+        stark_raylib_ImageDrawLineV(dst, &start, &end, &color);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageDrawLineEx(rawmutptr<Image> dst, rawptr<Vector2> start, rawptr<Vector2> end, i32[min max] thick, rawptr<Color> color);
 public unsafe fn void ImageDrawLineEx(rawmutptr<Image> dst, Vector2 start, Vector2 end, i32[min max] thick, Color color) {
-    stark_raylib_ImageDrawLineEx(dst, &start, &end, thick, &color);
+    unsafe {
+        stark_raylib_ImageDrawLineEx(dst, &start, &end, thick, &color);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageDrawCircle(rawmutptr<Image> dst, i32[min max] centerX, i32[min max] centerY, i32[min max] radius, rawptr<Color> color);
 public unsafe fn void ImageDrawCircle(rawmutptr<Image> dst, i32[min max] centerX, i32[min max] centerY, i32[min max] radius, Color color) {
-    stark_raylib_ImageDrawCircle(dst, centerX, centerY, radius, &color);
+    unsafe {
+        stark_raylib_ImageDrawCircle(dst, centerX, centerY, radius, &color);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageDrawCircleV(rawmutptr<Image> dst, rawptr<Vector2> center, i32[min max] radius, rawptr<Color> color);
 public unsafe fn void ImageDrawCircleV(rawmutptr<Image> dst, Vector2 center, i32[min max] radius, Color color) {
-    stark_raylib_ImageDrawCircleV(dst, &center, radius, &color);
+    unsafe {
+        stark_raylib_ImageDrawCircleV(dst, &center, radius, &color);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageDrawCircleLines(rawmutptr<Image> dst, i32[min max] centerX, i32[min max] centerY, i32[min max] radius, rawptr<Color> color);
 public unsafe fn void ImageDrawCircleLines(rawmutptr<Image> dst, i32[min max] centerX, i32[min max] centerY, i32[min max] radius, Color color) {
-    stark_raylib_ImageDrawCircleLines(dst, centerX, centerY, radius, &color);
+    unsafe {
+        stark_raylib_ImageDrawCircleLines(dst, centerX, centerY, radius, &color);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageDrawCircleLinesV(rawmutptr<Image> dst, rawptr<Vector2> center, i32[min max] radius, rawptr<Color> color);
 public unsafe fn void ImageDrawCircleLinesV(rawmutptr<Image> dst, Vector2 center, i32[min max] radius, Color color) {
-    stark_raylib_ImageDrawCircleLinesV(dst, &center, radius, &color);
+    unsafe {
+        stark_raylib_ImageDrawCircleLinesV(dst, &center, radius, &color);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageDrawRectangle(rawmutptr<Image> dst, i32[min max] posX, i32[min max] posY, i32[min max] width, i32[min max] height, rawptr<Color> color);
 public unsafe fn void ImageDrawRectangle(rawmutptr<Image> dst, i32[min max] posX, i32[min max] posY, i32[min max] width, i32[min max] height, Color color) {
-    stark_raylib_ImageDrawRectangle(dst, posX, posY, width, height, &color);
+    unsafe {
+        stark_raylib_ImageDrawRectangle(dst, posX, posY, width, height, &color);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageDrawRectangleV(rawmutptr<Image> dst, rawptr<Vector2> position, rawptr<Vector2> size, rawptr<Color> color);
 public unsafe fn void ImageDrawRectangleV(rawmutptr<Image> dst, Vector2 position, Vector2 size, Color color) {
-    stark_raylib_ImageDrawRectangleV(dst, &position, &size, &color);
+    unsafe {
+        stark_raylib_ImageDrawRectangleV(dst, &position, &size, &color);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageDrawRectangleRec(rawmutptr<Image> dst, rawptr<Rectangle> rec, rawptr<Color> color);
 public unsafe fn void ImageDrawRectangleRec(rawmutptr<Image> dst, Rectangle rec, Color color) {
-    stark_raylib_ImageDrawRectangleRec(dst, &rec, &color);
+    unsafe {
+        stark_raylib_ImageDrawRectangleRec(dst, &rec, &color);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageDrawRectangleLines(rawmutptr<Image> dst, rawptr<Rectangle> rec, i32[min max] thick, rawptr<Color> color);
 public unsafe fn void ImageDrawRectangleLines(rawmutptr<Image> dst, Rectangle rec, i32[min max] thick, Color color) {
-    stark_raylib_ImageDrawRectangleLines(dst, &rec, thick, &color);
+    unsafe {
+        stark_raylib_ImageDrawRectangleLines(dst, &rec, thick, &color);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageDrawTriangle(rawmutptr<Image> dst, rawptr<Vector2> v1, rawptr<Vector2> v2, rawptr<Vector2> v3, rawptr<Color> color);
 public unsafe fn void ImageDrawTriangle(rawmutptr<Image> dst, Vector2 v1, Vector2 v2, Vector2 v3, Color color) {
-    stark_raylib_ImageDrawTriangle(dst, &v1, &v2, &v3, &color);
+    unsafe {
+        stark_raylib_ImageDrawTriangle(dst, &v1, &v2, &v3, &color);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageDrawTriangleEx(rawmutptr<Image> dst, rawptr<Vector2> v1, rawptr<Vector2> v2, rawptr<Vector2> v3, rawptr<Color> c1, rawptr<Color> c2, rawptr<Color> c3);
 public unsafe fn void ImageDrawTriangleEx(rawmutptr<Image> dst, Vector2 v1, Vector2 v2, Vector2 v3, Color c1, Color c2, Color c3) {
-    stark_raylib_ImageDrawTriangleEx(dst, &v1, &v2, &v3, &c1, &c2, &c3);
+    unsafe {
+        stark_raylib_ImageDrawTriangleEx(dst, &v1, &v2, &v3, &c1, &c2, &c3);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageDrawTriangleLines(rawmutptr<Image> dst, rawptr<Vector2> v1, rawptr<Vector2> v2, rawptr<Vector2> v3, rawptr<Color> color);
 public unsafe fn void ImageDrawTriangleLines(rawmutptr<Image> dst, Vector2 v1, Vector2 v2, Vector2 v3, Color color) {
-    stark_raylib_ImageDrawTriangleLines(dst, &v1, &v2, &v3, &color);
+    unsafe {
+        stark_raylib_ImageDrawTriangleLines(dst, &v1, &v2, &v3, &color);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageDrawTriangleFan(rawmutptr<Image> dst, rawmutptr<Vector2> points, i32[min max] pointCount, rawptr<Color> color);
 public unsafe fn void ImageDrawTriangleFan(rawmutptr<Image> dst, rawmutptr<Vector2> points, i32[min max] pointCount, Color color) {
-    stark_raylib_ImageDrawTriangleFan(dst, points, pointCount, &color);
+    unsafe {
+        stark_raylib_ImageDrawTriangleFan(dst, points, pointCount, &color);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageDrawTriangleStrip(rawmutptr<Image> dst, rawmutptr<Vector2> points, i32[min max] pointCount, rawptr<Color> color);
 public unsafe fn void ImageDrawTriangleStrip(rawmutptr<Image> dst, rawmutptr<Vector2> points, i32[min max] pointCount, Color color) {
-    stark_raylib_ImageDrawTriangleStrip(dst, points, pointCount, &color);
+    unsafe {
+        stark_raylib_ImageDrawTriangleStrip(dst, points, pointCount, &color);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageDraw(rawmutptr<Image> dst, rawptr<Image> src, rawptr<Rectangle> srcRec, rawptr<Rectangle> dstRec, rawptr<Color> tint);
 public unsafe fn void ImageDraw(rawmutptr<Image> dst, Image src, Rectangle srcRec, Rectangle dstRec, Color tint) {
-    stark_raylib_ImageDraw(dst, &src, &srcRec, &dstRec, &tint);
+    unsafe {
+        stark_raylib_ImageDraw(dst, &src, &srcRec, &dstRec, &tint);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageDrawText(rawmutptr<Image> dst, ascii text, i32[min max] posX, i32[min max] posY, i32[min max] fontSize, rawptr<Color> color);
 public unsafe fn void ImageDrawText(rawmutptr<Image> dst, ascii text, i32[min max] posX, i32[min max] posY, i32[min max] fontSize, Color color) {
-    stark_raylib_ImageDrawText(dst, text, posX, posY, fontSize, &color);
+    unsafe {
+        stark_raylib_ImageDrawText(dst, text, posX, posY, fontSize, &color);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_ImageDrawTextEx(rawmutptr<Image> dst, rawptr<Font> font, ascii text, rawptr<Vector2> position, f32 fontSize, f32 spacing, rawptr<Color> tint);
 public unsafe fn void ImageDrawTextEx(rawmutptr<Image> dst, Font font, ascii text, Vector2 position, f32 fontSize, f32 spacing, Color tint) {
-    stark_raylib_ImageDrawTextEx(dst, &font, text, &position, fontSize, spacing, &tint);
+    unsafe {
+        stark_raylib_ImageDrawTextEx(dst, &font, text, &position, fontSize, spacing, &tint);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_LoadTexture(rawmutptr<Texture2D> result, ascii fileName);
 public fn Texture2D LoadTexture(ascii fileName) {
     stack mut Texture2D result = DefaultTexture();
-    stark_raylib_LoadTexture(&result, fileName);
+    unsafe {
+        stark_raylib_LoadTexture(&result, fileName);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_LoadTextureFromImage(rawmutptr<Texture2D> result, rawptr<Image> image);
 public fn Texture2D LoadTextureFromImage(Image image) {
     stack mut Texture2D result = DefaultTexture();
-    stark_raylib_LoadTextureFromImage(&result, &image);
+    unsafe {
+        stark_raylib_LoadTextureFromImage(&result, &image);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_LoadTextureCubemap(rawmutptr<TextureCubemap> result, rawptr<Image> image, i32[min max] layout);
 public fn TextureCubemap LoadTextureCubemap(Image image, i32[min max] layout) {
     stack mut TextureCubemap result = DefaultTexture();
-    stark_raylib_LoadTextureCubemap(&result, &image, layout);
+    unsafe {
+        stark_raylib_LoadTextureCubemap(&result, &image, layout);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_LoadRenderTexture(rawmutptr<RenderTexture2D> result, i32[min max] width, i32[min max] height);
 public fn RenderTexture2D LoadRenderTexture(i32[min max] width, i32[min max] height) {
     stack mut RenderTexture2D result = DefaultRenderTexture();
-    stark_raylib_LoadRenderTexture(&result, width, height);
+    unsafe {
+        stark_raylib_LoadRenderTexture(&result, width, height);
+    }
     return result;
 }
 
 internal unsafe ffi fn bool stark_raylib_IsTextureValid(rawptr<Texture2D> texture);
 public fn bool IsTextureValid(Texture2D texture) {
-    return stark_raylib_IsTextureValid(&texture);
+    unsafe {
+        return stark_raylib_IsTextureValid(&texture);
+    }
 }
 
 internal unsafe ffi fn void stark_raylib_UnloadTexture(rawptr<Texture2D> texture);
 public fn void UnloadTexture(Texture2D texture) {
-    stark_raylib_UnloadTexture(&texture);
+    unsafe {
+        stark_raylib_UnloadTexture(&texture);
+    }
     return;
 }
 
 internal unsafe ffi fn bool stark_raylib_IsRenderTextureValid(rawptr<RenderTexture2D> target);
 public fn bool IsRenderTextureValid(RenderTexture2D target) {
-    return stark_raylib_IsRenderTextureValid(&target);
+    unsafe {
+        return stark_raylib_IsRenderTextureValid(&target);
+    }
 }
 
 internal unsafe ffi fn void stark_raylib_UnloadRenderTexture(rawptr<RenderTexture2D> target);
 public fn void UnloadRenderTexture(RenderTexture2D target) {
-    stark_raylib_UnloadRenderTexture(&target);
+    unsafe {
+        stark_raylib_UnloadRenderTexture(&target);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_UpdateTexture(rawptr<Texture2D> texture, rawptr<i8[min max]> pixels);
 public unsafe fn void UpdateTexture(Texture2D texture, rawptr<i8[min max]> pixels) {
-    stark_raylib_UpdateTexture(&texture, pixels);
+    unsafe {
+        stark_raylib_UpdateTexture(&texture, pixels);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_UpdateTextureRec(rawptr<Texture2D> texture, rawptr<Rectangle> rec, rawptr<i8[min max]> pixels);
 public unsafe fn void UpdateTextureRec(Texture2D texture, Rectangle rec, rawptr<i8[min max]> pixels) {
-    stark_raylib_UpdateTextureRec(&texture, &rec, pixels);
+    unsafe {
+        stark_raylib_UpdateTextureRec(&texture, &rec, pixels);
+    }
     return;
 }
 
 public unsafe ffi fn void GenTextureMipmaps(rawmutptr<Texture2D> texture);
 internal unsafe ffi fn void stark_raylib_SetTextureFilter(rawptr<Texture2D> texture, i32[min max] filter);
 public fn void SetTextureFilter(Texture2D texture, i32[min max] filter) {
-    stark_raylib_SetTextureFilter(&texture, filter);
+    unsafe {
+        stark_raylib_SetTextureFilter(&texture, filter);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_SetTextureWrap(rawptr<Texture2D> texture, i32[min max] wrap);
 public fn void SetTextureWrap(Texture2D texture, i32[min max] wrap) {
-    stark_raylib_SetTextureWrap(&texture, wrap);
+    unsafe {
+        stark_raylib_SetTextureWrap(&texture, wrap);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_DrawTexture(rawptr<Texture2D> texture, i32[min max] posX, i32[min max] posY, rawptr<Color> tint);
 public fn void DrawTexture(Texture2D texture, i32[min max] posX, i32[min max] posY, Color tint) {
-    stark_raylib_DrawTexture(&texture, posX, posY, &tint);
+    unsafe {
+        stark_raylib_DrawTexture(&texture, posX, posY, &tint);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_DrawTextureV(rawptr<Texture2D> texture, rawptr<Vector2> position, rawptr<Color> tint);
 public fn void DrawTextureV(Texture2D texture, Vector2 position, Color tint) {
-    stark_raylib_DrawTextureV(&texture, &position, &tint);
+    unsafe {
+        stark_raylib_DrawTextureV(&texture, &position, &tint);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_DrawTextureEx(rawptr<Texture2D> texture, rawptr<Vector2> position, f32 rotation, f32 scale, rawptr<Color> tint);
 public fn void DrawTextureEx(Texture2D texture, Vector2 position, f32 rotation, f32 scale, Color tint) {
-    stark_raylib_DrawTextureEx(&texture, &position, rotation, scale, &tint);
+    unsafe {
+        stark_raylib_DrawTextureEx(&texture, &position, rotation, scale, &tint);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_DrawTextureRec(rawptr<Texture2D> texture, rawptr<Rectangle> source, rawptr<Vector2> position, rawptr<Color> tint);
 public fn void DrawTextureRec(Texture2D texture, Rectangle source, Vector2 position, Color tint) {
-    stark_raylib_DrawTextureRec(&texture, &source, &position, &tint);
+    unsafe {
+        stark_raylib_DrawTextureRec(&texture, &source, &position, &tint);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_DrawTexturePro(rawptr<Texture2D> texture, rawptr<Rectangle> source, rawptr<Rectangle> dest, rawptr<Vector2> origin, f32 rotation, rawptr<Color> tint);
 public fn void DrawTexturePro(Texture2D texture, Rectangle source, Rectangle dest, Vector2 origin, f32 rotation, Color tint) {
-    stark_raylib_DrawTexturePro(&texture, &source, &dest, &origin, rotation, &tint);
+    unsafe {
+        stark_raylib_DrawTexturePro(&texture, &source, &dest, &origin, rotation, &tint);
+    }
     return;
 }
 
 internal unsafe ffi fn void stark_raylib_DrawTextureNPatch(rawptr<Texture2D> texture, rawptr<NPatchInfo> nPatchInfo, rawptr<Rectangle> dest, rawptr<Vector2> origin, f32 rotation, rawptr<Color> tint);
 public fn void DrawTextureNPatch(Texture2D texture, NPatchInfo nPatchInfo, Rectangle dest, Vector2 origin, f32 rotation, Color tint) {
-    stark_raylib_DrawTextureNPatch(&texture, &nPatchInfo, &dest, &origin, rotation, &tint);
+    unsafe {
+        stark_raylib_DrawTextureNPatch(&texture, &nPatchInfo, &dest, &origin, rotation, &tint);
+    }
     return;
 }
 
 internal unsafe ffi fn bool stark_raylib_ColorIsEqual(rawptr<Color> col1, rawptr<Color> col2);
 public fn bool ColorIsEqual(Color col1, Color col2) {
-    return stark_raylib_ColorIsEqual(&col1, &col2);
+    unsafe {
+        return stark_raylib_ColorIsEqual(&col1, &col2);
+    }
 }
 
 internal unsafe ffi fn void stark_raylib_Fade(rawmutptr<Color> result, rawptr<Color> color, f32 alpha);
 public fn Color Fade(Color color, f32 alpha) {
     stack mut Color result = DefaultColor();
-    stark_raylib_Fade(&result, &color, alpha);
+    unsafe {
+        stark_raylib_Fade(&result, &color, alpha);
+    }
     return result;
 }
 
 internal unsafe ffi fn i32[min max] stark_raylib_ColorToInt(rawptr<Color> color);
 public fn i32[min max] ColorToInt(Color color) {
-    return stark_raylib_ColorToInt(&color);
+    unsafe {
+        return stark_raylib_ColorToInt(&color);
+    }
 }
 
 internal unsafe ffi fn void stark_raylib_ColorNormalize(rawmutptr<Vector4> result, rawptr<Color> color);
 public fn Vector4 ColorNormalize(Color color) {
     stack mut Vector4 result = DefaultVector4();
-    stark_raylib_ColorNormalize(&result, &color);
+    unsafe {
+        stark_raylib_ColorNormalize(&result, &color);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_ColorFromNormalized(rawmutptr<Color> result, rawptr<Vector4> normalized);
 public fn Color ColorFromNormalized(Vector4 normalized) {
     stack mut Color result = DefaultColor();
-    stark_raylib_ColorFromNormalized(&result, &normalized);
+    unsafe {
+        stark_raylib_ColorFromNormalized(&result, &normalized);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_ColorToHSV(rawmutptr<Vector3> result, rawptr<Color> color);
 public fn Vector3 ColorToHSV(Color color) {
     stack mut Vector3 result = DefaultVector3();
-    stark_raylib_ColorToHSV(&result, &color);
+    unsafe {
+        stark_raylib_ColorToHSV(&result, &color);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_ColorFromHSV(rawmutptr<Color> result, f32 hue, f32 saturation, f32 value);
 public fn Color ColorFromHSV(f32 hue, f32 saturation, f32 value) {
     stack mut Color result = DefaultColor();
-    stark_raylib_ColorFromHSV(&result, hue, saturation, value);
+    unsafe {
+        stark_raylib_ColorFromHSV(&result, hue, saturation, value);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_ColorTint(rawmutptr<Color> result, rawptr<Color> color, rawptr<Color> tint);
 public fn Color ColorTint(Color color, Color tint) {
     stack mut Color result = DefaultColor();
-    stark_raylib_ColorTint(&result, &color, &tint);
+    unsafe {
+        stark_raylib_ColorTint(&result, &color, &tint);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_ColorBrightness(rawmutptr<Color> result, rawptr<Color> color, f32 factor);
 public fn Color ColorBrightness(Color color, f32 factor) {
     stack mut Color result = DefaultColor();
-    stark_raylib_ColorBrightness(&result, &color, factor);
+    unsafe {
+        stark_raylib_ColorBrightness(&result, &color, factor);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_ColorContrast(rawmutptr<Color> result, rawptr<Color> color, f32 contrast);
 public fn Color ColorContrast(Color color, f32 contrast) {
     stack mut Color result = DefaultColor();
-    stark_raylib_ColorContrast(&result, &color, contrast);
+    unsafe {
+        stark_raylib_ColorContrast(&result, &color, contrast);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_ColorAlpha(rawmutptr<Color> result, rawptr<Color> color, f32 alpha);
 public fn Color ColorAlpha(Color color, f32 alpha) {
     stack mut Color result = DefaultColor();
-    stark_raylib_ColorAlpha(&result, &color, alpha);
+    unsafe {
+        stark_raylib_ColorAlpha(&result, &color, alpha);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_ColorAlphaBlend(rawmutptr<Color> result, rawptr<Color> dst, rawptr<Color> src, rawptr<Color> tint);
 public fn Color ColorAlphaBlend(Color dst, Color src, Color tint) {
     stack mut Color result = DefaultColor();
-    stark_raylib_ColorAlphaBlend(&result, &dst, &src, &tint);
+    unsafe {
+        stark_raylib_ColorAlphaBlend(&result, &dst, &src, &tint);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_ColorLerp(rawmutptr<Color> result, rawptr<Color> color1, rawptr<Color> color2, f32 factor);
 public fn Color ColorLerp(Color color1, Color color2, f32 factor) {
     stack mut Color result = DefaultColor();
-    stark_raylib_ColorLerp(&result, &color1, &color2, factor);
+    unsafe {
+        stark_raylib_ColorLerp(&result, &color1, &color2, factor);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_GetColor(rawmutptr<Color> result, u32[0 max] hexValue);
 public fn Color GetColor(u32[0 max] hexValue) {
     stack mut Color result = DefaultColor();
-    stark_raylib_GetColor(&result, hexValue);
+    unsafe {
+        stark_raylib_GetColor(&result, hexValue);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_GetPixelColor(rawmutptr<Color> result, rawmutptr<i8[min max]> srcPtr, i32[min max] format);
 public unsafe fn Color GetPixelColor(rawmutptr<i8[min max]> srcPtr, i32[min max] format) {
     stack mut Color result = DefaultColor();
-    stark_raylib_GetPixelColor(&result, srcPtr, format);
+    unsafe {
+        stark_raylib_GetPixelColor(&result, srcPtr, format);
+    }
     return result;
 }
 
 internal unsafe ffi fn void stark_raylib_SetPixelColor(rawmutptr<i8[min max]> dstPtr, rawptr<Color> color, i32[min max] format);
 public unsafe fn void SetPixelColor(rawmutptr<i8[min max]> dstPtr, Color color, i32[min max] format) {
-    stark_raylib_SetPixelColor(dstPtr, &color, format);
+    unsafe {
+        stark_raylib_SetPixelColor(dstPtr, &color, format);
+    }
     return;
 }
 

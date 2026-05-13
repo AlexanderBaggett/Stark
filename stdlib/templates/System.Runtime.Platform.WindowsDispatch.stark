@@ -87,25 +87,25 @@ internal unsafe fn i64[min max] ReadStdin(rawmutptr<i8[min max]>[capacity] buffe
     }
 }
 
-internal unsafe fn i32[min max] WriteAscii(rawptr<i8[min max]> handle, ascii text) {
+internal unsafe inline fn i32[min max] WriteAscii(rawptr<i8[min max]> handle, ascii text) {
     unsafe {
         return System.Runtime.Platform.Windows.WriteAscii(handle, text);
     }
 }
 
-internal finite law ascii DirectorySeparator() {
+internal inline finite law ascii DirectorySeparator() {
     return System.Runtime.Platform.Windows.DirectorySeparator();
 }
 
-internal finite law ascii AlternateDirectorySeparator() {
+internal inline finite law ascii AlternateDirectorySeparator() {
     return System.Runtime.Platform.Windows.AlternateDirectorySeparator();
 }
 
-internal finite law ascii PathSeparator() {
+internal inline finite law ascii PathSeparator() {
     return System.Runtime.Platform.Windows.PathSeparator();
 }
 
-internal finite law bool IsDirectorySeparator(ascii value) {
+internal inline finite law bool IsDirectorySeparator(ascii value) {
     return System.Runtime.Platform.Windows.IsDirectorySeparator(value);
 }
 
@@ -115,7 +115,7 @@ internal unsafe fn bool IsTerminal(rawptr<i8[min max]> handle) {
     }
 }
 
-internal unsafe fn i32[min max] WriteUnicode(rawptr<i8[min max]> handle, unicode text) {
+internal unsafe inline fn i32[min max] WriteUnicode(rawptr<i8[min max]> handle, unicode text) {
     unsafe {
         return System.Runtime.Platform.Windows.WriteUnicode(handle, text);
     }
@@ -145,7 +145,7 @@ internal unsafe fn rawptr<i8[min max]> OpenFileReadWrite(ascii path) {
     }
 }
 
-internal unsafe fn i32[min max] CloseFile(rawptr<i8[min max]> handle) {
+internal unsafe inline fn i32[min max] CloseFile(rawptr<i8[min max]> handle) {
     unsafe {
         return System.Runtime.Platform.Windows.CloseFile(handle);
     }
@@ -157,43 +157,43 @@ internal unsafe fn i32[min max] FlushFile(rawptr<i8[min max]> handle) {
     }
 }
 
-internal unsafe fn i64[min max] ReadFile(rawmutptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
+internal unsafe inline fn i64[min max] ReadFile(rawmutptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
     unsafe {
         return System.Runtime.Platform.Windows.ReadFile(buffer, size, count, handle);
     }
 }
 
-internal unsafe fn i64[min max] WriteFile(rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
+internal unsafe inline fn i64[min max] WriteFile(rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
     unsafe {
         return System.Runtime.Platform.Windows.WriteFile(buffer, size, count, handle);
     }
 }
 
-internal unsafe fn i64[min max] ReadFileBytes(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
+internal unsafe inline fn i64[min max] ReadFileBytes(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
     unsafe {
         return System.Runtime.Platform.Windows.ReadFileBytes(buffer, length, handle);
     }
 }
 
-internal unsafe fn i64[min max] WriteFileBytes(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
+internal unsafe inline fn i64[min max] WriteFileBytes(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
     unsafe {
         return System.Runtime.Platform.Windows.WriteFileBytes(buffer, length, handle);
     }
 }
 
-internal unsafe fn i64[min max] ReadFileBytesFast(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
+internal unsafe inline fn i64[min max] ReadFileBytesFast(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
     unsafe {
         return System.Runtime.Platform.Windows.ReadFileBytesFast(buffer, length, handle);
     }
 }
 
-internal unsafe fn i64[min max] WriteFileBytesFast(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
+internal unsafe inline fn i64[min max] WriteFileBytesFast(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
     unsafe {
         return System.Runtime.Platform.Windows.WriteFileBytesFast(buffer, length, handle);
     }
 }
 
-internal unsafe fn i64[min max] SeekFile(rawptr<i8[min max]> handle, i64[min max] offset, i32[min max] origin) {
+internal unsafe inline fn i64[min max] SeekFile(rawptr<i8[min max]> handle, i64[min max] offset, i32[min max] origin) {
     unsafe {
         return System.Runtime.Platform.Windows.SeekFile(handle, offset, origin);
     }
@@ -245,7 +245,7 @@ internal unsafe fn rawptr<i8[min max]> OpenDirectoryFast(ascii path)
     }
 }
 
-internal unsafe fn rawptr<i8[min max]> OpenDirectoryFastInto(
+internal unsafe inline fn rawptr<i8[min max]> OpenDirectoryFastInto(
     ascii path,
     rawmutptr<i8[min max]>[capacity] buffer,
     u64[0 2 ** 63 - 1] capacity,
@@ -256,17 +256,17 @@ internal unsafe fn rawptr<i8[min max]> OpenDirectoryFastInto(
     }
 }
 
-internal fn u64[0 2 ** 63 - 1] DirectoryBufferCapacity() {
+internal inline fn u64[0 2 ** 63 - 1] DirectoryBufferCapacity() {
     return System.Runtime.Platform.Windows.DirectoryBufferCapacity();
 }
 
-internal unsafe fn i32[min max] CloseDirectory(rawptr<i8[min max]> handle) {
+internal unsafe inline fn i32[min max] CloseDirectory(rawptr<i8[min max]> handle) {
     unsafe {
         return System.Runtime.Platform.Windows.CloseDirectory(handle);
     }
 }
 
-internal unsafe fn i32[min max] ReadDirectoryEntry(
+internal unsafe inline fn i32[min max] ReadDirectoryEntry(
     rawptr<i8[min max]> handle,
     rawmutptr<i8[min max]>[capacity] buffer,
     u64[0 2 ** 63 - 1] capacity,
@@ -280,7 +280,7 @@ internal unsafe fn i32[min max] ReadDirectoryEntry(
     }
 }
 
-internal unsafe fn i32[min max] ReadDirectoryEntryInfo(
+internal unsafe inline fn i32[min max] ReadDirectoryEntryInfo(
     rawptr<i8[min max]> handle,
     rawmutptr<i8[min max]>[capacity] buffer,
     u64[0 2 ** 63 - 1] capacity,
@@ -291,6 +291,19 @@ internal unsafe fn i32[min max] ReadDirectoryEntryInfo(
 {
     unsafe {
         return System.Runtime.Platform.Windows.ReadDirectoryEntryInfo(handle, buffer, capacity, readPos, readLength, nameLength, kind);
+    }
+}
+
+internal unsafe inline fn i64[min max] ReadDirectoryNameLengthChecksum(
+    rawptr<i8[min max]> handle,
+    rawmutptr<i8[min max]>[capacity] buffer,
+    u64[0 2 ** 63 - 1] capacity,
+    rawmutptr<i64[min max]> readPos,
+    rawmutptr<i64[min max]> readLength,
+    i64[min max] expectedCount)
+{
+    unsafe {
+        return System.Runtime.Platform.Windows.ReadDirectoryNameLengthChecksum(handle, buffer, capacity, readPos, readLength, expectedCount);
     }
 }
 

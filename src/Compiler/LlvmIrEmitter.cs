@@ -33,11 +33,13 @@ internal sealed class LlvmIrEmitter
     private readonly bool _enableOptimizedRawPointerLoopIntrinsics;
     private readonly IReadOnlyDictionary<string, string> _globalSymbols;
     private readonly IReadOnlySet<string> _globalsEligibleForLocalUnnamedAddr;
+    private readonly IReadOnlyDictionary<string, ImportedGlobalDeclarationPlan> _importedCloneReferencedGlobals;
     private readonly IReadOnlyDictionary<StringConstantKey, EmittedStringConstant> _stringConstants;
     private readonly IReadOnlyDictionary<ObjectCreationKey, TypedConstructorShape?> _objectCreationConstructors;
     private readonly IReadOnlyDictionary<string, FunctionEffectProfile> _allFunctionEffects;
     private readonly IReadOnlyDictionary<string, TypedFunctionSignature> _allFunctionSignatures;
     private readonly IReadOnlyDictionary<string, AbiFunctionSignature> _allAbiFunctions;
+    private readonly IReadOnlySet<string>? _importedInlineCloneSeedFunctions;
     private readonly IReadOnlyDictionary<string, ConcreteTypeLayout> _publishedConcreteLayouts;
     private readonly IReadOnlyDictionary<string, ImportedFunctionSemanticSummary> _publishedFunctionSemantics;
     private readonly IReadOnlyDictionary<string, string> _specializationTemplateNames;
@@ -46,6 +48,7 @@ internal sealed class LlvmIrEmitter
     private readonly IReadOnlyDictionary<string, ImportedInlineBodyPlan> _closedWorldImportedInlineBodies;
     private readonly IReadOnlySet<string> _referencedImportedFunctions;
     private readonly bool _isOptimizedBuild;
+    private readonly bool _emitFallbackDeclarationsForSourceBodies;
     private readonly DebugMetadataEmitter _debugInfo;
     private readonly LlvmEmissionContext _emissionContext;
     private readonly LlvmFunctionAttributeBuilder _functionAttributeBuilder;
@@ -71,7 +74,9 @@ internal sealed class LlvmIrEmitter
         ClosedWorldOptimizationModel? closedWorldModel = null,
         SpecializationCodegenStrategyModel? specializationCodegenStrategy = null,
         CompilerLogBag? logs = null,
-        SsaValueFactModel? ssaValueFacts = null)
+        SsaValueFactModel? ssaValueFacts = null,
+        IReadOnlySet<string>? importedInlineCloneSeedFunctions = null,
+        bool emitFallbackDeclarationsForSourceBodies = true)
         : this(
             input,
             parseResult,
@@ -90,7 +95,9 @@ internal sealed class LlvmIrEmitter
             closedWorldModel,
             specializationCodegenStrategy,
             logs,
-            ssaValueFacts)
+            ssaValueFacts,
+            importedInlineCloneSeedFunctions,
+            emitFallbackDeclarationsForSourceBodies)
     {
     }
 
@@ -112,7 +119,9 @@ internal sealed class LlvmIrEmitter
         ClosedWorldOptimizationModel? closedWorldModel = null,
         SpecializationCodegenStrategyModel? specializationCodegenStrategy = null,
         CompilerLogBag? logs = null,
-        SsaValueFactModel? ssaValueFacts = null)
+        SsaValueFactModel? ssaValueFacts = null,
+        IReadOnlySet<string>? importedInlineCloneSeedFunctions = null,
+        bool emitFallbackDeclarationsForSourceBodies = true)
     {
         _input = input;
         _parseResult = parseResult;
@@ -132,21 +141,24 @@ internal sealed class LlvmIrEmitter
         _internalizeModulePrivate = internalizeModulePrivate;
         _enableOptimizedRawPointerLoopIntrinsics = enableOptimizedRawPointerLoopIntrinsics;
         _isOptimizedBuild = isOptimizedBuild;
+        _emitFallbackDeclarationsForSourceBodies = emitFallbackDeclarationsForSourceBodies;
         _stringConstants = CollectStringConstants(parseResult, ssa);
         _objectCreationConstructors = typeModel.ObjectCreations
             .GroupBy(static record => new ObjectCreationKey(record.ExpressionText, record.Location.Line, record.Location.Column))
             .ToDictionary(static group => group.Key, static group => group.Last().Constructor);
-        _globalSymbols = BuildGlobalSymbolMap();
-        _globalsEligibleForLocalUnnamedAddr = BuildGlobalsEligibleForLocalUnnamedAddr();
         _allFunctionEffects = BuildAllFunctionEffects(effectModel, specializationCodegenStrategy);
         _allFunctionSignatures = BuildAllFunctionSignatures(typeModel, ssa, specializationCodegenStrategy);
         _allAbiFunctions = BuildAllAbiFunctions(_allFunctionSignatures, abiModel, _allFunctionEffects, typeModel.NamedTypes, enumLayoutModel.Layouts);
+        _importedInlineCloneSeedFunctions = importedInlineCloneSeedFunctions;
         _publishedConcreteLayouts = BuildPublishedConcreteLayouts(loadedModules);
         _publishedFunctionSemantics = BuildPublishedFunctionSemantics(loadedModules, specializationCodegenStrategy);
         _specializationTemplateNames = BuildSpecializationTemplateNames(specializationCodegenStrategy);
         _functionLocations = BuildFunctionLocationMap(loadedModules, input.FilePath);
         _closedWorldImportedLawClones = BuildClosedWorldImportedLawClones();
         _closedWorldImportedInlineBodies = BuildClosedWorldImportedInlineBodies();
+        _importedCloneReferencedGlobals = BuildImportedCloneReferencedGlobalDeclarations();
+        _globalSymbols = BuildGlobalSymbolMap();
+        _globalsEligibleForLocalUnnamedAddr = BuildGlobalsEligibleForLocalUnnamedAddr();
         _referencedImportedFunctions = CollectReferencedImportedFunctions(
             ssa,
             _closedWorldImportedLawClones.Values,
@@ -222,6 +234,7 @@ internal sealed class LlvmIrEmitter
         _moduleSurfaceEmitter = new LlvmModuleSurfaceEmitter(
             _emissionContext,
             _globalsEligibleForLocalUnnamedAddr,
+            _importedCloneReferencedGlobals,
             _globalInitializerPlanner);
     }
 
@@ -239,7 +252,7 @@ internal sealed class LlvmIrEmitter
         builder.AppendLine($"target triple = \"{EscapeFileName(_targetInfo?.Triple ?? "unknown-unknown-unknown")}\"");
         builder.AppendLine();
         builder.AppendLine("; LLVM IR for the currently supported Stark SSA subset.");
-        builder.AppendLine("; Unsupported constructs still fall back to declarations.");
+        builder.AppendLine("; Body emission fallback is reported by the compiler pipeline.");
         builder.AppendLine();
 
         LogSpecializationCodegenStrategies();
@@ -294,6 +307,13 @@ internal sealed class LlvmIrEmitter
                     FunctionBodyLoweringKind.AsmBypass,
                     supportsDirectCodeGeneration: false,
                     operation: "EmitAsmFunctionDefinition");
+                if (!_emitFallbackDeclarationsForSourceBodies)
+                {
+                    builder.AppendLine($"; declaration omitted for source asm body '{resolvedName}' because LLVM body fallback is disabled for accepted source functions.");
+                    builder.AppendLine();
+                    continue;
+                }
+
                 builder.AppendLine(BuildDeclarationSignature(false, signature, abiSignature, effects, memoryEffects, parameterEffects));
                 builder.AppendLine();
                 continue;
@@ -344,6 +364,12 @@ internal sealed class LlvmIrEmitter
                         ssaFunction.BodyLoweringKind,
                         ssaFunction.SupportsDirectCodeGeneration,
                         operation: "EmitFunctionDefinition");
+                    if (!_emitFallbackDeclarationsForSourceBodies)
+                    {
+                        builder.AppendLine($"; declaration omitted for source body '{resolvedName}' because LLVM body fallback is disabled for accepted source functions.");
+                        builder.AppendLine();
+                        continue;
+                    }
                 }
             }
             else if (function.HasBody && !IsOpenGenericTemplate(signature))
@@ -356,6 +382,12 @@ internal sealed class LlvmIrEmitter
                     ssaFunction?.BodyLoweringKind ?? FunctionBodyLoweringKind.DeclarationOnly,
                     ssaFunction?.SupportsDirectCodeGeneration ?? false,
                     operation: "EmitFunctionDefinition");
+                if (!_emitFallbackDeclarationsForSourceBodies)
+                {
+                    builder.AppendLine($"; declaration omitted for source body '{resolvedName}' because LLVM body fallback is disabled for accepted source functions.");
+                    builder.AppendLine();
+                    continue;
+                }
             }
 
             builder.AppendLine(BuildDeclarationSignature(false, signature, abiSignature, effects, memoryEffects, parameterEffects));
@@ -507,6 +539,88 @@ internal sealed class LlvmIrEmitter
         }
     }
 
+    private static void CollectReferencedGlobalUses(
+        SsaFunction function,
+        IDictionary<string, ReferencedGlobalUse> referencedGlobals)
+    {
+        foreach (var block in function.Blocks)
+        {
+            foreach (var phi in block.Phis)
+            {
+                foreach (var incoming in phi.Incomings)
+                {
+                    CollectReferencedGlobalUses(incoming.Value, referencedGlobals);
+                }
+            }
+
+            foreach (var instruction in block.Instructions)
+            {
+                CollectReferencedGlobalUses(instruction, referencedGlobals);
+            }
+
+            foreach (var value in EnumerateTerminatorOperands(block.Terminator))
+            {
+                CollectReferencedGlobalUses(value, referencedGlobals);
+            }
+        }
+    }
+
+    private static void CollectReferencedGlobalUses(
+        SsaInstruction instruction,
+        IDictionary<string, ReferencedGlobalUse> referencedGlobals)
+    {
+        switch (instruction)
+        {
+            case SsaValueInstruction valueInstruction:
+                CollectReferencedGlobalUses(valueInstruction.Value, referencedGlobals);
+                break;
+            case SsaStoreGlobalInstruction storeGlobal:
+                AddReferencedGlobalUse(storeGlobal.GlobalName, storeGlobal.GlobalType, referencedGlobals);
+                CollectReferencedGlobalUses(storeGlobal.Value, referencedGlobals);
+                break;
+            default:
+                foreach (var value in EnumerateInstructionOperands(instruction))
+                {
+                    CollectReferencedGlobalUses(value, referencedGlobals);
+                }
+
+                break;
+        }
+    }
+
+    private static void CollectReferencedGlobalUses(
+        SsaRValue value,
+        IDictionary<string, ReferencedGlobalUse> referencedGlobals)
+    {
+        if (value is SsaLoadGlobalRValue loadGlobal)
+        {
+            AddReferencedGlobalUse(loadGlobal.GlobalName, loadGlobal.Type, referencedGlobals);
+        }
+
+        foreach (var operand in EnumerateRValueOperands(value))
+        {
+            CollectReferencedGlobalUses(operand, referencedGlobals);
+        }
+    }
+
+    private static void CollectReferencedGlobalUses(
+        SsaValue value,
+        IDictionary<string, ReferencedGlobalUse> referencedGlobals)
+    {
+        if (value is SsaGlobalAddressValue globalAddress)
+        {
+            AddReferencedGlobalUse(globalAddress.GlobalName, globalAddress.PointeeType, referencedGlobals);
+        }
+    }
+
+    private static void AddReferencedGlobalUse(
+        string globalName,
+        StarkTypeSymbol type,
+        IDictionary<string, ReferencedGlobalUse> referencedGlobals)
+    {
+        referencedGlobals.TryAdd(globalName, new ReferencedGlobalUse(type));
+    }
+
     private void LogLlvmFallback(
         string eventId,
         string functionName,
@@ -527,7 +641,7 @@ internal sealed class LlvmIrEmitter
             location: _functionLocations.TryGetValue(functionName, out var location)
                 ? location
                 : SourceLocation.Synthetic(_input.FilePath),
-            outcome: CompilerLogOutcome.Bypassed,
+            outcome: CompilerLogOutcome.Unsupported,
             data: CompilerLogData.Create(
                 ("module", _syntaxModel.ModuleName),
                 ("function", functionName),
@@ -702,7 +816,8 @@ internal sealed class LlvmIrEmitter
                     bodyLoweringKind,
                     supportsDirectCodeGeneration,
                     operation: "EmitFunctionDefinition"),
-            EscapeIdentifier);
+            EscapeIdentifier,
+            _emitFallbackDeclarationsForSourceBodies);
     }
 
     private IReadOnlyDictionary<string, ImportedLawClonePlan> BuildClosedWorldImportedLawClones()
@@ -729,8 +844,120 @@ internal sealed class LlvmIrEmitter
             _typeModel,
             _enumLayoutModel,
             _allFunctionEffects,
-            _allFunctionSignatures);
+            _allFunctionSignatures,
+            _importedInlineCloneSeedFunctions);
     }
+
+    private IReadOnlyDictionary<string, ImportedGlobalDeclarationPlan> BuildImportedCloneReferencedGlobalDeclarations()
+    {
+        var referencedGlobals = new Dictionary<string, ReferencedGlobalUse>(StringComparer.Ordinal);
+        foreach (var function in _ssa.Functions)
+        {
+            CollectReferencedGlobalUses(function, referencedGlobals);
+        }
+
+        foreach (var clone in _closedWorldImportedLawClones.Values)
+        {
+            CollectReferencedGlobalUses(clone.SsaFunction, referencedGlobals);
+        }
+
+        foreach (var clone in _closedWorldImportedInlineBodies.Values)
+        {
+            CollectReferencedGlobalUses(clone.SsaFunction, referencedGlobals);
+        }
+
+        if (referencedGlobals.Count == 0)
+        {
+            return new Dictionary<string, ImportedGlobalDeclarationPlan>(StringComparer.Ordinal);
+        }
+
+        var importedSourceGlobals = BuildImportedGlobalSourceLookup();
+        var globals = new Dictionary<string, ImportedGlobalDeclarationPlan>(StringComparer.Ordinal);
+
+        foreach (var (qualifiedName, reference) in referencedGlobals.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
+        {
+            if (_typeModel.Globals.ContainsKey(qualifiedName)
+                || !importedSourceGlobals.TryGetValue(qualifiedName, out var source))
+            {
+                continue;
+            }
+
+            var global = new TypedGlobalSymbol(
+                qualifiedName,
+                reference.Type,
+                source.BindingKind);
+            globals[qualifiedName] = new ImportedGlobalDeclarationPlan(
+                qualifiedName,
+                source.ModuleName,
+                source.SourceName,
+                source.Visibility,
+                global,
+                source.Initializer);
+        }
+
+        return globals;
+    }
+
+    private IReadOnlyDictionary<string, ImportedGlobalSourceInfo> BuildImportedGlobalSourceLookup()
+    {
+        var globals = new Dictionary<string, ImportedGlobalSourceInfo>(StringComparer.Ordinal);
+
+        foreach (var module in _loadedModules.ImportedModules)
+        {
+            foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
+            {
+                var visibility = ParseVisibility(declaration.visibilityModifier());
+
+                if (declaration.globalConstantDeclaration() is { } constantDeclaration)
+                {
+                    foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
+                    {
+                        var sourceName = declarator.Identifier().GetText();
+                        var qualifiedName = $"{module.SyntaxModel.ModuleName}.{sourceName}";
+                        globals[qualifiedName] = new ImportedGlobalSourceInfo(
+                            module.SyntaxModel.ModuleName,
+                            sourceName,
+                            visibility,
+                            GlobalBindingKind.Const,
+                            declarator.variableInitializer());
+                    }
+
+                    continue;
+                }
+
+                if (declaration.globalVariableDeclaration() is not { } variableDeclaration)
+                {
+                    continue;
+                }
+
+                var bindingKind = variableDeclaration.MUT() is not null
+                    ? GlobalBindingKind.Mutable
+                    : GlobalBindingKind.Immutable;
+                foreach (var declarator in variableDeclaration.variableDeclarators().variableDeclarator())
+                {
+                    var sourceName = declarator.Identifier().GetText();
+                    var qualifiedName = $"{module.SyntaxModel.ModuleName}.{sourceName}";
+                    globals[qualifiedName] = new ImportedGlobalSourceInfo(
+                        module.SyntaxModel.ModuleName,
+                        sourceName,
+                        visibility,
+                        bindingKind,
+                        declarator.variableInitializer());
+                }
+            }
+        }
+
+        return globals;
+    }
+
+    private sealed record ReferencedGlobalUse(StarkTypeSymbol Type);
+
+    private sealed record ImportedGlobalSourceInfo(
+        string ModuleName,
+        string SourceName,
+        StarkVisibility Visibility,
+        GlobalBindingKind BindingKind,
+        StarkParser.VariableInitializerContext? Initializer);
 
     private void LogSpecializationCodegenStrategies()
     {
@@ -760,7 +987,10 @@ internal sealed class LlvmIrEmitter
 
     private IReadOnlySet<string> BuildGlobalsEligibleForLocalUnnamedAddr()
     {
-        var addressTakenGlobals = CollectExplicitGlobalAddressNames(_ssa);
+        var addressTakenGlobals = CollectExplicitGlobalAddressNames(
+            _ssa.Functions
+                .Concat(_closedWorldImportedLawClones.Values.Select(static clone => clone.SsaFunction))
+                .Concat(_closedWorldImportedInlineBodies.Values.Select(static clone => clone.SsaFunction)));
         var eligible = new HashSet<string>(StringComparer.Ordinal);
 
         void TryAddEligibleGlobal(
@@ -824,7 +1054,7 @@ internal sealed class LlvmIrEmitter
                     foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
                     {
                         var qualifiedName = $"{module.SyntaxModel.ModuleName}.{declarator.Identifier().GetText()}";
-                        if (!_typeModel.Globals.TryGetValue(qualifiedName, out var global))
+                        if (!TryGetGlobal(qualifiedName, out var global))
                         {
                             continue;
                         }
@@ -843,7 +1073,7 @@ internal sealed class LlvmIrEmitter
                 foreach (var declarator in variableDeclaration.variableDeclarators().variableDeclarator())
                 {
                     var qualifiedName = $"{module.SyntaxModel.ModuleName}.{declarator.Identifier().GetText()}";
-                    if (!_typeModel.Globals.TryGetValue(qualifiedName, out var global)
+                    if (!TryGetGlobal(qualifiedName, out var global)
                         || declarator.variableInitializer() is null)
                     {
                         continue;
@@ -857,11 +1087,11 @@ internal sealed class LlvmIrEmitter
         return eligible;
     }
 
-    private static IReadOnlySet<string> CollectExplicitGlobalAddressNames(SsaIrModule module)
+    private static IReadOnlySet<string> CollectExplicitGlobalAddressNames(IEnumerable<SsaFunction> functions)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var function in module.Functions)
+        foreach (var function in functions)
         {
             foreach (var block in function.Blocks)
             {
@@ -926,11 +1156,15 @@ internal sealed class LlvmIrEmitter
             SsaCallRValue call => call.IndirectArgumentAddresses is { Count: > 0 }
                 ? call.Arguments.Concat(call.IndirectArgumentAddresses.OfType<SsaValue>())
                 : call.Arguments,
+            SsaIndirectCallRValue indirectCall => indirectCall.IndirectArgumentAddresses is { Count: > 0 }
+                ? indirectCall.Arguments.Prepend(indirectCall.Target).Concat(indirectCall.IndirectArgumentAddresses.OfType<SsaValue>())
+                : indirectCall.Arguments.Prepend(indirectCall.Target),
             SsaConvertRValue convert => [convert.Operand],
             SsaExtractFieldRValue extractField => [extractField.Target],
             SsaInsertFieldRValue insertField => [insertField.Target, insertField.Value],
             SsaExtractIndexRValue extractIndex => [extractIndex.Target],
             SsaInsertIndexRValue insertIndex => [insertIndex.Target, insertIndex.Value],
+            SsaMakeSliceFromPointerRValue slice => [slice.Pointer, slice.Length],
             SsaDynamicStorageAllocationRValue allocation => [allocation.Capacity],
             SsaDynamicStorageFreeRValue free => [free.Storage],
             SsaDynamicStorageReserveRValue reserve => [reserve.StorageAddress, reserve.AdditionalCapacity],
@@ -1032,12 +1266,14 @@ internal sealed class LlvmIrEmitter
                     {
                         var sourceName = declarator.Identifier().GetText();
                         var qualifiedName = $"{module.SyntaxModel.ModuleName}.{sourceName}";
-                        if (!_typeModel.Globals.TryGetValue(qualifiedName, out var global))
+                        if (!TryGetGlobal(qualifiedName, out var global))
                         {
                             continue;
                         }
 
-                        symbols[qualifiedName] = ShouldEmitExternalConstPlaceholder(global, declarator.variableInitializer())
+                        var isImportedCloneConst = _importedCloneReferencedGlobals.ContainsKey(qualifiedName)
+                            && !_typeModel.Globals.ContainsKey(qualifiedName);
+                        symbols[qualifiedName] = !isImportedCloneConst && ShouldEmitExternalConstPlaceholder(global, declarator.variableInitializer())
                             ? sourceName
                             : GlobalSymbolNaming.ComputeSymbolName(
                                 module.SyntaxModel.ModuleName,
@@ -1067,16 +1303,28 @@ internal sealed class LlvmIrEmitter
             symbols.TryAdd(globalName, globalName);
         }
 
+        foreach (var global in _importedCloneReferencedGlobals.Values)
+        {
+            symbols.TryAdd(
+                global.QualifiedName,
+                GlobalSymbolNaming.ComputeSymbolName(
+                    global.ModuleName,
+                    global.SourceName,
+                    global.Visibility,
+                    qualifyModuleSymbols: false,
+                    isImported: true));
+        }
+
         return symbols;
     }
 
     private static bool ShouldEmitExternalConstPlaceholder(
         TypedGlobalSymbol global,
-        StarkParser.VariableInitializerContext initializer)
+        StarkParser.VariableInitializerContext? initializer)
     {
         return global.IsConst
             && global.Type.Kind == StarkTypeKind.RawPointer
-            && initializer.expression() is { } expression
+            && initializer?.expression() is { } expression
             && TryUnwrapSimplePrimaryExpression(expression, out var primaryExpression)
             && primaryExpression.literal()?.NULL() is not null;
     }
@@ -1088,7 +1336,7 @@ internal sealed class LlvmIrEmitter
         string sourceName)
     {
         var qualifiedName = $"{moduleName}.{sourceName}";
-        if (!_typeModel.Globals.ContainsKey(qualifiedName))
+        if (!TryGetGlobal(qualifiedName, out _))
         {
             return;
         }
@@ -1099,6 +1347,22 @@ internal sealed class LlvmIrEmitter
             visibility,
             qualifyModuleSymbols: false,
             isImported: true);
+    }
+
+    private bool TryGetGlobal(string globalName, out TypedGlobalSymbol global)
+    {
+        if (_typeModel.Globals.TryGetValue(globalName, out global!))
+        {
+            return true;
+        }
+
+        if (_importedCloneReferencedGlobals.TryGetValue(globalName, out var importedGlobal))
+        {
+            global = importedGlobal.Global;
+            return true;
+        }
+
+        return false;
     }
 
     private string ResolveGlobalSymbolName(string globalName)
@@ -1430,7 +1694,7 @@ internal sealed class LlvmIrEmitter
 
     private bool IsImmutableGlobalName(string globalName)
     {
-        return _typeModel.Globals.TryGetValue(globalName, out var global)
+        return TryGetGlobal(globalName, out var global)
             && !global.IsMutable;
     }
 

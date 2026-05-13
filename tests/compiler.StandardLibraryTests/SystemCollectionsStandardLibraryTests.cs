@@ -2397,17 +2397,17 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
         var reserveBody = ExtractDefinedFunctionText(
             llvm,
-            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_LinkedList_ReserveNodes__u32_0_2147483647(");
+            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_LinkedList_ReserveNodes__u32(");
         var allocateBody = ExtractDefinedFunctionText(
             llvm,
-            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_LinkedList_AllocateNode__u32_0_2147483647(");
+            "define linkonce_odr dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_mono_fn_System_Collections__System_Collections_LinkedList_AllocateNode__u32(");
 
         Assert.Contains("__stark_dynamic_try_reserve", reserveBody, StringComparison.Ordinal);
         Assert.DoesNotContain("LinkedListValueSlot", reserveBody, StringComparison.Ordinal);
         Assert.DoesNotContain("LinkedListLinks", reserveBody, StringComparison.Ordinal);
         Assert.Contains("LinkedListValueSlot", allocateBody, StringComparison.Ordinal);
-        Assert.Contains("LinkedList_ReserveNodes__u32_0_2147483647", allocateBody, StringComparison.Ordinal);
-        Assert.Contains("insertvalue %System_Collections_LinkedListValueSlot_u32_0_2147483647__ zeroinitializer, i8 1", allocateBody, StringComparison.Ordinal);
+        Assert.Contains("LinkedList_ReserveNodes__u32", allocateBody, StringComparison.Ordinal);
+        Assert.Contains("insertvalue %System_Collections_LinkedListValueSlot_u32_ zeroinitializer, i8 1", allocateBody, StringComparison.Ordinal);
     }
 
     [Fact]

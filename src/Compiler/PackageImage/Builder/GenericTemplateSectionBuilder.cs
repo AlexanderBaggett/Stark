@@ -168,24 +168,22 @@ internal static partial class PackageImageBuilder
                 fieldAccessesByFunction.TryGetValue(lookupName, out var fieldAccesses);
                 memberCallsByFunction.TryGetValue(lookupName, out var memberCalls);
 
-                var typedBody = functionSignature.ReturnType.BorrowKind == StarkBorrowKind.RetBorrow
-                    ? null
-                    : BuildPublishedTypedTemplateBody(
-                        module,
-                        functionSignature.ReturnType,
-                        function.Body,
-                        typeModel.NamedTypes,
-                        literalsByLocation,
-                        objectCreations,
-                        enumConstructors,
-                        enumCalls,
-                        enumValues,
-                        enumPatterns,
-                        aggregatePatterns,
-                        localDeclarations,
-                        conversions,
-                        directCalls,
-                        memberCalls);
+                var typedBody = BuildPublishedTypedTemplateBody(
+                    module,
+                    functionSignature.ReturnType,
+                    function.Body,
+                    typeModel.NamedTypes,
+                    literalsByLocation,
+                    objectCreations,
+                    enumConstructors,
+                    enumCalls,
+                    enumValues,
+                    enumPatterns,
+                    aggregatePatterns,
+                    localDeclarations,
+                    conversions,
+                    directCalls,
+                    memberCalls);
 
                 return new StarkPackageFunctionTemplateManifest(
                     QualifiedResolvedName: qualifiedResolvedName,
@@ -903,7 +901,7 @@ internal static partial class PackageImageBuilder
         {
             publishedStatement = new StarkPackageTypedTemplateStatementManifest(
                 Kind: "for",
-                Expression: forCondition,
+                Expression: forCondition!,
                 LoopBehavior: forStatement.loopBehavior().GetText(),
                 InitializerStatements: initializerStatements,
                 IteratorStatements: iteratorStatements,

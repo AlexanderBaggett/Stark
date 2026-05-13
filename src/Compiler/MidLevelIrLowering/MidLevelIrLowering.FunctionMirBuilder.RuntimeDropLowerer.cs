@@ -278,8 +278,13 @@ internal sealed partial class MidLevelIrLowerer
                 return;
             }
 
-            var temporary = CreateTemporaryLocal(type, "drop");
-            EmitOperandAssignment(temporary, operand, operand.Text);
+            var temporary = operand is MidLevelIrLocalOperand localOperand && localOperand.Type == type
+                ? localOperand
+                : CreateTemporaryLocal(type, "drop");
+            if (!ReferenceEquals(temporary, operand))
+            {
+                EmitOperandAssignment(temporary, operand, operand.Text);
+            }
 
             if (type.Kind == StarkTypeKind.FixedArray
                 && type.ElementType is not null
@@ -627,8 +632,9 @@ internal sealed partial class MidLevelIrLowerer
                 "addr");
             if (lengthAddress is null)
             {
-                MarkUnsupported(reason: "Dynamic storage initialization could not address the owner length.");
-                return;
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Dynamic storage initialization for '{text}' could not address the owner length.");
             }
 
             var index = CoerceOperand(update.InitializedIndex, lengthType) ?? update.InitializedIndex;
@@ -642,8 +648,9 @@ internal sealed partial class MidLevelIrLowerer
                 "dynamic_len");
             if (initializedLength is null)
             {
-                MarkUnsupported(reason: "Dynamic storage initialization could not compute the initialized length.");
-                return;
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Dynamic storage initialization for '{text}' could not compute the initialized length.");
             }
 
             EmitDynamicStorageLengthCommitCore(
@@ -668,8 +675,9 @@ internal sealed partial class MidLevelIrLowerer
                 "addr");
             if (lengthAddress is null)
             {
-                MarkUnsupported(reason: "Dynamic storage initialization could not address the owner length.");
-                return;
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Dynamic storage length commit for '{text}' could not address the owner length.");
             }
 
             var initializedLength = CoerceOperand(commit.InitializedLength, lengthType) ?? commit.InitializedLength;

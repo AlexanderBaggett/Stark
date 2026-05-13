@@ -347,8 +347,7 @@ public sealed class TypeCheckingTests
         Assert.False(result.Succeeded);
         Assert.Contains(
             result.Diagnostics,
-            static diagnostic => diagnostic.Code == "STK3008"
-                && diagnostic.Message.Contains("Capturing lambdas", StringComparison.Ordinal));
+            IsFunctionPointerCaptureDiagnostic);
     }
 
     [Fact]
@@ -463,8 +462,7 @@ public sealed class TypeCheckingTests
             static diagnostic => diagnostic.Code == "STK3024");
         Assert.Contains(
             good.Diagnostics,
-            static diagnostic => diagnostic.Code == "STK3008"
-                && diagnostic.Message.Contains("Capturing lambdas", StringComparison.Ordinal));
+            IsFunctionPointerCaptureDiagnostic);
     }
 
     [Fact]
@@ -530,8 +528,7 @@ public sealed class TypeCheckingTests
         Assert.False(result.Succeeded);
         Assert.Contains(
             result.Diagnostics,
-            static diagnostic => diagnostic.Code == "STK3008"
-                && diagnostic.Message.Contains("Capturing lambdas", StringComparison.Ordinal));
+            IsFunctionPointerCaptureDiagnostic);
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
         Assert.NotNull(typeCheckModel);
         Assert.Equal(5, typeCheckModel.LambdaCaptures.Count);
@@ -596,8 +593,7 @@ public sealed class TypeCheckingTests
                 && diagnostic.Message.Contains("Capture mode 'copy' cannot copy", StringComparison.Ordinal));
         Assert.Contains(
             result.Diagnostics,
-            static diagnostic => diagnostic.Code == "STK3008"
-                && diagnostic.Message.Contains("Capturing lambdas", StringComparison.Ordinal));
+            IsFunctionPointerCaptureDiagnostic);
     }
 
     [Fact]
@@ -658,8 +654,7 @@ public sealed class TypeCheckingTests
             static diagnostic => diagnostic.Code == "STK3007");
         Assert.Contains(
             result.Diagnostics,
-            static diagnostic => diagnostic.Code == "STK3008"
-                && diagnostic.Message.Contains("Capturing lambdas", StringComparison.Ordinal));
+            IsFunctionPointerCaptureDiagnostic);
     }
 
     [Fact]
@@ -724,8 +719,7 @@ public sealed class TypeCheckingTests
             static diagnostic => diagnostic.Code is "STK3002" or "STK3007");
         Assert.Contains(
             result.Diagnostics,
-            static diagnostic => diagnostic.Code == "STK3008"
-                && diagnostic.Message.Contains("Capturing lambdas", StringComparison.Ordinal));
+            IsFunctionPointerCaptureDiagnostic);
     }
 
     [Fact]
@@ -850,8 +844,7 @@ public sealed class TypeCheckingTests
             static diagnostic => diagnostic.Code == "STK3002");
         Assert.Contains(
             good.Diagnostics,
-            static diagnostic => diagnostic.Code == "STK3008"
-                && diagnostic.Message.Contains("Capturing lambdas", StringComparison.Ordinal));
+            IsFunctionPointerCaptureDiagnostic);
     }
 
     [Fact]
@@ -3356,6 +3349,138 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void DynamicStorageMoveAtRequiresMutableOwnerOneIntegerArgument()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void ImmutableOwner() {
+                stack dynamic i32[0 max] values = new(1);
+                values.MoveAt(0);
+            }
+
+            fn void MissingArgument() {
+                stack mut dynamic i32[0 max] values = new(1);
+                values.MoveAt();
+            }
+
+            fn void ExtraArgument() {
+                stack mut dynamic i32[0 max] values = new(1);
+                values.MoveAt(0, 1);
+            }
+
+            fn void NonIntegerIndex(bool flag) {
+                stack mut dynamic i32[0 max] values = new(1);
+                values.MoveAt(flag);
+            }
+
+            fn void NegativeIndex() {
+                stack mut dynamic i32[0 max] values = new(1);
+                values.MoveAt(-1);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3007"
+                && diagnostic.Message.Contains("Cannot assign to immutable local 'values'", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3009"
+                && diagnostic.Message.Contains("MoveAt expects one index argument but received 0", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3009"
+                && diagnostic.Message.Contains("MoveAt expects one index argument but received 2", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("MoveAt index must be an integer", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("bool", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("MoveAt index must be provably non-negative", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void DynamicStorageReserveOperationsRequireMutableOwnerAndOneIntegerArgument()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void ReserveImmutableOwner() {
+                stack dynamic i32[0 max] values = new(1);
+                values.Reserve(1);
+            }
+
+            fn void ReserveMissingArgument() {
+                stack mut dynamic i32[0 max] values = new(1);
+                values.Reserve();
+            }
+
+            fn void TryReserveExtraArgument() {
+                stack mut dynamic i32[0 max] values = new(1);
+                values.TryReserve(1, 2);
+            }
+
+            fn void TryReserveCapacityNonInteger(bool flag) {
+                stack mut dynamic i32[0 max] values = new(1);
+                values.TryReserveCapacity(flag);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3007"
+                && diagnostic.Message.Contains("Cannot assign to immutable local 'values'", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3009"
+                && diagnostic.Message.Contains("Reserve expects one additional-capacity argument but received 0", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3009"
+                && diagnostic.Message.Contains("TryReserve expects one additional-capacity argument but received 2", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("TryReserveCapacity target capacity must be an integer", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("bool", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void DynamicStorageOperationsRequireAddressableOwner()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn dynamic i32[0 max] Make() {
+                return new(1);
+            }
+
+            fn void Run() {
+                Make().MoveLast();
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3007"
+                && diagnostic.Message.Contains("MoveLast requires a mutable addressable dynamic owner", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("call to 'Make'", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void DynamicStorageSpareRangeCanBindInitSliceView()
     {
         var result = Compile(
@@ -3448,6 +3573,13 @@ public sealed class TypeCheckingTests
         Assert.Equal(isUnsafe, capture.IsUnsafe);
         Assert.Equal(StarkTypeKind.Integer, capture.Type.Kind);
         Assert.Equal("Run", capture.EnclosingFunctionName);
+    }
+
+    private static bool IsFunctionPointerCaptureDiagnostic(CompilerDiagnostic diagnostic)
+    {
+        return diagnostic.Code == "STK3008"
+            && diagnostic.Message.Contains("lambda converted to 'fnptr<...>' cannot capture local state", StringComparison.Ordinal)
+            && diagnostic.Message.Contains("function pointers do not carry closure storage", StringComparison.Ordinal);
     }
 
     private static CompilationResult Compile(string source, CompilerOptions? options = null)

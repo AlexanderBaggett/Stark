@@ -6,7 +6,7 @@ repo_root="$(cd "${script_dir}/.." && pwd)"
 bench_root="${repo_root}/benchmarks"
 stdlib_root="${repo_root}/stdlib/src"
 
-runs="${STARK_BENCH_RUNS:-20}"
+runs="${STARK_BENCH_RUNS:-100}"
 filter="${STARK_BENCH_FILTER:-}"
 target="${STARK_TARGET:-}"
 extra_args="${STARK_COMPILER_ARGS:-}"
@@ -175,6 +175,7 @@ write_machine_metadata() {
     printf 'benchmark_ratio_column=c_avg_ratio avg_us divided by same-benchmark C avg_us\n'
     printf 'stark_target=%s\n' "${target:-host-default}"
     printf 'stark_flags=--emit-exe -O3\n'
+    printf 'stark_compiler_configuration=Release\n'
     printf 'stark_compiler_args=%s\n' "${extra_args:-<none>}"
     printf 'c_compiler=%s\n' "${c_compiler}"
     printf 'c_flags=%s\n' "${c_flags[*]}"
@@ -293,18 +294,30 @@ mark_timed_native_benchmark() {
 
 last_run_peak_rss_kib=0
 
+emit_captured_benchmark_stderr() {
+  local stderr_path="$1"
+
+  if [[ -s "${stderr_path}" ]]; then
+    echo "Captured benchmark stderr:" >&2
+    sed 's/^/  /' "${stderr_path}" >&2
+  fi
+}
+
 run_benchmark_executable() {
   local benchmark_id="$1"
   local language="$2"
   local phase="$3"
   local output_path="$4"
   local status
+  local stderr_path
 
   last_run_peak_rss_kib=0
+  stderr_path="$(mktemp "${tmp_dir}/benchmark-stderr.XXXXXX")"
 
   if [[ "${capture_rss}" != "1" ]]; then
     if [[ "${run_timeout_seconds}" -gt 0 ]] && command -v timeout >/dev/null 2>&1; then
-      if timeout "${run_timeout_seconds}" "${output_path}" >/dev/null; then
+      if timeout "${run_timeout_seconds}" "${output_path}" >/dev/null 2>"${stderr_path}"; then
+        rm -f "${stderr_path}"
         return 0
       else
         status="$?"
@@ -316,19 +329,24 @@ run_benchmark_executable() {
         echo "Benchmark ${benchmark_id}/${language} exited with status ${status} during ${phase}." >&2
       fi
 
+      emit_captured_benchmark_stderr "${stderr_path}"
+      rm -f "${stderr_path}"
       exit "${status}"
     fi
 
     set +e
-    "${output_path}" >/dev/null
+    "${output_path}" >/dev/null 2>"${stderr_path}"
     status="$?"
     set -e
 
     if [[ "${status}" -eq 0 ]]; then
+      rm -f "${stderr_path}"
       return 0
     fi
 
     echo "Benchmark ${benchmark_id}/${language} exited with status ${status} during ${phase}." >&2
+    emit_captured_benchmark_stderr "${stderr_path}"
+    rm -f "${stderr_path}"
     exit "${status}"
   fi
 
@@ -342,7 +360,7 @@ run_benchmark_executable() {
   rm -f "${timeout_path}"
   printf '0\n' > "${peak_path}"
 
-  "${output_path}" >/dev/null &
+  "${output_path}" >/dev/null 2>"${stderr_path}" &
   local child_pid="$!"
 
   poll_process_peak_rss_kib "${child_pid}" "${peak_path}" &
@@ -381,17 +399,22 @@ run_benchmark_executable() {
 
   if [[ "${status}" -eq 0 ]]; then
     rm -f "${timeout_path}"
+    rm -f "${stderr_path}"
     return 0
   fi
 
   if [[ -f "${timeout_path}" ]]; then
     rm -f "${timeout_path}"
     echo "Benchmark ${benchmark_id}/${language} timed out during ${phase} after ${run_timeout_seconds}s." >&2
+    emit_captured_benchmark_stderr "${stderr_path}"
+    rm -f "${stderr_path}"
     exit 124
   fi
 
   rm -f "${timeout_path}"
   echo "Benchmark ${benchmark_id}/${language} exited with status ${status} during ${phase}." >&2
+  emit_captured_benchmark_stderr "${stderr_path}"
+  rm -f "${stderr_path}"
   exit "${status}"
 }
 
@@ -463,7 +486,7 @@ compile_and_time_stark() {
   local metrics_path="${output_path}.metrics"
   compile_start="$(date +%s%N)"
   local compiler_command=(
-    dotnet run --project "${repo_root}/src" -- \
+    dotnet run -c Release --project "${repo_root}/src" -- \
     "${source_path}" \
     --emit-exe \
     -O3 \

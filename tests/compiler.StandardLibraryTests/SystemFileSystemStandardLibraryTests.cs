@@ -5,6 +5,288 @@ namespace compiler.StandardLibraryTests;
 public sealed class SystemFileSystemStandardLibraryTests : StandardLibraryTestSuite
 {
     [Fact]
+    public async Task SourceStdLibDirectoryReadNextInfoRawReportsEntryLengthsAndEnd()
+    {
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        await AssertSourceExecutableRunsAsync(
+            """
+            import System
+            import System.Text
+            module App
+
+            fn bool IsOk(System.IO.IOStatus status) {
+                switch (status) {
+                    case System.IO.IOStatus.Ok:
+                        return true;
+                    case System.IO.IOStatus.Err(var error):
+                        return false;
+                }
+            }
+
+            fn System.IO.File.File OpenFileOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
+                switch (result) {
+                    case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+                        return value;
+                    case System.IO.IOResult<System.IO.File.File>.Err(var error):
+                        return new();
+                }
+            }
+
+            unsafe fn bool CreateEmptyFile(ascii path) {
+                stack mut System.IO.File.File file =
+                    OpenFileOrEmpty(System.IO.File.Open(path, System.IO.File.FileMode.Write, System.IO.File.FileBuffering.None));
+                if (!file.IsOpen()) {
+                    return false;
+                }
+
+                return IsOk(file.Close());
+            }
+
+            unsafe fn void Cleanup(ascii unicodePath) {
+                System.IO.File.Delete("raw-dir-info/ascii.txt");
+                System.IO.File.Delete(unicodePath);
+                System.FileSystem.DeleteDirectory("raw-dir-info");
+            }
+
+            unsafe fn i32[min max] CountOpenFdEntries() {
+                stack System.IO.IOResult<System.FileSystem.Directory> opened =
+                    System.FileSystem.OpenDirectory("/proc/self/fd");
+                switch (opened) {
+                    case System.IO.IOResult<System.FileSystem.Directory>.Err(var openError):
+                        return -1;
+                    case System.IO.IOResult<System.FileSystem.Directory>.Ok(var value):
+                        stack mut System.FileSystem.Directory directory = value;
+                        stack mut i32[min max] count = 0;
+
+                        for willexit (stack mut i32[min max] index = 0; index < 256; index += 1) {
+                            stack mut i64[min max] length = 0;
+                            stack mut i32[min max] kind = 0;
+                            stack i32[min max] status = directory.ReadNextInfoRaw(&length, &kind);
+                            if (status == 0) {
+                                directory.Close();
+                                return count;
+                            }
+
+                            if (status != 1) {
+                                directory.Close();
+                                return -2;
+                            }
+
+                            count += 1;
+                        }
+
+                        directory.Close();
+                        return -3;
+                }
+            }
+
+            unsafe fn i32[min max] EarlyReturnAfterOneRead(ascii path) {
+                stack System.IO.IOResult<System.FileSystem.Directory> opened = System.FileSystem.OpenDirectory(path);
+                switch (opened) {
+                    case System.IO.IOResult<System.FileSystem.Directory>.Err(var openError):
+                        return -1;
+                    case System.IO.IOResult<System.FileSystem.Directory>.Ok(var value):
+                        stack mut System.FileSystem.Directory directory = value;
+                        stack mut i64[min max] length = 0;
+                        stack mut i32[min max] kind = 0;
+                        stack i32[min max] status = directory.ReadNextInfoRaw(&length, &kind);
+                        if (status == 1) {
+                            return 0;
+                        }
+
+                        return -2;
+                }
+            }
+
+            unsafe fn i64[min max] DirectoryNameLengthChecksum(ascii path, i64[min max] expectedCount) {
+                stack System.IO.IOResult<System.FileSystem.Directory> opened = System.FileSystem.OpenDirectory(path);
+                switch (opened) {
+                    case System.IO.IOResult<System.FileSystem.Directory>.Err(var openError):
+                        return -1;
+                    case System.IO.IOResult<System.FileSystem.Directory>.Ok(var value):
+                        stack mut System.FileSystem.Directory directory = value;
+                        return directory.ReadRemainingNameLengthChecksumRaw(expectedCount);
+                }
+            }
+
+            export unsafe ffi fn i32[min max] main() {
+                stack mut i8[min max][32] unicodePathStorage = {
+                    114, 97, 119, 45, 100, 105, 114, 45,
+                    105, 110, 102, 111, 47, 119, 105, 100,
+                    101, 45, -61, -87, 46, 116, 120, 116,
+                    0, 0, 0, 0, 0, 0, 0, 0
+                };
+                stack mut Ascii unicodePath = new Ascii() {
+                    Data = &unicodePathStorage[0],
+                    Length = 24,
+                    Capacity = 32
+                };
+                stack ascii unicodePathView = System.Text.AsciiView(unicodePath);
+
+                stack mut System.FileSystem.Directory unopenedDirectory = new();
+                stack mut i64[min max] unopenedLength = 0;
+                stack mut i32[min max] unopenedKind = 0;
+                if (unopenedDirectory.ReadNextInfoRaw(&unopenedLength, &unopenedKind) >= 0
+                    || unopenedLength != -2
+                    || unopenedKind != -1) {
+                    return 1;
+                }
+
+                if (unopenedDirectory.ReadRemainingNameLengthChecksumRaw(0) != -1) {
+                    return 2;
+                }
+
+                switch (unopenedDirectory.ReadNextInfo()) {
+                    case System.FileSystem.DirectoryReadInfoResult.Entry(var unopenedEntry):
+                        return 3;
+                    case System.FileSystem.DirectoryReadInfoResult.End:
+                        return 4;
+                    case System.FileSystem.DirectoryReadInfoResult.Err(var unopenedError):
+                }
+
+                Cleanup(unicodePathView);
+                if (!IsOk(System.FileSystem.CreateDirectory("raw-dir-info"))) {
+                    return 5;
+                }
+
+                if (!CreateEmptyFile("raw-dir-info/ascii.txt")) {
+                    Cleanup(unicodePathView);
+                    return 6;
+                }
+
+                if (!CreateEmptyFile(unicodePathView)) {
+                    Cleanup(unicodePathView);
+                    return 7;
+                }
+
+                if (DirectoryNameLengthChecksum("raw-dir-info", 2) != 20) {
+                    Cleanup(unicodePathView);
+                    return 8;
+                }
+
+                if (DirectoryNameLengthChecksum("raw-dir-info", 1) != -1) {
+                    Cleanup(unicodePathView);
+                    return 9;
+                }
+
+                stack i32[min max] beforeFdCount = CountOpenFdEntries();
+                if (beforeFdCount <= 0) {
+                    Cleanup(unicodePathView);
+                    return 10;
+                }
+
+                if (EarlyReturnAfterOneRead("raw-dir-info") != 0) {
+                    Cleanup(unicodePathView);
+                    return 11;
+                }
+
+                stack i32[min max] afterFdCount = CountOpenFdEntries();
+                if (afterFdCount != beforeFdCount) {
+                    Cleanup(unicodePathView);
+                    return 12;
+                }
+
+                stack System.IO.IOResult<System.FileSystem.Directory> opened = System.FileSystem.OpenDirectory("raw-dir-info");
+                switch (opened) {
+                    case System.IO.IOResult<System.FileSystem.Directory>.Err(var openError):
+                        Cleanup(unicodePathView);
+                        return 13;
+                    case System.IO.IOResult<System.FileSystem.Directory>.Ok(var value):
+                        stack mut System.FileSystem.Directory directory = value;
+                        stack mut bool sawAscii = false;
+                        stack mut bool sawUnicode = false;
+                        stack mut i32[min max] count = 0;
+
+                        for willexit (stack mut i32[min max] index = 0; index < 4; index += 1) {
+                            stack mut i64[min max] length = 0;
+                            stack mut i32[min max] kind = 0;
+                            stack i32[min max] status = directory.ReadNextInfoRaw(&length, &kind);
+
+                            if (status == 0) {
+                                if (!IsOk(directory.Close())) {
+                                    Cleanup(unicodePathView);
+                                    return 14;
+                                }
+
+                                if (!IsOk(directory.Close())) {
+                                    Cleanup(unicodePathView);
+                                    return 15;
+                                }
+
+                                stack mut i64[min max] closedLength = 0;
+                                stack mut i32[min max] closedKind = 0;
+                                if (directory.ReadNextInfoRaw(&closedLength, &closedKind) >= 0
+                                    || closedLength != -2
+                                    || closedKind != -1) {
+                                    Cleanup(unicodePathView);
+                                    return 16;
+                                }
+
+                                if (directory.ReadRemainingNameLengthChecksumRaw(0) != -1) {
+                                    Cleanup(unicodePathView);
+                                    return 17;
+                                }
+
+                                switch (directory.ReadNextInfo()) {
+                                    case System.FileSystem.DirectoryReadInfoResult.Entry(var closedEntry):
+                                        Cleanup(unicodePathView);
+                                        return 18;
+                                    case System.FileSystem.DirectoryReadInfoResult.End:
+                                        Cleanup(unicodePathView);
+                                        return 19;
+                                    case System.FileSystem.DirectoryReadInfoResult.Err(var closedError):
+                                }
+
+                                Cleanup(unicodePathView);
+                                if (count != 2 || !sawAscii || !sawUnicode) {
+                                    return 20;
+                                }
+
+                                return 0;
+                            }
+
+                            if (status != 1) {
+                                directory.Close();
+                                Cleanup(unicodePathView);
+                                return 21;
+                            }
+
+                            if (kind != 1) {
+                                directory.Close();
+                                Cleanup(unicodePathView);
+                                return 22;
+                            }
+
+                            if (length == 9) {
+                                sawAscii = true;
+                            }
+                            else if (length == 11) {
+                                sawUnicode = true;
+                            }
+                            else {
+                                directory.Close();
+                                Cleanup(unicodePathView);
+                                return 23;
+                            }
+
+                            count += 1;
+                        }
+
+                        directory.Close();
+                        Cleanup(unicodePathView);
+                        return 24;
+                }
+            }
+            """,
+            "stark-stdlib-filesystem-raw-info-",
+            skipWindows: true);
+    }
+
+    [Fact]
     public async Task PackagedStdLibFileSystemDirectoryLifecycleAndQueriesWorkWithoutSource()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _)
@@ -205,6 +487,56 @@ public sealed class SystemFileSystemStandardLibraryTests : StandardLibraryTestSu
             Assert.Equal(string.Empty, processStdout);
             Assert.Equal(string.Empty, processStderr);
             Assert.False(Directory.Exists(Path.Combine(appDirectory, "fs-root")));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    private async Task AssertSourceExecutableRunsAsync(string source, string tempPrefix, bool skipWindows)
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
+            || (skipWindows && OperatingSystem.IsWindows()))
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var tempDirectory = Directory.CreateTempSubdirectory(tempPrefix);
+        var appPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "app");
+
+        try
+        {
+            await File.WriteAllTextAsync(appPath, source);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", sourceRoot, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(
+                exitCode == 0,
+                stdout + Environment.NewLine + stderr);
+            AssertCompilerLogsEmitted(stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var execution = await RunProcessWithUtf8StdinAsync(outputPath, tempDirectory.FullName, string.Empty);
+            Assert.Equal(0, execution.ExitCode);
+            Assert.Equal(string.Empty, execution.Stdout);
+            Assert.Equal(string.Empty, execution.Stderr);
         }
         finally
         {

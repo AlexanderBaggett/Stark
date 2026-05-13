@@ -87,11 +87,11 @@ public struct PathFacts {
     internal i64[min max] DirectoryLength;
     internal bool HasExtension;
 
-    finite law i64[min max] PathLength(borrow PathFacts self) {
+    inline finite law i64[min max] PathLength(borrow PathFacts self) {
         return self.Length;
     }
 
-    finite law i64[min max] ExtensionLength(borrow PathFacts self) {
+    inline finite law i64[min max] ExtensionLength(borrow PathFacts self) {
         if (!self.HasExtension) {
             return 0;
         }
@@ -99,7 +99,7 @@ public struct PathFacts {
         return self.End - self.ExtensionStart;
     }
 
-    finite law ascii Extension(borrow PathFacts self) {
+    inline finite law ascii Extension(borrow PathFacts self) {
         if (!self.HasExtension) {
             return "";
         }
@@ -107,7 +107,7 @@ public struct PathFacts {
         return self.Path[self.ExtensionStart, self.End - self.ExtensionStart];
     }
 
-    finite law i64[min max] BaseNameLength(borrow PathFacts self) {
+    inline finite law i64[min max] BaseNameLength(borrow PathFacts self) {
         if (self.SegmentStart >= self.End) {
             return 0;
         }
@@ -119,7 +119,7 @@ public struct PathFacts {
         return self.End - self.SegmentStart;
     }
 
-    finite law ascii BaseName(borrow PathFacts self) {
+    inline finite law ascii BaseName(borrow PathFacts self) {
         if (self.SegmentStart >= self.End) {
             return "";
         }
@@ -131,11 +131,11 @@ public struct PathFacts {
         return self.Path[self.SegmentStart, self.End - self.SegmentStart];
     }
 
-    finite law i64[min max] DirectoryNameLength(borrow PathFacts self) {
+    inline finite law i64[min max] DirectoryNameLength(borrow PathFacts self) {
         return self.DirectoryLength;
     }
 
-    finite law ascii DirectoryName(borrow PathFacts self) {
+    inline finite law ascii DirectoryName(borrow PathFacts self) {
         if (self.DirectoryLength <= 0) {
             return "";
         }

@@ -48,6 +48,8 @@ internal sealed class LlvmFunctionBodyEmitter
     private readonly HashSet<string> _referencedValueNames;
     private readonly HashSet<string> _addressTakenParameterNames;
     private readonly IReadOnlyDictionary<string, SsaRValue> _valueDefinitions;
+    private readonly IReadOnlyDictionary<string, SsaValue> _trivialValueAliases;
+    private readonly IReadOnlyDictionary<string, SsaInstructionPosition> _valueDefinitionPositions;
     private readonly IReadOnlyDictionary<string, SsaValueFacts> _valueFacts;
     private readonly IReadOnlyDictionary<int, SsaBasicBlock> _blocksById;
     private readonly IReadOnlyDictionary<int, int> _blockOrderById;
@@ -67,6 +69,11 @@ internal sealed class LlvmFunctionBodyEmitter
     private readonly Dictionary<string, string> _localStorageClasses;
     private readonly Dictionary<string, bool> _aggregateValueMaterializationRequirements = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _indirectAggregateValueSlots = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, LocalSlotAlias> _localSlotAliases = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _directAggregateAliasCandidateLocalNames;
+    private readonly Dictionary<string, SsaAllocateLocalInstruction> _deferredAliasLocalAllocations = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, SsaLifetimeStartInstruction> _deferredAliasLifetimeStarts = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _materializedAliasCandidateLocalNames = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _materializedParameters = new(StringComparer.Ordinal);
     private readonly Dictionary<string, string> _valueAliases = new(StringComparer.Ordinal);
     private IReadOnlyDictionary<int, RawPointerLoopIntrinsicPlan> _embeddedOptimizedRawPointerLoopPlansByPreheader =
@@ -77,8 +84,12 @@ internal sealed class LlvmFunctionBodyEmitter
     private SourceLocation? _currentDebugLocation;
     private SsaBasicBlock? _currentBlock;
     private int? _entryStaticAllocaInsertionIndex;
+    private int _currentInstructionIndex = -1;
     private int _nextAbiTempId;
     private int _nextAssumeTempId;
+
+    private sealed record LocalSlotAlias(string Pointer, int? AlignmentBytes, StarkTypeSymbol Type);
+    private readonly record struct SsaInstructionPosition(int BlockId, int InstructionIndex);
 
     public LlvmFunctionBodyEmitter(
         StringBuilder builder,
@@ -105,6 +116,8 @@ internal sealed class LlvmFunctionBodyEmitter
         _referencedValueNames = CollectReferencedValueNames(ssaFunction);
         _addressTakenParameterNames = CollectAddressTakenParameterNames(ssaFunction);
         _valueDefinitions = CollectValueDefinitions(ssaFunction);
+        _trivialValueAliases = CollectTrivialValueAliases(ssaFunction);
+        _valueDefinitionPositions = CollectValueDefinitionPositions(ssaFunction);
         _valueFacts = valueFacts?.Values ?? new Dictionary<string, SsaValueFacts>(StringComparer.Ordinal);
         _blocksById = ssaFunction.Blocks.ToDictionary(static block => block.Id);
         _blockOrderById = CollectBlockOrder(ssaFunction);
@@ -119,6 +132,7 @@ internal sealed class LlvmFunctionBodyEmitter
         _scopedNoAliasMetadata = BuildScopedNoAliasMetadata(parameterEffects);
         _localStorageClasses = CollectLocalStorageClasses(ssaFunction);
         _singleStoreLocalValues = CollectSingleStoreLocalValues();
+        _directAggregateAliasCandidateLocalNames = CollectDirectAggregateAliasCandidateLocalNames();
         _constProvenanceLocalNames = CollectConstProvenanceLocalNames();
         _invariantLocalNames = CollectInvariantLocalNames();
         _tailCallResultNames = CollectTailCallResultNames(
@@ -266,20 +280,23 @@ internal sealed class LlvmFunctionBodyEmitter
                 EmitAssumptionsForBlock(block.Id);
             }
 
-            foreach (var instruction in block.Instructions)
+            for (var instructionIndex = 0; instructionIndex < block.Instructions.Count; instructionIndex++)
             {
+                var instruction = block.Instructions[instructionIndex];
+                _currentInstructionIndex = instructionIndex;
                 _currentDebugLocation = GetInstructionLocation(instruction) ?? _ssaFunction.Location;
                 EmitInstruction(instruction);
             }
 
+            _currentInstructionIndex = block.Instructions.Count;
             _currentDebugLocation = block.Terminator.Location ?? _ssaFunction.Location;
             if (_embeddedOptimizedRawPointerLoopPlansByPreheader.TryGetValue(block.Id, out var embeddedPlan))
             {
                 _currentDebugLocation = embeddedPlan.Location ?? block.Terminator.Location ?? _ssaFunction.Location;
-                if (!TryEmitOptimizedRawPointerLoopIntrinsicCall(embeddedPlan)
-                    || embeddedPlan.ExitBlockId is not int exitBlockId)
+                EmitOptimizedRawPointerLoopIntrinsicCall(embeddedPlan);
+                if (embeddedPlan.ExitBlockId is not int exitBlockId)
                 {
-                    throw new UnsupportedBodyEmissionException("Failed to emit optimized raw pointer loop intrinsic.");
+                    throw CreateOptimizedRawPointerLoopInvariantException(embeddedPlan, "embedded plan is missing its exit block.");
                 }
 
                 AppendLine($"  br label %{FormatBlockLabel(exitBlockId)}");
@@ -293,6 +310,7 @@ internal sealed class LlvmFunctionBodyEmitter
         }
 
         _currentBlock = null;
+        _currentInstructionIndex = -1;
 
         FlushEntryStaticAllocas();
     }
@@ -349,48 +367,114 @@ internal sealed class LlvmFunctionBodyEmitter
         EmitEntryParameterDebugInfo();
 
         _currentDebugLocation = plan.Location ?? _ssaFunction.Location;
-        if (!TryEmitOptimizedRawPointerLoopIntrinsicCall(plan))
-        {
-            _currentBlock = null;
-            return false;
-        }
+        EmitOptimizedRawPointerLoopIntrinsicCall(plan);
 
         AppendLine("  ret void");
         AppendLine(string.Empty);
         _currentBlock = null;
+        _currentInstructionIndex = -1;
         FlushEntryStaticAllocas();
         return true;
     }
 
-    private bool TryEmitOptimizedRawPointerLoopIntrinsicCall(RawPointerLoopIntrinsicPlan plan)
+    private void EmitOptimizedRawPointerLoopIntrinsicCall(RawPointerLoopIntrinsicPlan plan)
     {
-        var emitted = plan.Kind switch
+        ValidateOptimizedRawPointerLoopIntrinsicPlan(plan);
+        switch (plan.Kind)
         {
-            RawPointerLoopIntrinsicKind.Memcpy => TryEmitOptimizedRawPointerMemcpy(plan),
-            RawPointerLoopIntrinsicKind.Memmove => TryEmitOptimizedRawPointerMemmove(plan),
-            RawPointerLoopIntrinsicKind.Memset => TryEmitOptimizedRawPointerMemset(plan),
-            _ => false
-        };
-        if (!emitted)
-        {
-            return false;
+            case RawPointerLoopIntrinsicKind.Memcpy:
+                EmitOptimizedRawPointerMemcpy(plan);
+                break;
+            case RawPointerLoopIntrinsicKind.Memmove:
+                EmitOptimizedRawPointerMemmove(plan);
+                break;
+            case RawPointerLoopIntrinsicKind.Memset:
+                EmitOptimizedRawPointerMemset(plan);
+                break;
+            default:
+                throw CreateOptimizedRawPointerLoopInvariantException(plan, $"unsupported intrinsic kind '{plan.Kind}'.");
         }
 
         EmitOptimizedRawPointerLoopDynamicLengthCommit(plan);
-        return true;
     }
 
-    private bool TryEmitOptimizedRawPointerMemcpy(RawPointerLoopIntrinsicPlan plan)
+    private void ValidateOptimizedRawPointerLoopIntrinsicPlan(RawPointerLoopIntrinsicPlan plan)
     {
-        if (plan.SourceBase is null
-            || !TryEmitRawPointerLoopByteLength(plan, out var byteLength, out var isZeroLength))
+        if (plan.DestinationBase is null)
         {
-            return false;
+            throw CreateOptimizedRawPointerLoopInvariantException(plan, "destination base is missing.");
         }
+
+        if (TryGetConcreteTypeLayout(NormalizeAggregateType(plan.ElementType)) is not { } elementLayout
+            || elementLayout.SizeBytes <= 0)
+        {
+            throw CreateOptimizedRawPointerLoopInvariantException(
+                plan,
+                $"element type '{plan.ElementType.DisplayName}' does not have a positive concrete layout.");
+        }
+
+        if (!CanRepresentRawPointerLoopByteLength(plan.Count, elementLayout, _valueDefinitions))
+        {
+            throw CreateOptimizedRawPointerLoopInvariantException(
+                plan,
+                $"byte length for count '{plan.Count.Text}' and element type '{plan.ElementType.DisplayName}' is not representable as i64.");
+        }
+
+        switch (plan.Kind)
+        {
+            case RawPointerLoopIntrinsicKind.Memcpy:
+            case RawPointerLoopIntrinsicKind.Memmove:
+                if (plan.SourceBase is null)
+                {
+                    throw CreateOptimizedRawPointerLoopInvariantException(plan, "source base is missing.");
+                }
+
+                if (plan.FillValue is not null)
+                {
+                    throw CreateOptimizedRawPointerLoopInvariantException(plan, "copy/move plan unexpectedly carries a fill value.");
+                }
+
+                break;
+            case RawPointerLoopIntrinsicKind.Memset:
+                if (plan.SourceBase is not null)
+                {
+                    throw CreateOptimizedRawPointerLoopInvariantException(plan, "memset plan unexpectedly carries a source base.");
+                }
+
+                if (plan.FillValue is null)
+                {
+                    throw CreateOptimizedRawPointerLoopInvariantException(plan, "fill value is missing.");
+                }
+
+                if (NormalizeAggregateType(plan.FillValue.Type).Kind != StarkTypeKind.Integer
+                    || NormalizeAggregateType(plan.FillValue.Type).BitWidth != 8)
+                {
+                    throw CreateOptimizedRawPointerLoopInvariantException(
+                        plan,
+                        $"memset fill value must be i8-shaped, but found '{plan.FillValue.Type.DisplayName}'.");
+                }
+
+                break;
+            default:
+                throw CreateOptimizedRawPointerLoopInvariantException(plan, $"unsupported intrinsic kind '{plan.Kind}'.");
+        }
+    }
+
+    private InvalidOperationException CreateOptimizedRawPointerLoopInvariantException(
+        RawPointerLoopIntrinsicPlan plan,
+        string reason)
+    {
+        return new InvalidOperationException(
+            $"Invalid optimized raw pointer loop intrinsic plan in '{_ssaFunction.Name}' ({plan.Kind}): {reason}");
+    }
+
+    private void EmitOptimizedRawPointerMemcpy(RawPointerLoopIntrinsicPlan plan)
+    {
+        var (byteLength, isZeroLength) = EmitRawPointerLoopByteLength(plan);
 
         if (isZeroLength)
         {
-            return true;
+            return;
         }
 
         var destinationPointer = EmitOptimizedRawPointerLoopBasePointer(
@@ -398,7 +482,7 @@ internal sealed class LlvmFunctionBodyEmitter
             plan.DestinationBaseIsSlice,
             "rawptr_loop_destination");
         var sourcePointer = EmitOptimizedRawPointerLoopBasePointer(
-            plan.SourceBase,
+            plan.SourceBase!,
             plan.SourceBaseIsSlice,
             "rawptr_loop_source");
         var destinationAlignment = GetOptimizedRawPointerLoopArgumentAlignmentFragment(
@@ -412,20 +496,15 @@ internal sealed class LlvmFunctionBodyEmitter
         var scopedNoAliasMetadata = GetOptimizedRawPointerLoopScopedNoAliasMetadataSuffix(plan.DestinationBase, plan.SourceBase);
         AppendLine(
             $"  call void @llvm.memcpy.p0.p0.i64(ptr{destinationAlignment} {destinationPointer}, ptr{sourceAlignment} {sourcePointer}, i64 {byteLength}, i1 false){scopedNoAliasMetadata}");
-        return true;
     }
 
-    private bool TryEmitOptimizedRawPointerMemmove(RawPointerLoopIntrinsicPlan plan)
+    private void EmitOptimizedRawPointerMemmove(RawPointerLoopIntrinsicPlan plan)
     {
-        if (plan.SourceBase is null
-            || !TryEmitRawPointerLoopByteLength(plan, out var byteLength, out var isZeroLength))
-        {
-            return false;
-        }
+        var (byteLength, isZeroLength) = EmitRawPointerLoopByteLength(plan);
 
         if (isZeroLength)
         {
-            return true;
+            return;
         }
 
         var destinationPointer = EmitOptimizedRawPointerLoopBasePointer(
@@ -433,7 +512,7 @@ internal sealed class LlvmFunctionBodyEmitter
             plan.DestinationBaseIsSlice,
             "rawptr_loop_destination");
         var sourcePointer = EmitOptimizedRawPointerLoopBasePointer(
-            plan.SourceBase,
+            plan.SourceBase!,
             plan.SourceBaseIsSlice,
             "rawptr_loop_source");
         var destinationAlignment = GetOptimizedRawPointerLoopArgumentAlignmentFragment(
@@ -447,20 +526,15 @@ internal sealed class LlvmFunctionBodyEmitter
         var scopedNoAliasMetadata = GetOptimizedRawPointerLoopScopedNoAliasMetadataSuffix(plan.DestinationBase, plan.SourceBase);
         AppendLine(
             $"  call void @llvm.memmove.p0.p0.i64(ptr{destinationAlignment} {destinationPointer}, ptr{sourceAlignment} {sourcePointer}, i64 {byteLength}, i1 false){scopedNoAliasMetadata}");
-        return true;
     }
 
-    private bool TryEmitOptimizedRawPointerMemset(RawPointerLoopIntrinsicPlan plan)
+    private void EmitOptimizedRawPointerMemset(RawPointerLoopIntrinsicPlan plan)
     {
-        if (plan.FillValue is null
-            || !TryEmitRawPointerLoopByteLength(plan, out var byteLength, out var isZeroLength))
-        {
-            return false;
-        }
+        var (byteLength, isZeroLength) = EmitRawPointerLoopByteLength(plan);
 
         if (isZeroLength)
         {
-            return true;
+            return;
         }
 
         var destinationPointer = EmitOptimizedRawPointerLoopBasePointer(
@@ -473,40 +547,33 @@ internal sealed class LlvmFunctionBodyEmitter
             plan.DestinationBaseIsSlice);
         var scopedNoAliasMetadata = GetOptimizedRawPointerLoopScopedNoAliasMetadataSuffix(plan.DestinationBase);
         AppendLine(
-            $"  call void @llvm.memset.p0.i64(ptr{destinationAlignment} {destinationPointer}, i8 {FormatValue(plan.FillValue)}, i64 {byteLength}, i1 false){scopedNoAliasMetadata}");
-        return true;
+            $"  call void @llvm.memset.p0.i64(ptr{destinationAlignment} {destinationPointer}, i8 {FormatValue(plan.FillValue!)}, i64 {byteLength}, i1 false){scopedNoAliasMetadata}");
     }
 
-    private bool TryEmitRawPointerLoopByteLength(
-        RawPointerLoopIntrinsicPlan plan,
-        out string byteLength,
-        out bool isZeroLength)
+    private (string ByteLength, bool IsZeroLength) EmitRawPointerLoopByteLength(RawPointerLoopIntrinsicPlan plan)
     {
-        byteLength = string.Empty;
-        isZeroLength = false;
-
         if (TryGetConcreteTypeLayout(NormalizeAggregateType(plan.ElementType)) is not { } elementLayout
             || elementLayout.SizeBytes <= 0)
         {
-            return false;
+            throw CreateOptimizedRawPointerLoopInvariantException(
+                plan,
+                $"element type '{plan.ElementType.DisplayName}' does not have a positive concrete layout.");
         }
 
         if (plan.Count is SsaIntegerConstant constantCount)
         {
             if (constantCount.Value < BigInteger.Zero)
             {
-                return false;
+                throw CreateOptimizedRawPointerLoopInvariantException(plan, "constant count is negative.");
             }
 
             var constantByteLength = constantCount.Value * elementLayout.SizeBytes;
             if (constantByteLength > long.MaxValue)
             {
-                return false;
+                throw CreateOptimizedRawPointerLoopInvariantException(plan, "constant byte length exceeds i64.");
             }
 
-            isZeroLength = constantByteLength.IsZero;
-            byteLength = constantByteLength.ToString(CultureInfo.InvariantCulture);
-            return true;
+            return (constantByteLength.ToString(CultureInfo.InvariantCulture), constantByteLength.IsZero);
         }
 
         if (!TryGetIntegerValueRange(plan.Count, new HashSet<string>(StringComparer.Ordinal), out var minCount, out var maxCount)
@@ -516,7 +583,9 @@ internal sealed class LlvmFunctionBodyEmitter
             || plan.Count.Type.BitWidth is not int countBitWidth
             || countBitWidth is <= 0 or > 64)
         {
-            return false;
+            throw CreateOptimizedRawPointerLoopInvariantException(
+                plan,
+                $"dynamic count '{plan.Count.Text}' cannot produce a non-negative i64 byte length.");
         }
 
         string count64;
@@ -533,22 +602,16 @@ internal sealed class LlvmFunctionBodyEmitter
 
         if (elementLayout.SizeBytes == 1)
         {
-            byteLength = count64;
-            return true;
+            return (count64, false);
         }
 
-        byteLength = $"%{EscapeIdentifier(CreateAbiTempName("rawptr_loop_bytes"))}";
+        var byteLength = $"%{EscapeIdentifier(CreateAbiTempName("rawptr_loop_bytes"))}";
         AppendLine($"  {byteLength} = mul i64 {count64}, {elementLayout.SizeBytes}");
-        return true;
+        return (byteLength, false);
     }
 
-    private string EmitOptimizedRawPointerLoopBasePointer(SsaValue? baseValue, bool isSlice, string purpose)
+    private string EmitOptimizedRawPointerLoopBasePointer(SsaValue baseValue, bool isSlice, string purpose)
     {
-        if (baseValue is null)
-        {
-            throw new UnsupportedBodyEmissionException("Optimized memory loop is missing a base pointer.");
-        }
-
         if (!isSlice)
         {
             return FormatValue(baseValue);
@@ -580,7 +643,7 @@ internal sealed class LlvmFunctionBodyEmitter
                 {
                     EnsureLocalSlotExists(loadLocal.LocalName, loadLocal.Type);
                     var loaded = $"%{EscapeIdentifier(CreateAbiTempName($"{purpose}_slice"))}";
-                    AppendLine($"  {loaded} = load {MapType(loadLocal.Type)}, ptr %{EscapeIdentifier($"slot_{loadLocal.LocalName}")}{GetStackObjectAlignmentSuffix(loadLocal.Type)}");
+                    AppendLine($"  {loaded} = load {MapType(loadLocal.Type)}, ptr {GetLocalSlotPointer(loadLocal.LocalName)}{GetLocalSlotAlignmentSuffix(loadLocal.LocalName, loadLocal.Type)}");
                     return loaded;
                 }
             }
@@ -722,7 +785,8 @@ internal sealed class LlvmFunctionBodyEmitter
             candidate => string.Equals(candidate.SourceName, addressOfParameter.ParameterName, StringComparison.Ordinal));
         if (parameter is null)
         {
-            throw new UnsupportedBodyEmissionException($"Unknown SSA parameter '{addressOfParameter.ParameterName}' for optimized memory loop.");
+            throw new InvalidOperationException(
+                $"Invalid optimized raw pointer loop address in '{_ssaFunction.Name}': unknown ABI parameter '{addressOfParameter.ParameterName}'.");
         }
 
         var result = $"%{EscapeIdentifier(CreateAbiTempName($"{purpose}_addr"))}";
@@ -743,7 +807,7 @@ internal sealed class LlvmFunctionBodyEmitter
     {
         EnsureLocalSlotExists(addressOfLocal.LocalName, addressOfLocal.PointeeType);
         var result = $"%{EscapeIdentifier(CreateAbiTempName($"{purpose}_addr"))}";
-        AppendLine($"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(addressOfLocal.PointeeType)}, ptr %{EscapeIdentifier($"slot_{addressOfLocal.LocalName}")}, i32 0");
+        AppendLine($"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(addressOfLocal.PointeeType)}, ptr {GetLocalSlotPointer(addressOfLocal.LocalName)}, i32 0");
         return result;
     }
 
@@ -1189,6 +1253,10 @@ internal sealed class LlvmFunctionBodyEmitter
                 SsaCallRValue call =>
                     call.Arguments.Any(ReferencesSkippedDefinition)
                     || (call.IndirectArgumentAddresses?.OfType<SsaValue>().Any(ReferencesSkippedDefinition) == true),
+                SsaIndirectCallRValue indirectCall =>
+                    ReferencesSkippedDefinition(indirectCall.Target)
+                    || indirectCall.Arguments.Any(ReferencesSkippedDefinition)
+                    || (indirectCall.IndirectArgumentAddresses?.OfType<SsaValue>().Any(ReferencesSkippedDefinition) == true),
                 SsaConvertRValue convert => ReferencesSkippedDefinition(convert.Operand),
                 SsaExtractFieldRValue extractField => ReferencesSkippedDefinition(extractField.Target),
                 SsaInsertFieldRValue insertField =>
@@ -2022,7 +2090,8 @@ internal sealed class LlvmFunctionBodyEmitter
                 || (call.IndirectArgumentAddresses?.Any(address => address is not null && ValueReferencesLocal(address, localName, definitions, visitedValueNames)) == true),
             SsaIndirectCallRValue indirectCall =>
                 ValueReferencesLocal(indirectCall.Target, localName, definitions, visitedValueNames)
-                || indirectCall.Arguments.Any(argument => ValueReferencesLocal(argument, localName, definitions, visitedValueNames)),
+                || indirectCall.Arguments.Any(argument => ValueReferencesLocal(argument, localName, definitions, visitedValueNames))
+                || (indirectCall.IndirectArgumentAddresses?.Any(address => address is not null && ValueReferencesLocal(address, localName, definitions, visitedValueNames)) == true),
             SsaConvertRValue convert => ValueReferencesLocal(convert.Operand, localName, definitions, visitedValueNames),
             SsaExtractFieldRValue extractField => ValueReferencesLocal(extractField.Target, localName, definitions, visitedValueNames),
             SsaInsertFieldRValue insertField =>
@@ -3901,8 +3970,7 @@ internal sealed class LlvmFunctionBodyEmitter
                 EmitStoreIndirect(storeIndirect);
                 return;
             case SsaStoreGlobalInstruction storeGlobal:
-                AppendLine(
-                    $"  store {MapType(storeGlobal.GlobalType)} {FormatValue(storeGlobal.Value)}, ptr @{EscapeIdentifier(ResolveGlobalSymbolName(storeGlobal.GlobalName))}{GetGlobalObjectAlignmentSuffix(storeGlobal.GlobalName, storeGlobal.GlobalType)}{GetDirectTbaaMetadataSuffix(CreateTbaaGlobalRootKey(storeGlobal.GlobalName), storeGlobal.GlobalType)}");
+                EmitStoreGlobal(storeGlobal);
                 return;
             default:
                 throw new UnsupportedBodyEmissionException($"Unsupported SSA instruction '{instruction.GetType().Name}'.");
@@ -3911,11 +3979,21 @@ internal sealed class LlvmFunctionBodyEmitter
 
     private void EmitValueInstruction(SsaValueInstruction instruction)
     {
+        if (!_referencedValueNames.Contains(instruction.ResultName)
+            && instruction.Value is SsaLoadLocalRValue)
+        {
+            return;
+        }
+
+        if (CanDeferAddressForwardedAggregateValueInstruction(instruction))
+        {
+            return;
+        }
+
         var result = $"%{EscapeIdentifier(instruction.ResultName)}";
         switch (instruction.Value)
         {
-            case SsaUseRValue use:
-                AppendLine($"  {result} = add {MapType(use.Type)} {FormatValue(use.Value)}, 0");
+            case SsaUseRValue:
                 return;
             case SsaLoadGlobalRValue load:
                 AppendLine(
@@ -3923,7 +4001,7 @@ internal sealed class LlvmFunctionBodyEmitter
                 return;
             case SsaLoadLocalRValue loadLocal:
                 EnsureLocalSlotExists(loadLocal.LocalName, loadLocal.Type);
-                AppendLine($"  {result} = load {MapType(loadLocal.Type)}, ptr %{EscapeIdentifier($"slot_{loadLocal.LocalName}")}{GetLocalObjectAlignmentSuffix(loadLocal.LocalName, loadLocal.Type)}{GetInvariantLocalLoadMetadataSuffix(loadLocal.LocalName)}{GetValueRangeMetadataSuffix(instruction.ResultName, loadLocal.Type)}{GetDirectTbaaMetadataSuffix(CreateTbaaLocalRootKey(loadLocal.LocalName), loadLocal.Type)}");
+                AppendLine($"  {result} = load {MapType(loadLocal.Type)}, ptr {GetLocalSlotPointer(loadLocal.LocalName)}{GetLocalSlotAlignmentSuffix(loadLocal.LocalName, loadLocal.Type)}{GetInvariantLocalLoadMetadataSuffix(loadLocal.LocalName)}{GetValueRangeMetadataSuffix(instruction.ResultName, loadLocal.Type)}{GetDirectTbaaMetadataSuffix(CreateTbaaLocalRootKey(loadLocal.LocalName), loadLocal.Type)}");
                 return;
             case SsaConvertRValue convert:
                 EmitConvert(instruction.ResultName, result, convert);
@@ -3972,10 +4050,10 @@ internal sealed class LlvmFunctionBodyEmitter
                 EmitDynamicStorageTryReserveCapacity(result, reserve);
                 return;
             case SsaDynamicStorageMoveLastRValue moveLast:
-                EmitDynamicStorageMoveLast(result, moveLast);
+                EmitDynamicStorageMoveLast(instruction.ResultName, result, moveLast);
                 return;
             case SsaDynamicStorageMoveAtRValue moveAt:
-                EmitDynamicStorageMoveAt(result, moveAt);
+                EmitDynamicStorageMoveAt(instruction.ResultName, result, moveAt);
                 return;
             case SsaLoadSliceElementRValue loadSlice:
                 EmitLoadSliceElement(result, loadSlice, instruction.ScopedNoAliasGroups, instruction.LoopAccessGroups);
@@ -4029,9 +4107,8 @@ internal sealed class LlvmFunctionBodyEmitter
 
         if (sourceType.Kind == StarkTypeKind.Integer && targetType.Kind == StarkTypeKind.Integer)
         {
-            if (sourceType.BitWidth == targetType.BitWidth)
+            if (IsNoOpConversion(sourceType, targetType))
             {
-                AppendLine($"  {result} = add {MapType(targetType)} {FormatValue(convert.Operand)}, 0");
                 return;
             }
 
@@ -4072,15 +4149,8 @@ internal sealed class LlvmFunctionBodyEmitter
 
         if (sourceType.Kind == StarkTypeKind.Float && targetType.Kind == StarkTypeKind.Float)
         {
-            if (sourceType.BitWidth == targetType.BitWidth)
+            if (IsNoOpConversion(sourceType, targetType))
             {
-                if (_isStrictFp)
-                {
-                    AppendLine($"  {result} = select i1 true, {MapType(targetType)} {FormatValue(convert.Operand)}, {MapType(targetType)} {FormatValue(convert.Operand)}");
-                    return;
-                }
-
-                AppendLine($"  {result} = fadd{GetFastMathSuffix()} {MapType(targetType)} {FormatValue(convert.Operand)}, 0.0");
                 return;
             }
 
@@ -4107,7 +4177,6 @@ internal sealed class LlvmFunctionBodyEmitter
 
         if (sourceType.Kind == StarkTypeKind.RawPointer && targetType.Kind == StarkTypeKind.RawPointer)
         {
-            AppendLine($"  {result} = select i1 true, ptr {FormatValue(convert.Operand)}, ptr {FormatValue(convert.Operand)}");
             return;
         }
 
@@ -5537,6 +5606,11 @@ internal sealed class LlvmFunctionBodyEmitter
                 {
                     case SsaUseRValue use:
                         return TryGetKnownSliceElementCountLowerBound(use.Value, visitedReferences, out elementCountLowerBound);
+                    case SsaLoadLocalRValue loadLocal:
+                        return TryGetStoredLocalSliceElementCountLowerBound(
+                            loadLocal.LocalName,
+                            visitedReferences,
+                            out elementCountLowerBound);
                     case SsaMakeSliceFromLocalRValue makeSlice when makeSlice.SourceType.FixedLength is int fixedLength:
                         elementCountLowerBound = fixedLength;
                         return true;
@@ -5552,6 +5626,39 @@ internal sealed class LlvmFunctionBodyEmitter
 
         elementCountLowerBound = default;
         return false;
+    }
+
+    private bool TryGetStoredLocalSliceElementCountLowerBound(
+        string localName,
+        HashSet<string> visitedReferences,
+        out BigInteger elementCountLowerBound)
+    {
+        if (!visitedReferences.Add($"local:{localName}"))
+        {
+            elementCountLowerBound = default;
+            return false;
+        }
+
+        var sawStore = false;
+        var lowerBound = BigInteger.Zero;
+        foreach (var store in _ssaFunction.Blocks
+                     .SelectMany(static block => block.Instructions)
+                     .OfType<SsaStoreLocalInstruction>()
+                     .Where(store => string.Equals(store.LocalName, localName, StringComparison.Ordinal)))
+        {
+            var storeVisited = new HashSet<string>(visitedReferences, StringComparer.Ordinal);
+            if (!TryGetKnownSliceElementCountLowerBound(store.Value, storeVisited, out var storedLowerBound))
+            {
+                elementCountLowerBound = default;
+                return false;
+            }
+
+            lowerBound = sawStore ? Min(lowerBound, storedLowerBound) : storedLowerBound;
+            sawStore = true;
+        }
+
+        elementCountLowerBound = lowerBound;
+        return sawStore;
     }
 
     private bool TryGetKnownTextUnitCountLowerBound(
@@ -5648,7 +5755,7 @@ internal sealed class LlvmFunctionBodyEmitter
         if (IsStringType(sourceReturnType) && abiCallee.LlvmReturnType.Kind == StarkTypeKind.RawPointer)
         {
             throw new UnsupportedBodyEmissionException(
-                $"FFI string returns are not yet supported for '{call.FunctionName}'.");
+                $"FFI string returns are invalid for '{call.FunctionName}'. Return a raw pointer plus explicit length/status and wrap it in Stark code.");
         }
 
         if (TryEmitAsciiToUnicodeLiteralCallSiteSpecialization(resultName, result, call, abiCallee))
@@ -5666,8 +5773,12 @@ internal sealed class LlvmFunctionBodyEmitter
 
         if (abiCallee.ReturnsIndirect)
         {
-            indirectReturnSlot = $"%{EscapeIdentifier(CreateAbiTempName("callret_slot"))}";
-            QueueStaticAlloca(indirectReturnSlot, sourceReturnType);
+            if (!TryGetCurrentReturnBufferForwardingAddress(resultName, sourceReturnType, out indirectReturnSlot))
+            {
+                indirectReturnSlot = $"%{EscapeIdentifier(CreateAbiTempName("callret_slot"))}";
+                QueueStaticAlloca(indirectReturnSlot, sourceReturnType);
+            }
+
             arguments.Add(RenderSRetArgumentPointer(sourceReturnType, indirectReturnSlot));
         }
 
@@ -5729,7 +5840,7 @@ internal sealed class LlvmFunctionBodyEmitter
                 }
 
                 EnsureLocalSlotExists(promotedLocal!, parameter.SourceType);
-                arguments.Add(RenderIndirectArgumentPointer(parameter, $"%{EscapeIdentifier($"slot_{promotedLocal}")}"));
+                arguments.Add(RenderIndirectArgumentPointer(parameter, GetLocalSlotPointer(promotedLocal!)));
                 continue;
             }
 
@@ -6039,8 +6150,8 @@ internal sealed class LlvmFunctionBodyEmitter
             value = LoadDictionaryKeyScalarValue(
                 llvmType,
                 keyType,
-                $"%{EscapeIdentifier($"slot_{promotedLocal}")}",
-                GetStackObjectAlignmentSuffix(keyType),
+                GetLocalSlotPointer(promotedLocal!),
+                GetLocalSlotAlignmentSuffix(promotedLocal!, keyType),
                 $"dict_key_local_{argumentIndex.ToString(CultureInfo.InvariantCulture)}");
             return true;
         }
@@ -6305,21 +6416,88 @@ internal sealed class LlvmFunctionBodyEmitter
 
     private void EmitIndirectCall(string resultName, string result, SsaIndirectCallRValue call)
     {
-        if (call.Target.Type.FunctionPointerParameterTypes is not { } parameterTypes)
+        var abiCallee = BuildIndirectCallAbi(call);
+        var sourceReturnType = call.SourceReturnType ?? call.Type;
+        var arguments = new List<string>();
+        string? indirectReturnSlot = null;
+
+        if (abiCallee.ReturnsIndirect)
         {
-            throw new UnsupportedBodyEmissionException("Indirect call target is missing function-pointer parameter type metadata.");
+            if (!TryGetCurrentReturnBufferForwardingAddress(resultName, sourceReturnType, out indirectReturnSlot))
+            {
+                indirectReturnSlot = $"%{EscapeIdentifier(CreateAbiTempName("indirect_callret_slot"))}";
+                QueueStaticAlloca(indirectReturnSlot, sourceReturnType);
+            }
+
+            arguments.Add(RenderSRetArgumentPointer(sourceReturnType, indirectReturnSlot));
         }
 
-        if (parameterTypes.Count != call.Arguments.Count)
+        var userParameters = abiCallee.UserParameters;
+        if (userParameters.Count != call.Arguments.Count)
         {
             throw new UnsupportedBodyEmissionException(
-                $"Indirect call argument count mismatch: expected {parameterTypes.Count}, got {call.Arguments.Count}.");
+                $"Indirect call argument count mismatch: expected {userParameters.Count}, got {call.Arguments.Count}.");
         }
 
-        var arguments = new List<string>(call.Arguments.Count);
         for (var index = 0; index < call.Arguments.Count; index++)
         {
-            arguments.Add($"{MapType(parameterTypes[index])} {FormatValue(call.Arguments[index])}");
+            var parameter = userParameters[index];
+            var argument = call.Arguments[index];
+
+            if (parameter.Kind == AbiParameterKind.Direct)
+            {
+                arguments.Add(RenderDirectArgument(parameter, argument));
+                continue;
+            }
+
+            var indirectArgumentAddress = call.IndirectArgumentAddresses is not null && index < call.IndirectArgumentAddresses.Count
+                ? call.IndirectArgumentAddresses[index]
+                : null;
+            if (indirectArgumentAddress is not null)
+            {
+                arguments.Add(RenderIndirectArgumentPointer(parameter, FormatValue(indirectArgumentAddress)));
+                continue;
+            }
+
+            var promotedLocal = call.IndirectArgumentLocalNames is not null && index < call.IndirectArgumentLocalNames.Count
+                ? call.IndirectArgumentLocalNames[index]
+                : null;
+            if (!string.IsNullOrWhiteSpace(promotedLocal))
+            {
+                var promotedParameter = _abiFunction.UserParameters.FirstOrDefault(
+                    candidate => string.Equals(candidate.SourceName, promotedLocal, StringComparison.Ordinal));
+                if (promotedParameter is not null)
+                {
+                    if (promotedParameter.Kind == AbiParameterKind.IndirectIn)
+                    {
+                        arguments.Add(RenderIndirectArgumentPointer(parameter, $"%{EscapeIdentifier(promotedParameter.LlvmName)}"));
+                    }
+                    else
+                    {
+                        EnsureParameterSlotExists(promotedParameter, promotedParameter.SourceType);
+                        arguments.Add(RenderIndirectArgumentPointer(parameter, $"%{EscapeIdentifier($"slot_param_{promotedParameter.SourceName}")}"));
+                    }
+
+                    continue;
+                }
+
+                EnsureLocalSlotExists(promotedLocal!, parameter.SourceType);
+                arguments.Add(RenderIndirectArgumentPointer(parameter, GetLocalSlotPointer(promotedLocal!)));
+                continue;
+            }
+
+            if (AbiLoweringHeuristics.IsByValueIndirectParameter(parameter)
+                && TryResolveAggregateSourceAddress(argument, parameter.SourceType, out var forwardedSourceAddress))
+            {
+                arguments.Add(RenderIndirectArgumentPointer(parameter, forwardedSourceAddress));
+                continue;
+            }
+
+            var tempSlot = $"%{EscapeIdentifier(CreateAbiTempName($"indirect_callarg_{parameter.SourceName}"))}";
+            QueueStaticAlloca(tempSlot, parameter.SourceType);
+            EmitValueToAddress(tempSlot, parameter.SourceType, argument, GetStackObjectAlignmentBytes(parameter.SourceType));
+
+            arguments.Add(RenderIndirectArgumentPointer(parameter, tempSlot));
         }
 
         var callPrefixSegments = new List<string> { "call" };
@@ -6333,13 +6511,405 @@ internal sealed class LlvmFunctionBodyEmitter
         var renderedArguments = string.Join(", ", arguments);
         var strictFpCallSuffix = GetStrictFpCallSuffix();
 
+        if (abiCallee.ReturnsIndirect)
+        {
+            AppendLine($"  {callPrefix} void {FormatValue(call.Target)}({renderedArguments}){strictFpCallSuffix}");
+            _indirectAggregateValueSlots[resultName] = indirectReturnSlot!;
+            if (RequiresAggregateValueMaterialization(resultName, sourceReturnType))
+            {
+                AppendLine($"  {result} = load {MapType(sourceReturnType)}, ptr {indirectReturnSlot}{GetStackObjectAlignmentSuffix(sourceReturnType)}{GetValueRangeMetadataSuffix(sourceReturnType)}{GetScopedNoAliasMetadataSuffix(CreateScopedAliasFreshResultRootKey(resultName))}");
+            }
+            return;
+        }
+
         if (call.Type.Kind == StarkTypeKind.Void)
         {
             AppendLine($"  {callPrefix} void {FormatValue(call.Target)}({renderedArguments}){strictFpCallSuffix}");
             return;
         }
 
-        AppendLine($"  {result} = {callPrefix} {MapType(call.Type)} {FormatValue(call.Target)}({renderedArguments}){strictFpCallSuffix}{GetValueRangeMetadataSuffix(resultName, call.Type)}");
+        AppendLine($"  {result} = {callPrefix} {MapType(abiCallee.LlvmReturnType)} {FormatValue(call.Target)}({renderedArguments}){strictFpCallSuffix}{GetValueRangeMetadataSuffix(resultName, call.Type)}");
+    }
+
+    private AbiFunctionSignature BuildIndirectCallAbi(SsaIndirectCallRValue call)
+    {
+        if (call.Target.Type.FunctionPointerReturnType is not { } returnType
+            || call.Target.Type.FunctionPointerParameterTypes is not { } parameterTypes)
+        {
+            throw new UnsupportedBodyEmissionException("Indirect call target is missing function-pointer ABI metadata.");
+        }
+
+        var signature = new TypedFunctionSignature(
+            "$indirect",
+            returnType,
+            parameterTypes
+                .Select((parameterType, index) => new TypedParameterSymbol(
+                    $"arg{index.ToString(CultureInfo.InvariantCulture)}",
+                    parameterType))
+                .ToArray(),
+            Kind: call.Target.Type.FunctionPointerKind ?? StarkFunctionKind.Fn);
+        return LlvmSpecializationEmissionPlanner.BuildSyntheticAbiSignature(
+            signature,
+            "$indirect",
+            isFfi: false,
+            _context.TypeModel.NamedTypes,
+            _context.EnumLayouts);
+    }
+
+    private bool TryGetCurrentReturnBufferForwardingAddress(
+        string resultName,
+        StarkTypeSymbol resultType,
+        out string returnBufferAddress)
+    {
+        returnBufferAddress = string.Empty;
+        if (!_abiFunction.ReturnsIndirect
+            || _abiFunction.ReturnBufferParameter is not { } returnBufferParameter
+            || _currentBlock is not { } currentBlock
+            || currentBlock.Terminator.Kind != SsaTerminatorKind.Return
+            || !CanForwardAggregateValueToAddress(_function.ReturnType, resultType)
+            || !IsNamedReference(currentBlock.Terminator.Value, resultName)
+            || RequiresAggregateValueMaterialization(resultName, resultType))
+        {
+            return false;
+        }
+
+        returnBufferAddress = $"%{EscapeIdentifier(returnBufferParameter.LlvmName)}";
+        return true;
+    }
+
+    private bool TryGetImmediateAggregateForwardingAddress(
+        string resultName,
+        StarkTypeSymbol resultType,
+        out string destinationAddress,
+        out int? destinationAlignmentBytes)
+    {
+        destinationAddress = string.Empty;
+        destinationAlignmentBytes = null;
+
+        if (_currentBlock is null)
+        {
+            return false;
+        }
+
+        for (var index = _currentInstructionIndex + 1; index < _currentBlock.Instructions.Count; index++)
+        {
+            var instruction = _currentBlock.Instructions[index];
+            switch (instruction)
+            {
+                case SsaStoreLocalInstruction storeLocal
+                    when IsNamedReference(storeLocal.Value, resultName)
+                         && CanForwardAggregateValueToAddress(storeLocal.LocalType, resultType)
+                         && ValueHasOnlyForwardableStoreUse(resultName, storeLocal):
+                    EnsureLocalSlotExists(storeLocal.LocalName, storeLocal.LocalType);
+                    destinationAddress = GetLocalSlotPointer(storeLocal.LocalName);
+                    destinationAlignmentBytes = GetLocalSlotAlignmentBytes(storeLocal.LocalName, storeLocal.LocalType);
+                    return true;
+                case SsaStoreIndirectInstruction storeIndirect
+                    when IsNamedReference(storeIndirect.Value, resultName)
+                         && ValueHasOnlyForwardableStoreUse(resultName, storeIndirect)
+                         && TryResolveForwardingDestinationAddress(
+                             storeIndirect.Address,
+                             storeIndirect.ValueType,
+                             out destinationAddress,
+                             out destinationAlignmentBytes):
+                    return true;
+                case SsaStoreGlobalInstruction storeGlobal
+                    when IsNamedReference(storeGlobal.Value, resultName)
+                         && CanForwardAggregateValueToAddress(storeGlobal.GlobalType, resultType)
+                         && ValueHasOnlyForwardableStoreUse(resultName, storeGlobal):
+                    destinationAddress = $"@{EscapeIdentifier(ResolveGlobalSymbolName(storeGlobal.GlobalName))}";
+                    destinationAlignmentBytes = GetGlobalObjectAlignmentBytes(storeGlobal.GlobalName, storeGlobal.GlobalType);
+                    return true;
+                case SsaValueInstruction valueInstruction
+                    when CanSkipValueInstructionBeforeForwardedAggregateStore(valueInstruction, resultName):
+                    continue;
+                default:
+                    return false;
+            }
+        }
+
+        return false;
+    }
+
+    private bool CanSkipValueInstructionBeforeForwardedAggregateStore(
+        SsaValueInstruction instruction,
+        string resultName)
+    {
+        return !RValueContainsNamedReference(instruction.Value, resultName)
+            && instruction.Value is SsaUseRValue
+                or SsaConvertRValue
+                or SsaAddressOfLocalRValue
+                or SsaAddressOfParameterRValue
+                or SsaFieldAddressRValue
+                or SsaElementAddressRValue;
+    }
+
+    private bool ValueHasOnlyForwardableStoreUse(string valueName, SsaInstruction allowedStore)
+    {
+        foreach (var block in _ssaFunction.Blocks)
+        {
+            foreach (var phi in block.Phis)
+            {
+                if (phi.Incomings.Any(incoming => IsNamedReference(incoming.Value, valueName)))
+                {
+                    return false;
+                }
+            }
+
+            foreach (var instruction in block.Instructions)
+            {
+                if (ReferenceEquals(instruction, allowedStore))
+                {
+                    continue;
+                }
+
+                if (InstructionDirectlyReferencesValue(instruction, valueName))
+                {
+                    return false;
+                }
+            }
+
+            if (TerminatorDirectlyReferencesValue(block.Terminator, valueName))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool InstructionDirectlyReferencesValue(SsaInstruction instruction, string valueName)
+    {
+        return instruction switch
+        {
+            SsaValueInstruction valueInstruction => RValueContainsNamedReference(valueInstruction.Value, valueName),
+            SsaStoreLocalInstruction storeLocal => IsNamedReference(storeLocal.Value, valueName),
+            SsaStoreIndirectInstruction storeIndirect => IsNamedReference(storeIndirect.Value, valueName)
+                || IsNamedReference(storeIndirect.Address, valueName),
+            SsaStoreGlobalInstruction storeGlobal => IsNamedReference(storeGlobal.Value, valueName),
+            SsaCopyMemoryInstruction copyMemory => IsNamedReference(copyMemory.DestinationAddress, valueName)
+                || IsNamedReference(copyMemory.SourceAddress, valueName),
+            _ => false
+        };
+    }
+
+    private static bool TerminatorDirectlyReferencesValue(SsaTerminator terminator, string valueName)
+    {
+        if (IsNamedReference(terminator.Value, valueName)
+            || IsNamedReference(terminator.Condition, valueName))
+        {
+            return true;
+        }
+
+        return terminator.SwitchCases is not null
+            && terminator.SwitchCases.Any(switchCase => IsNamedReference(switchCase.MatchValue, valueName));
+    }
+
+    private bool TryResolveForwardingDestinationAddress(
+        SsaValue addressValue,
+        StarkTypeSymbol valueType,
+        out string destinationAddress,
+        out int? destinationAlignmentBytes)
+    {
+        return TryResolveForwardingDestinationAddress(
+            addressValue,
+            valueType,
+            new HashSet<string>(StringComparer.Ordinal),
+            out destinationAddress,
+            out destinationAlignmentBytes);
+    }
+
+    private bool TryResolveForwardingDestinationAddress(
+        SsaValue addressValue,
+        StarkTypeSymbol valueType,
+        ISet<string> visitedValueNames,
+        out string destinationAddress,
+        out int? destinationAlignmentBytes)
+    {
+        switch (addressValue)
+        {
+            case SsaValueReference reference:
+                if (_valueAliases.TryGetValue(reference.Name, out var alias))
+                {
+                    destinationAddress = alias;
+                    destinationAlignmentBytes = GetKnownPointerAlignmentBytes(addressValue, valueType);
+                    return true;
+                }
+
+                if (!visitedValueNames.Add(reference.Name)
+                    || !_valueDefinitions.TryGetValue(reference.Name, out var definition))
+                {
+                    destinationAddress = string.Empty;
+                    destinationAlignmentBytes = null;
+                    return false;
+                }
+
+                if (!TryResolveForwardingDestinationAddress(
+                        definition,
+                        valueType,
+                        visitedValueNames,
+                        out destinationAddress,
+                        out destinationAlignmentBytes))
+                {
+                    return false;
+                }
+
+                _valueAliases[reference.Name] = destinationAddress;
+                return true;
+            case SsaGlobalAddressValue globalAddress
+                when NormalizeAggregateType(globalAddress.PointeeType) == NormalizeAggregateType(valueType):
+                destinationAddress = $"@{EscapeIdentifier(ResolveGlobalSymbolName(globalAddress.GlobalName))}";
+                destinationAlignmentBytes = GetGlobalObjectAlignmentBytes(globalAddress.GlobalName, globalAddress.PointeeType);
+                return true;
+            default:
+                destinationAddress = string.Empty;
+                destinationAlignmentBytes = null;
+                return false;
+        }
+    }
+
+    private bool TryResolveForwardingDestinationAddress(
+        SsaRValue addressValue,
+        StarkTypeSymbol valueType,
+        ISet<string> visitedValueNames,
+        out string destinationAddress,
+        out int? destinationAlignmentBytes)
+    {
+        switch (addressValue)
+        {
+            case SsaUseRValue use:
+                return TryResolveForwardingDestinationAddress(
+                    use.Value,
+                    valueType,
+                    visitedValueNames,
+                    out destinationAddress,
+                    out destinationAlignmentBytes);
+            case SsaConvertRValue convert
+                when convert.Operand.Type.Kind == StarkTypeKind.RawPointer
+                     && convert.TargetType.Kind == StarkTypeKind.RawPointer:
+                return TryResolveForwardingDestinationAddress(
+                    convert.Operand,
+                    valueType,
+                    visitedValueNames,
+                    out destinationAddress,
+                    out destinationAlignmentBytes);
+            case SsaAddressOfLocalRValue addressOfLocal
+                when NormalizeAggregateType(addressOfLocal.PointeeType) == NormalizeAggregateType(valueType):
+                EnsureLocalSlotExists(addressOfLocal.LocalName, addressOfLocal.PointeeType);
+                destinationAddress = GetLocalSlotPointer(addressOfLocal.LocalName);
+                destinationAlignmentBytes = GetLocalSlotAlignmentBytes(addressOfLocal.LocalName, addressOfLocal.PointeeType);
+                return true;
+            case SsaAddressOfParameterRValue addressOfParameter
+                when NormalizeAggregateType(addressOfParameter.PointeeType) == NormalizeAggregateType(valueType):
+                return TryResolveForwardingParameterAddress(
+                    addressOfParameter,
+                    out destinationAddress,
+                    out destinationAlignmentBytes);
+            case SsaFieldAddressRValue fieldAddress
+                when fieldAddress.Type.ElementType is { } fieldType
+                     && NormalizeAggregateType(fieldType) == NormalizeAggregateType(valueType)
+                     && TryResolveForwardingDestinationAddress(
+                         fieldAddress.Address,
+                         fieldAddress.AggregateType,
+                         visitedValueNames,
+                         out var aggregateAddress,
+                         out var aggregateAlignmentBytes):
+                destinationAddress = EmitScalarizedAggregateLeafAddress(
+                    aggregateAddress,
+                    fieldAddress.AggregateType,
+                    [fieldAddress.FieldIndex],
+                    "forward_store_field");
+                destinationAlignmentBytes = GetLeafAlignmentBytes(aggregateAlignmentBytes, fieldType)
+                    ?? GetTypeAlignmentBytes(fieldType);
+                return true;
+            case SsaElementAddressRValue elementAddress
+                when elementAddress.Type.ElementType is { } elementType
+                     && NormalizeAggregateType(elementType) == NormalizeAggregateType(valueType)
+                     && TryGetForwardingConstantElementIndex(elementAddress, out var constantIndex)
+                     && TryResolveForwardingDestinationAddress(
+                         elementAddress.Address,
+                         elementAddress.AggregateType,
+                         visitedValueNames,
+                         out var aggregateAddress,
+                         out var aggregateAlignmentBytes):
+                destinationAddress = EmitForwardingElementDestinationAddress(
+                    aggregateAddress,
+                    elementAddress.AggregateType,
+                    constantIndex);
+                destinationAlignmentBytes = GetLeafAlignmentBytes(aggregateAlignmentBytes, elementType)
+                    ?? GetTypeAlignmentBytes(elementType);
+                return true;
+            default:
+                destinationAddress = string.Empty;
+                destinationAlignmentBytes = null;
+                return false;
+        }
+    }
+
+    private bool TryResolveForwardingParameterAddress(
+        SsaAddressOfParameterRValue addressOfParameter,
+        out string destinationAddress,
+        out int? destinationAlignmentBytes)
+    {
+        var parameter = _abiFunction.UserParameters.FirstOrDefault(
+            candidate => string.Equals(candidate.SourceName, addressOfParameter.ParameterName, StringComparison.Ordinal));
+        if (parameter is null)
+        {
+            destinationAddress = string.Empty;
+            destinationAlignmentBytes = null;
+            return false;
+        }
+
+        if (parameter.Kind == AbiParameterKind.IndirectIn)
+        {
+            destinationAddress = $"%{EscapeIdentifier(parameter.LlvmName)}";
+            destinationAlignmentBytes = GetTypeAlignmentBytes(addressOfParameter.PointeeType);
+            return true;
+        }
+
+        EnsureParameterSlotExists(parameter, addressOfParameter.PointeeType);
+        destinationAddress = $"%{EscapeIdentifier($"slot_param_{parameter.SourceName}")}";
+        destinationAlignmentBytes = GetStackObjectAlignmentBytes(addressOfParameter.PointeeType);
+        return true;
+    }
+
+    private static bool TryGetForwardingConstantElementIndex(
+        SsaElementAddressRValue elementAddress,
+        out int constantIndex)
+    {
+        if (elementAddress.ConstantIndex is int fixedIndex)
+        {
+            constantIndex = fixedIndex;
+            return true;
+        }
+
+        if (elementAddress.Index is SsaIntegerConstant integerIndex
+            && integerIndex.Value >= int.MinValue
+            && integerIndex.Value <= int.MaxValue)
+        {
+            constantIndex = (int)integerIndex.Value;
+            return true;
+        }
+
+        constantIndex = 0;
+        return false;
+    }
+
+    private string EmitForwardingElementDestinationAddress(
+        string aggregateAddress,
+        StarkTypeSymbol aggregateType,
+        int constantIndex)
+    {
+        var elementAddress = $"%{EscapeIdentifier(CreateAbiTempName("forward_store_index"))}";
+        if (aggregateType.Kind == StarkTypeKind.FixedArray)
+        {
+            AppendLine($"  {elementAddress} = getelementptr{GetProvenInObjectGepFlags()} {MapType(aggregateType)}, ptr {aggregateAddress}, i32 0, i32 {constantIndex}");
+            return elementAddress;
+        }
+
+        var flags = constantIndex == 0 ? GetZeroOffsetGepFlags() : string.Empty;
+        AppendLine($"  {elementAddress} = getelementptr{flags} {MapType(aggregateType)}, ptr {aggregateAddress}, i32 {constantIndex}");
+        return elementAddress;
     }
 
     private bool ShouldEmitTailCallMarker(string resultName)
@@ -6349,9 +6919,15 @@ internal sealed class LlvmFunctionBodyEmitter
 
     private void EmitAllocateLocal(SsaAllocateLocalInstruction allocateLocal)
     {
+        if (IsDirectAggregateAliasCandidateLocal(allocateLocal.LocalName))
+        {
+            _deferredAliasLocalAllocations[allocateLocal.LocalName] = allocateLocal;
+            return;
+        }
+
         EnsureLocalSlotExists(allocateLocal.LocalName, allocateLocal.LocalType);
         EmitLocalDebugDeclare(
-            $"%{EscapeIdentifier($"slot_{allocateLocal.LocalName}")}",
+            GetLocalSlotPointer(allocateLocal.LocalName),
             allocateLocal.LocalName,
             allocateLocal.LocalType,
             allocateLocal.Location);
@@ -6364,6 +6940,11 @@ internal sealed class LlvmFunctionBodyEmitter
 
     private void EmitLifetimeEnd(SsaLifetimeEndInstruction lifetimeEnd)
     {
+        if (ShouldSuppressLifetimeEnd(lifetimeEnd))
+        {
+            return;
+        }
+
         EmitLifetimeMarker("end", lifetimeEnd.LocalName, lifetimeEnd.LocalType);
     }
 
@@ -6372,7 +6953,7 @@ internal sealed class LlvmFunctionBodyEmitter
         if (deallocateLocal.StorageClass != "heap")
         {
             throw new UnsupportedBodyEmissionException(
-                $"Local storage class '{deallocateLocal.StorageClass}' is not yet supported for LLVM deallocation.");
+                $"Local storage class '{deallocateLocal.StorageClass}' is invalid for LLVM deallocation.");
         }
 
         var slotName = $"%{EscapeIdentifier($"slot_{deallocateLocal.LocalName}")}";
@@ -6386,8 +6967,174 @@ internal sealed class LlvmFunctionBodyEmitter
             return;
         }
 
+        if (phase == "start" && IsDirectAggregateAliasCandidateLocal(localName))
+        {
+            _deferredAliasLifetimeStarts[localName] = new SsaLifetimeStartInstruction(localName, localType, null);
+            return;
+        }
+
         EnsureLocalSlotExists(localName, localType);
-        AppendLine($"  call void @llvm.lifetime.{phase}.p0(i64 {layout.SizeBytes}, ptr %{EscapeIdentifier($"slot_{localName}")})");
+        AppendLine($"  call void @llvm.lifetime.{phase}.p0(i64 {layout.SizeBytes}, ptr {GetLocalSlotPointer(localName)})");
+    }
+
+    private bool ShouldSuppressLifetimeEnd(SsaLifetimeEndInstruction lifetimeEnd)
+    {
+        return ShouldSuppressLifetimeEnd(lifetimeEnd, _currentInstructionIndex);
+    }
+
+    private bool ShouldSuppressLifetimeEnd(SsaLifetimeEndInstruction lifetimeEnd, int lifetimeEndInstructionIndex)
+    {
+        if (_currentBlock is null || lifetimeEndInstructionIndex < 0)
+        {
+            return false;
+        }
+
+        for (var index = lifetimeEndInstructionIndex + 1; index < _currentBlock.Instructions.Count; index++)
+        {
+            var instruction = _currentBlock.Instructions[index];
+            if (instruction is SsaLifetimeStartInstruction lifetimeStart
+                && string.Equals(lifetimeStart.LocalName, lifetimeEnd.LocalName, StringComparison.Ordinal))
+            {
+                return false;
+            }
+
+            if (InstructionTransitivelyUsesLocalStorage(instruction, lifetimeEnd.LocalName))
+            {
+                return true;
+            }
+        }
+
+        return TerminatorTransitivelyUsesLocalStorage(_currentBlock.Terminator, lifetimeEnd.LocalName);
+    }
+
+    private bool InstructionTransitivelyUsesLocalStorage(SsaInstruction instruction, string localName)
+    {
+        return instruction switch
+        {
+            SsaValueInstruction { Value: SsaCallRValue call } => CallMayAddressForwardLocalAfterLifetimeEnd(call, localName),
+            SsaStoreLocalInstruction storeLocal => CanForwardAggregateValueToAddress(storeLocal.LocalType, storeLocal.Value.Type)
+                && ValueTransitivelyUsesLocalStorage(storeLocal.Value, localName),
+            SsaStoreIndirectInstruction storeIndirect => (CanForwardAggregateValueToAddress(storeIndirect.ValueType, storeIndirect.Value.Type)
+                    && ValueTransitivelyUsesLocalStorage(storeIndirect.Value, localName))
+                || ValueTransitivelyUsesLocalStorage(storeIndirect.Address, localName),
+            SsaStoreGlobalInstruction storeGlobal => CanForwardAggregateValueToAddress(storeGlobal.GlobalType, storeGlobal.Value.Type)
+                && ValueTransitivelyUsesLocalStorage(storeGlobal.Value, localName),
+            SsaCopyMemoryInstruction copyMemory => ValueTransitivelyUsesLocalStorage(copyMemory.DestinationAddress, localName)
+                || ValueTransitivelyUsesLocalStorage(copyMemory.SourceAddress, localName),
+            _ => false
+        };
+    }
+
+    private bool TerminatorTransitivelyUsesLocalStorage(SsaTerminator terminator, string localName)
+    {
+        return terminator is { Kind: SsaTerminatorKind.Return, Value: { } value }
+            && _abiFunction.ReturnsIndirect
+            && CanForwardAggregateValueToAddress(_function.ReturnType, value.Type)
+            && ValueTransitivelyUsesLocalStorage(value, localName);
+    }
+
+    private bool CallMayAddressForwardLocalAfterLifetimeEnd(SsaCallRValue call, string localName)
+    {
+        var calleeAbi = _resolveCallAbi(_function.Name, call.FunctionName);
+        if (calleeAbi is null)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < call.Arguments.Count && index < calleeAbi.UserParameters.Count; index++)
+        {
+            var parameter = calleeAbi.UserParameters[index];
+            if (AbiLoweringHeuristics.IsByValueIndirectParameter(parameter)
+                && CanForwardAggregateValueToAddress(parameter.SourceType, call.Arguments[index].Type)
+                && ValueTransitivelyUsesLocalStorage(call.Arguments[index], localName))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool ValueTransitivelyUsesLocalStorage(SsaValue? value, string localName)
+    {
+        return ValueTransitivelyUsesLocalStorage(value, localName, new HashSet<string>(StringComparer.Ordinal));
+    }
+
+    private bool ValueTransitivelyUsesLocalStorage(SsaValue? value, string localName, ISet<string> visitedValueNames)
+    {
+        if (value is not SsaValueReference reference)
+        {
+            return false;
+        }
+
+        if (!visitedValueNames.Add(reference.Name)
+            || !_valueDefinitions.TryGetValue(reference.Name, out var definition))
+        {
+            return false;
+        }
+
+        return definition switch
+        {
+            SsaLoadLocalRValue loadLocal => string.Equals(loadLocal.LocalName, localName, StringComparison.Ordinal),
+            SsaAddressOfLocalRValue addressOfLocal => string.Equals(addressOfLocal.LocalName, localName, StringComparison.Ordinal),
+            _ => RValueTransitivelyUsesLocalStorage(definition, localName, visitedValueNames)
+        };
+    }
+
+    private bool RValueTransitivelyUsesLocalStorage(SsaRValue value, string localName)
+    {
+        return RValueTransitivelyUsesLocalStorage(value, localName, new HashSet<string>(StringComparer.Ordinal));
+    }
+
+    private bool RValueTransitivelyUsesLocalStorage(SsaRValue value, string localName, ISet<string> visitedValueNames)
+    {
+        return value switch
+        {
+            SsaUseRValue use => ValueTransitivelyUsesLocalStorage(use.Value, localName, visitedValueNames),
+            SsaUnaryRValue unary => ValueTransitivelyUsesLocalStorage(unary.Operand, localName, visitedValueNames),
+            SsaBinaryRValue binary => ValueTransitivelyUsesLocalStorage(binary.Left, localName, visitedValueNames)
+                || ValueTransitivelyUsesLocalStorage(binary.Right, localName, visitedValueNames),
+            SsaSelectRValue select => ValueTransitivelyUsesLocalStorage(select.Condition, localName, visitedValueNames)
+                || ValueTransitivelyUsesLocalStorage(select.WhenTrue, localName, visitedValueNames)
+                || ValueTransitivelyUsesLocalStorage(select.WhenFalse, localName, visitedValueNames),
+            SsaCallRValue call => call.Arguments.Any(argument => ValueTransitivelyUsesLocalStorage(argument, localName, visitedValueNames))
+                || (call.IndirectArgumentAddresses?.OfType<SsaValue>().Any(address => ValueTransitivelyUsesLocalStorage(address, localName, visitedValueNames)) ?? false),
+            SsaIndirectCallRValue indirectCall => ValueTransitivelyUsesLocalStorage(indirectCall.Target, localName, visitedValueNames)
+                || indirectCall.Arguments.Any(argument => ValueTransitivelyUsesLocalStorage(argument, localName, visitedValueNames))
+                || (indirectCall.IndirectArgumentAddresses?.OfType<SsaValue>().Any(address => ValueTransitivelyUsesLocalStorage(address, localName, visitedValueNames)) ?? false),
+            SsaConvertRValue convert => ValueTransitivelyUsesLocalStorage(convert.Operand, localName, visitedValueNames),
+            SsaExtractFieldRValue extractField => ValueTransitivelyUsesLocalStorage(extractField.Target, localName, visitedValueNames),
+            SsaInsertFieldRValue insertField => ValueTransitivelyUsesLocalStorage(insertField.Target, localName, visitedValueNames)
+                || ValueTransitivelyUsesLocalStorage(insertField.Value, localName, visitedValueNames),
+            SsaExtractIndexRValue extractIndex => ValueTransitivelyUsesLocalStorage(extractIndex.Target, localName, visitedValueNames),
+            SsaInsertIndexRValue insertIndex => ValueTransitivelyUsesLocalStorage(insertIndex.Target, localName, visitedValueNames)
+                || ValueTransitivelyUsesLocalStorage(insertIndex.Value, localName, visitedValueNames),
+            SsaMakeSliceFromPointerRValue makeSlice => ValueTransitivelyUsesLocalStorage(makeSlice.Pointer, localName, visitedValueNames)
+                || ValueTransitivelyUsesLocalStorage(makeSlice.Length, localName, visitedValueNames),
+            SsaDynamicStorageAllocationRValue allocation => ValueTransitivelyUsesLocalStorage(allocation.Capacity, localName, visitedValueNames),
+            SsaDynamicStorageFreeRValue free => ValueTransitivelyUsesLocalStorage(free.Storage, localName, visitedValueNames),
+            SsaDynamicStorageReserveRValue reserve => ValueTransitivelyUsesLocalStorage(reserve.StorageAddress, localName, visitedValueNames)
+                || ValueTransitivelyUsesLocalStorage(reserve.AdditionalCapacity, localName, visitedValueNames),
+            SsaDynamicStorageTryReserveRValue reserve => ValueTransitivelyUsesLocalStorage(reserve.StorageAddress, localName, visitedValueNames)
+                || ValueTransitivelyUsesLocalStorage(reserve.AdditionalCapacity, localName, visitedValueNames),
+            SsaDynamicStorageTryReserveCapacityRValue reserve => ValueTransitivelyUsesLocalStorage(reserve.StorageAddress, localName, visitedValueNames)
+                || ValueTransitivelyUsesLocalStorage(reserve.TargetCapacity, localName, visitedValueNames),
+            SsaDynamicStorageMoveLastRValue moveLast => ValueTransitivelyUsesLocalStorage(moveLast.StorageAddress, localName, visitedValueNames),
+            SsaDynamicStorageMoveAtRValue moveAt => ValueTransitivelyUsesLocalStorage(moveAt.StorageAddress, localName, visitedValueNames)
+                || ValueTransitivelyUsesLocalStorage(moveAt.Index, localName, visitedValueNames),
+            SsaLoadSliceElementRValue loadSlice => ValueTransitivelyUsesLocalStorage(loadSlice.Slice, localName, visitedValueNames)
+                || ValueTransitivelyUsesLocalStorage(loadSlice.Index, localName, visitedValueNames),
+            SsaTextSliceRValue textSlice => ValueTransitivelyUsesLocalStorage(textSlice.TextValue, localName, visitedValueNames)
+                || ValueTransitivelyUsesLocalStorage(textSlice.Start, localName, visitedValueNames)
+                || ValueTransitivelyUsesLocalStorage(textSlice.Length, localName, visitedValueNames),
+            SsaFieldAddressRValue fieldAddress => ValueTransitivelyUsesLocalStorage(fieldAddress.Address, localName, visitedValueNames),
+            SsaElementAddressRValue elementAddress => ValueTransitivelyUsesLocalStorage(elementAddress.Address, localName, visitedValueNames)
+                || ValueTransitivelyUsesLocalStorage(elementAddress.Index, localName, visitedValueNames),
+            SsaSliceElementAddressRValue sliceElementAddress => ValueTransitivelyUsesLocalStorage(sliceElementAddress.Slice, localName, visitedValueNames)
+                || ValueTransitivelyUsesLocalStorage(sliceElementAddress.Index, localName, visitedValueNames),
+            SsaLoadIndirectRValue loadIndirect => ValueTransitivelyUsesLocalStorage(loadIndirect.Address, localName, visitedValueNames),
+            _ => false
+        };
     }
 
     private bool ShouldUseFastMathFlags(StarkTypeSymbol type)
@@ -6782,15 +7529,58 @@ internal sealed class LlvmFunctionBodyEmitter
 
     private void EmitStoreLocal(SsaStoreLocalInstruction storeLocal)
     {
+        if (storeLocal.Value is SsaUndefValue && ShouldSuppressMovedFromUndefStore(storeLocal))
+        {
+            return;
+        }
+
+        if (TryEmitDirectAggregateAliasStoreLocal(storeLocal))
+        {
+            return;
+        }
+
         EnsureLocalSlotExists(storeLocal.LocalName, storeLocal.LocalType);
-        var slot = $"%{EscapeIdentifier($"slot_{storeLocal.LocalName}")}";
+        var slot = GetLocalSlotPointer(storeLocal.LocalName);
         EmitValueToAddress(
             slot,
             storeLocal.LocalType,
             storeLocal.Value,
-            GetLocalObjectAlignmentBytes(storeLocal.LocalName, storeLocal.LocalType),
+            GetLocalSlotAlignmentBytes(storeLocal.LocalName, storeLocal.LocalType),
             GetDirectTbaaMetadataSuffix(CreateTbaaLocalRootKey(storeLocal.LocalName), storeLocal.LocalType));
         EmitInvariantStartForLocalIfNeeded(storeLocal.LocalName, storeLocal.LocalType);
+    }
+
+    private bool TryEmitDirectAggregateAliasStoreLocal(SsaStoreLocalInstruction storeLocal)
+    {
+        if (!IsDirectAggregateAliasCandidateLocal(storeLocal.LocalName)
+            || !CanAliasLocalToFreshIndirectAggregateSource(storeLocal.Value, storeLocal.LocalType)
+            || !TryResolveAggregateSourceAddress(
+                storeLocal.Value,
+                storeLocal.LocalType,
+                out var sourceAddress,
+                out var sourceAlignmentBytes))
+        {
+            return false;
+        }
+
+        _localSlotAliases[storeLocal.LocalName] = new LocalSlotAlias(
+            sourceAddress,
+            sourceAlignmentBytes ?? GetLocalObjectAlignmentBytes(storeLocal.LocalName, storeLocal.LocalType),
+            storeLocal.LocalType);
+
+        if (_deferredAliasLocalAllocations.Remove(storeLocal.LocalName, out var allocateLocal))
+        {
+            EmitLocalDebugDeclare(
+                sourceAddress,
+                allocateLocal.LocalName,
+                allocateLocal.LocalType,
+                allocateLocal.Location);
+        }
+
+        _deferredAliasLifetimeStarts.Remove(storeLocal.LocalName);
+
+        EmitInvariantStartForLocalIfNeeded(storeLocal.LocalName, storeLocal.LocalType);
+        return true;
     }
 
     private void EmitCopyMemory(SsaCopyMemoryInstruction copyMemory)
@@ -6836,6 +7626,16 @@ internal sealed class LlvmFunctionBodyEmitter
             GetTbaaMetadataSuffix(storeIndirect.Address, storeIndirect.ValueType),
             GetScopedNoAliasMetadataSuffix(storeIndirect.Address, storeIndirect.ScopedNoAliasGroups)
                 + GetLoopAccessGroupMetadataSuffix(storeIndirect.LoopAccessGroups));
+    }
+
+    private void EmitStoreGlobal(SsaStoreGlobalInstruction storeGlobal)
+    {
+        EmitValueToAddress(
+            $"@{EscapeIdentifier(ResolveGlobalSymbolName(storeGlobal.GlobalName))}",
+            storeGlobal.GlobalType,
+            storeGlobal.Value,
+            GetGlobalObjectAlignmentBytes(storeGlobal.GlobalName, storeGlobal.GlobalType),
+            GetDirectTbaaMetadataSuffix(CreateTbaaGlobalRootKey(storeGlobal.GlobalName), storeGlobal.GlobalType));
     }
 
     private void EmitValueToAddress(SsaValue destinationAddress, StarkTypeSymbol valueType, SsaValue value)
@@ -6964,9 +7764,14 @@ internal sealed class LlvmFunctionBodyEmitter
 
     private bool TryEmitAggregateAddressCopy(string destinationAddress, StarkTypeSymbol valueType, SsaValue value, int? destinationAlignmentBytes)
     {
-        if (!TryResolveAggregateSourceAddress(value, valueType, out var sourceAddress))
+        if (!TryResolveAggregateSourceAddress(value, valueType, out var sourceAddress, out var sourceAlignmentBytes))
         {
             return false;
+        }
+
+        if (string.Equals(destinationAddress, sourceAddress, StringComparison.Ordinal))
+        {
+            return true;
         }
 
         EmitAggregateAddressCopy(
@@ -6974,7 +7779,7 @@ internal sealed class LlvmFunctionBodyEmitter
             sourceAddress,
             valueType,
             destinationAlignmentBytes,
-            GetKnownPointerAlignmentBytes(value, valueType),
+            sourceAlignmentBytes,
             GetInvariantLoadMetadataSuffixForAggregateSource(value));
         return true;
     }
@@ -7028,15 +7833,30 @@ internal sealed class LlvmFunctionBodyEmitter
         return TryResolveAggregateSourceAddress(
             value,
             expectedType,
+            out sourceAddress,
+            out _);
+    }
+
+    private bool TryResolveAggregateSourceAddress(
+        SsaValue value,
+        StarkTypeSymbol expectedType,
+        out string sourceAddress,
+        out int? sourceAlignmentBytes)
+    {
+        return TryResolveAggregateSourceAddress(
+            value,
+            expectedType,
             new HashSet<string>(StringComparer.Ordinal),
-            out sourceAddress);
+            out sourceAddress,
+            out sourceAlignmentBytes);
     }
 
     private bool TryResolveAggregateSourceAddress(
         SsaValue value,
         StarkTypeSymbol expectedType,
         ISet<string> visitedValueNames,
-        out string sourceAddress)
+        out string sourceAddress,
+        out int? sourceAlignmentBytes)
     {
         var normalizedExpectedType = NormalizeAggregateType(expectedType);
 
@@ -7046,6 +7866,7 @@ internal sealed class LlvmFunctionBodyEmitter
                 if (_indirectAggregateValueSlots.TryGetValue(reference.Name, out var indirectSlot))
                 {
                     sourceAddress = indirectSlot;
+                    sourceAlignmentBytes = GetTypeAlignmentBytes(expectedType);
                     return true;
                 }
 
@@ -7057,6 +7878,7 @@ internal sealed class LlvmFunctionBodyEmitter
                 if (indirectParameter is not null)
                 {
                     sourceAddress = $"%{EscapeIdentifier(indirectParameter.LlvmName)}";
+                    sourceAlignmentBytes = GetTypeAlignmentBytes(indirectParameter.SourceType);
                     return true;
                 }
 
@@ -7064,24 +7886,362 @@ internal sealed class LlvmFunctionBodyEmitter
                     || !_valueDefinitions.TryGetValue(reference.Name, out var definition))
                 {
                     sourceAddress = string.Empty;
+                    sourceAlignmentBytes = null;
                     return false;
                 }
 
                 switch (definition)
                 {
                     case SsaUseRValue use when NormalizeAggregateType(use.Type) == normalizedExpectedType:
-                        return TryResolveAggregateSourceAddress(use.Value, expectedType, visitedValueNames, out sourceAddress);
+                        return TryResolveAggregateSourceAddress(
+                            use.Value,
+                            expectedType,
+                            visitedValueNames,
+                            out sourceAddress,
+                            out sourceAlignmentBytes);
+                    case SsaLoadLocalRValue loadLocal when NormalizeAggregateType(loadLocal.Type) == normalizedExpectedType:
+                        if (IsLocalLifetimeEndedBeforeCurrentInstruction(loadLocal.LocalName)
+                            || !CanForwardLocalLoadStorageAtCurrentInstruction(reference.Name, loadLocal.LocalName))
+                        {
+                            sourceAddress = string.Empty;
+                            sourceAlignmentBytes = null;
+                            return false;
+                        }
+
+                        EnsureLocalSlotExists(loadLocal.LocalName, loadLocal.Type);
+                        sourceAddress = GetLocalSlotPointer(loadLocal.LocalName);
+                        sourceAlignmentBytes = GetLocalSlotAlignmentBytes(loadLocal.LocalName, loadLocal.Type)
+                            ?? GetTypeAlignmentBytes(loadLocal.Type);
+                        return true;
+                    case SsaLoadGlobalRValue loadGlobal
+                        when NormalizeAggregateType(loadGlobal.Type) == normalizedExpectedType
+                             && IsImmutableGlobalName(loadGlobal.GlobalName):
+                        sourceAddress = $"@{EscapeIdentifier(ResolveGlobalSymbolName(loadGlobal.GlobalName))}";
+                        sourceAlignmentBytes = GetGlobalObjectAlignmentBytes(loadGlobal.GlobalName, loadGlobal.Type);
+                        return true;
+                    case SsaExtractFieldRValue extractField
+                        when NormalizeAggregateType(extractField.Type) == normalizedExpectedType
+                             && GetAggregateElementType(extractField.Target.Type, extractField.FieldIndex) is { } fieldType
+                             && NormalizeAggregateType(fieldType) == normalizedExpectedType
+                             && TryResolveAggregateSourceAddress(
+                                 extractField.Target,
+                                 extractField.Target.Type,
+                                 visitedValueNames,
+                                 out var aggregateSourceAddress,
+                                 out var aggregateAlignmentBytes):
+                        sourceAddress = EmitScalarizedAggregateLeafAddress(
+                            aggregateSourceAddress,
+                            extractField.Target.Type,
+                            [extractField.FieldIndex],
+                            "aggregate_source_field");
+                        sourceAlignmentBytes = GetLeafAlignmentBytes(aggregateAlignmentBytes, fieldType)
+                            ?? GetTypeAlignmentBytes(fieldType);
+                        return true;
+                    case SsaExtractIndexRValue extractIndex
+                        when NormalizeAggregateType(extractIndex.Type) == normalizedExpectedType
+                             && GetAggregateElementType(extractIndex.Target.Type, extractIndex.ElementIndex) is { } elementType
+                             && NormalizeAggregateType(elementType) == normalizedExpectedType
+                             && TryResolveAggregateSourceAddress(
+                                 extractIndex.Target,
+                                 extractIndex.Target.Type,
+                                 visitedValueNames,
+                                 out var aggregateSourceAddress,
+                                 out var aggregateAlignmentBytes):
+                        sourceAddress = EmitScalarizedAggregateLeafAddress(
+                            aggregateSourceAddress,
+                            extractIndex.Target.Type,
+                            [extractIndex.ElementIndex],
+                            "aggregate_source_index");
+                        sourceAlignmentBytes = GetLeafAlignmentBytes(aggregateAlignmentBytes, elementType)
+                            ?? GetTypeAlignmentBytes(elementType);
+                        return true;
                     default:
                         sourceAddress = string.Empty;
+                        sourceAlignmentBytes = null;
                         return false;
                 }
             case SsaGlobalAddressValue globalAddress when NormalizeAggregateType(globalAddress.PointeeType) == normalizedExpectedType:
                 sourceAddress = $"@{EscapeIdentifier(ResolveGlobalSymbolName(globalAddress.GlobalName))}";
+                sourceAlignmentBytes = GetGlobalObjectAlignmentBytes(globalAddress.GlobalName, globalAddress.PointeeType);
                 return true;
             default:
                 sourceAddress = string.Empty;
+                sourceAlignmentBytes = null;
                 return false;
         }
+    }
+
+    private bool IsLocalLifetimeEndedBeforeCurrentInstruction(string localName)
+    {
+        if (_currentBlock is null || _currentInstructionIndex <= 0)
+        {
+            return false;
+        }
+
+        var isEnded = false;
+        for (var index = 0; index < _currentInstructionIndex && index < _currentBlock.Instructions.Count; index++)
+        {
+            switch (_currentBlock.Instructions[index])
+            {
+                case SsaLifetimeStartInstruction lifetimeStart
+                    when string.Equals(lifetimeStart.LocalName, localName, StringComparison.Ordinal):
+                    isEnded = false;
+                    break;
+                case SsaLifetimeEndInstruction lifetimeEnd
+                    when string.Equals(lifetimeEnd.LocalName, localName, StringComparison.Ordinal)
+                         && !ShouldSuppressLifetimeEnd(lifetimeEnd, index):
+                    isEnded = true;
+                    break;
+            }
+        }
+
+        return isEnded;
+    }
+
+    private bool CanForwardLocalLoadStorageAtCurrentInstruction(string valueName, string localName)
+    {
+        if (_currentBlock is null
+            || !_valueDefinitionPositions.TryGetValue(valueName, out var definitionPosition)
+            || definitionPosition.BlockId != _currentBlock.Id
+            || definitionPosition.InstructionIndex >= _currentInstructionIndex)
+        {
+            return false;
+        }
+
+        for (var index = definitionPosition.InstructionIndex + 1;
+             index < _currentInstructionIndex && index < _currentBlock.Instructions.Count;
+             index++)
+        {
+            if (InstructionMayOverwriteLocalStorage(_currentBlock.Instructions[index], localName, index))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private bool ShouldSuppressMovedFromUndefStore(SsaStoreLocalInstruction storeLocal)
+    {
+        return ShouldSuppressMovedFromUndefStore(storeLocal, _currentInstructionIndex);
+    }
+
+    private bool ShouldSuppressMovedFromUndefStore(SsaStoreLocalInstruction storeLocal, int storeInstructionIndex)
+    {
+        if (_currentBlock is null || storeInstructionIndex < 0)
+        {
+            return false;
+        }
+
+        for (var index = storeInstructionIndex + 1; index < _currentBlock.Instructions.Count; index++)
+        {
+            var instruction = _currentBlock.Instructions[index];
+            switch (instruction)
+            {
+                case SsaAllocateLocalInstruction allocateLocal
+                    when string.Equals(allocateLocal.LocalName, storeLocal.LocalName, StringComparison.Ordinal):
+                case SsaLifetimeStartInstruction lifetimeStart
+                    when string.Equals(lifetimeStart.LocalName, storeLocal.LocalName, StringComparison.Ordinal):
+                case SsaStoreLocalInstruction nextStore
+                    when string.Equals(nextStore.LocalName, storeLocal.LocalName, StringComparison.Ordinal):
+                    return false;
+            }
+
+            if (InstructionTransitivelyUsesLocalStorage(instruction, storeLocal.LocalName))
+            {
+                return true;
+            }
+        }
+
+        return TerminatorTransitivelyUsesLocalStorage(_currentBlock.Terminator, storeLocal.LocalName);
+    }
+
+    private bool InstructionMayOverwriteLocalStorage(SsaInstruction instruction, string localName, int instructionIndex)
+    {
+        switch (instruction)
+        {
+            case SsaStoreLocalInstruction storeLocal
+                when string.Equals(storeLocal.LocalName, localName, StringComparison.Ordinal):
+                return storeLocal.Value is not SsaUndefValue
+                    || !ShouldSuppressMovedFromUndefStore(storeLocal, instructionIndex);
+            case SsaAllocateLocalInstruction allocateLocal
+                when string.Equals(allocateLocal.LocalName, localName, StringComparison.Ordinal):
+            case SsaLifetimeEndInstruction lifetimeEnd
+                when string.Equals(lifetimeEnd.LocalName, localName, StringComparison.Ordinal)
+                     && !ShouldSuppressLifetimeEnd(lifetimeEnd, instructionIndex):
+            case SsaDeallocateLocalInstruction deallocateLocal
+                when string.Equals(deallocateLocal.LocalName, localName, StringComparison.Ordinal):
+                return true;
+            case SsaCopyMemoryInstruction copyMemory:
+                return TryResolveLocalAddressRoot(copyMemory.DestinationAddress, out var copyDestinationLocal)
+                    && string.Equals(copyDestinationLocal, localName, StringComparison.Ordinal);
+            case SsaStoreIndirectInstruction storeIndirect:
+                return TryResolveLocalAddressRoot(storeIndirect.Address, out var indirectDestinationLocal)
+                    && string.Equals(indirectDestinationLocal, localName, StringComparison.Ordinal);
+            case SsaValueInstruction { Value: SsaCallRValue call }:
+                return CallMayOverwriteLocalStorage(call, localName);
+            case SsaValueInstruction valueInstruction:
+                return RValueMayOverwriteLocalStorage(valueInstruction.Value, localName);
+            default:
+                return false;
+        }
+    }
+
+    private bool CallMayOverwriteLocalStorage(SsaCallRValue call, string localName)
+    {
+        foreach (var argument in call.Arguments)
+        {
+            if (ValueMayReferenceLocalStorage(argument, localName))
+            {
+                return true;
+            }
+        }
+
+        foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+        {
+            if (ValueMayReferenceLocalStorage(address, localName))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private bool RValueMayOverwriteLocalStorage(SsaRValue value, string localName)
+    {
+        return value switch
+        {
+            SsaDynamicStorageFreeRValue free => ValueMayReferenceLocalStorage(free.Storage, localName),
+            SsaDynamicStorageReserveRValue reserve => ValueMayReferenceLocalStorage(reserve.StorageAddress, localName),
+            SsaDynamicStorageTryReserveRValue reserve => ValueMayReferenceLocalStorage(reserve.StorageAddress, localName),
+            SsaDynamicStorageTryReserveCapacityRValue reserve => ValueMayReferenceLocalStorage(reserve.StorageAddress, localName),
+            SsaDynamicStorageMoveLastRValue moveLast => ValueMayReferenceLocalStorage(moveLast.StorageAddress, localName),
+            SsaDynamicStorageMoveAtRValue moveAt => ValueMayReferenceLocalStorage(moveAt.StorageAddress, localName),
+            _ => false
+        };
+    }
+
+    private bool ValueMayReferenceLocalStorage(SsaValue value, string localName)
+    {
+        return TryResolveLocalAddressRoot(value, out var referencedLocal)
+            && string.Equals(referencedLocal, localName, StringComparison.Ordinal);
+    }
+
+    private bool CanDeferAddressForwardedAggregateValueInstruction(SsaValueInstruction instruction)
+    {
+        if (!ShouldPreferAddressBasedAggregateLowering(instruction.Value.Type)
+            || TryGetConcreteTypeLayout(NormalizeAggregateType(instruction.Value.Type)) is not { SizeBytes: > AggregateMemcpyThresholdBytes }
+            || RequiresAggregateValueMaterialization(instruction.ResultName, instruction.Value.Type))
+        {
+            return false;
+        }
+
+        return instruction.Value switch
+        {
+            SsaUseRValue => true,
+            SsaExtractFieldRValue extractField => IsFreshIndirectAggregateValueReference(extractField.Target),
+            SsaExtractIndexRValue extractIndex => IsFreshIndirectAggregateValueReference(extractIndex.Target),
+            SsaInsertFieldRValue => true,
+            SsaInsertIndexRValue => true,
+            _ => false
+        };
+    }
+
+    private bool CanAliasLocalToFreshIndirectAggregateSource(SsaValue value, StarkTypeSymbol localType)
+    {
+        if (!ShouldPreferAddressBasedAggregateLowering(localType)
+            || TryGetConcreteTypeLayout(NormalizeAggregateType(localType)) is not { SizeBytes: > AggregateMemcpyThresholdBytes }
+            || NormalizeAggregateType(value.Type) != NormalizeAggregateType(localType))
+        {
+            return false;
+        }
+
+        return IsFreshIndirectAggregatePayloadProjection(
+            value,
+            NormalizeAggregateType(localType),
+            new HashSet<string>(StringComparer.Ordinal));
+    }
+
+    private bool IsFreshIndirectAggregatePayloadProjection(
+        SsaValue value,
+        StarkTypeSymbol expectedType,
+        ISet<string> visitedValueNames)
+    {
+        if (value is not SsaValueReference reference
+            || !visitedValueNames.Add(reference.Name)
+            || !_valueDefinitions.TryGetValue(reference.Name, out var definition))
+        {
+            return false;
+        }
+
+        return definition switch
+        {
+            SsaUseRValue use when NormalizeAggregateType(use.Type) == expectedType =>
+                IsFreshIndirectAggregatePayloadProjection(use.Value, expectedType, visitedValueNames),
+            SsaExtractFieldRValue extractField
+                when NormalizeAggregateType(extractField.Type) == expectedType
+                     && GetAggregateElementType(extractField.Target.Type, extractField.FieldIndex) is { } fieldType
+                     && NormalizeAggregateType(fieldType) == expectedType =>
+                IsFreshIndirectAggregateRootReference(extractField.Target, new HashSet<string>(visitedValueNames, StringComparer.Ordinal)),
+            SsaExtractIndexRValue extractIndex
+                when NormalizeAggregateType(extractIndex.Type) == expectedType
+                     && GetAggregateElementType(extractIndex.Target.Type, extractIndex.ElementIndex) is { } elementType
+                     && NormalizeAggregateType(elementType) == expectedType =>
+                IsFreshIndirectAggregateRootReference(extractIndex.Target, new HashSet<string>(visitedValueNames, StringComparer.Ordinal)),
+            _ => false
+        };
+    }
+
+    private bool IsFreshIndirectAggregateRootReference(SsaValue value, ISet<string> visitedValueNames)
+    {
+        if (value is not SsaValueReference reference
+            || !visitedValueNames.Add(reference.Name))
+        {
+            return false;
+        }
+
+        if (_indirectAggregateValueSlots.ContainsKey(reference.Name))
+        {
+            return true;
+        }
+
+        if (!_valueDefinitions.TryGetValue(reference.Name, out var definition))
+        {
+            return false;
+        }
+
+        return definition switch
+        {
+            SsaUseRValue use => IsFreshIndirectAggregateRootReference(use.Value, visitedValueNames),
+            SsaCallRValue call => _resolveCallAbi(_function.Name, call.FunctionName)?.ReturnsIndirect == true,
+            _ => false
+        };
+    }
+
+    private bool IsFreshIndirectAggregateValueReference(SsaValue value)
+    {
+        return IsFreshIndirectAggregateValueReference(
+            value,
+            new HashSet<string>(StringComparer.Ordinal));
+    }
+
+    private bool IsFreshIndirectAggregateValueReference(SsaValue value, ISet<string> visitedValueNames)
+    {
+        if (value is not SsaValueReference reference
+            || !visitedValueNames.Add(reference.Name))
+        {
+            return false;
+        }
+
+        if (_indirectAggregateValueSlots.ContainsKey(reference.Name))
+        {
+            return true;
+        }
+
+        return _valueDefinitions.TryGetValue(reference.Name, out var definition)
+            && definition is SsaUseRValue use
+            && IsFreshIndirectAggregateValueReference(use.Value, visitedValueNames);
     }
 
     private bool TryEmitAggregateElementLoad(
@@ -7140,6 +8300,39 @@ internal sealed class LlvmFunctionBodyEmitter
                 {
                     case SsaUseRValue use when NormalizeAggregateType(use.Type) == NormalizeAggregateType(valueType):
                         return TryEmitStructuredAggregateStore(destinationAddress, valueType, use.Value, destinationAlignmentBytes, visitedValueNames);
+                    case SsaLoadLocalRValue loadLocal when NormalizeAggregateType(loadLocal.Type) == NormalizeAggregateType(valueType):
+                    {
+                        if (IsLocalLifetimeEndedBeforeCurrentInstruction(loadLocal.LocalName)
+                            || !CanForwardLocalLoadStorageAtCurrentInstruction(reference.Name, loadLocal.LocalName))
+                        {
+                            return false;
+                        }
+
+                        EnsureLocalSlotExists(loadLocal.LocalName, loadLocal.Type);
+                        return TryEmitStructuredAggregateBaseStore(
+                            destinationAddress,
+                            valueType,
+                            GetLocalSlotPointer(loadLocal.LocalName),
+                            destinationAlignmentBytes,
+                            GetLocalSlotAlignmentBytes(loadLocal.LocalName, loadLocal.Type),
+                            GetInvariantLocalLoadMetadataSuffix(loadLocal.LocalName));
+                    }
+                    case SsaLoadIndirectRValue loadIndirect when NormalizeAggregateType(loadIndirect.Type) == NormalizeAggregateType(valueType):
+                        return TryEmitStructuredAggregateBaseStore(
+                            destinationAddress,
+                            valueType,
+                            FormatValue(loadIndirect.Address),
+                            destinationAlignmentBytes,
+                            GetKnownPointerAlignmentBytes(loadIndirect.Address, loadIndirect.Type),
+                            GetInvariantLoadMetadataSuffix(loadIndirect.Address));
+                    case SsaLoadGlobalRValue loadGlobal when NormalizeAggregateType(loadGlobal.Type) == NormalizeAggregateType(valueType):
+                        return TryEmitStructuredAggregateBaseStore(
+                            destinationAddress,
+                            valueType,
+                            $"@{EscapeIdentifier(ResolveGlobalSymbolName(loadGlobal.GlobalName))}",
+                            destinationAlignmentBytes,
+                            GetGlobalObjectAlignmentBytes(loadGlobal.GlobalName, loadGlobal.Type),
+                            GetInvariantLoadMetadataSuffix(loadGlobal.GlobalName));
                     case SsaInsertFieldRValue insertField when NormalizeAggregateType(insertField.Type) == NormalizeAggregateType(valueType):
                     {
                         var fieldType = GetAggregateElementType(valueType, insertField.FieldIndex);
@@ -7180,6 +8373,29 @@ internal sealed class LlvmFunctionBodyEmitter
             default:
                 return false;
         }
+    }
+
+    private bool TryEmitStructuredAggregateBaseStore(
+        string destinationAddress,
+        StarkTypeSymbol valueType,
+        string sourceAddress,
+        int? destinationAlignmentBytes,
+        int? sourceAlignmentBytes,
+        string invariantLoadMetadataSuffix)
+    {
+        if (string.Equals(destinationAddress, sourceAddress, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        EmitAggregateAddressCopy(
+            destinationAddress,
+            sourceAddress,
+            valueType,
+            destinationAlignmentBytes,
+            sourceAlignmentBytes,
+            invariantLoadMetadataSuffix);
+        return true;
     }
 
     private bool RequiresAggregateValueMaterialization(string valueName, StarkTypeSymbol valueType)
@@ -7399,6 +8615,9 @@ internal sealed class LlvmFunctionBodyEmitter
                 || IsNamedReference(select.WhenFalse, valueName),
             SsaCallRValue call => call.Arguments.Any(argument => IsNamedReference(argument, valueName))
                 || (call.IndirectArgumentAddresses?.OfType<SsaValue>().Any(address => IsNamedReference(address, valueName)) ?? false),
+            SsaIndirectCallRValue indirectCall => IsNamedReference(indirectCall.Target, valueName)
+                || indirectCall.Arguments.Any(argument => IsNamedReference(argument, valueName))
+                || (indirectCall.IndirectArgumentAddresses?.OfType<SsaValue>().Any(address => IsNamedReference(address, valueName)) ?? false),
             SsaConvertRValue convert => IsNamedReference(convert.Operand, valueName),
             SsaExtractFieldRValue extractField => IsNamedReference(extractField.Target, valueName),
             SsaInsertFieldRValue insertField => IsNamedReference(insertField.Target, valueName) || IsNamedReference(insertField.Value, valueName),
@@ -7772,7 +8991,7 @@ internal sealed class LlvmFunctionBodyEmitter
             throw new UnsupportedBodyEmissionException($"Slice creation from '{makeSlice.SourceType.DisplayName}' is not supported.");
         }
 
-        var slotName = $"%{EscapeIdentifier($"slot_{makeSlice.LocalName}")}";
+        var slotName = GetLocalSlotPointer(makeSlice.LocalName);
         var elementPointer = $"%{EscapeIdentifier($"{result.TrimStart('%')}_data")}";
         var withPointer = $"%{EscapeIdentifier($"{result.TrimStart('%')}_p0")}";
 
@@ -8218,7 +9437,7 @@ internal sealed class LlvmFunctionBodyEmitter
         RecordCurrentBlockExitLabel(doneLabel);
     }
 
-    private void EmitDynamicStorageMoveLast(string result, SsaDynamicStorageMoveLastRValue moveLast)
+    private void EmitDynamicStorageMoveLast(string resultName, string result, SsaDynamicStorageMoveLastRValue moveLast)
     {
         if (moveLast.StorageType.Kind != StarkTypeKind.Dynamic
             || moveLast.StorageType.ElementType is not { } elementType)
@@ -8243,12 +9462,31 @@ internal sealed class LlvmFunctionBodyEmitter
         var storageType = MapType(moveLast.StorageType);
         var elementLlvmType = MapType(moveLast.Type);
         var storageAddress = FormatValue(moveLast.StorageAddress);
+        var elementAlignment = Math.Max(1, elementLayout.AlignmentBytes);
+        var useAddressBackedResult = TryPrepareLargeDynamicMoveResultSlot(
+            resultName,
+            moveLast.Type,
+            elementLayout,
+            "dynamic_move_result_slot",
+            out var resultSlot,
+            out var resultAlignmentBytes);
         if (!CanSplitCurrentBlockForCallSiteControlFlow())
         {
             var elementPointerFallback = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_ptr_fallback"))}";
             AppendLine(
                 $"  {elementPointerFallback} = call nonnull ptr @{DynamicStorageMoveLastPointerHelperName}(ptr {storageAddress}, i64 noundef {elementLayout.SizeBytes.ToString(CultureInfo.InvariantCulture)})");
-            AppendLine($"  {result} = load {elementLlvmType}, ptr {elementPointerFallback}, align {Math.Max(1, elementLayout.AlignmentBytes)}");
+            if (useAddressBackedResult)
+            {
+                EmitAggregateAddressCopy(
+                    resultSlot,
+                    elementPointerFallback,
+                    moveLast.Type,
+                    resultAlignmentBytes,
+                    elementAlignment);
+                return;
+            }
+
+            AppendLine($"  {result} = load {elementLlvmType}, ptr {elementPointerFallback}, align {elementAlignment}");
             return;
         }
 
@@ -8258,7 +9496,9 @@ internal sealed class LlvmFunctionBodyEmitter
         var isEmpty = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_is_empty"))}";
         var newLength = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_new_length"))}";
         var elementPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_element_ptr"))}";
-        var movedValue = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_value"))}";
+        var movedValue = useAddressBackedResult
+            ? string.Empty
+            : $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_value"))}";
         var updated = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_updated"))}";
         var trapLabel = EscapeIdentifier(CreateAbiTempName("dynamic_move_empty"));
         var moveLabel = EscapeIdentifier(CreateAbiTempName("dynamic_move_do"));
@@ -8282,17 +9522,34 @@ internal sealed class LlvmFunctionBodyEmitter
         AppendLine($"  {newLength} = sub i64 {length}, 1");
         AppendLine($"  {pointer} = extractvalue {storageType} {current}, 0");
         AppendLine($"  {elementPointer} = getelementptr {elementLlvmType}, ptr {pointer}, i64 {newLength}");
-        AppendLine($"  {movedValue} = load {elementLlvmType}, ptr {elementPointer}, align {Math.Max(1, elementLayout.AlignmentBytes)}");
+        if (useAddressBackedResult)
+        {
+            EmitAggregateAddressCopy(
+                resultSlot,
+                elementPointer,
+                moveLast.Type,
+                resultAlignmentBytes,
+                elementAlignment);
+        }
+        else
+        {
+            AppendLine($"  {movedValue} = load {elementLlvmType}, ptr {elementPointer}, align {elementAlignment}");
+        }
+
         AppendLine($"  {updated} = insertvalue {storageType} {current}, i64 {newLength}, 1");
         AppendLine($"  store {storageType} {updated}, ptr {storageAddress}");
         AppendLine($"  br label %{doneLabel}");
         AppendLine(string.Empty);
         AppendLine($"{doneLabel}:");
-        AppendLine($"  {result} = phi {elementLlvmType} [ {movedValue}, %{moveLabel} ]");
+        if (!useAddressBackedResult)
+        {
+            AppendLine($"  {result} = phi {elementLlvmType} [ {movedValue}, %{moveLabel} ]");
+        }
+
         RecordCurrentBlockExitLabel(doneLabel);
     }
 
-    private void EmitDynamicStorageMoveAt(string result, SsaDynamicStorageMoveAtRValue moveAt)
+    private void EmitDynamicStorageMoveAt(string resultName, string result, SsaDynamicStorageMoveAtRValue moveAt)
     {
         if (moveAt.StorageType.Kind != StarkTypeKind.Dynamic
             || moveAt.StorageType.ElementType is not { } elementType)
@@ -8319,13 +9576,29 @@ internal sealed class LlvmFunctionBodyEmitter
         var storageAddress = FormatValue(moveAt.StorageAddress);
         var indexI64 = EmitUnsignedIntegerAsI64(moveAt.Index, "dynamic_move_at_index");
         var elementAlignment = Math.Max(1, elementLayout.AlignmentBytes);
+        var useAddressBackedResult = TryPrepareLargeDynamicMoveResultSlot(
+            resultName,
+            moveAt.Type,
+            elementLayout,
+            "dynamic_move_at_result_slot",
+            out var resultSlot,
+            out var resultAlignmentBytes);
         if (!CanSplitCurrentBlockForCallSiteControlFlow())
         {
-            var outSlot = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_slot"))}";
-            _entryStaticAllocas.Add($"  {outSlot} = alloca {elementLlvmType}, align {elementAlignment}");
+            var outSlot = resultSlot;
+            if (!useAddressBackedResult)
+            {
+                outSlot = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_slot"))}";
+                _entryStaticAllocas.Add($"  {outSlot} = alloca {elementLlvmType}, align {elementAlignment}");
+            }
+
             AppendLine(
                 $"  call void @{DynamicStorageMoveAtToOutHelperName}(ptr {storageAddress}, i64 noundef {indexI64}, ptr {outSlot}, i64 noundef {elementLayout.SizeBytes.ToString(CultureInfo.InvariantCulture)})");
-            AppendLine($"  {result} = load {elementLlvmType}, ptr {outSlot}, align {elementAlignment}");
+            if (!useAddressBackedResult)
+            {
+                AppendLine($"  {result} = load {elementLlvmType}, ptr {outSlot}, align {elementAlignment}");
+            }
+
             return;
         }
 
@@ -8335,7 +9608,9 @@ internal sealed class LlvmFunctionBodyEmitter
         var inBounds = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_in_bounds"))}";
         var newLength = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_new_length"))}";
         var elementPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_element_ptr"))}";
-        var movedValue = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_value"))}";
+        var movedValue = useAddressBackedResult
+            ? string.Empty
+            : $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_value"))}";
         var hasTail = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_has_tail"))}";
         var nextIndex = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_next_index"))}";
         var sourcePointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_source_ptr"))}";
@@ -8366,7 +9641,20 @@ internal sealed class LlvmFunctionBodyEmitter
         AppendLine($"  {newLength} = sub i64 {length}, 1");
         AppendLine($"  {pointer} = extractvalue {storageType} {current}, 0");
         AppendLine($"  {elementPointer} = getelementptr {elementLlvmType}, ptr {pointer}, i64 {indexI64}");
-        AppendLine($"  {movedValue} = load {elementLlvmType}, ptr {elementPointer}, align {elementAlignment}");
+        if (useAddressBackedResult)
+        {
+            EmitAggregateAddressCopy(
+                resultSlot,
+                elementPointer,
+                moveAt.Type,
+                resultAlignmentBytes,
+                elementAlignment);
+        }
+        else
+        {
+            AppendLine($"  {movedValue} = load {elementLlvmType}, ptr {elementPointer}, align {elementAlignment}");
+        }
+
         AppendLine($"  {hasTail} = icmp ult i64 {indexI64}, {newLength}");
         AppendLine($"  br i1 {hasTail}, label %{shiftLabel}, label %{updateLabel}");
         AppendLine(string.Empty);
@@ -8384,8 +9672,56 @@ internal sealed class LlvmFunctionBodyEmitter
         AppendLine($"  br label %{doneLabel}");
         AppendLine(string.Empty);
         AppendLine($"{doneLabel}:");
-        AppendLine($"  {result} = phi {elementLlvmType} [ {movedValue}, %{updateLabel} ]");
+        if (!useAddressBackedResult)
+        {
+            AppendLine($"  {result} = phi {elementLlvmType} [ {movedValue}, %{updateLabel} ]");
+        }
+
         RecordCurrentBlockExitLabel(doneLabel);
+    }
+
+    private bool TryPrepareLargeDynamicMoveResultSlot(
+        string resultName,
+        StarkTypeSymbol resultType,
+        ConcreteTypeLayout resultLayout,
+        string slotPurpose,
+        out string resultSlot,
+        out int resultAlignmentBytes)
+    {
+        resultAlignmentBytes = Math.Max(1, resultLayout.AlignmentBytes);
+        resultSlot = string.Empty;
+
+        if (!ShouldPreferAddressBasedAggregateLowering(resultType)
+            || resultLayout.SizeBytes <= AggregateMemcpyThresholdBytes)
+        {
+            return false;
+        }
+
+        if (TryGetCurrentReturnBufferForwardingAddress(resultName, resultType, out resultSlot))
+        {
+            resultAlignmentBytes = GetStackObjectAlignmentBytes(resultType) ?? resultAlignmentBytes;
+        }
+        else if (TryGetImmediateAggregateForwardingAddress(
+                     resultName,
+                     resultType,
+                     out resultSlot,
+                     out var localAlignmentBytes))
+        {
+            resultAlignmentBytes = localAlignmentBytes ?? resultAlignmentBytes;
+        }
+        else
+        {
+            if (RequiresAggregateValueMaterialization(resultName, resultType))
+            {
+                return false;
+            }
+
+            resultSlot = $"%{EscapeIdentifier(CreateAbiTempName(slotPurpose))}";
+            QueueStaticAlloca(resultSlot, resultType);
+        }
+
+        _indirectAggregateValueSlots[resultName] = resultSlot;
+        return true;
     }
 
     private string EmitUnsignedIntegerAsI64(SsaValue value, string purpose)
@@ -8479,7 +9815,7 @@ internal sealed class LlvmFunctionBodyEmitter
     private void EmitAddressOfLocal(string result, SsaAddressOfLocalRValue addressOfLocal)
     {
         EnsureLocalSlotExists(addressOfLocal.LocalName, addressOfLocal.PointeeType);
-        AppendLine($"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(addressOfLocal.PointeeType)}, ptr %{EscapeIdentifier($"slot_{addressOfLocal.LocalName}")}, i32 0");
+        AppendLine($"  {result} = getelementptr{GetZeroOffsetGepFlags()} {MapType(addressOfLocal.PointeeType)}, ptr {GetLocalSlotPointer(addressOfLocal.LocalName)}, i32 0");
     }
 
     private void EmitAddressOfParameter(string result, SsaAddressOfParameterRValue addressOfParameter)
@@ -10181,7 +11517,7 @@ internal sealed class LlvmFunctionBodyEmitter
         }
 
         var tokenName = EscapeIdentifier(CreateAbiTempName("invariant"));
-        AppendLine($"  %{tokenName} = call ptr @llvm.invariant.start.p0(i64 {layout.SizeBytes}, ptr %{EscapeIdentifier($"slot_{localName}")})");
+        AppendLine($"  %{tokenName} = call ptr @llvm.invariant.start.p0(i64 {layout.SizeBytes}, ptr {GetLocalSlotPointer(localName)})");
     }
 
     private bool TryResolveLocalAddressRoot(SsaValue address, out string localName)
@@ -10370,6 +11706,13 @@ internal sealed class LlvmFunctionBodyEmitter
 
     private void EnsureLocalSlotExists(string localName, StarkTypeSymbol localType)
     {
+        if (_localSlotAliases.ContainsKey(localName))
+        {
+            return;
+        }
+
+        MaterializeDeferredAliasCandidateLocal(localName, localType);
+
         var slotName = EscapeIdentifier($"slot_{localName}");
         if (!_allocatedLocalSlots.Add(slotName))
         {
@@ -10381,13 +11724,71 @@ internal sealed class LlvmFunctionBodyEmitter
             case "stack":
             case "match":
                 QueueStaticAlloca($"%{slotName}", localType);
-                return;
+                break;
             case "heap":
                 EmitHeapAllocateLocalSlot(slotName, localType);
-                return;
+                break;
             default:
                 throw new UnsupportedBodyEmissionException(
-                    $"Local storage class '{GetLocalStorageClass(localName)}' is not yet supported for LLVM body emission.");
+                    $"Local storage class '{GetLocalStorageClass(localName)}' is invalid for LLVM body emission.");
+        }
+
+        EmitDeferredAliasLocalSetup(localName, localType, $"%{slotName}");
+    }
+
+    private string GetLocalSlotPointer(string localName)
+    {
+        return _localSlotAliases.TryGetValue(localName, out var alias)
+            ? alias.Pointer
+            : $"%{EscapeIdentifier($"slot_{localName}")}";
+    }
+
+    private int? GetLocalSlotAlignmentBytes(string localName, StarkTypeSymbol localType)
+    {
+        return _localSlotAliases.TryGetValue(localName, out var alias)
+            ? alias.AlignmentBytes ?? GetTypeAlignmentBytes(alias.Type)
+            : GetLocalObjectAlignmentBytes(localName, localType);
+    }
+
+    private string GetLocalSlotAlignmentSuffix(string localName, StarkTypeSymbol localType)
+    {
+        return GetAlignmentSuffix(GetLocalSlotAlignmentBytes(localName, localType));
+    }
+
+    private bool IsDirectAggregateAliasCandidateLocal(string localName)
+    {
+        return _directAggregateAliasCandidateLocalNames.Contains(localName)
+            && !_materializedAliasCandidateLocalNames.Contains(localName)
+            && !_localSlotAliases.ContainsKey(localName);
+    }
+
+    private void MaterializeDeferredAliasCandidateLocal(string localName, StarkTypeSymbol localType)
+    {
+        if (!_directAggregateAliasCandidateLocalNames.Contains(localName)
+            || _materializedAliasCandidateLocalNames.Contains(localName)
+            || _localSlotAliases.ContainsKey(localName))
+        {
+            return;
+        }
+
+        _materializedAliasCandidateLocalNames.Add(localName);
+    }
+
+    private void EmitDeferredAliasLocalSetup(string localName, StarkTypeSymbol localType, string slotPointer)
+    {
+        if (_deferredAliasLocalAllocations.Remove(localName, out var allocateLocal))
+        {
+            EmitLocalDebugDeclare(
+                slotPointer,
+                allocateLocal.LocalName,
+                allocateLocal.LocalType,
+                allocateLocal.Location);
+        }
+
+        if (_deferredAliasLifetimeStarts.Remove(localName, out _)
+            && TryGetConcreteTypeLayout(localType) is { } layout)
+        {
+            AppendLine($"  call void @llvm.lifetime.start.p0(i64 {layout.SizeBytes}, ptr {slotPointer})");
         }
     }
 
@@ -10622,12 +12023,47 @@ internal sealed class LlvmFunctionBodyEmitter
                     VisitValue(select.WhenFalse);
                     break;
                 case SsaCallRValue call:
-                    foreach (var argument in call.Arguments)
+                    for (var index = 0; index < call.Arguments.Count; index++)
                     {
-                        VisitValue(argument);
+                        var hasIndirectAddress = call.IndirectArgumentAddresses is not null
+                            && index < call.IndirectArgumentAddresses.Count
+                            && call.IndirectArgumentAddresses[index] is not null;
+                        var hasPromotedLocal = call.IndirectArgumentLocalNames is not null
+                            && index < call.IndirectArgumentLocalNames.Count
+                            && !string.IsNullOrWhiteSpace(call.IndirectArgumentLocalNames[index]);
+                        if (hasIndirectAddress || hasPromotedLocal)
+                        {
+                            continue;
+                        }
+
+                        VisitValue(call.Arguments[index]);
                     }
 
                     foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+                    {
+                        VisitValue(address);
+                    }
+
+                    break;
+                case SsaIndirectCallRValue indirectCall:
+                    VisitValue(indirectCall.Target);
+                    for (var index = 0; index < indirectCall.Arguments.Count; index++)
+                    {
+                        var hasIndirectAddress = indirectCall.IndirectArgumentAddresses is not null
+                            && index < indirectCall.IndirectArgumentAddresses.Count
+                            && indirectCall.IndirectArgumentAddresses[index] is not null;
+                        var hasPromotedLocal = indirectCall.IndirectArgumentLocalNames is not null
+                            && index < indirectCall.IndirectArgumentLocalNames.Count
+                            && !string.IsNullOrWhiteSpace(indirectCall.IndirectArgumentLocalNames[index]);
+                        if (hasIndirectAddress || hasPromotedLocal)
+                        {
+                            continue;
+                        }
+
+                        VisitValue(indirectCall.Arguments[index]);
+                    }
+
+                    foreach (var address in indirectCall.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
                     {
                         VisitValue(address);
                     }
@@ -10748,6 +12184,72 @@ internal sealed class LlvmFunctionBodyEmitter
         }
 
         return definitions;
+    }
+
+    private static IReadOnlyDictionary<string, SsaValue> CollectTrivialValueAliases(SsaFunction function)
+    {
+        var aliases = new Dictionary<string, SsaValue>(StringComparer.Ordinal);
+
+        foreach (var block in function.Blocks)
+        {
+            foreach (var instruction in block.Instructions)
+            {
+                if (instruction is SsaValueInstruction valueInstruction
+                    && TryGetTrivialValueAlias(valueInstruction.Value, out var aliasValue))
+                {
+                    aliases[valueInstruction.ResultName] = aliasValue;
+                }
+            }
+        }
+
+        return aliases;
+    }
+
+    private static bool TryGetTrivialValueAlias(SsaRValue value, out SsaValue aliasValue)
+    {
+        switch (value)
+        {
+            case SsaUseRValue use:
+                aliasValue = use.Value;
+                return true;
+            case SsaConvertRValue convert when IsNoOpConversion(convert.Operand.Type, convert.TargetType):
+                aliasValue = convert.Operand;
+                return true;
+            default:
+                aliasValue = new SsaUndefValue(value.Type);
+                return false;
+        }
+    }
+
+    private static bool IsNoOpConversion(StarkTypeSymbol sourceType, StarkTypeSymbol targetType)
+    {
+        var source = NormalizeAggregateType(sourceType);
+        var target = NormalizeAggregateType(targetType);
+        return (source.Kind, target.Kind) switch
+        {
+            (StarkTypeKind.Integer, StarkTypeKind.Integer) => source.BitWidth == target.BitWidth,
+            (StarkTypeKind.Float, StarkTypeKind.Float) => source.BitWidth == target.BitWidth,
+            (StarkTypeKind.RawPointer, StarkTypeKind.RawPointer) => true,
+            _ => false
+        };
+    }
+
+    private static IReadOnlyDictionary<string, SsaInstructionPosition> CollectValueDefinitionPositions(SsaFunction function)
+    {
+        var positions = new Dictionary<string, SsaInstructionPosition>(StringComparer.Ordinal);
+
+        foreach (var block in function.Blocks)
+        {
+            for (var instructionIndex = 0; instructionIndex < block.Instructions.Count; instructionIndex++)
+            {
+                if (block.Instructions[instructionIndex] is SsaValueInstruction valueInstruction)
+                {
+                    positions[valueInstruction.ResultName] = new SsaInstructionPosition(block.Id, instructionIndex);
+                }
+            }
+        }
+
+        return positions;
     }
 
     private static IReadOnlyDictionary<int, int> CollectBlockOrder(SsaFunction function)
@@ -11615,6 +13117,28 @@ internal sealed class LlvmFunctionBodyEmitter
         return values;
     }
 
+    private HashSet<string> CollectDirectAggregateAliasCandidateLocalNames()
+    {
+        var candidates = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var block in _ssaFunction.Blocks)
+        {
+            foreach (var allocateLocal in block.Instructions.OfType<SsaAllocateLocalInstruction>())
+            {
+                if (allocateLocal.StorageClass != "stack"
+                    || !_singleStoreLocalValues.TryGetValue(allocateLocal.LocalName, out var storedValue)
+                    || !CanAliasLocalToFreshIndirectAggregateSource(storedValue, allocateLocal.LocalType))
+                {
+                    continue;
+                }
+
+                candidates.Add(allocateLocal.LocalName);
+            }
+        }
+
+        return candidates;
+    }
+
     private bool TryResolveSingleStoreLocalValue(string localName, out SsaValue value)
     {
         return _singleStoreLocalValues.TryGetValue(localName, out value!);
@@ -11709,6 +13233,37 @@ internal sealed class LlvmFunctionBodyEmitter
             return alias;
         }
 
+        if (_trivialValueAliases.TryGetValue(reference.Name, out var aliasValue))
+        {
+            return FormatTrivialValueAlias(aliasValue, new HashSet<string>(StringComparer.Ordinal) { reference.Name });
+        }
+
+        return FormatNonAliasedValueReference(reference);
+    }
+
+    private string FormatTrivialValueAlias(SsaValue value, ISet<string> visitedValueNames)
+    {
+        if (value is SsaValueReference reference)
+        {
+            if (_valueAliases.TryGetValue(reference.Name, out var alias))
+            {
+                return alias;
+            }
+
+            if (_trivialValueAliases.TryGetValue(reference.Name, out var aliasValue)
+                && visitedValueNames.Add(reference.Name))
+            {
+                return FormatTrivialValueAlias(aliasValue, visitedValueNames);
+            }
+
+            return FormatNonAliasedValueReference(reference);
+        }
+
+        return FormatValue(value);
+    }
+
+    private string FormatNonAliasedValueReference(SsaValueReference reference)
+    {
         return _materializedParameters.TryGetValue(reference.Name, out var materialized)
             ? materialized
             : $"%{EscapeIdentifier(reference.Name)}";

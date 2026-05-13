@@ -289,7 +289,6 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                 appPath,
                 """
                 import System
-                import System.Text
                 module App
                 fn bool StatusOk(System.IO.IOStatus status) {
                     switch (status) {
@@ -667,7 +666,7 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn i64[min max] ReadCount(ascii path, i64[min max] expected) {
+                unsafe fn i64[min max] ReadCount(ascii path, u64[0 2 ** 63 - 1] expected) {
                     stack mut i8[min max][16] buffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
                     stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open(path, System.IO.File.FileMode.Read));
                     if (!file.IsOpen()) {
@@ -825,6 +824,7 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                 appPath,
                 """
                 import System
+                import System.Text
                 module App
                 fn bool StatusOk(System.IO.IOStatus status) {
                     switch (status) {
@@ -1143,6 +1143,7 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                 appPath,
                 """
                 import System
+                import System.Text
                 module App
                 fn bool StatusOk(System.IO.IOStatus status) {
                     switch (status) {
@@ -1223,9 +1224,9 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
             await process.WaitForExitAsync();
 
             Assert.Equal(0, process.ExitCode);
-            Assert.Equal("Console Î±\n", processStdout);
+            Assert.Equal("Console α\n", processStdout);
             Assert.Equal(string.Empty, processStderr);
-            Assert.Equal("File Î±\n", await File.ReadAllTextAsync(Path.Combine(appDirectory, "unicode.txt")));
+            Assert.Equal("File α\n", await File.ReadAllTextAsync(Path.Combine(appDirectory, "unicode.txt")));
         }
         finally
         {
@@ -1240,4 +1241,3 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
         }
     }
 }
-

@@ -78,6 +78,7 @@ internal sealed class SsaLowerer
         private readonly Dictionary<string, StarkTypeSymbol> _variableTypes;
         private readonly HashSet<string> _addressableLocals;
         private readonly IReadOnlyDictionary<string, MidLevelIrLocal> _localsByName;
+        private readonly IReadOnlyList<MidLevelIrLocal> _implicitAddressableLocalAllocations;
         private readonly Dictionary<string, SsaValueReference> _parameterValues;
         private readonly Dictionary<string, SsaValue> _sharedValueNumbers = new(StringComparer.Ordinal);
         private Dictionary<string, SsaValue>? _currentValueNumbers;
@@ -107,6 +108,7 @@ internal sealed class SsaLowerer
                 .Where(static local => local.IsAddressable)
                 .Select(static local => local.Name)
                 .ToHashSet(StringComparer.Ordinal);
+            _implicitAddressableLocalAllocations = BuildImplicitAddressableLocalAllocations(function);
             _parameterValues = function.Parameters.ToDictionary(
                 static parameter => parameter.Name,
                 static parameter => new SsaValueReference($"arg_{parameter.Name}", parameter.Type),
@@ -177,6 +179,10 @@ internal sealed class SsaLowerer
             {
                 var source = _sourceBlocks[blockId];
                 var target = _blocks[blockId];
+                if (blockId == _function.EntryBlockId)
+                {
+                    EmitImplicitAddressableLocalAllocations(target);
+                }
 
                 foreach (var statement in source.Statements)
                 {
@@ -539,7 +545,11 @@ internal sealed class SsaLowerer
                 call.Arguments.Select(argument => LowerOperand(blockId, block, argument)).ToArray(),
                 call.Type,
                 call.Text,
-                call.SourceReturnType));
+                call.SourceReturnType,
+                call.IndirectArgumentLocalNames,
+                call.IndirectArgumentAddresses?
+                    .Select(address => address is null ? null : LowerOperand(blockId, block, address))
+                    .ToArray()));
         }
 
         private SsaValue LowerOperand(int blockId, SsaBlockBuilder block, MidLevelIrOperand operand)
@@ -836,9 +846,55 @@ internal sealed class SsaLowerer
 
         private string GetLocalStorageClass(string localName)
         {
-            return _localsByName.TryGetValue(localName, out var local)
-                ? local.StorageClass
-                : "stack";
+            if (!_localsByName.TryGetValue(localName, out var local))
+            {
+                return "stack";
+            }
+
+            // `temp` is a MIR-only storage class for compiler-generated scratch
+            // locals. Once semantic and borrow validation have run, it lowers
+            // as ordinary stack storage so SSA optimization and LLVM emission
+            // never have to model a storage class that cannot exist in codegen.
+            return local.StorageClass == "temp"
+                ? "stack"
+                : local.StorageClass;
+        }
+
+        private void EmitImplicitAddressableLocalAllocations(SsaBlockBuilder block)
+        {
+            foreach (var local in _implicitAddressableLocalAllocations)
+            {
+                var storageClass = GetLocalStorageClass(local.Name);
+                block.Instructions.Add(new SsaAllocateLocalInstruction(
+                    local.Name,
+                    local.Type,
+                    storageClass,
+                    local.Location ?? _function.Location,
+                    IsOnceInitializedReadonlyLocal(local.Name, storageClass),
+                    LocalHasConstProvenance(local.Name)));
+            }
+        }
+
+        private static IReadOnlyList<MidLevelIrLocal> BuildImplicitAddressableLocalAllocations(MidLevelIrFunction function)
+        {
+            var explicitStorageLiveLocals = function.Blocks
+                .SelectMany(static block => block.Statements)
+                .Where(static statement => statement.Kind == MidLevelIrStatementKind.StorageLive
+                                           && statement.TargetName is not null)
+                .Select(static statement => statement.TargetName!)
+                .ToHashSet(StringComparer.Ordinal);
+
+            return function.Locals
+                .Where(local => local.IsAddressable
+                                && IsCompilerGeneratedScratchLocal(local)
+                                && !explicitStorageLiveLocals.Contains(local.Name))
+                .ToArray();
+        }
+
+        private static bool IsCompilerGeneratedScratchLocal(MidLevelIrLocal local)
+        {
+            return string.Equals(local.StorageClass, "temp", StringComparison.Ordinal)
+                || local.Name.StartsWith("$tmp", StringComparison.Ordinal);
         }
 
         private bool IsOnceInitializedReadonlyLocal(string localName, string storageClass)
@@ -1493,7 +1549,11 @@ internal sealed class SsaLowerer
                     call.Arguments.Select(argument => RewriteValue(argument, replacements)).ToArray(),
                     call.Type,
                     call.Text,
-                    call.SourceReturnType),
+                    call.SourceReturnType,
+                    call.IndirectArgumentLocalNames,
+                    call.IndirectArgumentAddresses?
+                        .Select(address => address is null ? null : RewriteValue(address, replacements))
+                        .ToArray()),
                 SsaConvertRValue convert => new SsaConvertRValue(
                     RewriteValue(convert.Operand, replacements),
                     convert.TargetType,

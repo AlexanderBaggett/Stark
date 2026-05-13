@@ -283,6 +283,42 @@ public sealed partial class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void SizeofAndAlignofLowerToConcreteIntegerConstants()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn i64[min max] Run() {
+                return sizeof(i32[min max]) + alignof(i64[min max]);
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(
+            statements,
+            static statement => statement.Value is MidLevelIrConvertRValue
+            {
+                Operand: MidLevelIrIntegerConstantOperand { Value: var value }
+            }
+            && value == 4);
+        Assert.Contains(
+            statements,
+            static statement => statement.Value is MidLevelIrConvertRValue
+            {
+                Operand: MidLevelIrIntegerConstantOperand { Value: var value }
+            }
+            && value == 8);
+        Assert.Contains(
+            statements,
+            static statement => statement.Value is MidLevelIrBinaryRValue { Operator: MidLevelIrBinaryOperator.Add });
+    }
+
+    [Fact]
     public void BitwiseXorExpressionLowersToMirBinaryOperation()
     {
         var result = Compile(

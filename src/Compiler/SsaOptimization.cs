@@ -35,8 +35,10 @@ internal sealed class SsaCleanupOptimizer
             return function;
         }
 
-        var current = CanonicalizeCompareAndBranchShapes(function);
+        var current = RemoveStalePhiIncomings(function);
+        current = CanonicalizeCompareAndBranchShapes(current);
         current = SimplifyTrivialTerminators(current);
+        current = RemoveStalePhiIncomings(current);
         current = SimplifySingleCaseSwitches(current);
         current = NormalizeSwitchLoweringStructures(current);
         current = ReuseIdenticalMaterializedValues(current);
@@ -45,7 +47,9 @@ internal sealed class SsaCleanupOptimizer
         current = RemoveUnusedLocalStorage(current);
         current = RemoveUnusedPureInstructions(current);
         current = CollapseTrampolineBlocks(current);
+        current = RemoveStalePhiIncomings(current);
         current = MergeLinearBlocks(current);
+        current = RemoveStalePhiIncomings(current);
         current = CanonicalizeEarlyReturnDiamonds(current);
         if (_enableSelectPredication)
         {
@@ -53,14 +57,18 @@ internal sealed class SsaCleanupOptimizer
         }
 
         current = PruneUnreachableBlocks(current);
+        current = RemoveStalePhiIncomings(current);
         current = SimplifyTrivialTerminators(current);
+        current = RemoveStalePhiIncomings(current);
         current = NormalizeSwitchLoweringStructures(current);
         current = RewriteTrivialCopiesAndIdentityPhis(current);
         current = RemoveUnusedPureInstructions(current);
         current = RemoveUnusedLocalStorage(current);
         current = RemoveUnusedPureInstructions(current);
         current = CollapseTrampolineBlocks(current);
+        current = RemoveStalePhiIncomings(current);
         current = MergeLinearBlocks(current);
+        current = RemoveStalePhiIncomings(current);
         current = CanonicalizeEarlyReturnDiamonds(current);
         if (_enableSelectPredication)
         {
@@ -69,7 +77,7 @@ internal sealed class SsaCleanupOptimizer
             current = RemoveUnusedPureInstructions(current);
         }
 
-        return PruneUnreachableBlocks(current);
+        return RemoveStalePhiIncomings(PruneUnreachableBlocks(current));
     }
 
     private static SsaFunction CanonicalizeCompareAndBranchShapes(SsaFunction function)
@@ -2328,6 +2336,16 @@ internal sealed class SsaCleanupOptimizer
                 }
 
                 break;
+            case SsaIndirectCallRValue { IndirectArgumentLocalNames: { } indirectLocals }:
+                foreach (var localName in indirectLocals)
+                {
+                    if (localName is not null)
+                    {
+                        requiredLocals.Add(localName);
+                    }
+                }
+
+                break;
         }
     }
 
@@ -2422,7 +2440,9 @@ internal sealed class SsaCleanupOptimizer
             SsaCallRValue call => call.IndirectArgumentAddresses is { Count: > 0 }
                 ? call.Arguments.Concat(call.IndirectArgumentAddresses.OfType<SsaValue>())
                 : call.Arguments,
-            SsaIndirectCallRValue indirectCall => [indirectCall.Target, .. indirectCall.Arguments],
+            SsaIndirectCallRValue indirectCall => indirectCall.IndirectArgumentAddresses is { Count: > 0 }
+                ? indirectCall.Arguments.Prepend(indirectCall.Target).Concat(indirectCall.IndirectArgumentAddresses.OfType<SsaValue>())
+                : indirectCall.Arguments.Prepend(indirectCall.Target),
             SsaConvertRValue convert => [convert.Operand],
             SsaExtractFieldRValue extractField => [extractField.Target],
             SsaInsertFieldRValue insertField => [insertField.Target, insertField.Value],
@@ -2507,6 +2527,59 @@ internal sealed class SsaCleanupOptimizer
     private static string TypeKey(StarkTypeSymbol type)
     {
         return type.ToString();
+    }
+
+    private static SsaFunction RemoveStalePhiIncomings(SsaFunction function)
+    {
+        var liveEdges = CollectLiveEdges(function.Blocks);
+        var changed = false;
+        var blocks = function.Blocks
+            .Select(block =>
+            {
+                if (block.Phis.Count == 0)
+                {
+                    return block;
+                }
+
+                var phis = block.Phis
+                    .Select(phi =>
+                    {
+                        var incomings = phi.Incomings
+                            .Where(incoming => liveEdges.Contains((incoming.PredecessorBlockId, block.Id)))
+                            .ToArray();
+                        if (incomings.Length != phi.Incomings.Count)
+                        {
+                            changed = true;
+                        }
+
+                        return new SsaPhi(
+                            phi.ResultName,
+                            phi.VariableName,
+                            phi.Type,
+                            CoalescePhiIncomings(incomings));
+                    })
+                    .ToArray();
+
+                return block with { Phis = phis };
+            })
+            .ToArray();
+
+        return changed ? function with { Blocks = blocks } : function;
+    }
+
+    private static HashSet<(int PredecessorBlockId, int SuccessorBlockId)> CollectLiveEdges(
+        IReadOnlyList<SsaBasicBlock> blocks)
+    {
+        var liveEdges = new HashSet<(int, int)>();
+        foreach (var block in blocks)
+        {
+            foreach (var successor in GetSuccessors(block.Terminator))
+            {
+                liveEdges.Add((block.Id, successor));
+            }
+        }
+
+        return liveEdges;
     }
 
     private static SsaFunction CollapseTrampolineBlocks(SsaFunction function)
@@ -3214,7 +3287,11 @@ internal sealed class SsaCleanupOptimizer
             arguments,
             indirectCall.Type,
             indirectCall.Text,
-            indirectCall.SourceReturnType);
+            indirectCall.SourceReturnType,
+            indirectCall.IndirectArgumentLocalNames,
+            indirectCall.IndirectArgumentAddresses?
+                .Select(address => address is null ? null : RewriteValue(address, replacements))
+                .ToArray());
     }
 
     private static SsaTerminator RewriteTerminator(
@@ -3291,6 +3368,10 @@ internal sealed class SsaAliasAwareMemoryOptimizer
 {
     private readonly FunctionEffectModel? _effectModel;
 
+    private readonly record struct FunctionBodyGlobalMemoryEffects(
+        bool ReadsGlobalMemory,
+        bool WritesGlobalMemory);
+
     private readonly record struct FieldMemoryKey(
         string LocalName,
         string FieldPath,
@@ -3307,11 +3388,12 @@ internal sealed class SsaAliasAwareMemoryOptimizer
 
     public SsaIrModule Optimize(SsaIrModule module)
     {
+        var bodyGlobalMemoryEffects = AnalyzeFunctionBodyGlobalMemoryEffects(module);
         var changed = false;
         var functions = module.Functions
             .Select(function =>
             {
-                var optimized = OptimizeFunction(function);
+                var optimized = OptimizeFunction(function, bodyGlobalMemoryEffects);
                 changed |= !ReferenceEquals(optimized, function);
                 return optimized;
             })
@@ -3323,6 +3405,13 @@ internal sealed class SsaAliasAwareMemoryOptimizer
     }
 
     public SsaFunction OptimizeFunction(SsaFunction function)
+    {
+        return OptimizeFunction(function, EmptyBodyGlobalMemoryEffects);
+    }
+
+    private SsaFunction OptimizeFunction(
+        SsaFunction function,
+        IReadOnlyDictionary<string, FunctionBodyGlobalMemoryEffects> bodyGlobalMemoryEffects)
     {
         if (!function.HasBody || !function.SupportsDirectCodeGeneration || function.Blocks.Count == 0)
         {
@@ -3363,6 +3452,7 @@ internal sealed class SsaAliasAwareMemoryOptimizer
                 entryKnownLocals,
                 entryKnownGlobals,
                 entryKnownFields,
+                bodyGlobalMemoryEffects,
                 ref changed,
                 out var exitKnownLocals,
                 out var exitKnownGlobals,
@@ -3390,6 +3480,7 @@ internal sealed class SsaAliasAwareMemoryOptimizer
         IReadOnlyDictionary<string, SsaValue> entryKnownLocals,
         IReadOnlyDictionary<(string GlobalName, StarkTypeSymbol Type), SsaValue> entryKnownGlobals,
         IReadOnlyDictionary<FieldMemoryKey, SsaValue> entryKnownFields,
+        IReadOnlyDictionary<string, FunctionBodyGlobalMemoryEffects> bodyGlobalMemoryEffects,
         ref bool changed,
         out IReadOnlyDictionary<string, SsaValue> exitKnownLocals,
         out IReadOnlyDictionary<(string GlobalName, StarkTypeSymbol Type), SsaValue> exitKnownGlobals,
@@ -3523,7 +3614,7 @@ internal sealed class SsaAliasAwareMemoryOptimizer
                     continue;
 
                 case SsaValueInstruction { Value: SsaCallRValue call }:
-                    if (MayWriteGlobalMemory(call))
+                    if (MayWriteGlobalMemory(call, bodyGlobalMemoryEffects))
                     {
                         knownGlobals.Clear();
                         pendingGlobalStoreInstructionIndexes.Clear();
@@ -3532,7 +3623,7 @@ internal sealed class SsaAliasAwareMemoryOptimizer
                     }
                     else
                     {
-                        if (MayReadGlobalMemory(call, definitions))
+                        if (MayReadGlobalMemory(call, definitions, bodyGlobalMemoryEffects))
                         {
                             pendingGlobalStoreInstructionIndexes.Clear();
                         }
@@ -4108,7 +4199,107 @@ internal sealed class SsaAliasAwareMemoryOptimizer
             or StarkTypeKind.FunctionPointer;
     }
 
-    private bool MayWriteGlobalMemory(SsaCallRValue call)
+    private static IReadOnlyDictionary<string, FunctionBodyGlobalMemoryEffects> EmptyBodyGlobalMemoryEffects { get; } =
+        new Dictionary<string, FunctionBodyGlobalMemoryEffects>(StringComparer.Ordinal);
+
+    private IReadOnlyDictionary<string, FunctionBodyGlobalMemoryEffects> AnalyzeFunctionBodyGlobalMemoryEffects(
+        SsaIrModule module)
+    {
+        var functions = module.Functions
+            .Where(static function => function.HasBody && function.SupportsDirectCodeGeneration)
+            .ToArray();
+        if (functions.Length == 0)
+        {
+            return EmptyBodyGlobalMemoryEffects;
+        }
+
+        var effects = functions.ToDictionary(
+            static function => function.Name,
+            static _ => new FunctionBodyGlobalMemoryEffects(false, false),
+            StringComparer.Ordinal);
+
+        var changed = true;
+        while (changed)
+        {
+            changed = false;
+
+            foreach (var function in functions)
+            {
+                var analyzed = AnalyzeFunctionBodyGlobalMemoryEffects(function, effects);
+                if (!EqualityComparer<FunctionBodyGlobalMemoryEffects>.Default.Equals(effects[function.Name], analyzed))
+                {
+                    effects[function.Name] = analyzed;
+                    changed = true;
+                }
+            }
+        }
+
+        return effects;
+    }
+
+    private FunctionBodyGlobalMemoryEffects AnalyzeFunctionBodyGlobalMemoryEffects(
+        SsaFunction function,
+        IReadOnlyDictionary<string, FunctionBodyGlobalMemoryEffects> knownBodyEffects)
+    {
+        var readsGlobalMemory = false;
+        var writesGlobalMemory = false;
+        var definitions = function.Blocks
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaValueInstruction>()
+            .ToDictionary(static instruction => instruction.ResultName, static instruction => instruction.Value, StringComparer.Ordinal);
+
+        foreach (var block in function.Blocks)
+        {
+            foreach (var instruction in block.Instructions)
+            {
+                switch (instruction)
+                {
+                    case SsaValueInstruction { Value: SsaLoadGlobalRValue }:
+                        readsGlobalMemory = true;
+                        break;
+
+                    case SsaStoreGlobalInstruction:
+                        writesGlobalMemory = true;
+                        break;
+
+                    case SsaValueInstruction { Value: SsaCallRValue call }:
+                        if (MayReadGlobalMemoryFromEffectModel(call, definitions)
+                            || knownBodyEffects.TryGetValue(call.FunctionName, out var readEffects)
+                            && readEffects.ReadsGlobalMemory)
+                        {
+                            readsGlobalMemory = true;
+                        }
+
+                        if (MayWriteGlobalMemoryFromEffectModel(call)
+                            || knownBodyEffects.TryGetValue(call.FunctionName, out var writeEffects)
+                            && writeEffects.WritesGlobalMemory)
+                        {
+                            writesGlobalMemory = true;
+                        }
+
+                        break;
+
+                    case SsaValueInstruction { Value: SsaIndirectCallRValue }:
+                        readsGlobalMemory = true;
+                        writesGlobalMemory = true;
+                        break;
+                }
+            }
+        }
+
+        return new FunctionBodyGlobalMemoryEffects(readsGlobalMemory, writesGlobalMemory);
+    }
+
+    private bool MayWriteGlobalMemory(
+        SsaCallRValue call,
+        IReadOnlyDictionary<string, FunctionBodyGlobalMemoryEffects> bodyGlobalMemoryEffects)
+    {
+        return MayWriteGlobalMemoryFromEffectModel(call)
+               || bodyGlobalMemoryEffects.TryGetValue(call.FunctionName, out var bodyEffects)
+               && bodyEffects.WritesGlobalMemory;
+    }
+
+    private bool MayWriteGlobalMemoryFromEffectModel(SsaCallRValue call)
     {
         return _effectModel is not { } effectModel
                || !effectModel.Functions.TryGetValue(call.FunctionName, out var effects)
@@ -4117,6 +4308,16 @@ internal sealed class SsaAliasAwareMemoryOptimizer
     }
 
     private bool MayReadGlobalMemory(
+        SsaCallRValue call,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        IReadOnlyDictionary<string, FunctionBodyGlobalMemoryEffects> bodyGlobalMemoryEffects)
+    {
+        return MayReadGlobalMemoryFromEffectModel(call, definitions)
+               || bodyGlobalMemoryEffects.TryGetValue(call.FunctionName, out var bodyEffects)
+               && bodyEffects.ReadsGlobalMemory;
+    }
+
+    private bool MayReadGlobalMemoryFromEffectModel(
         SsaCallRValue call,
         IReadOnlyDictionary<string, SsaRValue> definitions)
     {
@@ -4684,6 +4885,9 @@ internal sealed class SsaAliasAwareMemoryOptimizer
                 Target = RewriteValue(indirectCall.Target, replacements),
                 Arguments = indirectCall.Arguments
                     .Select(argument => RewriteValue(argument, replacements))
+                    .ToArray(),
+                IndirectArgumentAddresses = indirectCall.IndirectArgumentAddresses?
+                    .Select(address => address is null ? null : RewriteValue(address, replacements))
                     .ToArray()
             },
             SsaConvertRValue convert => convert with
@@ -4985,6 +5189,11 @@ internal sealed class SsaScalarReplacementOptimizer
                 foreach (var argument in indirectCall.Arguments)
                 {
                     AddEscapedAggregateRoots(argument, definitions, phiDefinitions, candidates, escaped);
+                }
+
+                foreach (var address in indirectCall.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+                {
+                    AddEscapedAggregateRoots(address, definitions, phiDefinitions, candidates, escaped);
                 }
 
                 break;
@@ -6645,7 +6854,9 @@ internal sealed class SsaDirectCallDevirtualizer
             indirectCall.Arguments,
             indirectCall.Type,
             indirectCall.Text,
-            SourceReturnType: indirectCall.SourceReturnType);
+            indirectCall.IndirectArgumentLocalNames,
+            SourceReturnType: indirectCall.SourceReturnType,
+            indirectCall.IndirectArgumentAddresses);
         return true;
     }
 }
@@ -7428,7 +7639,9 @@ internal sealed class SsaValueFactAnalyzer
                     valueInstruction.ResultName,
                     valueInstruction.Value,
                     values,
-                    moduleName);
+                    moduleName,
+                    function,
+                    reachableBlockIds);
                 if (!EqualityComparer<SsaValueFacts>.Default.Equals(values[valueInstruction.ResultName], analyzed))
                 {
                     values[valueInstruction.ResultName] = analyzed;
@@ -7447,7 +7660,9 @@ internal sealed class SsaValueFactAnalyzer
         string valueName,
         SsaRValue value,
         IReadOnlyDictionary<string, SsaValueFacts> knownValues,
-        string moduleName)
+        string moduleName,
+        SsaFunction function,
+        ISet<int> reachableBlockIds)
     {
         return value switch
         {
@@ -7464,6 +7679,7 @@ internal sealed class SsaValueFactAnalyzer
             SsaElementAddressRValue elementAddress => AnalyzeDerivedPointerAddress(valueName, elementAddress.Type, elementAddress.Address, knownValues),
             SsaSliceElementAddressRValue sliceElementAddress => CreateNonNullFacts(valueName, sliceElementAddress.Type),
             SsaMakeSliceFromLocalRValue makeSlice => AnalyzeMakeSlice(valueName, makeSlice),
+            SsaLoadLocalRValue loadLocal => AnalyzeLoadLocal(valueName, loadLocal, function, reachableBlockIds, knownValues),
             SsaTextSliceRValue textSlice => AnalyzeTextSlice(valueName, textSlice, knownValues),
             _ => CreateTypeFacts(valueName, value.Type)
         };
@@ -8091,6 +8307,43 @@ internal sealed class SsaValueFactAnalyzer
                 LengthRange = new SsaIntegerRangeFact(fixedLength, fixedLength)
             }
             : facts;
+    }
+
+    private static SsaValueFacts AnalyzeLoadLocal(
+        string valueName,
+        SsaLoadLocalRValue loadLocal,
+        SsaFunction function,
+        ISet<int> reachableBlockIds,
+        IReadOnlyDictionary<string, SsaValueFacts> knownValues)
+    {
+        var facts = CreateTypeFacts(valueName, loadLocal.Type);
+        if (loadLocal.Type.Kind != StarkTypeKind.Slice)
+        {
+            return facts;
+        }
+
+        var storedLengthRanges = function.Blocks
+            .Where(block => reachableBlockIds.Contains(block.Id))
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaStoreLocalInstruction>()
+            .Where(store => string.Equals(store.LocalName, loadLocal.LocalName, StringComparison.Ordinal)
+                            && store.LocalType == loadLocal.Type)
+            .Select(store => AnalyzeValue(valueName, store.Value, knownValues))
+            .ToArray();
+        if (storedLengthRanges.Length == 0
+            || storedLengthRanges.Any(static storeFacts => storeFacts.LengthKind != SsaFactLatticeKind.Known
+                                                           || storeFacts.LengthRange is null))
+        {
+            return facts;
+        }
+
+        return facts with
+        {
+            LengthKind = SsaFactLatticeKind.Known,
+            LengthRange = new SsaIntegerRangeFact(
+                storedLengthRanges.Min(static storeFacts => storeFacts.LengthRange!.Min),
+                storedLengthRanges.Max(static storeFacts => storeFacts.LengthRange!.Max))
+        };
     }
 
     private static SsaValueFacts AnalyzeTextSlice(
@@ -10804,11 +11057,18 @@ internal sealed class SsaDirectCallInliner
                 arguments,
                 indirectCall.Type,
                 indirectCall.Text,
-                SourceReturnType: indirectCall.SourceReturnType)
+                indirectCall.IndirectArgumentLocalNames,
+                SourceReturnType: indirectCall.SourceReturnType,
+                indirectCall.IndirectArgumentAddresses?
+                    .Select(address => address is null ? null : RewriteValue(address, replacements))
+                    .ToArray())
             : indirectCall with
             {
                 Target = target,
-                Arguments = arguments
+                Arguments = arguments,
+                IndirectArgumentAddresses = indirectCall.IndirectArgumentAddresses?
+                    .Select(address => address is null ? null : RewriteValue(address, replacements))
+                    .ToArray()
             };
     }
 
@@ -11022,6 +11282,11 @@ internal static class SsaAddressTakenFunctionPruner
                 foreach (var argument in indirectCall.Arguments)
                 {
                     AddReferencedFunctionAddress(argument, referencedFunctions);
+                }
+
+                foreach (var address in indirectCall.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+                {
+                    AddReferencedFunctionAddress(address, referencedFunctions);
                 }
 
                 break;
@@ -12211,7 +12476,11 @@ internal sealed class SsaConstantPropagator
             arguments,
             indirectCall.Type,
             indirectCall.Text,
-            indirectCall.SourceReturnType);
+            indirectCall.SourceReturnType,
+            indirectCall.IndirectArgumentLocalNames,
+            indirectCall.IndirectArgumentAddresses?
+                .Select(address => address is null ? null : RewriteValue(address, replacements))
+                .ToArray());
     }
 
     private static SsaValue RewriteValue(

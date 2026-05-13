@@ -128,7 +128,7 @@ And it is designed to be as fast and as optimized as possible and needs to beat 
 - saturation and wrapping operators exist and are explicit
 - ^ is XOR, not exponentiation
 - ** is the exponent operator
-- the current compiler-lowered exponent path is floating-point oriented
+- runtime exponent lowering is floating-point oriented
 
 ## Errors and Runtime
 - Stark has no exceptions or stack unwinding

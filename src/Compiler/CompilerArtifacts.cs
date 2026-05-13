@@ -22,6 +22,7 @@ public static class CompilerArtifactKeys
     public static readonly ArtifactKey<EnumLayoutModel> EnumLayoutModel = new("typing.enum-layout");
     public static readonly ArtifactKey<SemanticValidationModel> SemanticValidation = new("semantics.validation");
     public static readonly ArtifactKey<OwnershipValidationModel> OwnershipValidation = new("semantics.ownership");
+    public static readonly ArtifactKey<LoweringContractValidationModel> LoweringContractValidation = new("lowering.contract-validation");
     public static readonly ArtifactKey<HighLevelIrModule> HighLevelIr = new("lowering.hir");
     public static readonly ArtifactKey<MidLevelIrModule> MidLevelIr = new("lowering.mir");
     public static readonly ArtifactKey<SsaIrModule> SsaIr = new("lowering.ssa");
@@ -1436,10 +1437,28 @@ public sealed record LocalDeclarationTypingRecord(
     SourceLocation Location,
     string? EnclosingFunctionName = null);
 
+public sealed record CallArgumentTypingRecord(
+    int ParameterIndex,
+    int SourceArgumentIndex,
+    StarkTypeSymbol ParameterType,
+    StarkTypeSymbol ArgumentType,
+    bool IsReceiver,
+    bool RequiresAddressable,
+    bool RequiresMutable,
+    bool RequiresConstProvenance,
+    bool ArgumentIsAddressable,
+    bool ArgumentIsMutable,
+    bool ArgumentHasConstProvenance);
+
 public sealed record DirectCallTypingRecord(
     TypedFunctionSignature Signature,
     SourceLocation Location,
-    string? EnclosingFunctionName = null);
+    string? EnclosingFunctionName = null,
+    IReadOnlyList<CallArgumentTypingRecord>? ArgumentRecords = null)
+{
+    public IReadOnlyList<CallArgumentTypingRecord> Arguments =>
+        ArgumentRecords ?? [];
+}
 
 public sealed record FunctionPointerPromotionTypingRecord(
     TypedFunctionSignature Signature,
@@ -1454,6 +1473,58 @@ public sealed record AddressTakenFunctionTypingRecord(
 
 public sealed record IndirectCallTypingRecord(
     StarkTypeSymbol FunctionPointerType,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null,
+    IReadOnlyList<CallArgumentTypingRecord>? ArgumentRecords = null)
+{
+    public IReadOnlyList<CallArgumentTypingRecord> Arguments =>
+        ArgumentRecords ?? [];
+}
+
+public sealed record IndexAccessTypingRecord(
+    string Kind,
+    StarkTypeSymbol SourceType,
+    StarkTypeSymbol ResultType,
+    int IndexCount,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null);
+
+public sealed record DynamicStorageOperationTypingRecord(
+    string OperationName,
+    StarkTypeSymbol ReceiverType,
+    StarkTypeSymbol ResultType,
+    int ArgumentCount,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null,
+    bool ReceiverIsAddressable = true,
+    bool ReceiverIsMutable = true);
+
+public static class SwitchLoweringFamilies
+{
+    public const string Native = "native";
+    public const string PartitionedText = "partitioned-text";
+    public const string Guarded = "guarded";
+
+    public static bool IsKnown(string family)
+    {
+        return string.Equals(family, Native, StringComparison.Ordinal)
+            || string.Equals(family, PartitionedText, StringComparison.Ordinal)
+            || string.Equals(family, Guarded, StringComparison.Ordinal);
+    }
+}
+
+public sealed record SwitchTypingRecord(
+    string Family,
+    StarkTypeSymbol SwitchType,
+    int SectionCount,
+    int LabelCount,
+    int ExplicitDefaultLabelCount,
+    int LoweredDefaultLabelCount,
+    int LiteralLabelCount,
+    int MatchAllLabelCount,
+    int CaptureLabelCount,
+    int StructuredPatternLabelCount,
+    int GuardedLabelCount,
     SourceLocation Location,
     string? EnclosingFunctionName = null);
 
@@ -1488,7 +1559,12 @@ public sealed record FieldAccessTypingRecord(
 public sealed record MemberCallTypingRecord(
     TypedFunctionSignature Signature,
     SourceLocation Location,
-    string? EnclosingFunctionName = null);
+    string? EnclosingFunctionName = null,
+    IReadOnlyList<CallArgumentTypingRecord>? ArgumentRecords = null)
+{
+    public IReadOnlyList<CallArgumentTypingRecord> Arguments =>
+        ArgumentRecords ?? [];
+}
 
 public sealed record ObjectInitializerMemberTypingRecord(
     string FieldName,
@@ -1577,6 +1653,18 @@ public sealed record TypeInstantiationTriggerRecord(
     IReadOnlyList<StarkTypeSymbol> TypeArguments,
     SourceLocation Location);
 
+public sealed record LoweringContractValidationModel(
+    string ModuleName,
+    int CheckedFunctionCount,
+    int CheckedCallCount,
+    int CheckedIndexAccessCount,
+    int CheckedObjectCreationCount,
+    int CheckedEnumConstructorCount,
+    int CheckedLambdaCount,
+    int CheckedTypeLayoutExpressionCount,
+    int CheckedDynamicStorageOperationCount,
+    int CheckedSwitchCount);
+
 public sealed record TypeCheckModel(
     string ModuleName,
     IReadOnlyDictionary<string, NamedTypeSymbol> NamedTypes,
@@ -1605,7 +1693,10 @@ public sealed record TypeCheckModel(
     IReadOnlyList<TypeLayoutExpressionTypingRecord>? TypeLayoutExpressionRecords = null,
     IReadOnlyList<LambdaTypingRecord>? LambdaRecords = null,
     IReadOnlyList<LambdaCaptureTypingRecord>? LambdaCaptureRecords = null,
-    IReadOnlyList<AddressTakenFunctionTypingRecord>? AddressTakenFunctionRecords = null)
+    IReadOnlyList<AddressTakenFunctionTypingRecord>? AddressTakenFunctionRecords = null,
+    IReadOnlyList<IndexAccessTypingRecord>? IndexAccessRecords = null,
+    IReadOnlyList<DynamicStorageOperationTypingRecord>? DynamicStorageOperationRecords = null,
+    IReadOnlyList<SwitchTypingRecord>? SwitchRecords = null)
 {
     public IReadOnlyDictionary<string, IReadOnlyList<TypedFunctionSignature>> Overloads =>
         FunctionOverloads
@@ -1675,6 +1766,15 @@ public sealed record TypeCheckModel(
 
     public IReadOnlyList<TypeLayoutExpressionTypingRecord> TypeLayoutExpressions =>
         TypeLayoutExpressionRecords ?? [];
+
+    public IReadOnlyList<IndexAccessTypingRecord> IndexAccesses =>
+        IndexAccessRecords ?? [];
+
+    public IReadOnlyList<DynamicStorageOperationTypingRecord> DynamicStorageOperations =>
+        DynamicStorageOperationRecords ?? [];
+
+    public IReadOnlyList<SwitchTypingRecord> Switches =>
+        SwitchRecords ?? [];
 }
 
 internal static class TemplateLocalDeclarationFacts
@@ -2456,7 +2556,9 @@ public sealed record MidLevelIrIndirectCallRValue(
     IReadOnlyList<MidLevelIrOperand> Arguments,
     StarkTypeSymbol Type,
     string Text,
-    StarkTypeSymbol? SourceReturnType = null)
+    StarkTypeSymbol? SourceReturnType = null,
+    IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
+    IReadOnlyList<MidLevelIrOperand?>? IndirectArgumentAddresses = null)
     : MidLevelIrRValue(Type, Text);
 
 public sealed record MidLevelIrConvertRValue(
@@ -2798,7 +2900,9 @@ public sealed record SsaIndirectCallRValue(
     IReadOnlyList<SsaValue> Arguments,
     StarkTypeSymbol Type,
     string Text,
-    StarkTypeSymbol? SourceReturnType = null)
+    StarkTypeSymbol? SourceReturnType = null,
+    IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
+    IReadOnlyList<SsaValue?>? IndirectArgumentAddresses = null)
     : SsaRValue(Type, Text);
 
 public sealed record SsaConvertRValue(

@@ -333,6 +333,26 @@ public sealed class DiagnosticRegressionTests
     }
 
     [Fact]
+    public void RuntimeDisjointScalarOperandsFailBeforeMirLowering()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn bool Run(i32[min max] left, i32[min max] right) {
+                if disjoint(left, right) {
+                    return true;
+                }
+
+                return false;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3025", "Runtime disjoint checks", "memory-backed operands", "i32");
+    }
+
+    [Fact]
     public void DisjointParameterCallsRejectObviousOverlappingArguments()
     {
         var result = Compile(

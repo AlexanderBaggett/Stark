@@ -51,7 +51,7 @@ public struct Directory {
         return !self.Closed;
     }
 
-    fn System.IO.IOStatus Close(mut borrow Directory self) {
+    inline fn System.IO.IOStatus Close(mut borrow Directory self) {
         unsafe {
             if (self.Closed || self.Handle == null) {
                 self.Handle = null;
@@ -59,7 +59,6 @@ public struct Directory {
                 self.BufferReadPos = 0;
                 self.BufferWritePos = 0;
                 self.BufferCapacity = 0;
-                self.Buffer.Clear();
                 return System.IO.IOStatus.Ok;
             }
 
@@ -69,36 +68,78 @@ public struct Directory {
             self.BufferReadPos = 0;
             self.BufferWritePos = 0;
             self.BufferCapacity = 0;
-            self.Buffer.Clear();
 
             return StatusFromPlatformResult(System.Runtime.Platform.CloseDirectory(handle));
         }
     }
 
-    fn DirectoryReadInfoResult ReadNextInfo(mut borrow Directory self) {
+    internal unsafe inline fn i32[min max] ReadNextInfoRaw(
+        mut borrow Directory self,
+        rawmutptr<i64[min max]> nameLength,
+        rawmutptr<i32[min max]> kindCode)
+    {
         unsafe {
+            if (nameLength == null || kindCode == null) {
+                return -1;
+            }
+
             if (self.Closed || self.Handle == null) {
-                return DirectoryReadInfoResult.Err(System.IO.IOError.Unknown(-1));
+                *nameLength = -2;
+                *kindCode = -1;
+                return -1;
             }
 
             stack rawmutptr<i8[min max]> buffer = self.Buffer.WritePointer();
             if (buffer == null || self.BufferCapacity == 0 || self.BufferCapacity > self.Buffer.Capacity()) {
-                return DirectoryReadInfoResult.Err(System.IO.IOError.InvalidPath);
+                *nameLength = -2;
+                *kindCode = -36;
+                return -36;
             }
 
+            return System.Runtime.Platform.ReadDirectoryEntryInfo(
+                self.Handle,
+                buffer,
+                self.BufferCapacity,
+                &self.BufferReadPos,
+                &self.BufferWritePos,
+                nameLength,
+                kindCode);
+        }
+    }
+
+    internal unsafe inline fn i64[min max] ReadRemainingNameLengthChecksumRaw(
+        mut borrow Directory self,
+        i64[min max] expectedCount)
+    {
+        unsafe {
+            if (expectedCount < 0) {
+                return -1;
+            }
+
+            if (self.Closed || self.Handle == null) {
+                return -1;
+            }
+
+            stack rawmutptr<i8[min max]> buffer = &self.Buffer.Storage[0];
+            if (self.BufferCapacity == 0 || self.BufferCapacity > (u64[0 2 ** 63 - 1])8192) {
+                return -1;
+            }
+
+            return System.Runtime.Platform.ReadDirectoryNameLengthChecksum(
+                self.Handle,
+                buffer,
+                self.BufferCapacity,
+                &self.BufferReadPos,
+                &self.BufferWritePos,
+                expectedCount);
+        }
+    }
+
+    fn DirectoryReadInfoResult ReadNextInfo(mut borrow Directory self) {
+        unsafe {
             stack mut i64[min max] nameLength = 0;
             stack mut i32[min max] kindCode = 0;
-            unsafe {
-                System.Runtime.Platform.ReadDirectoryEntryInfo(
-                    self.Handle,
-                    buffer,
-                    self.BufferCapacity,
-                    &self.BufferReadPos,
-                    &self.BufferWritePos,
-                    &nameLength,
-                    &kindCode);
-            }
-
+            self.ReadNextInfoRaw(&nameLength, &kindCode);
             return DirectoryReadInfoResultFromPlatformInfo(nameLength, kindCode);
         }
     }

@@ -220,6 +220,23 @@ public sealed class TypeTypingDiagnosticsTests
     }
 
     [Fact]
+    public void FfiFunctionsRejectTextViewReturnTypes()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe ffi fn ascii CurrentAscii();
+            unsafe ffi fn unicode CurrentUnicode();
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3008", "FFI function 'CurrentAscii'", "cannot return text view type 'ascii'", "raw pointer plus explicit length/status");
+        AssertDiagnostic(result, "STK3008", "FFI function 'CurrentUnicode'", "cannot return text view type 'unicode'", "raw pointer plus explicit length/status");
+    }
+
+    [Fact]
     public void AsmFunctionsRejectUnsupportedParameterAndReturnTypes()
     {
         var result = Compile(
@@ -429,7 +446,7 @@ public sealed class TypeTypingDiagnosticsTests
             new CompilerOptions(StopAfterPassId: "type-check"));
 
         Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK3008", "Type 'Outer'", "depends on enum 'Token'", "not yet supported in a global variable type");
+        AssertDiagnostic(result, "STK3008", "Type 'Outer'", "depends on enum 'Token'", "enum-dependent runtime layout is not valid in a global variable type");
     }
 
     [Fact]
@@ -1179,8 +1196,8 @@ public sealed class TypeTypingDiagnosticsTests
             new CompilerOptions(StopAfterPassId: "type-check"));
 
         Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK3002", "Explicit conversion from 'ascii' to 'unicode' is not supported", "compile-time text constant");
-        AssertDiagnostic(result, "STK3002", "Explicit conversion from 'unicode' to 'ascii' is not supported", "compile-time text constant");
+        AssertDiagnostic(result, "STK3002", "Explicit conversion from 'ascii' to 'unicode' requires a compile-time text constant", "System.Text APIs");
+        AssertDiagnostic(result, "STK3002", "Explicit conversion from 'unicode' to 'ascii' requires a compile-time text constant", "System.Text APIs");
     }
 
     [Fact]
@@ -1198,7 +1215,7 @@ public sealed class TypeTypingDiagnosticsTests
             new CompilerOptions(StopAfterPassId: "type-check"));
 
         Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK3002", "Explicit conversion from 'unicode' to 'ascii' is not supported", "compile-time text constant");
+        AssertDiagnostic(result, "STK3002", "Explicit conversion from 'unicode' to 'ascii' requires a compile-time text constant", "System.Text APIs");
     }
 
     [Fact]
@@ -1330,6 +1347,24 @@ public sealed class TypeTypingDiagnosticsTests
 
         Assert.False(result.Succeeded);
         AssertDiagnostic(result, "STK3008", "Text indexing currently supports exactly one integer index or two integer expressions: start and length");
+    }
+
+    [Fact]
+    public void DynamicStorageAccessRejectsMoreThanTwoIndices()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] Run() {
+                stack mut dynamic i32[min max] values = new();
+                return values[0, 1, 2];
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3008", "Dynamic storage indexing supports either one integer index or two integer expressions: start and count");
     }
 
     [Fact]
@@ -1594,9 +1629,504 @@ public sealed class TypeTypingDiagnosticsTests
         AssertDiagnostic(result, "STK3022", "Measure(f64)");
     }
 
+    [Fact]
+    public void MemberOverloadResolutionReportsNoMatchingCandidates()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[min max] Value;
+
+                finite law i32[min max] Add(borrow Box self, i32[min max] amount) {
+                    return self.Value + amount;
+                }
+
+                finite law i32[min max] Add(borrow Box self, ascii label) {
+                    return self.Value;
+                }
+            }
+
+            fn i32[min max] Run() {
+                stack Box box = new Box() { Value = 1 };
+                return box.Add(true);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3021", "No overload of 'Box.Add' matches argument types (bool)");
+        AssertDiagnostic(result, "STK3021", "Box.Add(borrow Box, i32)");
+        AssertDiagnostic(result, "STK3021", "Box.Add(borrow Box, ascii)");
+    }
+
+    [Fact]
+    public void MemberOverloadResolutionReportsAmbiguousCalls()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[min max] Value;
+
+                finite law i32[min max] Measure(borrow Box self, f32 value) {
+                    return self.Value;
+                }
+
+                finite law i32[min max] Measure(borrow Box self, f64 value) {
+                    return self.Value;
+                }
+            }
+
+            fn i32[min max] Run() {
+                stack Box box = new Box() { Value = 1 };
+                stack i32[min max] value = 1;
+                return box.Measure(value);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3022", "Call to overloaded function 'Box.Measure' is ambiguous for argument types (i32)");
+        AssertDiagnostic(result, "STK3022", "Box.Measure(borrow Box, f32)");
+        AssertDiagnostic(result, "STK3022", "Box.Measure(borrow Box, f64)");
+    }
+
+    [Fact]
+    public void VoidCallsUsedAsValuesFailBeforeMirLowering()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Touch() {
+                return;
+            }
+
+            struct Box {
+                i32[min max] Value;
+
+                fn void Clear(borrow Box self) {
+                    return;
+                }
+            }
+
+            fn i32[min max] Direct() {
+                return Touch();
+            }
+
+            fn i32[min max] Member() {
+                stack Box box = new Box() { Value = 1 };
+                return box.Clear();
+            }
+
+            fn i32[min max] Indirect() {
+                stack fnptr<fn void()> callback = Touch;
+                return callback();
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(
+            3,
+            result.Diagnostics.Count(static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("Return statement expects 'i32'", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("found 'void'", StringComparison.Ordinal)));
+        Assert.DoesNotContain(result.Logs, IsLoweringOrBackendFallbackLog);
+    }
+
+    [Fact]
+    public void SemanticErrorShapedLoweringFallbackCasesFailBeforeMirLowering()
+    {
+        var cases = new (string Name, string Source, string DiagnosticCode, string[] MessageFragments)[]
+        {
+            (
+                "constructor return value",
+                """
+                module Demo
+
+                struct Box {
+                    i32[min max] Value;
+
+                    Box(i32[min max] value) {
+                        return value;
+                    }
+                }
+                """,
+                "STK3002",
+                ["Constructor bodies cannot return a value"]),
+            (
+                "direct call arity",
+                """
+                module Demo
+
+                fn i32[min max] Add(i32[min max] left, i32[min max] right) {
+                    return left + right;
+                }
+
+                fn i32[min max] Run() {
+                    return Add(1);
+                }
+                """,
+                "STK3009",
+                ["Function 'Add'", "expects 2 arguments", "received 1"]),
+            (
+                "member call arity",
+                """
+                module Demo
+
+                struct Box {
+                    i32[min max] Value;
+
+                    finite law i32[min max] Add(borrow Box self, i32[min max] amount) {
+                        return self.Value + amount;
+                    }
+                }
+
+                fn i32[min max] Run() {
+                    stack Box box = new Box() { Value = 1 };
+                    return box.Add();
+                }
+                """,
+                "STK3009",
+                ["Function 'Box.Add'", "expects 1 arguments", "received 0"]),
+            (
+                "void direct call as value",
+                """
+                module Demo
+
+                fn void Touch() {
+                    return;
+                }
+
+                fn i32[min max] Run() {
+                    return Touch();
+                }
+                """,
+                "STK3002",
+                ["Return statement expects 'i32'", "found 'void'"]),
+            (
+                "void member call as value",
+                """
+                module Demo
+
+                struct Box {
+                    i32[min max] Value;
+
+                    fn void Clear(borrow Box self) {
+                        return;
+                    }
+                }
+
+                fn i32[min max] Run() {
+                    stack Box box = new Box() { Value = 1 };
+                    return box.Clear();
+                }
+                """,
+                "STK3002",
+                ["Return statement expects 'i32'", "found 'void'"]),
+            (
+                "void indirect call as value",
+                """
+                module Demo
+
+                fn void Touch() {
+                    return;
+                }
+
+                fn i32[min max] Run() {
+                    stack fnptr<fn void()> callback = Touch;
+                    return callback();
+                }
+                """,
+                "STK3002",
+                ["Return statement expects 'i32'", "found 'void'"]),
+            (
+                "member call binding",
+                """
+                module Demo
+
+                struct Box {
+                    i32[min max] Value;
+
+                    finite law i32[min max] Add(borrow Box self, i32[min max] amount) {
+                        return self.Value + amount;
+                    }
+
+                    finite law i32[min max] Add(borrow Box self, ascii label) {
+                        return self.Value;
+                    }
+                }
+
+                fn i32[min max] Run() {
+                    stack Box box = new Box() { Value = 1 };
+                    return box.Add(true);
+                }
+                """,
+                "STK3021",
+                ["No overload of 'Box.Add' matches argument types (bool)"]),
+            (
+                "raw slice arity",
+                """
+                module Demo
+
+                unsafe fn void Run(rawptr<i32[min max]> pointer) {
+                    unsafe {
+                        stack i32[min max][] view = slice(pointer);
+                    }
+                }
+                """,
+                "STK3009",
+                ["Raw slice construction expects 2 arguments", "received 1"]),
+            (
+                "index non-integer operand",
+                """
+                module Demo
+
+                fn i32[min max] Run(bool flag) {
+                    stack i32[min max][2] values = { 1, 2 };
+                    return values[flag];
+                }
+                """,
+                "STK3002",
+                ["Index access", "expects an integer index", "bool"]),
+            (
+                "empty index arity",
+                """
+                module Demo
+
+                fn i32[min max] Run() {
+                    stack i32[min max][2] values = { 1, 2 };
+                    values[];
+                    return 0;
+                }
+                """,
+                "STK3002",
+                ["Index access requires at least one index expression"]),
+            (
+                "dynamic storage index arity",
+                """
+                module Demo
+
+                fn i32[min max] Run() {
+                    stack mut dynamic i32[min max] values = new();
+                    return values[0, 1, 2];
+                }
+                """,
+                "STK3008",
+                ["Dynamic storage indexing supports either one integer index or two integer expressions"]),
+            (
+                "text index arity",
+                """
+                module Demo
+
+                fn ascii Run(ascii text) {
+                    return text[1, 2, 3];
+                }
+                """,
+                "STK3008",
+                ["Text indexing currently supports exactly one integer index or two integer expressions"]),
+            (
+                "dynamic storage operation shape",
+                """
+                module Demo
+
+                fn void Run() {
+                    stack mut dynamic i32[min max] values = new();
+                    values.Reserve(true);
+                }
+                """,
+                "STK3002",
+                ["Dynamic storage Reserve", "additional capacity", "must be an integer", "bool"]),
+            (
+                "dynamic storage MoveAt arity",
+                """
+                module Demo
+
+                fn void Run() {
+                    stack mut dynamic i32[min max] values = new();
+                    values.MoveAt();
+                }
+                """,
+                "STK3009",
+                ["Dynamic storage MoveAt", "expects one index argument", "received 0"]),
+            (
+                "dynamic storage non-addressable receiver",
+                """
+                module Demo
+
+                fn dynamic i32[min max] Make() {
+                    return new();
+                }
+
+                fn void Run() {
+                    Make().MoveLast();
+                }
+                """,
+                "STK3007",
+                ["Dynamic storage MoveLast", "requires a mutable addressable dynamic owner"]),
+            (
+                "dynamic storage creation capacity type",
+                """
+                module Demo
+
+                fn void Run() {
+                    stack mut dynamic i32[min max] values = new(true);
+                }
+                """,
+                "STK3002",
+                ["Dynamic storage capacity", "must be an integer", "bool"]),
+            (
+                "dynamic storage creation object initializer",
+                """
+                module Demo
+
+                fn void Run() {
+                    stack mut dynamic i32[min max] values = new() { Length = 1 };
+                }
+                """,
+                "STK3008",
+                ["Dynamic storage creation", "does not support object initializers", "new(capacity)"]),
+            (
+                "fixed text buffer initializer shape",
+                """
+                module Demo
+
+                fn void Run(Ascii left) {
+                    stack Ascii text[16] = { left };
+                }
+                """,
+                "STK3002",
+                ["Fixed text buffer 'text'", "needs a text-building initializer"]),
+            (
+                "function as value",
+                """
+                module Demo
+
+                fn i32[min max] Add(i32[min max] left, i32[min max] right) {
+                    return left + right;
+                }
+
+                fn void Run() {
+                    Add;
+                }
+                """,
+                "STK3012",
+                ["Function 'Add' must be called before its value can be used"]),
+            (
+                "lambda without function pointer target",
+                """
+                module Demo
+
+                fn void Run() {
+                    (i32[min max] value) => value + 1;
+                }
+                """,
+                "STK3008",
+                ["Lambda expressions require an explicit function-pointer target type"]),
+            (
+                "capturing lambda cannot convert to function pointer",
+                """
+                module Demo
+
+                fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op) {
+                    return op(41);
+                }
+
+                fn i32[min max] Run() {
+                    stack i32[min max] offset = 1;
+                    return Apply(capture(copy offset) (i32[min max] value) => value + offset);
+                }
+                """,
+                "STK3008",
+                ["lambda converted to 'fnptr<...>' cannot capture local state", "function pointers do not carry closure storage"]),
+            (
+                "runtime interpolated text without caller-owned storage",
+                """
+                module Demo
+
+                fn ascii Run(i32[min max] score) {
+                    return $"Score: {score}";
+                }
+                """,
+                "STK3002",
+                ["Interpolated text with runtime value 'score' needs caller-owned storage", "fixed-capacity buffer"]),
+            (
+                "invalid switch domain",
+                """
+                module Demo
+
+                fn void Run() {
+                    stack mut dynamic i32[min max] values = new();
+                    switch (values) {
+                        default:
+                            return;
+                    }
+                }
+                """,
+                "STK3008",
+                ["Switch expression type 'dynamic i32'", "not a valid switch domain"]),
+            (
+                "non-concrete type layout expression",
+                """
+                module Demo
+
+                trait Marker {
+                }
+
+                fn i64[0 max] Run() {
+                    return sizeof(Marker);
+                }
+                """,
+                "STK3008",
+                ["sizeof requires a concrete runtime layout", "Marker"]),
+            (
+                "ffi text view return",
+                """
+                module Demo
+
+                unsafe ffi fn ascii CurrentName();
+                """,
+                "STK3008",
+                ["FFI function 'CurrentName'", "cannot return text view type 'ascii'", "raw pointer plus explicit length/status"]),
+            (
+                "unresolved named operand",
+                """
+                module Demo
+
+                fn i32[min max] Run() {
+                    return Missing;
+                }
+                """,
+                "STK3003",
+                ["Unknown symbol 'Missing'"])
+        };
+
+        foreach (var (name, source, diagnosticCode, messageFragments) in cases)
+        {
+            var result = Compile(source);
+
+            Assert.False(result.Succeeded);
+            AssertDiagnostic(result, diagnosticCode, messageFragments);
+            Assert.DoesNotContain(result.Logs, IsLoweringOrBackendFallbackLog);
+        }
+    }
+
     private static CompilationResult Compile(string source, CompilerOptions? options = null)
     {
         return DefaultCompilerPipeline.Create().Run(new CompilationInput(source), options);
+    }
+
+    private static bool IsLoweringOrBackendFallbackLog(CompilerLogEntry log)
+    {
+        return log.EventId is
+            "unsupported-lowering" or
+            "llvm-body-fallback" or
+            "llvm-asm-fallback" or
+            "llvm-body-pending" or
+            "missing-function-body";
     }
 
     private static void AssertDiagnostic(CompilationResult result, string code, params string[] messageFragments)

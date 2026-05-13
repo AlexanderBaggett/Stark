@@ -1,5 +1,5 @@
 param(
-    [int]$Runs = $(if ($env:STARK_BENCH_RUNS) { [int]$env:STARK_BENCH_RUNS } else { 20 }),
+    [int]$Runs = $(if ($env:STARK_BENCH_RUNS) { [int]$env:STARK_BENCH_RUNS } else { 100 }),
     [string]$Filter = $env:STARK_BENCH_FILTER,
     [string]$Subset = $env:STARK_BENCH_SUBSET,
     [string]$Target = $env:STARK_TARGET,
@@ -849,6 +849,7 @@ function Write-MachineMetadata {
         "benchmark_compile_columns=compile_us total benchmark build wall time; llvm_object_us/link_us/toolchain_us from Stark --toolchain-metrics when available",
         "stark_target=$(if ([string]::IsNullOrWhiteSpace($Target)) { 'host-default' } else { $Target })",
         "stark_flags=--emit-exe -O3",
+        "stark_compiler_configuration=Release",
         "stark_compiler_args=$(if ([string]::IsNullOrWhiteSpace($ExtraCompilerArgs)) { '<none>' } else { $ExtraCompilerArgs })",
         "c_compiler=$CCompiler",
         "c_flags=$($cFlags -join ' ')",
@@ -947,6 +948,8 @@ function Compile-AndTimeStark {
     $metricsPath = "$OutputPath.metrics"
     $arguments = @(
         "run",
+        "-c",
+        "Release",
         "--project",
         (Join-Path $repoRoot "src"),
         "--",

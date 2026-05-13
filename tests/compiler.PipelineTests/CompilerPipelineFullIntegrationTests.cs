@@ -28,6 +28,8 @@ public sealed class CompilerPipelineFullIntegrationTests
         Assert.NotNull(specializationCodegenStrategy);
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OwnershipValidation, out OwnershipValidationModel? ownershipValidation));
         Assert.NotNull(ownershipValidation);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LoweringContractValidation, out LoweringContractValidationModel? loweringContractValidation));
+        Assert.NotNull(loweringContractValidation);
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.AbiModel, out AbiModel? abiModel));
         Assert.NotNull(abiModel);
 
@@ -38,7 +40,7 @@ public sealed class CompilerPipelineFullIntegrationTests
         Assert.NotNull(ssaModule);
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? optimizedSsaModule));
         Assert.NotNull(optimizedSsaModule);
-        Assert.Equal(32, result.Executions.Count(static execution => execution.Status == PassExecutionStatus.Executed));
+        Assert.Equal(34, result.Executions.Count(static execution => execution.Status == PassExecutionStatus.Executed));
         Assert.Contains(
             result.Logs,
             log => log.Severity == DiagnosticSeverity.Info

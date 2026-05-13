@@ -317,12 +317,14 @@ public sealed class PackageImageCliToolingTests
                 """
                 module NativePkgDemo
 
-                unsafe ffi fn i32[min max] stark_native_value();
+            unsafe ffi fn i32[min max] stark_native_value();
 
-                public fn i32[min max] GetValue() {
+            public fn i32[min max] GetValue() {
+                unsafe {
                     return stark_native_value();
                 }
-                """);
+            }
+            """);
             await File.WriteAllTextAsync(
                 nativeSourcePath,
                 """
