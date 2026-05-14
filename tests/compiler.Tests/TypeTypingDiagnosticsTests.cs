@@ -159,6 +159,55 @@ public sealed class TypeTypingDiagnosticsTests
     }
 
     [Fact]
+    public void ObjectCreationRequiresExplicitFunctionPointerFields()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] Worker() {
+                return 1;
+            }
+
+            struct Callback {
+                i32[min max] Value;
+                fnptr<fn i32[min max]()> Entry;
+            }
+
+            fn void Run() {
+                stack Callback missing = new Callback();
+                stack Callback partial = new Callback() { Value = 2 };
+                stack Callback ok = new Callback() { Value = 3, Entry = Worker };
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3009", "Field 'Entry'", "must be explicitly initialized", "function pointers cannot be null");
+    }
+
+    [Fact]
+    public void ArrayInitializersRequireEveryFunctionPointerElement()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] Worker() {
+                return 1;
+            }
+
+            fn void Run() {
+                stack fnptr<fn i32[min max]()>[2] callbacks = { Worker };
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3009", "Array initializer", "must provide all 2 elements", "function-pointer elements");
+    }
+
+    [Fact]
     public void FunctionNamesAreRejectedAsRuntimeValuesDuringTypeChecking()
     {
         var result = Compile(

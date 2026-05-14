@@ -205,7 +205,8 @@ internal unsafe fn System.Memory.MemoryStatus TryJoinPointerRanges(
     u64[0 2 ** 63 - 1] leftCount,
     rawptr<i8[min max]> leftData,
     u64[0 2 ** 63 - 1] rightCount,
-    rawptr<i8[min max]> rightData) {
+    rawptr<i8[min max]> rightData)
+    where overlap(leftData, rightData) {
     stack mut u64[0 2 ** 63 - 1] rightStart = 0;
     stack mut u64[0 2 ** 63 - 1] rightCopyLength = rightCount;
     stack mut bool needsSeparator = false;
@@ -293,7 +294,10 @@ internal unsafe fn System.Memory.MemoryStatus TryJoinPointerRanges(
 public fn System.Memory.MemoryStatus TryJoin(
     mut borrow System.Text.OwnedAscii destination,
     ascii left,
-    ascii right) {
+    ascii right)
+    where overlap(destination, left),
+          overlap(destination, right),
+          overlap(left, right) {
         unsafe {
         stack i64[min max] leftLength = System.Text.AsciiLength(left);
         stack i64[min max] rightLength = System.Text.AsciiLength(right);
@@ -337,14 +341,19 @@ public fn System.Memory.MemoryStatus TryJoin(
             }
         }
 
-        return TryJoinPointerRanges(destination, leftCount, leftData, rightCount, rightData);
+        assume disjoint(destination, leftData) {
+            assume disjoint(destination, rightData) {
+                return TryJoinPointerRanges(destination, leftCount, leftData, rightCount, rightData);
+            }
+        }
         }
 }
 
 public fn System.Memory.MemoryStatus TryJoinConst(
     mut borrow System.Text.OwnedAscii destination,
     const ascii left,
-    const ascii right) {
+    const ascii right)
+    where overlap(left, right) {
         unsafe {
         stack i64[min max] leftLength = System.Text.AsciiLength(left);
         stack i64[min max] rightLength = System.Text.AsciiLength(right);
@@ -360,11 +369,16 @@ public fn System.Memory.MemoryStatus TryJoinConst(
             return System.Memory.MemoryStatus.Err(System.Memory.MemoryError.InvalidLayout);
         }
 
-        return TryJoinPointerRanges(destination, leftCount, leftData, rightCount, rightData);
+        assume disjoint(destination, leftData) {
+            assume disjoint(destination, rightData) {
+                return TryJoinPointerRanges(destination, leftCount, leftData, rightCount, rightData);
+            }
+        }
         }
 }
 
-public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(ascii left, ascii right) {
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(ascii left, ascii right)
+    where overlap(left, right) {
     stack mut System.Text.OwnedAscii destination = new();
     stack System.Memory.MemoryStatus status = TryJoin(destination, left, right);
     switch (status) {
@@ -375,7 +389,8 @@ public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(ascii left, as
     }
 }
 
-public fn System.Memory.MemoryResult<System.Text.OwnedAscii> JoinConst(const ascii left, const ascii right) {
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> JoinConst(const ascii left, const ascii right)
+    where overlap(left, right) {
     stack mut System.Text.OwnedAscii destination = new();
     stack System.Memory.MemoryStatus status = TryJoinConst(destination, left, right);
     switch (status) {
@@ -388,7 +403,8 @@ public fn System.Memory.MemoryResult<System.Text.OwnedAscii> JoinConst(const asc
 
 public fn System.Memory.MemoryStatus TryNormalizeSeparators(
     mut borrow System.Text.OwnedAscii destination,
-    ascii path) {
+    ascii path)
+    where overlap(destination, path) {
         unsafe {
         stack mut ascii source = path;
         stack mut System.Text.OwnedAscii snapshot = new();

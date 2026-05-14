@@ -240,7 +240,7 @@ public sealed class SystemThreadingStandardLibraryTests : StandardLibraryTestSui
         Assert.Contains(
             result.Diagnostics,
             static diagnostic => diagnostic.Code == "STK3008"
-                && diagnostic.Message.Contains("Capturing lambdas", StringComparison.Ordinal));
+                && diagnostic.Message.Contains("cannot capture local state", StringComparison.Ordinal));
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
         Assert.NotNull(typeCheckModel);
 
@@ -372,4 +372,3 @@ public sealed class SystemThreadingStandardLibraryTests : StandardLibraryTestSui
         Assert.DoesNotContain("@pthread_detach(", llvm, StringComparison.Ordinal);
     }
 }
-

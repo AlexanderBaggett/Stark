@@ -4,6 +4,14 @@ namespace Stark.Compiler;
 
 internal static class TypeCompatibilityFacts
 {
+    private enum FunctionPointerParameterMemoryRelation
+    {
+        None,
+        Disjoint,
+        Overlap,
+        Same
+    }
+
     public static bool CanAssign(StarkTypeSymbol target, StarkTypeSymbol source)
     {
         if (target.Kind == StarkTypeKind.Error || source.Kind == StarkTypeKind.Error)
@@ -132,7 +140,26 @@ internal static class TypeCompatibilityFacts
             }
         }
 
-        return true;
+        return AreFunctionPointerMemoryContractsAssignable(target, source, targetParameters);
+    }
+
+    public static StarkTypeSymbol FunctionPointerTypeForSignature(TypedFunctionSignature function)
+    {
+        var parameterNameMap = function.Parameters
+            .Select((parameter, index) => new
+            {
+                parameter.Name,
+                SyntheticName = $"arg{index}"
+            })
+            .ToDictionary(static pair => pair.Name, static pair => pair.SyntheticName, StringComparer.Ordinal);
+
+        return StarkTypeSymbols.FunctionPointer(
+            function.Kind,
+            function.ReturnType,
+            function.Parameters.Select(static parameter => parameter.Type).ToArray(),
+            MapDisjointGroups(function.DisjointGroups, parameterNameMap),
+            MapOverlapGroups(function.OverlapGroups, parameterNameMap),
+            MapSameGroups(function.SameGroups, parameterNameMap));
     }
 
     public static bool FunctionKindSatisfies(StarkFunctionKind source, StarkFunctionKind target)
@@ -164,6 +191,172 @@ internal static class TypeCompatibilityFacts
         }
 
         return true;
+    }
+
+    private static bool AreFunctionPointerMemoryContractsAssignable(
+        StarkTypeSymbol target,
+        StarkTypeSymbol source,
+        IReadOnlyList<StarkTypeSymbol> parameterTypes)
+    {
+        for (var leftIndex = 0; leftIndex < parameterTypes.Count; leftIndex++)
+        {
+            if (!ParameterMemoryContractFacts.IsMemoryBacked(parameterTypes[leftIndex]))
+            {
+                continue;
+            }
+
+            for (var rightIndex = leftIndex + 1; rightIndex < parameterTypes.Count; rightIndex++)
+            {
+                if (!ParameterMemoryContractFacts.IsMemoryBacked(parameterTypes[rightIndex]))
+                {
+                    continue;
+                }
+
+                var leftName = $"arg{leftIndex}";
+                var rightName = $"arg{rightIndex}";
+                var targetRelation = GetFunctionPointerParameterMemoryRelation(target, leftName, rightName);
+                var sourceRelation = GetFunctionPointerParameterMemoryRelation(source, leftName, rightName);
+                if (!SourceMemoryRelationSatisfiesTarget(sourceRelation, targetRelation))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private static bool SourceMemoryRelationSatisfiesTarget(
+        FunctionPointerParameterMemoryRelation source,
+        FunctionPointerParameterMemoryRelation target)
+    {
+        return target switch
+        {
+            FunctionPointerParameterMemoryRelation.Same => source is FunctionPointerParameterMemoryRelation.Same
+                or FunctionPointerParameterMemoryRelation.Overlap,
+            FunctionPointerParameterMemoryRelation.Overlap or FunctionPointerParameterMemoryRelation.None => source == FunctionPointerParameterMemoryRelation.Overlap,
+            FunctionPointerParameterMemoryRelation.Disjoint => source is FunctionPointerParameterMemoryRelation.Disjoint
+                or FunctionPointerParameterMemoryRelation.Overlap,
+            _ => false
+        };
+    }
+
+    private static FunctionPointerParameterMemoryRelation GetFunctionPointerParameterMemoryRelation(
+        StarkTypeSymbol type,
+        string leftName,
+        string rightName)
+    {
+        if (ContainsParameterPair(type.FunctionPointerSameParameterGroups, leftName, rightName))
+        {
+            return FunctionPointerParameterMemoryRelation.Same;
+        }
+
+        if (ContainsParameterPair(type.FunctionPointerOverlapParameterGroups, leftName, rightName))
+        {
+            return FunctionPointerParameterMemoryRelation.Overlap;
+        }
+
+        if (ContainsParameterPair(type.FunctionPointerDisjointParameterGroups, leftName, rightName))
+        {
+            return FunctionPointerParameterMemoryRelation.Disjoint;
+        }
+
+        return FunctionPointerParameterMemoryRelation.None;
+    }
+
+    private static bool ContainsParameterPair(
+        IEnumerable<ParameterDisjointGroup>? groups,
+        string leftName,
+        string rightName)
+    {
+        return groups?.Any(group => GroupContainsParameterPair(group.ParameterNames, leftName, rightName)) == true;
+    }
+
+    private static bool ContainsParameterPair(
+        IEnumerable<ParameterOverlapGroup>? groups,
+        string leftName,
+        string rightName)
+    {
+        return groups?.Any(group => GroupContainsParameterPair(group.ParameterNames, leftName, rightName)) == true;
+    }
+
+    private static bool ContainsParameterPair(
+        IEnumerable<ParameterSameGroup>? groups,
+        string leftName,
+        string rightName)
+    {
+        return groups?.Any(group => GroupContainsParameterPair(group.ParameterNames, leftName, rightName)) == true;
+    }
+
+    private static bool GroupContainsParameterPair(
+        IReadOnlyList<string> parameterNames,
+        string leftName,
+        string rightName)
+    {
+        var containsLeft = false;
+        var containsRight = false;
+        foreach (var parameterName in parameterNames)
+        {
+            containsLeft |= string.Equals(parameterName, leftName, StringComparison.Ordinal);
+            containsRight |= string.Equals(parameterName, rightName, StringComparison.Ordinal);
+            if (containsLeft && containsRight)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static IReadOnlyList<ParameterDisjointGroup> MapDisjointGroups(
+        IReadOnlyList<ParameterDisjointGroup> groups,
+        IReadOnlyDictionary<string, string> parameterNameMap)
+    {
+        return groups
+            .Select(group => MapGroup(group.ParameterNames, parameterNameMap))
+            .Where(static names => names.Count >= 2)
+            .Select(static names => new ParameterDisjointGroup(names))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<ParameterOverlapGroup> MapOverlapGroups(
+        IReadOnlyList<ParameterOverlapGroup> groups,
+        IReadOnlyDictionary<string, string> parameterNameMap)
+    {
+        return groups
+            .Select(group => MapGroup(group.ParameterNames, parameterNameMap))
+            .Where(static names => names.Count >= 2)
+            .Select(static names => new ParameterOverlapGroup(names))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<ParameterSameGroup> MapSameGroups(
+        IReadOnlyList<ParameterSameGroup> groups,
+        IReadOnlyDictionary<string, string> parameterNameMap)
+    {
+        return groups
+            .Select(group => MapGroup(group.ParameterNames, parameterNameMap))
+            .Where(static names => names.Count >= 2)
+            .Select(static names => new ParameterSameGroup(names))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<string> MapGroup(
+        IReadOnlyList<string> parameterNames,
+        IReadOnlyDictionary<string, string> parameterNameMap)
+    {
+        var names = new List<string>(parameterNames.Count);
+        foreach (var parameterName in parameterNames)
+        {
+            if (parameterNameMap.TryGetValue(parameterName, out var syntheticName))
+            {
+                names.Add(syntheticName);
+            }
+        }
+
+        return names
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
     }
 
     public static bool WouldEraseFrozenProvenance(StarkTypeSymbol target, StarkTypeSymbol source)

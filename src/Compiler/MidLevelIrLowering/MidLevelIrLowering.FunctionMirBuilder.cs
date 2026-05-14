@@ -548,7 +548,21 @@ internal sealed partial class MidLevelIrLowerer
 
             if (statement.unsafeStatement() is { } unsafeStatement)
             {
-                LowerBlock(unsafeStatement.block());
+                if (unsafeStatement.block() is { } unsafeBlock)
+                {
+                    LowerBlock(unsafeBlock);
+                }
+                else if (unsafeStatement.assumeStatement() is { } unsafeAssumeStatement)
+                {
+                    LowerAssumeStatement(unsafeAssumeStatement);
+                }
+
+                return;
+            }
+
+            if (statement.assumeStatement() is { } assumeStatement)
+            {
+                LowerAssumeStatement(assumeStatement);
                 return;
             }
 
@@ -1965,6 +1979,28 @@ internal sealed partial class MidLevelIrLowerer
             CurrentBlock = joinBlock;
         }
 
+        private void LowerAssumeStatement(StarkParser.AssumeStatementContext assumeStatement)
+        {
+            var scopedNoAliasGroup = TryCreateRuntimeDisjointScopedNoAliasGroup(
+                assumeStatement.disjointRuntimeCondition().expressionList().expression(),
+                "unsafe-assume-disjoint");
+            if (scopedNoAliasGroup is null)
+            {
+                LowerStatement(assumeStatement.statement());
+                return;
+            }
+
+            _activeScopedNoAliasGroups.Push(scopedNoAliasGroup);
+            try
+            {
+                LowerStatement(assumeStatement.statement());
+            }
+            finally
+            {
+                _activeScopedNoAliasGroups.Pop();
+            }
+        }
+
         private Dictionary<string, bool> SnapshotRuntimeDropStates()
         {
             return new Dictionary<string, bool>(_runtimeDropStates, StringComparer.Ordinal);
@@ -2097,7 +2133,8 @@ internal sealed partial class MidLevelIrLowerer
         }
 
         private ScopedNoAliasGroup? TryCreateRuntimeDisjointScopedNoAliasGroup(
-            IReadOnlyList<StarkParser.ExpressionContext> expressions)
+            IReadOnlyList<StarkParser.ExpressionContext> expressions,
+            string scopePrefix = "runtime-disjoint")
         {
             var rootKeys = new List<string>(expressions.Count);
             foreach (var expression in expressions)
@@ -2117,7 +2154,7 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             return new ScopedNoAliasGroup(
-                $"runtime-disjoint-{_nextRuntimeDisjointScopeId++}",
+                $"{scopePrefix}-{_nextRuntimeDisjointScopeId++}",
                 distinctRootKeys);
         }
 
@@ -6083,10 +6120,7 @@ internal sealed partial class MidLevelIrLowerer
                 .Where(static function => !function.IsGeneric)
                 .Where(function => TypeCompatibilityFacts.AreFunctionPointerTypesAssignable(
                     targetType,
-                    StarkTypeSymbols.FunctionPointer(
-                        function.Kind,
-                        function.ReturnType,
-                        function.Parameters.Select(static parameter => parameter.Type).ToArray())))
+                    TypeCompatibilityFacts.FunctionPointerTypeForSignature(function)))
                 .ToArray();
 
             if (candidates.Length != 1)

@@ -5,7 +5,8 @@ internal unsafe finite law rawptr<i8[min max]> AsciiData(ascii source);
 internal finite law i64[min max] AsciiLength(ascii source);
 internal unsafe finite law rawptr<i32[min max]> UnicodeData(unicode source);
 internal finite law i64[min max] UnicodeLength(unicode source);
-internal unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+internal unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right)
+    where overlap(left, right);
 
 internal unsafe ffi asm(x86_64) fn i64[min max] LinuxSyscall1Handle(i64[min max] number, rawptr<i8[min max]> arg1)
     in("rax") number,
@@ -1155,6 +1156,7 @@ internal unsafe fn rawptr<i8[min max]> OpenFileWithFlags(ascii path, i64[min max
 internal unsafe fn i32[min max] FlushEncodedWriteBuffer(
     rawptr<i8[min max]> handle,
     mut borrow System.Runtime.Buffer.FixedByteBuffer4096 buffer)
+    where overlap(handle, buffer)
 {
     while willexit (true) {
         stack mut u64[0 2 ** 63 - 1] readPosition = buffer.ReadPosition;
@@ -1185,7 +1187,8 @@ internal unsafe fn i32[min max] FlushEncodedWriteBuffer(
     }
 }
 
-internal unsafe fn i32[min max] WriteAsciiToHandle(rawptr<i8[min max]> handle, ascii text) {
+internal unsafe fn i32[min max] WriteAsciiToHandle(rawptr<i8[min max]> handle, ascii text)
+    where overlap(handle, text) {
     stack mut i64[min max] remaining = AsciiLength(text);
     stack mut i64[min max] written = 0;
 
@@ -1211,7 +1214,8 @@ internal unsafe fn i32[min max] WriteAsciiToHandle(rawptr<i8[min max]> handle, a
 internal unsafe fn i32[min max] WriteBufferToHandle(
     rawptr<i8[min max]> handle,
     rawptr<i8[min max]>[length] buffer,
-    u64[0 2 ** 63 - 1] length) {
+    u64[0 2 ** 63 - 1] length)
+    where overlap(handle, buffer) {
     if (handle == null) {
         return -1;
     }
@@ -1249,7 +1253,8 @@ internal unsafe fn i32[min max] WriteBufferToHandle(
 internal unsafe fn i32[min max] WriteBufferLineToHandle(
     rawptr<i8[min max]> handle,
     rawptr<i8[min max]>[length] buffer,
-    u64[0 2 ** 63 - 1] length) {
+    u64[0 2 ** 63 - 1] length)
+    where overlap(handle, buffer) {
     if (handle == null) {
         return -1;
     }
@@ -1374,7 +1379,8 @@ internal fn void AppendUtf8CodePoint(
     buffer.WritePosition = (u64[0 2 ** 63 - 1])(writePosition + 4);
 }
 
-internal unsafe fn i32[min max] WriteUnicodeToHandle(rawptr<i8[min max]> handle, unicode text) {
+internal unsafe fn i32[min max] WriteUnicodeToHandle(rawptr<i8[min max]> handle, unicode text)
+    where overlap(handle, text) {
     if (handle == null) {
         return -1;
     }
@@ -1407,7 +1413,8 @@ internal unsafe fn i32[min max] WriteUnicodeToHandle(rawptr<i8[min max]> handle,
     return FlushEncodedWriteBuffer(handle, utf8Buffer);
 }
 
-internal unsafe fn i32[min max] WriteAsciiLineToHandle(rawptr<i8[min max]> handle, ascii text) {
+internal unsafe fn i32[min max] WriteAsciiLineToHandle(rawptr<i8[min max]> handle, ascii text)
+    where overlap(handle, text) {
     stack i64[min max] length = AsciiLength(text);
     if (length < 0) {
         return -1;
@@ -1426,7 +1433,8 @@ internal unsafe fn i32[min max] WriteAsciiLineToHandle(rawptr<i8[min max]> handl
     return status;
 }
 
-internal unsafe fn i32[min max] WriteUnicodeLineToHandle(rawptr<i8[min max]> handle, unicode text) {
+internal unsafe fn i32[min max] WriteUnicodeLineToHandle(rawptr<i8[min max]> handle, unicode text)
+    where overlap(handle, text) {
     if (handle == null) {
         return -1;
     }
@@ -1558,7 +1566,8 @@ internal unsafe fn i64[min max] ReadStdin(rawmutptr<i8[min max]>[capacity] buffe
     return readCount;
 }
 
-internal unsafe inline fn i32[min max] WriteAscii(rawptr<i8[min max]> handle, ascii text) {
+internal unsafe inline fn i32[min max] WriteAscii(rawptr<i8[min max]> handle, ascii text)
+    where overlap(handle, text) {
     if (handle == null) {
         return -1;
     }
@@ -1602,7 +1611,8 @@ internal unsafe fn bool IsTerminal(rawptr<i8[min max]> handle) {
         state) >= 0;
 }
 
-internal unsafe inline fn i32[min max] WriteUnicode(rawptr<i8[min max]> handle, unicode text) {
+internal unsafe inline fn i32[min max] WriteUnicode(rawptr<i8[min max]> handle, unicode text)
+    where overlap(handle, text) {
     return WriteUnicodeToHandle(handle, text);
 }
 
@@ -1640,7 +1650,8 @@ internal unsafe fn i32[min max] FlushFile(rawptr<i8[min max]> handle) {
     return 0;
 }
 
-internal unsafe fn i64[min max] ReadFile(rawmutptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
+internal unsafe fn i64[min max] ReadFile(rawmutptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle)
+    where overlap(buffer, handle) {
     if (handle == null || buffer == null || size <= 0 || count <= 0) {
         return 0;
     }
@@ -1654,7 +1665,8 @@ internal unsafe fn i64[min max] ReadFile(rawmutptr<i8[min max]> buffer, i64[min 
     return syscallResult / size;
 }
 
-internal unsafe fn i64[min max] WriteFile(rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
+internal unsafe fn i64[min max] WriteFile(rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle)
+    where overlap(buffer, handle) {
     if (handle == null || buffer == null || size <= 0 || count <= 0) {
         return 0;
     }
@@ -1668,7 +1680,8 @@ internal unsafe fn i64[min max] WriteFile(rawptr<i8[min max]> buffer, i64[min ma
     return syscallResult / size;
 }
 
-internal unsafe inline fn i64[min max] ReadFileBytes(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
+internal unsafe inline fn i64[min max] ReadFileBytes(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle)
+    where overlap(buffer, handle) {
     if (handle == null || buffer == null || length == 0) {
         return 0;
     }
@@ -1682,7 +1695,8 @@ internal unsafe inline fn i64[min max] ReadFileBytes(rawmutptr<i8[min max]>[leng
     return syscallResult;
 }
 
-internal unsafe inline fn i64[min max] WriteFileBytes(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
+internal unsafe inline fn i64[min max] WriteFileBytes(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle)
+    where overlap(buffer, handle) {
     if (handle == null || buffer == null || length == 0) {
         return 0;
     }
@@ -2027,6 +2041,7 @@ internal unsafe fn i64[min max] ReadSocket(
     rawptr<i8[min max]> handle,
     rawmutptr<i8[min max]>[capacity] buffer,
     u64[0 2 ** 63 - 1] capacity)
+    where overlap(handle, buffer)
 {
     if (handle == null) {
         return -107;
@@ -2051,6 +2066,7 @@ internal unsafe fn i64[min max] WriteSocket(
     rawptr<i8[min max]> handle,
     rawptr<i8[min max]>[length] buffer,
     u64[0 2 ** 63 - 1] length)
+    where overlap(handle, buffer)
 {
     if (handle == null) {
         return -107;
@@ -2077,6 +2093,8 @@ internal unsafe fn i64[min max] ReadSocketVector2(
     u64[0 2 ** 63 - 1] firstCapacity,
     rawmutptr<i8[min max]>[secondCapacity] secondBuffer,
     u64[0 2 ** 63 - 1] secondCapacity)
+    where overlap(handle, firstBuffer),
+          overlap(handle, secondBuffer)
 {
     if (firstCapacity > 0) {
         return ReadSocket(handle, firstBuffer, firstCapacity);
@@ -2091,6 +2109,8 @@ internal unsafe fn i64[min max] WriteSocketVector2(
     u64[0 2 ** 63 - 1] firstLength,
     rawptr<i8[min max]>[secondLength] secondBuffer,
     u64[0 2 ** 63 - 1] secondLength)
+    where overlap(handle, firstBuffer),
+          overlap(handle, secondBuffer)
 {
     if (firstLength == 0) {
         return WriteSocket(handle, secondBuffer, secondLength);
@@ -2218,6 +2238,11 @@ internal unsafe fn i32[min max] ReadDirectoryEntry(
     rawmutptr<i64[min max]> readLength,
     rawmutptr<Ascii> name,
     rawmutptr<i32[min max]> kind)
+    where overlap(handle, buffer),
+          overlap(handle, readPos),
+          overlap(handle, readLength),
+          overlap(handle, name),
+          overlap(handle, kind)
 {
     if (handle == null || buffer == null || capacity <= (u64[0 2 ** 63 - 1])LinuxDirent64HeaderLength || readPos == null || readLength == null || name == null || kind == null) {
         return -1;
@@ -2334,6 +2359,11 @@ internal unsafe inline fn i32[min max] ReadDirectoryEntryInfo(
     rawmutptr<i64[min max]> readLength,
     rawmutptr<i64[min max]> nameLength,
     rawmutptr<i32[min max]> kind)
+    where overlap(handle, buffer),
+          overlap(handle, readPos),
+          overlap(handle, readLength),
+          overlap(handle, nameLength),
+          overlap(handle, kind)
 {
     if (handle == null || buffer == null || capacity <= (u64[0 2 ** 63 - 1])LinuxDirent64HeaderLength || readPos == null || readLength == null || nameLength == null || kind == null) {
         return -1;
@@ -2401,6 +2431,9 @@ internal unsafe inline fn i64[min max] ReadDirectoryNameLengthChecksum(
     rawmutptr<i64[min max]> readPos,
     rawmutptr<i64[min max]> readLength,
     i64[min max] expectedCount)
+    where overlap(handle, buffer),
+          overlap(handle, readPos),
+          overlap(handle, readLength)
 {
     if (handle == null || buffer == null || capacity <= (u64[0 2 ** 63 - 1])LinuxDirent64HeaderLength || readPos == null || readLength == null || expectedCount < 0) {
         return -1;

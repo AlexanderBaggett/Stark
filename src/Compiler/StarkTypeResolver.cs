@@ -339,10 +339,219 @@ internal sealed class StarkTypeResolver
         var parameterTypes = signature.functionPointerParameterList().type_()
             .Select(parameter => ResolveType(parameter, genericParameters, currentModuleName))
             .ToArray();
+        var parameters = parameterTypes
+            .Select((parameterType, index) => new TypedParameterSymbol($"arg{index}", parameterType))
+            .ToArray();
+        ValidateUnsupportedFunctionPointerDisjointClauses(signature);
+        ValidateFunctionPointerRelationConflicts(signature);
+        var overlapGroups = CreateFunctionPointerOverlapGroups(signature, parameters);
+        var sameGroups = CreateFunctionPointerSameGroups(signature, parameters);
+        var disjointGroups = ParameterMemoryContractFacts.BuildEffectiveDisjointGroups(
+            parameters,
+            explicitDisjointGroups: [],
+            overlapGroups,
+            sameGroups,
+            applyDefaultNonOverlap: true);
         return StarkTypeSymbols.FunctionPointer(
             ParseFunctionKind(signature.functionKind()),
             returnType,
-            parameterTypes);
+            parameterTypes,
+            disjointGroups,
+            overlapGroups,
+            sameGroups);
+    }
+
+    private IReadOnlyList<ParameterOverlapGroup> CreateFunctionPointerOverlapGroups(
+        StarkParser.FunctionPointerSignatureContext signature,
+        IReadOnlyList<TypedParameterSymbol> parameters)
+    {
+        return CreateFunctionPointerRelationGroups(
+                signature,
+                parameters,
+                relationName: "overlap",
+                static contract => contract.overlapContract()?.expressionList())
+            .Select(static group => new ParameterOverlapGroup(group))
+            .ToArray();
+    }
+
+    private IReadOnlyList<ParameterSameGroup> CreateFunctionPointerSameGroups(
+        StarkParser.FunctionPointerSignatureContext signature,
+        IReadOnlyList<TypedParameterSymbol> parameters)
+    {
+        return CreateFunctionPointerRelationGroups(
+                signature,
+                parameters,
+                relationName: "same",
+                static contract => contract.sameContract()?.expressionList())
+            .Select(static group => new ParameterSameGroup(group))
+            .ToArray();
+    }
+
+    private IReadOnlyList<IReadOnlyList<string>> CreateFunctionPointerRelationGroups(
+        StarkParser.FunctionPointerSignatureContext signature,
+        IReadOnlyList<TypedParameterSymbol> parameters,
+        string relationName,
+        Func<StarkParser.ParameterMemoryContractContext, StarkParser.ExpressionListContext?> selectExpressionList)
+    {
+        var parameterByName = parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        var groups = new List<IReadOnlyList<string>>();
+        foreach (var clause in signature.parameterMemoryContractClause())
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                var expressionList = selectExpressionList(contract);
+                if (expressionList is null)
+                {
+                    continue;
+                }
+
+                var names = new List<string>();
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var expression in expressionList.expression())
+                {
+                    if (!TryGetFunctionPointerContractParameterName(expression, out var name))
+                    {
+                        ReportError(
+                            "STK3029",
+                            $"Function pointer '{relationName}' contracts must use synthetic parameter names of the form 'arg0', 'arg1', and so on.",
+                            expression);
+                        continue;
+                    }
+
+                    if (!parameterByName.TryGetValue(name, out var parameter))
+                    {
+                        ReportError(
+                            "STK3029",
+                            $"Function pointer '{relationName}' contract references unknown parameter '{name}'.",
+                            expression);
+                    }
+                    else if (!ParameterMemoryContractFacts.IsMemoryBacked(parameter.Type))
+                    {
+                        ReportError(
+                            "STK3029",
+                            $"Function pointer '{relationName}' contract references parameter '{name}' with non-memory-backed type '{parameter.Type.DisplayName}'. Memory contracts require memory-backed parameters such as slices, text views, borrows, initialization views, or raw pointers.",
+                            expression);
+                    }
+                    else if (!seen.Add(name))
+                    {
+                        ReportError(
+                            "STK3029",
+                            $"Function pointer '{relationName}' contract repeats parameter '{name}'.",
+                            expression);
+                    }
+                    else
+                    {
+                        names.Add(name);
+                    }
+                }
+
+                if (names.Count < 2)
+                {
+                    ReportError(
+                        "STK3029",
+                        $"Function pointer 'where {relationName}(...)' contracts require at least two parameter operands.",
+                        contract);
+                    continue;
+                }
+
+                groups.Add(names.ToArray());
+            }
+        }
+
+        return groups;
+    }
+
+    private void ValidateUnsupportedFunctionPointerDisjointClauses(StarkParser.FunctionPointerSignatureContext signature)
+    {
+        foreach (var clause in signature.parameterMemoryContractClause())
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                if (contract.disjointContract() is null)
+                {
+                    continue;
+                }
+
+                ReportError(
+                    "STK3029",
+                    "Function pointer whole-parameter 'where disjoint(...)' is redundant because memory-backed function pointer parameters are non-overlapping by default. Use 'where overlap(...)' for intentional overlap or 'where same(...)' for identical storage.",
+                    contract);
+            }
+        }
+    }
+
+    private void ValidateFunctionPointerRelationConflicts(StarkParser.FunctionPointerSignatureContext signature)
+    {
+        var overlapPairs = CollectFunctionPointerRelationPairs(signature, static contract => contract.overlapContract()?.expressionList());
+        var samePairs = CollectFunctionPointerRelationPairs(signature, static contract => contract.sameContract()?.expressionList());
+        foreach (var pair in overlapPairs)
+        {
+            if (!samePairs.Contains(pair))
+            {
+                continue;
+            }
+
+            ReportError(
+                "STK3029",
+                $"Function pointer memory contract for parameters '{pair.Replace("|", "' and '", StringComparison.Ordinal)}' cannot be both overlap and same-memory. Use 'same' when identical storage is required.",
+                signature);
+        }
+    }
+
+    private static HashSet<string> CollectFunctionPointerRelationPairs(
+        StarkParser.FunctionPointerSignatureContext signature,
+        Func<StarkParser.ParameterMemoryContractContext, StarkParser.ExpressionListContext?> selectExpressionList)
+    {
+        var pairs = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var clause in signature.parameterMemoryContractClause())
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                var names = selectExpressionList(contract)?.expression()
+                    .Select(static expression => TryGetFunctionPointerContractParameterName(expression, out var name) ? name : null)
+                    .Where(static name => !string.IsNullOrWhiteSpace(name))
+                    .Select(static name => name!)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                if (names is null)
+                {
+                    continue;
+                }
+
+                for (var leftIndex = 0; leftIndex < names.Length; leftIndex++)
+                {
+                    for (var rightIndex = leftIndex + 1; rightIndex < names.Length; rightIndex++)
+                    {
+                        pairs.Add(BuildNamePairKey(names[leftIndex], names[rightIndex]));
+                    }
+                }
+            }
+        }
+
+        return pairs;
+    }
+
+    private static bool TryGetFunctionPointerContractParameterName(
+        StarkParser.ExpressionContext expression,
+        out string name)
+    {
+        name = expression.GetText();
+        if (name.Length <= 3
+            || !name.StartsWith("arg", StringComparison.Ordinal)
+            || !int.TryParse(name[3..], NumberStyles.None, CultureInfo.InvariantCulture, out _))
+        {
+            name = string.Empty;
+            return false;
+        }
+
+        return true;
+    }
+
+    private static string BuildNamePairKey(string left, string right)
+    {
+        return string.CompareOrdinal(left, right) <= 0
+            ? $"{left}|{right}"
+            : $"{right}|{left}";
     }
 
     private static StarkFunctionKind ParseFunctionKind(StarkParser.FunctionKindContext functionKind)
@@ -1167,7 +1376,10 @@ internal sealed class StarkTypeResolver
             substitutedCore = StarkTypeSymbols.FunctionPointer(
                 functionKind,
                 SubstituteType(returnType, substitution),
-                parameterTypes.Select(parameter => SubstituteType(parameter, substitution)).ToArray());
+                parameterTypes.Select(parameter => SubstituteType(parameter, substitution)).ToArray(),
+                coreType.FunctionPointerDisjointParameterGroups,
+                coreType.FunctionPointerOverlapParameterGroups,
+                coreType.FunctionPointerSameParameterGroups);
         }
         else
         {

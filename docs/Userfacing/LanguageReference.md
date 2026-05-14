@@ -224,81 +224,38 @@ Default argument syntax such as `fn i32 Add(i32 left = 1)` is not part of Stark.
 Function parameters support memory-separation and deep-immutability contracts.
 These contracts are part of the function type and are checked at call sites.
 
-The parameter-prefix `disjoint` form declares that the memory region reachable through that parameter does not overlap the memory region reachable through any other `disjoint` parameter in the same parameter list:
+Memory-backed parameters are non-overlapping by default. For ordinary `fn`, `finite`, `law`, and `finite law` declarations, every pair of parameters that describes reachable caller storage must be passed non-overlapping regions unless the callee says otherwise. This includes `borrow`, `borrow mut`, `retborrow`, `storeborrow`, slices, text views, `out`, `init`, bounded raw pointer regions, `rawptr`, and `rawmutptr`. Scalar value parameters and ordinary by-value owned aggregates do not create a user-facing non-overlap obligation just because the ABI may lower them indirectly.
+
+The default makes this common shape a non-overlap contract without extra syntax:
 
 ```stark
 fn void Add(
-    disjoint borrow f32[] left,
-    disjoint borrow f32[] right,
-    disjoint borrow mut f32[] output) {
+    borrow f32[] left,
+    borrow f32[] right,
+    borrow mut f32[] output) {
     return;
 }
 ```
 
-The relational `where disjoint(...)` form declares exact disjointness relations between named parameters or bounded memory-region expressions:
+The relational `where overlap(...)` form opts out for an intentional may-overlap relation. It removes the default non-overlap obligation for only the listed pair or group and suppresses default `noalias` facts between those regions:
 
 ```stark
-fn void Copy(borrow u8[] source, borrow mut u8[] destination)
-    where disjoint(source, destination) {
+fn void MoveBytes(borrow u8[] source, borrow mut u8[] destination)
+    where overlap(source, destination) {
     return;
 }
 ```
 
-`disjoint(a, b, c)` means every listed memory region is pairwise non-overlapping for the duration of the call. This is the form for three parameters that are all separate from each other:
+The relational `where same(...)` form requires the listed parameters to identify the same memory region. A safe call must prove same-region identity:
 
 ```stark
-fn void Process(borrow u8[] a, borrow u8[] b, borrow mut u8[] c)
-    where disjoint(a, b, c) {
+fn void CompareViewWithBacking(borrow u8[] view, borrow u8[] backing)
+    where same(view, backing) {
     return;
 }
 ```
 
-Multiple `disjoint(...)` clauses in the same `where` clause are separated with commas. They describe separate disjoint groups and do not imply disjointness between groups:
-
-```stark
-fn void ProcessPairs(
-    borrow u8[] a,
-    borrow u8[] b,
-    borrow u8[] c,
-    borrow mut u8[] d)
-    where disjoint(a, b), disjoint(c, d) {
-    return;
-}
-```
-
-In `ProcessPairs`, `a` and `b` do not overlap, and `c` and `d` do not overlap. No other pair is promised to be separate. For example, `b` and `d` may still overlap.
-
-Disjointness is not transitive. `where disjoint(a, b), disjoint(b, c)` does not mean `a` and `c` are separate.
-
-To require all four parameters to be separate from each other, put all four names in the same group:
-
-```stark
-fn void ProcessAllSeparate(
-    borrow u8[] a,
-    borrow u8[] b,
-    borrow u8[] c,
-    borrow mut u8[] d)
-    where disjoint(a, b, c, d) {
-    return;
-}
-```
-
-A disjoint contract is about memory ranges, not only root values. Two slices that point into the same allocation satisfy `disjoint` when their element ranges do not overlap. The parameter named by `disjoint` must have a memory-backed type, such as a slice, text view, borrow, initialization view, bounded raw pointer region, or raw pointer; scalar value parameters cannot carry a disjoint memory-region contract.
-
-Raw pointer parameters may expose their bounded element region directly. The forms `rawptr<T>[count]` and `rawmutptr<T>[count]` are raw pointer parameters whose valid source region contains `count` contiguous elements of `T`:
-
-```stark
-fn void CopyBytes(
-    i64[0 max] length,
-    disjoint rawptr<i8[min max]>[length] source,
-    disjoint rawmutptr<i8[min max]>[length] destination) {
-    return;
-}
-```
-
-The pointer value is still a raw pointer, but the function contract includes the region bound. A nonzero count requires a non-null pointer that is valid for every element in `0 <= index < count`; a zero-length region may use `null`. The bound expression is an integer expression over the function parameters and compile-time constants, and cyclic bounds are rejected.
-
-Raw pointer region expressions use two-index slicing syntax inside memory contracts and disjoint checks. `pointer[start, count]` names the contiguous region beginning at `pointer + start` and containing `count` elements:
+The relational `where disjoint(...)` form remains available for exact disjointness relations the parameter default cannot express, especially bounded subregions and disjointness inside an otherwise overlap-capable API:
 
 ```stark
 fn void CopyWindow(
@@ -311,12 +268,44 @@ fn void CopyWindow(
 }
 ```
 
-The expression `pointer[start, count]` is a memory-region expression, not an owning value. It is valid in `where disjoint(...)`, `if disjoint(...)`, and places where the language expects a bounded raw pointer region fact.
-
-At a safe call site, the compiler must have a proof before it lets a call satisfy a `disjoint` contract. Passing the same memory region twice, passing a whole object together with one of its fields, passing two indexed regions whose indexes are not proven separate, passing a call result or other expression whose memory root is not visible, or passing two raw pointer or slice variables whose regions have not been proven separate violates the contract:
+Whole-parameter `disjoint` groups are redundant with the default for memory-backed Stark parameters and are rejected with a fix-it diagnostic. Remove parameter-prefix `disjoint` and whole-parameter `where disjoint(a, b)` clauses; keep `where disjoint(pointer[start, count], other[start, count])` for subregions the default cannot express. FFI and assembly declarations are the exception: they do not receive Stark's default non-overlap contract, so explicit whole-parameter `disjoint` remains the opt-in spelling for external ABI boundaries. `overlap(a, b, c)` and `same(a, b, c)` are pairwise within the listed group. Multiple clauses in the same `where` clause are separated with commas:
 
 ```stark
-fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
+fn void ProcessPairs(
+    borrow u8[] a,
+    borrow u8[] b,
+    borrow u8[] c,
+    borrow mut u8[] d)
+    where overlap(a, b), same(c, d) {
+    return;
+}
+```
+
+These relations are not transitive. `where same(a, b), same(b, c)` does not prove `same(a, c)` unless that relation is also stated or separately proven, and `where overlap(a, b)` does not permit overlap between `a` and any unlisted parameter.
+
+A memory contract is about memory ranges, not only root values. Two slices that point into the same allocation satisfy a non-overlap obligation when their element ranges do not overlap. Contract operands must be memory-backed parameters or raw pointer region expressions; scalar value parameters cannot carry a memory-region contract.
+
+Raw pointer parameters may expose their bounded element region directly. The forms `rawptr<T>[count]` and `rawmutptr<T>[count]` are raw pointer parameters whose valid source region contains `count` contiguous elements of `T`:
+
+```stark
+fn void CopyBytes(
+    i64[0 max] length,
+    rawptr<i8[min max]>[length] source,
+    rawmutptr<i8[min max]>[length] destination) {
+    return;
+}
+```
+
+The pointer value is still a raw pointer, but the function contract includes the region bound. A nonzero count requires a non-null pointer that is valid for every element in `0 <= index < count`; a zero-length region may use `null`. The bound expression is an integer expression over the function parameters and compile-time constants, and cyclic bounds are rejected.
+
+Raw pointer region expressions use two-index slicing syntax inside memory contracts and disjoint checks. `pointer[start, count]` names the contiguous region beginning at `pointer + start` and containing `count` elements.
+
+The expression `pointer[start, count]` is a memory-region expression, not an owning value. It is valid in `where disjoint(...)`, `if disjoint(...)`, and places where the language expects a bounded raw pointer region fact.
+
+At a safe call site, the compiler must prove each memory relation. Default parameter pairs require non-overlap. `where same(...)` pairs require same-region identity. `where overlap(...)` pairs impose no non-overlap obligation for that relation. Passing the same memory region twice to default parameters, passing a whole object together with one of its fields, passing two indexed regions whose indexes are not proven separate, passing a call result or other expression whose memory root is not visible, or passing two raw pointer or slice variables whose regions have not been proven separate violates the default contract:
+
+```stark
+fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
     return;
 }
 
@@ -329,7 +318,8 @@ fn void MaybeBad(i32[0 2] i, i32[0 2] j) {
     Touch(&values[i], &values[j]); // STK3030 unless the indexes are proven separate
 }
 
-fn void Unknown(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight) {
+fn void Unknown(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight)
+    where overlap(maybeLeft, maybeRight) {
     Touch(maybeLeft, maybeRight); // STK3030: different pointer names are not a proof
 }
 
@@ -337,14 +327,37 @@ fn rawmutptr<i32[min max]> Identity(rawmutptr<i32[min max]> ptr) {
     return ptr;
 }
 
-fn void HiddenRoot(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight) {
+fn void HiddenRoot(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight)
+    where overlap(maybeLeft, maybeRight) {
     Touch(Identity(maybeLeft), maybeRight); // STK3030: the left root is hidden behind a call
 }
 ```
 
-Inside an `unsafe` block, raw pointer separation may be a programmer-proven fact instead of a compiler-proven one. The compiler still rejects obvious self-overlap.
+An ordinary `unsafe` block does not bypass parameter non-overlap. Trusted external separation must be written as a scoped unsafe assertion:
 
-Distinct projections that the compiler can see do not overlap, non-overlapping index ranges, compiler-visible text slice ranges such as `text[0, 4]` and `text[4, 4]`, bounded raw pointer region expressions, exclusive mutable borrow roots, `out`/`init` destination roots, immutable slice/text views whose backing storage is compiler-visible, separately addressed local storage, declared parameter contracts, and true branches of `if disjoint(...)` may satisfy the contract. Readonly borrows do not prove disjointness by themselves because two readonly views may alias the same immutable region.
+```stark
+unsafe fn void ExternallySeparated(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+    where overlap(left, right) {
+    unsafe assume disjoint(left, right) {
+        Touch(left, right);
+    }
+}
+```
+
+`unsafe assume disjoint(...)` introduces a scoped non-overlap fact for the nested statement and lets the backend emit scoped `noalias` metadata without a runtime check. The assertion must name compiler-visible memory roots or representable subregions. It does not silence obvious same-root overlap, hidden call results, or integer-laundered pointers.
+
+Inside an `unsafe fn` or an existing `unsafe { ... }` block, the leading `unsafe` is optional:
+
+```stark
+unsafe fn void AlreadyUnsafe(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+    where overlap(left, right) {
+    assume disjoint(left, right) {
+        Touch(left, right);
+    }
+}
+```
+
+Distinct projections that the compiler can see do not overlap, non-overlapping index ranges, compiler-visible text slice ranges such as `text[0, 4]` and `text[4, 4]`, bounded raw pointer region expressions, exclusive mutable borrow roots, `out`/`init` destination roots, immutable slice/text views whose backing storage is compiler-visible, separately addressed local storage, declared parameter contracts, and true branches of `if disjoint(...)` may satisfy the contract. Local raw pointers, slice locals, text locals, and borrowed local views are not non-overlapping merely because they are separate declarations; local facts come from provenance. Pointer copies and simple casts preserve same-region identity.
 
 ```stark
 struct Pair {
@@ -352,7 +365,7 @@ struct Pair {
     i32[min max] Right;
 }
 
-fn void Fields(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
+fn void Fields(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
     return;
 }
 
@@ -360,8 +373,7 @@ fn void Good(borrow mut Pair pair) {
     Fields(&pair.Left, &pair.Right);
 }
 
-fn void Forward(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
-    where disjoint(left, right) {
+fn void Forward(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
     Fields(left, right);
 }
 ```
@@ -376,7 +388,7 @@ fn i32[0 max] Lookup(const Table table, i32[0 max] key) {
 
 Projections from a `const` parameter remain deeply readonly. Safe code may not derive a mutable borrow, mutable raw pointer, or mutation-capable alias from any reachable part of a const parameter graph.
 
-`const` does not imply `disjoint`. Two const parameters can refer to the same immutable object graph unless `disjoint` is also written or proven.
+`const` does not imply local non-overlap. Local const views can refer to the same immutable object graph. Memory-backed function parameters remain non-overlapping by default unless the callee declares `where overlap(...)` or `where same(...)`.
 
 ### 5.5 Function Items and Function Pointers
 
@@ -406,10 +418,58 @@ Promotion to a function pointer is the point where the function becomes address 
 Function pointer types carry the function kind in their signature:
 
 ```stark
-fnptr<fn i32[0 max](i32[0 max])>
-fnptr<finite i32[0 max](i32[0 max])>
+fnptr<fn i32[min max](i32[min max])>
+fnptr<finite i32[min max](i32[min max])>
 fnptr<law bool(borrow Item)>
-fnptr<finite law i32[0 max](i32[0 max])>
+fnptr<finite law i32[min max](i32[min max])>
+```
+
+The kind is part of the callable contract. `fnptr<fn ...>` is the general
+form. `fnptr<finite ...>` may only hold callbacks that guarantee progress and
+return. `fnptr<law ...>` may only hold callbacks that are pure/read-only and
+have no visible side effects. `fnptr<finite law ...>` requires both sets of
+guarantees.
+
+Stronger function items can be used where a weaker function pointer is expected:
+
+```stark
+finite law i32[min max] Clamp(i32[min max] value) {
+    return value;
+}
+
+fn void Register() {
+    stack fnptr<fn i32[min max](i32[min max])> general = Clamp;
+    stack fnptr<finite i32[min max](i32[min max])> bounded = Clamp;
+    stack fnptr<law i32[min max](i32[min max])> pure = Clamp;
+    stack fnptr<finite law i32[min max](i32[min max])> strict = Clamp;
+    return;
+}
+```
+
+A weaker function item cannot be promoted to a stronger function pointer. This
+keeps higher-order APIs honest: a `law` function can call a
+`fnptr<law ...>` callback without losing its own law guarantee, and a `finite`
+function can call a `fnptr<finite ...>` callback without accepting a callback
+that may fail to make progress. The compiler preserves these facts for indirect
+calls so optimized builds can keep the same progress, termination, purity, and
+memory-effect guarantees that direct calls expose.
+
+`fnptr` values are non-null callable pointers. A function pointer must come from
+a compatible function item or non-capturing lambda; `null` is not assignable to a
+`fnptr`. Struct fields and fixed-array elements that contain function pointers
+must be explicitly initialized when an aggregate initializer would otherwise
+zero-fill them.
+
+Function pointer types also carry memory-separation contracts for memory-backed
+parameters. Because `fnptr` parameter lists do not name parameters, contract
+clauses use synthetic names `arg0`, `arg1`, and so on. Memory-backed `fnptr`
+parameters are non-overlapping by default; use `where overlap(arg0, arg1)` when
+the indirect callee permits overlap, or `where same(arg0, arg1)` when the call
+requires identical storage.
+
+```stark
+fnptr<fn void(borrow mut Buffer, borrow mut Buffer) where overlap(arg0, arg1)>
+fnptr<fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>) where same(arg0, arg1)>
 ```
 
 The current `fnptr` type is an ordinary safe callable pointer. Unsafe function items cannot be promoted to ordinary `fnptr` values because that would hide the unsafe requirement from later calls. Call unsafe functions directly inside an `unsafe` block, or expose a safe wrapper that checks the required conditions.
@@ -419,8 +479,8 @@ The current `fnptr` type is an ordinary safe callable pointer. Unsafe function i
 Lambda syntax follows the C# arrow form:
 
 ```stark
-stack fnptr<fn i32[0 max](i32[0 max])> square =
-    (i32[0 max] value) => value * value;
+stack fnptr<fn i32[min max](i32[min max])> square =
+    (i32[min max] value) => value * value;
 
 stack fnptr<fn i32[min max](rawmutptr<State>)> worker =
     (rawmutptr<State> state) => {
@@ -679,7 +739,7 @@ fn void Copy(
     i64[0 max] length,
     rawptr<i8[min max]>[length] source,
     rawmutptr<i8[min max]>[length] destination)
-    where disjoint(source, destination) {
+    where disjoint(source[0, length], destination[0, length]) {
     unsafe {
         stack i8[min max][] sourceView = slice(source, length);
         stack mut i8[min max][] destinationView = slice(destination, length);
@@ -740,8 +800,8 @@ The deep-const parameter form is:
 
 The memory-separation forms are:
 
-* `disjoint T name`: parameter-prefix disjointness for function parameters
-* `where disjoint(a, b)`: relational disjointness between named memory regions
+* `disjoint T name`: external-boundary opt-in disjointness for FFI/asm parameters
+* `where disjoint(a[start, count], b[start, count])`: relational disjointness between subregions or computed memory regions
 
 `disjoint` means the named memory regions do not overlap. `const` means the reachable memory cannot be mutated through safe Stark code. The two contracts are independent; immutable memory can still alias another immutable view.
 

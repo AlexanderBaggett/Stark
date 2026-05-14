@@ -877,7 +877,10 @@ internal static class FunctionOverloadFacts
             substitutedCore = StarkTypeSymbols.FunctionPointer(
                 functionKind,
                 SubstituteType(returnType, substitution),
-                parameterTypes.Select(parameter => SubstituteType(parameter, substitution)).ToArray());
+                parameterTypes.Select(parameter => SubstituteType(parameter, substitution)).ToArray(),
+                coreType.FunctionPointerDisjointParameterGroups,
+                coreType.FunctionPointerOverlapParameterGroups,
+                coreType.FunctionPointerSameParameterGroups);
         }
         else
         {

@@ -1,14 +1,15 @@
 module Book.MemorySeparationContracts
 
 unsafe fn void AddSeparate(
-    disjoint rawmutptr<i32[min max]> left,
-    disjoint rawmutptr<i32[min max]> right) {
+    rawmutptr<i32[min max]> left,
+    rawmutptr<i32[min max]> right) {
     *left += 1;
     *right += 1;
     return;
 }
 
-unsafe fn void AddOverlapSafe(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+unsafe fn void AddOverlapSafe(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+    where overlap(left, right) {
     if (left == right) {
         *left += 2;
         return;
@@ -19,7 +20,8 @@ unsafe fn void AddOverlapSafe(rawmutptr<i32[min max]> left, rawmutptr<i32[min ma
     return;
 }
 
-unsafe fn bool TryAddPairFast(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+unsafe fn bool TryAddPairFast(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+    where overlap(left, right) {
     if disjoint(left, right) {
         AddSeparate(left, right);
         return true;

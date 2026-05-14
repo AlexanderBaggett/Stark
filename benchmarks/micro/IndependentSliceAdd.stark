@@ -2,9 +2,9 @@ import System.Process
 module Benchmarks.Micro.IndependentSliceAdd
 
 unsafe fn void Add(
-    disjoint borrow i64[min max][] left,
-    disjoint borrow i64[min max][] right,
-    disjoint borrow mut i64[min max][] output) {
+    borrow i64[min max][] left,
+    borrow i64[min max][] right,
+    borrow mut i64[min max][] output) {
     for willexit independent (stack mut u8[0 32] index = 0; index < 32; index += 1) {
         output[index] = left[index] + right[index];
     }

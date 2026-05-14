@@ -40,7 +40,9 @@ internal static partial class PackageImageBuilder
                 : BuildPublishedAbiTypeReference(type.FunctionPointerReturnType, moduleName, localNamedTypes),
             ParameterTypes: type.FunctionPointerParameterTypes is { Count: > 0 }
                 ? type.FunctionPointerParameterTypes.Select(parameter => BuildPublishedAbiTypeReference(parameter, moduleName, localNamedTypes)).ToArray()
-                : null);
+                : null,
+            OverlapParameterGroups: BuildParameterOverlapGroupManifests(type.FunctionPointerOverlapParameterGroups ?? []),
+            SameParameterGroups: BuildParameterSameGroupManifests(type.FunctionPointerSameParameterGroups ?? []));
     }
 
     private static string ComputePublishedPackageAbiSymbolName(
@@ -147,7 +149,9 @@ internal static partial class PackageImageBuilder
                 : BuildTypeReference(type.FunctionPointerReturnType, moduleName, stripCurrentModulePrefix),
             ParameterTypes: type.FunctionPointerParameterTypes is { Count: > 0 }
                 ? type.FunctionPointerParameterTypes.Select(parameter => BuildTypeReference(parameter, moduleName, stripCurrentModulePrefix)).ToArray()
-                : null);
+                : null,
+            OverlapParameterGroups: BuildParameterOverlapGroupManifests(type.FunctionPointerOverlapParameterGroups ?? []),
+            SameParameterGroups: BuildParameterSameGroupManifests(type.FunctionPointerSameParameterGroups ?? []));
     }
 
     private static string RenderPackageFunctionKind(StarkFunctionKind kind)
@@ -366,7 +370,10 @@ internal static partial class PackageImageLoader
             "functionpointer" when type.ReturnType is not null => StarkTypeSymbols.FunctionPointer(
                 ParsePackageFunctionKind(type.FunctionKind),
                 BuildTypeSymbol(type.ReturnType, currentModuleName, localNamedTypes),
-                (type.ParameterTypes ?? []).Select(parameter => BuildTypeSymbol(parameter, currentModuleName, localNamedTypes)).ToArray()),
+                (type.ParameterTypes ?? []).Select(parameter => BuildTypeSymbol(parameter, currentModuleName, localNamedTypes)).ToArray(),
+                BuildTypeReferenceParameterDisjointGroups(type.DisjointParameterGroups),
+                BuildParameterOverlapGroups(type.OverlapParameterGroups),
+                BuildParameterSameGroups(type.SameParameterGroups)),
             "named" when type.TypeArguments is { Count: > 0 } => StarkTypeSymbols.GenericInstantiation(
                 normalizedNamedType ?? "<unnamed>",
                 type.TypeArguments.Select(argument => BuildTypeSymbol(argument, currentModuleName, localNamedTypes)).ToArray()),
@@ -446,7 +453,7 @@ internal static partial class PackageImageLoader
             "fixedarray" => $"{RenderTypeReference(type.ElementType!)}[{(type.FixedLength is { } fixedLength ? fixedLength.ToString() : "?")}]",
             "slice" => $"{RenderTypeReference(type.ElementType!)}[]",
             "dynamic" => $"dynamic {RenderTypeReference(type.ElementType!)}",
-            "functionpointer" => $"fnptr<{RenderTypeReferenceFunctionKind(type.FunctionKind)} {RenderTypeReference(type.ReturnType!)}({string.Join(", ", (type.ParameterTypes ?? []).Select(RenderTypeReference))})>",
+            "functionpointer" => $"fnptr<{RenderTypeReferenceFunctionKind(type.FunctionKind)} {RenderTypeReference(type.ReturnType!)}({string.Join(", ", (type.ParameterTypes ?? []).Select(RenderTypeReference))}){RenderFunctionPointerMemoryContracts(type)}>",
             "named" when type.TypeArguments is { Count: > 0 } => $"{type.Name}<{string.Join(", ", type.TypeArguments.Select(RenderTypeReference))}>",
             "named" => type.Name ?? "<unnamed>",
             _ => type.Name ?? type.Kind
@@ -466,6 +473,48 @@ internal static partial class PackageImageLoader
             "finite law" or "finitelaw" => "finite law",
             _ => "fn"
         };
+    }
+
+    private static string RenderFunctionPointerMemoryContracts(StarkPackageTypeReference type)
+    {
+        var clauses = new List<string>();
+        AppendFunctionPointerMemoryContractClauses(clauses, "overlap", type.OverlapParameterGroups);
+        AppendFunctionPointerMemoryContractClauses(clauses, "same", type.SameParameterGroups);
+        return clauses.Count == 0
+            ? string.Empty
+            : $" where {string.Join(", ", clauses)}";
+    }
+
+    private static void AppendFunctionPointerMemoryContractClauses(
+        List<string> clauses,
+        string relationName,
+        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? groups)
+    {
+        foreach (var group in groups ?? [])
+        {
+            var names = group.ParameterNames
+                .Where(static name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            if (names.Length >= 2)
+            {
+                clauses.Add($"{relationName}({string.Join(", ", names)})");
+            }
+        }
+    }
+
+    private static IReadOnlyList<ParameterDisjointGroup>? BuildTypeReferenceParameterDisjointGroups(
+        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? groups)
+    {
+        var result = groups?
+            .Select(static group => group.ParameterNames
+                .Where(static name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray())
+            .Where(static names => names.Length >= 2)
+            .Select(static names => new ParameterDisjointGroup(names))
+            .ToArray();
+        return result is { Length: > 0 } ? result : null;
     }
 }
 

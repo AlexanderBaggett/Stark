@@ -174,7 +174,12 @@ When you want indirection, write it:
 fnptr<fn i32[min max](i32[min max])>
 ```
 
-The source should say when a call becomes a callable value.
+The source should say when a call becomes a callable value. It should also say
+which guarantees survive that indirection. A `fnptr<finite law ...>` callback is
+still a thin function pointer at runtime, but it tells the compiler that the
+indirect target preserves progress, return, purity, and readonly behavior. That
+lets LLVM see call-site facts such as progress/return and memory effects even
+when the target cannot be statically inlined or devirtualized.
 
 ## Explicit Storage
 

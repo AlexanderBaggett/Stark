@@ -46,6 +46,22 @@ public sealed class ParserConformanceTests
             """
         },
         {
+            "function pointer memory contracts parse",
+            """
+            module Demo
+
+            struct Box {
+                i32[min max] Value;
+            }
+
+            fn void RegisterOverlap(fnptr<fn void(borrow mut Box, borrow mut Box) where overlap(arg0, arg1)> callback);
+            fn void RegisterSame(fnptr<fn void(borrow mut Box, borrow mut Box) where same(arg0, arg1)> callback);
+            fn void RegisterFinite(fnptr<finite i32[min max](i32[min max])> callback);
+            fn void RegisterLaw(fnptr<law bool(borrow Box)> callback);
+            fn void RegisterFiniteLaw(fnptr<finite law i32[min max](i32[min max])> callback);
+            """
+        },
+        {
             "constant interpolated text literal",
             """
             module Demo
@@ -178,10 +194,15 @@ public sealed class ParserConformanceTests
             module Memory
 
             unsafe fn void Copy(
-                disjoint rawptr<i32[min max]> source,
-                disjoint rawmutptr<i32[min max]> destination)
-                where disjoint(source, destination) {
+                rawptr<i32[min max]> source,
+                rawmutptr<i32[min max]> destination)
+                where disjoint(source[0, 4], destination[0, 4])
+                where overlap(source, destination) {
                 if disjoint(source, destination) {
+                    return;
+                }
+
+                assume disjoint(source, destination) {
                     return;
                 }
 
@@ -192,6 +213,11 @@ public sealed class ParserConformanceTests
                 for willexit independent (stack mut u32[0 2 ** 31 - 1] index = 0; index < 4; index += 1) {
                     continue;
                 }
+            }
+
+            unsafe fn void SameMemory(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+                where same(left, right) {
+                return;
             }
             """
         },
@@ -430,6 +456,14 @@ public sealed class ParserConformanceTests
             fn i32 Run(i32 value) {
                 return value;
             }
+            """
+        },
+        {
+            "function pointer kinds use finite law order",
+            """
+            module Demo
+
+            fn void Register(fnptr<law finite i32[min max]()> callback);
             """
         },
         {

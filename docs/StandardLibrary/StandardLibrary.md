@@ -665,7 +665,8 @@ module System.IO.Path
 public finite law ascii DirectorySeparator();
 public finite law ascii AlternateDirectorySeparator();
 public finite law ascii PathSeparator();
-public fn System.Memory.MemoryStatus TryJoin(mut borrow System.Text.OwnedAscii destination, ascii left, ascii right);
+public fn System.Memory.MemoryStatus TryJoin(mut borrow System.Text.OwnedAscii destination, ascii left, ascii right)
+    where overlap(destination, left), overlap(destination, right), overlap(left, right);
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(ascii left, ascii right);
 public struct PathFacts;
 public finite law PathFacts GetFacts(ascii path);
@@ -683,7 +684,7 @@ public fn System.Memory.MemoryResult<System.Text.OwnedAscii> CurrentDirectory();
 
 `GetFacts` computes the reusable component ranges for callers that need several pieces of the same path. `PathFacts` exposes view and length helpers for the full path, extension, base name, and directory name without rescanning.
 
-`TryJoin` uses caller-owned `System.Text.OwnedAscii` storage rather than allocating hidden storage. It returns `MemoryStatus` so allocation and layout failures remain explicit.
+`TryJoin` uses caller-owned `System.Text.OwnedAscii` storage rather than allocating hidden storage. It explicitly permits overlap among the destination and input views, snapshots when necessary, and returns `MemoryStatus` so allocation and layout failures remain explicit.
 
 `Join` allocates an owned `System.Text.OwnedAscii` result through `System.Memory` and returns `System.Memory.MemoryResult<T>`, so allocation failure remains visible. It uses the same separator normalization rules as `TryJoin`.
 

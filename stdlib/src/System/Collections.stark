@@ -3,7 +3,8 @@ import System.BitOperations
 module System.Collections
 
 public trait Equatable<T> {
-    finite law bool Equals(borrow T left, borrow T right);
+    finite law bool Equals(borrow T left, borrow T right)
+        where overlap(left, right);
 }
 
 public trait Hashable<T> {
@@ -11,7 +12,8 @@ public trait Hashable<T> {
 }
 
 public doctrine DictionaryKey<T> {
-    finite law bool Equals(borrow T left, borrow T right);
+    finite law bool Equals(borrow T left, borrow T right)
+        where overlap(left, right);
     finite law u64[0 max] Hash(borrow T value);
 }
 
@@ -734,7 +736,10 @@ public struct Dictionary<K, V> {
         rawmutptr<V> values,
         rawmutptr<u8[0 2]> states,
         K key,
-        V value) {
+        V value)
+        where overlap(self, keys),
+              overlap(self, values),
+              overlap(self, states) {
         stack u64[0 2 ** 63 - 1] storageMask = (u64[0 2 ** 63 - 1])(capacity - 1);
         stack mut K pendingKey = key;
         stack mut V pendingValue = value;
@@ -779,7 +784,8 @@ public struct Dictionary<K, V> {
         return;
     }
 
-    inline finite law u64[0 2 ** 63 - 1] FindIndex(borrow Dictionary<K, V> self, borrow K key) {
+    inline finite law u64[0 2 ** 63 - 1] FindIndex(borrow Dictionary<K, V> self, borrow K key)
+        where overlap(self, key) {
         unsafe {
             if (self.StorageCapacity == 0) {
                 return 0;
@@ -1246,11 +1252,14 @@ public struct Dictionary<K, V> {
         }
     }
 
-    inline finite law bool ContainsKey(borrow Dictionary<K, V> self, borrow K key) {
+    inline finite law bool ContainsKey(borrow Dictionary<K, V> self, borrow K key)
+        where overlap(self, key) {
         return self.FindIndex(key) < self.StorageCapacity;
     }
 
-    inline fn bool TryGet(borrow Dictionary<K, V> self, borrow K key, out V value) {
+    inline fn bool TryGet(borrow Dictionary<K, V> self, borrow K key, out V value)
+        where overlap(self, key),
+              overlap(key, value) {
         unsafe {
             stack u64[0 2 ** 63 - 1] index = self.FindIndex(key);
             if (index >= self.StorageCapacity) {
@@ -1262,7 +1271,8 @@ public struct Dictionary<K, V> {
         }
     }
 
-    inline fn DictionaryRemoveResult<V> RemoveMove(mut borrow Dictionary<K, V> self, borrow K key) {
+    inline fn DictionaryRemoveResult<V> RemoveMove(mut borrow Dictionary<K, V> self, borrow K key)
+        where overlap(self, key) {
         unsafe {
             stack u64[0 2 ** 63 - 1] index = self.FindIndex(key);
             if (index >= self.StorageCapacity) {
@@ -1277,7 +1287,9 @@ public struct Dictionary<K, V> {
         }
     }
 
-    inline fn bool TryRemove(mut borrow Dictionary<K, V> self, borrow K key, out V value) {
+    inline fn bool TryRemove(mut borrow Dictionary<K, V> self, borrow K key, out V value)
+        where overlap(self, key),
+              overlap(key, value) {
         unsafe {
             stack u64[0 2 ** 63 - 1] index = self.FindIndex(key);
             if (index >= self.StorageCapacity) {
@@ -1293,7 +1305,8 @@ public struct Dictionary<K, V> {
         }
     }
 
-    inline fn bool Remove(mut borrow Dictionary<K, V> self, borrow K key) {
+    inline fn bool Remove(mut borrow Dictionary<K, V> self, borrow K key)
+        where overlap(self, key) {
         unsafe {
             stack u64[0 2 ** 63 - 1] index = self.FindIndex(key);
             if (index >= self.StorageCapacity) {

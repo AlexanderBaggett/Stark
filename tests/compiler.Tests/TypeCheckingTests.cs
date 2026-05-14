@@ -52,6 +52,100 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void FunctionPointerOverlapContractsAllowAliasingIndirectCalls()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[min max] Value;
+            }
+
+            fn void Touch(borrow mut Box left, borrow mut Box right) where overlap(left, right) {
+                return;
+            }
+
+            fn void Run(borrow mut Box box) {
+                stack fnptr<fn void(borrow mut Box, borrow mut Box) where overlap(arg0, arg1)> op = Touch;
+                op(box, box);
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        var promotion = Assert.Single(typeCheckModel.FunctionPointerPromotions);
+        Assert.Equal("Touch", promotion.Signature.Name);
+        var indirectCall = Assert.Single(typeCheckModel.IndirectCalls);
+        var overlapGroup = Assert.Single(indirectCall.FunctionPointerType.FunctionPointerOverlapParameterGroups ?? []);
+        Assert.Equal(["arg0", "arg1"], overlapGroup.ParameterNames);
+    }
+
+    [Fact]
+    public void FunctionPointerOverlapTargetRejectsDefaultDisjointFunctionItems()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[min max] Value;
+            }
+
+            fn void Touch(borrow mut Box left, borrow mut Box right) {
+                return;
+            }
+
+            fn void Run() {
+                stack fnptr<fn void(borrow mut Box, borrow mut Box) where overlap(arg0, arg1)> op = Touch;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("cannot be promoted", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("where overlap(arg0, arg1)", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void FunctionPointerSameTargetsAcceptOverlapFunctionsAndRequireSameArguments()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[min max] Value;
+            }
+
+            fn void Touch(borrow mut Box left, borrow mut Box right) where overlap(left, right) {
+                return;
+            }
+
+            fn void Run(borrow mut Box box) {
+                stack fnptr<fn void(borrow mut Box, borrow mut Box) where same(arg0, arg1)> op = Touch;
+                op(box, box);
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        var indirectCall = Assert.Single(typeCheckModel.IndirectCalls);
+        var sameGroup = Assert.Single(indirectCall.FunctionPointerType.FunctionPointerSameParameterGroups ?? []);
+        Assert.Equal(["arg0", "arg1"], sameGroup.ParameterNames);
+    }
+
+    [Fact]
     public void FunctionItemPromotionPreservesFunctionKindFacts()
     {
         var result = Compile(
@@ -2131,7 +2225,7 @@ public sealed class TypeCheckingTests
             unsafe finite law void Run(frozen Box box, frozen PtrBox ptrBox) {
                 stack rawptr<frozen i32[min max]> valuePtr = &box.Value;
                 stack rawptr<frozen i32[min max]> readonlyPtr = ptrBox.Ptr;
-                stack bool same = *valuePtr == *readonlyPtr;
+                stack bool valuesEqual = *valuePtr == *readonlyPtr;
             }
             """,
             new CompilerOptions(StopAfterPassId: "type-check"));
@@ -2156,7 +2250,7 @@ public sealed class TypeCheckingTests
                 stack rawptr<frozen i32[min max]> fieldPtr = box.Ptr;
                 stack rawptr<frozen i32[min max]> directPtr = ptr;
                 stack i32[min max] value = *ptr;
-                stack bool same = *fieldPtr == *directPtr;
+                stack bool valuesEqual = *fieldPtr == *directPtr;
                 return;
             }
             """,

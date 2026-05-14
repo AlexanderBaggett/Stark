@@ -313,6 +313,26 @@ internal sealed partial class MidLevelIrLowerer
                     return TryExecuteBlock(block, moduleName, state, activeCalls, returnType, out returned, out returnValue);
                 }
 
+                if (statement.unsafeStatement() is { } unsafeStatement)
+                {
+                    if (unsafeStatement.block() is { } unsafeBlock)
+                    {
+                        return TryExecuteBlock(unsafeBlock, moduleName, state, activeCalls, returnType, out returned, out returnValue);
+                    }
+
+                    if (unsafeStatement.assumeStatement()?.statement() is { } unsafeAssumedStatement)
+                    {
+                        return TryExecuteScopedStatement(unsafeAssumedStatement, moduleName, state, activeCalls, returnType, out returned, out returnValue);
+                    }
+
+                    return false;
+                }
+
+                if (statement.assumeStatement() is { } assumeStatement)
+                {
+                    return TryExecuteScopedStatement(assumeStatement.statement(), moduleName, state, activeCalls, returnType, out returned, out returnValue);
+                }
+
                 if (statement.localConstantDeclaration() is { } localConstant)
                 {
                     var declaredType = _builder.TryResolveLocalDeclarationType(

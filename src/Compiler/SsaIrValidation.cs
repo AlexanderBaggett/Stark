@@ -1717,7 +1717,10 @@ internal sealed class SsaIrValidator
             call.Target.Type.FunctionPointerParameterTypes
                 .Select((parameterType, index) => new TypedParameterSymbol($"arg{index}", parameterType))
                 .ToArray(),
-            Kind: call.Target.Type.FunctionPointerKind ?? StarkFunctionKind.Fn);
+            Kind: call.Target.Type.FunctionPointerKind ?? StarkFunctionKind.Fn,
+            DisjointParameterGroups: call.Target.Type.FunctionPointerDisjointParameterGroups ?? [],
+            OverlapParameterGroups: call.Target.Type.FunctionPointerOverlapParameterGroups ?? [],
+            SameParameterGroups: call.Target.Type.FunctionPointerSameParameterGroups ?? []);
         var abiCallee = LlvmSpecializationEmissionPlanner.BuildSyntheticAbiSignature(
             signature,
             "$indirect",

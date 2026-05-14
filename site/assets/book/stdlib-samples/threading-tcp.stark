@@ -21,7 +21,7 @@ fn bool ThreadEntryShapeCompiles() {
     return JoinResultIs(joined, 7);
 }
 
-finite law bool EndpointShapeWorks() {
+fn bool EndpointShapeWorks() {
     stack System.Net.IPv4Endpoint endpoint = new() {
         Address = new() {
             A = 127,

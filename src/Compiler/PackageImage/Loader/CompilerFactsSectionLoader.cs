@@ -42,7 +42,9 @@ internal static partial class PackageImageLoader
                 IsUnsafe: function.IsUnsafe,
                 IsVarargs: function.IsVarargs,
                 BackendOptimizationMode: functionBackendOptimizationMode,
-                DisjointParameterGroups: BuildParameterDisjointGroups(function.Parameters, function.DisjointParameterGroups));
+                DisjointParameterGroups: BuildParameterDisjointGroups(function.Parameters, function.DisjointParameterGroups),
+                OverlapParameterGroups: BuildParameterOverlapGroups(function.OverlapParameterGroups),
+                SameParameterGroups: BuildParameterSameGroups(function.SameParameterGroups));
         }
 
         foreach (var type in module.Module.EffectiveTypedInterface?.Types ?? [])
@@ -82,7 +84,9 @@ internal static partial class PackageImageLoader
                     IsUnsafe: method.IsUnsafe,
                     IsVarargs: method.IsVarargs,
                     BackendOptimizationMode: methodBackendOptimizationMode,
-                    DisjointParameterGroups: BuildParameterDisjointGroups(method.Parameters, method.DisjointParameterGroups));
+                    DisjointParameterGroups: BuildParameterDisjointGroups(method.Parameters, method.DisjointParameterGroups),
+                    OverlapParameterGroups: BuildParameterOverlapGroups(method.OverlapParameterGroups),
+                    SameParameterGroups: BuildParameterSameGroups(method.SameParameterGroups));
             }
         }
 
@@ -412,7 +416,9 @@ internal static partial class PackageImageLoader
                             SourceName: directCall.QualifiedSourceName,
                             TemplateName: directCall.QualifiedTemplateName,
                             TypeArguments: directCall.TypeArguments?.Select(BuildTypeSymbol).ToArray(),
-                            DisjointParameterGroups: BuildParameterDisjointGroups(directCall.Parameters, directCall.DisjointParameterGroups))))
+                            DisjointParameterGroups: BuildParameterDisjointGroups(directCall.Parameters, directCall.DisjointParameterGroups),
+                            OverlapParameterGroups: BuildParameterOverlapGroups(directCall.OverlapParameterGroups),
+                            SameParameterGroups: BuildParameterSameGroups(directCall.SameParameterGroups))))
                     .ToArray(),
                 FieldAccessSummaries: functionTemplate.FieldAccesses?
                     .Select(fieldAccess => new ImportedTemplateFieldAccessSummary(
@@ -433,7 +439,9 @@ internal static partial class PackageImageLoader
                             SourceName: memberCall.QualifiedSourceName,
                             TemplateName: memberCall.QualifiedTemplateName,
                             TypeArguments: memberCall.TypeArguments?.Select(BuildTypeSymbol).ToArray(),
-                            DisjointParameterGroups: BuildParameterDisjointGroups(memberCall.Parameters, memberCall.DisjointParameterGroups))))
+                            DisjointParameterGroups: BuildParameterDisjointGroups(memberCall.Parameters, memberCall.DisjointParameterGroups),
+                            OverlapParameterGroups: BuildParameterOverlapGroups(memberCall.OverlapParameterGroups),
+                            SameParameterGroups: BuildParameterSameGroups(memberCall.SameParameterGroups))))
                     .ToArray(),
                 BackendOptimizationMode: templateBackendOptimizationMode);
         }

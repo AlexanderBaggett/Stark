@@ -67,8 +67,8 @@ public inline fn MemoryStatus ReserveCodePoints(
 }
 
 public inline fn MemoryStatus AppendBytesDisjoint(
-    disjoint mut borrow dynamic i8[min max] storage,
-    disjoint borrow i8[min max][] source,
+    mut borrow dynamic i8[min max] storage,
+    borrow i8[min max][] source,
     u64[0 2 ** 63 - 1] count) {
     if (count == 0) {
         return MemoryStatus.Ok;
@@ -87,7 +87,8 @@ public inline fn MemoryStatus AppendBytesDisjoint(
 public fn MemoryStatus AppendBytes(
     mut borrow dynamic i8[min max] storage,
     borrow i8[min max][] source,
-    u64[0 2 ** 63 - 1] count) {
+    u64[0 2 ** 63 - 1] count)
+    where overlap(storage, source) {
         unsafe {
         if (count == 0) {
             return MemoryStatus.Ok;
@@ -134,8 +135,8 @@ public inline fn MemoryStatus AppendFillBytes(
 }
 
 public inline fn MemoryStatus AppendCodePointsDisjoint(
-    disjoint mut borrow dynamic i32[min max] storage,
-    disjoint borrow i32[min max][] source,
+    mut borrow dynamic i32[min max] storage,
+    borrow i32[min max][] source,
     u64[0 2 ** 63 - 1] count) {
     if (count == 0) {
         return MemoryStatus.Ok;
@@ -158,7 +159,8 @@ public inline fn MemoryStatus AppendCodePointsDisjoint(
 public fn MemoryStatus AppendCodePoints(
     mut borrow dynamic i32[min max] storage,
     borrow i32[min max][] source,
-    u64[0 2 ** 63 - 1] count) {
+    u64[0 2 ** 63 - 1] count)
+    where overlap(storage, source) {
         unsafe {
         if (count == 0) {
             return MemoryStatus.Ok;
@@ -215,8 +217,8 @@ public inline fn MemoryStatus AppendFillCodePoints(
 }
 
 public inline finite MemoryStatus InitializeBytesDisjoint(
-    disjoint borrow i8[min max][] source,
-    disjoint init i8[min max][] destination,
+    borrow i8[min max][] source,
+    init i8[min max][] destination,
     u64[0 2 ** 63 - 1] count) {
     for willexit independent (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
         init destination[index] = source[index];
@@ -238,8 +240,8 @@ public inline finite MemoryStatus InitializeBytes(
 
 internal unsafe inline finite MemoryStatus InitializeBytesFromPointerDisjoint(
     u64[0 2 ** 63 - 1] count,
-    disjoint rawptr<i8[min max]>[count] source,
-    disjoint init i8[min max][] destination) {
+    rawptr<i8[min max]>[count] source,
+    init i8[min max][] destination) {
     for willexit independent (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
         init destination[index] = *(&source[index]);
     }
@@ -248,8 +250,8 @@ internal unsafe inline finite MemoryStatus InitializeBytesFromPointerDisjoint(
 }
 
 public inline finite void CopyBytesDisjointInfallible(
-    disjoint borrow i8[min max][] source,
-    disjoint borrow mut i8[min max][] destination,
+    borrow i8[min max][] source,
+    borrow mut i8[min max][] destination,
     u64[0 2 ** 63 - 1] count) {
     for willexit independent (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
         destination[index] = source[index];
@@ -259,8 +261,8 @@ public inline finite void CopyBytesDisjointInfallible(
 }
 
 public inline finite MemoryStatus CopyBytesDisjoint(
-    disjoint borrow i8[min max][] source,
-    disjoint borrow mut i8[min max][] destination,
+    borrow i8[min max][] source,
+    borrow mut i8[min max][] destination,
     u64[0 2 ** 63 - 1] count) {
     CopyBytesDisjointInfallible(source, destination, count);
     return MemoryStatus.Ok;
@@ -269,7 +271,8 @@ public inline finite MemoryStatus CopyBytesDisjoint(
 public fn MemoryStatus CopyBytes(
     borrow i8[min max][] source,
     borrow mut i8[min max][] destination,
-    u64[0 2 ** 63 - 1] count) {
+    u64[0 2 ** 63 - 1] count)
+    where overlap(source, destination) {
         unsafe {
         if (count == 0) {
             return MemoryStatus.Ok;
@@ -304,7 +307,8 @@ public fn MemoryStatus CopyBytes(
 public inline finite void MoveBytesInfallible(
     borrow i8[min max][] source,
     borrow mut i8[min max][] destination,
-    u64[0 2 ** 63 - 1] count) {
+    u64[0 2 ** 63 - 1] count)
+    where overlap(source, destination) {
         unsafe {
         if (count == 0) {
             return;
@@ -333,7 +337,8 @@ public inline finite void MoveBytesInfallible(
 public inline finite MemoryStatus MoveBytes(
     borrow i8[min max][] source,
     borrow mut i8[min max][] destination,
-    u64[0 2 ** 63 - 1] count) {
+    u64[0 2 ** 63 - 1] count)
+    where overlap(source, destination) {
     MoveBytesInfallible(source, destination, count);
     return MemoryStatus.Ok;
 }
@@ -369,8 +374,8 @@ public inline finite MemoryStatus FillInitializedBytes(
 }
 
 public inline finite MemoryStatus InitializeCodePointsDisjoint(
-    disjoint borrow i32[min max][] source,
-    disjoint init i32[min max][] destination,
+    borrow i32[min max][] source,
+    init i32[min max][] destination,
     u64[0 2 ** 61 - 1] count) {
     for willexit independent (stack mut u64[0 2 ** 61 - 1] index = 0; index < count; index += 1) {
         init destination[index] = source[index];
@@ -392,8 +397,8 @@ public inline finite MemoryStatus InitializeCodePoints(
 
 internal unsafe inline finite MemoryStatus InitializeCodePointsFromPointerDisjoint(
     u64[0 2 ** 61 - 1] count,
-    disjoint rawptr<i32[min max]>[count] source,
-    disjoint init i32[min max][] destination) {
+    rawptr<i32[min max]>[count] source,
+    init i32[min max][] destination) {
     for willexit independent (stack mut u64[0 2 ** 61 - 1] index = 0; index < count; index += 1) {
         init destination[index] = *(&source[index]);
     }
@@ -402,8 +407,8 @@ internal unsafe inline finite MemoryStatus InitializeCodePointsFromPointerDisjoi
 }
 
 public inline finite void CopyCodePointsDisjointInfallible(
-    disjoint borrow i32[min max][] source,
-    disjoint borrow mut i32[min max][] destination,
+    borrow i32[min max][] source,
+    borrow mut i32[min max][] destination,
     u64[0 2 ** 61 - 1] count) {
     for willexit independent (stack mut u64[0 2 ** 61 - 1] index = 0; index < count; index += 1) {
         destination[index] = source[index];
@@ -413,8 +418,8 @@ public inline finite void CopyCodePointsDisjointInfallible(
 }
 
 public inline finite MemoryStatus CopyCodePointsDisjoint(
-    disjoint borrow i32[min max][] source,
-    disjoint borrow mut i32[min max][] destination,
+    borrow i32[min max][] source,
+    borrow mut i32[min max][] destination,
     u64[0 2 ** 63 - 1] count) {
     if (count > 2 ** 61 - 1) {
         return MemoryStatus.Err(MemoryError.OutOfMemory);
@@ -427,7 +432,8 @@ public inline finite MemoryStatus CopyCodePointsDisjoint(
 public fn MemoryStatus CopyCodePoints(
     borrow i32[min max][] source,
     borrow mut i32[min max][] destination,
-    u64[0 2 ** 63 - 1] count) {
+    u64[0 2 ** 63 - 1] count)
+    where overlap(source, destination) {
         unsafe {
         if (count == 0) {
             return MemoryStatus.Ok;
@@ -467,7 +473,8 @@ public fn MemoryStatus CopyCodePoints(
 public inline finite void MoveCodePointsInfallible(
     borrow i32[min max][] source,
     borrow mut i32[min max][] destination,
-    u64[0 2 ** 61 - 1] count) {
+    u64[0 2 ** 61 - 1] count)
+    where overlap(source, destination) {
         unsafe {
         if (count == 0) {
             return;
@@ -496,7 +503,8 @@ public inline finite void MoveCodePointsInfallible(
 public inline finite MemoryStatus MoveCodePoints(
     borrow i32[min max][] source,
     borrow mut i32[min max][] destination,
-    u64[0 2 ** 63 - 1] count) {
+    u64[0 2 ** 63 - 1] count)
+    where overlap(source, destination) {
     if (count > 2 ** 61 - 1) {
         return MemoryStatus.Err(MemoryError.OutOfMemory);
     }

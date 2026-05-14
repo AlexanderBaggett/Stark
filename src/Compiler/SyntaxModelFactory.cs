@@ -1270,7 +1270,9 @@ internal static class SyntaxModelFactory
             IsStatic: modifiers.Contains("static"),
             Attributes: attributes,
             BackendOptimizationMode: backendOptimizationMode,
-            DisjointParameterGroups: CreateDisjointParameterGroups(parameterList, memoryContractClauses));
+            DisjointParameterGroups: CreateDisjointParameterGroups(parameterList, memoryContractClauses),
+            OverlapParameterGroups: CreateOverlapParameterGroups(memoryContractClauses),
+            SameParameterGroups: CreateSameParameterGroups(memoryContractClauses));
     }
 
     private static ParameterModel CreateParameterModel(StarkParser.ParameterContext parameter)
@@ -1315,7 +1317,9 @@ internal static class SyntaxModelFactory
 
         foreach (var clause in memoryContractClauses)
         {
-            foreach (var contract in clause.disjointContract())
+            foreach (var contract in clause.parameterMemoryContract()
+                         .Select(static contract => contract.disjointContract())
+                         .Where(static contract => contract is not null)!)
             {
                 var names = contract.expressionList()
                     .expression()
@@ -1327,6 +1331,58 @@ internal static class SyntaxModelFactory
                 if (names.Length > 1)
                 {
                     groups.Add(new ParameterDisjointGroup(names));
+                }
+            }
+        }
+
+        return groups;
+    }
+
+    private static IReadOnlyList<ParameterOverlapGroup> CreateOverlapParameterGroups(
+        IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> memoryContractClauses)
+    {
+        return CreateParameterRelationGroups(
+                memoryContractClauses,
+                static contract => contract.overlapContract()?.expressionList())
+            .Select(static group => new ParameterOverlapGroup(group))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<ParameterSameGroup> CreateSameParameterGroups(
+        IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> memoryContractClauses)
+    {
+        return CreateParameterRelationGroups(
+                memoryContractClauses,
+                static contract => contract.sameContract()?.expressionList())
+            .Select(static group => new ParameterSameGroup(group))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<IReadOnlyList<string>> CreateParameterRelationGroups(
+        IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> memoryContractClauses,
+        Func<StarkParser.ParameterMemoryContractContext, StarkParser.ExpressionListContext?> selectExpressionList)
+    {
+        var groups = new List<IReadOnlyList<string>>();
+        foreach (var clause in memoryContractClauses)
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                var expressionList = selectExpressionList(contract);
+                if (expressionList is null)
+                {
+                    continue;
+                }
+
+                var names = expressionList
+                    .expression()
+                    .Select(static expression => TryGetDisjointContractParameterName(expression.GetText()))
+                    .Where(static name => !string.IsNullOrWhiteSpace(name))
+                    .Select(static name => name!)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                if (names.Length > 1)
+                {
+                    groups.Add(names);
                 }
             }
         }

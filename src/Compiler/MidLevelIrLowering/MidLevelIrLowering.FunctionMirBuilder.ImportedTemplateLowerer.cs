@@ -687,6 +687,22 @@ internal sealed partial class MidLevelIrLowerer
                         continue;
                     }
 
+                    if (currentType.Kind == StarkTypeKind.Dynamic && currentType.ElementType is not null)
+                    {
+                        var dynamicStorageElementType = ProjectAddressProjectionType(currentType, currentType.ElementType);
+                        updatedPath.Add(new PlacePathSegment(
+                            PlacePathKind.DynamicStorageIndex,
+                            FieldName: null,
+                            ConstantIndex: null,
+                            IndexOperand: index,
+                            ParentType: currentType,
+                            SegmentType: dynamicStorageElementType));
+                        currentType = dynamicStorageElementType;
+                        usesAddressModel = true;
+                        supportsAddressModel = true;
+                        continue;
+                    }
+
                     if (currentType.Kind == StarkTypeKind.RawPointer && currentType.ElementType is not null)
                     {
                         updatedPath.Add(new PlacePathSegment(

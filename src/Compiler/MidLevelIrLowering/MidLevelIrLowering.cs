@@ -87,7 +87,8 @@ internal sealed partial class MidLevelIrLowerer
                 EntryBlockId: 0,
                 Locals: [],
                 Blocks: [],
-                BodyLoweringKind: function.BodyLoweringKind);
+                BodyLoweringKind: function.BodyLoweringKind,
+                DisjointParameterGroups: function.Signature.DisjointGroups);
         }
 
         if (keepOpenGenericTemplateDeclarationBodyless)
@@ -102,7 +103,8 @@ internal sealed partial class MidLevelIrLowerer
                 EntryBlockId: 0,
                 Locals: [],
                 Blocks: [],
-                BodyLoweringKind: function.BodyLoweringKind);
+                BodyLoweringKind: function.BodyLoweringKind,
+                DisjointParameterGroups: function.Signature.DisjointGroups);
         }
 
         if (!_functionsByName.TryGetValue(loweringTemplateName, out var loweringContext))
@@ -136,7 +138,8 @@ internal sealed partial class MidLevelIrLowerer
                 EntryBlockId: 0,
                 Locals: [],
                 Blocks: [],
-                BodyLoweringKind: function.BodyLoweringKind);
+                BodyLoweringKind: function.BodyLoweringKind,
+                DisjointParameterGroups: function.Signature.DisjointGroups);
         }
 
         var body = loweringContext.ParsedBody;
@@ -228,7 +231,8 @@ internal sealed partial class MidLevelIrLowerer
                     EntryBlockId: 0,
                     Locals: [],
                     Blocks: [],
-                    BodyLoweringKind: function.BodyLoweringKind);
+                    BodyLoweringKind: function.BodyLoweringKind,
+                    DisjointParameterGroups: function.Signature.DisjointGroups);
             }
 
             if (lambdaExpression is not null)
@@ -270,7 +274,8 @@ internal sealed partial class MidLevelIrLowerer
             builder.Locals,
             builder.Blocks,
             function.BodyLoweringKind,
-            functionLocation);
+            functionLocation,
+            function.Signature.DisjointGroups);
     }
 
     private static bool ShouldKeepOpenGenericTemplateDeclarationBodyless(
@@ -1082,6 +1087,16 @@ internal sealed partial class MidLevelIrLowerer
                         parameter.parameterContractPrefix().Any(static prefix => prefix.Start.Type == StarkParser.CONST),
                         rawPointerElementCountExpression))
                     .ToArray();
+                var isFfi = declaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "ffi", StringComparison.Ordinal));
+                var isAsm = declarationModel?.Function?.Asm is not null;
+                var overlapGroups = declarationModel?.Function?.OverlapGroups ?? [];
+                var sameGroups = declarationModel?.Function?.SameGroups ?? [];
+                var disjointGroups = ParameterMemoryContractFacts.BuildEffectiveDisjointGroups(
+                    parameters,
+                    declarationModel?.Function?.DisjointGroups ?? [],
+                    overlapGroups,
+                    sameGroups,
+                    applyDefaultNonOverlap: !isFfi && !isAsm);
                 functions[qualifiedName] = new TypedFunctionSignature(
                     qualifiedName,
                     resolver.ResolveReturnType(declaration.ReturnType, genericParameters, module.SyntaxModel.ModuleName),
@@ -1089,8 +1104,11 @@ internal sealed partial class MidLevelIrLowerer
                     SourceName: FunctionOverloadFacts.QualifySourceName(module, declaration.DisplaySourceName),
                     GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray(),
                     IsStatic: declaration.IsStatic,
+                    IsUnsafe: declaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "unsafe", StringComparison.Ordinal)),
                     IsVarargs: declaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "varargs", StringComparison.Ordinal)),
-                    DisjointParameterGroups: declarationModel?.Function?.DisjointGroups);
+                    DisjointParameterGroups: disjointGroups,
+                    OverlapParameterGroups: overlapGroups,
+                    SameParameterGroups: sameGroups);
             }
         }
 

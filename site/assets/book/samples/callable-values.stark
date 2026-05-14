@@ -8,6 +8,16 @@ fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] valu
     return op(value);
 }
 
+finite law i32[min max] Double(i32[min max] value) {
+    return value * 2;
+}
+
+finite law i32[min max] ApplyPure(
+    fnptr<finite law i32[min max](i32[min max])> op,
+    i32[min max] value) {
+    return op(value);
+}
+
 export unsafe ffi fn i32[min max] main() {
     stack fnptr<fn i32[min max](i32[min max], i32[min max])> add = Add;
     stack fnptr<fn i32[min max](i32[min max])> increment =
@@ -19,6 +29,10 @@ export unsafe ffi fn i32[min max] main() {
 
     if (Apply(increment, 41) != 42) {
         return 2;
+    }
+
+    if (ApplyPure(Double, 21) != 42) {
+        return 3;
     }
 
     return 0;

@@ -178,13 +178,26 @@ internal sealed class OwnershipValidator
             _unsafeDepth++;
             try
             {
-                CheckBlock(unsafeStatement.block(), state, signature, summary, openScope: true);
+                if (unsafeStatement.block() is { } unsafeBlock)
+                {
+                    CheckBlock(unsafeBlock, state, signature, summary, openScope: true);
+                }
+                else if (unsafeStatement.assumeStatement() is { } unsafeAssumeStatement)
+                {
+                    CheckAssumeStatement(unsafeAssumeStatement, state, signature, summary);
+                }
             }
             finally
             {
                 _unsafeDepth--;
             }
 
+            return;
+        }
+
+        if (statement.assumeStatement() is { } assumeStatement)
+        {
+            CheckAssumeStatement(assumeStatement, state, signature, summary);
             return;
         }
 
@@ -385,6 +398,33 @@ internal sealed class OwnershipValidator
         if (statement.expressionStatement() is { } expressionStatement)
         {
             EvaluateExpression(expressionStatement.expression(), state, signature, summary, ValueUse.ConsumeTemporary, allowFunctionReference: false);
+        }
+    }
+
+    private void CheckAssumeStatement(
+        StarkParser.AssumeStatementContext assumeStatement,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary)
+    {
+        foreach (var expression in assumeStatement.disjointRuntimeCondition().expressionList().expression())
+        {
+            if (TryEvaluateRawPointerRegionExpression(expression, state, signature, summary))
+            {
+                continue;
+            }
+
+            EvaluateExpression(expression, state, signature, summary, ValueUse.Read, allowFunctionReference: false);
+        }
+
+        var assumeScope = state.EnterScope();
+        try
+        {
+            CheckStatement(assumeStatement.statement(), state, signature, summary);
+        }
+        finally
+        {
+            state.ExitScope(assumeScope, summary, ValidateScopeExitState, RecordImplicitDrops);
         }
     }
 

@@ -997,9 +997,9 @@ public sealed class SsaLoweringTests
             module Demo
 
             unsafe fn void Add(
-                disjoint borrow i32[min max][] left,
-                disjoint borrow i32[min max][] right,
-                disjoint borrow mut i32[min max][] output,
+                borrow i32[min max][] left,
+                borrow i32[min max][] right,
+                borrow mut i32[min max][] output,
                 u8[0 10] count) {
                 for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     output[index] = left[index] + right[index];

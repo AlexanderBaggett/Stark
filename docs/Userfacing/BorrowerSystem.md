@@ -478,26 +478,43 @@ These tell the compiler more about alignment, bounds, non-overlap, and vectoriza
 
 ## 11. Memory-Separation Composition
 
-`disjoint` is a memory-region contract. It composes with the borrower qualifiers but does not replace them.
+Default parameter non-overlap is a memory-region contract. It composes with the borrower qualifiers but does not replace them.
 
 Rules:
 
-* `disjoint borrow T` means readonly borrowed access to a region that does not overlap the other regions named by the same disjoint contract.
-* `disjoint borrow mut T` means mutable borrowed access to a region that does not overlap the other regions named by the same disjoint contract.
-* `out T` and `init T` keep their write-before-read requirements when they are also disjoint from input regions.
-* `frozen T` and `const T` remain deeply readonly; adding `disjoint` also proves memory separation.
-* `shared T` does not establish disjointness by itself. Shared-state capabilities still need explicit disjoint contracts or other proof before the compiler treats accesses as non-overlapping.
+* `borrow T` parameters are readonly borrowed access to regions that must not overlap other memory-backed parameters by default.
+* `borrow mut T` parameters are mutable borrowed access to regions that must not overlap other memory-backed parameters by default.
+* `out T` and `init T` keep their write-before-read requirements while also participating in default parameter non-overlap.
+* `frozen T` and `const T` remain deeply readonly; parameter non-overlap is a separate call contract, not a readonly rule.
+* `shared T` does not establish local disjointness by itself. Shared-state capabilities still need default parameter contracts, explicit contracts, or other proof before the compiler treats accesses as non-overlapping.
 
-The relational form states exact relationships:
+The relational forms adjust the default:
 
 ```stark
-fn void Copy(borrow u8[] source, borrow mut u8[] destination)
-    where disjoint(source, destination) {
+fn void CopyDisjoint(borrow u8[] source, borrow mut u8[] destination) {
+    return;
+}
+
+fn void MoveOverlapSafe(borrow u8[] source, borrow mut u8[] destination)
+    where overlap(source, destination) {
+    return;
+}
+
+fn void RequireSame(borrow u8[] left, borrow u8[] right)
+    where same(left, right) {
     return;
 }
 ```
 
-Inside `Copy`, `source` and `destination` are known not to overlap for the duration of the call. The readonly or mutable authority still comes from `borrow` and `borrow mut`; `disjoint` only supplies the non-overlap fact.
+Inside `CopyDisjoint`, `source` and `destination` are known not to overlap for the duration of the call because that is the default. `MoveOverlapSafe` explicitly permits overlap for its listed pair and must use overlap-safe code. `RequireSame` requires the caller to pass the same visible region for both parameters. The readonly or mutable authority still comes from `borrow` and `borrow mut`; the memory contract only supplies region identity or non-overlap facts.
+
+Function-pointer types preserve the same callable-boundary contract. Because a
+`fnptr` type does not name its parameters, use `arg0`, `arg1`, and so on in the
+type-level relation:
+
+```stark
+fnptr<fn void(borrow u8[], borrow mut u8[]) where overlap(arg0, arg1)>
+```
 
 The checked branch form scopes the same fact to the true branch:
 
@@ -509,7 +526,17 @@ if disjoint(source, destination) {
 
 The false branch receives no disjoint fact and must use overlap-safe code.
 
-`const` and `disjoint` are independent. Two const parameters can alias the same immutable object graph. The compiler treats them as non-overlapping only when `disjoint` is written or proven.
+An unsafe block by itself is not a non-overlap proof. When a low-level boundary has separation facts the compiler cannot prove, write a scoped assertion:
+
+```stark
+unsafe assume disjoint(source, destination) {
+    Copy(source, destination);
+}
+```
+
+Inside an `unsafe fn` or an existing `unsafe { ... }` block, the leading `unsafe` may be omitted: `assume disjoint(source, destination) { ... }`. The assertion is limited to the nested statement and must name visible roots or representable subregions. It gives the optimizer scoped `noalias` facts without a runtime branch, but it still rejects obvious same-root assumptions and hidden-root tricks such as pointer values laundered through integers or helper calls.
+
+`const` and parameter non-overlap are independent contracts. A local const view can alias another local const view. Function parameters are separate by default when they are memory-backed, unless the callee writes `where overlap(...)` or `where same(...)`.
 
 ## 12. Bounded Raw Pointer Regions
 
@@ -527,8 +554,8 @@ module Demo
 
 fn void Copy(
     i64[0 max] length,
-    disjoint rawptr<i8[min max]>[length] source,
-    disjoint rawmutptr<i8[min max]>[length] destination)
+    rawptr<i8[min max]>[length] source,
+    rawmutptr<i8[min max]>[length] destination)
     where disjoint(source[0, length], destination[0, length]) {
     return;
 }
@@ -540,7 +567,9 @@ Composition rules:
 
 * `rawptr<T>[count]` gives readonly raw access to the bounded region.
 * `rawmutptr<T>[count]` gives mutable raw access to the bounded region.
-* `disjoint rawptr<T>[count]` and `disjoint rawmutptr<T>[count]` state non-overlap with the other regions in the same disjoint group.
+* `rawptr<T>[count]` and `rawmutptr<T>[count]` participate in default parameter non-overlap.
+* `where overlap(pointerA, pointerB)` permits overlap between listed bounded raw pointer regions and suppresses default noalias facts for that relation.
+* `where disjoint(pointer[start, count], other[0, count])` states subregion non-overlap that the parameter default cannot express.
 * `const rawptr<T>[count]` and `frozen` provenance keep reachable memory readonly; they do not prove non-overlap by themselves.
 * `borrow mut` remains the safe mutable-borrow form. A bounded `rawmutptr` can be used at an unsafe or FFI boundary, but it does not become a safe borrow automatically.
 * `out` and `init` still express write-before-read initialization. A bounded raw pointer region may be proven disjoint from `out` or `init` destinations, but raw pointer mutability is not a substitute for the `out` or `init` initialization contract.

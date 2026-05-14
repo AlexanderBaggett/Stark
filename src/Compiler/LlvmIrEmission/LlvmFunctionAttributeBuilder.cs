@@ -46,6 +46,13 @@ internal sealed class LlvmFunctionAttributeBuilder
         return string.Join(" ", segments);
     }
 
+    public IReadOnlyList<string> GetAbiParameterAttributes(
+        AbiParameterSymbol parameter,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects)
+    {
+        return DeriveAbiParameterAttributes(parameter, ResolveParameterEffects(parameter, parameterEffects));
+    }
+
     public string RenderAbiReturnType(AbiFunctionSignature abiFunction, SsaIntegerRangeFact? returnRange = null)
     {
         var segments = new List<string>();
@@ -149,6 +156,40 @@ internal sealed class LlvmFunctionAttributeBuilder
         return string.Join(" ", attributes);
     }
 
+    public string BuildFunctionPointerCallSiteAttributes(
+        AbiFunctionSignature abiFunction,
+        StarkFunctionKind functionPointerKind)
+    {
+        var isFinite = FunctionKindFacts.IsFinite(functionPointerKind);
+        var isLaw = FunctionKindFacts.IsLaw(functionPointerKind);
+        if (!isLaw)
+        {
+            return isFinite
+                ? "nounwind willreturn mustprogress"
+                : string.Empty;
+        }
+
+        var baseAttributes = isFinite
+            ? "nounwind willreturn mustprogress nosync nofree"
+            : "nounwind nosync nofree";
+        var memoryAttribute = BuildLawFunctionPointerCallSiteMemoryAttribute(abiFunction);
+        if (!string.IsNullOrWhiteSpace(memoryAttribute))
+        {
+            return $"{baseAttributes} {memoryAttribute}";
+        }
+
+        return baseAttributes;
+    }
+
+    private static string? BuildLawFunctionPointerCallSiteMemoryAttribute(AbiFunctionSignature abiFunction)
+    {
+        return GetMemoryAttribute(
+            FunctionContractReadsArgumentMemory(abiFunction) || FunctionAbiLoweringReadsArgumentMemory(abiFunction),
+            FunctionContractWritesArgumentMemory(abiFunction) || FunctionAbiLoweringWritesArgumentMemory(abiFunction),
+            FunctionContractReadsOtherMemory(abiFunction),
+            FunctionContractWritesOtherMemory(abiFunction));
+    }
+
     private IReadOnlyList<string> DeriveAbiParameterAttributes(
         AbiParameterSymbol parameter,
         ParameterMemoryEffectSummary? parameterEffects)
@@ -178,6 +219,13 @@ internal sealed class LlvmFunctionAttributeBuilder
             AppendCaptureAttribute(attributes, parameterEffects);
             AppendDereferenceableAttributes(attributes, parameter.SourceType);
 
+            return attributes;
+        }
+
+        if (parameter.Kind == AbiParameterKind.Direct
+            && parameter.LlvmType.Kind == StarkTypeKind.FunctionPointer)
+        {
+            attributes.Add("nonnull");
             return attributes;
         }
 

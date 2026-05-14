@@ -1,5 +1,6 @@
 using Stark.Compiler;
 using Stark.Parsing;
+using System.Text.RegularExpressions;
 
 namespace compiler.Tests;
 
@@ -315,7 +316,7 @@ public sealed class PackageImageArchitectureTests
     }
 
     [Fact]
-    public void PackageImagePreservesConstAndDisjointParameterQualifiers()
+    public void PackageImagePreservesConstDefaultNonOverlapAndExplicitRelationQualifiers()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-parameter-qualifiers-");
 
@@ -331,11 +332,17 @@ public sealed class PackageImageArchitectureTests
                         return;
                     }
 
-                    public unsafe fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
+                    public unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
                         return;
                     }
 
-                    public unsafe fn void TouchWhere(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) where disjoint(left, right) {
+                    public unsafe ffi fn void ExternalTouch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right);
+
+                    public unsafe fn void TouchOverlap(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) where overlap(left, right) {
+                        return;
+                    }
+
+                    public unsafe fn void TouchSame(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) where same(left, right) {
                         return;
                     }
 
@@ -363,12 +370,20 @@ public sealed class PackageImageArchitectureTests
             Assert.True(Assert.Single(inspect.Parameters).IsConst);
 
             var touch = Assert.Single(typedInterface.Functions, static function => function.Name == "Touch");
-            Assert.All(touch.Parameters, static parameter => Assert.True(parameter.IsDisjoint));
+            Assert.All(touch.Parameters, static parameter => Assert.False(parameter.IsDisjoint));
             Assert.Contains(touch.DisjointParameterGroups ?? [], static group => group.ParameterNames.SequenceEqual(["left", "right"]));
 
-            var touchWhere = Assert.Single(typedInterface.Functions, static function => function.Name == "TouchWhere");
-            Assert.All(touchWhere.Parameters, static parameter => Assert.False(parameter.IsDisjoint));
-            Assert.Contains(touchWhere.DisjointParameterGroups ?? [], static group => group.ParameterNames.SequenceEqual(["left", "right"]));
+            var externalTouch = Assert.Single(typedInterface.Functions, static function => function.Name == "ExternalTouch");
+            Assert.All(externalTouch.Parameters, static parameter => Assert.True(parameter.IsDisjoint));
+            Assert.Contains(externalTouch.DisjointParameterGroups ?? [], static group => group.ParameterNames.SequenceEqual(["left", "right"]));
+
+            var touchOverlap = Assert.Single(typedInterface.Functions, static function => function.Name == "TouchOverlap");
+            Assert.Contains(touchOverlap.OverlapParameterGroups ?? [], static group => group.ParameterNames.SequenceEqual(["left", "right"]));
+            Assert.Null(touchOverlap.DisjointParameterGroups);
+
+            var touchSame = Assert.Single(typedInterface.Functions, static function => function.Name == "TouchSame");
+            Assert.Contains(touchSame.SameParameterGroups ?? [], static group => group.ParameterNames.SequenceEqual(["left", "right"]));
+            Assert.Null(touchSame.DisjointParameterGroups);
 
             var reader = Assert.Single(typedInterface.Types, static type => type.Name == "Reader");
             var read = Assert.Single(reader.Methods ?? [], static method => method.Name == "Read");
@@ -377,15 +392,21 @@ public sealed class PackageImageArchitectureTests
             var resolvedModule = CreateResolvedPackageModule(facadeModule);
             Assert.True(PackageImageLoader.TryBuildModuleSource(resolvedModule, out var sourceText));
             Assert.Contains("Inspect(const rawmutptr", sourceText, StringComparison.Ordinal);
-            Assert.Contains("Touch(disjoint rawmutptr", sourceText, StringComparison.Ordinal);
-            Assert.Contains("TouchWhere(rawmutptr", sourceText, StringComparison.Ordinal);
-            Assert.Contains("where disjoint(left, right)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("Touch(rawmutptr", sourceText, StringComparison.Ordinal);
+            Assert.Contains("ExternalTouch(disjoint rawmutptr", sourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("where disjoint(left, right)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("where overlap(left, right)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("where same(left, right)", sourceText, StringComparison.Ordinal);
             Assert.Contains("Read(borrow Reader self, const rawmutptr", sourceText, StringComparison.Ordinal);
 
             Assert.True(PackageImageLoader.TryBuildLoadedPackageImageFacts(resolvedModule, out var facts));
             Assert.True(facts.FunctionSignatures["Facade.Inspect"].Parameters[0].IsConst);
-            Assert.All(facts.FunctionSignatures["Facade.Touch"].Parameters, static parameter => Assert.True(parameter.IsDisjoint));
-            Assert.Contains(facts.FunctionSignatures["Facade.TouchWhere"].DisjointGroups, static group => group.ParameterNames.SequenceEqual(["left", "right"]));
+            Assert.All(facts.FunctionSignatures["Facade.Touch"].Parameters, static parameter => Assert.False(parameter.IsDisjoint));
+            Assert.Contains(facts.FunctionSignatures["Facade.Touch"].DisjointGroups, static group => group.ParameterNames.SequenceEqual(["left", "right"]));
+            Assert.All(facts.FunctionSignatures["Facade.ExternalTouch"].Parameters, static parameter => Assert.True(parameter.IsDisjoint));
+            Assert.Contains(facts.FunctionSignatures["Facade.ExternalTouch"].DisjointGroups, static group => group.ParameterNames.SequenceEqual(["left", "right"]));
+            Assert.Contains(facts.FunctionSignatures["Facade.TouchOverlap"].OverlapGroups, static group => group.ParameterNames.SequenceEqual(["left", "right"]));
+            Assert.Contains(facts.FunctionSignatures["Facade.TouchSame"].SameGroups, static group => group.ParameterNames.SequenceEqual(["left", "right"]));
             Assert.True(facts.FunctionSignatures["Facade.Reader.Read"].Parameters[1].IsConst);
         }
         finally
@@ -472,7 +493,7 @@ public sealed class PackageImageArchitectureTests
     }
 
     [Fact]
-    public void PackageImageBackedWhereDisjointCallsRejectOverlappingArguments()
+    public void PackageImageBackedDefaultNonOverlapCallsRejectOverlappingArguments()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-where-disjoint-");
         var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
@@ -486,7 +507,7 @@ public sealed class PackageImageArchitectureTests
                 """
                 module Facade
 
-                public unsafe fn void TouchWhere(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) where disjoint(left, right) {
+                public unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
                     return;
                 }
                 """,
@@ -505,7 +526,7 @@ public sealed class PackageImageArchitectureTests
                     module Demo
 
                     unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
-                        Facade.TouchWhere(ptr, ptr);
+                        Facade.Touch(ptr, ptr);
                         return;
                     }
                     """,
@@ -519,6 +540,136 @@ public sealed class PackageImageArchitectureTests
                 result.Diagnostics,
                 static diagnostic => diagnostic.Code == "STK3030"
                     && diagnostic.Message.Contains("violates disjoint parameter contract", StringComparison.Ordinal));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImageBackedWhereOverlapCallsAllowOverlappingArguments()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-where-overlap-");
+        var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public unsafe fn void TouchOverlap(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) where overlap(left, right) {
+                    return;
+                }
+                """,
+                sourcePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(sourcePath);
+
+            var result = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
+                        Facade.TouchOverlap(ptr, ptr);
+                        return;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "type-check"));
+
+            Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImageBackedRetborrowDynamicIndexTemplatesReturnElementAddresses()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-retborrow-dynamic-");
+        var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct Bag<T> {
+                    public T[] Items;
+
+                    public law retborrow T Get(borrow Bag<T> self, u64[0 2 ** 63 - 1] index) {
+                        return self.Items[index];
+                    }
+                }
+                """,
+                sourcePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(sourcePath);
+
+            var result = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32[min max] Run() {
+                        stack mut Facade.Bag<i32[min max]> bag = new();
+                        return bag.Get(0);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    EmitLlvmIr: true));
+
+            Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+            Assert.NotNull(llvmModule);
+
+            var getBody = ExtractDefinitionBodyContaining(llvmModule.Text, "Facade_Bag_Get__i32");
+            var returned = Regex.Match(getBody, @"ret ptr (?<value>%[A-Za-z0-9_]+)");
+            Assert.True(returned.Success, getBody);
+            var returnedValue = returned.Groups["value"].Value;
+            Assert.Contains($"{returnedValue} = getelementptr i32, ptr ", getBody, StringComparison.Ordinal);
+            Assert.Contains($"ret ptr {returnedValue}", getBody, StringComparison.Ordinal);
+            Assert.DoesNotContain($"{returnedValue} = load i32", getBody, StringComparison.Ordinal);
         }
         finally
         {
@@ -1070,6 +1221,36 @@ public sealed class PackageImageArchitectureTests
             $"/virtual/lib{module.ModuleName}.a",
             new StarkPackageManifest(module.ModuleName, $"lib{module.ModuleName}.a", [module]),
             module);
+    }
+
+    private static string ExtractDefinitionBody(string llvm, string symbolName)
+    {
+        var headerMatch = Regex.Match(
+            llvm,
+            $@"^define [^\n]*@{Regex.Escape(symbolName)}\([^\n]*\)[^\n]*",
+            RegexOptions.Multiline);
+        Assert.True(headerMatch.Success, $"Expected LLVM definition for '{symbolName}'.");
+
+        var start = headerMatch.Index;
+        var nextDefinition = llvm.IndexOf("\ndefine ", start + headerMatch.Length, StringComparison.Ordinal);
+        return nextDefinition < 0
+            ? llvm[start..]
+            : llvm[start..nextDefinition];
+    }
+
+    private static string ExtractDefinitionBodyContaining(string llvm, string symbolNameFragment)
+    {
+        var headerMatch = Regex.Match(
+            llvm,
+            $@"^define [^\n]*@[^\s(]*{Regex.Escape(symbolNameFragment)}[^\s(]*\([^\n]*\)[^\n]*",
+            RegexOptions.Multiline);
+        Assert.True(headerMatch.Success, $"Expected LLVM definition containing '{symbolNameFragment}'.");
+
+        var start = headerMatch.Index;
+        var nextDefinition = llvm.IndexOf("\ndefine ", start + headerMatch.Length, StringComparison.Ordinal);
+        return nextDefinition < 0
+            ? llvm[start..]
+            : llvm[start..nextDefinition];
     }
 
     private static string FindRepositoryRoot()

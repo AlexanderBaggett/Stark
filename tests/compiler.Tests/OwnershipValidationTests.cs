@@ -413,7 +413,7 @@ public sealed class OwnershipValidationTests
                 i32[min max] Value;
             }
 
-            fn void Touch(disjoint borrow mut Box left, disjoint borrow mut Box right) {
+            fn void Touch(borrow mut Box left, borrow mut Box right) {
                 left.Value = 1;
                 right.Value = 2;
                 return;

@@ -620,8 +620,8 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 module Demo
 
                 fn MemoryStatus InitBytes(
-                    disjoint borrow i8[min max][] source,
-                    disjoint init i8[min max][] destination,
+                    borrow i8[min max][] source,
+                    init i8[min max][] destination,
                     u64[0 2 ** 63 - 1] count) {
                     return System.Memory.InitializeBytesDisjoint(source, destination, count);
                 }
@@ -638,15 +638,15 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 }
 
                 fn MemoryStatus AppendBytesDisjoint(
-                    disjoint mut borrow dynamic i8[min max] destination,
-                    disjoint borrow i8[min max][] source,
+                    mut borrow dynamic i8[min max] destination,
+                    borrow i8[min max][] source,
                     u64[0 2 ** 63 - 1] count) {
                     return System.Memory.AppendBytesDisjoint(destination, source, count);
                 }
 
                 fn MemoryStatus CopyCodePoints(
-                    disjoint borrow i32[min max][] source,
-                    disjoint borrow mut i32[min max][] destination,
+                    borrow i32[min max][] source,
+                    borrow mut i32[min max][] destination,
                     u64[0 2 ** 63 - 1] count) {
                     return System.Memory.CopyCodePointsDisjoint(source, destination, count);
                 }
@@ -792,8 +792,8 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
                 module App
 
                 fn System.Memory.MemoryStatus UseCopy(
-                    disjoint borrow i8[min max][] source,
-                    disjoint init i8[min max][] destination,
+                    borrow i8[min max][] source,
+                    init i8[min max][] destination,
                     u64[0 2 ** 63 - 1] count) {
                     return System.Memory.InitializeBytesDisjoint(source, destination, count);
                 }

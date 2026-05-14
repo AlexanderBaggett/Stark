@@ -61,6 +61,18 @@ fnptr<finite law i32[min max](i32[min max])>
 
 A callable value must satisfy the kind expected by the `fnptr` type.
 
+The kind matters most at higher-order boundaries. A general
+`fnptr<fn ...>` can call ordinary code. A `fnptr<law ...>` preserves purity
+through an indirect call. A `fnptr<finite ...>` preserves progress and return
+guarantees. A `fnptr<finite law ...>` carries both, which lets functional-style
+helpers accept callbacks without giving up the guarantees that direct calls
+would have given the compiler.
+
+Function pointer values are non-null. They must be initialized from a compatible
+function item or non-capturing lambda, so aggregate initializers need to spell out
+any field or fixed-array element that contains a `fnptr` instead of relying on
+zero-fill.
+
 The declaration on the function item matters. A general `fn` is not silently
 upgraded to a stronger callable value just because its body is simple:
 

@@ -2,6 +2,13 @@
 
 `System.Text` provides the shared encoding enum and the current owned-text helper functions.
 
+Owned text builders follow Stark's memory-contract rules. Builder methods keep
+the default non-overlap contract for disjoint append fast paths and spell
+intentional source/destination overlap with `where overlap(self, source)`.
+Conversions that append into caller-owned text storage must either preserve that
+explicit overlap contract or copy through a snapshot before mutating the
+destination.
+
 ## Surface
 
 ```stark

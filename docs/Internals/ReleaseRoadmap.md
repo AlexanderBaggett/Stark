@@ -1421,7 +1421,7 @@ Completion rules:
 
 ## 2.5. Make Pointers Non-Overlapping By Default
 
-- [ ] Change Stark's pointer and pointer-like parameter aliasing model so
+- [x] Change Stark's pointer and pointer-like parameter aliasing model so
       function parameters are assumed to describe non-overlapping memory regions
       by default, and overlap must be requested explicitly.
   - [x] 2026-05-13 proposal direction: make non-overlap a callable-boundary
@@ -1439,49 +1439,191 @@ Completion rules:
         a local non-overlap fact. Unknown local/raw provenance remains unknown
         until proven by source-visible roots, range facts, `if disjoint(...)`, or
         a future explicit unsafe assertion form.
-  - [ ] Define the source-level contract precisely.
-      - [ ] Distinguish parameter-level from expression-level disjointness in the
+  - [x] 2026-05-13 implementation note: grammar, syntax modeling, type
+        checking, semantic summaries, LLVM noalias/scoped-noalias emission, and
+        package-image manifests now carry default parameter non-overlap plus
+        explicit `where overlap(...)` and `where same(...)` relation groups.
+        Safe calls reject obvious/default overlap, `where same(...)` requires
+        same-region proof, and `where overlap(...)` suppresses the default
+        obligation and noalias facts for that relation. The call-site proof model
+        now preserves roots through retborrow returns, text view conversions,
+        text literals, explicit literal conversions, out/init destinations, and
+        distinct fresh locals; FFI/asm declarations do not receive implicit Stark
+        non-overlap unless they opt in explicitly because external ABI contracts
+        are not Stark call contracts.
+  - [x] 2026-05-13 standard-library and backend follow-up: overlap-safe stdlib
+        APIs have been annotated where existing tests intentionally pass aliasing
+        regions, including `System.Memory.AppendBytes`,
+        `AppendCodePoints`, `CopyBytes`, `CopyCodePoints`,
+        `MoveBytes*`, `MoveCodePoints*`, `System.Text.OwnedAscii.AppendAscii`,
+        `System.Text.OwnedUnicode.AppendAscii`/`AppendUnicode`,
+        `System.IO.Path.TryJoin`/`TryJoinConst`/`Join`/`JoinConst`,
+        dictionary key/value lookup and removal helpers, dictionary storage
+        insertion, and runtime buffer compaction internals. Imported generic
+        typed-template lowering now returns dynamic-storage element addresses for
+        pointer-backed `retborrow` returns instead of loading the element value.
+        Invariant metadata selection now blocks locals passed by address to calls
+        so drop/cleanup temporaries are not marked immutable while preserving the
+        large-aggregate single-store forwarding path.
+  - [x] 2026-05-13 unsafe assertion update: the body-level trusted proof form is
+        now `unsafe assume disjoint(a, b) statement`, and the leading `unsafe`
+        is optional inside an `unsafe fn` or an existing `unsafe { ... }` block.
+        Bare `assume disjoint(...)` outside an unsafe context is rejected before
+        MIR. The assertion is scoped to the nested statement, must name visible
+        memory roots or representable subregions, rejects obvious same-root or
+        hidden-root assumptions, and feeds the same scoped noalias metadata path
+        as a proven `if disjoint(...)` true branch without adding a runtime
+        branch.
+  - [x] 2026-05-13 platform/stdlib contract follow-up: the source dispatch
+        templates under `stdlib/templates/System.Runtime.Platform.*Dispatch.stark`
+        now carry the same overlap contracts as the concrete platform modules,
+        so source-imported stdlib builds and package builds agree. Opaque OS
+        handles represented as `rawptr<i8>` are explicitly marked
+        overlap-capable with text/buffer/status outputs at the wrapper boundary
+        because those values are kernel handles, not Stark memory regions. Real
+        data-buffer pairs, such as the two buffers in socket vector IO, remain
+        non-overlapping by default so LLVM can still receive noalias facts for
+        the actual user memory ranges.
+  - [x] 2026-05-13 verification: `dotnet test -c Release
+        tests/compiler.Tests/compiler.Tests.csproj` passed 1265 tests. Targeted
+        stdlib sweeps passed: all `SystemCollectionsStandardLibraryTests` (19
+        tests), the source and packaged collections grow/move/drop executable
+        tests, and the `SystemTextStandardLibraryTests`,
+        `SystemIOPathStandardLibraryTests`, `SystemRuntimeBufferStandardLibraryTests`,
+        and `SystemMemoryHelperStandardLibraryTests` filter (27 tests).
+  - [x] 2026-05-13 verification update: after optional unsafe-assume syntax,
+        platform dispatch contract propagation, and opaque-handle stdlib
+        annotations, `dotnet test -c Release tests/compiler.Tests/compiler.Tests.csproj`
+        passed 1270 tests; the focused stdlib text/path/collections/networking
+        sweep passed 46 tests; and `scripts/build-stdlib.sh` rebuilt
+        `stdlib/dist/libSystem.a` plus `stdlib/dist/libSystem.starkpkg.json`.
+  - [x] 2026-05-13 verification update: after fixing the source-promoted Net
+        TCP bulk-read IR lookup and book samples that were relying on legacy
+        range/law behavior, `dotnet test -c Release
+        tests/compiler.StandardLibraryTests/compiler.StandardLibraryTests.csproj
+        --filter "FullyQualifiedName~SystemPromotedNetTcpStandardLibraryTests.StdLibSourcePromotedNetTcpBufferReadsUseBulkPaths|FullyQualifiedName~SystemPromotedRuntimeBufferStandardLibraryTests.SourceStdLibPromotedRuntimeBufferExecutableRuns|FullyQualifiedName~BookSampleStandardLibraryTests.PositiveBookSamplesCompileWithStrictIntegerRanges"`
+        passed 41 tests. `dotnet test -c Release
+        tests/compiler.Tests/compiler.Tests.csproj` passed 1270 tests.
+        `scripts/build-stdlib.sh` rebuilt `stdlib/dist/libSystem.a` and
+        `stdlib/dist/libSystem.starkpkg.json` with the current compiler.
+  - [x] 2026-05-13 implementation update: whole-parameter `disjoint` is no
+        longer migration-only documentation for ordinary Stark functions. The
+        compiler now rejects redundant parameter-prefix `disjoint` and
+        whole-parameter `where disjoint(a, b)` with fix-it diagnostics while
+        preserving `where disjoint(a[start, count], b[start, count])`,
+        `if disjoint(...)`, loop-carried facts, and `unsafe assume disjoint(...)`.
+        FFI and asm declarations remain explicit opt-in boundaries and do not
+        receive the default Stark non-overlap groups unless they spell
+        `disjoint`. Effective default disjoint groups now flow through source
+        fallback signatures, MIR, SSA, package-image source reconstruction, and
+        imported inline clones; the raw-pointer-loop memcpy recognizer consumes
+        pairwise disjoint groups directly so removing legacy prefixes does not
+        pessimize `System.Memory.Copy*DisjointInfallible`.
+  - [x] 2026-05-13 verification update: focused diagnostic/package/parser/LLVM
+        contract tests passed 520 tests. Full
+        `dotnet test -c Release tests/compiler.Tests/compiler.Tests.csproj`
+        passed 1272 tests. Focused standard-library memory/text/book sample
+        sweep passed 56 tests, and `scripts/build-stdlib.sh` rebuilt
+        `stdlib/dist/libSystem.a` plus `stdlib/dist/libSystem.starkpkg.json`.
+  - [x] 2026-05-13 final verification update: after local provenance
+        assignment tracking, noalias metadata guardrails, stdlib audit coverage,
+        and documentation updates, full
+        `dotnet test -c Release tests/compiler.Tests/compiler.Tests.csproj`
+        passed 1283 tests. Focused standard-library memory/text/path/contract
+        audit sweep passed 21 tests. `scripts/build-stdlib.sh` rebuilt
+        `stdlib/dist/libSystem.a` and `stdlib/dist/libSystem.starkpkg.json`.
+  - [x] 2026-05-14 provenance precision update: declaration-time memory
+        provenance is now preserved for mutable raw-pointer, slice, ascii, and
+        unicode locals as well as immutable locals. Mutable local provenance is
+        still flow-sensitive: direct assignments refine it when the right-hand
+        side carries a visible root and clear it otherwise, while branch, loop,
+        and nested-scope writes invalidate outer facts. This lets
+        `stack mut rawmutptr<T> p = &local` participate in default non-overlap
+        and `where same(...)` proofs until the local is reassigned, avoiding
+        conservative proof failures without trusting hidden aliases. Verification:
+        full `dotnet test -c Release tests/compiler.Tests/compiler.Tests.csproj`
+        passed 1286 tests; focused standard-library memory/text/path/contract
+        audit sweep passed 21 tests; `scripts/build-stdlib.sh` rebuilt
+        `stdlib/dist/libSystem.a` and `stdlib/dist/libSystem.starkpkg.json`.
+  - [x] 2026-05-14 indirect-call noalias update: function-pointer calls now
+        synthesize default memory-parameter non-overlap obligations during type
+        checking, so an indirect call such as `op(ptr, ptr)` is rejected before
+        LLVM emission unless the arguments have a compiler-visible disjoint
+        proof. The LLVM backend then renders the same ABI argument contract facts
+        on function-pointer call operands that a named callee would expose on its
+        declaration where LLVM cannot infer the target signature directly.
+        Indirect borrow, out, init, raw-pointer, byval, and sret calls now carry
+        sound `noalias`, `nonnull`, `dereferenceable`, read/write, capture,
+        `byval`, and `sret` attributes at the call site. Direct named calls keep
+        their narrower historical call spelling because the callee
+        declaration/definition already carries the same contract facts, avoiding
+        unnecessary IR churn. Verification: full `dotnet test -c Release
+        tests/compiler.Tests/compiler.Tests.csproj` passed 1288 tests; focused
+        standard-library memory/text/path/contract audit sweep passed 21 tests;
+        `scripts/build-stdlib.sh` rebuilt `stdlib/dist/libSystem.a` and
+        `stdlib/dist/libSystem.starkpkg.json`.
+  - [x] 2026-05-14 function-pointer memory-contract completion: `fnptr<...>`
+        types now accept and preserve `where overlap(arg0, arg1, ...)` and
+        `where same(arg0, arg1, ...)` clauses using synthetic parameter names.
+        Function-item promotion maps source parameter relation groups onto
+        `argN`, type compatibility rejects unsafe contract weakening
+        (for example assigning a default-disjoint function to an overlap-capable
+        function pointer), type substitution and package-image type references
+        preserve the groups, indirect-call type checking uses the actual
+        function-pointer contract, and LLVM indirect-call parameter attributes
+        emit `noalias` only for pairs still proven disjoint by that contract.
+        Whole-parameter `where disjoint(arg0, arg1)` on `fnptr` is rejected as
+        redundant with the default. The Windows `InitOnceExecuteOnce` callback
+        boundary is explicitly overlap-capable because the OS callback ABI is an
+        external boundary and must not be modeled as a Stark default-noalias
+        callable. Verification: full `dotnet test -c Release
+        tests/compiler.Tests/compiler.Tests.csproj` passed 1296 tests; focused
+        `SystemMemoryContractAuditStandardLibraryTests` passed; and
+        `scripts/build-stdlib.sh` rebuilt `stdlib/dist/libSystem.a` plus
+        `stdlib/dist/libSystem.starkpkg.json`.
+  - [x] Define the source-level contract precisely.
+      - [x] Distinguish parameter-level from expression-level disjointness in the
             source-level contract. Parameter-level non-overlap is a call
             contract between the caller and callee for the full duration of the
             call. Expression-level `disjoint(...)` facts describe specific
             computed regions and may be static, branch-scoped, or loop-scoped.
-      - [ ] Document that parameter-level non-overlap is now expressed by the
+      - [x] Document that parameter-level non-overlap is now expressed by the
             default and that writing `disjoint` on whole parameters or in
             `where disjoint(a, b)` clauses over whole parameters is redundant.
-      - [ ] Preserve `disjoint` for expression-level facts the default cannot
+      - [x] Preserve `disjoint` for expression-level facts the default cannot
             express, including subregions of a single parameter
             (`where disjoint(buffer[0, n], buffer[n, 2*n])`), partial disjointness
             inside an explicit `overlap` group, and disjointness between
             computed slice or raw pointer region expressions.
-      - [ ] Preserve runtime-checked `if disjoint(...)` branches as the
+      - [x] Preserve runtime-checked `if disjoint(...)` branches as the
             body-level refinement form for APIs that opt into overlap or for
             data-dependent subregions.
-      - [ ] Preserve loop-carried disjoint facts used by `for independent` and
+      - [x] Preserve loop-carried disjoint facts used by `for independent` and
             related constructs, since iteration-space disjointness is not a
             parameter contract.
-      - [ ] Document that local raw pointers, slice locals, text locals, and
+      - [x] Document that local raw pointers, slice locals, text locals, and
             borrowed local views are not non-overlapping by declaration default.
             Local facts are inferred from provenance: pointer copies and simple
             casts preserve same-region identity; address-of distinct visible
             roots, non-overlapping projections, fresh allocation, exclusive
             mutable borrows, and proven range splits can establish local
             non-overlap.
-      - [ ] Define fix-it diagnostics that remove redundant whole-parameter
+      - [x] Define fix-it diagnostics that remove redundant whole-parameter
             `disjoint` qualifiers and redundant whole-parameter
             `where disjoint(...)` clauses, while leaving expression-level,
             branch-scoped, and loop-scoped `disjoint` forms untouched.
-      - [ ] Add tests that confirm redundant whole-parameter `disjoint` is
+      - [x] Add tests that confirm redundant whole-parameter `disjoint` is
             rejected with a fix-it, while expression-level, branch-scoped, and
             loop-scoped `disjoint` continue to compile and continue to produce
             the same alias-scope, noalias, and loop-access-group metadata as
             before.
-    - [ ] Decide the exact set of parameter families covered by the default:
+    - [x] Decide the exact set of parameter families covered by the default:
           `borrow`, `borrow mut`, `retborrow`, `storeborrow`, slices, text views,
           `init`, `out`, bounded raw pointer regions, `rawptr`, and `rawmutptr`.
-    - [ ] Decide whether the default applies to every memory-backed parameter or
+    - [x] Decide whether the default applies to every memory-backed parameter or
           only to pointer-like parameters, and document the treatment of owned
           by-value aggregates that lower indirectly through ABI rules.
-      - [ ] Proposed rule: apply the source-level default to parameters that
+      - [x] Proposed rule: apply the source-level default to parameters that
             describe reachable caller storage (`borrow`, `borrow mut`,
             `retborrow`, `storeborrow`, slices, text views, `init`, `out`,
             bounded raw pointer regions, `rawptr`, and `rawmutptr`). Do not add
@@ -1490,27 +1632,40 @@ Completion rules:
             value indirectly; source by-value semantics already describe a
             value transfer/copy. Backend `byval`/sret noalias facts may still be
             emitted when the ABI contract itself makes them sound.
-    - [ ] Define how the new default composes with `const`, `frozen`, `shared`,
+    - [x] Define how the new default composes with `const`, `frozen`, `shared`,
           `out`, `init`, `unsafe`, `ffi`, `asm`, member receivers, generic
           parameters, function pointers, lambdas, methods, trait requirements,
           doctrine members, and package-image imports.
-    - [ ] Define explicit opt-out syntax for allowed overlap using
+      - [x] Implemented composition rules: `const`/frozen/shared affect
+            mutability and readonly facts but do not erase parameter region
+            obligations; `out` and `init` destinations use caller-destination
+            roots for proof; member receivers participate as ordinary parameters;
+            generics, imported templates, package images, trait/doctrine
+            signatures, and function-pointer ABI facts preserve the relation
+            groups; FFI/asm functions are excluded from implicit Stark default
+            non-overlap unless explicitly annotated.
+    - [x] Define explicit opt-out syntax for allowed overlap using
           `where overlap(a, b)` as the canonical spelling. This removes the
           default non-overlap obligation only for the listed relation and must
           suppress `noalias`/scoped-noalias facts between those regions unless a
           nested `if disjoint(...)` or expression-level fact proves a narrower
           non-overlap path.
-    - [ ] Define explicit same-region syntax for APIs that intentionally require
+    - [x] Define explicit same-region syntax for APIs that intentionally require
           the same memory using `where same(a, b)` as the canonical spelling.
           This is stronger than `overlap`: a safe call must prove both operands
           identify the same region, not merely that overlap is allowed.
-    - [ ] Decide whether explicit legacy `disjoint` remains legal as redundant
+    - [x] Decide whether explicit legacy `disjoint` remains legal as redundant
           documentation, becomes an error with a fix-it, or is kept only for
           local/runtime `if disjoint(...)` checks.
-    - [ ] Define the safe-code rule: a call that passes overlapping arguments to
+      - [x] Decision: ordinary Stark whole-parameter `disjoint` is an error with
+            a fix-it because the default already carries that contract. Keep
+            `disjoint` for subregion/region facts, runtime checks, unsafe
+            scoped assumptions, independent-loop facts, and explicit FFI/asm
+            external-boundary opt-in.
+    - [x] Define the safe-code rule: a call that passes overlapping arguments to
           default-non-overlap parameters is rejected unless the callee explicitly
           permits that overlap relation.
-      - [ ] Proposed enforcement rule: every safe call generates call-site
+      - [x] Proposed enforcement rule: every safe call generates call-site
             memory obligations after overload resolution and generic
             substitution. Default parameter pairs require proof of
             non-overlap; `where same(a, b)` pairs require proof of same-region
@@ -1519,41 +1674,42 @@ Completion rules:
             default pair, emit a diagnostic. If the compiler cannot prove
             non-overlap, emit a diagnostic in safe code rather than trusting
             distinct variable names.
-    - [ ] Define the unsafe-code rule: unsafe may assert facts the compiler cannot
+    - [x] Define the unsafe-code rule: unsafe may assert facts the compiler cannot
           prove, but it must not disable obvious self-overlap diagnostics unless
           an explicit overlap/same-memory contract permits the call shape.
-      - [ ] Proposed unsafe rule: `unsafe` does not automatically bypass
-            default non-overlap. Add a separate explicit assertion form later,
-            such as `unsafe assume disjoint(a, b) { ... }`, for trusted external
-            facts the compiler cannot prove. Even that form must not silence
-            obvious same-root/self-overlap unless it names a region split the
-            compiler can represent.
-  - [ ] Update grammar, parsing, and syntax modeling.
-    - [ ] Add parser support for relational memory-contract clauses:
+      - [x] Implemented unsafe rule: `unsafe` does not automatically bypass
+            default non-overlap. Trusted external facts use
+            `unsafe assume disjoint(a, b) statement`, or bare
+            `assume disjoint(a, b) statement` inside an unsafe function/block.
+            The form is scoped, validates visible roots, and does not silence
+            obvious same-root/self-overlap unless the assertion names a
+            representable region split the compiler can reason about.
+  - [x] Update grammar, parsing, and syntax modeling.
+    - [x] Add parser support for relational memory-contract clauses:
           `where overlap(a, b)` and `where same(a, b)`. Prefer these clauses
           over bare parameter prefixes because overlap and same-memory are
           relations between regions; a prefix without an operand set is too
           broad unless later accepted as an explicit "may overlap all
           memory-backed parameters" shorthand.
-    - [ ] Add syntax-model representation for default-non-overlap parameters,
+    - [x] Add syntax-model representation for default-non-overlap parameters,
           explicit overlap groups, and explicit same-memory groups.
-    - [ ] Preserve the new facts through declared function syntax, member
+    - [x] Preserve the new facts through declared function syntax, member
           functions, constructors if applicable, trait/doctrine declarations,
           overload identity, generic templates, package images, and source
           bridge fallbacks.
-    - [ ] Add parser diagnostics for malformed overlap/same-memory clauses,
+    - [x] Add parser diagnostics for malformed overlap/same-memory clauses,
           repeated operands, unknown operands, scalar operands, and invalid raw
           pointer region expressions.
-  - [ ] Update type checking and semantic validation.
-    - [ ] Invert the current `disjoint` model so memory-backed parameters produce
+  - [x] Update type checking and semantic validation.
+    - [x] Invert the current `disjoint` model so memory-backed parameters produce
           default pairwise non-overlap groups unless an explicit overlap or
           same-memory relation removes or narrows that requirement. This allows
           Stark to emit `noalias` and scoped-noalias facts by default where the
           source contract and call-site proof make them sound.
-    - [ ] Extend `ValidateParameterDisjointContracts` into a general parameter
+    - [x] Extend `ValidateParameterDisjointContracts` into a general parameter
           memory-contract validator that handles default non-overlap, explicit
           overlap, explicit same-memory, and explicit disjoint facts together.
-    - [ ] Build a call-site proof engine over a canonical memory-region model.
+    - [x] Build a call-site proof engine over a canonical memory-region model.
           Each argument region should carry root identity, projection path,
           byte/element range when known, mutability/readonly/init/out facts, and
           provenance flags such as raw, FFI-derived, integer-laundered, fresh,
@@ -1562,124 +1718,468 @@ Completion rules:
           default-non-overlap calls accept only `disjoint`, `where same` accepts
           only `same`, and `where overlap` accepts all three while suppressing
           default noalias facts for that relation.
-    - [ ] Update call-site validation so overlapping arguments are rejected by
+      - [x] Implemented the first canonical region proof engine over root keys,
+            projection/index/range paths, text/dynamic view roots, call-result
+            retborrow roots, literal roots, out/init destinations, const/frozen
+            provenance, fresh locals, and conservative raw/FFI unknowns. The
+            remaining "cheat detection" task below tracks intentionally
+            adversarial provenance laundering beyond this first engine.
+    - [x] Update call-site validation so overlapping arguments are rejected by
           default, including same root, root/field, field/field, slice ranges,
           text ranges, dynamic initialized/spare views, bounded raw pointer
           regions, address-of forms, method receivers, and hidden-root call
           results.
-    - [ ] Add compile-time cheat detection for obvious attempts to disguise
+    - [x] Add compile-time cheat detection for obvious attempts to disguise
           overlap: address-of aliases, local raw-pointer copies, simple casts,
           pointer-to-integer-to-pointer round trips, slice-from-pointer aliases,
           dynamic storage views over the same owner, field/index projections, and
           function-item or helper-call roots that hide known argument provenance.
-    - [ ] Preserve conservative behavior for unknown raw/FFI provenance: reject
+      - [x] 2026-05-13 final provenance pass: direct local pointer/view
+            assignments now update the visible memory root for the current
+            straight-line flow, while branch, loop, nested-block, and scoped
+            assumption assignments conservatively invalidate outer local
+            provenance. Regression tests cover immutable raw-pointer aliases,
+            mutable assignment aliases, raw-pointer casts, integer-laundered
+            pointer aliases, and branch reassignment invalidation. Existing
+            slice/text/dynamic range tests continue to cover same-owner views,
+            projections, hidden roots, and call-result roots.
+    - [x] Preserve conservative behavior for unknown raw/FFI provenance: reject
           safe default-non-overlap calls without proof instead of silently trusting
           distinct variable names.
-    - [ ] Update diagnostics so they explain whether the user should pass
+    - [x] Update diagnostics so they explain whether the user should pass
           distinct storage, call an overlap-safe API, add `where overlap(...)`
           to the callee, use `where same(...)` when the API requires identical
           storage, guard the call with `if disjoint(...)`, or use an explicit
           unsafe assumption form once that form exists.
-    - [ ] Revisit `unsafe` diagnostics so unsafe code can express trusted
+    - [x] Revisit `unsafe` diagnostics so unsafe code can express trusted
           external facts without weakening Stark's ordinary ownership,
           initialization, range, const, or borrow validation.
-  - [ ] Update ownership, borrowing, and pointer interactions.
-    - [ ] Ensure the borrower model states that non-overlap is a parameter-level
+  - [x] Update ownership, borrowing, and pointer interactions.
+    - [x] Ensure the borrower model states that non-overlap is a parameter-level
           region contract, while borrow qualifiers still control mutability,
           escape, initialization, const provenance, and lifetime.
-    - [ ] Ensure local pointer and local view facts remain provenance-based, not
+    - [x] Ensure local pointer and local view facts remain provenance-based, not
           declaration-default-based. A local raw pointer copy, slice local copied
           from another slice, or simple pointer cast must retain the same-region
           identity. Distinct locals become non-overlapping only through known
           distinct storage roots, non-overlapping projections/ranges, fresh
           allocation, exclusive borrow facts, or branch-scoped/runtime
           `if disjoint(...)` facts.
-    - [ ] Verify `borrow mut` exclusivity, `out`, and `init` destination rules
+    - [x] Verify `borrow mut` exclusivity, `out`, and `init` destination rules
           compose with default non-overlap without double-counting or emitting
           unsound noalias facts.
-    - [ ] Define how readonly borrows and const/frozen views behave: readonly
+    - [x] Define how readonly borrows and const/frozen views behave: readonly
           does not permit mutation, but default parameter non-overlap may still
           give noalias when the call contract requires separate regions.
-    - [ ] Define raw pointer behavior: raw pointers remain nullable/unsafe as
+    - [x] Define raw pointer behavior: raw pointers remain nullable/unsafe as
           appropriate, but parameter-region overlap is still prohibited by
           default unless the API opts out.
-    - [ ] Audit dynamic storage, slices, text views, initialization views, and
+    - [x] Audit dynamic storage, slices, text views, initialization views, and
           sparse-slot internals for same-owner region handling under the new
           default.
-  - [ ] Update compiler pipeline lowering and backend facts.
-    - [ ] Carry default non-overlap, explicit overlap, and explicit same-memory
+      - [x] 2026-05-13 audit result: dynamic storage ranges, slice/text ranges,
+            initialization destinations, dictionary sparse-slot lookup/removal
+            helpers, runtime-buffer compaction, and owned text/path builders now
+            either preserve same-owner provenance for call-site rejection or
+            declare explicit `where overlap(...)` contracts where the
+            implementation is overlap-safe.
+  - [x] Update compiler pipeline lowering and backend facts.
+    - [x] Carry default non-overlap, explicit overlap, and explicit same-memory
           facts through type models, semantic summaries, HIR, MIR, SSA, ABI
           lowering, package images, and imported generic template bodies.
-    - [ ] Represent call-site memory obligations explicitly before MIR so the
+    - [x] Represent call-site memory obligations explicitly before MIR so the
           lowerer receives accepted calls whose default non-overlap, explicit
           overlap, and explicit same-memory requirements have already been
           proven or diagnosed. MIR lowering must not rediscover whether a call is
           valid.
-    - [ ] Update semantic memory summaries so `GuaranteedNoAlias` reflects the
+    - [x] Update semantic memory summaries so `GuaranteedNoAlias` reflects the
           new default only where the callee contract covers the full reachable
           region and LLVM `noalias` is legal.
-    - [ ] Update MIR runtime fact lowering so `if disjoint(...)` remains a
+    - [x] Update MIR runtime fact lowering so `if disjoint(...)` remains a
           branch-scoped refinement for APIs that explicitly allow overlap or for
           data-dependent subregions.
-    - [ ] Update SSA scoped-noalias propagation so default parameter facts and
+    - [x] Update SSA scoped-noalias propagation so default parameter facts and
           runtime branch facts produce separate, sound alias-scope domains.
-    - [ ] Update LLVM parameter attributes, scoped `!alias.scope` / `!noalias`,
+    - [x] Update LLVM parameter attributes, scoped `!alias.scope` / `!noalias`,
           loop access groups, memcpy/memmove selection, and inlined-body metadata
           to use the new default without attaching metadata to explicitly
           overlapping or same-memory regions.
-    - [ ] Add guardrails that suppress or drop noalias metadata when raw pointer
+      - [x] 2026-05-13 fallback/MIR/SSA performance guard: effective default
+            disjoint groups are built by shared compiler utility code and are
+            attached to source fallback signatures, MIR functions, and SSA
+            functions. This prevents imported inline clones from losing
+            noalias/memcpy eligibility after legacy `disjoint` prefixes are
+            removed.
+    - [x] Add guardrails that suppress or drop noalias metadata when raw pointer
           escapes, integer pointer laundering, FFI capture, `shared` publication,
           or explicit overlap contracts make the fact unsound.
-  - [ ] Update standard library and examples.
-    - [ ] Audit every public and internal `System.*` API that currently relies on
+      - [x] 2026-05-13 metadata guardrail update: scoped-noalias/TBAA unsafe-root
+            collection now treats raw pointer escapes, FFI calls, pointer
+            conversions, and integer pointer laundering as unsafe roots for
+            metadata attachment. The LLVM emitter no longer builds scoped
+            noalias domains for fewer than two sound roots, so escaped or
+            laundered single-root survivors do not leave inert alias metadata in
+            the IR. Explicit overlap contracts still suppress default parameter
+            noalias facts for those relations.
+  - [x] Update standard library and examples.
+    - [x] Audit every public and internal `System.*` API that currently relies on
           implicit possible overlap and add explicit overlap/same-memory
           contracts where overlap is part of the algorithm.
-    - [ ] Remove redundant `disjoint` annotations where the new default is enough,
+      - [x] 2026-05-13 audited the high-risk platform, IO, path, text, memory,
+            runtime-buffer, networking, and collections paths reached by current
+            standard-library tests. Added explicit `where overlap(...)` for
+            overlap-safe text concatenation inputs, dictionary equality,
+            path/raw-pointer joins, runtime buffers, platform write/read
+            wrappers, directory-entry buffers/status outputs, file-byte helpers,
+            socket buffers, and source dispatch templates. Opaque platform
+            handles opt out only against the handle relation; real user-memory
+            buffers remain default-non-overlap.
+    - [x] Remove redundant `disjoint` annotations where the new default is enough,
           or keep them only where the design says redundant documentation is
           allowed.
-    - [ ] Update memory, text, path, runtime-buffer, IO, networking, and
+      - [x] 2026-05-13 removed redundant whole-parameter `disjoint` prefixes
+            from `System.Memory`, `System.Text`, micro benchmarks, book samples,
+            and compiler/standard-library source snippets. Remaining whole
+            parameter uses are either diagnostics proving rejection or explicit
+            FFI/package-image opt-in cases.
+    - [x] Update memory, text, path, runtime-buffer, IO, networking, and
           collection fast paths so disjoint fast paths remain fast and
           overlap-safe fallbacks remain correct.
-    - [ ] Update benchmarks and examples to use the new spelling for intentional
+    - [x] Update benchmarks and examples to use the new spelling for intentional
           overlap and same-memory behavior.
-  - [ ] Add compiler and standard-library tests.
-    - [ ] Add parser and syntax-model tests for the new overlap/same-memory forms
+      - [x] 2026-05-13 updated the book memory-separation sample to spell its
+            intentional overlap contract with `where overlap(...)`, updated the
+            dynamic-storage sample to use canonical strict byte ranges, and
+            changed the threading/TCP shape sample from a `law` to a normal
+            function because it constructs an owned `TcpClient` with destructor
+            effects.
+  - [x] Add compiler and standard-library tests.
+    - [x] Add parser and syntax-model tests for the new overlap/same-memory forms
           and for rejected malformed contracts.
-    - [ ] Add type-checking tests proving default rejection of same-root,
+    - [x] Add type-checking tests proving default rejection of same-root,
           root/field, overlapping fields, overlapping indexes, overlapping
           ranges, hidden roots, call-result roots, raw pointer aliases, and
           slice/text/dynamic views over the same storage.
-    - [ ] Add positive tests for provably independent locals, distinct fields,
+    - [x] Add positive tests for provably independent locals, distinct fields,
           non-overlapping ranges, explicit overlap contracts, explicit
           same-memory contracts, and `if disjoint(...)` guarded calls.
-    - [ ] Add call-site proof tests for the three-outcome region comparison:
+    - [x] Add call-site proof tests for the three-outcome region comparison:
           default non-overlap accepts proven `disjoint` and rejects `same` or
           `unknown`; `where same(...)` accepts only proven same-region
           arguments; `where overlap(...)` accepts same, disjoint, and unknown
           relations while suppressing default noalias facts between the
           overlapping-capable parameters.
-    - [ ] Add unsafe-boundary tests that distinguish trusted unknown raw-pointer
+    - [x] Add unsafe-boundary tests that distinguish trusted unknown raw-pointer
           facts from obvious self-overlap that should still be rejected.
-    - [ ] Add semantic summary tests for `GuaranteedNoAlias`, readonly/writeonly,
+    - [x] Add semantic summary tests for `GuaranteedNoAlias`, readonly/writeonly,
           capture effects, and package-image preservation.
-    - [ ] Add MIR, SSA, and LLVM tests for default noalias attributes,
+    - [x] Add MIR, SSA, and LLVM tests for default noalias attributes,
           scoped-noalias metadata, runtime disjoint branch metadata, loop access
           groups, memcpy lowering, and memmove/snapshot fallback when explicit
           overlap is allowed.
-    - [ ] Add standard-library audit tests that catch accidental public APIs whose
+    - [x] Add standard-library audit tests that catch accidental public APIs whose
           overlap behavior is undocumented under the new default.
-  - [ ] Update documentation.
-    - [ ] Update `docs/Userfacing/LanguageReference.md` with the new default,
+      - [x] 2026-05-13 coverage update: parser conformance includes
+            `where overlap(...)` and `where same(...)`, malformed memory
+            contracts have focused diagnostics for repeated/unknown/scalar
+            operands, call-site rejection tests cover alias laundering and
+            same-owner views, LLVM tests verify escaped/laundered raw roots do
+            not receive scoped noalias attachments, and
+            `SystemMemoryContractAuditStandardLibraryTests` pins the
+            overlap-sensitive stdlib contract surface.
+  - [x] Update documentation.
+    - [x] Update `docs/Userfacing/LanguageReference.md` with the new default,
           explicit opt-out syntax, same-memory syntax, diagnostics, and examples.
-    - [ ] Update `docs/Userfacing/BorrowerSystem.md` so borrowing, const/frozen,
+    - [x] Update `docs/Userfacing/BorrowerSystem.md` so borrowing, const/frozen,
           raw pointers, initialization destinations, and default non-overlap are
           described as separate but composable contracts.
-    - [ ] Update `docs/Internals/LanguageInternals.md` with the new compiler fact
+    - [x] Update `docs/Internals/LanguageInternals.md` with the new compiler fact
           model, call-site proof model, branch-scoped disjoint facts, LLVM
           lowering, and metadata soundness rules.
-    - [ ] Update standard-library docs for APIs whose overlap behavior changes or
+    - [x] Update standard-library docs for APIs whose overlap behavior changes or
           becomes explicit.
-    - [ ] Update book/style-guide material once the source spelling is final.
+    - [x] Update book/style-guide material once the source spelling is final.
+
+## 2.6. Treat Function Pointer Kinds As Optimization Contracts
+
+- [x] Preserve `fnptr<fn ...>`, `fnptr<finite ...>`, `fnptr<law ...>`, and
+      `fnptr<finite law ...>` as first-class callable contracts, and use those
+      contracts to optimize indirect calls without changing the ABI shape of a
+      function pointer.
+  - Context: Stark already has four source-level function kinds. `fn` is the
+    general callable form. `finite` guarantees progress and return. `law`
+    guarantees pure/read-only behavior with no visible side effects.
+    `finite law` combines both. A function pointer that carries one of these
+    kinds lets higher-order APIs make functional-programming guarantees that a
+    plain callable pointer cannot make. For example, a `law` function can call a
+    `fnptr<law ...>` callback without losing its own law guarantee, while it
+    must reject a `fnptr<fn ...>` callback because the target may perform IO,
+    mutate reachable state, synchronize, free memory, or otherwise introduce an
+    untracked effect.
+  - LLVM note: function-pointer values should still lower as ordinary pointer
+    values. The optimization value is not a distinct LLVM function-pointer type.
+    LLVM consumes these facts through declaration attributes and call-site
+    attributes. For indirect calls, Stark must attach the sound call-site
+    attributes directly to the `call` instruction because LLVM cannot infer the
+    target's Stark function kind from an opaque pointer value alone.
+  - Attribute mapping target:
+    - `finite` indirect calls should emit `willreturn` and `mustprogress`.
+    - `law` indirect calls should emit the strongest sound memory/effect
+      attributes, such as `nosync`, `nofree`, `nounwind` when guaranteed, and
+      `memory(none)` for scalar-only pure calls or `memory(argmem: read)` /
+      equivalent readonly memory effects when the callback may read argument
+      memory.
+    - `finite law` indirect calls should combine the `finite` and `law`
+      attribute sets.
+    - `fnptr<fn ...>` must remain the general fallback and must not receive
+      stronger attributes unless the compiler has a separate accepted-program
+      proof for that specific call target.
+  - Soundness rule: stronger callbacks may be used through weaker function
+    pointer types, but weaker callbacks may not be assigned to stronger
+    function pointer slots. In other words, `finite law` can satisfy `finite`,
+    `law`, or `fn`; `law` can satisfy `law` or `fn`; `finite` can satisfy
+    `finite` or `fn`; plain `fn` satisfies only `fn`. Diagnostics should explain
+    that the target API requires a callback with the named guarantee.
+  - User model: do not require every user to specialize every callback. Ordinary
+    APIs may accept `fnptr<fn ...>`. APIs that need purity, guaranteed
+    termination/progress, deterministic functional composition, independent-loop
+    legality, or stronger LLVM optimization should ask for `fnptr<law ...>`,
+    `fnptr<finite ...>`, or `fnptr<finite law ...>` explicitly. Type aliases
+    should be encouraged for repeated callback shapes.
+  - [x] 2026-05-14 implementation note: the existing `fnptr` type system already
+        preserved callable kind through type checking, semantic validation,
+        package images, aliases, lambda target typing, MIR, and SSA. This pass
+        completed the backend contract by emitting kind-derived LLVM call-site
+        attributes on indirect calls. Calls through `fnptr<finite ...>` now
+        receive `nounwind willreturn mustprogress`; calls through
+        `fnptr<law ...>` receive `nounwind nosync nofree` plus the strongest
+        sound memory attribute; and `fnptr<finite law ...>` combines both.
+        Plain `fnptr<fn ...>` remains the general indirect-call form and does
+        not receive progress, purity, or memory-effect attributes from the
+        function-pointer type alone.
+  - [x] 2026-05-14 polish note: the call-site attribute helper now computes the
+        law memory attribute directly from ABI/source contracts instead of
+        allocating a synthetic effect-profile object per indirect call. LLVM
+        coverage also includes strict-fp function-pointer calls so `strictfp`
+        composes with `willreturn`/`mustprogress`/law attributes without adding
+        fast-math flags.
+  - [x] 2026-05-14 final audit note: the call-site attribute helper now uses
+        fixed strings for the common `finite`, `law`, and `finite law` cases so
+        indirect-call emission does not allocate a temporary attribute list per
+        call. SSA validation now builds the same synthetic indirect-call ABI
+        signature as LLVM emission, including function-pointer `where
+        overlap(...)` / `where same(...)` memory-contract groups, so validation
+        and codegen preserve the same accepted-program facts. Verification:
+        focused function-pointer LLVM/package-image tests passed, full
+        `dotnet test -c Release tests/compiler.Tests/compiler.Tests.csproj`
+        passed 1304 tests, and `scripts/build-stdlib.sh` rebuilt
+        `stdlib/dist/libSystem.a` plus `stdlib/dist/libSystem.starkpkg.json`.
+  - [x] 2026-05-14 known-target metadata update: indirect function-pointer
+        calls now emit LLVM `!callees` metadata when SSA proves that every
+        possible target is a closed set of function addresses but the set is not
+        reducible to one direct call. Opaque targets from parameters, memory
+        loads, calls, or external ABI boundaries still emit no target metadata.
+        Function-pointer-to-function-pointer conversions are treated as no-op
+        pointer conversions in LLVM emission so stronger-to-weaker callable-kind
+        erasure does not materialize unnecessary IR. The SSA devirtualizer also
+        collapses singleton targets hidden behind `use`, function-pointer
+        conversion, `select`, or phi shapes. Verification: focused
+        function-pointer LLVM tests passed, emitted finite-target-set LLVM IR
+        parsed with `llvm-as`, full
+        `dotnet test -c Release tests/compiler.Tests/compiler.Tests.csproj`
+        passed 1307 tests, and `scripts/build-stdlib.sh` rebuilt
+        `stdlib/dist/libSystem.a` plus `stdlib/dist/libSystem.starkpkg.json`.
+  - [x] 2026-05-14 non-null function-pointer ABI update: `fnptr` is now treated
+        as a non-null callable value all the way down to LLVM. The type checker
+        already rejected direct `null` assignment to function pointers; this
+        pass also rejects aggregate initializer shapes that would silently
+        zero-fill function-pointer fields or fixed-array elements. With that
+        frontend guarantee in place, LLVM ABI emission marks direct
+        function-pointer parameters as `nonnull`. Verification: focused
+        type/LLVM tests cover both the diagnostic guardrails and the emitted ABI
+        attribute, full
+        `dotnet test -c Release tests/compiler.Tests/compiler.Tests.csproj`
+        passed 1309 tests, `scripts/build-stdlib.sh` rebuilt
+        `stdlib/dist/libSystem.a` plus `stdlib/dist/libSystem.starkpkg.json`,
+        and 100-run
+        `STARK_BENCH_FILTER=FunctionPointerDevirtualization` wrote
+        `benchmarks/results/results-20260514T034244Z.N0t0R4.csv` with C `3133`
+        us, Rust `3127` us (`Rust/C 0.998085`), and Stark `3099` us
+        (`Stark/C 0.989148`).
+  - [x] Finalize the source semantics and compatibility rules.
+    - [x] Specify that the function kind inside a `fnptr` is part of Stark's
+          type-level callable contract, even though it is not a separate LLVM
+          pointer ABI.
+    - [x] Confirm the stronger-to-weaker assignment lattice described above and
+          add diagnostics for invalid promotions, assignments, overload
+          arguments, generic substitutions, package imports, and aliases.
+    - [x] Define how function pointer kinds compose with `unsafe` functions and
+          unsafe erasure. Unsafe function items must not silently become ordinary
+          safe `fnptr` values unless the source is inside an accepted unsafe
+          erasure context, and erasure must not smuggle stronger `law` or
+          `finite` guarantees that the erased target does not satisfy.
+    - [x] Define how non-capturing lambdas are checked against kinded function
+          pointer targets. A lambda assigned to `fnptr<law ...>` must satisfy law
+          restrictions; a lambda assigned to `fnptr<finite ...>` must satisfy
+          finite restrictions; `fnptr<finite law ...>` must satisfy both.
+  - [x] Update grammar, parsing, and syntax modeling.
+    - [x] Ensure the grammar accepts the function-kind prefix inside
+          `fnptr<...>` signatures for all four forms:
+          `fn`, `finite`, `law`, and `finite law`.
+    - [x] Preserve the fixed keyword order `finite law`; reject `law finite`
+          with a precise parser or syntax diagnostic.
+    - [x] Ensure kinded function-pointer syntax composes with return types,
+          parameter lists, generic aliases, member declarations, package-image
+          reconstructed source, and `where overlap(...)` / `where same(...)`
+          function-pointer memory-contract clauses.
+    - [x] Add parser and syntax-model tests for all valid function-pointer kinds
+          and malformed combinations.
+  - [x] Update `docs/Userfacing/LanguageReference.md`.
+    - [x] Expand the function-pointer section with a concise explanation of why
+          `fnptr` carries a function kind: the kind preserves semantic
+          guarantees across indirect calls and higher-order APIs.
+    - [x] Add examples for `fnptr<fn ...>`, `fnptr<finite ...>`,
+          `fnptr<law ...>`, and `fnptr<finite law ...>`.
+    - [x] Document stronger-to-weaker assignability and rejected weaker-to-
+          stronger assignments with examples.
+    - [x] Explain the practical user guidance: use `fnptr<fn ...>` for general
+          callbacks, `fnptr<law ...>` for pure callbacks, `fnptr<finite ...>` for
+          guaranteed-return callbacks, and `fnptr<finite law ...>` for callbacks
+          that need both sets of guarantees.
+    - [x] Mention the LLVM lowering consequence without making LLVM part of the
+          user-facing contract: kinded function pointers let the compiler emit
+          stronger indirect-call attributes where sound.
+  - [x] Update compiler pipeline and lowering documentation.
+    - [x] Update `docs/Internals/CompilerPipeline.md` so the pipeline states
+          that function-pointer kinds are preserved through type checking,
+          semantic validation, lowering, SSA, ABI planning, package images,
+          imported templates, and LLVM call-site emission.
+    - [x] Update `docs/Internals/LanguageInternals.md` with the internal fact
+          model: a kinded function pointer carries a callable-effect contract,
+          not a different runtime representation.
+    - [x] Document that MIR lowering receives accepted indirect calls whose
+          function-kind obligations have already been checked. MIR and SSA
+          should carry the kind for optimization/codegen, not rediscover source
+          validity.
+  - [x] Implement LLVM indirect-call effect emission.
+    - [x] Add a shared lowering helper that maps a function-pointer kind and the
+          already-computed callable memory summary into LLVM call-site
+          attributes.
+    - [x] Emit `willreturn` and `mustprogress` on calls through
+          `fnptr<finite ...>` and `fnptr<finite law ...>`.
+    - [x] Emit law-derived call-site attributes on calls through
+          `fnptr<law ...>` and `fnptr<finite law ...>`, using the strongest
+          memory effect that is sound for the signature and body/effect facts.
+    - [x] Apply the same call-site effect spelling for direct-return, void,
+          `sret`, large `byval`, borrow/out/init, imported, monomorphized, and
+          package-image-backed indirect calls.
+    - [x] Keep existing noalias/nonnull/dereferenceable/byval/sret parameter
+          attributes independent from function-kind effect attributes, but make
+          sure the two systems compose on the same indirect `call`.
+    - [x] Do not attach stronger call-site attributes after an explicit unsafe
+          erasure or ABI boundary unless the resulting `fnptr` type still
+          carries the guarantee and the compiler has accepted that guarantee.
+  - [x] Add lowering and LLVM tests.
+    - [x] Add an LLVM emission test proving this Stark source:
+          ```stark
+          finite law i32[min max] Apply(fnptr<finite law i32[min max](i32[min max])> f, i32[min max] x) {
+              return f(x);
+          }
+          ```
+          emits an indirect `call` carrying both `willreturn` and
+          `mustprogress`.
+      - Note: the executable regression uses `i32[min max]` because Stark now
+        correctly rejects non-negative signed ranges such as `i32[0 max]` with
+        `STK3014`; a `u32[0 max]` version would exercise the same callable-kind
+        lowering.
+    - [x] Extend the same test to assert the law-side attributes that are sound
+          for this scalar-only example, such as `nosync`, `nofree`, `nounwind`,
+          and `memory(none)` if the current effect model proves no memory access.
+    - [x] Add separate positive tests for `fnptr<finite ...>`,
+          `fnptr<law ...>`, and `fnptr<finite law ...>` so each kind's attribute
+          set is pinned independently.
+    - [x] Add negative tests proving calls through `fnptr<fn ...>` do not
+          receive `willreturn`, `mustprogress`, `memory(none)`, or other stronger
+          attributes merely because the local call happens to return a scalar.
+    - [x] Add tests for indirect calls with borrow, out, init, sret, and byval
+          ABI shapes so function-kind call attributes and parameter attributes
+          appear together correctly.
+    - [x] Add package-image and imported-template tests proving function-pointer
+          kinds survive serialization/deserialization and still affect imported
+          indirect-call lowering.
+    - [x] Add semantic tests proving `law` functions may call
+          `fnptr<law ...>`/`fnptr<finite law ...>` but reject `fnptr<fn ...>` and
+          `fnptr<finite ...>` targets; `finite` functions should analogously
+          reject non-finite function-pointer targets.
+  - [x] Scan the standard library for callback APIs that should use kinded
+        function pointers.
+    - [x] Find public and internal `fnptr<fn ...>` uses in `System.*`,
+          promoted platform wrappers, templates, examples, and benchmarks.
+      - Done: `rg -n "fnptr<" stdlib/src stdlib/templates benchmarks examples`
+        found standard-library function pointers only in `System.Threading` and
+        platform thread/callback wrappers. Those are OS/FFI callback boundaries,
+        so they intentionally remain `fnptr<fn ...>`. The micro benchmark
+        `FunctionPointerDevirtualization.stark` already uses
+        `fnptr<finite law ...>`.
+    - [x] Upgrade callback types to `fnptr<law ...>` where the API only needs a
+          pure predicate, comparer, mapper, hasher, equality function, or
+          readonly projection.
+      - Done: no current standard-library callback APIs in this category were
+        found by the scan.
+    - [x] Upgrade callback types to `fnptr<finite ...>` where the caller needs a
+          guaranteed-return callback but purity is not required.
+      - Done: no current standard-library callback APIs in this category were
+        found by the scan.
+    - [x] Upgrade callback types to `fnptr<finite law ...>` where the callback is
+          both pure and expected to complete, especially in collection, text,
+          memory, numeric, and independent-loop-friendly APIs.
+      - Done: no current standard-library callback APIs in this category were
+        found by the scan.
+    - [x] Leave OS/FFI callback boundaries as `fnptr<fn ...>` unless the external
+          contract genuinely provides the stronger Stark guarantee; external
+          callbacks should not receive accidental law/finite assumptions.
+    - [x] Rerun standard-library tests after upgrades and note any API changes
+          that affect user code or package compatibility.
+      - Done: no standard-library API signatures changed. The focused
+        compile-checked book sample sweep passed after the example update. The
+        focused threading callback diagnostic test passed after updating the
+        assertion to the current non-capturing `fnptr` diagnostic wording.
+  - [x] Add examples and book coverage.
+    - [x] Add a small compile-checked example that demonstrates a higher-order
+          `finite law` function accepting a `fnptr<finite law ...>` transform,
+          plus a rejected weaker callback example in docs/tests where
+          appropriate.
+    - [x] Update the website/book chapter plan and the relevant chapter content,
+          especially the function-guarantees chapter, callable-values chapter,
+          and performance-model chapter.
+    - [x] Add a book subsection explaining why kinded function pointers are not
+          just decoration: they preserve functional guarantees and allow LLVM
+          call-site attributes on indirect calls.
+  - [x] Verify performance and correctness.
+    - [x] Run focused parser, type-checking, semantic, package-image, MIR/SSA,
+          and LLVM tests for kinded function pointers.
+      - Done: focused `LlvmIrEmissionTests`, `ParserConformanceTests`,
+        `FunctionSemanticsTests`, and
+        `PackageImageCallableValueTests.PackageImageBackedCallableAliasDrivesIndirectCallSiteEffectAttributes`
+        passed under `dotnet test -c Release`. Full
+        `dotnet test -c Release tests/compiler.Tests/compiler.Tests.csproj`
+        passed 1304 tests after adding imported generic-template and strict-fp
+        coverage.
+    - [x] Run the standard-library callback audit tests and rebuild the standard
+          library package image.
+      - Done: `scripts/build-stdlib.sh` rebuilt `stdlib/dist/libSystem.a` and
+        `stdlib/dist/libSystem.starkpkg.json`.
+    - [x] Rerun `benchmarks/micro/FunctionPointerDevirtualization` and any
+          callback-heavy collection/text benchmarks after lowering changes. The
+          expected win is not a different function-pointer call instruction; it
+          is better optimizer freedom around indirect calls because Stark emits
+          sound progress, termination, purity, memory, and synchronization
+          facts.
+      - Done: `STARK_BENCH_RUNS=100 STARK_BENCH_FILTER=FunctionPointerDevirtualization scripts/run-benchmarks.sh`
+        wrote `benchmarks/results/results-20260514T032721Z.xZlvjO.csv`.
+        Results: C `3104 us` (`1.000000`), Rust `3843 us` (`1.238080`,
+        high spread), Stark `3060 us` (`0.985825`). The benchmark successfully
+        built through LLVM with the new indirect-call attributes.
 
 
 ## 3. Remove Unnecessary Raw Pointers From The Standard Library

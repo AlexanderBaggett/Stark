@@ -53,7 +53,8 @@ internal sealed class SsaLowerer
                 function.EntryBlockId,
                 [],
                 function.BodyLoweringKind,
-                function.Location);
+                function.Location,
+                function.DisjointParameterGroups);
         }
 
         var builder = new FunctionSsaBuilder(function, _signatures, _globals);
@@ -168,7 +169,8 @@ internal sealed class SsaLowerer
                         blockId => ResolveCollapsedPredecessor(blockId, trampolineRedirects, predecessorCache)))
                     .ToArray(),
                 _function.BodyLoweringKind,
-                _function.Location);
+                _function.Location,
+                _function.DisjointParameterGroups);
         }
 
         private void LowerBlock(int blockId)

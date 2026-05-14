@@ -78,7 +78,7 @@ The current default compilation pipeline is dependency-ordered rather than hard-
    This is where `law`, `finite`, `ffi`, `hot`, `cold`, and inline preferences are converted into semantic facts such as `nounwind`, `mustprogress`, `willreturn`, `nofree`, `nosync`, and internal `fastcc` intent.
 8. `type-check`
    Resolves named and builtin types, assigns literal types, validates globals and a useful subset of function bodies, and produces typed signatures for later lowering.
-   Imported declarations are loaded into the same typed world, so qualified Stark calls and type references can flow across modules before LLVM lowering.
+   Imported declarations are loaded into the same typed world, so qualified Stark calls and type references can flow across modules before LLVM lowering. Function-pointer types retain their callable kind (`fn`, `finite`, `law`, or `finite law`) and memory contract groups here; promotion/assignment checks reject weaker callbacks, `null` callbacks, and aggregate initializer shapes that would zero-fill `fnptr` storage before lowering.
 9. `instantiation-ownership`
    Collects concrete generic function and type instantiation ownership across the loaded module set.
    This pass decides which module owns each instantiation trigger, expands type/function triggers that arise from generic use, tracks destructor-driven instantiations, and validates currently provable library constraints such as supported `System.Collections.Dictionary<K, V>` key types.
@@ -90,7 +90,7 @@ The current default compilation pipeline is dependency-ordered rather than hard-
    Today this pass selects the direct tag runtime representation used by later semantic checks and LLVM lowering, and it merges enum layout facts loaded from package images.
 12. `semantic-validate`
    Validates Stark-specific semantic contracts after typing.
-   This is where borrow escape classes, `law` restrictions, `finite` restrictions, raw-pointer boundary rules, recursive finite-call cycles, parameter memory summaries, and call-memory summaries are checked.
+   This is where borrow escape classes, `law` restrictions, `finite` restrictions, raw-pointer boundary rules, recursive finite-call cycles, parameter memory summaries, and call-memory summaries are checked. Indirect calls through `fnptr<law ...>` and `fnptr<finite ...>` are validated against the current function's obligations here; MIR lowering should receive an accepted indirect call, not rediscover whether the callback kind is legal.
 13. `refine-function-effects`
    Refines function guarantees from semantic body analysis after the declaration-driven effect pass.
    This is where plain `fn` bodies that can be proven `law`, `finite`, or `finite law` are upgraded into the effect profiles consumed by HIR lowering, ABI lowering, and LLVM emission. It also publishes the closed-world optimization model that classifies direct-call eligibility, trait/doctrine sealing, law-call optimization opportunities, and caller-sensitive clone candidates.
@@ -122,7 +122,8 @@ The current default compilation pipeline is dependency-ordered rather than hard-
    bodies become control-flow-aware CFG form suitable for ownership precision
    and explicit value lowering, including aggregate field/index operations,
    slice formation, raw address formation, indirect load/store,
-   constructor/destructor lowering, runtime drop lowering, and explicit
+   constructor/destructor lowering, runtime drop lowering, function-pointer
+   calls with their accepted callable-kind contracts, and explicit
    conversions. This pass consumes accepted typed facts. It must not decide
    whether a parsed construct is valid Stark; invalid source belongs in earlier
    diagnostics, and missing lowering support for an accepted construct is an
@@ -141,7 +142,7 @@ The current default compilation pipeline is dependency-ordered rather than hard-
    This pass folds constant arithmetic, conversions, compares, branches, and simple `switch` decisions, then runs the SSA cleanup optimizer again and republishes the optimized SSA artifact consumed by LLVM emission. At `O0` and `Og`, this pass is also bypassed.
 24. `devirt-ssa`
    Rewrites recoverable indirect calls into direct SSA calls.
-   This pass currently handles singleton function-address cases produced by function item or non-capturing lambda lowering, preserves the address-taken function records that still matter after rewriting, and republishes the optimized SSA artifact. At `O0` and `Og`, it is bypassed.
+   This pass currently handles singleton function-address cases produced by function item or non-capturing lambda lowering, preserves the address-taken function records that still matter after rewriting, and republishes the optimized SSA artifact. Finite non-singleton target sets remain indirect but are still available to LLVM emission as `!callees` metadata when every possible SSA target is a known function address. At `O0` and `Og`, this pass is bypassed.
 25. `inline-ssa`
    Inlines eligible direct calls in SSA.
    This pass consumes refined effects, module-private visibility, declared law functions, monomorphization planning, and specialization codegen strategy facts. It inlines small safe candidates, gives declared law functions a larger inline budget, can inline with constant specialization arguments, rejects recursive and unsafe candidate shapes, then reruns SSA cleanup and constant propagation. At `O0` and `Og`, it is bypassed.
@@ -181,10 +182,15 @@ The current default compilation pipeline is dependency-ordered rather than hard-
    stronger `readonly`/`writeonly`/`nocapture`/`captures(...)` facts for root
    Stark functions, consumes SSA value facts for range, alignment, assumption,
    and literal-data decisions, consumes scoped noalias and loop-access groups
-   from MIR/SSA, consumes the closed-world optimization model for
-   caller-sensitive law-path specialization decisions, can materialize internal
-   root-side clones of eligible imported law bodies and imported inline bodies
-   for closed-world optimization, emits optimized raw-pointer and slice loops as
+   from MIR/SSA, emits function-kind call-site attributes for indirect
+   function-pointer calls where the `fnptr` type carries `finite`, `law`, or
+   `finite law` guarantees, emits LLVM `!callees` metadata for indirect
+   function-pointer calls whose SSA target set is a closed set of known function
+   addresses, marks accepted direct function-pointer ABI parameters `nonnull`,
+   consumes the closed-world optimization model for caller-sensitive
+   law-path specialization decisions, can materialize internal root-side clones
+   of eligible imported law bodies and imported inline bodies for closed-world
+   optimization, emits optimized raw-pointer and slice loops as
    `memcpy`, `memmove`, or `memset` when the source contracts prove the shape,
    emits imported Stark declarations using the ABI model, and qualifies non-FFI
    symbols for library builds. Declaration-only emission is reserved for true

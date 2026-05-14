@@ -178,6 +178,18 @@ internal fn i32 ComputeHash(i32 value)
 public fn i32 ComputeHash(i32 value)
 ```
 
+## Memory Contracts
+
+Do not write whole-parameter `disjoint` on ordinary Stark functions. Memory-backed
+parameters are non-overlapping by default, so the clean spelling is the
+unadorned parameter list.
+
+Use `where overlap(a, b)` only when the API really accepts overlapping regions,
+and use `where same(a, b)` only when the API requires identical storage. Keep
+`where disjoint(a[start, count], b[start, count])` for subregion facts the
+default cannot express. For hot overlap-safe APIs, prefer a public overlap-safe
+wrapper plus an internal default-disjoint fast path.
+
 ## FFI and ABI Boundary Rules
 
 ### Imported FFI Names

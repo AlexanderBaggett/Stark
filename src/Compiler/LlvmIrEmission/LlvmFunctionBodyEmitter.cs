@@ -43,11 +43,13 @@ internal sealed class LlvmFunctionBodyEmitter
     private readonly Func<string, string, AbiFunctionSignature?> _resolveCallAbi;
     private readonly SsaFunction _ssaFunction;
     private readonly LlvmEmissionContext _context;
+    private readonly LlvmFunctionAttributeBuilder _attributeBuilder;
     private readonly DebugFunctionContext? _debugFunction;
     private readonly bool _isStrictFp;
     private readonly HashSet<string> _referencedValueNames;
     private readonly HashSet<string> _addressTakenParameterNames;
     private readonly IReadOnlyDictionary<string, SsaRValue> _valueDefinitions;
+    private readonly IReadOnlyDictionary<string, SsaPhi> _phisByResultName;
     private readonly IReadOnlyDictionary<string, SsaValue> _trivialValueAliases;
     private readonly IReadOnlyDictionary<string, SsaInstructionPosition> _valueDefinitionPositions;
     private readonly IReadOnlyDictionary<string, SsaValueFacts> _valueFacts;
@@ -110,12 +112,14 @@ internal sealed class LlvmFunctionBodyEmitter
         _resolveCallAbi = resolveCallAbi;
         _ssaFunction = ssaFunction;
         _context = context;
+        _attributeBuilder = new LlvmFunctionAttributeBuilder(context);
         _debugFunction = debugFunction;
         _isStrictFp = isStrictFp;
         _enableOptimizedRawPointerLoopIntrinsics = enableOptimizedRawPointerLoopIntrinsics;
         _referencedValueNames = CollectReferencedValueNames(ssaFunction);
         _addressTakenParameterNames = CollectAddressTakenParameterNames(ssaFunction);
         _valueDefinitions = CollectValueDefinitions(ssaFunction);
+        _phisByResultName = CollectPhisByResultName(ssaFunction);
         _trivialValueAliases = CollectTrivialValueAliases(ssaFunction);
         _valueDefinitionPositions = CollectValueDefinitionPositions(ssaFunction);
         _valueFacts = valueFacts?.Values ?? new Dictionary<string, SsaValueFacts>(StringComparer.Ordinal);
@@ -3397,8 +3401,32 @@ internal sealed class LlvmFunctionBodyEmitter
         return TryResolveParameterName(function, destinationBase, definitions, out var destinationParameter)
             && TryResolveParameterName(function, sourceBase, definitions, out var sourceParameter)
             && !string.Equals(destinationParameter, sourceParameter, StringComparison.Ordinal)
-            && ParameterHasNoAliasProof(function, destinationParameter, parameterEffects)
-            && ParameterHasNoAliasProof(function, sourceParameter, parameterEffects);
+            && (ParametersHavePairwiseNoAliasProof(function, destinationParameter, sourceParameter)
+                || (ParameterHasNoAliasProof(function, destinationParameter, parameterEffects)
+                    && ParameterHasNoAliasProof(function, sourceParameter, parameterEffects)));
+    }
+
+    private static bool ParametersHavePairwiseNoAliasProof(
+        SsaFunction function,
+        string leftParameterName,
+        string rightParameterName)
+    {
+        foreach (var group in function.DisjointParameterGroups ?? [])
+        {
+            var containsLeft = false;
+            var containsRight = false;
+            foreach (var parameterName in group.ParameterNames)
+            {
+                containsLeft |= string.Equals(parameterName, leftParameterName, StringComparison.Ordinal);
+                containsRight |= string.Equals(parameterName, rightParameterName, StringComparison.Ordinal);
+                if (containsLeft && containsRight)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private static bool TryResolveParameterName(
@@ -4105,13 +4133,13 @@ internal sealed class LlvmFunctionBodyEmitter
         var sourceType = convert.Operand.Type;
         var targetType = convert.TargetType;
 
+        if (IsNoOpConversion(sourceType, targetType))
+        {
+            return;
+        }
+
         if (sourceType.Kind == StarkTypeKind.Integer && targetType.Kind == StarkTypeKind.Integer)
         {
-            if (IsNoOpConversion(sourceType, targetType))
-            {
-                return;
-            }
-
             var opcode = sourceType.BitWidth < targetType.BitWidth
                 ? (HasUnsignedIntegerSemantics(sourceType) ? "zext" : "sext")
                 : "trunc";
@@ -4149,11 +4177,6 @@ internal sealed class LlvmFunctionBodyEmitter
 
         if (sourceType.Kind == StarkTypeKind.Float && targetType.Kind == StarkTypeKind.Float)
         {
-            if (IsNoOpConversion(sourceType, targetType))
-            {
-                return;
-            }
-
             var opcode = sourceType.BitWidth < targetType.BitWidth ? "fpext" : "fptrunc";
             if (_isStrictFp)
             {
@@ -4172,11 +4195,6 @@ internal sealed class LlvmFunctionBodyEmitter
         if (sourceType.Kind == StarkTypeKind.Integer && targetType.Kind == StarkTypeKind.RawPointer)
         {
             AppendLine($"  {result} = inttoptr {MapType(sourceType)} {FormatValue(convert.Operand)} to ptr");
-            return;
-        }
-
-        if (sourceType.Kind == StarkTypeKind.RawPointer && targetType.Kind == StarkTypeKind.RawPointer)
-        {
             return;
         }
 
@@ -5779,7 +5797,7 @@ internal sealed class LlvmFunctionBodyEmitter
                 QueueStaticAlloca(indirectReturnSlot, sourceReturnType);
             }
 
-            arguments.Add(RenderSRetArgumentPointer(sourceReturnType, indirectReturnSlot));
+            arguments.Add(RenderSRetArgumentPointer(abiCallee.ReturnBufferParameter!, indirectReturnSlot, includeContractAttributes: false));
         }
 
         var userParameters = abiCallee.UserParameters;
@@ -5804,7 +5822,7 @@ internal sealed class LlvmFunctionBodyEmitter
 
             if (parameter.Kind == AbiParameterKind.Direct)
             {
-                arguments.Add(RenderDirectArgument(parameter, argument));
+                arguments.Add(RenderDirectArgument(parameter, argument, parameterEffects: null, includeContractAttributes: false));
                 continue;
             }
 
@@ -5813,7 +5831,7 @@ internal sealed class LlvmFunctionBodyEmitter
                 : null;
             if (indirectArgumentAddress is not null)
             {
-                arguments.Add(RenderIndirectArgumentPointer(parameter, FormatValue(indirectArgumentAddress)));
+                arguments.Add(RenderIndirectArgumentPointer(parameter, FormatValue(indirectArgumentAddress), parameterEffects: null, includeContractAttributes: false));
                 continue;
             }
 
@@ -5828,26 +5846,26 @@ internal sealed class LlvmFunctionBodyEmitter
                 {
                     if (promotedParameter.Kind == AbiParameterKind.IndirectIn)
                     {
-                        arguments.Add(RenderIndirectArgumentPointer(parameter, $"%{EscapeIdentifier(promotedParameter.LlvmName)}"));
+                        arguments.Add(RenderIndirectArgumentPointer(parameter, $"%{EscapeIdentifier(promotedParameter.LlvmName)}", parameterEffects: null, includeContractAttributes: false));
                     }
                     else
                     {
                         EnsureParameterSlotExists(promotedParameter, promotedParameter.SourceType);
-                        arguments.Add(RenderIndirectArgumentPointer(parameter, $"%{EscapeIdentifier($"slot_param_{promotedParameter.SourceName}")}"));
+                        arguments.Add(RenderIndirectArgumentPointer(parameter, $"%{EscapeIdentifier($"slot_param_{promotedParameter.SourceName}")}", parameterEffects: null, includeContractAttributes: false));
                     }
 
                     continue;
                 }
 
                 EnsureLocalSlotExists(promotedLocal!, parameter.SourceType);
-                arguments.Add(RenderIndirectArgumentPointer(parameter, GetLocalSlotPointer(promotedLocal!)));
+                arguments.Add(RenderIndirectArgumentPointer(parameter, GetLocalSlotPointer(promotedLocal!), parameterEffects: null, includeContractAttributes: false));
                 continue;
             }
 
             if (AbiLoweringHeuristics.IsByValueIndirectParameter(parameter)
                 && TryResolveAggregateSourceAddress(argument, parameter.SourceType, out var forwardedSourceAddress))
             {
-                arguments.Add(RenderIndirectArgumentPointer(parameter, forwardedSourceAddress));
+                arguments.Add(RenderIndirectArgumentPointer(parameter, forwardedSourceAddress, parameterEffects: null, includeContractAttributes: false));
                 continue;
             }
 
@@ -5855,7 +5873,7 @@ internal sealed class LlvmFunctionBodyEmitter
             QueueStaticAlloca(tempSlot, parameter.SourceType);
             EmitValueToAddress(tempSlot, parameter.SourceType, argument, GetStackObjectAlignmentBytes(parameter.SourceType));
 
-            arguments.Add(RenderIndirectArgumentPointer(parameter, tempSlot));
+            arguments.Add(RenderIndirectArgumentPointer(parameter, tempSlot, parameterEffects: null, includeContractAttributes: false));
         }
 
         if (abiCallee.IsVarargs)
@@ -6429,8 +6447,10 @@ internal sealed class LlvmFunctionBodyEmitter
                 QueueStaticAlloca(indirectReturnSlot, sourceReturnType);
             }
 
-            arguments.Add(RenderSRetArgumentPointer(sourceReturnType, indirectReturnSlot));
+            arguments.Add(RenderSRetArgumentPointer(abiCallee.ReturnBufferParameter!, indirectReturnSlot, includeContractAttributes: true));
         }
+
+        var parameterEffects = BuildIndirectCallParameterEffects(abiCallee, call.Target.Type);
 
         var userParameters = abiCallee.UserParameters;
         if (userParameters.Count != call.Arguments.Count)
@@ -6446,7 +6466,7 @@ internal sealed class LlvmFunctionBodyEmitter
 
             if (parameter.Kind == AbiParameterKind.Direct)
             {
-                arguments.Add(RenderDirectArgument(parameter, argument));
+                arguments.Add(RenderDirectArgument(parameter, argument, parameterEffects, includeContractAttributes: true));
                 continue;
             }
 
@@ -6455,7 +6475,7 @@ internal sealed class LlvmFunctionBodyEmitter
                 : null;
             if (indirectArgumentAddress is not null)
             {
-                arguments.Add(RenderIndirectArgumentPointer(parameter, FormatValue(indirectArgumentAddress)));
+                arguments.Add(RenderIndirectArgumentPointer(parameter, FormatValue(indirectArgumentAddress), parameterEffects, includeContractAttributes: true));
                 continue;
             }
 
@@ -6470,26 +6490,26 @@ internal sealed class LlvmFunctionBodyEmitter
                 {
                     if (promotedParameter.Kind == AbiParameterKind.IndirectIn)
                     {
-                        arguments.Add(RenderIndirectArgumentPointer(parameter, $"%{EscapeIdentifier(promotedParameter.LlvmName)}"));
+                        arguments.Add(RenderIndirectArgumentPointer(parameter, $"%{EscapeIdentifier(promotedParameter.LlvmName)}", parameterEffects, includeContractAttributes: true));
                     }
                     else
                     {
                         EnsureParameterSlotExists(promotedParameter, promotedParameter.SourceType);
-                        arguments.Add(RenderIndirectArgumentPointer(parameter, $"%{EscapeIdentifier($"slot_param_{promotedParameter.SourceName}")}"));
+                        arguments.Add(RenderIndirectArgumentPointer(parameter, $"%{EscapeIdentifier($"slot_param_{promotedParameter.SourceName}")}", parameterEffects, includeContractAttributes: true));
                     }
 
                     continue;
                 }
 
                 EnsureLocalSlotExists(promotedLocal!, parameter.SourceType);
-                arguments.Add(RenderIndirectArgumentPointer(parameter, GetLocalSlotPointer(promotedLocal!)));
+                arguments.Add(RenderIndirectArgumentPointer(parameter, GetLocalSlotPointer(promotedLocal!), parameterEffects, includeContractAttributes: true));
                 continue;
             }
 
             if (AbiLoweringHeuristics.IsByValueIndirectParameter(parameter)
                 && TryResolveAggregateSourceAddress(argument, parameter.SourceType, out var forwardedSourceAddress))
             {
-                arguments.Add(RenderIndirectArgumentPointer(parameter, forwardedSourceAddress));
+                arguments.Add(RenderIndirectArgumentPointer(parameter, forwardedSourceAddress, parameterEffects, includeContractAttributes: true));
                 continue;
             }
 
@@ -6497,7 +6517,7 @@ internal sealed class LlvmFunctionBodyEmitter
             QueueStaticAlloca(tempSlot, parameter.SourceType);
             EmitValueToAddress(tempSlot, parameter.SourceType, argument, GetStackObjectAlignmentBytes(parameter.SourceType));
 
-            arguments.Add(RenderIndirectArgumentPointer(parameter, tempSlot));
+            arguments.Add(RenderIndirectArgumentPointer(parameter, tempSlot, parameterEffects, includeContractAttributes: true));
         }
 
         var callPrefixSegments = new List<string> { "call" };
@@ -6510,10 +6530,17 @@ internal sealed class LlvmFunctionBodyEmitter
         var callPrefix = string.Join(" ", callPrefixSegments);
         var renderedArguments = string.Join(", ", arguments);
         var strictFpCallSuffix = GetStrictFpCallSuffix();
+        var callSiteAttributes = _attributeBuilder.BuildFunctionPointerCallSiteAttributes(
+            abiCallee,
+            call.Target.Type.FunctionPointerKind ?? StarkFunctionKind.Fn);
+        var callSiteAttributeSuffix = string.IsNullOrWhiteSpace(callSiteAttributes)
+            ? string.Empty
+            : $" {callSiteAttributes}";
+        var calleesMetadataSuffix = GetKnownCalleesMetadataSuffix(call.Target);
 
         if (abiCallee.ReturnsIndirect)
         {
-            AppendLine($"  {callPrefix} void {FormatValue(call.Target)}({renderedArguments}){strictFpCallSuffix}");
+            AppendLine($"  {callPrefix} void {FormatValue(call.Target)}({renderedArguments}){callSiteAttributeSuffix}{strictFpCallSuffix}{calleesMetadataSuffix}");
             _indirectAggregateValueSlots[resultName] = indirectReturnSlot!;
             if (RequiresAggregateValueMaterialization(resultName, sourceReturnType))
             {
@@ -6524,11 +6551,110 @@ internal sealed class LlvmFunctionBodyEmitter
 
         if (call.Type.Kind == StarkTypeKind.Void)
         {
-            AppendLine($"  {callPrefix} void {FormatValue(call.Target)}({renderedArguments}){strictFpCallSuffix}");
+            AppendLine($"  {callPrefix} void {FormatValue(call.Target)}({renderedArguments}){callSiteAttributeSuffix}{strictFpCallSuffix}{calleesMetadataSuffix}");
             return;
         }
 
-        AppendLine($"  {result} = {callPrefix} {MapType(abiCallee.LlvmReturnType)} {FormatValue(call.Target)}({renderedArguments}){strictFpCallSuffix}{GetValueRangeMetadataSuffix(resultName, call.Type)}");
+        AppendLine($"  {result} = {callPrefix} {MapType(abiCallee.LlvmReturnType)} {FormatValue(call.Target)}({renderedArguments}){callSiteAttributeSuffix}{strictFpCallSuffix}{GetValueRangeMetadataSuffix(resultName, call.Type)}{calleesMetadataSuffix}");
+    }
+
+    private string GetKnownCalleesMetadataSuffix(SsaValue target)
+    {
+        if (target is SsaFunctionAddressValue)
+        {
+            return string.Empty;
+        }
+
+        var targets = new SortedSet<string>(StringComparer.Ordinal);
+        return TryCollectKnownFunctionPointerTargets(target, targets, new HashSet<string>(StringComparer.Ordinal))
+            && targets.Count > 1
+            ? $", !callees {_context.GetMetadataTupleRef(targets.Select(static name => $"ptr @{EscapeIdentifier(name)}").ToArray())}"
+            : string.Empty;
+    }
+
+    private bool TryCollectKnownFunctionPointerTargets(
+        SsaValue value,
+        ISet<string> targets,
+        ISet<string> visitingValueNames)
+    {
+        switch (value)
+        {
+            case SsaFunctionAddressValue functionAddress:
+                targets.Add(functionAddress.FunctionName);
+                return true;
+            case SsaValueReference reference:
+                return TryCollectKnownFunctionPointerTargets(reference, targets, visitingValueNames);
+            default:
+                return false;
+        }
+    }
+
+    private bool TryCollectKnownFunctionPointerTargets(
+        SsaValueReference reference,
+        ISet<string> targets,
+        ISet<string> visitingValueNames)
+    {
+        if (!visitingValueNames.Add(reference.Name))
+        {
+            return false;
+        }
+
+        try
+        {
+            if (_trivialValueAliases.TryGetValue(reference.Name, out var alias))
+            {
+                return TryCollectKnownFunctionPointerTargets(alias, targets, visitingValueNames);
+            }
+
+            if (_valueDefinitions.TryGetValue(reference.Name, out var definition))
+            {
+                return TryCollectKnownFunctionPointerTargets(definition, targets, visitingValueNames);
+            }
+
+            if (_phisByResultName.TryGetValue(reference.Name, out var phi))
+            {
+                if (phi.Incomings.Count == 0)
+                {
+                    return false;
+                }
+
+                foreach (var incoming in phi.Incomings)
+                {
+                    if (!TryCollectKnownFunctionPointerTargets(incoming.Value, targets, visitingValueNames))
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+
+            return false;
+        }
+        finally
+        {
+            visitingValueNames.Remove(reference.Name);
+        }
+    }
+
+    private bool TryCollectKnownFunctionPointerTargets(
+        SsaRValue value,
+        ISet<string> targets,
+        ISet<string> visitingValueNames)
+    {
+        switch (value)
+        {
+            case SsaUseRValue use:
+                return TryCollectKnownFunctionPointerTargets(use.Value, targets, visitingValueNames);
+            case SsaSelectRValue select:
+                return TryCollectKnownFunctionPointerTargets(select.WhenTrue, targets, visitingValueNames)
+                    && TryCollectKnownFunctionPointerTargets(select.WhenFalse, targets, visitingValueNames);
+            case SsaConvertRValue convert when convert.Operand.Type.Kind == StarkTypeKind.FunctionPointer
+                                             && convert.TargetType.Kind == StarkTypeKind.FunctionPointer:
+                return TryCollectKnownFunctionPointerTargets(convert.Operand, targets, visitingValueNames);
+            default:
+                return false;
+        }
     }
 
     private AbiFunctionSignature BuildIndirectCallAbi(SsaIndirectCallRValue call)
@@ -6547,13 +6673,123 @@ internal sealed class LlvmFunctionBodyEmitter
                     $"arg{index.ToString(CultureInfo.InvariantCulture)}",
                     parameterType))
                 .ToArray(),
-            Kind: call.Target.Type.FunctionPointerKind ?? StarkFunctionKind.Fn);
+            Kind: call.Target.Type.FunctionPointerKind ?? StarkFunctionKind.Fn,
+            DisjointParameterGroups: call.Target.Type.FunctionPointerDisjointParameterGroups ?? [],
+            OverlapParameterGroups: call.Target.Type.FunctionPointerOverlapParameterGroups ?? [],
+            SameParameterGroups: call.Target.Type.FunctionPointerSameParameterGroups ?? []);
         return LlvmSpecializationEmissionPlanner.BuildSyntheticAbiSignature(
             signature,
             "$indirect",
             isFfi: false,
             _context.TypeModel.NamedTypes,
             _context.EnumLayouts);
+    }
+
+    private static IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? BuildIndirectCallParameterEffects(
+        AbiFunctionSignature abiCallee,
+        StarkTypeSymbol functionPointerType)
+    {
+        var memoryBackedParameters = abiCallee.UserParameters
+            .Where(static parameter => ParameterMemoryContractFacts.IsMemoryBacked(parameter.SourceType))
+            .Select(static parameter => parameter.SourceName)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (memoryBackedParameters.Length == 0)
+        {
+            return null;
+        }
+
+        return abiCallee.UserParameters
+            .Where(static parameter => ParameterMemoryContractFacts.IsMemoryBacked(parameter.SourceType))
+            .ToDictionary(
+                static parameter => parameter.SourceName,
+                parameter =>
+                {
+                    var guaranteedReadOnly = DeriveIndirectCallParameterReadOnly(parameter.SourceType);
+                    var guaranteedWriteOnly = parameter.SourceType.InitializationKind != StarkInitializationKind.None;
+                    var reads = !guaranteedWriteOnly;
+                    var writes = guaranteedWriteOnly || !guaranteedReadOnly;
+                    return new ParameterMemoryEffectSummary(
+                        parameter.SourceName,
+                        parameter.SourceType.DisplayName,
+                        IsMemoryBacked: true,
+                        GuaranteedNonNull: parameter.SourceType.BorrowKind != StarkBorrowKind.None
+                            || parameter.SourceType.InitializationKind != StarkInitializationKind.None,
+                        GuaranteedReadOnly: guaranteedReadOnly,
+                        GuaranteedWriteOnly: guaranteedWriteOnly,
+                        GuaranteedNoAlias: IsFunctionPointerParameterNoAliasAgainstAll(
+                            parameter.SourceName,
+                            memoryBackedParameters,
+                            functionPointerType.FunctionPointerDisjointParameterGroups ?? []),
+                        DereferenceableBytes: null,
+                        AlignmentBytes: null,
+                        Reads: reads,
+                        Writes: writes,
+                        CaptureKind: ParameterCaptureKind.Escape);
+                },
+                StringComparer.Ordinal);
+    }
+
+    private static bool IsFunctionPointerParameterNoAliasAgainstAll(
+        string parameterName,
+        IReadOnlyList<string> memoryBackedParameterNames,
+        IReadOnlyList<ParameterDisjointGroup> disjointGroups)
+    {
+        if (memoryBackedParameterNames.Count <= 1)
+        {
+            return false;
+        }
+
+        foreach (var otherName in memoryBackedParameterNames)
+        {
+            if (string.Equals(parameterName, otherName, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (!DisjointGroupsContainPair(disjointGroups, parameterName, otherName))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool DisjointGroupsContainPair(
+        IReadOnlyList<ParameterDisjointGroup> disjointGroups,
+        string leftName,
+        string rightName)
+    {
+        foreach (var group in disjointGroups)
+        {
+            var containsLeft = false;
+            var containsRight = false;
+            foreach (var parameterName in group.ParameterNames)
+            {
+                containsLeft |= string.Equals(parameterName, leftName, StringComparison.Ordinal);
+                containsRight |= string.Equals(parameterName, rightName, StringComparison.Ordinal);
+                if (containsLeft && containsRight)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool DeriveIndirectCallParameterReadOnly(StarkTypeSymbol type)
+    {
+        if (type.InitializationKind != StarkInitializationKind.None)
+        {
+            return false;
+        }
+
+        return (type.Kind == StarkTypeKind.RawPointer && !type.IsMutablePointer)
+            || type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode
+            || (type.BorrowKind != StarkBorrowKind.None && !type.IsMutableView)
+            || type.AccessKind is StarkAccessKind.Shared or StarkAccessKind.Frozen;
     }
 
     private bool TryGetCurrentReturnBufferForwardingAddress(
@@ -10328,7 +10564,7 @@ internal sealed class LlvmFunctionBodyEmitter
             roots.TryAdd(root.Key, root);
         }
 
-        if (roots.Count == 0)
+        if (roots.Count < 2)
         {
             return null;
         }
@@ -11600,7 +11836,11 @@ internal sealed class LlvmFunctionBodyEmitter
             : rendered + ".0";
     }
 
-    private string RenderDirectArgument(AbiParameterSymbol parameter, SsaValue argument)
+    private string RenderDirectArgument(
+        AbiParameterSymbol parameter,
+        SsaValue argument,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
+        bool includeContractAttributes)
     {
         if (parameter.LlvmType.Kind == StarkTypeKind.RawPointer && IsStringType(parameter.SourceType))
         {
@@ -11611,6 +11851,11 @@ internal sealed class LlvmFunctionBodyEmitter
         if (LlvmValueRangeFacts.TryBuildRangeAttribute(parameter.SourceType, out var rangeAttribute))
         {
             segments.Add(rangeAttribute);
+        }
+
+        if (includeContractAttributes)
+        {
+            segments.AddRange(_attributeBuilder.GetAbiParameterAttributes(parameter, parameterEffects));
         }
 
         segments.Add(FormatValue(argument));
@@ -11645,11 +11890,18 @@ internal sealed class LlvmFunctionBodyEmitter
         };
     }
 
-    private string RenderIndirectArgumentPointer(AbiParameterSymbol parameter, string pointerValue)
+    private string RenderIndirectArgumentPointer(
+        AbiParameterSymbol parameter,
+        string pointerValue,
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
+        bool includeContractAttributes)
     {
         var segments = new List<string> { "ptr" };
-
-        if (AbiLoweringHeuristics.IsByValueIndirectParameter(parameter))
+        if (includeContractAttributes)
+        {
+            segments.AddRange(_attributeBuilder.GetAbiParameterAttributes(parameter, parameterEffects));
+        }
+        else if (AbiLoweringHeuristics.IsByValueIndirectParameter(parameter))
         {
             segments.Add($"byval({MapType(parameter.SourceType)})");
             if (TryGetConcreteTypeLayout(parameter.SourceType) is { AlignmentBytes: > 1 } layout)
@@ -11662,12 +11914,23 @@ internal sealed class LlvmFunctionBodyEmitter
         return string.Join(" ", segments);
     }
 
-    private string RenderSRetArgumentPointer(StarkTypeSymbol returnType, string pointerValue)
+    private string RenderSRetArgumentPointer(
+        AbiParameterSymbol parameter,
+        string pointerValue,
+        bool includeContractAttributes)
     {
-        var segments = new List<string> { "ptr", $"sret({MapType(returnType)})" };
-        if (GetStackObjectAlignmentBytes(returnType) is { } alignmentBytes)
+        var segments = new List<string> { "ptr" };
+        if (includeContractAttributes)
         {
-            segments.Add($"align {alignmentBytes}");
+            segments.AddRange(_attributeBuilder.GetAbiParameterAttributes(parameter, parameterEffects: null));
+        }
+        else
+        {
+            segments.Add($"sret({MapType(parameter.SourceType)})");
+            if (GetStackObjectAlignmentBytes(parameter.SourceType) is { } alignmentBytes)
+            {
+                segments.Add($"align {alignmentBytes}");
+            }
         }
 
         segments.Add(pointerValue);
@@ -12186,6 +12449,21 @@ internal sealed class LlvmFunctionBodyEmitter
         return definitions;
     }
 
+    private static IReadOnlyDictionary<string, SsaPhi> CollectPhisByResultName(SsaFunction function)
+    {
+        var phis = new Dictionary<string, SsaPhi>(StringComparer.Ordinal);
+
+        foreach (var block in function.Blocks)
+        {
+            foreach (var phi in block.Phis)
+            {
+                phis[phi.ResultName] = phi;
+            }
+        }
+
+        return phis;
+    }
+
     private static IReadOnlyDictionary<string, SsaValue> CollectTrivialValueAliases(SsaFunction function)
     {
         var aliases = new Dictionary<string, SsaValue>(StringComparer.Ordinal);
@@ -12230,6 +12508,7 @@ internal sealed class LlvmFunctionBodyEmitter
             (StarkTypeKind.Integer, StarkTypeKind.Integer) => source.BitWidth == target.BitWidth,
             (StarkTypeKind.Float, StarkTypeKind.Float) => source.BitWidth == target.BitWidth,
             (StarkTypeKind.RawPointer, StarkTypeKind.RawPointer) => true,
+            (StarkTypeKind.FunctionPointer, StarkTypeKind.FunctionPointer) => true,
             _ => false
         };
     }
@@ -13196,6 +13475,45 @@ internal sealed class LlvmFunctionBodyEmitter
                             if (TryResolveLocalAddressRoot(argument, out var escapedLocal))
                             {
                                 blocked.Add(escapedLocal);
+                            }
+                        }
+
+                        foreach (var localName in call.IndirectArgumentLocalNames ?? [])
+                        {
+                            if (!string.IsNullOrWhiteSpace(localName))
+                            {
+                                blocked.Add(localName!);
+                            }
+                        }
+
+                        foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+                        {
+                            if (TryResolveLocalAddressRoot(address, out var escapedLocal))
+                            {
+                                blocked.Add(escapedLocal);
+                            }
+                        }
+
+                        break;
+                    case SsaValueInstruction { Value: SsaIndirectCallRValue call }:
+                        if (TryResolveLocalAddressRoot(call.Target, out var targetLocal))
+                        {
+                            blocked.Add(targetLocal);
+                        }
+
+                        foreach (var argument in call.Arguments)
+                        {
+                            if (TryResolveLocalAddressRoot(argument, out var escapedLocal))
+                            {
+                                blocked.Add(escapedLocal);
+                            }
+                        }
+
+                        foreach (var localName in call.IndirectArgumentLocalNames ?? [])
+                        {
+                            if (!string.IsNullOrWhiteSpace(localName))
+                            {
+                                blocked.Add(localName!);
                             }
                         }
 

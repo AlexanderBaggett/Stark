@@ -7,6 +7,21 @@ helpers.
 The module is intentionally small. Ordinary user code should allocate through
 constructors such as `new()` and `new(allocator)`, not through raw pointer APIs.
 
+## Memory-Region Contracts
+
+Stark parameters are non-overlapping by default when they describe caller
+storage. `System.Memory` keeps that default for disjoint fast paths such as
+`AppendBytesDisjoint`, `CopyBytesDisjointInfallible`, and
+`CopyCodePointsDisjointInfallible`. APIs whose algorithm intentionally accepts
+overlap spell that explicitly with `where overlap(...)`; examples include
+`AppendBytes`, `AppendCodePoints`, `CopyBytes`, `CopyCodePoints`,
+`MoveBytes`, and `MoveCodePoints`.
+
+When adding a new memory helper, prefer the disjoint default for the fastest
+path. Add `where overlap(source, destination)` only when the implementation is
+actually overlap-safe, and use an internal disjoint helper for the hot path when
+runtime checks can prove separation.
+
 ## Initial Public Surface
 
 ```stark

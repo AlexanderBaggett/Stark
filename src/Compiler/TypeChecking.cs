@@ -736,7 +736,10 @@ internal sealed class TypeChecker
 
                     ValidateParameterContractPrefixes(functionSyntax.ParameterList.parameter());
                     ValidateBoundedRawPointerParameterCounts(functionSyntax.ParameterList.parameter(), parameters);
-                    ValidateParameterDisjointContracts(functionSyntax, parameters);
+                    ValidateParameterDisjointContracts(
+                        functionSyntax,
+                        parameters,
+                        allowWholeParameterDisjointContracts: isFfi || isAsm);
 
                     if (declarationModel.Function?.Asm is not null)
                     {
@@ -745,6 +748,15 @@ internal sealed class TypeChecker
 
                     var sourceQualifiedName = QualifyName(module, localName);
                     var qualifiedName = QualifyName(module, functionSyntax.Name);
+                    var explicitDisjointGroups = declarationModel.Function?.DisjointGroups ?? [];
+                    var overlapGroups = declarationModel.Function?.OverlapGroups ?? [];
+                    var sameGroups = declarationModel.Function?.SameGroups ?? [];
+                    var effectiveDisjointGroups = ParameterMemoryContractFacts.BuildEffectiveDisjointGroups(
+                        parameters,
+                        explicitDisjointGroups,
+                        overlapGroups,
+                        sameGroups,
+                        applyDefaultNonOverlap: !isFfi && !isAsm);
                     var signature = new TypedFunctionSignature(
                         qualifiedName,
                         returnType,
@@ -756,7 +768,9 @@ internal sealed class TypeChecker
                         IsUnsafe: isUnsafe,
                         IsVarargs: isVarargs,
                         BackendOptimizationMode: declarationModel.Function?.BackendOptimizationMode ?? ModuleBackendOptimizationMode.Default,
-                        DisjointParameterGroups: declarationModel.Function?.DisjointGroups);
+                        DisjointParameterGroups: effectiveDisjointGroups,
+                        OverlapParameterGroups: overlapGroups,
+                        SameParameterGroups: sameGroups);
                     RegisterFunctionSignature(signature, seenOverloadKeys, functionSyntax.DeclarationContext);
                 }
                 finally
@@ -1240,7 +1254,8 @@ internal sealed class TypeChecker
 
     private void ValidateParameterDisjointContracts(
         DeclaredFunctionSyntax functionSyntax,
-        IReadOnlyList<TypedParameterSymbol> parameters)
+        IReadOnlyList<TypedParameterSymbol> parameters,
+        bool allowWholeParameterDisjointContracts)
     {
         var parameterSymbols = new Dictionary<string, TypedParameterSymbol>(StringComparer.Ordinal);
         foreach (var parameter in parameters)
@@ -1260,45 +1275,72 @@ internal sealed class TypeChecker
                     $"Parameter '{name}' may specify 'disjoint' only for memory-backed types such as slices, text views, borrows, initialization views, or raw pointers, but found '{symbol.Type.DisplayName}'.",
                     parameter);
             }
+            else if (ParameterHasPrefix(parameter, StarkParser.DISJOINT)
+                     && !allowWholeParameterDisjointContracts)
+            {
+                ReportError(
+                    "STK3028",
+                    $"Parameter '{name}' no longer needs the whole-parameter 'disjoint' qualifier because Stark memory-backed parameters are non-overlapping by default. Remove 'disjoint'; use 'where overlap({name}, other)' for intentional overlap, 'where same({name}, other)' for identical storage, or 'where disjoint({name}[start, count], other[start, count])' for subregions.",
+                    parameter);
+            }
         }
 
         foreach (var clause in GetParameterMemoryContractClauses(functionSyntax.DeclarationContext))
         {
-            foreach (var contract in clause.disjointContract())
+            foreach (var contract in clause.parameterMemoryContract())
             {
-                var operands = contract.expressionList().expression();
+                var relationName = GetParameterMemoryContractName(contract);
+                var expressionList = GetParameterMemoryContractExpressionList(contract);
+                if (expressionList is null)
+                {
+                    continue;
+                }
+
+                var operands = expressionList.expression();
                 if (operands.Length < 2)
                 {
                     ReportError(
                         "STK3029",
-                        "'where disjoint(...)' contracts require at least two parameter or region operands.",
+                        $"'where {relationName}(...)' contracts require at least two parameter or region operands.",
                         contract);
                 }
 
                 var seen = new HashSet<string>(StringComparer.Ordinal);
+                var names = new List<string>();
+                var wholeParameterNames = new List<string>();
+                var allOperandsAreWholeParameters = true;
                 foreach (var operand in operands)
                 {
                     if (!TryGetDisjointContractRootName(operand, out var name, out var regionStart, out var regionLength))
                     {
                         ReportError(
                             "STK3029",
-                            "Disjoint contract operands must be parameter names or raw pointer regions of the form 'parameter[start, count]'.",
+                            $"{Capitalize(relationName)} contract operands must be parameter names or raw pointer regions of the form 'parameter[start, count]'.",
                             operand);
                         continue;
+                    }
+
+                    if (regionStart is null)
+                    {
+                        wholeParameterNames.Add(name);
+                    }
+                    else
+                    {
+                        allOperandsAreWholeParameters = false;
                     }
 
                     if (!parameterSymbols.TryGetValue(name, out var symbol))
                     {
                         ReportError(
                             "STK3029",
-                            $"Disjoint contract references unknown parameter '{name}'.",
+                            $"{Capitalize(relationName)} contract references unknown parameter '{name}'.",
                             operand);
                     }
                     else if (!CanRuntimeDisjointTest(symbol.Type))
                     {
                         ReportError(
                             "STK3029",
-                            $"Disjoint contract references parameter '{name}' with non-memory-backed type '{symbol.Type.DisplayName}'. Disjoint contracts require memory-backed parameters such as slices, text views, borrows, initialization views, or raw pointers.",
+                            $"{Capitalize(relationName)} contract references parameter '{name}' with non-memory-backed type '{symbol.Type.DisplayName}'. Memory contracts require memory-backed parameters such as slices, text views, borrows, initialization views, or raw pointers.",
                             operand);
                     }
                     else if (regionStart is not null
@@ -1310,12 +1352,139 @@ internal sealed class TypeChecker
                     {
                         ReportError(
                             "STK3029",
-                            $"Disjoint contract repeats parameter '{name}'.",
+                            $"{Capitalize(relationName)} contract repeats parameter '{name}'.",
                             operand);
                     }
+                    else
+                    {
+                        names.Add(name);
+                    }
+                }
+
+                if (names.Count > 1)
+                {
+                    ValidateMemoryContractPairConflicts(
+                        relationName,
+                        allOperandsAreWholeParameters ? wholeParameterNames : [],
+                        functionSyntax.DeclarationContext);
+                }
+
+                if (!allowWholeParameterDisjointContracts
+                    && string.Equals(relationName, "disjoint", StringComparison.Ordinal)
+                    && allOperandsAreWholeParameters
+                    && wholeParameterNames.Distinct(StringComparer.Ordinal).Count() >= 2)
+                {
+                    ReportError(
+                        "STK3029",
+                        $"Whole-parameter 'where disjoint({string.Join(", ", wholeParameterNames)})' is redundant because Stark memory-backed parameters are non-overlapping by default. Remove the clause; use 'where overlap(...)' for intentional overlap, 'where same(...)' for identical storage, or keep 'where disjoint(parameter[start, count], other[start, count])' for subregions.",
+                        contract);
                 }
             }
         }
+    }
+
+    private static string GetParameterMemoryContractName(StarkParser.ParameterMemoryContractContext contract)
+    {
+        if (contract.disjointContract() is not null)
+        {
+            return "disjoint";
+        }
+
+        if (contract.overlapContract() is not null)
+        {
+            return "overlap";
+        }
+
+        if (contract.sameContract() is not null)
+        {
+            return "same";
+        }
+
+        return "memory";
+    }
+
+    private static StarkParser.ExpressionListContext? GetParameterMemoryContractExpressionList(
+        StarkParser.ParameterMemoryContractContext contract)
+    {
+        return contract.disjointContract()?.expressionList()
+            ?? contract.overlapContract()?.expressionList()
+            ?? contract.sameContract()?.expressionList();
+    }
+
+    private void ValidateMemoryContractPairConflicts(
+        string currentRelationName,
+        IReadOnlyList<string> currentNames,
+        ParserRuleContext context)
+    {
+        if (currentNames.Count < 2)
+        {
+            return;
+        }
+
+        // Conflicting same/overlap/disjoint clauses are easiest to diagnose here while
+        // the source declaration is still in front of us. Only whole-parameter
+        // relations participate here; subregion disjointness can refine an overlap-safe
+        // API without contradicting its whole-parameter overlap contract.
+        var currentPairs = EnumerateNamePairs(currentNames).ToArray();
+        var relationPairs = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal)
+        {
+            ["disjoint"] = [],
+            ["overlap"] = [],
+            ["same"] = []
+        };
+
+        foreach (var clause in GetParameterMemoryContractClauses(context))
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                var relationName = GetParameterMemoryContractName(contract);
+                var expressionList = GetParameterMemoryContractExpressionList(contract);
+                if (expressionList is null)
+                {
+                    continue;
+                }
+
+                var names = expressionList.expression()
+                    .Select(static expression => TryGetWholeParameterMemoryContractName(expression, out var name)
+                        ? name
+                        : null)
+                    .Where(static name => !string.IsNullOrWhiteSpace(name))
+                    .Select(static name => name!)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                foreach (var pairKey in EnumerateNamePairs(names))
+                {
+                    relationPairs[relationName].Add(pairKey);
+                }
+            }
+        }
+
+        foreach (var pairKey in currentPairs)
+        {
+            if (string.Equals(currentRelationName, "disjoint", StringComparison.Ordinal)
+                && (relationPairs["overlap"].Contains(pairKey) || relationPairs["same"].Contains(pairKey)))
+            {
+                ReportError(
+                    "STK3029",
+                    $"Memory contract for parameters '{pairKey.Replace("|", "' and '", StringComparison.Ordinal)}' cannot be both disjoint and overlapping/same-memory.",
+                    context);
+            }
+            else if (string.Equals(currentRelationName, "overlap", StringComparison.Ordinal)
+                     && relationPairs["same"].Contains(pairKey))
+            {
+                ReportError(
+                    "STK3029",
+                    $"Memory contract for parameters '{pairKey.Replace("|", "' and '", StringComparison.Ordinal)}' cannot be both overlap and same-memory. Use 'same' when identical storage is required.",
+                    context);
+            }
+        }
+    }
+
+    private static string Capitalize(string text)
+    {
+        return string.IsNullOrEmpty(text)
+            ? text
+            : char.ToUpperInvariant(text[0]) + text[1..];
     }
 
     private static IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> GetParameterMemoryContractClauses(
@@ -1329,6 +1498,91 @@ internal sealed class TypeChecker
             StarkParser.DoctrineMethodDeclarationContext doctrineMethodDeclaration => doctrineMethodDeclaration.parameterMemoryContractClause(),
             _ => []
         };
+    }
+
+    private static IReadOnlyList<ParameterDisjointGroup> BuildEffectiveParameterDisjointGroups(
+        IReadOnlyList<TypedParameterSymbol> parameters,
+        IReadOnlyList<ParameterDisjointGroup> explicitDisjointGroups,
+        IReadOnlyList<ParameterOverlapGroup> overlapGroups,
+        IReadOnlyList<ParameterSameGroup> sameGroups,
+        bool applyDefaultNonOverlap)
+    {
+        var groups = new List<ParameterDisjointGroup>();
+        var suppressedPairs = overlapGroups
+            .SelectMany(static group => EnumerateNamePairs(group.ParameterNames))
+            .Concat(sameGroups.SelectMany(static group => EnumerateNamePairs(group.ParameterNames)))
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var group in explicitDisjointGroups)
+        {
+            var names = group.ParameterNames
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            if (names.Length < 2)
+            {
+                continue;
+            }
+
+            var pairNames = EnumerateNamePairs(names).ToArray();
+            if (pairNames.Any(suppressedPairs.Contains))
+            {
+                continue;
+            }
+
+            groups.Add(new ParameterDisjointGroup(names));
+        }
+
+        if (!applyDefaultNonOverlap)
+        {
+            return groups
+                .GroupBy(static group => string.Join("|", group.ParameterNames.Order(StringComparer.Ordinal)), StringComparer.Ordinal)
+                .Select(static group => group.First())
+                .ToArray();
+        }
+
+        var defaultMemoryParameters = parameters
+            .Where(static parameter => CanRuntimeDisjointTest(parameter.Type))
+            .Select(static parameter => parameter.Name)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        for (var leftIndex = 0; leftIndex < defaultMemoryParameters.Length; leftIndex++)
+        {
+            for (var rightIndex = leftIndex + 1; rightIndex < defaultMemoryParameters.Length; rightIndex++)
+            {
+                var left = defaultMemoryParameters[leftIndex];
+                var right = defaultMemoryParameters[rightIndex];
+                if (!suppressedPairs.Contains(BuildNamePairKey(left, right)))
+                {
+                    groups.Add(new ParameterDisjointGroup([left, right]));
+                }
+            }
+        }
+
+        return groups
+            .GroupBy(static group => string.Join("|", group.ParameterNames.Order(StringComparer.Ordinal)), StringComparer.Ordinal)
+            .Select(static group => group.First())
+            .ToArray();
+    }
+
+    private static IEnumerable<string> EnumerateNamePairs(IReadOnlyList<string> names)
+    {
+        var distinctNames = names
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        for (var leftIndex = 0; leftIndex < distinctNames.Length; leftIndex++)
+        {
+            for (var rightIndex = leftIndex + 1; rightIndex < distinctNames.Length; rightIndex++)
+            {
+                yield return BuildNamePairKey(distinctNames[leftIndex], distinctNames[rightIndex]);
+            }
+        }
+    }
+
+    private static string BuildNamePairKey(string left, string right)
+    {
+        return string.CompareOrdinal(left, right) <= 0
+            ? $"{left}|{right}"
+            : $"{right}|{left}";
     }
 
     private static bool TryGetDisjointContractRootName(
@@ -1351,6 +1605,21 @@ internal sealed class TypeChecker
             return false;
         }
 
+        return true;
+    }
+
+    private static bool TryGetWholeParameterMemoryContractName(
+        StarkParser.ExpressionContext expression,
+        out string rootName)
+    {
+        rootName = string.Empty;
+        if (!TryGetDisjointContractRootName(expression, out var name, out var regionStart, out _)
+            || regionStart is not null)
+        {
+            return false;
+        }
+
+        rootName = name;
         return true;
     }
 
@@ -1968,20 +2237,23 @@ internal sealed class TypeChecker
         }
     }
 
-    private void CheckBlock(StarkParser.BlockContext block, Scope parentScope, StarkTypeSymbol returnType)
+    private Scope CheckBlock(StarkParser.BlockContext block, Scope parentScope, StarkTypeSymbol returnType)
     {
         var scope = new Scope(parentScope);
         foreach (var statement in block.statement())
         {
             CheckStatement(statement, scope, returnType);
         }
+
+        return scope;
     }
 
     private void CheckStatement(StarkParser.StatementContext statement, Scope scope, StarkTypeSymbol returnType)
     {
         if (statement.block() is { } block)
         {
-            CheckBlock(block, scope, returnType);
+            var blockScope = CheckBlock(block, scope, returnType);
+            scope.InvalidateCurrentFlowMemoryProvenance(blockScope.FlowAssignedOuterLocalNames);
             return;
         }
 
@@ -1990,13 +2262,27 @@ internal sealed class TypeChecker
             _unsafeDepth++;
             try
             {
-                CheckBlock(unsafeStatement.block(), scope, returnType);
+                if (unsafeStatement.block() is { } unsafeBlock)
+                {
+                    var unsafeScope = CheckBlock(unsafeBlock, scope, returnType);
+                    scope.InvalidateCurrentFlowMemoryProvenance(unsafeScope.FlowAssignedOuterLocalNames);
+                }
+                else if (unsafeStatement.assumeStatement() is { } unsafeAssumeStatement)
+                {
+                    CheckAssumeStatement(unsafeAssumeStatement, scope, returnType);
+                }
             }
             finally
             {
                 _unsafeDepth--;
             }
 
+            return;
+        }
+
+        if (statement.assumeStatement() is { } assumeStatement)
+        {
+            CheckAssumeStatement(assumeStatement, scope, returnType);
             return;
         }
 
@@ -2075,11 +2361,17 @@ internal sealed class TypeChecker
             }
 
             CheckStatement(ifStatement.statement(0), thenScope, returnType);
+            var assignedOuterLocalNames = new HashSet<string>(
+                thenScope.FlowAssignedOuterLocalNames,
+                StringComparer.Ordinal);
             if (ifStatement.statement().Length > 1)
             {
-                CheckStatement(ifStatement.statement(1), new Scope(scope), returnType);
+                var elseScope = new Scope(scope);
+                CheckStatement(ifStatement.statement(1), elseScope, returnType);
+                assignedOuterLocalNames.UnionWith(elseScope.FlowAssignedOuterLocalNames);
             }
 
+            scope.InvalidateCurrentFlowMemoryProvenance(assignedOuterLocalNames);
             return;
         }
 
@@ -2089,6 +2381,7 @@ internal sealed class TypeChecker
             ValidateImplementedSwitchShape(switchStatement, switchType);
             RecordSwitch(switchStatement, switchType);
 
+            var assignedOuterLocalNames = new HashSet<string>(StringComparer.Ordinal);
             foreach (var section in switchStatement.switchSection())
             {
                 var sectionScope = new Scope(scope);
@@ -2110,8 +2403,11 @@ internal sealed class TypeChecker
                 {
                     CheckStatement(nestedStatement, sectionScope, returnType);
                 }
+
+                assignedOuterLocalNames.UnionWith(sectionScope.FlowAssignedOuterLocalNames);
             }
 
+            scope.InvalidateCurrentFlowMemoryProvenance(assignedOuterLocalNames);
             return;
         }
 
@@ -2123,7 +2419,9 @@ internal sealed class TypeChecker
                 whileStatement.statement(),
                 scope,
                 condition: whileStatement.expression());
-            CheckStatement(whileStatement.statement(), new Scope(scope), returnType);
+            var loopBodyScope = new Scope(scope);
+            CheckStatement(whileStatement.statement(), loopBodyScope, returnType);
+            scope.InvalidateCurrentFlowMemoryProvenance(loopBodyScope.FlowAssignedOuterLocalNames);
             return;
         }
 
@@ -2171,6 +2469,7 @@ internal sealed class TypeChecker
                 iteratorExpressions: forStatement.forIterator()?.expressionList().expression());
 
             CheckStatement(forStatement.statement(), loopScope, returnType);
+            scope.InvalidateCurrentFlowMemoryProvenance(loopScope.FlowAssignedOuterLocalNames);
             return;
         }
 
@@ -2207,6 +2506,30 @@ internal sealed class TypeChecker
         {
             EvaluateExpression(expressionStatement.expression(), scope, allowFunctionReference: false);
         }
+    }
+
+    private void CheckAssumeStatement(
+        StarkParser.AssumeStatementContext assumeStatement,
+        Scope scope,
+        StarkTypeSymbol returnType)
+    {
+        if (_unsafeDepth == 0)
+        {
+            ReportError(
+                "STK3024",
+                "Unsafe disjoint assumptions require an unsafe context. Write `unsafe assume disjoint(...) { ... }`, wrap the statement in `unsafe { ... }`, or move it into an `unsafe fn`.",
+                assumeStatement);
+        }
+
+        var assumedScope = new Scope(scope);
+        var assumedDisjointRoots = CheckUnsafeAssumeDisjointCondition(assumeStatement.disjointRuntimeCondition(), scope);
+        if (assumedDisjointRoots is { Count: >= 2 })
+        {
+            assumedScope.AddDisjointFact(assumedDisjointRoots);
+        }
+
+        CheckStatement(assumeStatement.statement(), assumedScope, returnType);
+        scope.InvalidateCurrentFlowMemoryProvenance(assumedScope.FlowAssignedOuterLocalNames);
     }
 
     private IReadOnlyList<string>? CheckDisjointRuntimeCondition(StarkParser.DisjointRuntimeConditionContext condition, Scope scope)
@@ -2274,6 +2597,23 @@ internal sealed class TypeChecker
             .Distinct(StringComparer.Ordinal)
             .ToArray();
         return distinctRootKeys.Length >= 2 ? distinctRootKeys : null;
+    }
+
+    private IReadOnlyList<string>? CheckUnsafeAssumeDisjointCondition(
+        StarkParser.DisjointRuntimeConditionContext condition,
+        Scope scope)
+    {
+        var roots = CheckDisjointRuntimeCondition(condition, scope);
+        if (roots is { Count: >= 2 })
+        {
+            return roots;
+        }
+
+        ReportError(
+            "STK3031",
+            "Unsafe disjoint assumptions must name at least two distinct compiler-visible memory regions. Same-root assumptions, hidden call results, and integer-laundered pointers cannot establish a scoped noalias fact; name visible roots or representable subregions such as 'ptr[0, count]' and 'ptr[count, count]'.",
+            condition);
+        return null;
     }
 
     private void CheckLoopContracts(
@@ -2681,6 +3021,7 @@ internal sealed class TypeChecker
         reason = statement switch
         {
             _ when statement.unsafeStatement() is not null => "unsafe blocks are outside the first supported subset",
+            _ when statement.assumeStatement() is not null => "unsafe assumptions are outside the first supported subset",
             _ when statement.switchStatement() is not null => "switch statements are outside the first supported subset",
             _ when statement.whileStatement() is not null => "nested loops are outside the first supported subset",
             _ when statement.forStatement() is not null => "nested loops are outside the first supported subset",
@@ -3293,6 +3634,7 @@ internal sealed class TypeChecker
         reason = statement switch
         {
             _ when statement.unsafeStatement() is not null => "unsafe blocks are outside the first supported subset",
+            _ when statement.assumeStatement() is not null => "unsafe assumptions are outside the first supported subset",
             _ when statement.switchStatement() is not null => "switch statements are outside the first supported subset",
             _ when statement.whileStatement() is not null => "nested loops are outside the first supported subset",
             _ when statement.forStatement() is not null => "nested loops are outside the first supported subset",
@@ -3593,9 +3935,7 @@ internal sealed class TypeChecker
 
     private static bool CanRuntimeDisjointTest(StarkTypeSymbol type)
     {
-        return type.Kind is StarkTypeKind.RawPointer or StarkTypeKind.Slice or StarkTypeKind.Ascii or StarkTypeKind.Unicode
-            || type.BorrowKind != StarkBorrowKind.None
-            || type.InitializationKind != StarkInitializationKind.None;
+        return ParameterMemoryContractFacts.IsMemoryBacked(type);
     }
 
     private void ValidateImplementedSwitchShape(StarkParser.SwitchStatementContext switchStatement, StarkTypeSymbol switchType)
@@ -5304,7 +5644,7 @@ internal sealed class TypeChecker
 
             var initializer = declarator.variableInitializer()!;
             var initializerBinding = CheckVariableInitializer(initializer, declaredType, scope);
-            var provenance = TryCreateImmutableLocalMemoryProvenance(declaredType, isMutable, initializerBinding, scope);
+            var provenance = TryCreateLocalDeclarationMemoryProvenance(declaredType, initializerBinding, scope);
             var hasConstProvenance = !isMutable
                 && initializerBinding is not null
                 && HasConstProvenance(initializerBinding);
@@ -6806,15 +7146,26 @@ internal sealed class TypeChecker
         return null;
     }
 
-    private static LocalMemoryProvenance? TryCreateImmutableLocalMemoryProvenance(
+    private static LocalMemoryProvenance? TryCreateLocalDeclarationMemoryProvenance(
         StarkTypeSymbol declaredType,
-        bool isMutable,
         ExpressionBinding? initializerBinding,
         Scope scope)
     {
-        if (isMutable
-            || initializerBinding?.MemoryRootKey is not { Length: > 0 } rootKey
-            || !CanPreserveImmutableLocalMemoryProvenance(declaredType, initializerBinding.Type))
+        if (initializerBinding is null)
+        {
+            return null;
+        }
+
+        return TryCreateLocalMemoryProvenance(declaredType, initializerBinding, scope);
+    }
+
+    private static LocalMemoryProvenance? TryCreateLocalMemoryProvenance(
+        StarkTypeSymbol declaredType,
+        ExpressionBinding initializerBinding,
+        Scope scope)
+    {
+        if (initializerBinding.MemoryRootKey is not { Length: > 0 } rootKey
+            || !CanPreserveLocalMemoryProvenance(declaredType, initializerBinding.Type))
         {
             return null;
         }
@@ -6825,7 +7176,7 @@ internal sealed class TypeChecker
             TryGetProvenancePreservingRawPointerCountExpression(rootKey, declaredType, initializerBinding.Type, scope));
     }
 
-    private static bool CanPreserveImmutableLocalMemoryProvenance(
+    private static bool CanPreserveLocalMemoryProvenance(
         StarkTypeSymbol declaredType,
         StarkTypeSymbol initializerType)
     {
@@ -6839,6 +7190,14 @@ internal sealed class TypeChecker
 
         return declaredType.Kind == StarkTypeKind.RawPointer
             && initializerType.Kind == StarkTypeKind.RawPointer;
+    }
+
+    private static bool CanCarryLocalMemoryProvenance(StarkTypeSymbol type)
+    {
+        return type.Kind is StarkTypeKind.RawPointer
+            or StarkTypeKind.Slice
+            or StarkTypeKind.Ascii
+            or StarkTypeKind.Unicode;
     }
 
     private static string? TryGetProvenancePreservingRawPointerCountExpression(
@@ -6865,7 +7224,8 @@ internal sealed class TypeChecker
         StarkTypeSymbol targetType,
         Scope scope,
         ISet<string>? preInitializedMembers,
-        IReadOnlyList<ImportedTemplateObjectInitializerMemberSummary>? publishedMembers = null)
+        IReadOnlyList<ImportedTemplateObjectInitializerMemberSummary>? publishedMembers = null,
+        bool requireExplicitNonZeroInitializers = true)
     {
         if (targetType.Kind != StarkTypeKind.Named)
         {
@@ -6939,6 +7299,15 @@ internal sealed class TypeChecker
             CheckVariableInitializer(initializer.variableInitializer(), fieldType, scope);
         }
 
+        if (requireExplicitNonZeroInitializers)
+        {
+            ValidateExplicitNonZeroInitializers(
+                targetType,
+                initializedMembers,
+                objectInitializer,
+                "object initializer");
+        }
+
         return recordedMembers;
     }
 
@@ -6974,6 +7343,92 @@ internal sealed class TypeChecker
                 "STK3006",
                 $"Array initializer provides {arrayInitializer.variableInitializer().Length} elements, but '{targetType.DisplayName}' expects at most {fixedLength}.",
                 arrayInitializer);
+        }
+
+        if (targetType.Kind == StarkTypeKind.FixedArray
+            && targetType.FixedLength is int requiredLength
+            && TypeRequiresExplicitNonZeroInitializer(elementType)
+            && arrayInitializer.variableInitializer().Length != requiredLength)
+        {
+            ReportError(
+                "STK3009",
+                $"Array initializer for '{targetType.DisplayName}' must provide all {requiredLength} element{Pluralize(requiredLength)} because omitted function-pointer elements would otherwise be initialized to null.",
+                arrayInitializer);
+        }
+    }
+
+    private void ValidateExplicitNonZeroInitializers(
+        StarkTypeSymbol targetType,
+        ISet<string>? initializedMembers,
+        ParserRuleContext diagnosticContext,
+        string initializerKind)
+    {
+        if (targetType.Kind != StarkTypeKind.Named
+            || targetType.NamedType is null
+            || !_namedTypes.TryGetValue(targetType.NamedType, out var namedType))
+        {
+            return;
+        }
+
+        foreach (var field in namedType.OrderedFields)
+        {
+            if (initializedMembers?.Contains(field.Name) == true
+                || !TypeRequiresExplicitNonZeroInitializer(field.Type))
+            {
+                continue;
+            }
+
+            ReportError(
+                "STK3009",
+                $"Field '{field.Name}' of '{namedType.Name}' must be explicitly initialized in this {initializerKind} because '{field.Type.DisplayName}' contains a function pointer and function pointers cannot be null.",
+                diagnosticContext);
+        }
+    }
+
+    private bool TypeRequiresExplicitNonZeroInitializer(StarkTypeSymbol type)
+        => TypeRequiresExplicitNonZeroInitializer(type, new HashSet<string>(StringComparer.Ordinal));
+
+    private bool TypeRequiresExplicitNonZeroInitializer(
+        StarkTypeSymbol type,
+        ISet<string> activeNamedTypes)
+    {
+        var normalized = StarkTypeSymbols.WithQualifiers(
+            type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+
+        if (normalized.Kind == StarkTypeKind.FunctionPointer)
+        {
+            return true;
+        }
+
+        if (normalized.Kind == StarkTypeKind.FixedArray
+            && normalized.ElementType is not null)
+        {
+            return TypeRequiresExplicitNonZeroInitializer(normalized.ElementType, activeNamedTypes);
+        }
+
+        if (normalized.Kind != StarkTypeKind.Named
+            || normalized.NamedType is null
+            || !_namedTypes.TryGetValue(normalized.NamedType, out var namedType))
+        {
+            return false;
+        }
+
+        if (!activeNamedTypes.Add(namedType.Name))
+        {
+            return false;
+        }
+
+        try
+        {
+            return namedType.OrderedFields.Any(field => TypeRequiresExplicitNonZeroInitializer(field.Type, activeNamedTypes));
+        }
+        finally
+        {
+            activeNamedTypes.Remove(namedType.Name);
         }
     }
 
@@ -7045,6 +7500,7 @@ internal sealed class TypeChecker
         if (assignmentOperator == "=")
         {
             EnsureAssignmentTargetCompatible(left, right.Type, expression.assignmentExpression());
+            UpdateAssignedLocalMemoryProvenance(expression.unaryExpression(), left, right, scope);
             return left;
         }
 
@@ -7079,6 +7535,31 @@ internal sealed class TypeChecker
         }
 
         return left;
+    }
+
+    private static void UpdateAssignedLocalMemoryProvenance(
+        StarkParser.UnaryExpressionContext targetExpression,
+        ExpressionBinding target,
+        ExpressionBinding value,
+        Scope scope)
+    {
+        if (!TryGetDirectAssignmentTargetName(targetExpression, out var targetName)
+            || !CanCarryLocalMemoryProvenance(target.Type))
+        {
+            return;
+        }
+
+        if (TryCreateLocalMemoryProvenance(target.Type, value, scope) is { } provenance)
+        {
+            scope.SetCurrentFlowMemoryProvenance(
+                targetName,
+                provenance.RootKey,
+                provenance.IsIndependentStorage,
+                provenance.RawPointerElementCountExpression);
+            return;
+        }
+
+        scope.ClearCurrentFlowMemoryProvenance(targetName);
     }
 
     private ExpressionBinding EvaluateConditionalExpression(
@@ -7379,7 +7860,9 @@ internal sealed class TypeChecker
                     NamedType: ResolveNamedTypeSymbol(targetType),
                     TextLiteral: convertedOperand.TextLiteral,
                     TextLiteralKind: convertedOperand.TextLiteralKind,
-                    HasConstProvenance: HasConstProvenance(convertedOperand));
+                    HasConstProvenance: HasConstProvenance(convertedOperand),
+                    MemoryRootKey: convertedOperand.MemoryRootKey,
+                    MemoryRootIsIndependentStorage: convertedOperand.MemoryRootIsIndependentStorage);
             }
 
             if (targetType.Kind == StarkTypeKind.RawPointer
@@ -8008,7 +8491,16 @@ internal sealed class TypeChecker
                 createdType,
                 scope,
                 matchedConstructor?.InitializedMembers,
-                publishedObjectCreation?.InitializerMembers);
+                publishedObjectCreation?.InitializerMembers,
+                requireExplicitNonZeroInitializers: matchedConstructor is null || matchedConstructor.IsPrimaryShape);
+        }
+        else if (matchedConstructor is null)
+        {
+            ValidateExplicitNonZeroInitializers(
+                createdType,
+                initializedMembers: null,
+                expression,
+                "object creation");
         }
 
         if (ShouldTrackObjectCreation(expression) || matchedConstructor is not null)
@@ -8658,6 +9150,12 @@ internal sealed class TypeChecker
         }
 
         var returnType = target.Function.ReturnType;
+        var resultHasMemoryRoot = TryGetCallResultMemoryRoot(
+            target.Function,
+            target.Receiver,
+            argumentBindings,
+            out var resultMemoryRootKey,
+            out var resultMemoryRootIsIndependentStorage);
         if (returnType.BorrowKind != StarkBorrowKind.None)
         {
             var valueType = StarkTypeSymbols.BorrowReturnValueType(returnType);
@@ -8668,10 +9166,70 @@ internal sealed class TypeChecker
                 NamedType: ResolveNamedTypeSymbol(valueType),
                 DiagnosticName: $"call to '{target.Function.DisplaySourceName}'",
                 IsAddressable: true,
-                IsAddressMutable: returnType.IsMutableView);
+                IsAddressMutable: returnType.IsMutableView,
+                MemoryRootKey: resultHasMemoryRoot ? resultMemoryRootKey : null,
+                MemoryRootIsIndependentStorage: resultHasMemoryRoot && resultMemoryRootIsIndependentStorage);
         }
 
-        return new ExpressionBinding(returnType, NamedType: ResolveNamedTypeSymbol(returnType), DiagnosticName: $"call to '{target.Function.DisplaySourceName}'");
+        return new ExpressionBinding(
+            returnType,
+            NamedType: ResolveNamedTypeSymbol(returnType),
+            DiagnosticName: $"call to '{target.Function.DisplaySourceName}'",
+            MemoryRootKey: resultHasMemoryRoot ? resultMemoryRootKey : null,
+            MemoryRootIsIndependentStorage: resultHasMemoryRoot && resultMemoryRootIsIndependentStorage);
+    }
+
+    private static bool TryGetCallResultMemoryRoot(
+        TypedFunctionSignature function,
+        ExpressionBinding? receiver,
+        IReadOnlyList<ExpressionBinding> argumentBindings,
+        out string? rootKey,
+        out bool isIndependentStorage)
+    {
+        rootKey = null;
+        isIndependentStorage = false;
+
+        if (function.ReturnType.BorrowKind != StarkBorrowKind.None
+            || function.ReturnType.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode
+                && IsTextViewConversion(function.DisplaySourceName)
+            || function.ReturnType.Kind == StarkTypeKind.RawPointer
+                && IsRawPointerViewConversion(function.DisplaySourceName))
+        {
+            var source = receiver ?? (argumentBindings.Count > 0 ? argumentBindings[0] : null);
+            if (source?.MemoryRootKey is { Length: > 0 } sourceRootKey)
+            {
+                rootKey = sourceRootKey;
+                isIndependentStorage = source.MemoryRootIsIndependentStorage;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsTextViewConversion(string sourceName)
+    {
+        return string.Equals(sourceName, "System.Text.AsciiView", StringComparison.Ordinal)
+            || string.Equals(sourceName, "System.Text.UnicodeView", StringComparison.Ordinal)
+            || string.Equals(sourceName, "AsciiView", StringComparison.Ordinal)
+            || string.Equals(sourceName, "UnicodeView", StringComparison.Ordinal)
+            || sourceName.EndsWith(".AsciiView", StringComparison.Ordinal)
+            || sourceName.EndsWith(".UnicodeView", StringComparison.Ordinal)
+            || sourceName.EndsWith(".View", StringComparison.Ordinal);
+    }
+
+    private static bool IsRawPointerViewConversion(string sourceName)
+    {
+        return string.Equals(sourceName, "AsciiData", StringComparison.Ordinal)
+            || string.Equals(sourceName, "UnicodeData", StringComparison.Ordinal)
+            || string.Equals(sourceName, "ReadPointer", StringComparison.Ordinal)
+            || string.Equals(sourceName, "WritePointer", StringComparison.Ordinal)
+            || string.Equals(sourceName, "ReadWritePointer", StringComparison.Ordinal)
+            || sourceName.EndsWith(".AsciiData", StringComparison.Ordinal)
+            || sourceName.EndsWith(".UnicodeData", StringComparison.Ordinal)
+            || sourceName.EndsWith(".ReadPointer", StringComparison.Ordinal)
+            || sourceName.EndsWith(".WritePointer", StringComparison.Ordinal)
+            || sourceName.EndsWith(".ReadWritePointer", StringComparison.Ordinal);
     }
 
     private void ValidateBoundedRawPointerCallArguments(
@@ -8968,7 +9526,7 @@ internal sealed class TypeChecker
         string displayFunctionName,
         Scope scope)
     {
-        if (function.DisjointGroups.Count == 0)
+        if (function.DisjointGroups.Count == 0 && function.SameGroups.Count == 0)
         {
             return;
         }
@@ -9012,10 +9570,52 @@ internal sealed class TypeChecker
 
             var expression = explicitArguments[argumentIndex].expression();
             memoryArgumentsByParameterName[parameter.Name] =
-                TryGetMemoryArgumentRoot(argumentBindings[argumentIndex], expression, scope, out var root)
-                || TryGetMemoryArgumentRoot(expression, argumentBindings[argumentIndex].Type, scope, out root)
+                TryGetMemoryArgumentRoot(argumentBindings[argumentIndex], expression, scope, parameter.Type, out var root)
+                || TryGetMemoryArgumentRoot(expression, parameter.Type, scope, out root)
                 ? new DisjointMemoryArgument(expression, root)
                 : new DisjointMemoryArgument(expression, null);
+        }
+
+        foreach (var group in function.SameGroups)
+        {
+            var parameterNames = group.ParameterNames
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            for (var leftIndex = 0; leftIndex < parameterNames.Length; leftIndex++)
+            {
+                if (!memoryArgumentsByParameterName.TryGetValue(parameterNames[leftIndex], out var left))
+                {
+                    continue;
+                }
+
+                for (var rightIndex = leftIndex + 1; rightIndex < parameterNames.Length; rightIndex++)
+                {
+                    if (!memoryArgumentsByParameterName.TryGetValue(parameterNames[rightIndex], out var right))
+                    {
+                        continue;
+                    }
+
+                    if (left.Root is not { } leftRoot
+                        || right.Root is not { } rightRoot)
+                    {
+                        ReportError(
+                            "STK3030",
+                            $"Call to '{displayFunctionName}' violates same-memory parameter contract: parameters '{parameterNames[leftIndex]}' and '{parameterNames[rightIndex]}' require a compiler-visible same-region proof, but one or both arguments do not have a statically identifiable memory root.",
+                            right.Expression);
+                        continue;
+                    }
+
+                    if (MemoryCallArgumentsAreSame(leftRoot, rightRoot))
+                    {
+                        continue;
+                    }
+
+                    ReportError(
+                        "STK3030",
+                        $"Call to '{displayFunctionName}' violates same-memory parameter contract: parameters '{parameterNames[leftIndex]}' and '{parameterNames[rightIndex]}' must receive the same memory region.",
+                        rightRoot.Expression);
+                }
+            }
         }
 
         foreach (var group in function.DisjointGroups)
@@ -9040,13 +9640,10 @@ internal sealed class TypeChecker
                     if (left.Root is not { } leftRoot
                         || right.Root is not { } rightRoot)
                     {
-                        if (_unsafeDepth == 0)
-                        {
-                            ReportError(
-                                "STK3030",
-                                $"Call to '{displayFunctionName}' violates disjoint parameter contract: parameters '{parameterNames[leftIndex]}' and '{parameterNames[rightIndex]}' require a compiler-visible non-overlap proof, but one or both arguments do not have a statically identifiable memory root.",
-                                right.Expression);
-                        }
+                        ReportError(
+                            "STK3030",
+                            $"Call to '{displayFunctionName}' violates disjoint parameter contract (default non-overlap): parameters '{parameterNames[leftIndex]}' and '{parameterNames[rightIndex]}' require a compiler-visible non-overlap proof, but one or both arguments do not have a statically identifiable memory root. Pass distinct storage, call an overlap-safe API, add 'where overlap(...)' to the callee, guard this call with 'if disjoint(...)', or use 'unsafe assume disjoint(...)' for trusted external facts.",
+                            right.Expression);
 
                         continue;
                     }
@@ -9055,7 +9652,7 @@ internal sealed class TypeChecker
                             leftRoot,
                             rightRoot,
                             scope,
-                            requireProof: _unsafeDepth == 0,
+                            requireProof: true,
                             out var overlapRootKey))
                     {
                         continue;
@@ -9063,11 +9660,27 @@ internal sealed class TypeChecker
 
                     ReportError(
                         "STK3030",
-                        $"Call to '{displayFunctionName}' violates disjoint parameter contract: parameters '{parameterNames[leftIndex]}' and '{parameterNames[rightIndex]}' may receive overlapping memory rooted at '{overlapRootKey}'.",
+                        $"Call to '{displayFunctionName}' violates disjoint parameter contract (default non-overlap): parameters '{parameterNames[leftIndex]}' and '{parameterNames[rightIndex]}' may receive overlapping memory rooted at '{overlapRootKey}'. Use distinct storage, call an overlap-safe API, or add 'where overlap(...)'/'where same(...)' to the callee when that aliasing is intentional.",
                         rightRoot.Expression);
                 }
             }
         }
+    }
+
+    private static bool MemoryCallArgumentsAreSame(MemoryArgumentRoot left, MemoryArgumentRoot right)
+    {
+        foreach (var leftRootKey in GetDisjointQueryRootKeys(left))
+        {
+            foreach (var rightRootKey in GetDisjointQueryRootKeys(right))
+            {
+                if (string.Equals(leftRootKey, rightRootKey, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private static void AddParameterDisjointFacts(Scope scope, IReadOnlyList<ParameterDisjointGroup> disjointGroups)
@@ -9121,6 +9734,16 @@ internal sealed class TypeChecker
         Scope scope,
         out MemoryArgumentRoot root)
     {
+        return TryGetMemoryArgumentRoot(binding, diagnosticContext, scope, binding.Type, out root);
+    }
+
+    private static bool TryGetMemoryArgumentRoot(
+        ExpressionBinding binding,
+        ParserRuleContext diagnosticContext,
+        Scope scope,
+        StarkTypeSymbol proofType,
+        out MemoryArgumentRoot root)
+    {
         root = default;
         if (binding.MemoryRootKey is not { Length: > 0 } rootKey)
         {
@@ -9130,7 +9753,7 @@ internal sealed class TypeChecker
         return TryCreateMemoryArgumentRoot(
             rootKey,
             diagnosticContext,
-            binding.Type,
+            proofType,
             wasAddressOf: false,
             binding.MemoryRootIsIndependentStorage,
             scope,
@@ -9255,8 +9878,7 @@ internal sealed class TypeChecker
     private static bool HaveProvenIndependentStorageRoots(MemoryArgumentRoot left, MemoryArgumentRoot right)
     {
         return !string.Equals(left.BaseName, right.BaseName, StringComparison.Ordinal)
-            && HasProvenIndependentStorageRoot(left)
-            && HasProvenIndependentStorageRoot(right);
+            && (HasProvenIndependentStorageRoot(left) || HasProvenIndependentStorageRoot(right));
     }
 
     private static bool HasProvenIndependentStorageRoot(MemoryArgumentRoot root)
@@ -9294,6 +9916,13 @@ internal sealed class TypeChecker
         string rightRootKey,
         out string overlapRootKey)
     {
+        if (string.Equals(leftRootKey, "null", StringComparison.Ordinal)
+            || string.Equals(rightRootKey, "null", StringComparison.Ordinal))
+        {
+            overlapRootKey = string.Empty;
+            return false;
+        }
+
         if (TryParseMemoryRootPath(leftRootKey, out var leftPath)
             && TryParseMemoryRootPath(rightRootKey, out var rightPath))
         {
@@ -9935,6 +10564,16 @@ internal sealed class TypeChecker
         var expectedParameters = parameterTypes
             .Select((parameterType, index) => new TypedParameterSymbol($"arg{index}", parameterType))
             .ToArray();
+        var displayTargetName = target.DiagnosticName ?? "function pointer";
+        var functionPointerSignature = new TypedFunctionSignature(
+            displayTargetName,
+            returnType,
+            expectedParameters,
+            SourceName: displayTargetName,
+            Kind: target.Type.FunctionPointerKind ?? StarkFunctionKind.Fn,
+            DisjointParameterGroups: target.Type.FunctionPointerDisjointParameterGroups ?? [],
+            OverlapParameterGroups: target.Type.FunctionPointerOverlapParameterGroups ?? [],
+            SameParameterGroups: target.Type.FunctionPointerSameParameterGroups ?? []);
         var argumentBindings = EvaluateArguments(arguments, expectedParameters, scope);
 
         if (parameterTypes.Count != arguments.argument().Length)
@@ -9948,12 +10587,29 @@ internal sealed class TypeChecker
         for (var index = 0; index < Math.Min(parameterTypes.Count, argumentBindings.Length); index++)
         {
             EnsureCallArgumentCompatible(
-                target.DiagnosticName ?? "function pointer",
+                displayTargetName,
                 index + 1,
                 expectedParameters[index],
                 argumentBindings[index],
                 arguments.argument(index).expression());
         }
+
+        ValidateBoundedRawPointerCallArguments(
+            functionPointerSignature,
+            receiverOffset: 0,
+            arguments,
+            argumentBindings,
+            displayTargetName,
+            scope);
+
+        ValidateDisjointCallArguments(
+            functionPointerSignature,
+            receiver: null,
+            receiverOffset: 0,
+            arguments,
+            argumentBindings,
+            displayTargetName,
+            scope);
 
         _indirectCalls.Add(new IndirectCallTypingRecord(
             target.Type,
@@ -10879,10 +11535,7 @@ internal sealed class TypeChecker
 
     private static StarkTypeSymbol FunctionPointerTypeForSignature(TypedFunctionSignature function)
     {
-        return StarkTypeSymbols.FunctionPointer(
-            function.Kind,
-            function.ReturnType,
-            function.Parameters.Select(static parameter => parameter.Type).ToArray());
+        return TypeCompatibilityFacts.FunctionPointerTypeForSignature(function);
     }
 
     private void RecordAddressTakenFunction(TypedFunctionSignature function, SourceLocation location)
@@ -11093,11 +11746,14 @@ internal sealed class TypeChecker
         }
 
         _literals.Add(new LiteralTypingRecord(literal.GetText(), type, Location(literal)));
+        var textLiteralHasMemoryRoot = textLiteral is not null && type.Kind is (StarkTypeKind.Ascii or StarkTypeKind.Unicode);
         return new ExpressionBinding(
             type,
             TextLiteral: textLiteral,
             TextLiteralKind: textLiteralKind,
-            HasConstProvenance: textLiteral is not null && type.Kind is (StarkTypeKind.Ascii or StarkTypeKind.Unicode));
+            HasConstProvenance: textLiteralHasMemoryRoot,
+            MemoryRootKey: textLiteralHasMemoryRoot ? BuildLiteralMemoryRootKey(literal) : null,
+            MemoryRootIsIndependentStorage: textLiteralHasMemoryRoot);
     }
 
     private ExpressionBinding EvaluateInterpolatedTextLiteral(
@@ -11167,10 +11823,14 @@ internal sealed class TypeChecker
 
         var type = InferStringLiteralType(foldedLiteral);
         _literals.Add(new LiteralTypingRecord(literal.GetText(), type, Location(literal)));
+        var textLiteralHasMemoryRoot = type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode;
         var bindingResult = new ExpressionBinding(
             type,
             TextLiteral: foldedLiteral,
-            TextLiteralKind: TextLiteralKind.String);
+            TextLiteralKind: TextLiteralKind.String,
+            HasConstProvenance: textLiteralHasMemoryRoot,
+            MemoryRootKey: textLiteralHasMemoryRoot ? BuildLiteralMemoryRootKey(literal) : null,
+            MemoryRootIsIndependentStorage: textLiteralHasMemoryRoot);
 
         if (expectedType is not null
             && IsTextType(expectedType)
@@ -11180,6 +11840,11 @@ internal sealed class TypeChecker
         }
 
         return bindingResult;
+    }
+
+    private static string BuildLiteralMemoryRootKey(StarkParser.LiteralContext literal)
+    {
+        return $"__literal_{literal.Start.Line.ToString(CultureInfo.InvariantCulture)}_{(literal.Start.Column + 1).ToString(CultureInfo.InvariantCulture)}";
     }
 
     private StarkTypeSymbol ResolveReturnType(StarkParser.ReturnTypeContext returnType, ISet<string>? genericParameters, string? currentModuleName = null)
@@ -11344,7 +12009,10 @@ internal sealed class TypeChecker
                 StarkTypeSymbols.FunctionPointer(
                     functionKind,
                     EnsureMonomorphizedType(returnType),
-                    parameterTypes.Select(parameter => EnsureMonomorphizedType(parameter)).ToArray()),
+                    parameterTypes.Select(parameter => EnsureMonomorphizedType(parameter)).ToArray(),
+                    strippedType.FunctionPointerDisjointParameterGroups,
+                    strippedType.FunctionPointerOverlapParameterGroups,
+                    strippedType.FunctionPointerSameParameterGroups),
                 borrowKind: type.BorrowKind,
                 accessKind: type.AccessKind,
                 initializationKind: type.InitializationKind,
@@ -11721,7 +12389,10 @@ internal sealed class TypeChecker
             substitutedCore = StarkTypeSymbols.FunctionPointer(
                 functionKind,
                 SubstituteType(returnType, substitution),
-                parameterTypes.Select(parameter => SubstituteType(parameter, substitution)).ToArray());
+                parameterTypes.Select(parameter => SubstituteType(parameter, substitution)).ToArray(),
+                coreType.FunctionPointerDisjointParameterGroups,
+                coreType.FunctionPointerOverlapParameterGroups,
+                coreType.FunctionPointerSameParameterGroups);
         }
         else
         {
@@ -13033,7 +13704,13 @@ internal sealed class TypeChecker
     {
         return local.Type.BorrowKind == StarkBorrowKind.None
             && local.Type.InitializationKind == StarkInitializationKind.None
-            && local.Type.Kind is StarkTypeKind.Named or StarkTypeKind.FixedArray;
+            && local.Type.Kind is StarkTypeKind.Bool
+                or StarkTypeKind.Integer
+                or StarkTypeKind.Float
+                or StarkTypeKind.FixedArray
+                or StarkTypeKind.Dynamic
+                or StarkTypeKind.FunctionPointer
+                or StarkTypeKind.Named;
     }
 
     private static bool CanMutateAddressProjection(ExpressionBinding target, StarkTypeSymbol projectedType)
@@ -14665,6 +15342,7 @@ internal sealed class TypeChecker
         private readonly Dictionary<string, VariableSymbol> _locals = new(StringComparer.Ordinal);
         private readonly Dictionary<string, VariableSymbol>? _globals;
         private readonly List<IReadOnlyList<string>> _disjointFacts = [];
+        private readonly HashSet<string> _flowAssignedOuterLocalNames = new(StringComparer.Ordinal);
 
         public Scope(Scope parent)
         {
@@ -14677,6 +15355,8 @@ internal sealed class TypeChecker
         }
 
         public Scope? Parent { get; }
+
+        public IReadOnlyCollection<string> FlowAssignedOuterLocalNames => _flowAssignedOuterLocalNames;
 
         public static Scope CreateRoot(Dictionary<string, VariableSymbol> globals) => new(globals);
 
@@ -14720,6 +15400,68 @@ internal sealed class TypeChecker
             if (_globals is not null && _globals.TryGetValue(name, out symbol!))
             {
                 return true;
+            }
+
+            symbol = default!;
+            return false;
+        }
+
+        public void SetCurrentFlowMemoryProvenance(
+            string name,
+            string? memoryRootKey,
+            bool memoryRootIsIndependentStorage,
+            string? rawPointerElementCountExpression)
+        {
+            if (_locals.TryGetValue(name, out var local))
+            {
+                _locals[name] = local with
+                {
+                    MemoryRootKey = memoryRootKey,
+                    MemoryRootIsIndependentStorage = memoryRootIsIndependentStorage,
+                    RawPointerElementCountExpression = rawPointerElementCountExpression
+                };
+                return;
+            }
+
+            if (Parent?.TryLookupLocal(name, out var outerLocal) == true)
+            {
+                _locals[name] = outerLocal with
+                {
+                    MemoryRootKey = memoryRootKey,
+                    MemoryRootIsIndependentStorage = memoryRootIsIndependentStorage,
+                    RawPointerElementCountExpression = rawPointerElementCountExpression
+                };
+                _flowAssignedOuterLocalNames.Add(name);
+            }
+        }
+
+        public void ClearCurrentFlowMemoryProvenance(string name)
+        {
+            SetCurrentFlowMemoryProvenance(
+                name,
+                memoryRootKey: null,
+                memoryRootIsIndependentStorage: false,
+                rawPointerElementCountExpression: null);
+        }
+
+        public void InvalidateCurrentFlowMemoryProvenance(IEnumerable<string> names)
+        {
+            foreach (var name in names)
+            {
+                ClearCurrentFlowMemoryProvenance(name);
+            }
+        }
+
+        private bool TryLookupLocal(string name, out VariableSymbol symbol)
+        {
+            if (_locals.TryGetValue(name, out symbol!))
+            {
+                return true;
+            }
+
+            if (Parent is not null)
+            {
+                return Parent.TryLookupLocal(name, out symbol);
             }
 
             symbol = default!;

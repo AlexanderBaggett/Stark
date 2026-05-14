@@ -105,7 +105,9 @@ internal sealed record StarkPackageFunctionManifest(
     bool IsUnsafe = false,
     bool IsVarargs = false,
     string? BackendOptimizationMode = null,
-    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null);
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null);
 
 internal sealed record StarkPackageParameterManifest(
     string Name,
@@ -153,7 +155,9 @@ internal sealed record StarkPackageMethodManifest(
     bool IsUnsafe = false,
     bool IsVarargs = false,
     string? BackendOptimizationMode = null,
-    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null);
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null);
 
 internal sealed record StarkPackageDestructorManifest(
     bool IsMutable,
@@ -226,7 +230,10 @@ internal sealed record StarkPackageTypeReference(
     IReadOnlyList<StarkPackageTypeReference>? TypeArguments = null,
     string? FunctionKind = null,
     StarkPackageTypeReference? ReturnType = null,
-    IReadOnlyList<StarkPackageTypeReference>? ParameterTypes = null);
+    IReadOnlyList<StarkPackageTypeReference>? ParameterTypes = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null);
 
 internal sealed record StarkPackageTypedParameterManifest(
     string Name,
@@ -266,7 +273,9 @@ internal sealed record StarkPackageTypedFunctionManifest(
     bool IsUnsafe = false,
     bool IsVarargs = false,
     string? BackendOptimizationMode = null,
-    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null);
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null);
 
 internal sealed record StarkPackageTypedMethodManifest(
     string Name,
@@ -291,7 +300,9 @@ internal sealed record StarkPackageTypedMethodManifest(
     bool IsUnsafe = false,
     bool IsVarargs = false,
     string? BackendOptimizationMode = null,
-    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null);
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null);
 
 internal sealed record StarkPackageTypedEnumVariantManifest(
     string Name,
@@ -456,7 +467,9 @@ internal sealed record StarkPackageTemplateDirectCallManifest(
     string? QualifiedSourceName = null,
     string? QualifiedTemplateName = null,
     IReadOnlyList<StarkPackageTypeReference>? TypeArguments = null,
-    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null);
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null);
 
 internal sealed record StarkPackageTemplateFieldAccessManifest(
     int Ordinal,
@@ -472,7 +485,9 @@ internal sealed record StarkPackageTemplateMemberCallManifest(
     string? QualifiedSourceName = null,
     string? QualifiedTemplateName = null,
     IReadOnlyList<StarkPackageTypeReference>? TypeArguments = null,
-    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null);
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null);
 
 internal sealed record StarkPackageFunctionTemplateManifest(
     string QualifiedResolvedName,

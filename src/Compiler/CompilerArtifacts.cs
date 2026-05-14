@@ -199,6 +199,10 @@ public sealed record ParameterModel(
 
 public sealed record ParameterDisjointGroup(IReadOnlyList<string> ParameterNames);
 
+public sealed record ParameterOverlapGroup(IReadOnlyList<string> ParameterNames);
+
+public sealed record ParameterSameGroup(IReadOnlyList<string> ParameterNames);
+
 public sealed record ImportDeclarationModel(
     string ModuleName,
     bool IsExported)
@@ -219,11 +223,15 @@ public sealed record FunctionDeclarationModel(
     bool IsStatic = false,
     IReadOnlyList<ModuleAttributeModel>? Attributes = null,
     ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default,
-    IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null)
+    IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null,
+    IReadOnlyList<ParameterOverlapGroup>? OverlapParameterGroups = null,
+    IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null)
 {
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
     public bool IsGeneric => GenericParameterNames is { Count: > 0 };
     public IReadOnlyList<ParameterDisjointGroup> DisjointGroups => DisjointParameterGroups ?? [];
+    public IReadOnlyList<ParameterOverlapGroup> OverlapGroups => OverlapParameterGroups ?? [];
+    public IReadOnlyList<ParameterSameGroup> SameGroups => SameParameterGroups ?? [];
 }
 
 public sealed record DestructorDeclarationModel(
@@ -893,6 +901,9 @@ public sealed record StarkTypeSymbol(
     StarkFunctionKind? FunctionPointerKind = null,
     StarkTypeSymbol? FunctionPointerReturnType = null,
     IReadOnlyList<StarkTypeSymbol>? FunctionPointerParameterTypes = null,
+    IReadOnlyList<ParameterDisjointGroup>? FunctionPointerDisjointParameterGroups = null,
+    IReadOnlyList<ParameterOverlapGroup>? FunctionPointerOverlapParameterGroups = null,
+    IReadOnlyList<ParameterSameGroup>? FunctionPointerSameParameterGroups = null,
     BigInteger? RangeMin = null,
     BigInteger? RangeMax = null,
     bool IsUnsigned = false,
@@ -965,7 +976,10 @@ public static class StarkTypeSymbols
     public static StarkTypeSymbol FunctionPointer(
         StarkFunctionKind functionKind,
         StarkTypeSymbol returnType,
-        IReadOnlyList<StarkTypeSymbol> parameterTypes)
+        IReadOnlyList<StarkTypeSymbol> parameterTypes,
+        IReadOnlyList<ParameterDisjointGroup>? disjointGroups = null,
+        IReadOnlyList<ParameterOverlapGroup>? overlapGroups = null,
+        IReadOnlyList<ParameterSameGroup>? sameGroups = null)
     {
         var displayKind = functionKind switch
         {
@@ -974,13 +988,41 @@ public static class StarkTypeSymbols
             StarkFunctionKind.Law => "law",
             _ => "fn"
         };
-        var displayName = $"fnptr<{displayKind} {returnType.DisplayName}({string.Join(", ", parameterTypes.Select(static parameter => parameter.DisplayName))})>";
+        var parameters = parameterTypes
+            .Select((parameter, index) => new TypedParameterSymbol($"arg{index}", parameter))
+            .ToArray();
+        var effectiveOverlapGroups = overlapGroups ?? [];
+        var effectiveSameGroups = sameGroups ?? [];
+        var effectiveDisjointGroups = disjointGroups
+            ?? ParameterMemoryContractFacts.BuildEffectiveDisjointGroups(
+                parameters,
+                explicitDisjointGroups: [],
+                overlapGroups: effectiveOverlapGroups,
+                sameGroups: effectiveSameGroups,
+                applyDefaultNonOverlap: true);
+        var displayName = $"fnptr<{displayKind} {returnType.DisplayName}({string.Join(", ", parameterTypes.Select(static parameter => parameter.DisplayName))}){FormatFunctionPointerMemoryContracts(effectiveOverlapGroups, effectiveSameGroups)}>";
         return new StarkTypeSymbol(
             StarkTypeKind.FunctionPointer,
             displayName,
             FunctionPointerKind: functionKind,
             FunctionPointerReturnType: returnType,
-            FunctionPointerParameterTypes: parameterTypes.ToArray());
+            FunctionPointerParameterTypes: parameterTypes.ToArray(),
+            FunctionPointerDisjointParameterGroups: effectiveDisjointGroups,
+            FunctionPointerOverlapParameterGroups: effectiveOverlapGroups,
+            FunctionPointerSameParameterGroups: effectiveSameGroups);
+    }
+
+    private static string FormatFunctionPointerMemoryContracts(
+        IReadOnlyList<ParameterOverlapGroup> overlapGroups,
+        IReadOnlyList<ParameterSameGroup> sameGroups)
+    {
+        var clauses = overlapGroups
+            .Select(static group => $"overlap({string.Join(", ", group.ParameterNames)})")
+            .Concat(sameGroups.Select(static group => $"same({string.Join(", ", group.ParameterNames)})"))
+            .ToArray();
+        return clauses.Length == 0
+            ? string.Empty
+            : $" where {string.Join(", ", clauses)}";
     }
 
     public static StarkTypeSymbol Named(string name) => new(StarkTypeKind.Named, name, NamedType: name);
@@ -1230,7 +1272,13 @@ public static class StarkTypeSymbols
             StarkTypeKind.FunctionPointer when type.FunctionPointerKind is { } functionKind
                                                && type.FunctionPointerReturnType is { } returnType
                                                && type.FunctionPointerParameterTypes is { } parameterTypes
-                => FunctionPointer(functionKind, returnType, parameterTypes),
+                => FunctionPointer(
+                    functionKind,
+                    returnType,
+                    parameterTypes,
+                    type.FunctionPointerDisjointParameterGroups,
+                    type.FunctionPointerOverlapParameterGroups,
+                    type.FunctionPointerSameParameterGroups),
             StarkTypeKind.Named when type.NamedType == OwnedAsciiName => OwnedAscii,
             StarkTypeKind.Named when type.NamedType == OwnedUnicodeName => OwnedUnicode,
             StarkTypeKind.Named when type.TypeArguments is { Count: > 0 } && type.NamedType is not null
@@ -1394,13 +1442,17 @@ public sealed record TypedFunctionSignature(
     bool IsUnsafe = false,
     bool IsVarargs = false,
     ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default,
-    IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null)
+    IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null,
+    IReadOnlyList<ParameterOverlapGroup>? OverlapParameterGroups = null,
+    IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null)
 {
     public string DisplaySourceName => SourceName ?? Name;
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
     public bool IsGeneric => GenericParameterNames is { Count: > 0 };
     public bool IsGenericInstantiation => TemplateName is not null && TypeArguments is { Count: > 0 };
     public IReadOnlyList<ParameterDisjointGroup> DisjointGroups => DisjointParameterGroups ?? [];
+    public IReadOnlyList<ParameterOverlapGroup> OverlapGroups => OverlapParameterGroups ?? [];
+    public IReadOnlyList<ParameterSameGroup> SameGroups => SameParameterGroups ?? [];
 }
 
 public enum GlobalBindingKind
@@ -2772,7 +2824,8 @@ public sealed record MidLevelIrFunction(
     IReadOnlyList<MidLevelIrLocal> Locals,
     IReadOnlyList<MidLevelIrBasicBlock> Blocks,
     FunctionBodyLoweringKind BodyLoweringKind = FunctionBodyLoweringKind.DeclarationOnly,
-    SourceLocation? Location = null);
+    SourceLocation? Location = null,
+    IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null);
 
 public sealed record MidLevelIrModule(
     string ModuleName,
@@ -3202,7 +3255,8 @@ public sealed record SsaFunction(
     int EntryBlockId,
     IReadOnlyList<SsaBasicBlock> Blocks,
     FunctionBodyLoweringKind BodyLoweringKind = FunctionBodyLoweringKind.DeclarationOnly,
-    SourceLocation? Location = null);
+    SourceLocation? Location = null,
+    IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null);
 
 public sealed record SsaIrModule(
     string ModuleName,

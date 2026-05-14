@@ -3470,14 +3470,24 @@ public static class DefaultCompilerPipeline
                         out var declarationModel);
                     var genericParameterNames = FunctionGenericParameterFacts.GetEffectiveGenericParameterNames(module, declaration);
                     var genericParameters = FunctionGenericParameterFacts.ToGenericParameterSet(genericParameterNames);
-                var parameters = declaration.ParameterList.parameter()
-                    .Select(parameter => new TypedParameterSymbol(
-                        parameter.Identifier().GetText(),
-                        resolver.ResolveParameterType(parameter.type_(), genericParameters, module.SyntaxModel.ModuleName, out var rawPointerElementCountExpression),
-                        parameter.parameterContractPrefix().Any(static prefix => prefix.Start.Type == StarkParser.DISJOINT),
-                        parameter.parameterContractPrefix().Any(static prefix => prefix.Start.Type == StarkParser.CONST),
-                        rawPointerElementCountExpression))
-                    .ToArray();
+                    var parameters = declaration.ParameterList.parameter()
+                        .Select(parameter => new TypedParameterSymbol(
+                            parameter.Identifier().GetText(),
+                            resolver.ResolveParameterType(parameter.type_(), genericParameters, module.SyntaxModel.ModuleName, out var rawPointerElementCountExpression),
+                            parameter.parameterContractPrefix().Any(static prefix => prefix.Start.Type == StarkParser.DISJOINT),
+                            parameter.parameterContractPrefix().Any(static prefix => prefix.Start.Type == StarkParser.CONST),
+                            rawPointerElementCountExpression))
+                        .ToArray();
+                    var isFfi = declaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "ffi", StringComparison.Ordinal));
+                    var isAsm = declarationModel?.Function?.Asm is not null;
+                    var overlapGroups = declarationModel?.Function?.OverlapGroups ?? [];
+                    var sameGroups = declarationModel?.Function?.SameGroups ?? [];
+                    var disjointGroups = ParameterMemoryContractFacts.BuildEffectiveDisjointGroups(
+                        parameters,
+                        declarationModel?.Function?.DisjointGroups ?? [],
+                        overlapGroups,
+                        sameGroups,
+                        applyDefaultNonOverlap: !isFfi && !isAsm);
                     functions[qualifiedName] = new TypedFunctionSignature(
                         qualifiedName,
                         resolver.ResolveReturnType(declaration.ReturnType, genericParameters, module.SyntaxModel.ModuleName),
@@ -3485,8 +3495,11 @@ public static class DefaultCompilerPipeline
                         SourceName: FunctionOverloadFacts.QualifySourceName(module, declaration.DisplaySourceName),
                         GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray(),
                         IsStatic: declaration.IsStatic,
+                        IsUnsafe: declaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "unsafe", StringComparison.Ordinal)),
                         IsVarargs: declaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "varargs", StringComparison.Ordinal)),
-                        DisjointParameterGroups: declarationModel?.Function?.DisjointGroups);
+                        DisjointParameterGroups: disjointGroups,
+                        OverlapParameterGroups: overlapGroups,
+                        SameParameterGroups: sameGroups);
                 }
             }
 

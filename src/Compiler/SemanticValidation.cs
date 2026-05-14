@@ -903,7 +903,21 @@ internal sealed class SemanticValidator
 
         if (statement.unsafeStatement() is { } unsafeStatement)
         {
-            CheckBlock(unsafeStatement.block(), scope, function, effects, summary, controlFlow);
+            if (unsafeStatement.block() is { } unsafeBlock)
+            {
+                CheckBlock(unsafeBlock, scope, function, effects, summary, controlFlow);
+            }
+            else if (unsafeStatement.assumeStatement() is { } unsafeAssumeStatement)
+            {
+                CheckAssumeStatement(unsafeAssumeStatement, scope, function, effects, summary, controlFlow);
+            }
+
+            return;
+        }
+
+        if (statement.assumeStatement() is { } assumeStatement)
+        {
+            CheckAssumeStatement(assumeStatement, scope, function, effects, summary, controlFlow);
             return;
         }
 
@@ -1417,6 +1431,27 @@ internal sealed class SemanticValidator
         }
 
         return new ValidationValue(left.Type);
+    }
+
+    private void CheckAssumeStatement(
+        StarkParser.AssumeStatementContext assumeStatement,
+        ValidationScope scope,
+        FunctionDeclarationModel function,
+        FunctionEffectProfile effects,
+        FunctionValidationBuilder summary,
+        ControlFlowContext controlFlow)
+    {
+        foreach (var expression in assumeStatement.disjointRuntimeCondition().expressionList().expression())
+        {
+            if (TryEvaluateRawPointerRegionExpression(expression, scope, function, effects, summary))
+            {
+                continue;
+            }
+
+            EvaluateExpression(expression, scope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
+        }
+
+        CheckStatement(assumeStatement.statement(), new ValidationScope(scope), function, effects, summary, controlFlow);
     }
 
     private bool TryEvaluateRawPointerRegionExpression(
@@ -5444,12 +5479,31 @@ internal sealed class SemanticValidator
             return false;
         }
 
-        return disjointGroups.Any(group =>
+        var pairwiseDisjoint = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var group in disjointGroups)
         {
-            var names = group.ParameterNames.ToHashSet(StringComparer.Ordinal);
-            return names.Contains(parameter.Name)
-                && aliasingParameters.All(names.Contains);
-        });
+            var names = group.ParameterNames
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            for (var leftIndex = 0; leftIndex < names.Length; leftIndex++)
+            {
+                for (var rightIndex = leftIndex + 1; rightIndex < names.Length; rightIndex++)
+                {
+                    pairwiseDisjoint.Add(BuildParameterPairKey(names[leftIndex], names[rightIndex]));
+                }
+            }
+        }
+
+        return aliasingParameters
+            .Where(candidate => !string.Equals(candidate, parameter.Name, StringComparison.Ordinal))
+            .All(candidate => pairwiseDisjoint.Contains(BuildParameterPairKey(parameter.Name, candidate)));
+    }
+
+    private static string BuildParameterPairKey(string left, string right)
+    {
+        return string.CompareOrdinal(left, right) <= 0
+            ? $"{left}|{right}"
+            : $"{right}|{left}";
     }
 
     private static bool CanAliasCalleeParameterMemory(StarkTypeSymbol parameterType)

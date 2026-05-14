@@ -67,7 +67,8 @@ internal fn System.Memory.MemoryStatus WriteSliceToStorage(
     u64[0 2 ** 63 - 1] capacity,
     borrow i8[min max][] source,
     u64[0 2 ** 63 - 1] count,
-    out u64[0 2 ** 63 - 1] nextWritePosition) {
+    out u64[0 2 ** 63 - 1] nextWritePosition)
+    where overlap(storage, source) {
         unsafe {
         nextWritePosition = writePosition;
         if (count == 0) {
@@ -125,7 +126,9 @@ internal fn void CompactStorage(
     u64[0 2 ** 63 - 1] readPosition,
     u64[0 2 ** 63 - 1] writePosition,
     out u64[0 2 ** 63 - 1] nextReadPosition,
-    out u64[0 2 ** 63 - 1] nextWritePosition) {
+    out u64[0 2 ** 63 - 1] nextWritePosition)
+    where overlap(storage, nextReadPosition),
+          overlap(storage, nextWritePosition) {
         unsafe {
         nextReadPosition = readPosition;
         nextWritePosition = writePosition;
@@ -274,7 +277,8 @@ public struct FixedByteBuffer512 {
     fn System.Memory.MemoryStatus WriteSlice(
         mut borrow FixedByteBuffer512 self,
         borrow i8[min max][] source,
-        u64[0 2 ** 63 - 1] count) {
+        u64[0 2 ** 63 - 1] count)
+        where overlap(self, source) {
             unsafe {
             stack mut u64[0 2 ** 63 - 1] nextWritePosition = self.WritePosition;
             stack mut System.Memory.MemoryStatus status = System.Memory.MemoryStatus.Ok;
@@ -479,7 +483,8 @@ public struct FixedByteBuffer4096 {
     fn System.Memory.MemoryStatus WriteSlice(
         mut borrow FixedByteBuffer4096 self,
         borrow i8[min max][] source,
-        u64[0 2 ** 63 - 1] count) {
+        u64[0 2 ** 63 - 1] count)
+        where overlap(self, source) {
             unsafe {
             stack mut u64[0 2 ** 63 - 1] nextWritePosition = self.WritePosition;
             stack mut System.Memory.MemoryStatus status = System.Memory.MemoryStatus.Ok;
@@ -684,7 +689,8 @@ public struct FixedByteBuffer8192 {
     fn System.Memory.MemoryStatus WriteSlice(
         mut borrow FixedByteBuffer8192 self,
         borrow i8[min max][] source,
-        u64[0 2 ** 63 - 1] count) {
+        u64[0 2 ** 63 - 1] count)
+        where overlap(self, source) {
             unsafe {
             stack mut u64[0 2 ** 63 - 1] nextWritePosition = self.WritePosition;
             stack mut System.Memory.MemoryStatus status = System.Memory.MemoryStatus.Ok;
@@ -831,7 +837,8 @@ public struct DynamicByteBuffer {
     fn System.Memory.MemoryStatus WriteSlice(
         mut borrow DynamicByteBuffer self,
         borrow i8[min max][] source,
-        u64[0 2 ** 63 - 1] count) {
+        u64[0 2 ** 63 - 1] count)
+        where overlap(self, source) {
             unsafe {
             if (count == 0) {
                 return System.Memory.MemoryStatus.Ok;

@@ -176,22 +176,27 @@ Common consequences include:
 These are compiler outputs, not language syntax.
 They are emitted only when the implementation can prove them from the source rules plus body analysis.
 
-### 2.1 Disjoint Function Parameters
+### 2.1 Parameter Memory Contracts
 
-`disjoint` is Stark's source-level contract for memory regions that do not overlap.
-The parameter-prefix form and the relational `where disjoint(...)` form both feed the same internal memory-separation fact model.
+Memory-backed callable parameters are non-overlapping by default. The type checker turns each accepted function signature into pairwise parameter memory facts after overload resolution and generic substitution. `where overlap(...)` removes the default non-overlap obligation for the listed relation, and `where same(...)` records a same-region obligation that safe callers must prove.
 
-The compiler accepts disjoint contracts only for memory-backed parameters and memory-region expressions: slices, text views, borrows, initialization views, bounded raw pointer regions, and raw pointers. Scalar value parameters are rejected because there is no source memory region for the contract to describe.
+Function-pointer types carry the same relation facts. Because `fnptr` parameter
+lists do not bind source names, function-pointer memory contracts use synthetic
+names `arg0`, `arg1`, and so on, and those facts are preserved through function
+item promotion, package-image type references, imported templates, type
+substitution, indirect-call validation, and LLVM indirect-call attributes.
 
-Each `disjoint(...)` relation forms a pairwise non-overlap group. `where disjoint(a, b, c)` records `a` separate from `b`, `a` separate from `c`, and `b` separate from `c`. Multiple groups remain independent: `where disjoint(a, b), disjoint(c, d)` records only the two stated pairs and does not record any relationship between `a` or `b` and `c` or `d`.
+The default applies to parameters that describe reachable caller storage: slices, text views, borrows, initialization views, bounded raw pointer regions, and raw pointers. Scalar value parameters and ordinary by-value owned aggregates do not receive a user-facing non-overlap obligation merely because the ABI may pass them indirectly.
 
-Disjointness facts are not transitive. `disjoint(a, b), disjoint(b, c)` does not prove `disjoint(a, c)` unless that relation is also stated or separately proven.
+`disjoint`, `overlap`, and `same` clauses are pairwise within each listed group. `where overlap(a, b, c)` removes default non-overlap for `a/b`, `a/c`, and `b/c`; it does not affect any unlisted parameter. `where same(a, b)` is stronger than overlap: the caller must prove both arguments have the same memory root and compatible region identity.
 
-For a four-parameter function where `a` and `b` do not overlap and `c` and `d` do not overlap, but cross-group pairs such as `b` and `d` may overlap, the source form is `where disjoint(a, b), disjoint(c, d)`. For a four-parameter function where all parameters are mutually separate, the source form is `where disjoint(a, b, c, d)`.
+Explicit `where disjoint(...)` remains useful for subregions and computed memory-region expressions. Whole-parameter disjoint groups on ordinary Stark functions are redundant with the default and are rejected with a fix-it diagnostic. FFI and assembly declarations do not receive default Stark non-overlap, so explicit whole-parameter `disjoint` remains the opt-in spelling at external ABI boundaries.
 
-Safe call-site validation uses the proof facts the compiler can see directly: explicit disjoint parameter facts, runtime `if disjoint(...)` branch facts, independent local storage roots, exclusive mutable borrow roots, `out`/`init` destination roots, immutable slice/text-view backing roots, bounded raw pointer parameter regions, raw pointer region expressions, method receiver roots, distinct field projections, distinct literal indexes, non-overlapping integer index ranges, and compiler-visible text slice ranges. Unknown unbounded raw pointers, call results or other arguments without a statically identifiable memory root, and overlapping or unknown index ranges remain rejected outside `unsafe`.
+Memory relations are not transitive. `same(a, b), same(b, c)` does not prove `same(a, c)` unless that relation is also stated or separately proven, and `overlap(a, b)` does not permit overlap between `a` and any unlisted parameter.
 
-For function parameters, disjointness gives the compiler these backend facts:
+Call-site validation uses the proof facts the compiler can see directly: default parameter facts, explicit memory-contract clauses, runtime `if disjoint(...)` branch facts, scoped `unsafe assume disjoint(...)` facts, independent local storage roots, exclusive mutable borrow roots, `out`/`init` destination roots, immutable slice/text-view backing roots, bounded raw pointer parameter regions, raw pointer region expressions, method receiver roots, distinct field projections, distinct literal indexes, non-overlapping integer index ranges, and compiler-visible text slice ranges. Unknown unbounded raw pointers, call results or other arguments without a statically identifiable memory root, and overlapping or unknown index ranges are rejected for default non-overlap obligations unless a specific scoped proof covers that relation.
+
+For function parameters, proven non-overlap gives the compiler these backend facts:
 
 - a parameter whose whole reachable memory region is disjoint from every other accessible pointer region is emitted with LLVM `noalias` when the LLVM parameter rules allow it
 - individual loads, stores, and memory-touching calls through disjoint roots carry scoped `!alias.scope` and `!noalias` metadata
@@ -199,7 +204,7 @@ For function parameters, disjointness gives the compiler these backend facts:
 - disjoint output or initialization destinations compose with `writeonly`, `initializes(...)`, and dead-store reasoning when the initialized byte range is known
 - disjoint readonly inputs compose with `readonly`, `captures(none)`, or read-only `captures(...)` facts
 
-The compiler treats disjointness as a memory-range fact, not as a root-identity fact. Two slices or raw pointer regions from the same allocation can be disjoint when their element ranges do not overlap. Two different values are not considered disjoint merely because their names differ.
+The compiler treats non-overlap as a memory-range fact, not as a root-identity fact. Two slices or raw pointer regions from the same allocation can be disjoint when their element ranges do not overlap. Two different local values are not considered disjoint merely because their names differ; local pointer facts remain provenance-based, so pointer copies and simple casts preserve same-region identity.
 
 ### 2.2 Branch-Scoped Disjointness
 
@@ -208,6 +213,8 @@ The compiler treats disjointness as a memory-range fact, not as a root-identity 
 For contiguous slices, text views, bounded raw pointer parameters, and raw pointer region expressions, the check lowers to pointer-range comparisons over the data pointer, element size, and length. Once the true branch is selected, memory operations through the checked regions receive scoped `!alias.scope` and `!noalias` metadata. If the fact is introduced inside a nested scope or loop body, the compiler uses a distinct alias-scope domain for that scope and emits `llvm.experimental.noalias.scope.decl` when the selected LLVM representation needs an explicit scope boundary.
 
 The runtime check is a source-level fact boundary. Optimizer metadata must not be attached outside the dominated true-branch region unless later analysis proves the fact still holds.
+
+`unsafe assume disjoint(a, b) statement` creates the same scoped fact without a runtime branch. It is the explicit unsafe boundary for trusted external separation facts. Inside an already unsafe context, the parser also accepts `assume disjoint(a, b) statement`; outside an unsafe context, bare `assume` is rejected before MIR. The assertion must name visible memory roots or representable subregions, so the compiler can attach the fact only to the intended roots. It does not make an ordinary `unsafe` block a blanket aliasing escape hatch, and it does not suppress same-root overlap, hidden helper-call roots, or pointer values laundered through integers.
 
 ### 2.3 Bounded Raw Pointer Regions
 
@@ -317,7 +324,7 @@ Const parameters produce these backend facts:
 - loads through permanently immutable const provenance carry `!invariant.load` when the loaded object cannot be replaced for the lifetime represented in IR
 - projections from const parameters preserve frozen/readonly provenance and keep raw conversions from regaining mutable authority
 
-Const does not imply disjointness. Multiple const parameters may alias the same immutable object graph. The compiler emits `noalias` for const parameters only when a separate disjointness fact is present or proven.
+Const does not imply local disjointness. Multiple local const views may alias the same immutable object graph. Memory-backed function parameters remain non-overlapping by default unless the callee declares `where overlap(...)` or `where same(...)`; the compiler emits `noalias` only when the resulting parameter contract and call-site proof make the fact sound.
 
 ## 3. Internal ABI and FFI Boundaries
 
@@ -486,12 +493,27 @@ When a function item is converted to a function-pointer type, the compiler
 records that the function is address-taken. The runtime representation is a
 thin code pointer. Calls through the pointer are indirect unless the compiler
 can recover a singleton target set. Where the target set remains known, the
-LLVM emitter may use indirect-call target metadata such as `!callees`.
+LLVM emitter attaches indirect-call target metadata such as `!callees` when
+every possible SSA target is a known function address. Opaque targets from
+parameters, memory loads, call results, or external ABI boundaries do not get
+target metadata.
 
 Function-pointer types carry the source function kind as part of the type. A
 `fnptr<law ...>` target has stronger source obligations than a general
 `fnptr<fn ...>` target, and the compiler may preserve those obligations in
-call-effect summaries and package-image facts.
+call-effect summaries and package-image facts. The runtime representation is
+still a thin code pointer; the kind is a compiler contract, not a different
+pointer ABI. LLVM lowering uses the preserved kind at indirect call sites:
+`fnptr<finite ...>` calls may receive `willreturn` and `mustprogress`, while
+`fnptr<law ...>` calls may receive the strongest sound readonly/purity,
+`nosync`, `nofree`, and memory-effect attributes. `fnptr<finite law ...>`
+combines both sets. Plain `fnptr<fn ...>` remains the general indirect-call
+form and does not receive those stronger attributes without another proof.
+Accepted `fnptr` values are also non-null. Type checking rejects `null`
+assignment and rejects aggregate initializer shapes that would zero-fill a
+function-pointer field or fixed-array element. LLVM ABI emission may therefore
+mark direct function-pointer parameters as `nonnull` without relying on a backend
+guess.
 
 Non-capturing lambdas should lower like anonymous internal function items. They
 may promote to thin function pointers when required by the target type.

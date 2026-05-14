@@ -174,8 +174,8 @@ internal finite law u8[1 20] DecimalLengthU64(u64[0 max] value) {
 }
 
 internal fn void CopyAsciiSliceDisjoint(
-    disjoint borrow i8[min max][] source,
-    disjoint init i8[min max][] destination,
+    borrow i8[min max][] source,
+    init i8[min max][] destination,
     u64[0 2 ** 63 - 1] count) {
     for willexit independent (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
         init destination[index] = source[index];
@@ -192,8 +192,8 @@ internal fn void CopyAsciiSliceOverlapSafe(
 }
 
 internal fn void CopyUnicodeSliceDisjoint(
-    disjoint borrow i32[min max][] source,
-    disjoint init i32[min max][] destination,
+    borrow i32[min max][] source,
+    init i32[min max][] destination,
     u64[0 2 ** 63 - 1] count) {
     for willexit independent (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
         init destination[index] = source[index];
@@ -277,7 +277,7 @@ public struct OwnedAscii {
 
     internal inline fn System.Memory.MemoryStatus AppendSliceDisjoint(
         mut borrow OwnedAscii self,
-        disjoint borrow i8[min max][] source,
+        borrow i8[min max][] source,
         u64[0 2 ** 63 - 1] count) {
         if (count == 0) {
             return System.Memory.MemoryStatus.Ok;
@@ -298,7 +298,7 @@ public struct OwnedAscii {
 
     internal inline fn System.Memory.MemoryStatus AppendAsciiDisjoint(
         mut borrow OwnedAscii self,
-        disjoint ascii source) {
+        ascii source) {
             unsafe {
             stack i64[min max] signedLength = AsciiLength(source);
             if (signedLength < 0) {
@@ -331,7 +331,7 @@ public struct OwnedAscii {
 
     internal inline fn System.Memory.MemoryStatus AppendConstAsciiDisjoint(
         mut borrow OwnedAscii self,
-        disjoint const ascii source) {
+        const ascii source) {
             unsafe {
             stack i64[min max] signedLength = AsciiLength(source);
             if (signedLength < 0) {
@@ -417,7 +417,8 @@ public struct OwnedAscii {
         }
     }
 
-    fn System.Memory.MemoryStatus AppendAscii(mut borrow OwnedAscii self, ascii source) {
+    fn System.Memory.MemoryStatus AppendAscii(mut borrow OwnedAscii self, ascii source)
+        where overlap(self, source) {
         unsafe {
             stack i64[min max] signedLength = AsciiLength(source);
             if (signedLength < 0) {
@@ -684,7 +685,7 @@ public struct OwnedUnicode {
 
     internal inline fn System.Memory.MemoryStatus AppendSliceDisjoint(
         mut borrow OwnedUnicode self,
-        disjoint borrow i32[min max][] source,
+        borrow i32[min max][] source,
         u64[0 2 ** 63 - 1] count) {
         if (count == 0) {
             return System.Memory.MemoryStatus.Ok;
@@ -710,7 +711,7 @@ public struct OwnedUnicode {
 
     internal inline fn System.Memory.MemoryStatus AppendUnicodeDisjoint(
         mut borrow OwnedUnicode self,
-        disjoint unicode source) {
+        unicode source) {
             unsafe {
             stack i64[min max] signedLength = UnicodeLength(source);
             if (signedLength < 0) {
@@ -748,7 +749,7 @@ public struct OwnedUnicode {
 
     internal inline fn System.Memory.MemoryStatus AppendConstUnicodeDisjoint(
         mut borrow OwnedUnicode self,
-        disjoint const unicode source) {
+        const unicode source) {
             unsafe {
             stack i64[min max] signedLength = UnicodeLength(source);
             if (signedLength < 0) {
@@ -849,7 +850,8 @@ public struct OwnedUnicode {
         }
     }
 
-    fn System.Memory.MemoryStatus AppendUnicode(mut borrow OwnedUnicode self, unicode source) {
+    fn System.Memory.MemoryStatus AppendUnicode(mut borrow OwnedUnicode self, unicode source)
+        where overlap(self, source) {
         unsafe {
             stack i64[min max] signedLength = UnicodeLength(source);
             if (signedLength < 0) {
@@ -887,7 +889,8 @@ public struct OwnedUnicode {
         }
     }
 
-    fn System.Memory.MemoryStatus AppendAscii(mut borrow OwnedUnicode self, ascii source) {
+    fn System.Memory.MemoryStatus AppendAscii(mut borrow OwnedUnicode self, ascii source)
+        where overlap(self, source) {
         unsafe {
             stack i64[min max] signedLength = AsciiLength(source);
             if (signedLength < 0) {
@@ -2924,8 +2927,10 @@ public fn System.Memory.MemoryStatus FromUtf16ToAscii(
     return System.Memory.MemoryStatus.Ok;
 }
 
-public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
-public unsafe finite bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
+public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right)
+    where overlap(left, right);
+public unsafe finite bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right)
+    where overlap(left, right);
 
 public unsafe finite bool TryFormatBoolAscii(rawmutptr<Ascii> destination, bool value) {
     if (value) {

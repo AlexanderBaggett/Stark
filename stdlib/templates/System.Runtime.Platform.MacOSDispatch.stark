@@ -73,7 +73,8 @@ internal unsafe fn i64[min max] ReadStdin(rawmutptr<i8[min max]>[capacity] buffe
     return System.Runtime.Platform.MacOS.ReadStdin(buffer, capacity);
 }
 
-internal unsafe inline fn i32[min max] WriteAscii(rawptr<i8[min max]> handle, ascii text) {
+internal unsafe inline fn i32[min max] WriteAscii(rawptr<i8[min max]> handle, ascii text)
+    where overlap(handle, text) {
     return System.Runtime.Platform.MacOS.WriteAscii(handle, text);
 }
 
@@ -97,7 +98,8 @@ internal unsafe fn bool IsTerminal(rawptr<i8[min max]> handle) {
     return System.Runtime.Platform.MacOS.IsTerminal(handle);
 }
 
-internal unsafe inline fn i32[min max] WriteUnicode(rawptr<i8[min max]> handle, unicode text) {
+internal unsafe inline fn i32[min max] WriteUnicode(rawptr<i8[min max]> handle, unicode text)
+    where overlap(handle, text) {
     return System.Runtime.Platform.MacOS.WriteUnicode(handle, text);
 }
 
@@ -125,27 +127,33 @@ internal unsafe fn i32[min max] FlushFile(rawptr<i8[min max]> handle) {
     return System.Runtime.Platform.MacOS.FlushFile(handle);
 }
 
-internal unsafe inline fn i64[min max] ReadFile(rawmutptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
+internal unsafe inline fn i64[min max] ReadFile(rawmutptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle)
+    where overlap(buffer, handle) {
     return System.Runtime.Platform.MacOS.ReadFile(buffer, size, count, handle);
 }
 
-internal unsafe inline fn i64[min max] WriteFile(rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle) {
+internal unsafe inline fn i64[min max] WriteFile(rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle)
+    where overlap(buffer, handle) {
     return System.Runtime.Platform.MacOS.WriteFile(buffer, size, count, handle);
 }
 
-internal unsafe inline fn i64[min max] ReadFileBytes(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
+internal unsafe inline fn i64[min max] ReadFileBytes(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle)
+    where overlap(buffer, handle) {
     return System.Runtime.Platform.MacOS.ReadFileBytes(buffer, length, handle);
 }
 
-internal unsafe inline fn i64[min max] WriteFileBytes(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
+internal unsafe inline fn i64[min max] WriteFileBytes(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle)
+    where overlap(buffer, handle) {
     return System.Runtime.Platform.MacOS.WriteFileBytes(buffer, length, handle);
 }
 
-internal unsafe inline fn i64[min max] ReadFileBytesFast(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
+internal unsafe inline fn i64[min max] ReadFileBytesFast(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle)
+    where overlap(buffer, handle) {
     return System.Runtime.Platform.MacOS.ReadFileBytes(buffer, length, handle);
 }
 
-internal unsafe inline fn i64[min max] WriteFileBytesFast(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle) {
+internal unsafe inline fn i64[min max] WriteFileBytesFast(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle)
+    where overlap(buffer, handle) {
     return System.Runtime.Platform.MacOS.WriteFileBytes(buffer, length, handle);
 }
 
@@ -220,6 +228,11 @@ internal unsafe inline fn i32[min max] ReadDirectoryEntry(
     rawmutptr<i64[min max]> readLength,
     rawmutptr<Ascii> name,
     rawmutptr<i32[min max]> kind)
+    where overlap(handle, buffer),
+          overlap(handle, readPos),
+          overlap(handle, readLength),
+          overlap(handle, name),
+          overlap(handle, kind)
 {
     return System.Runtime.Platform.MacOS.ReadDirectoryEntry(handle, buffer, capacity, readPos, readLength, name, kind);
 }
@@ -232,6 +245,11 @@ internal unsafe inline fn i32[min max] ReadDirectoryEntryInfo(
     rawmutptr<i64[min max]> readLength,
     rawmutptr<i64[min max]> nameLength,
     rawmutptr<i32[min max]> kind)
+    where overlap(handle, buffer),
+          overlap(handle, readPos),
+          overlap(handle, readLength),
+          overlap(handle, nameLength),
+          overlap(handle, kind)
 {
     return System.Runtime.Platform.MacOS.ReadDirectoryEntryInfo(handle, buffer, capacity, readPos, readLength, nameLength, kind);
 }
@@ -243,6 +261,9 @@ internal unsafe inline fn i64[min max] ReadDirectoryNameLengthChecksum(
     rawmutptr<i64[min max]> readPos,
     rawmutptr<i64[min max]> readLength,
     i64[min max] expectedCount)
+    where overlap(handle, buffer),
+          overlap(handle, readPos),
+          overlap(handle, readLength)
 {
     return System.Runtime.Platform.MacOS.ReadDirectoryNameLengthChecksum(handle, buffer, capacity, readPos, readLength, expectedCount);
 }
@@ -289,6 +310,7 @@ internal unsafe fn i64[min max] ReadSocket(
     rawptr<i8[min max]> handle,
     rawmutptr<i8[min max]>[capacity] buffer,
     u64[0 2 ** 63 - 1] capacity)
+    where overlap(handle, buffer)
 {
     return System.Runtime.Platform.MacOS.ReadSocket(handle, buffer, capacity);
 }
@@ -297,6 +319,7 @@ internal unsafe fn i64[min max] WriteSocket(
     rawptr<i8[min max]> handle,
     rawptr<i8[min max]>[length] buffer,
     u64[0 2 ** 63 - 1] length)
+    where overlap(handle, buffer)
 {
     return System.Runtime.Platform.MacOS.WriteSocket(handle, buffer, length);
 }
@@ -307,6 +330,8 @@ internal unsafe fn i64[min max] ReadSocketVector2(
     u64[0 2 ** 63 - 1] firstCapacity,
     rawmutptr<i8[min max]>[secondCapacity] secondBuffer,
     u64[0 2 ** 63 - 1] secondCapacity)
+    where overlap(handle, firstBuffer),
+          overlap(handle, secondBuffer)
 {
     return System.Runtime.Platform.MacOS.ReadSocketVector2(handle, firstBuffer, firstCapacity, secondBuffer, secondCapacity);
 }
@@ -317,6 +342,8 @@ internal unsafe fn i64[min max] WriteSocketVector2(
     u64[0 2 ** 63 - 1] firstLength,
     rawptr<i8[min max]>[secondLength] secondBuffer,
     u64[0 2 ** 63 - 1] secondLength)
+    where overlap(handle, firstBuffer),
+          overlap(handle, secondBuffer)
 {
     return System.Runtime.Platform.MacOS.WriteSocketVector2(handle, firstBuffer, firstLength, secondBuffer, secondLength);
 }

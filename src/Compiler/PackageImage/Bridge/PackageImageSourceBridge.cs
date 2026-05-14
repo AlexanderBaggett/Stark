@@ -91,7 +91,7 @@ internal static partial class PackageImageLoader
                 && type.PrimaryConstructorParameters is { Count: > 0 })
             {
                 builder.Append('(');
-                builder.Append(string.Join(", ", type.PrimaryConstructorParameters.Select(static parameter => RenderParameter(parameter))));
+                builder.Append(string.Join(", ", type.PrimaryConstructorParameters.Select(static parameter => RenderParameter(parameter, emitDisjointPrefix: false))));
                 builder.Append(')');
             }
 
@@ -157,7 +157,7 @@ internal static partial class PackageImageLoader
                         builder.Append("    ");
                         builder.Append(type.Name);
                         builder.Append('(');
-                        builder.Append(string.Join(", ", constructor.Parameters.Select(static parameter => RenderParameter(parameter))));
+                        builder.Append(string.Join(", ", constructor.Parameters.Select(static parameter => RenderParameter(parameter, emitDisjointPrefix: false))));
                         builder.Append(") ");
                         builder.AppendLine(constructor.BodyText);
                         builder.AppendLine();
@@ -246,9 +246,15 @@ internal static partial class PackageImageLoader
                     }
 
                     builder.Append('(');
-                    builder.Append(string.Join(", ", method.Parameters.Select(static parameter => RenderParameter(parameter))));
+                    builder.Append(string.Join(", ", method.Parameters.Select(parameter => RenderParameter(parameter, emitDisjointPrefix: method.IsFfi))));
                     builder.Append(')');
-                    AppendDisjointParameterGroups(builder, method.Parameters, method.DisjointParameterGroups);
+                    AppendParameterMemoryContractGroups(
+                        builder,
+                        method.Parameters,
+                        method.DisjointParameterGroups,
+                        method.OverlapParameterGroups,
+                        method.SameParameterGroups,
+                        emitDisjointGroups: method.IsFfi);
                     if (methodBodyText is null)
                     {
                         builder.AppendLine(";");
@@ -480,10 +486,10 @@ internal static partial class PackageImageLoader
         };
     }
 
-    private static string RenderParameter(StarkPackageParameterManifest parameter)
+    private static string RenderParameter(StarkPackageParameterManifest parameter, bool emitDisjointPrefix)
     {
         var parts = new List<string>(4);
-        if (parameter.IsDisjoint)
+        if (emitDisjointPrefix && parameter.IsDisjoint)
         {
             parts.Add("disjoint");
         }
@@ -514,20 +520,41 @@ internal static partial class PackageImageLoader
             : $"{typeText}[{parameter.RawPointerElementCountExpression}]";
     }
 
-    private static void AppendDisjointParameterGroups(
+    private static void AppendParameterMemoryContractGroups(
         StringBuilder builder,
         IReadOnlyList<StarkPackageParameterManifest> parameters,
-        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? groups)
+        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? disjointGroups,
+        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? overlapGroups,
+        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? sameGroups,
+        bool emitDisjointGroups)
+    {
+        if (emitDisjointGroups)
+        {
+            AppendParameterMemoryContractGroups(builder, parameters, "disjoint", disjointGroups, skipFullyPrefixedDisjointGroups: true);
+        }
+
+        AppendParameterMemoryContractGroups(builder, parameters, "overlap", overlapGroups, skipFullyPrefixedDisjointGroups: false);
+        AppendParameterMemoryContractGroups(builder, parameters, "same", sameGroups, skipFullyPrefixedDisjointGroups: false);
+    }
+
+    private static void AppendParameterMemoryContractGroups(
+        StringBuilder builder,
+        IReadOnlyList<StarkPackageParameterManifest> parameters,
+        string relationName,
+        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? groups,
+        bool skipFullyPrefixedDisjointGroups)
     {
         if (groups is null || groups.Count == 0)
         {
             return;
         }
 
-        var prefixedParameters = parameters
-            .Where(static parameter => parameter.IsDisjoint)
-            .Select(static parameter => parameter.Name)
-            .ToHashSet(StringComparer.Ordinal);
+        var prefixedParameters = skipFullyPrefixedDisjointGroups
+            ? parameters
+                .Where(static parameter => parameter.IsDisjoint)
+                .Select(static parameter => parameter.Name)
+                .ToHashSet(StringComparer.Ordinal)
+            : [];
         foreach (var group in groups)
         {
             var names = group.ParameterNames
@@ -539,7 +566,9 @@ internal static partial class PackageImageLoader
                 continue;
             }
 
-            builder.Append(" where disjoint(");
+            builder.Append(" where ");
+            builder.Append(relationName);
+            builder.Append('(');
             builder.Append(string.Join(", ", names));
             builder.Append(')');
         }
@@ -606,9 +635,16 @@ internal static partial class PackageImageLoader
         }
 
         builder.Append('(');
-        builder.Append(string.Join(", ", function.Parameters.Select(static parameter => RenderParameter(parameter))));
+        var emitDisjointContracts = function.IsFfi || function.Asm is not null;
+        builder.Append(string.Join(", ", function.Parameters.Select(parameter => RenderParameter(parameter, emitDisjointPrefix: emitDisjointContracts))));
         builder.Append(')');
-        AppendDisjointParameterGroups(builder, function.Parameters, function.DisjointParameterGroups);
+        AppendParameterMemoryContractGroups(
+            builder,
+            function.Parameters,
+            function.DisjointParameterGroups,
+            function.OverlapParameterGroups,
+            function.SameParameterGroups,
+            emitDisjointContracts);
 
         if (function.Asm is null && bodyText is null)
         {
@@ -694,7 +730,9 @@ internal static partial class PackageImageLoader
         string? publishedOverloadKey = null,
         bool isUnsafe = false,
         ModuleBackendOptimizationMode backendOptimizationMode = ModuleBackendOptimizationMode.Default,
-        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? disjointParameterGroups = null)
+        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? disjointParameterGroups = null,
+        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? overlapParameterGroups = null,
+        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? sameParameterGroups = null)
     {
         var parsedInlinePreference = ParseInlinePreferenceOrDefault(inlinePreference);
         return new FunctionDeclarationModel(
@@ -725,7 +763,9 @@ internal static partial class PackageImageLoader
             IsStatic: isStatic,
             Attributes: BuildBackendAttributes(backendOptimizationMode),
             BackendOptimizationMode: backendOptimizationMode,
-            DisjointParameterGroups: BuildParameterDisjointGroups(parameters, disjointParameterGroups));
+            DisjointParameterGroups: BuildParameterDisjointGroups(parameters, disjointParameterGroups),
+            OverlapParameterGroups: BuildParameterOverlapGroups(overlapParameterGroups),
+            SameParameterGroups: BuildParameterSameGroups(sameParameterGroups));
     }
 
     private static IReadOnlyList<ParameterDisjointGroup>? BuildParameterDisjointGroups(
@@ -756,6 +796,42 @@ internal static partial class PackageImageLoader
         }
 
         return result.Count == 0 ? null : result;
+    }
+
+    private static IReadOnlyList<ParameterOverlapGroup>? BuildParameterOverlapGroups(
+        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? groups)
+    {
+        var result = BuildParameterRelationGroups(groups)
+            .Select(static group => new ParameterOverlapGroup(group))
+            .ToArray();
+        return result.Length == 0 ? null : result;
+    }
+
+    private static IReadOnlyList<ParameterSameGroup>? BuildParameterSameGroups(
+        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? groups)
+    {
+        var result = BuildParameterRelationGroups(groups)
+            .Select(static group => new ParameterSameGroup(group))
+            .ToArray();
+        return result.Length == 0 ? null : result;
+    }
+
+    private static IReadOnlyList<IReadOnlyList<string>> BuildParameterRelationGroups(
+        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? groups)
+    {
+        if (groups is not { Count: > 0 })
+        {
+            return [];
+        }
+
+        return groups
+            .Select(static group => group.ParameterNames
+                .Where(static name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray())
+            .Where(static names => names.Length >= 2)
+            .Cast<IReadOnlyList<string>>()
+            .ToArray();
     }
 
     private static bool ParameterDisjointGroupsEqual(
@@ -2096,7 +2172,9 @@ internal static partial class PackageImageLoader
             function.IsUnsafe,
             function.IsVarargs,
             function.BackendOptimizationMode,
-            DisjointParameterGroups: function.DisjointParameterGroups);
+            DisjointParameterGroups: function.DisjointParameterGroups,
+            OverlapParameterGroups: function.OverlapParameterGroups,
+            SameParameterGroups: function.SameParameterGroups);
     }
 
     private static StarkPackageTypeManifest ConvertTypeManifest(StarkPackageTypedTypeManifest type)
@@ -2151,7 +2229,9 @@ internal static partial class PackageImageLoader
                 method.IsUnsafe,
                 method.IsVarargs,
                 method.BackendOptimizationMode,
-                DisjointParameterGroups: method.DisjointParameterGroups))
+                DisjointParameterGroups: method.DisjointParameterGroups,
+                OverlapParameterGroups: method.OverlapParameterGroups,
+                SameParameterGroups: method.SameParameterGroups))
                 .ToArray(),
             type.Destructor,
             BackendOptimizationMode: type.BackendOptimizationMode);

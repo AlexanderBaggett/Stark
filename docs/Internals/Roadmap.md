@@ -1842,7 +1842,7 @@ turn that book outline into published website content.
 ### New Langauge Features
 
 - [x] Add `disjoint` function parameter contracts.
-  - [x] support the parameter-prefix form, such as `disjoint borrow u8[] source`
+  - [x] support and later retire the ordinary Stark parameter-prefix form; whole-parameter `disjoint` is now redundant with default non-overlap except for explicit FFI/asm opt-in boundaries
   - [x] support the relational `where disjoint(a, b)` form for explicit parameter pairs and groups
   - [x] define `disjoint` as a semantic contract that the named memory regions do not overlap for the duration of the call
   - [x] reject `disjoint` declarations on non-memory-backed scalar parameters

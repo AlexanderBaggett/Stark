@@ -2,8 +2,8 @@ import System.Process
 module Benchmarks.Micro.IndependentRawPointerRegions
 
 unsafe fn void Copy(
-    disjoint rawptr<i64[min max]>[32] input,
-    disjoint rawmutptr<i64[min max]>[32] output)
+    rawptr<i64[min max]>[32] input,
+    rawmutptr<i64[min max]>[32] output)
     where disjoint(input[0, 32], output[0, 32]) {
     for willexit independent (stack mut u8[0 32] index = 0; index < 32; index += 1) {
         *(&output[index]) = *(&input[index]);
@@ -13,8 +13,8 @@ unsafe fn void Copy(
 }
 
 unsafe fn void CopyWithScalarWork(
-    disjoint rawptr<i64[min max]>[32] input,
-    disjoint rawmutptr<i64[min max]>[32] output)
+    rawptr<i64[min max]>[32] input,
+    rawmutptr<i64[min max]>[32] output)
     where disjoint(input[0, 32], output[0, 32]) {
     stack u8[0 32] before = 32;
 
@@ -63,8 +63,8 @@ unsafe fn void FillBytesWithScalarWork(rawmutptr<i8[min max]>[32] output, i8[min
 }
 
 unsafe fn void Transform(
-    disjoint rawptr<i64[min max]>[32] input,
-    disjoint rawmutptr<i64[min max]>[32] output)
+    rawptr<i64[min max]>[32] input,
+    rawmutptr<i64[min max]>[32] output)
     where disjoint(input[0, 32], output[0, 32]) {
     for willexit independent (stack mut u8[0 32] index = 0; index < 32; index += 1) {
         *(&output[index]) = *(&input[index]) + 1;

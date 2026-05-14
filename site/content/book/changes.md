@@ -97,3 +97,6 @@ This page records user-facing changes to the published Stark Book.
   construction, and independent raw-pointer loop contracts.
 - Added a checked bounded raw pointer sample covering copy, fill, transform,
   and overlap-safe fallback paths.
+- Expanded callable-value coverage so `fnptr<finite ...>`, `fnptr<law ...>`,
+  and `fnptr<finite law ...>` are described as higher-order semantic
+  guarantees, and added a checked `finite law` function-pointer sample.

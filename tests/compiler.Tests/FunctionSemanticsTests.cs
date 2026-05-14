@@ -231,7 +231,7 @@ public sealed class FunctionSemanticsTests
     }
 
     [Fact]
-    public void DisjointParameterContractsFlowIntoSemanticNoAliasFacts()
+    public void DefaultNonOverlapParameterContractsFlowIntoSemanticNoAliasFacts()
     {
         var result = Compile(
             """
@@ -241,13 +241,13 @@ public sealed class FunctionSemanticsTests
                 i32[min max] Value;
             }
 
-            unsafe fn void TouchPrefix(disjoint borrow mut Box left, disjoint borrow mut Box right) {
+            unsafe fn void TouchDefault(borrow mut Box left, borrow mut Box right) {
                 left.Value = 1;
                 right.Value = 2;
                 return;
             }
 
-            unsafe fn void TouchWhere(borrow mut Box left, borrow mut Box right) where disjoint(left, right) {
+            unsafe fn void TouchSecondDefault(borrow mut Box left, borrow mut Box right) {
                 left.Value = 1;
                 right.Value = 2;
                 return;
@@ -258,13 +258,60 @@ public sealed class FunctionSemanticsTests
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? validation));
         Assert.NotNull(validation);
 
-        var prefixParameters = validation.Functions["TouchPrefix"].Parameters!.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        var prefixParameters = validation.Functions["TouchDefault"].Parameters!.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
         Assert.True(prefixParameters["left"].GuaranteedNoAlias);
         Assert.True(prefixParameters["right"].GuaranteedNoAlias);
 
-        var whereParameters = validation.Functions["TouchWhere"].Parameters!.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        var whereParameters = validation.Functions["TouchSecondDefault"].Parameters!.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
         Assert.True(whereParameters["left"].GuaranteedNoAlias);
         Assert.True(whereParameters["right"].GuaranteedNoAlias);
+    }
+
+    [Fact]
+    public void DefaultNonOverlapAndOverlapContractsFlowIntoSemanticNoAliasFacts()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[min max] Value;
+            }
+
+            unsafe fn void TouchDefault(borrow mut Box left, borrow mut Box right) {
+                left.Value = 1;
+                right.Value = 2;
+                return;
+            }
+
+            unsafe fn void TouchOverlap(borrow mut Box left, borrow mut Box right) where overlap(left, right) {
+                left.Value = 1;
+                right.Value = 2;
+                return;
+            }
+
+            unsafe fn void TouchSame(borrow mut Box left, borrow mut Box right) where same(left, right) {
+                left.Value = 1;
+                right.Value = 2;
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? validation));
+        Assert.NotNull(validation);
+
+        var defaultParameters = validation.Functions["TouchDefault"].Parameters!.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        Assert.True(defaultParameters["left"].GuaranteedNoAlias);
+        Assert.True(defaultParameters["right"].GuaranteedNoAlias);
+
+        var overlapParameters = validation.Functions["TouchOverlap"].Parameters!.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        Assert.False(overlapParameters["left"].GuaranteedNoAlias);
+        Assert.False(overlapParameters["right"].GuaranteedNoAlias);
+
+        var sameParameters = validation.Functions["TouchSame"].Parameters!.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        Assert.False(sameParameters["left"].GuaranteedNoAlias);
+        Assert.False(sameParameters["right"].GuaranteedNoAlias);
     }
 
     [Fact]

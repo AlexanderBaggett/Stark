@@ -4001,7 +4001,9 @@ internal static partial class PackageImageBuilder
                             .Select(typeArgument => BuildPublishedAbiTypeReference(typeArgument, module))
                             .ToArray()
                         : null,
-                    DisjointParameterGroups: BuildParameterDisjointGroupManifests(record.Signature.DisjointGroups))
+                    DisjointParameterGroups: BuildParameterDisjointGroupManifests(record.Signature.DisjointGroups),
+                    OverlapParameterGroups: BuildParameterOverlapGroupManifests(record.Signature.OverlapGroups),
+                    SameParameterGroups: BuildParameterSameGroupManifests(record.Signature.SameGroups))
                 : null)
             .Where(static directCall => directCall is not null)
             .Cast<StarkPackageTemplateDirectCallManifest>()
@@ -4080,7 +4082,9 @@ internal static partial class PackageImageBuilder
                             .Select(typeArgument => BuildPublishedAbiTypeReference(typeArgument, module))
                             .ToArray()
                         : null,
-                    DisjointParameterGroups: BuildParameterDisjointGroupManifests(record.Signature.DisjointGroups))
+                    DisjointParameterGroups: BuildParameterDisjointGroupManifests(record.Signature.DisjointGroups),
+                    OverlapParameterGroups: BuildParameterOverlapGroupManifests(record.Signature.OverlapGroups),
+                    SameParameterGroups: BuildParameterSameGroupManifests(record.Signature.SameGroups))
                 : null)
             .Where(static memberCall => memberCall is not null)
             .Cast<StarkPackageTemplateMemberCallManifest>()
@@ -4262,7 +4266,9 @@ internal static partial class PackageImageBuilder
                 "functionpointer",
                 FunctionKind: RenderPublishedFunctionPointerKind(signature.functionKind().GetText()),
                 ReturnType: returnType,
-                ParameterTypes: parameterTypes.Count == 0 ? null : parameterTypes.ToArray());
+                ParameterTypes: parameterTypes.Count == 0 ? null : parameterTypes.ToArray(),
+                OverlapParameterGroups: BuildParameterOverlapGroupManifests(signature.parameterMemoryContractClause()),
+                SameParameterGroups: BuildParameterSameGroupManifests(signature.parameterMemoryContractClause()));
             return true;
         }
 

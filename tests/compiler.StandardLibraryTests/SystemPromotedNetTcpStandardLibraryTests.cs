@@ -157,7 +157,7 @@ public sealed class SystemPromotedNetTcpStandardLibraryTests : StandardLibraryTe
         var fixed512Read = ExtractLlvmFunctionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_FixedByteBuffer512_(");
         var fixed4096Read = ExtractLlvmFunctionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_FixedByteBuffer4096_(");
         var fixed8192Read = ExtractLlvmFunctionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_FixedByteBuffer8192_(");
-        var dynamicRead = ExtractLlvmFunctionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_DynamicByteBuffer_u64_0_2__63__1__(");
+        var dynamicRead = ExtractLlvmFunctionBody(llvm, "@TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_DynamicByteBuffer_");
         var fixedReads = string.Join(Environment.NewLine, [fixed512Read, fixed4096Read, fixed8192Read]);
 
         Assert.Contains("ptr noundef nonnull noalias nocapture dereferenceable(528) align 8 %arg_destination", fixed512Read, StringComparison.Ordinal);

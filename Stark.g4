@@ -89,11 +89,25 @@ parameterContractPrefix
     ;
 
 parameterMemoryContractClause
-    : WHERE disjointContract (COMMA disjointContract)* COMMA?
+    : WHERE parameterMemoryContract (COMMA parameterMemoryContract)* COMMA?
+    ;
+
+parameterMemoryContract
+    : disjointContract
+    | overlapContract
+    | sameContract
     ;
 
 disjointContract
     : DISJOINT LPAREN expressionList RPAREN
+    ;
+
+overlapContract
+    : OVERLAP LPAREN expressionList RPAREN
+    ;
+
+sameContract
+    : SAME LPAREN expressionList RPAREN
     ;
 
 typeParameterList
@@ -341,7 +355,7 @@ functionPointerType
     ;
 
 functionPointerSignature
-    : functionKind returnType functionPointerParameterList
+    : functionKind returnType functionPointerParameterList parameterMemoryContractClause*
     ;
 
 functionPointerParameterList
@@ -398,6 +412,7 @@ block
 statement
     : block
     | unsafeStatement
+    | assumeStatement
     | localConstantDeclaration
     | localVariableDeclaration
     | ifStatement
@@ -412,7 +427,11 @@ statement
     ;
 
 unsafeStatement
-    : UNSAFE block
+    : UNSAFE (block | assumeStatement)
+    ;
+
+assumeStatement
+    : ASSUME disjointRuntimeCondition statement
     ;
 
 localConstantDeclaration
@@ -822,6 +841,9 @@ RAWMUTPTR   : 'rawmutptr';
 FNPTR       : 'fnptr';
 MUT         : 'mut';
 DISJOINT    : 'disjoint';
+OVERLAP     : 'overlap';
+SAME        : 'same';
+ASSUME      : 'assume';
 
 IF          : 'if';
 ELSE        : 'else';

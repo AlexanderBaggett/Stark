@@ -359,7 +359,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
                 return;
             }
 
@@ -371,6 +371,377 @@ public sealed class DiagnosticRegressionTests
 
         Assert.False(result.Succeeded);
         AssertDiagnostic(result, "STK3030", "violates disjoint parameter contract", "left", "right", "ptr");
+    }
+
+    [Fact]
+    public void DefaultNonOverlapParametersRejectObviousOverlappingArguments()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+                return;
+            }
+
+            unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
+                Touch(ptr, ptr);
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3030", "violates disjoint parameter contract", "default non-overlap", "left", "right", "ptr");
+    }
+
+    [Fact]
+    public void OverlapContractAllowsIntentionalOverlappingArguments()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+                where overlap(left, right) {
+                *left = *right;
+                return;
+            }
+
+            unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
+                Touch(ptr, ptr);
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void SameContractRejectsDistinctRegions()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+                where same(left, right) {
+                return;
+            }
+
+            unsafe fn void Run() {
+                stack mut i32[min max] left = 1;
+                stack mut i32[min max] right = 2;
+                Touch(&left, &right);
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3030", "same-memory parameter contract", "left", "right", "same memory region");
+    }
+
+    [Fact]
+    public void SameContractAcceptsSameRegion()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+                where same(left, right) {
+                return;
+            }
+
+            unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
+                Touch(ptr, ptr);
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void DefaultNonOverlapRejectsImmutableRawPointerLocalAliases()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+                return;
+            }
+
+            unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
+                stack rawmutptr<i32[min max]> mirror = ptr;
+                Touch(ptr, mirror);
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3030", "violates disjoint parameter contract", "left", "right", "ptr");
+    }
+
+    [Fact]
+    public void DefaultNonOverlapRejectsMutableRawPointerAssignmentAliases()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+                return;
+            }
+
+            unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
+                stack mut rawmutptr<i32[min max]> mirror = null;
+                mirror = ptr;
+                Touch(ptr, mirror);
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3030", "violates disjoint parameter contract", "left", "right", "ptr");
+    }
+
+    [Fact]
+    public void DefaultNonOverlapRejectsMutableRawPointerInitializerAliases()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+                return;
+            }
+
+            unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
+                stack mut rawmutptr<i32[min max]> mirror = ptr;
+                Touch(ptr, mirror);
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3030", "violates disjoint parameter contract", "left", "right", "ptr");
+    }
+
+    [Fact]
+    public void DefaultNonOverlapRejectsIndirectFunctionPointerRawPointerAliases()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Run(
+                fnptr<fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>)> op,
+                rawmutptr<i32[min max]> ptr) {
+                op(ptr, ptr);
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3030", "violates disjoint parameter contract", "default non-overlap", "arg0", "arg1", "ptr");
+    }
+
+    [Fact]
+    public void FunctionPointerWhereDisjointIsRejectedAsRedundant()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Run(
+                fnptr<fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>) where disjoint(arg0, arg1)> op) {
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3029", "Function pointer", "where disjoint", "redundant", "where overlap", "where same");
+    }
+
+    [Fact]
+    public void FunctionPointerMemoryContractsRejectNonMemoryBackedOperands()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Run(
+                fnptr<fn void(i32[min max], rawmutptr<i32[min max]>) where overlap(arg0, arg1)> op) {
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3029", "Function pointer", "overlap", "arg0", "non-memory-backed", "i32");
+    }
+
+    [Fact]
+    public void FunctionPointerMemoryContractsRejectUnknownSyntheticOperands()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Run(
+                fnptr<fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>) where same(arg0, arg2)> op) {
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3029", "Function pointer", "same", "unknown parameter 'arg2'");
+    }
+
+    [Fact]
+    public void DefaultNonOverlapAcceptsMutableRawPointerInitializersFromDistinctRoots()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+                *left = *right;
+                return;
+            }
+
+            unsafe fn void Run() {
+                stack mut i32[min max] leftValue = 1;
+                stack mut i32[min max] rightValue = 2;
+                stack mut rawmutptr<i32[min max]> left = &leftValue;
+                stack mut rawmutptr<i32[min max]> right = &rightValue;
+                Touch(left, right);
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void SameContractAcceptsMutableRawPointerInitializerAlias()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+                where same(left, right) {
+                return;
+            }
+
+            unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
+                stack mut rawmutptr<i32[min max]> mirror = ptr;
+                Touch(ptr, mirror);
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void DefaultNonOverlapRejectsSimpleRawPointerCastAliases()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+                return;
+            }
+
+            unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
+                stack rawmutptr<i32[min max]> mirror = (rawmutptr<i32[min max]>)ptr;
+                Touch(ptr, mirror);
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3030", "violates disjoint parameter contract", "left", "right", "ptr");
+    }
+
+    [Fact]
+    public void DefaultNonOverlapRejectsIntegerLaunderedRawPointerAliasesWithoutProof()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+                return;
+            }
+
+            unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
+                stack u64[min max] bits = (u64[min max])ptr;
+                stack rawmutptr<i32[min max]> mirror = (rawmutptr<i32[min max]>)bits;
+                Touch(ptr, mirror);
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3030", "violates disjoint parameter contract", "left", "right", "ptr or mirror");
+    }
+
+    [Fact]
+    public void DefaultNonOverlapInvalidatesMutablePointerAliasAfterBranchAssignment()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+                return;
+            }
+
+            unsafe fn void Run(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right, bool flag) {
+                stack mut rawmutptr<i32[min max]> mirror = null;
+                mirror = left;
+                if (flag) {
+                    mirror = right;
+                }
+
+                Touch(left, mirror);
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3030", "violates disjoint parameter contract", "left", "right", "left or mirror");
+    }
+
+    [Fact]
+    public void BranchLocalPointerAliasInvalidationDoesNotPolluteSiblingBranch()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+                return;
+            }
+
+            unsafe fn void Run(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right, bool flag) {
+                stack mut rawmutptr<i32[min max]> mirror = null;
+                mirror = left;
+                if (flag) {
+                    mirror = right;
+                } else {
+                    Touch(mirror, right);
+                }
+
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
 
     [Fact]
@@ -390,7 +761,23 @@ public sealed class DiagnosticRegressionTests
     }
 
     [Fact]
-    public void WhereDisjointParameterCallsRejectObviousOverlappingArguments()
+    public void WholeParameterDisjointPrefixIsRejectedWithFixItDiagnostic()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Touch(disjoint rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3028", "no longer needs", "Remove 'disjoint'", "where overlap", "where same", "subregions");
+    }
+
+    [Fact]
+    public void WholeParameterWhereDisjointIsRejectedWithFixItDiagnostic()
     {
         var result = Compile(
             """
@@ -400,15 +787,23 @@ public sealed class DiagnosticRegressionTests
                 where disjoint(left, right) {
                 return;
             }
-
-            unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
-                Touch(ptr, (ptr));
-                return;
-            }
             """);
 
         Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK3030", "violates disjoint parameter contract", "left", "right", "ptr");
+        AssertDiagnostic(result, "STK3029", "Whole-parameter", "where disjoint(left, right)", "Remove the clause", "where overlap", "where same", "subregions");
+    }
+
+    [Fact]
+    public void FfiWholeParameterDisjointStillOptsIntoExternalNoAliasContract()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            public unsafe ffi fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right);
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
 
     [Fact]
@@ -429,13 +824,64 @@ public sealed class DiagnosticRegressionTests
     }
 
     [Fact]
-    public void UnsafeFunctionDisjointParameterCallsAllowProgrammerProvenRawPointerArguments()
+    public void OverlapContractsRejectRepeatedOperands()
     {
         var result = Compile(
             """
             module Demo
 
-            unsafe fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+                where overlap(left, left) {
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3029", "Overlap contract repeats parameter 'left'");
+    }
+
+    [Fact]
+    public void SameContractsRejectUnknownOperands()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+                where same(left, missing) {
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3029", "Same contract references unknown parameter 'missing'");
+    }
+
+    [Fact]
+    public void OverlapContractsRejectNonMemoryBackedOperands()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Touch(i32[min max] value, rawmutptr<i32[min max]> ptr)
+                where overlap(value, ptr) {
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3029", "Overlap contract references parameter 'value'", "non-memory-backed", "i32");
+    }
+
+    [Fact]
+    public void UnsafeFunctionDisjointParameterCallsForwardCallerDefaultParameterFacts()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
                 return;
             }
 
@@ -449,7 +895,7 @@ public sealed class DiagnosticRegressionTests
     }
 
     [Fact]
-    public void UnsafeFunctionDisjointParameterCallsAllowProgrammerProvenUnrootedArguments()
+    public void UnsafeFunctionDisjointParameterCallsRejectHiddenRootsWithoutAssumption()
     {
         var result = Compile(
             """
@@ -459,7 +905,7 @@ public sealed class DiagnosticRegressionTests
                 return ptr;
             }
 
-            unsafe fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
                 return;
             }
 
@@ -469,22 +915,24 @@ public sealed class DiagnosticRegressionTests
             }
             """);
 
-        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3030", "compiler-visible non-overlap proof", "left", "right", "statically identifiable memory root");
     }
 
     [Fact]
-    public void UnsafeDisjointParameterCallsAllowProgrammerProvenRawPointerArguments()
+    public void UnsafeAssumeDisjointAllowsProgrammerProvenRawPointerArguments()
     {
         var result = Compile(
             """
             module Demo
 
-            unsafe fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
                 return;
             }
 
-            unsafe fn void Run(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight) {
-                unsafe {
+            unsafe fn void Run(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight)
+                where overlap(maybeLeft, maybeRight) {
+                unsafe assume disjoint(maybeLeft, maybeRight) {
                     Touch(maybeLeft, maybeRight);
                 }
 
@@ -496,23 +944,20 @@ public sealed class DiagnosticRegressionTests
     }
 
     [Fact]
-    public void UnsafeDisjointParameterCallsAllowProgrammerProvenUnrootedArguments()
+    public void BareAssumeDisjointIsAllowedInsideUnsafeFunction()
     {
         var result = Compile(
             """
             module Demo
 
-            unsafe fn rawmutptr<i32[min max]> Identity(rawmutptr<i32[min max]> ptr) {
-                return ptr;
-            }
-
-            unsafe fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
                 return;
             }
 
-            unsafe fn void Run(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight) {
-                unsafe {
-                    Touch(Identity(maybeLeft), Identity(maybeRight));
+            unsafe fn void Run(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight)
+                where overlap(maybeLeft, maybeRight) {
+                assume disjoint(maybeLeft, maybeRight) {
+                    Touch(maybeLeft, maybeRight);
                 }
 
                 return;
@@ -523,18 +968,126 @@ public sealed class DiagnosticRegressionTests
     }
 
     [Fact]
+    public void BareAssumeDisjointRequiresUnsafeContext()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[min max] Value;
+            }
+
+            fn void Touch(borrow mut Box left, borrow mut Box right) {
+                return;
+            }
+
+            fn void Run(borrow mut Box maybeLeft, borrow mut Box maybeRight)
+                where overlap(maybeLeft, maybeRight) {
+                assume disjoint(maybeLeft, maybeRight) {
+                    Touch(maybeLeft, maybeRight);
+                }
+
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3024", "Unsafe disjoint assumptions require an unsafe context", "unsafe assume disjoint");
+    }
+
+    [Fact]
+    public void UnsafeBlockAloneDoesNotSatisfyUnknownDisjointCallContract()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+                return;
+            }
+
+            unsafe fn void Run(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight)
+                where overlap(maybeLeft, maybeRight) {
+                unsafe {
+                    Touch(maybeLeft, maybeRight);
+                }
+
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3030", "violates disjoint parameter contract", "left", "right", "maybeLeft or maybeRight");
+    }
+
+    [Fact]
+    public void UnsafeAssumeDisjointRejectsHiddenRoots()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn rawmutptr<i32[min max]> Identity(rawmutptr<i32[min max]> ptr) {
+                return ptr;
+            }
+
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+                return;
+            }
+
+            unsafe fn void Run(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight)
+                where overlap(maybeLeft, maybeRight) {
+                unsafe assume disjoint(Identity(maybeLeft), maybeRight) {
+                    Touch(Identity(maybeLeft), maybeRight);
+                }
+
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3031", "Unsafe disjoint assumptions", "compiler-visible memory regions", "hidden call results");
+    }
+
+    [Fact]
+    public void UnsafeAssumeDisjointRejectsObviousSameRoot()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+                where overlap(left, right) {
+                return;
+            }
+
+            unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
+                unsafe assume disjoint(ptr, ptr) {
+                    Touch(ptr, ptr);
+                }
+
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3031", "Unsafe disjoint assumptions", "distinct compiler-visible memory regions", "Same-root assumptions");
+    }
+
+    [Fact]
     public void DisjointParameterFactsAllowForwardingToDisjointCallee()
     {
         var result = Compile(
             """
             module Demo
 
-            unsafe fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
                 return;
             }
 
             unsafe fn void Run(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
-                where disjoint(left, right) {
+            {
                 Touch(left, right);
                 return;
             }
@@ -554,7 +1107,7 @@ public sealed class DiagnosticRegressionTests
                 i32[min max] Value;
             }
 
-            unsafe fn void Touch(disjoint borrow mut Box left, disjoint borrow mut Box right) {
+            unsafe fn void Touch(borrow mut Box left, borrow mut Box right) {
                 left.Value = 1;
                 right.Value = 2;
                 return;
@@ -580,7 +1133,7 @@ public sealed class DiagnosticRegressionTests
                 i32[min max] Value;
             }
 
-            unsafe fn void Touch(disjoint out Box left, disjoint out Box right) {
+            unsafe fn void Touch(out Box left, out Box right) {
                 left = new Box() { Value = 1 };
                 right = new Box() { Value = 2 };
                 return;
@@ -606,7 +1159,7 @@ public sealed class DiagnosticRegressionTests
                 i32[min max] Value;
             }
 
-            unsafe fn void Touch(disjoint out Box left, disjoint out Box right) {
+            unsafe fn void Touch(out Box left, out Box right) {
                 left = new Box() { Value = 1 };
                 right = new Box() { Value = 2 };
                 return;
@@ -629,7 +1182,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(disjoint borrow i32[min max][] left, disjoint borrow i32[min max][] right) {
+            unsafe fn void Touch(borrow i32[min max][] left, borrow i32[min max][] right) {
                 return;
             }
 
@@ -653,7 +1206,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(disjoint borrow i32[min max][] left, disjoint borrow i32[min max][] right) {
+            unsafe fn void Touch(borrow i32[min max][] left, borrow i32[min max][] right) {
                 return;
             }
 
@@ -676,7 +1229,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(disjoint ascii left, disjoint ascii right) {
+            unsafe fn void Touch(ascii left, ascii right) {
                 return;
             }
 
@@ -698,7 +1251,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(disjoint ascii left, disjoint ascii right) {
+            unsafe fn void Touch(ascii left, ascii right) {
                 return;
             }
 
@@ -720,7 +1273,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(disjoint ascii left, disjoint ascii right) {
+            unsafe fn void Touch(ascii left, ascii right) {
                 return;
             }
 
@@ -741,7 +1294,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(disjoint ascii left, disjoint ascii right) {
+            unsafe fn void Touch(ascii left, ascii right) {
                 return;
             }
 
@@ -758,7 +1311,7 @@ public sealed class DiagnosticRegressionTests
     }
 
     [Fact]
-    public void DisjointParameterCallsRejectDistinctReadonlyBorrowParametersWithoutProof()
+    public void DisjointParameterCallsAcceptDefaultNonOverlapReadonlyBorrowParameters()
     {
         var result = Compile(
             """
@@ -768,7 +1321,7 @@ public sealed class DiagnosticRegressionTests
                 i32[min max] Value;
             }
 
-            fn void Touch(disjoint borrow Box left, disjoint borrow Box right) {
+            fn void Touch(borrow Box left, borrow Box right) {
                 return;
             }
 
@@ -778,8 +1331,7 @@ public sealed class DiagnosticRegressionTests
             }
             """);
 
-        Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK3030", "violates disjoint parameter contract", "left", "right", "maybeLeft", "maybeRight");
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
 
     [Fact]
@@ -792,7 +1344,7 @@ public sealed class DiagnosticRegressionTests
             struct Box {
                 i32[min max] Value;
 
-                fn void Touch(disjoint borrow mut Box self, disjoint borrow mut Box other) {
+                fn void Touch(borrow mut Box self, borrow mut Box other) {
                     self.Value = 1;
                     other.Value = 2;
                     return;
@@ -809,7 +1361,7 @@ public sealed class DiagnosticRegressionTests
     }
 
     [Fact]
-    public void DisjointMethodCallsRejectUnprovenReceiverContracts()
+    public void DisjointMethodCallsAcceptDefaultNonOverlapReceiverContracts()
     {
         var result = Compile(
             """
@@ -818,7 +1370,7 @@ public sealed class DiagnosticRegressionTests
             struct Box {
                 i32[min max] Value;
 
-                fn void Touch(disjoint borrow Box self, disjoint borrow Box other) {
+                fn void Touch(borrow Box self, borrow Box other) {
                     return;
                 }
             }
@@ -829,8 +1381,7 @@ public sealed class DiagnosticRegressionTests
             }
             """);
 
-        Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK3030", "violates disjoint parameter contract", "self", "other", "maybeRight");
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
 
     [Fact]
@@ -840,7 +1391,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
                 return;
             }
 
@@ -867,7 +1418,7 @@ public sealed class DiagnosticRegressionTests
                 i32[min max] Right;
             }
 
-            unsafe fn void Touch(disjoint rawmutptr<Pair> whole, disjoint rawmutptr<i32[min max]> field) {
+            unsafe fn void Touch(rawmutptr<Pair> whole, rawmutptr<i32[min max]> field) {
                 return;
             }
 
@@ -893,7 +1444,7 @@ public sealed class DiagnosticRegressionTests
                 i32[min max] Right;
             }
 
-            unsafe fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
                 return;
             }
 
@@ -913,7 +1464,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
                 return;
             }
 
@@ -935,7 +1486,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
                 return;
             }
 
@@ -956,7 +1507,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
                 return;
             }
 
@@ -977,7 +1528,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
                 return;
             }
 
@@ -999,7 +1550,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
                 return;
             }
 
@@ -1023,7 +1574,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(disjoint ascii left, disjoint ascii right) {
+            unsafe fn void Touch(ascii left, ascii right) {
                 return;
             }
 
@@ -1049,8 +1600,8 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             unsafe fn void Touch(
-                disjoint borrow mut i32[min max][] left,
-                disjoint borrow i32[min max][] right) {
+                borrow mut i32[min max][] left,
+                borrow i32[min max][] right) {
                 return;
             }
 
@@ -1084,7 +1635,7 @@ public sealed class DiagnosticRegressionTests
                 i32[min max] Value;
             }
 
-            unsafe fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
                 return;
             }
 
@@ -1112,7 +1663,7 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
                 return;
             }
 
@@ -1176,9 +1727,9 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             unsafe fn void Add(
-                disjoint borrow i32[min max][] left,
-                disjoint borrow i32[min max][] right,
-                disjoint borrow mut i32[min max][] output,
+                borrow i32[min max][] left,
+                borrow i32[min max][] right,
+                borrow mut i32[min max][] output,
                 u8[0 10] count) {
                 for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     output[index] = left[index] + right[index];
@@ -1199,9 +1750,9 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             unsafe fn void SelectPositive(
-                disjoint borrow i32[min max][] left,
-                disjoint borrow i32[min max][] right,
-                disjoint borrow mut i32[min max][] output,
+                borrow i32[min max][] left,
+                borrow i32[min max][] right,
+                borrow mut i32[min max][] output,
                 u8[0 10] count) {
                 for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     if (left[index] > 0) {
@@ -1230,8 +1781,8 @@ public sealed class DiagnosticRegressionTests
             }
 
             unsafe fn void Copy(
-                disjoint borrow Cell[] input,
-                disjoint borrow mut Cell[] output,
+                borrow Cell[] input,
+                borrow mut Cell[] output,
                 u8[0 10] count) {
                 for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     output[index].Value = input[index].Value;
@@ -1252,8 +1803,8 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             unsafe fn void Copy(
-                disjoint rawptr<i32[min max]>[count] input,
-                disjoint rawmutptr<i32[min max]>[count] output,
+                rawptr<i32[min max]>[count] input,
+                rawmutptr<i32[min max]>[count] output,
                 u8[0 10] count)
                 where disjoint(input[0, count], output[0, count]) {
                 for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
@@ -1676,8 +2227,8 @@ public sealed class DiagnosticRegressionTests
             }
 
             unsafe fn void ScaleAll(
-                disjoint borrow i32[min max][] input,
-                disjoint borrow mut i32[min max][] output,
+                borrow i32[min max][] input,
+                borrow mut i32[min max][] output,
                 u8[0 10] count) {
                 for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     output[index] = Scale(input[index]);
@@ -1700,7 +2251,8 @@ public sealed class DiagnosticRegressionTests
             unsafe fn void Add(
                 borrow i32[min max][] input,
                 borrow mut i32[min max][] output,
-                u8[0 10] count) {
+                u8[0 10] count)
+                where overlap(input, output) {
                 for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     output[index] = input[index];
                 }
@@ -1721,8 +2273,8 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             unsafe fn void Copy(
-                disjoint borrow i32[min max][] input,
-                disjoint borrow mut i32[min max][] output,
+                borrow i32[min max][] input,
+                borrow mut i32[min max][] output,
                 u8[0 10] count,
                 u8[0 10] other) {
                 for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
@@ -1745,8 +2297,8 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             unsafe fn void Copy(
-                disjoint borrow i32[min max][] input,
-                disjoint borrow mut i32[min max][] output,
+                borrow i32[min max][] input,
+                borrow mut i32[min max][] output,
                 u8[0 10] count) {
                 for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     index += 1;
@@ -1773,8 +2325,8 @@ public sealed class DiagnosticRegressionTests
             }
 
             unsafe fn void ScaleAll(
-                disjoint borrow i32[min max][] input,
-                disjoint borrow mut i32[min max][] output,
+                borrow i32[min max][] input,
+                borrow mut i32[min max][] output,
                 u8[0 10] count) {
                 for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     output[index] = Scale(input[index]);
@@ -1816,8 +2368,8 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             unsafe fn void Copy(
-                disjoint borrow i32[min max][] input,
-                disjoint borrow mut i32[min max][] output,
+                borrow i32[min max][] input,
+                borrow mut i32[min max][] output,
                 u8[0 10] count) {
                 for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     stack mut i32[min max][2] values = { input[index], 0 };
@@ -1840,8 +2392,8 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             unsafe fn void Copy(
-                disjoint borrow i32[min max][] input,
-                disjoint borrow mut i32[min max][] output,
+                borrow i32[min max][] input,
+                borrow mut i32[min max][] output,
                 u8[0 10] count) {
                 for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     while willexit (false) {
@@ -1866,8 +2418,8 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             unsafe fn void Copy(
-                disjoint borrow i32[min max][] input,
-                disjoint borrow mut i32[min max][] output,
+                borrow i32[min max][] input,
+                borrow mut i32[min max][] output,
                 u8[0 10] count) {
                 for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     if (input[index] == 0) {
