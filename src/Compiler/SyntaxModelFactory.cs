@@ -1321,16 +1321,22 @@ internal static class SyntaxModelFactory
                          .Select(static contract => contract.disjointContract())
                          .Where(static contract => contract is not null)!)
             {
-                var names = contract.expressionList()
+                var regions = contract.expressionList()
                     .expression()
-                    .Select(static expression => TryGetDisjointContractParameterName(expression.GetText()))
-                    .Where(static name => !string.IsNullOrWhiteSpace(name))
-                    .Select(static name => name!)
+                    .Select(static expression => TryGetParameterMemoryRegion(expression.GetText()))
+                    .Where(static region => region is not null)
+                    .Select(static region => region!)
+                    .ToArray();
+                var names = regions
+                    .Select(static region => region.ParameterName)
                     .Distinct(StringComparer.Ordinal)
                     .ToArray();
-                if (names.Length > 1)
+                var hasSubregions = regions.Any(static region => !region.IsWholeParameter);
+                if (regions.Length > 1 && (hasSubregions || names.Length > 1))
                 {
-                    groups.Add(new ParameterDisjointGroup(names));
+                    groups.Add(hasSubregions
+                        ? new ParameterDisjointGroup(names, regions)
+                        : new ParameterDisjointGroup(names));
                 }
             }
         }
@@ -1392,15 +1398,38 @@ internal static class SyntaxModelFactory
 
     private static string? TryGetDisjointContractParameterName(string operandText)
     {
+        return TryGetParameterMemoryRegion(operandText)?.ParameterName;
+    }
+
+    private static ParameterMemoryRegion? TryGetParameterMemoryRegion(string operandText)
+    {
         operandText = TrimOuterParentheses(operandText);
         if (!TryReadIdentifier(operandText, 0, out var identifier, out var position))
         {
             return null;
         }
 
-        return position == operandText.Length || operandText[position] == '['
-            ? identifier
-            : null;
+        if (position == operandText.Length)
+        {
+            return new ParameterMemoryRegion(identifier);
+        }
+
+        if (operandText[position] != '[' || operandText[^1] != ']')
+        {
+            return null;
+        }
+
+        var regionText = operandText[(position + 1)..^1];
+        var separator = regionText.IndexOf(',', StringComparison.Ordinal);
+        if (separator <= 0 || separator >= regionText.Length - 1)
+        {
+            return null;
+        }
+
+        return new ParameterMemoryRegion(
+            identifier,
+            TrimOuterParentheses(regionText[..separator]),
+            TrimOuterParentheses(regionText[(separator + 1)..]));
     }
 
     private static string TrimOuterParentheses(string text)

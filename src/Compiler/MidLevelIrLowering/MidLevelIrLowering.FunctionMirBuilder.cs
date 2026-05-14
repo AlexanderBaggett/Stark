@@ -104,7 +104,8 @@ internal sealed partial class MidLevelIrLowerer
             MidLevelIrOperand ResultValue,
             MidLevelIrOperand? Address,
             bool ReplacesWholeValue,
-            DynamicStorageLengthUpdate? DynamicLengthUpdate = null);
+            DynamicStorageLengthUpdate? DynamicLengthUpdate = null,
+            MemoryWriteKind WriteKind = MemoryWriteKind.Replacement);
 
         private sealed record DynamicStorageLengthUpdate(
             MidLevelIrOperand StorageAddress,
@@ -630,7 +631,12 @@ internal sealed partial class MidLevelIrLowerer
 
                 var loop = _loops.Peek();
                 EmitStorageDeadBeyondDepth(loop.ScopeDepth);
-                CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [loop.ContinueTarget]);
+                CurrentBlock.Terminator = new MidLevelIrTerminator(
+                    MidLevelIrTerminatorKind.Goto,
+                    [loop.ContinueTarget],
+                    LoopBehavior: loop.ContinueLoopBehavior,
+                    LoopContracts: loop.ContinueLoopContracts,
+                    LoopAccessGroups: loop.ContinueLoopAccessGroups);
                 return;
             }
 
@@ -1314,7 +1320,13 @@ internal sealed partial class MidLevelIrLowerer
                         $"Object initializer for local '{name}' did not materialize a MIR value.");
                 }
 
-                Emit(MidLevelIrStatementKind.Assign, $"{name} = {FormatInitializer(initializer)}", name, declaredType, new MidLevelIrUseRValue(value));
+                Emit(
+                    MidLevelIrStatementKind.Assign,
+                    $"{name} = {FormatInitializer(initializer)}",
+                    name,
+                    declaredType,
+                    new MidLevelIrUseRValue(value),
+                    writeKind: MemoryWriteKind.Initialization);
                 return OperandHasConstProvenance(value);
             }
 
@@ -1328,7 +1340,13 @@ internal sealed partial class MidLevelIrLowerer
                         $"Array initializer for local '{name}' did not materialize a MIR value.");
                 }
 
-                Emit(MidLevelIrStatementKind.Assign, $"{name} = {FormatInitializer(initializer)}", name, declaredType, new MidLevelIrUseRValue(value));
+                Emit(
+                    MidLevelIrStatementKind.Assign,
+                    $"{name} = {FormatInitializer(initializer)}",
+                    name,
+                    declaredType,
+                    new MidLevelIrUseRValue(value),
+                    writeKind: MemoryWriteKind.Initialization);
                 return OperandHasConstProvenance(value);
             }
 
@@ -1708,7 +1726,8 @@ internal sealed partial class MidLevelIrLowerer
                         DirectValue: null,
                         ResultValue: assignedValue,
                         Address: initPointerAddress,
-                        ReplacesWholeValue: false);
+                        ReplacesWholeValue: false,
+                        WriteKind: MemoryWriteKind.Initialization);
                     return true;
                 }
 
@@ -1725,7 +1744,10 @@ internal sealed partial class MidLevelIrLowerer
                         $"Init assignment '{initAssignmentText}' did not lower its right-hand side.");
                 }
 
-                assignment = BuildAssignment(initTarget, initValue, initAssignmentText);
+                assignment = BuildAssignment(initTarget, initValue, initAssignmentText) with
+                {
+                    WriteKind = MemoryWriteKind.Initialization
+                };
                 if (TryBuildDynamicStorageLengthUpdate(initTarget, out var dynamicLengthUpdate))
                 {
                     assignment = assignment with { DynamicLengthUpdate = dynamicLengthUpdate };
@@ -2164,10 +2186,16 @@ internal sealed partial class MidLevelIrLowerer
         {
             rootKey = string.Empty;
 
-            if (TryGetRawPointerRegionExpression(expression, out var regionRootName, out _, out _)
+            if (TryGetRawPointerRegionExpression(expression, out var regionRootName, out var regionStart, out var regionLength)
                 && _parametersByName.ContainsKey(regionRootName))
             {
-                rootKey = CreateScopedNoAliasParameterRootKey(regionRootName);
+                rootKey = TryCreateScopedNoAliasParameterRegionRootKey(
+                    regionRootName,
+                    regionStart,
+                    regionLength,
+                    out var regionRootKey)
+                        ? regionRootKey
+                        : CreateScopedNoAliasParameterRootKey(regionRootName);
                 return true;
             }
 
@@ -2618,9 +2646,10 @@ internal sealed partial class MidLevelIrLowerer
 
         private void LowerWhile(StarkParser.WhileStatementContext whileStatement)
         {
+            var loopBehavior = whileStatement.loopBehavior().GetText();
             var loopContracts = GetLoopContractNames(whileStatement.loopContract());
             var loopAccessGroups = CreateIndependentLoopAccessGroups(loopContracts);
-            var conditionBlock = CreateBlock($"while_{whileStatement.loopBehavior().GetText()}_cond");
+            var conditionBlock = CreateBlock($"while_{loopBehavior}_cond");
             var bodyBlock = CreateBlock("while_body");
             var exitBlock = CreateBlock("while_exit");
 
@@ -2633,7 +2662,13 @@ internal sealed partial class MidLevelIrLowerer
                 ConditionText: whileStatement.expression().GetText(),
                 Condition: LowerExpressionToOperand(whileStatement.expression(), StarkTypeSymbols.Bool));
 
-            _loops.Push(new LoopTargets(conditionBlock.Id, exitBlock.Id, _scopes.Count));
+            _loops.Push(new LoopTargets(
+                conditionBlock.Id,
+                exitBlock.Id,
+                _scopes.Count,
+                loopBehavior,
+                loopContracts,
+                loopAccessGroups));
             _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
             CurrentBlock = bodyBlock;
             try
@@ -2661,7 +2696,7 @@ internal sealed partial class MidLevelIrLowerer
                 _breakTargets.Pop();
                 _loops.Pop();
             }
-            EnsureGoto(conditionBlock.Id, loopContracts, loopAccessGroups);
+            EnsureGoto(conditionBlock.Id, loopContracts, loopAccessGroups, loopBehavior);
 
             CurrentBlock = exitBlock;
         }
@@ -2707,7 +2742,8 @@ internal sealed partial class MidLevelIrLowerer
                     }
                 }
 
-                var conditionBlock = CreateBlock($"for_{forStatement.loopBehavior().GetText()}_cond");
+                var loopBehavior = forStatement.loopBehavior().GetText();
+                var conditionBlock = CreateBlock($"for_{loopBehavior}_cond");
                 var bodyBlock = CreateBlock("for_body");
                 var iteratorBlock = CreateBlock("for_iter");
                 var exitBlock = CreateBlock("for_exit");
@@ -2730,7 +2766,7 @@ internal sealed partial class MidLevelIrLowerer
                     CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [bodyBlock.Id]);
                 }
 
-                _loops.Push(new LoopTargets(iteratorBlock.Id, exitBlock.Id, _scopes.Count));
+                _loops.Push(new LoopTargets(iteratorBlock.Id, exitBlock.Id, _scopes.Count, null, null, null));
                 _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
                 CurrentBlock = bodyBlock;
                 try
@@ -2769,7 +2805,7 @@ internal sealed partial class MidLevelIrLowerer
                     }
                 }
 
-                EnsureGoto(conditionBlock.Id, loopContracts, loopAccessGroups);
+                EnsureGoto(conditionBlock.Id, loopContracts, loopAccessGroups, loopBehavior);
                 CurrentBlock = exitBlock;
             }
             finally
@@ -8279,7 +8315,13 @@ internal sealed partial class MidLevelIrLowerer
                     $"Variable initializer '{text}' for local '{targetName}' did not lower to a MIR operand.");
             }
 
-            Emit(MidLevelIrStatementKind.Assign, $"{targetName} = {text}", targetName, targetType, new MidLevelIrUseRValue(operand));
+            Emit(
+                MidLevelIrStatementKind.Assign,
+                $"{targetName} = {text}",
+                targetName,
+                targetType,
+                new MidLevelIrUseRValue(operand),
+                writeKind: MemoryWriteKind.Initialization);
             RecordMoveFromOperand(operand, targetType);
             return OperandHasConstProvenance(operand);
         }
@@ -8508,7 +8550,8 @@ internal sealed partial class MidLevelIrLowerer
             string? targetName = null,
             StarkTypeSymbol? targetType = null,
             MidLevelIrRValue? value = null,
-            MidLevelIrOperand? address = null)
+            MidLevelIrOperand? address = null,
+            MemoryWriteKind writeKind = MemoryWriteKind.Replacement)
         {
             CurrentBlock.Statements.Add(new MidLevelIrStatement(
                 kind,
@@ -8519,7 +8562,8 @@ internal sealed partial class MidLevelIrLowerer
                 value,
                 _currentStatementLocation ?? _functionLocation,
                 CurrentScopedNoAliasGroups(),
-                CurrentLoopAccessGroups()));
+                CurrentLoopAccessGroups(),
+                writeKind));
         }
 
         private IReadOnlyList<ScopedNoAliasGroup>? CurrentScopedNoAliasGroups()
@@ -8539,13 +8583,15 @@ internal sealed partial class MidLevelIrLowerer
         private void EnsureGoto(
             int targetBlockId,
             IReadOnlyList<string>? loopContracts = null,
-            IReadOnlyList<string>? loopAccessGroups = null)
+            IReadOnlyList<string>? loopAccessGroups = null,
+            string? loopBehavior = null)
         {
             if (!CurrentBlock.HasTerminator)
             {
                 CurrentBlock.Terminator = new MidLevelIrTerminator(
                     MidLevelIrTerminatorKind.Goto,
                     [targetBlockId],
+                    LoopBehavior: loopBehavior,
                     LoopContracts: loopContracts is { Count: > 0 } ? loopContracts : null,
                     LoopAccessGroups: loopAccessGroups is { Count: > 0 } ? loopAccessGroups : null);
             }
@@ -9066,6 +9112,59 @@ internal sealed partial class MidLevelIrLowerer
 
         private static string CreateScopedNoAliasParameterRootKey(string parameterName) => $"param:{parameterName}";
 
+        private bool TryCreateScopedNoAliasParameterRegionRootKey(
+            string parameterName,
+            StarkParser.ExpressionContext startExpression,
+            StarkParser.ExpressionContext lengthExpression,
+            out string rootKey)
+        {
+            rootKey = string.Empty;
+            if (!TryResolveParameterIntegerRange(startExpression, out var startMin, out var startMax)
+                || !TryResolveParameterIntegerRange(lengthExpression, out _, out var lengthMax)
+                || startMin < BigInteger.Zero
+                || lengthMax <= BigInteger.Zero)
+            {
+                return false;
+            }
+
+            var rangeMax = startMax + lengthMax - BigInteger.One;
+            if (rangeMax < startMin)
+            {
+                return false;
+            }
+
+            rootKey = $"{CreateScopedNoAliasParameterRootKey(parameterName)}[{startMin.ToString(CultureInfo.InvariantCulture)}..{rangeMax.ToString(CultureInfo.InvariantCulture)}]";
+            return true;
+        }
+
+        private bool TryResolveParameterIntegerRange(
+            StarkParser.ExpressionContext expression,
+            out BigInteger min,
+            out BigInteger max)
+        {
+            var text = expression.GetText();
+            if (BigInteger.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var literal))
+            {
+                min = literal;
+                max = literal;
+                return true;
+            }
+
+            if (_parametersByName.TryGetValue(text, out var parameter)
+                && parameter.Type.Kind == StarkTypeKind.Integer
+                && parameter.Type.RangeMin is { } rangeMin
+                && parameter.Type.RangeMax is { } rangeMax)
+            {
+                min = rangeMin;
+                max = rangeMax;
+                return true;
+            }
+
+            min = default;
+            max = default;
+            return false;
+        }
+
         private bool GetAddressMutability(MidLevelIrOperand operand)
         {
             return operand switch
@@ -9310,7 +9409,13 @@ internal sealed partial class MidLevelIrLowerer
             }
         }
 
-        private readonly record struct LoopTargets(int ContinueTarget, int BreakTarget, int ScopeDepth);
+        private readonly record struct LoopTargets(
+            int ContinueTarget,
+            int BreakTarget,
+            int ScopeDepth,
+            string? ContinueLoopBehavior,
+            IReadOnlyList<string>? ContinueLoopContracts,
+            IReadOnlyList<string>? ContinueLoopAccessGroups);
         private readonly record struct BreakTargets(int Target, int ScopeDepth);
         private readonly record struct ConstructorReturnTarget(int ExitBlockId, int ScopeDepth);
     }

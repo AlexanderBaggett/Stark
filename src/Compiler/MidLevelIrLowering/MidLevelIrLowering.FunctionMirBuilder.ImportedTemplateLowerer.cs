@@ -485,6 +485,11 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             assignment = BuildAssignment(target, assignedValue, assignmentText);
+            if (isInitializationAssignment)
+            {
+                assignment = assignment with { WriteKind = MemoryWriteKind.Initialization };
+            }
+
             return true;
         }
 
@@ -1312,7 +1317,12 @@ internal sealed partial class MidLevelIrLowerer
 
             var loop = _loops.Peek();
             EmitStorageDeadBeyondDepth(loop.ScopeDepth);
-            CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [loop.ContinueTarget]);
+            CurrentBlock.Terminator = new MidLevelIrTerminator(
+                MidLevelIrTerminatorKind.Goto,
+                [loop.ContinueTarget],
+                LoopBehavior: loop.ContinueLoopBehavior,
+                LoopContracts: loop.ContinueLoopContracts,
+                LoopAccessGroups: loop.ContinueLoopAccessGroups);
             return true;
         }
 
@@ -1323,6 +1333,9 @@ internal sealed partial class MidLevelIrLowerer
                 return false;
             }
 
+            var loopBehavior = statement.LoopBehavior;
+            var loopContracts = statement.LoopContracts is { Count: > 0 } ? statement.LoopContracts : null;
+            var loopAccessGroups = CreateIndependentLoopAccessGroups(loopContracts);
             var conditionBlock = CreateBlock("typed_while_cond");
             var bodyBlock = CreateBlock("typed_while_body");
             var exitBlock = CreateBlock("typed_while_exit");
@@ -1342,11 +1355,25 @@ internal sealed partial class MidLevelIrLowerer
                 ConditionText: RenderImportedTypedTemplateExpressionCore(statement.Expression),
                 Condition: condition);
 
-            _loops.Push(new LoopTargets(conditionBlock.Id, exitBlock.Id, _scopes.Count));
+            _loops.Push(new LoopTargets(
+                conditionBlock.Id,
+                exitBlock.Id,
+                _scopes.Count,
+                loopBehavior,
+                loopContracts,
+                loopAccessGroups));
             _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
             CurrentBlock = bodyBlock;
             try
             {
+                if (loopAccessGroups is { Count: > 0 })
+                {
+                    foreach (var loopAccessGroup in loopAccessGroups.Reverse())
+                    {
+                        _activeLoopAccessGroups.Push(loopAccessGroup);
+                    }
+                }
+
                 if (!TryLowerImportedTypedTemplateStatementList(statement.Body, createScope: true))
                 {
                     return false;
@@ -1354,11 +1381,19 @@ internal sealed partial class MidLevelIrLowerer
 
                 if (!CurrentBlock.HasTerminator)
                 {
-                    EnsureGoto(conditionBlock.Id);
+                    EnsureGoto(conditionBlock.Id, loopContracts, loopAccessGroups, loopBehavior);
                 }
             }
             finally
             {
+                if (loopAccessGroups is { Count: > 0 })
+                {
+                    for (var index = 0; index < loopAccessGroups.Count; index++)
+                    {
+                        _activeLoopAccessGroups.Pop();
+                    }
+                }
+
                 _breakTargets.Pop();
                 _loops.Pop();
             }
@@ -1377,6 +1412,9 @@ internal sealed partial class MidLevelIrLowerer
                     return false;
                 }
 
+                var loopBehavior = statement.LoopBehavior;
+                var loopContracts = statement.LoopContracts is { Count: > 0 } ? statement.LoopContracts : null;
+                var loopAccessGroups = CreateIndependentLoopAccessGroups(loopContracts);
                 var conditionBlock = CreateBlock("typed_for_cond");
                 var bodyBlock = CreateBlock("typed_for_body");
                 var iteratorBlock = CreateBlock("typed_for_iter");
@@ -1404,14 +1442,35 @@ internal sealed partial class MidLevelIrLowerer
                         Condition: condition);
                 }
 
-                _loops.Push(new LoopTargets(iteratorBlock.Id, exitBlock.Id, _scopes.Count));
+                _loops.Push(new LoopTargets(iteratorBlock.Id, exitBlock.Id, _scopes.Count, null, null, null));
                 _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
                 CurrentBlock = bodyBlock;
+                var loopAccessGroupsPushed = false;
                 try
                 {
+                    if (loopAccessGroups is { Count: > 0 })
+                    {
+                        foreach (var loopAccessGroup in loopAccessGroups.Reverse())
+                        {
+                            _activeLoopAccessGroups.Push(loopAccessGroup);
+                        }
+
+                        loopAccessGroupsPushed = true;
+                    }
+
                     if (!TryLowerImportedTypedTemplateStatementList(statement.Body, createScope: true))
                     {
                         return false;
+                    }
+
+                    if (loopAccessGroups is { Count: > 0 })
+                    {
+                        for (var index = 0; index < loopAccessGroups.Count; index++)
+                        {
+                            _activeLoopAccessGroups.Pop();
+                        }
+
+                        loopAccessGroupsPushed = false;
                     }
 
                     if (!CurrentBlock.HasTerminator)
@@ -1427,11 +1486,19 @@ internal sealed partial class MidLevelIrLowerer
 
                     if (!CurrentBlock.HasTerminator)
                     {
-                        EnsureGoto(conditionBlock.Id);
+                        EnsureGoto(conditionBlock.Id, loopContracts, loopAccessGroups, loopBehavior);
                     }
                 }
                 finally
                 {
+                    if (loopAccessGroupsPushed && loopAccessGroups is { Count: > 0 })
+                    {
+                        for (var index = 0; index < loopAccessGroups.Count; index++)
+                        {
+                            _activeLoopAccessGroups.Pop();
+                        }
+                    }
+
                     _breakTargets.Pop();
                     _loops.Pop();
                 }

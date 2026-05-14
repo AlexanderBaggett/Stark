@@ -3822,7 +3822,10 @@ public static class DefaultCompilerPipeline
             var nullabilityCount = 0;
             var pointerAlignmentCount = 0;
             var lengthCount = 0;
+            var capacityCount = 0;
+            var initializedPrefixCount = 0;
             var textLiteralPayloadCount = 0;
+            var boundedRawPointerRegionCount = 0;
             var blockEntryBlockCount = 0;
             var blockEntryFactCount = 0;
             var blockExitBlockCount = 0;
@@ -3863,9 +3866,24 @@ public static class DefaultCompilerPipeline
                         lengthCount++;
                     }
 
+                    if (valueFacts.CapacityKind != SsaFactLatticeKind.Unknown)
+                    {
+                        capacityCount++;
+                    }
+
+                    if (valueFacts.InitializedPrefixKind != SsaFactLatticeKind.Unknown)
+                    {
+                        initializedPrefixCount++;
+                    }
+
                     if (valueFacts.TextLiteralPayloadKind != SsaFactLatticeKind.Unknown)
                     {
                         textLiteralPayloadCount++;
+                    }
+
+                    if (valueFacts.BoundedRawPointerRegionKind != SsaFactLatticeKind.Unknown)
+                    {
+                        boundedRawPointerRegionCount++;
                     }
                 }
 
@@ -3892,7 +3910,10 @@ public static class DefaultCompilerPipeline
                 ("nullability", nullabilityCount.ToString(CultureInfo.InvariantCulture)),
                 ("pointerAlignments", pointerAlignmentCount.ToString(CultureInfo.InvariantCulture)),
                 ("lengths", lengthCount.ToString(CultureInfo.InvariantCulture)),
+                ("capacities", capacityCount.ToString(CultureInfo.InvariantCulture)),
+                ("initializedPrefixes", initializedPrefixCount.ToString(CultureInfo.InvariantCulture)),
                 ("textLiteralPayloads", textLiteralPayloadCount.ToString(CultureInfo.InvariantCulture)),
+                ("boundedRawPointerRegions", boundedRawPointerRegionCount.ToString(CultureInfo.InvariantCulture)),
                 ("blockEntryBlocks", blockEntryBlockCount.ToString(CultureInfo.InvariantCulture)),
                 ("blockEntryFacts", blockEntryFactCount.ToString(CultureInfo.InvariantCulture)),
                 ("blockExitBlocks", blockExitBlockCount.ToString(CultureInfo.InvariantCulture)),

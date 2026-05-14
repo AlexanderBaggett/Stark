@@ -1819,6 +1819,55 @@ public sealed class DiagnosticRegressionTests
     }
 
     [Fact]
+    public void OverlapCapableSubregionDisjointCallsAllowSameRootWhenRangesAreProvenDisjoint()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Window(
+                rawptr<i32[min max]>[8] source,
+                rawmutptr<i32[min max]>[8] destination)
+                where overlap(source, destination)
+                where disjoint(source[4, 4], destination[0, 4]) {
+                return;
+            }
+
+            unsafe fn void Run(rawmutptr<i32[min max]>[8] buffer) {
+                Window(buffer, buffer);
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void OverlapCapableSubregionDisjointCallsRejectSameRootWhenRangesOverlap()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Window(
+                rawptr<i32[min max]>[8] source,
+                rawmutptr<i32[min max]>[8] destination)
+                where overlap(source, destination)
+                where disjoint(source[2, 4], destination[0, 4]) {
+                return;
+            }
+
+            unsafe fn void Run(rawmutptr<i32[min max]>[8] buffer) {
+                Window(buffer, buffer);
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3030", "disjoint subregion parameter contract", "source[2, 4]", "destination[0, 4]", "may overlap");
+    }
+
+    [Fact]
     public void IndependentBoundedRawPointerLoopsCompileWithRuntimeRegionFacts()
     {
         var result = Compile(

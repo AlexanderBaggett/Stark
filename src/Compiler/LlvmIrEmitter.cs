@@ -730,7 +730,9 @@ internal sealed class LlvmIrEmitter
                     function.Name,
                     function.ReturnType,
                     function.Parameters,
-                    SourceName: function.Name));
+                    SourceName: function.Name,
+                    DisjointParameterGroups: function.DisjointGroups,
+                    SameParameterGroups: function.SameGroups));
         }
 
         foreach (var strategy in specializationCodegenStrategy?.Functions ?? [])
@@ -1614,6 +1616,8 @@ internal sealed class LlvmIrEmitter
             valueFacts,
             parameterEffects,
             effects.IsStrictFp,
+            GetParameterEffects,
+            GetFunctionMemoryEffects,
             _enableOptimizedRawPointerLoopIntrinsics);
         bodyEmitter.Emit();
         functionBuilder.AppendLine("}");
@@ -2052,6 +2056,7 @@ internal sealed class LlvmIrEmitter
     private IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? GetParameterEffects(string functionName, bool hasBody)
     {
         if (hasBody
+            && HasSsaBody(functionName)
             && TryGetRootValidationSummary(functionName, out var validation)
             && validation.Parameters is not null)
         {
@@ -2070,6 +2075,7 @@ internal sealed class LlvmIrEmitter
     private FunctionMemoryEffectSummary? GetFunctionMemoryEffects(string functionName, bool hasBody)
     {
         if (hasBody
+            && HasSsaBody(functionName)
             && TryGetRootValidationSummary(functionName, out var validation))
         {
             return validation.MemoryEffects;
@@ -2078,6 +2084,13 @@ internal sealed class LlvmIrEmitter
         return _publishedFunctionSemantics.TryGetValue(functionName, out var imported)
             ? imported.MemoryEffects
             : null;
+    }
+
+    private bool HasSsaBody(string functionName)
+    {
+        return _ssa.Functions.Any(function =>
+            string.Equals(function.Name, functionName, StringComparison.Ordinal)
+            && function.HasBody);
     }
 
     private bool TryGetRootValidationSummary(string functionName, out FunctionValidationSummary validation)

@@ -528,9 +528,14 @@ internal static partial class PackageImageLoader
         IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? sameGroups,
         bool emitDisjointGroups)
     {
-        if (emitDisjointGroups)
+        var disjointGroupsToEmit = emitDisjointGroups
+            ? disjointGroups
+            : disjointGroups?
+                .Where(static group => group.Regions is { Count: >= 2 })
+                .ToArray();
+        if (disjointGroupsToEmit is { Count: > 0 })
         {
-            AppendParameterMemoryContractGroups(builder, parameters, "disjoint", disjointGroups, skipFullyPrefixedDisjointGroups: true);
+            AppendParameterMemoryContractGroups(builder, parameters, "disjoint", disjointGroupsToEmit, skipFullyPrefixedDisjointGroups: true);
         }
 
         AppendParameterMemoryContractGroups(builder, parameters, "overlap", overlapGroups, skipFullyPrefixedDisjointGroups: false);
@@ -557,11 +562,22 @@ internal static partial class PackageImageLoader
             : [];
         foreach (var group in groups)
         {
+            var operands = group.Regions is { Count: >= 2 }
+                ? group.Regions
+                    .Where(static region => !string.IsNullOrWhiteSpace(region.ParameterName))
+                    .Select(static region => string.IsNullOrWhiteSpace(region.StartExpression)
+                        || string.IsNullOrWhiteSpace(region.CountExpression)
+                            ? region.ParameterName
+                            : $"{region.ParameterName}[{region.StartExpression}, {region.CountExpression}]")
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray()
+                : null;
             var names = group.ParameterNames
                 .Where(static name => !string.IsNullOrWhiteSpace(name))
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
-            if (names.Length < 2 || names.All(prefixedParameters.Contains))
+            if (operands is null && (names.Length < 2 || names.All(prefixedParameters.Contains))
+                || operands is { Length: < 2 })
             {
                 continue;
             }
@@ -569,7 +585,7 @@ internal static partial class PackageImageLoader
             builder.Append(" where ");
             builder.Append(relationName);
             builder.Append('(');
-            builder.Append(string.Join(", ", names));
+            builder.Append(string.Join(", ", operands ?? names));
             builder.Append(')');
         }
     }
@@ -785,6 +801,24 @@ internal static partial class PackageImageLoader
 
         foreach (var group in groups ?? [])
         {
+            if (group.Regions is { Count: >= 2 } regions)
+            {
+                result.Add(new ParameterDisjointGroup(
+                    regions
+                        .Select(static region => region.ParameterName)
+                        .Where(static name => !string.IsNullOrWhiteSpace(name))
+                        .Distinct(StringComparer.Ordinal)
+                        .ToArray(),
+                    regions
+                        .Where(static region => !string.IsNullOrWhiteSpace(region.ParameterName))
+                        .Select(static region => new ParameterMemoryRegion(
+                            region.ParameterName,
+                            region.StartExpression,
+                            region.CountExpression))
+                        .ToArray()));
+                continue;
+            }
+
             var names = group.ParameterNames
                 .Where(static name => !string.IsNullOrWhiteSpace(name))
                 .Distinct(StringComparer.Ordinal)

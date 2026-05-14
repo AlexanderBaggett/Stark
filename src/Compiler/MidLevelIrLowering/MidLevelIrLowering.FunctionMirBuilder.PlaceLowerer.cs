@@ -1008,6 +1008,9 @@ internal sealed partial class MidLevelIrLowerer
         private LoweredAssignment BuildAssignmentCore(PlaceTarget target, MidLevelIrOperand value, string text)
         {
             var assignedValue = CoerceOperand(value, target.Type) ?? value;
+            var writeKind = target.Type.InitializationKind == StarkInitializationKind.None
+                ? MemoryWriteKind.Replacement
+                : MemoryWriteKind.Initialization;
             if (target.UsesAddressModel)
             {
                 var address = BuildAddressCore(target);
@@ -1025,7 +1028,8 @@ internal sealed partial class MidLevelIrLowerer
                     DirectValue: null,
                     ResultValue: assignedValue,
                     Address: address,
-                    ReplacesWholeValue: false);
+                    ReplacesWholeValue: false,
+                    WriteKind: writeKind);
             }
 
             if (target.Path.Count == 0)
@@ -1044,7 +1048,8 @@ internal sealed partial class MidLevelIrLowerer
                     new MidLevelIrUseRValue(assignedValue),
                     assignedValue,
                     Address: null,
-                    ReplacesWholeValue: true);
+                    ReplacesWholeValue: true,
+                    WriteKind: writeKind);
             }
 
             if (target.RootName is null)
@@ -1070,7 +1075,8 @@ internal sealed partial class MidLevelIrLowerer
                 new MidLevelIrUseRValue(updatedRoot),
                 assignedValue,
                 Address: null,
-                ReplacesWholeValue: false);
+                ReplacesWholeValue: false,
+                WriteKind: writeKind);
         }
 
         private MidLevelIrOperand? ApplyAggregatePathUpdate(

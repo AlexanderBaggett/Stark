@@ -36,7 +36,7 @@ internal sealed class LlvmFunctionAttributeBuilder
             segments.Add(rangeAttribute);
         }
 
-        segments.AddRange(DeriveAbiParameterAttributes(parameter, ResolveParameterEffects(parameter, parameterEffects)));
+        segments.AddRange(DeriveAbiParameterAttributes(abiFunction, parameter, ResolveParameterEffects(parameter, parameterEffects)));
 
         if (includeName)
         {
@@ -48,9 +48,10 @@ internal sealed class LlvmFunctionAttributeBuilder
 
     public IReadOnlyList<string> GetAbiParameterAttributes(
         AbiParameterSymbol parameter,
-        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects)
+        IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? parameterEffects,
+        AbiFunctionSignature? abiFunction = null)
     {
-        return DeriveAbiParameterAttributes(parameter, ResolveParameterEffects(parameter, parameterEffects));
+        return DeriveAbiParameterAttributes(abiFunction, parameter, ResolveParameterEffects(parameter, parameterEffects));
     }
 
     public string RenderAbiReturnType(AbiFunctionSignature abiFunction, SsaIntegerRangeFact? returnRange = null)
@@ -70,6 +71,8 @@ internal sealed class LlvmFunctionAttributeBuilder
             segments.Add(rangeAttribute);
         }
 
+        AppendReturnPointerAttributes(segments, abiFunction);
+
         segments.Add(MapType(abiFunction.LlvmReturnType));
 
         return string.Join(" ", segments);
@@ -83,6 +86,29 @@ internal sealed class LlvmFunctionAttributeBuilder
         return returnRange is { } range
             ? LlvmValueRangeFacts.TryBuildRangeAttribute(returnType, range, out rangeAttribute)
             : LlvmValueRangeFacts.TryBuildRangeAttribute(returnType, out rangeAttribute);
+    }
+
+    private void AppendReturnPointerAttributes(List<string> attributes, AbiFunctionSignature abiFunction)
+    {
+        if (abiFunction.IsFfi || abiFunction.ReturnsIndirect)
+        {
+            return;
+        }
+
+        if (abiFunction.LlvmReturnType.Kind == StarkTypeKind.FunctionPointer)
+        {
+            attributes.Add("nonnull");
+            return;
+        }
+
+        if (abiFunction.LlvmReturnType.Kind != StarkTypeKind.RawPointer
+            || !StarkTypeSymbols.IsPointerBackedBorrowReturn(abiFunction.SourceReturnType))
+        {
+            return;
+        }
+
+        attributes.Add("nonnull");
+        AppendDereferenceableAttributes(attributes, StarkTypeSymbols.BorrowReturnValueType(abiFunction.SourceReturnType));
     }
 
     public string BuildFunctionAttributes(
@@ -191,6 +217,7 @@ internal sealed class LlvmFunctionAttributeBuilder
     }
 
     private IReadOnlyList<string> DeriveAbiParameterAttributes(
+        AbiFunctionSignature? abiFunction,
         AbiParameterSymbol parameter,
         ParameterMemoryEffectSummary? parameterEffects)
     {
@@ -234,7 +261,7 @@ internal sealed class LlvmFunctionAttributeBuilder
             return attributes;
         }
 
-        AppendBoundedRawPointerRegionAttributes(attributes, parameter);
+        AppendBoundedRawPointerRegionAttributes(attributes, parameter, abiFunction);
 
         if (parameter.SourceType.BorrowKind != StarkBorrowKind.None
             || parameter.SourceType.InitializationKind != StarkInitializationKind.None)
@@ -257,31 +284,98 @@ internal sealed class LlvmFunctionAttributeBuilder
         return attributes;
     }
 
-    private void AppendBoundedRawPointerRegionAttributes(List<string> attributes, AbiParameterSymbol parameter)
+    private void AppendBoundedRawPointerRegionAttributes(
+        List<string> attributes,
+        AbiParameterSymbol parameter,
+        AbiFunctionSignature? abiFunction)
     {
         if (parameter.Kind != AbiParameterKind.Direct
             || parameter.SourceType.Kind != StarkTypeKind.RawPointer
             || parameter.SourceType.ElementType is not { } elementType
             || string.IsNullOrWhiteSpace(parameter.RawPointerElementCountExpression)
-            || !BigInteger.TryParse(parameter.RawPointerElementCountExpression, NumberStyles.None, CultureInfo.InvariantCulture, out var elementCount)
-            || elementCount <= BigInteger.Zero
             || TryGetConcreteTypeLayout(elementType) is not { } elementLayout)
         {
             return;
         }
 
-        var byteCount = elementCount * elementLayout.SizeBytes;
-        if (byteCount > long.MaxValue)
+        if (BigInteger.TryParse(parameter.RawPointerElementCountExpression, NumberStyles.None, CultureInfo.InvariantCulture, out var elementCount)
+            && elementCount > BigInteger.Zero)
+        {
+            attributes.Add("nonnull");
+            var byteCount = elementCount * elementLayout.SizeBytes;
+            if (byteCount <= long.MaxValue)
+            {
+                attributes.Add($"dereferenceable({byteCount.ToString(CultureInfo.InvariantCulture)})");
+            }
+
+            if (elementLayout.AlignmentBytes > 1)
+            {
+                attributes.Add($"align {elementLayout.AlignmentBytes}");
+            }
+
+            return;
+        }
+
+        if (!IsBoundedRawPointerCountProvenPositive(parameter.RawPointerElementCountExpression, abiFunction))
         {
             return;
         }
 
         attributes.Add("nonnull");
-        attributes.Add($"dereferenceable({byteCount.ToString(CultureInfo.InvariantCulture)})");
+        if (TryGetBoundedRawPointerMinimumByteCount(
+                parameter.RawPointerElementCountExpression,
+                abiFunction,
+                elementLayout,
+                out var minimumByteCount))
+        {
+            attributes.Add($"dereferenceable({minimumByteCount.ToString(CultureInfo.InvariantCulture)})");
+        }
+
         if (elementLayout.AlignmentBytes > 1)
         {
             attributes.Add($"align {elementLayout.AlignmentBytes}");
         }
+    }
+
+    private static bool IsBoundedRawPointerCountProvenPositive(
+        string countExpression,
+        AbiFunctionSignature? abiFunction)
+    {
+        if (abiFunction is null)
+        {
+            return false;
+        }
+
+        var countParameter = abiFunction.UserParameters.FirstOrDefault(
+            candidate => string.Equals(candidate.SourceName, countExpression, StringComparison.Ordinal));
+        return countParameter?.SourceType.Kind == StarkTypeKind.Integer
+            && countParameter.SourceType.RangeMin is { } min
+            && min > BigInteger.Zero;
+    }
+
+    private static bool TryGetBoundedRawPointerMinimumByteCount(
+        string countExpression,
+        AbiFunctionSignature? abiFunction,
+        ConcreteTypeLayout elementLayout,
+        out BigInteger minimumByteCount)
+    {
+        minimumByteCount = default;
+        if (abiFunction is null || elementLayout.SizeBytes <= 0)
+        {
+            return false;
+        }
+
+        var countParameter = abiFunction.UserParameters.FirstOrDefault(
+            candidate => string.Equals(candidate.SourceName, countExpression, StringComparison.Ordinal));
+        if (countParameter?.SourceType.Kind != StarkTypeKind.Integer
+            || countParameter.SourceType.RangeMin is not { } min
+            || min <= BigInteger.Zero)
+        {
+            return false;
+        }
+
+        minimumByteCount = min * elementLayout.SizeBytes;
+        return minimumByteCount <= long.MaxValue;
     }
 
     private void AppendDereferenceableAttributes(List<string> attributes, StarkTypeSymbol type)

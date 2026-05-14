@@ -88,7 +88,8 @@ internal sealed partial class MidLevelIrLowerer
                 Locals: [],
                 Blocks: [],
                 BodyLoweringKind: function.BodyLoweringKind,
-                DisjointParameterGroups: function.Signature.DisjointGroups);
+                DisjointParameterGroups: function.Signature.DisjointGroups,
+                SameParameterGroups: function.Signature.SameGroups);
         }
 
         if (keepOpenGenericTemplateDeclarationBodyless)
@@ -104,7 +105,8 @@ internal sealed partial class MidLevelIrLowerer
                 Locals: [],
                 Blocks: [],
                 BodyLoweringKind: function.BodyLoweringKind,
-                DisjointParameterGroups: function.Signature.DisjointGroups);
+                DisjointParameterGroups: function.Signature.DisjointGroups,
+                SameParameterGroups: function.Signature.SameGroups);
         }
 
         if (!_functionsByName.TryGetValue(loweringTemplateName, out var loweringContext))
@@ -139,7 +141,8 @@ internal sealed partial class MidLevelIrLowerer
                 Locals: [],
                 Blocks: [],
                 BodyLoweringKind: function.BodyLoweringKind,
-                DisjointParameterGroups: function.Signature.DisjointGroups);
+                DisjointParameterGroups: function.Signature.DisjointGroups,
+                SameParameterGroups: function.Signature.SameGroups);
         }
 
         var body = loweringContext.ParsedBody;
@@ -232,7 +235,8 @@ internal sealed partial class MidLevelIrLowerer
                     Locals: [],
                     Blocks: [],
                     BodyLoweringKind: function.BodyLoweringKind,
-                    DisjointParameterGroups: function.Signature.DisjointGroups);
+                    DisjointParameterGroups: function.Signature.DisjointGroups,
+                    SameParameterGroups: function.Signature.SameGroups);
             }
 
             if (lambdaExpression is not null)
@@ -275,7 +279,8 @@ internal sealed partial class MidLevelIrLowerer
             builder.Blocks,
             function.BodyLoweringKind,
             functionLocation,
-            function.Signature.DisjointGroups);
+            function.Signature.DisjointGroups,
+            function.Signature.SameGroups);
     }
 
     private static bool ShouldKeepOpenGenericTemplateDeclarationBodyless(

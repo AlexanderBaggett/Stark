@@ -986,7 +986,39 @@ public sealed class SsaLoweringTests
         Assert.Contains(
             function.Blocks.Select(static block => block.Terminator),
             static terminator => terminator.LoopContracts is { Count: > 0 }
+                && terminator.LoopBehavior == "willexit"
                 && terminator.LoopContracts.Contains("independent", StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void WillexitWhileLoopsPreserveLoopBehaviorOnBackedgesInSsa()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn u8[0 10] Run(u8[0 10] limit) {
+                stack mut u8[0 10] value = 0;
+                while willexit (value < limit) {
+                    value += 1;
+                    if (value == 2) {
+                        continue;
+                    }
+                }
+
+                return value;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetSsa(result).Functions);
+        var loopBackedges = function.Blocks
+            .Select(static block => block.Terminator)
+            .Where(static terminator => terminator.LoopBehavior == "willexit")
+            .ToArray();
+
+        Assert.True(loopBackedges.Length >= 2);
+        Assert.All(loopBackedges, static terminator => Assert.Null(terminator.LoopContracts));
     }
 
     [Fact]
@@ -1022,6 +1054,71 @@ public sealed class SsaLoweringTests
         Assert.Contains(
             function.Blocks.Select(static block => block.Terminator),
             static terminator => terminator.LoopAccessGroups is { Count: > 0 });
+    }
+
+    [Fact]
+    public void InitAndOutAssignmentsCarryInitializationWriteKindInSsa()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Fill(init u32[0 max][] destination) {
+                init destination[0] = 7;
+                return;
+            }
+
+            fn void Write(out u32[0 max] value) {
+                value = 9;
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var functions = GetSsa(result).Functions.ToDictionary(static function => function.Name, StringComparer.Ordinal);
+
+        var fill = functions["Fill"];
+        Assert.Contains(
+            fill.Blocks.SelectMany(static block => block.Instructions),
+            static instruction => instruction is SsaStoreIndirectInstruction
+            {
+                WriteKind: MemoryWriteKind.Initialization,
+                ValueType.Kind: StarkTypeKind.Integer
+            });
+
+        var write = functions["Write"];
+        Assert.Contains(
+            write.Blocks.SelectMany(static block => block.Instructions),
+            static instruction => instruction is SsaStoreIndirectInstruction
+            {
+                WriteKind: MemoryWriteKind.Initialization,
+                ValueType.Kind: StarkTypeKind.Integer
+            });
+    }
+
+    [Fact]
+    public void OrdinaryMutableSliceAssignmentKeepsReplacementWriteKindInSsa()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Replace(borrow mut u32[0 max][] destination) {
+                destination[0] = 7;
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetSsa(result).Functions);
+
+        Assert.Contains(
+            function.Blocks.SelectMany(static block => block.Instructions),
+            static instruction => instruction is SsaStoreIndirectInstruction
+            {
+                WriteKind: MemoryWriteKind.Replacement,
+                ValueType.Kind: StarkTypeKind.Integer
+            });
     }
 
     private static CompilationResult Compile(string source)

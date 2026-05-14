@@ -28,6 +28,7 @@ public sealed class PackageImageCallableValueTests
                 public fn void RegisterFinite(fnptr<finite u32[0 2 ** 31 - 1]()> callback);
                 public fn void RegisterLaw(fnptr<law bool()> callback);
                 public fn void RegisterFiniteLaw(fnptr<finite law u32[0 2 ** 31 - 1]()> callback);
+                public unsafe fn void RegisterBounded(fnptr<fn void(rawptr<i32[min max]>[arg1], u8[1 10])> callback);
                 public unsafe fn void Dangerous();
                 """,
                 sourcePath));
@@ -54,6 +55,8 @@ public sealed class PackageImageCallableValueTests
             AssertFunctionPointerKind(module, "RegisterFinite", "finite");
             AssertFunctionPointerKind(module, "RegisterLaw", "law");
             AssertFunctionPointerKind(module, "RegisterFiniteLaw", "finite law");
+            var boundedCallbackType = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "RegisterBounded").Parameters.Single().Type;
+            Assert.Equal(["arg1", null], boundedCallbackType.ParameterRawPointerElementCountExpressions);
 
             var dangerous = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "Dangerous");
             Assert.True(dangerous.IsUnsafe);
@@ -70,6 +73,8 @@ public sealed class PackageImageCallableValueTests
             Assert.Contains("where overlap(arg0, arg1)", sourceText, StringComparison.Ordinal);
             Assert.Contains("RegisterSame", sourceText, StringComparison.Ordinal);
             Assert.Contains("where same(arg0, arg1)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("RegisterBounded", sourceText, StringComparison.Ordinal);
+            Assert.Contains("[arg1]", sourceText, StringComparison.Ordinal);
         }
         finally
         {
@@ -450,7 +455,7 @@ public sealed class PackageImageCallableValueTests
             Assert.Equal(lambda.FunctionName, Assert.Single(llvm.AddressTakenFunctions));
             Assert.Contains("; synthetic definition: Run.__lambda_", llvm.Text, StringComparison.Ordinal);
             Assert.Matches(@"define internal dso_local fastcc noundef(?: range\([^)]*\))? i32 @Run___lambda_", llvm.Text);
-            Assert.Matches(@"call fastcc i32 @Facade_Apply\(ptr (noundef )?@Run___lambda_", llvm.Text);
+            Assert.Matches(@"call fastcc i32 @Facade_Apply\(ptr (noundef )?nonnull @Run___lambda_", llvm.Text);
         }
         finally
         {

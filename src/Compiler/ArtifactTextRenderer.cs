@@ -131,8 +131,12 @@ internal static class ArtifactTextRenderer
         {
             MidLevelIrStatementKind.StorageLive => $"storage-live {statement.TargetName}",
             MidLevelIrStatementKind.StorageDead => $"storage-dead {statement.TargetName}",
-            MidLevelIrStatementKind.Assign => statement.Text,
-            MidLevelIrStatementKind.StoreIndirect => $"store-indirect {statement.Value?.Text ?? "<value>"} -> {statement.Address?.Text ?? "<addr>"}",
+            MidLevelIrStatementKind.Assign => statement.WriteKind == MemoryWriteKind.Initialization
+                ? $"init {statement.Text}"
+                : statement.Text,
+            MidLevelIrStatementKind.StoreIndirect => statement.WriteKind == MemoryWriteKind.Initialization
+                ? $"init-store-indirect {statement.Value?.Text ?? "<value>"} -> {statement.Address?.Text ?? "<addr>"}"
+                : $"store-indirect {statement.Value?.Text ?? "<value>"} -> {statement.Address?.Text ?? "<addr>"}",
             MidLevelIrStatementKind.Evaluate => $"eval {statement.Text}",
             _ => statement.Text
         };
@@ -185,9 +189,13 @@ internal static class ArtifactTextRenderer
             SsaLifetimeStartInstruction lifetimeStart => $"lifetime.start {lifetimeStart.LocalName}",
             SsaLifetimeEndInstruction lifetimeEnd => $"lifetime.end {lifetimeEnd.LocalName}",
             SsaDeallocateLocalInstruction deallocateLocal => $"dealloc[{deallocateLocal.StorageClass}] {deallocateLocal.LocalName}",
-            SsaStoreLocalInstruction storeLocal => $"store {FormatSsaValue(storeLocal.Value)} -> {storeLocal.LocalName}",
-            SsaCopyMemoryInstruction copyMemory => $"{(copyMemory.TransferKind == SsaMemoryTransferKind.Move ? "move" : "copy")} {FormatSsaValue(copyMemory.SourceAddress)} -> {FormatSsaValue(copyMemory.DestinationAddress)} : {copyMemory.CopyType.DisplayName}",
-            SsaStoreIndirectInstruction storeIndirect => $"store {FormatSsaValue(storeIndirect.Value)} -> {FormatSsaValue(storeIndirect.Address)}",
+            SsaStoreLocalInstruction storeLocal => storeLocal.WriteKind == MemoryWriteKind.Initialization
+                ? $"init-store {FormatSsaValue(storeLocal.Value)} -> {storeLocal.LocalName}"
+                : $"store {FormatSsaValue(storeLocal.Value)} -> {storeLocal.LocalName}",
+            SsaCopyMemoryInstruction copyMemory => $"{(copyMemory.TransferKind == SsaMemoryTransferKind.Move ? "move" : "copy")}{(copyMemory.WriteKind == MemoryWriteKind.Initialization ? ".init" : string.Empty)} {FormatSsaValue(copyMemory.SourceAddress)} -> {FormatSsaValue(copyMemory.DestinationAddress)} : {copyMemory.CopyType.DisplayName}",
+            SsaStoreIndirectInstruction storeIndirect => storeIndirect.WriteKind == MemoryWriteKind.Initialization
+                ? $"init-store {FormatSsaValue(storeIndirect.Value)} -> {FormatSsaValue(storeIndirect.Address)}"
+                : $"store {FormatSsaValue(storeIndirect.Value)} -> {FormatSsaValue(storeIndirect.Address)}",
             SsaStoreGlobalInstruction storeGlobal => $"store {FormatSsaValue(storeGlobal.Value)} -> @{storeGlobal.GlobalName}",
             _ => instruction.ToString() ?? instruction.GetType().Name
         };

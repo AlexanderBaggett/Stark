@@ -309,7 +309,9 @@ internal sealed class StarkTypeResolver
         rawPointerType = ApplyQualifiers(
             StarkTypeSymbols.RawPointer(elementType, rawPointerSyntax.RAWMUTPTR() is not null),
             type.typeQualifier());
-        elementCountExpression = countExpression.GetText();
+        elementCountExpression = TryEvaluateConstantInteger(countExpression) is { } constantElementCount
+            ? constantElementCount.ToString(CultureInfo.InvariantCulture)
+            : countExpression.GetText();
         return true;
     }
 
@@ -336,12 +338,26 @@ internal sealed class StarkTypeResolver
     {
         var signature = type.functionPointerSignature();
         var returnType = ResolveReturnType(signature.returnType(), genericParameters, currentModuleName);
-        var parameterTypes = signature.functionPointerParameterList().type_()
-            .Select(parameter => ResolveType(parameter, genericParameters, currentModuleName))
-            .ToArray();
+        var parameterTypeSyntaxes = signature.functionPointerParameterList().type_();
+        var parameterTypes = new List<StarkTypeSymbol>(parameterTypeSyntaxes.Length);
+        var rawPointerElementCountExpressions = new List<string?>(parameterTypeSyntaxes.Length);
+        foreach (var parameterTypeSyntax in parameterTypeSyntaxes)
+        {
+            parameterTypes.Add(ResolveParameterType(
+                parameterTypeSyntax,
+                genericParameters,
+                currentModuleName,
+                out var rawPointerElementCountExpression));
+            rawPointerElementCountExpressions.Add(rawPointerElementCountExpression);
+        }
+
         var parameters = parameterTypes
-            .Select((parameterType, index) => new TypedParameterSymbol($"arg{index}", parameterType))
+            .Select((parameterType, index) => new TypedParameterSymbol(
+                $"arg{index}",
+                parameterType,
+                RawPointerElementCountExpression: rawPointerElementCountExpressions[index]))
             .ToArray();
+        ValidateFunctionPointerBoundedRawPointerParameterCounts(parameterTypeSyntaxes, parameters);
         ValidateUnsupportedFunctionPointerDisjointClauses(signature);
         ValidateFunctionPointerRelationConflicts(signature);
         var overlapGroups = CreateFunctionPointerOverlapGroups(signature, parameters);
@@ -358,7 +374,100 @@ internal sealed class StarkTypeResolver
             parameterTypes,
             disjointGroups,
             overlapGroups,
-            sameGroups);
+            sameGroups,
+            rawPointerElementCountExpressions);
+    }
+
+    private void ValidateFunctionPointerBoundedRawPointerParameterCounts(
+        IReadOnlyList<StarkParser.Type_Context> parameterTypeSyntaxes,
+        IReadOnlyList<TypedParameterSymbol> parameters)
+    {
+        var parameterSymbols = parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        for (var index = 0; index < parameterTypeSyntaxes.Count && index < parameters.Count; index++)
+        {
+            var parameter = parameters[index];
+            if (parameter.RawPointerElementCountExpression is null
+                || !TryGetBoundedRawPointerElementCountExpression(parameterTypeSyntaxes[index], out var countExpression))
+            {
+                continue;
+            }
+
+            ValidateFunctionPointerBoundedRawPointerCountExpression(parameter.Name, countExpression, parameterSymbols);
+        }
+    }
+
+    private bool ValidateFunctionPointerBoundedRawPointerCountExpression(
+        string parameterName,
+        StarkParser.ExpressionContext expression,
+        IReadOnlyDictionary<string, TypedParameterSymbol> parameterSymbols)
+    {
+        if (TryGetFunctionPointerContractParameterName(expression, out var boundName))
+        {
+            if (!parameterSymbols.TryGetValue(boundName, out var boundParameter))
+            {
+                ReportError(
+                    "STK3014",
+                    $"Bounded raw pointer function-pointer parameter '{parameterName}' references unknown count parameter '{boundName}'.",
+                    expression);
+                return false;
+            }
+
+            if (boundParameter.Type.Kind != StarkTypeKind.Integer)
+            {
+                ReportError(
+                    "STK3014",
+                    $"Bounded raw pointer function-pointer parameter '{parameterName}' count '{boundName}' must be an integer parameter, but found '{boundParameter.Type.DisplayName}'.",
+                    expression);
+                return false;
+            }
+
+            if (!IsProvablyNonNegativeIntegerType(boundParameter.Type))
+            {
+                ReportError(
+                    "STK3014",
+                    $"Bounded raw pointer function-pointer parameter '{parameterName}' count '{boundName}' must be provably non-negative.",
+                    expression);
+                return false;
+            }
+
+            return true;
+        }
+
+        if (TryEvaluateConstantInteger(expression) is { } constant)
+        {
+            if (constant >= BigInteger.Zero)
+            {
+                return true;
+            }
+
+            ReportError(
+                "STK3014",
+                $"Bounded raw pointer function-pointer parameter '{parameterName}' count '{expression.GetText()}' must be non-negative.",
+                expression);
+            return false;
+        }
+
+        ReportError(
+            "STK3014",
+            $"Bounded raw pointer function-pointer parameter '{parameterName}' count must be a non-negative integer parameter of the form 'arg0', 'arg1', and so on, or a compile-time integer constant.",
+            expression);
+        return false;
+    }
+
+    private static bool TryGetBoundedRawPointerElementCountExpression(
+        StarkParser.Type_Context type,
+        out StarkParser.ExpressionContext countExpression)
+    {
+        countExpression = null!;
+        if (type.nonArrayType().rawPointerType() is null
+            || type.arraySuffix() is not [var suffix]
+            || suffix.expression() is not { } expression)
+        {
+            return false;
+        }
+
+        countExpression = expression;
+        return true;
     }
 
     private IReadOnlyList<ParameterOverlapGroup> CreateFunctionPointerOverlapGroups(
@@ -545,6 +654,22 @@ internal sealed class StarkTypeResolver
         }
 
         return true;
+    }
+
+    private static bool IsProvablyNonNegativeIntegerType(StarkTypeSymbol type)
+    {
+        if (type.Kind != StarkTypeKind.Integer || type.BitWidth is not { } bitWidth)
+        {
+            return false;
+        }
+
+        if (type.RangeMin is { } rangeMin)
+        {
+            return rangeMin >= BigInteger.Zero;
+        }
+
+        return type.IsUnsigned
+            && bitWidth > 0;
     }
 
     private static string BuildNamePairKey(string left, string right)
@@ -1379,7 +1504,8 @@ internal sealed class StarkTypeResolver
                 parameterTypes.Select(parameter => SubstituteType(parameter, substitution)).ToArray(),
                 coreType.FunctionPointerDisjointParameterGroups,
                 coreType.FunctionPointerOverlapParameterGroups,
-                coreType.FunctionPointerSameParameterGroups);
+                coreType.FunctionPointerSameParameterGroups,
+                coreType.FunctionPointerParameterRawPointerElementCountExpressions);
         }
         else
         {

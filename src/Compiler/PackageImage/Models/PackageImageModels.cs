@@ -117,7 +117,13 @@ internal sealed record StarkPackageParameterManifest(
     string? RawPointerElementCountExpression = null);
 
 internal sealed record StarkPackageParameterDisjointGroupManifest(
-    IReadOnlyList<string> ParameterNames);
+    IReadOnlyList<string> ParameterNames,
+    IReadOnlyList<StarkPackageParameterMemoryRegionManifest>? Regions = null);
+
+internal sealed record StarkPackageParameterMemoryRegionManifest(
+    string ParameterName,
+    string? StartExpression = null,
+    string? CountExpression = null);
 
 internal sealed record StarkPackageAsmManifest(
     string ArchitectureText,
@@ -231,6 +237,7 @@ internal sealed record StarkPackageTypeReference(
     string? FunctionKind = null,
     StarkPackageTypeReference? ReturnType = null,
     IReadOnlyList<StarkPackageTypeReference>? ParameterTypes = null,
+    IReadOnlyList<string?>? ParameterRawPointerElementCountExpressions = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null);

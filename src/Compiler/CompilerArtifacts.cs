@@ -109,7 +109,14 @@ internal static class CallableValueFacts
         var returnType = lambda.FunctionPointerType.FunctionPointerReturnType ?? StarkTypeSymbols.Error;
         var parameterTypes = lambda.FunctionPointerType.FunctionPointerParameterTypes ?? [];
         var parameters = parameterTypes
-            .Select((type, index) => new TypedParameterSymbol(lambda.ParameterNames[index], type))
+            .Select((type, index) => new TypedParameterSymbol(
+                lambda.ParameterNames[index],
+                type,
+                RawPointerElementCountExpression: MapFunctionPointerRawPointerElementCountExpressionToLambdaParameterNames(
+                    StarkTypeSymbols.GetFunctionPointerParameterRawPointerElementCountExpression(
+                        lambda.FunctionPointerType,
+                        index),
+                    lambda.ParameterNames)))
             .ToArray();
 
         return new TypedFunctionSignature(
@@ -118,6 +125,22 @@ internal static class CallableValueFacts
             parameters,
             SourceName: lambda.FunctionName,
             Kind: lambda.FunctionPointerType.FunctionPointerKind ?? StarkFunctionKind.Fn);
+    }
+
+    private static string? MapFunctionPointerRawPointerElementCountExpressionToLambdaParameterNames(
+        string? expression,
+        IReadOnlyList<string> parameterNames)
+    {
+        if (string.IsNullOrWhiteSpace(expression)
+            || !expression.StartsWith("arg", StringComparison.Ordinal)
+            || !int.TryParse(expression[3..], out var parameterIndex)
+            || parameterIndex < 0
+            || parameterIndex >= parameterNames.Count)
+        {
+            return expression;
+        }
+
+        return parameterNames[parameterIndex];
     }
 
     public static FunctionEffectProfile BuildLambdaEffectProfile(LambdaTypingRecord lambda)
@@ -197,7 +220,27 @@ public sealed record ParameterModel(
     bool IsConst = false,
     string? RawPointerElementCountExpression = null);
 
-public sealed record ParameterDisjointGroup(IReadOnlyList<string> ParameterNames);
+public sealed record ParameterMemoryRegion(
+    string ParameterName,
+    string? StartExpression = null,
+    string? CountExpression = null)
+{
+    public bool IsWholeParameter => StartExpression is null && CountExpression is null;
+
+    public string DisplayText => IsWholeParameter
+        ? ParameterName
+        : $"{ParameterName}[{StartExpression}, {CountExpression}]";
+}
+
+public sealed record ParameterDisjointGroup(
+    IReadOnlyList<string> ParameterNames,
+    IReadOnlyList<ParameterMemoryRegion>? Regions = null)
+{
+    public IReadOnlyList<ParameterMemoryRegion> MemoryRegions =>
+        Regions ?? ParameterNames.Select(static name => new ParameterMemoryRegion(name)).ToArray();
+
+    public bool HasSubregions => MemoryRegions.Any(static region => !region.IsWholeParameter);
+}
 
 public sealed record ParameterOverlapGroup(IReadOnlyList<string> ParameterNames);
 
@@ -901,6 +944,7 @@ public sealed record StarkTypeSymbol(
     StarkFunctionKind? FunctionPointerKind = null,
     StarkTypeSymbol? FunctionPointerReturnType = null,
     IReadOnlyList<StarkTypeSymbol>? FunctionPointerParameterTypes = null,
+    IReadOnlyList<string?>? FunctionPointerParameterRawPointerElementCountExpressions = null,
     IReadOnlyList<ParameterDisjointGroup>? FunctionPointerDisjointParameterGroups = null,
     IReadOnlyList<ParameterOverlapGroup>? FunctionPointerOverlapParameterGroups = null,
     IReadOnlyList<ParameterSameGroup>? FunctionPointerSameParameterGroups = null,
@@ -979,7 +1023,8 @@ public static class StarkTypeSymbols
         IReadOnlyList<StarkTypeSymbol> parameterTypes,
         IReadOnlyList<ParameterDisjointGroup>? disjointGroups = null,
         IReadOnlyList<ParameterOverlapGroup>? overlapGroups = null,
-        IReadOnlyList<ParameterSameGroup>? sameGroups = null)
+        IReadOnlyList<ParameterSameGroup>? sameGroups = null,
+        IReadOnlyList<string?>? parameterRawPointerElementCountExpressions = null)
     {
         var displayKind = functionKind switch
         {
@@ -988,8 +1033,17 @@ public static class StarkTypeSymbols
             StarkFunctionKind.Law => "law",
             _ => "fn"
         };
+        var effectiveRawPointerElementCountExpressions =
+            NormalizeFunctionPointerParameterRawPointerElementCountExpressions(
+                parameterTypes,
+                parameterRawPointerElementCountExpressions);
         var parameters = parameterTypes
-            .Select((parameter, index) => new TypedParameterSymbol($"arg{index}", parameter))
+            .Select((parameter, index) => new TypedParameterSymbol(
+                $"arg{index}",
+                parameter,
+                RawPointerElementCountExpression: GetFunctionPointerParameterRawPointerElementCountExpression(
+                    effectiveRawPointerElementCountExpressions,
+                    index)))
             .ToArray();
         var effectiveOverlapGroups = overlapGroups ?? [];
         var effectiveSameGroups = sameGroups ?? [];
@@ -1000,16 +1054,76 @@ public static class StarkTypeSymbols
                 overlapGroups: effectiveOverlapGroups,
                 sameGroups: effectiveSameGroups,
                 applyDefaultNonOverlap: true);
-        var displayName = $"fnptr<{displayKind} {returnType.DisplayName}({string.Join(", ", parameterTypes.Select(static parameter => parameter.DisplayName))}){FormatFunctionPointerMemoryContracts(effectiveOverlapGroups, effectiveSameGroups)}>";
+        var displayName = $"fnptr<{displayKind} {returnType.DisplayName}({string.Join(", ", parameterTypes.Select((parameter, index) => FormatFunctionPointerParameterDisplayName(parameter, effectiveRawPointerElementCountExpressions, index)))}){FormatFunctionPointerMemoryContracts(effectiveOverlapGroups, effectiveSameGroups)}>";
         return new StarkTypeSymbol(
             StarkTypeKind.FunctionPointer,
             displayName,
             FunctionPointerKind: functionKind,
             FunctionPointerReturnType: returnType,
             FunctionPointerParameterTypes: parameterTypes.ToArray(),
+            FunctionPointerParameterRawPointerElementCountExpressions: effectiveRawPointerElementCountExpressions,
             FunctionPointerDisjointParameterGroups: effectiveDisjointGroups,
             FunctionPointerOverlapParameterGroups: effectiveOverlapGroups,
             FunctionPointerSameParameterGroups: effectiveSameGroups);
+    }
+
+    public static string? GetFunctionPointerParameterRawPointerElementCountExpression(
+        StarkTypeSymbol functionPointerType,
+        int parameterIndex)
+    {
+        return GetFunctionPointerParameterRawPointerElementCountExpression(
+            functionPointerType.FunctionPointerParameterRawPointerElementCountExpressions,
+            parameterIndex);
+    }
+
+    private static IReadOnlyList<string?>? NormalizeFunctionPointerParameterRawPointerElementCountExpressions(
+        IReadOnlyList<StarkTypeSymbol> parameterTypes,
+        IReadOnlyList<string?>? parameterRawPointerElementCountExpressions)
+    {
+        if (parameterRawPointerElementCountExpressions is null
+            || parameterRawPointerElementCountExpressions.All(string.IsNullOrWhiteSpace))
+        {
+            return null;
+        }
+
+        var normalized = new string?[parameterTypes.Count];
+        for (var index = 0; index < normalized.Length; index++)
+        {
+            normalized[index] = index < parameterRawPointerElementCountExpressions.Count
+                && parameterTypes[index].Kind == StarkTypeKind.RawPointer
+                && !string.IsNullOrWhiteSpace(parameterRawPointerElementCountExpressions[index])
+                    ? parameterRawPointerElementCountExpressions[index]
+                    : null;
+        }
+
+        return normalized.Any(static expression => !string.IsNullOrWhiteSpace(expression))
+            ? normalized
+            : null;
+    }
+
+    private static string? GetFunctionPointerParameterRawPointerElementCountExpression(
+        IReadOnlyList<string?>? parameterRawPointerElementCountExpressions,
+        int parameterIndex)
+    {
+        return parameterRawPointerElementCountExpressions is not null
+               && parameterIndex >= 0
+               && parameterIndex < parameterRawPointerElementCountExpressions.Count
+               && !string.IsNullOrWhiteSpace(parameterRawPointerElementCountExpressions[parameterIndex])
+            ? parameterRawPointerElementCountExpressions[parameterIndex]
+            : null;
+    }
+
+    private static string FormatFunctionPointerParameterDisplayName(
+        StarkTypeSymbol parameterType,
+        IReadOnlyList<string?>? parameterRawPointerElementCountExpressions,
+        int parameterIndex)
+    {
+        var countExpression = GetFunctionPointerParameterRawPointerElementCountExpression(
+            parameterRawPointerElementCountExpressions,
+            parameterIndex);
+        return countExpression is null
+            ? parameterType.DisplayName
+            : $"{parameterType.DisplayName}[{countExpression}]";
     }
 
     private static string FormatFunctionPointerMemoryContracts(
@@ -1278,7 +1392,8 @@ public static class StarkTypeSymbols
                     parameterTypes,
                     type.FunctionPointerDisjointParameterGroups,
                     type.FunctionPointerOverlapParameterGroups,
-                    type.FunctionPointerSameParameterGroups),
+                    type.FunctionPointerSameParameterGroups,
+                    type.FunctionPointerParameterRawPointerElementCountExpressions),
             StarkTypeKind.Named when type.NamedType == OwnedAsciiName => OwnedAscii,
             StarkTypeKind.Named when type.NamedType == OwnedUnicodeName => OwnedUnicode,
             StarkTypeKind.Named when type.TypeArguments is { Count: > 0 } && type.NamedType is not null
@@ -2479,6 +2594,12 @@ public enum MidLevelIrStatementKind
     Evaluate
 }
 
+public enum MemoryWriteKind
+{
+    Replacement,
+    Initialization
+}
+
 public enum MidLevelIrUnaryOperator
 {
     Negate,
@@ -2785,7 +2906,8 @@ public sealed record MidLevelIrStatement(
     MidLevelIrRValue? Value = null,
     SourceLocation? Location = null,
     IReadOnlyList<ScopedNoAliasGroup>? ScopedNoAliasGroups = null,
-    IReadOnlyList<string>? LoopAccessGroups = null);
+    IReadOnlyList<string>? LoopAccessGroups = null,
+    MemoryWriteKind WriteKind = MemoryWriteKind.Replacement);
 
 public sealed record MidLevelIrSwitchCase(
     string Label,
@@ -2804,6 +2926,7 @@ public sealed record MidLevelIrTerminator(
     int? DefaultTarget = null,
     SourceLocation? Location = null,
     IReadOnlyList<int>? BranchWeights = null,
+    string? LoopBehavior = null,
     IReadOnlyList<string>? LoopContracts = null,
     IReadOnlyList<string>? LoopAccessGroups = null);
 
@@ -2825,7 +2948,12 @@ public sealed record MidLevelIrFunction(
     IReadOnlyList<MidLevelIrBasicBlock> Blocks,
     FunctionBodyLoweringKind BodyLoweringKind = FunctionBodyLoweringKind.DeclarationOnly,
     SourceLocation? Location = null,
-    IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null);
+    IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null,
+    IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null)
+{
+    public IReadOnlyList<ParameterDisjointGroup> DisjointGroups => DisjointParameterGroups ?? [];
+    public IReadOnlyList<ParameterSameGroup> SameGroups => SameParameterGroups ?? [];
+}
 
 public sealed record MidLevelIrModule(
     string ModuleName,
@@ -3183,7 +3311,8 @@ public sealed record SsaStoreLocalInstruction(
     string LocalName,
     StarkTypeSymbol LocalType,
     SsaValue Value,
-    SourceLocation? Location = null)
+    SourceLocation? Location = null,
+    MemoryWriteKind WriteKind = MemoryWriteKind.Replacement)
     : SsaInstruction;
 
 public sealed record SsaStoreIndirectInstruction(
@@ -3192,7 +3321,8 @@ public sealed record SsaStoreIndirectInstruction(
     SsaValue Value,
     SourceLocation? Location = null,
     IReadOnlyList<ScopedNoAliasGroup>? ScopedNoAliasGroups = null,
-    IReadOnlyList<string>? LoopAccessGroups = null)
+    IReadOnlyList<string>? LoopAccessGroups = null,
+    MemoryWriteKind WriteKind = MemoryWriteKind.Replacement)
     : SsaInstruction;
 
 public enum SsaMemoryTransferKind
@@ -3208,7 +3338,8 @@ public sealed record SsaCopyMemoryInstruction(
     SsaMemoryTransferKind TransferKind = SsaMemoryTransferKind.Copy,
     SourceLocation? Location = null,
     IReadOnlyList<ScopedNoAliasGroup>? ScopedNoAliasGroups = null,
-    IReadOnlyList<string>? LoopAccessGroups = null)
+    IReadOnlyList<string>? LoopAccessGroups = null,
+    MemoryWriteKind WriteKind = MemoryWriteKind.Replacement)
     : SsaInstruction;
 
 public sealed record SsaStoreGlobalInstruction(
@@ -3236,6 +3367,7 @@ public sealed record SsaTerminator(
     int? DefaultTarget = null,
     SourceLocation? Location = null,
     IReadOnlyList<int>? BranchWeights = null,
+    string? LoopBehavior = null,
     IReadOnlyList<string>? LoopContracts = null,
     IReadOnlyList<string>? LoopAccessGroups = null);
 
@@ -3256,7 +3388,12 @@ public sealed record SsaFunction(
     IReadOnlyList<SsaBasicBlock> Blocks,
     FunctionBodyLoweringKind BodyLoweringKind = FunctionBodyLoweringKind.DeclarationOnly,
     SourceLocation? Location = null,
-    IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null);
+    IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null,
+    IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null)
+{
+    public IReadOnlyList<ParameterDisjointGroup> DisjointGroups => DisjointParameterGroups ?? [];
+    public IReadOnlyList<ParameterSameGroup> SameGroups => SameParameterGroups ?? [];
+}
 
 public sealed record SsaIrModule(
     string ModuleName,
@@ -3294,6 +3431,11 @@ public sealed record SsaTextLiteralPayloadFact(
     int Utf8Length,
     int Utf32Length);
 
+public sealed record SsaBoundedRawPointerRegionFact(
+    SsaValue ElementCount,
+    SsaIntegerRangeFact? ElementCountRange = null,
+    int? ElementAlignmentBytes = null);
+
 public sealed record SsaValueFacts(
     string ValueName,
     StarkTypeSymbol Type,
@@ -3308,8 +3450,14 @@ public sealed record SsaValueFacts(
     int? PointerAlignmentBytes = null,
     SsaFactLatticeKind LengthKind = SsaFactLatticeKind.Unknown,
     SsaIntegerRangeFact? LengthRange = null,
+    SsaFactLatticeKind CapacityKind = SsaFactLatticeKind.Unknown,
+    SsaIntegerRangeFact? CapacityRange = null,
+    SsaFactLatticeKind InitializedPrefixKind = SsaFactLatticeKind.Unknown,
+    SsaIntegerRangeFact? InitializedPrefixRange = null,
     SsaFactLatticeKind TextLiteralPayloadKind = SsaFactLatticeKind.Unknown,
-    SsaTextLiteralPayloadFact? TextLiteralPayload = null);
+    SsaTextLiteralPayloadFact? TextLiteralPayload = null,
+    SsaFactLatticeKind BoundedRawPointerRegionKind = SsaFactLatticeKind.Unknown,
+    SsaBoundedRawPointerRegionFact? BoundedRawPointerRegion = null);
 
 public sealed record SsaFunctionFactModel(
     string FunctionName,

@@ -138,6 +138,14 @@ internal static class TypeCompatibilityFacts
             {
                 return false;
             }
+
+            if (!string.Equals(
+                    GetFunctionPointerParameterRawPointerElementCountExpression(source, index),
+                    GetFunctionPointerParameterRawPointerElementCountExpression(target, index),
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
         }
 
         return AreFunctionPointerMemoryContractsAssignable(target, source, targetParameters);
@@ -159,7 +167,35 @@ internal static class TypeCompatibilityFacts
             function.Parameters.Select(static parameter => parameter.Type).ToArray(),
             MapDisjointGroups(function.DisjointGroups, parameterNameMap),
             MapOverlapGroups(function.OverlapGroups, parameterNameMap),
-            MapSameGroups(function.SameGroups, parameterNameMap));
+            MapSameGroups(function.SameGroups, parameterNameMap),
+            function.Parameters
+                .Select(parameter => MapRawPointerElementCountExpression(
+                    parameter.RawPointerElementCountExpression,
+                    parameterNameMap))
+                .ToArray());
+    }
+
+    private static string? GetFunctionPointerParameterRawPointerElementCountExpression(
+        StarkTypeSymbol functionPointerType,
+        int parameterIndex)
+    {
+        return StarkTypeSymbols.GetFunctionPointerParameterRawPointerElementCountExpression(
+            functionPointerType,
+            parameterIndex);
+    }
+
+    private static string? MapRawPointerElementCountExpression(
+        string? expression,
+        IReadOnlyDictionary<string, string> parameterNameMap)
+    {
+        if (string.IsNullOrWhiteSpace(expression))
+        {
+            return null;
+        }
+
+        return parameterNameMap.TryGetValue(expression, out var syntheticName)
+            ? syntheticName
+            : expression;
     }
 
     public static bool FunctionKindSatisfies(StarkFunctionKind source, StarkFunctionKind target)
@@ -269,7 +305,7 @@ internal static class TypeCompatibilityFacts
         string leftName,
         string rightName)
     {
-        return groups?.Any(group => GroupContainsParameterPair(group.ParameterNames, leftName, rightName)) == true;
+        return groups?.Any(group => !group.HasSubregions && GroupContainsParameterPair(group.ParameterNames, leftName, rightName)) == true;
     }
 
     private static bool ContainsParameterPair(
@@ -313,9 +349,31 @@ internal static class TypeCompatibilityFacts
         IReadOnlyDictionary<string, string> parameterNameMap)
     {
         return groups
-            .Select(group => MapGroup(group.ParameterNames, parameterNameMap))
-            .Where(static names => names.Count >= 2)
-            .Select(static names => new ParameterDisjointGroup(names))
+            .Select(group =>
+            {
+                if (group.HasSubregions)
+                {
+                    var regions = group.MemoryRegions
+                        .Select(region => parameterNameMap.TryGetValue(region.ParameterName, out var mappedName)
+                            ? region with { ParameterName = mappedName }
+                            : null)
+                        .Where(static region => region is not null)
+                        .Select(static region => region!)
+                        .ToArray();
+                    var names = regions
+                        .Select(static region => region.ParameterName)
+                        .Distinct(StringComparer.Ordinal)
+                        .ToArray();
+                    return regions.Length >= 2
+                        ? new ParameterDisjointGroup(names, regions)
+                        : null;
+                }
+
+                var mappedNames = MapGroup(group.ParameterNames, parameterNameMap);
+                return mappedNames.Count >= 2 ? new ParameterDisjointGroup(mappedNames) : null;
+            })
+            .Where(static group => group is not null)
+            .Cast<ParameterDisjointGroup>()
             .ToArray();
     }
 

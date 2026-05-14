@@ -78,7 +78,7 @@ The current default compilation pipeline is dependency-ordered rather than hard-
    This is where `law`, `finite`, `ffi`, `hot`, `cold`, and inline preferences are converted into semantic facts such as `nounwind`, `mustprogress`, `willreturn`, `nofree`, `nosync`, and internal `fastcc` intent.
 8. `type-check`
    Resolves named and builtin types, assigns literal types, validates globals and a useful subset of function bodies, and produces typed signatures for later lowering.
-   Imported declarations are loaded into the same typed world, so qualified Stark calls and type references can flow across modules before LLVM lowering. Function-pointer types retain their callable kind (`fn`, `finite`, `law`, or `finite law`) and memory contract groups here; promotion/assignment checks reject weaker callbacks, `null` callbacks, and aggregate initializer shapes that would zero-fill `fnptr` storage before lowering.
+   Imported declarations are loaded into the same typed world, so qualified Stark calls and type references can flow across modules before LLVM lowering. Function-pointer types retain their callable kind (`fn`, `finite`, `law`, or `finite law`), memory contract groups, and bounded raw-pointer parameter count expressions here; promotion/assignment checks reject weaker callbacks, incompatible bounded-region contracts, `null` callbacks, and aggregate initializer shapes that would zero-fill `fnptr` storage before lowering.
 9. `instantiation-ownership`
    Collects concrete generic function and type instantiation ownership across the loaded module set.
    This pass decides which module owns each instantiation trigger, expands type/function triggers that arise from generic use, tracks destructor-driven instantiations, and validates currently provable library constraints such as supported `System.Collections.Dictionary<K, V>` key types.
@@ -181,12 +181,16 @@ The current default compilation pipeline is dependency-ordered rather than hard-
    layouts, uses parameter memory summaries from semantic validation to emit
    stronger `readonly`/`writeonly`/`nocapture`/`captures(...)` facts for root
    Stark functions, consumes SSA value facts for range, alignment, assumption,
-   and literal-data decisions, consumes scoped noalias and loop-access groups
-   from MIR/SSA, emits function-kind call-site attributes for indirect
+   and literal-data decisions, consumes scoped noalias, loop behavior, and
+   loop-access groups from MIR/SSA so `willexit` backedges receive
+   `!llvm.loop.mustprogress` and validated `independent` loops receive
+   `!llvm.loop.parallel_accesses`, emits function-kind call-site attributes for indirect
    function-pointer calls where the `fnptr` type carries `finite`, `law`, or
    `finite law` guarantees, emits LLVM `!callees` metadata for indirect
    function-pointer calls whose SSA target set is a closed set of known function
-   addresses, marks accepted direct function-pointer ABI parameters `nonnull`,
+   addresses, marks accepted direct function-pointer ABI parameters and returns
+   `nonnull`, marks pointer-backed safe borrow returns `nonnull` and
+   `dereferenceable` when layout is known,
    consumes the closed-world optimization model for caller-sensitive
    law-path specialization decisions, can materialize internal root-side clones
    of eligible imported law bodies and imported inline bodies for closed-world

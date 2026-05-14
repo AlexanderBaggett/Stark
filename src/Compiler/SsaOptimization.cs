@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Numerics;
+using System.Text;
 using Stark.Parsing;
 
 namespace Stark.Compiler;
@@ -129,12 +130,14 @@ internal sealed class SsaCleanupOptimizer
         if (value is SsaUnaryRValue { Operator: SsaUnaryOperator.LogicalNot } logicalNot
             && logicalNot.Operand.Type.Kind == StarkTypeKind.Bool)
         {
-            canonicalTerminator = new SsaTerminator(
-                SsaTerminatorKind.Branch,
-                [terminator.Targets[1], terminator.Targets[0]],
-                Condition: logicalNot.Operand,
-                Location: terminator.Location,
-                BranchWeights: ReverseBranchWeights(terminator));
+            canonicalTerminator = PreserveLoopMetadata(
+                terminator,
+                new SsaTerminator(
+                    SsaTerminatorKind.Branch,
+                    [terminator.Targets[1], terminator.Targets[0]],
+                    Condition: logicalNot.Operand,
+                    Location: terminator.Location,
+                    BranchWeights: ReverseBranchWeights(terminator)));
             return true;
         }
 
@@ -156,12 +159,14 @@ internal sealed class SsaCleanupOptimizer
                 ? new[] { terminator.Targets[1], terminator.Targets[0] }
                 : terminator.Targets.ToArray();
 
-            canonicalTerminator = new SsaTerminator(
-                SsaTerminatorKind.Branch,
-                targets,
-                Condition: branchCondition,
-                Location: terminator.Location,
-                BranchWeights: swapTargets ? ReverseBranchWeights(terminator) : terminator.BranchWeights);
+            canonicalTerminator = PreserveLoopMetadata(
+                terminator,
+                new SsaTerminator(
+                    SsaTerminatorKind.Branch,
+                    targets,
+                    Condition: branchCondition,
+                    Location: terminator.Location,
+                    BranchWeights: swapTargets ? ReverseBranchWeights(terminator) : terminator.BranchWeights));
             return true;
         }
 
@@ -173,6 +178,16 @@ internal sealed class SsaCleanupOptimizer
         return terminator.BranchWeights is { Count: 2 } weights
             ? [weights[1], weights[0]]
             : null;
+    }
+
+    private static SsaTerminator PreserveLoopMetadata(SsaTerminator source, SsaTerminator replacement)
+    {
+        return replacement with
+        {
+            LoopBehavior = source.LoopBehavior,
+            LoopContracts = source.LoopContracts,
+            LoopAccessGroups = source.LoopAccessGroups
+        };
     }
 
     private static bool TryMatchBooleanComparison(
@@ -303,12 +318,14 @@ internal sealed class SsaCleanupOptimizer
                     block.Label,
                     block.Phis,
                     block.Instructions.Concat([compareInstruction]).ToArray(),
-                    new SsaTerminator(
-                        SsaTerminatorKind.Branch,
-                        [switchCase.TargetBlockId, block.Terminator.DefaultTarget.Value],
-                        Condition: new SsaValueReference(conditionName, StarkTypeSymbols.Bool),
-                        Location: block.Terminator.Location,
-                        BranchWeights: TryCreateSwitchCaseBranchWeights(block.Terminator, switchCase, trueTargetIsCase: true)));
+                    PreserveLoopMetadata(
+                        block.Terminator,
+                        new SsaTerminator(
+                            SsaTerminatorKind.Branch,
+                            [switchCase.TargetBlockId, block.Terminator.DefaultTarget.Value],
+                            Condition: new SsaValueReference(conditionName, StarkTypeSymbols.Bool),
+                            Location: block.Terminator.Location,
+                            BranchWeights: TryCreateSwitchCaseBranchWeights(block.Terminator, switchCase, trueTargetIsCase: true))));
             })
             .ToArray();
 
@@ -421,12 +438,14 @@ internal sealed class SsaCleanupOptimizer
             return false;
         }
 
-        branchTerminator = new SsaTerminator(
-            SsaTerminatorKind.Branch,
-            [trueCase.TargetBlockId, falseCase.TargetBlockId],
-            Condition: terminator.Condition,
-            Location: terminator.Location,
-            BranchWeights: TryCreateBoolSwitchBranchWeights(terminator, trueCase, falseCase));
+        branchTerminator = PreserveLoopMetadata(
+            terminator,
+            new SsaTerminator(
+                SsaTerminatorKind.Branch,
+                [trueCase.TargetBlockId, falseCase.TargetBlockId],
+                Condition: terminator.Condition,
+                Location: terminator.Location,
+                BranchWeights: TryCreateBoolSwitchBranchWeights(terminator, trueCase, falseCase)));
         return true;
     }
 
@@ -538,12 +557,14 @@ internal sealed class SsaCleanupOptimizer
                 currentLabel,
                 currentPhis,
                 currentInstructions.Concat([compareInstruction]).ToArray(),
-                new SsaTerminator(
-                    SsaTerminatorKind.Branch,
-                    [switchCase.TargetBlockId, falseTarget],
-                    Condition: new SsaValueReference(conditionName, StarkTypeSymbols.Bool),
-                    Location: block.Terminator.Location,
-                    BranchWeights: branchWeights)));
+                PreserveLoopMetadata(
+                    block.Terminator,
+                    new SsaTerminator(
+                        SsaTerminatorKind.Branch,
+                        [switchCase.TargetBlockId, falseTarget],
+                        Condition: new SsaValueReference(conditionName, StarkTypeSymbols.Bool),
+                        Location: block.Terminator.Location,
+                        BranchWeights: branchWeights))));
 
             currentBlockId = falseTarget;
             currentLabel = $"{block.Label}_switch_cmp_{index + 1}";
@@ -607,7 +628,9 @@ internal sealed class SsaCleanupOptimizer
             case SsaTerminatorKind.Branch when terminator.Targets.Count == 2
                                              && terminator.Targets[0] == terminator.Targets[1]
                                              && CanCollapseMultiEdgeTerminator(blockId, terminator.Targets[0], byId):
-                return new SsaTerminator(SsaTerminatorKind.Goto, [terminator.Targets[0]]);
+                return PreserveLoopMetadata(
+                    terminator,
+                    new SsaTerminator(SsaTerminatorKind.Goto, [terminator.Targets[0]]));
             case SsaTerminatorKind.Switch:
             {
                 terminator = RemoveSwitchCasesThatMatchDefaultTarget(terminator);
@@ -615,7 +638,9 @@ internal sealed class SsaCleanupOptimizer
                 if ((terminator.SwitchCases is null || terminator.SwitchCases.Count == 0)
                     && terminator.DefaultTarget is { } defaultTarget)
                 {
-                    return new SsaTerminator(SsaTerminatorKind.Goto, [defaultTarget]);
+                    return PreserveLoopMetadata(
+                        terminator,
+                        new SsaTerminator(SsaTerminatorKind.Goto, [defaultTarget]));
                 }
 
                 var allTargets = new List<int>(terminator.Targets);
@@ -628,7 +653,9 @@ internal sealed class SsaCleanupOptimizer
                     && allTargets.All(target => target == allTargets[0])
                     && CanCollapseMultiEdgeTerminator(blockId, allTargets[0], byId))
                 {
-                    return new SsaTerminator(SsaTerminatorKind.Goto, [allTargets[0]]);
+                    return PreserveLoopMetadata(
+                        terminator,
+                        new SsaTerminator(SsaTerminatorKind.Goto, [allTargets[0]]));
                 }
 
                 break;
@@ -726,12 +753,14 @@ internal sealed class SsaCleanupOptimizer
                 ? new[] { switchCase.TargetBlockId, terminator.DefaultTarget!.Value }
                 : new[] { terminator.DefaultTarget!.Value, switchCase.TargetBlockId };
 
-            branchTerminator = new SsaTerminator(
-                SsaTerminatorKind.Branch,
-                targets,
-                Condition: terminator.Condition,
-                Location: terminator.Location,
-                BranchWeights: TryCreateSwitchCaseBranchWeights(terminator, switchCase, trueTargetIsCase: match.Value));
+            branchTerminator = PreserveLoopMetadata(
+                terminator,
+                new SsaTerminator(
+                    SsaTerminatorKind.Branch,
+                    targets,
+                    Condition: terminator.Condition,
+                    Location: terminator.Location,
+                    BranchWeights: TryCreateSwitchCaseBranchWeights(terminator, switchCase, trueTargetIsCase: match.Value)));
             return true;
         }
 
@@ -2256,6 +2285,7 @@ internal sealed class SsaCleanupOptimizer
     private static bool IsPureRemovableInstruction(SsaRValue value)
     {
         return value is not SsaCallRValue
+            and not SsaIndirectCallRValue
             and not SsaDynamicStorageAllocationRValue
             and not SsaDynamicStorageFreeRValue
             and not SsaDynamicStorageReserveRValue
@@ -3111,16 +3141,26 @@ internal sealed class SsaCleanupOptimizer
             SsaStoreLocalInstruction storeLocal => new SsaStoreLocalInstruction(
                 storeLocal.LocalName,
                 storeLocal.LocalType,
-                RewriteValue(storeLocal.Value, replacements)),
+                RewriteValue(storeLocal.Value, replacements),
+                storeLocal.Location,
+                storeLocal.WriteKind),
             SsaCopyMemoryInstruction copyMemory => new SsaCopyMemoryInstruction(
                 RewriteValue(copyMemory.DestinationAddress, replacements),
                 RewriteValue(copyMemory.SourceAddress, replacements),
                 copyMemory.CopyType,
-                copyMemory.TransferKind),
+                copyMemory.TransferKind,
+                copyMemory.Location,
+                copyMemory.ScopedNoAliasGroups,
+                copyMemory.LoopAccessGroups,
+                copyMemory.WriteKind),
             SsaStoreIndirectInstruction storeIndirect => new SsaStoreIndirectInstruction(
                 RewriteValue(storeIndirect.Address, replacements),
                 storeIndirect.ValueType,
-                RewriteValue(storeIndirect.Value, replacements)),
+                RewriteValue(storeIndirect.Value, replacements),
+                storeIndirect.Location,
+                storeIndirect.ScopedNoAliasGroups,
+                storeIndirect.LoopAccessGroups,
+                storeIndirect.WriteKind),
             SsaStoreGlobalInstruction storeGlobal => new SsaStoreGlobalInstruction(
                 storeGlobal.GlobalName,
                 storeGlobal.GlobalType,
@@ -3314,7 +3354,10 @@ internal sealed class SsaCleanupOptimizer
                 ? null
                 : resolveTarget(terminator.DefaultTarget.Value),
             Location: terminator.Location,
-            BranchWeights: terminator.BranchWeights);
+            BranchWeights: terminator.BranchWeights,
+            LoopBehavior: terminator.LoopBehavior,
+            LoopContracts: terminator.LoopContracts,
+            LoopAccessGroups: terminator.LoopAccessGroups);
     }
 
     private static SsaValue RewriteValue(
@@ -5892,6 +5935,12 @@ internal sealed class SsaScalarReplacementOptimizer
         return true;
     }
 
+    private static bool ReturnNoLocalName(out string localName)
+    {
+        localName = string.Empty;
+        return false;
+    }
+
     private static IReadOnlySet<FieldKey> CollectStoredScalarFields(
         SsaFunction function,
         IReadOnlyDictionary<string, SsaRValue> definitions,
@@ -7016,7 +7065,7 @@ internal sealed class SsaValueFactAnalyzer
 
         foreach (var parameter in function.Parameters)
         {
-            values[$"arg_{parameter.Name}"] = CreateTypeFacts($"arg_{parameter.Name}", parameter.Type);
+            values[$"arg_{parameter.Name}"] = CreateParameterFacts($"arg_{parameter.Name}", parameter, function.Parameters);
         }
 
         foreach (var block in function.Blocks)
@@ -7182,7 +7231,10 @@ internal sealed class SsaValueFactAnalyzer
             || facts.Nullability != SsaNullabilityFactKind.Unknown
             || facts.PointerAlignmentKind != SsaFactLatticeKind.Unknown
             || facts.LengthKind != SsaFactLatticeKind.Unknown
-            || facts.TextLiteralPayloadKind != SsaFactLatticeKind.Unknown;
+            || facts.CapacityKind != SsaFactLatticeKind.Unknown
+            || facts.InitializedPrefixKind != SsaFactLatticeKind.Unknown
+            || facts.TextLiteralPayloadKind != SsaFactLatticeKind.Unknown
+            || facts.BoundedRawPointerRegionKind != SsaFactLatticeKind.Unknown;
     }
 
     private static Dictionary<string, SsaRValue> CollectValueDefinitions(SsaFunction function)
@@ -7785,6 +7837,11 @@ internal sealed class SsaValueFactAnalyzer
                 }
             }
 
+            if (RefineDynamicStorageLocalFacts(function, values, reachableBlockIds))
+            {
+                changed = true;
+            }
+
             if (!changed)
             {
                 return;
@@ -7808,15 +7865,18 @@ internal sealed class SsaValueFactAnalyzer
             SsaSelectRValue select => AnalyzeSelect(valueName, select, knownValues),
             SsaConvertRValue convert => AnalyzeConvert(valueName, convert, knownValues),
             SsaExtractFieldRValue extractField => AnalyzeExtractField(valueName, extractField, knownValues),
+            SsaInsertFieldRValue insertField => AnalyzeInsertField(valueName, insertField, knownValues),
             SsaCallRValue call => AnalyzeCall(valueName, call, knownValues, moduleName),
             SsaAddressOfLocalRValue addressOfLocal => CreateAddressFacts(valueName, addressOfLocal.Type, addressOfLocal.PointeeType),
             SsaAddressOfParameterRValue addressOfParameter => CreateAddressFacts(valueName, addressOfParameter.Type, addressOfParameter.PointeeType),
             SsaFieldAddressRValue fieldAddress => AnalyzeDerivedPointerAddress(valueName, fieldAddress.Type, fieldAddress.Address, knownValues),
             SsaElementAddressRValue elementAddress => AnalyzeDerivedPointerAddress(valueName, elementAddress.Type, elementAddress.Address, knownValues),
-            SsaSliceElementAddressRValue sliceElementAddress => CreateNonNullFacts(valueName, sliceElementAddress.Type),
+            SsaSliceElementAddressRValue sliceElementAddress => AnalyzeSliceElementAddress(valueName, sliceElementAddress, knownValues),
             SsaMakeSliceFromLocalRValue makeSlice => AnalyzeMakeSlice(valueName, makeSlice),
+            SsaMakeSliceFromPointerRValue makeSlice => AnalyzeMakeSliceFromPointer(valueName, makeSlice, knownValues),
             SsaLoadLocalRValue loadLocal => AnalyzeLoadLocal(valueName, loadLocal, function, reachableBlockIds, knownValues),
             SsaTextSliceRValue textSlice => AnalyzeTextSlice(valueName, textSlice, knownValues),
+            SsaDynamicStorageAllocationRValue allocation => AnalyzeDynamicStorageAllocation(valueName, allocation, knownValues),
             _ => CreateTypeFacts(valueName, value.Type)
         };
     }
@@ -8347,6 +8407,15 @@ internal sealed class SsaValueFactAnalyzer
             {
                 Nullability = operand.Nullability
             };
+            if (TryCanPreserveBoundedRawPointerRegionThroughConvert(
+                    convert.Operand.Type,
+                    convert.TargetType,
+                    operand,
+                    out var boundedRegion))
+            {
+                facts = WithBoundedRawPointerRegion(facts, boundedRegion);
+            }
+
             return TryNormalizePointerAlignment(convert.TargetType, operand.PointerAlignmentBytes, out var alignmentBytes)
                 ? WithPointerAlignment(facts, alignmentBytes)
                 : facts;
@@ -8380,6 +8449,26 @@ internal sealed class SsaValueFactAnalyzer
         }
 
         return WithPointerAlignment(facts, alignmentBytes);
+    }
+
+    private static SsaValueFacts AnalyzeSliceElementAddress(
+        string valueName,
+        SsaSliceElementAddressRValue sliceElementAddress,
+        IReadOnlyDictionary<string, SsaValueFacts> knownValues)
+    {
+        var facts = CreateNonNullFacts(valueName, sliceElementAddress.Type);
+        var sliceFacts = AnalyzeValue(valueName, sliceElementAddress.Slice, knownValues);
+        if (sliceFacts.BoundedRawPointerRegionKind == SsaFactLatticeKind.Known
+            && sliceFacts.BoundedRawPointerRegion is { ElementAlignmentBytes: > 1 } boundedRegion
+            && TryNormalizePointerAlignment(
+                sliceElementAddress.Type,
+                boundedRegion.ElementAlignmentBytes,
+                out var alignmentBytes))
+        {
+            return WithPointerAlignment(facts, alignmentBytes);
+        }
+
+        return NormalizeDynamicStorageFacts(facts);
     }
 
     private static SsaValueFacts AnalyzeCall(
@@ -8427,7 +8516,95 @@ internal sealed class SsaValueFactAnalyzer
                 ClampToTypeRange(lengthRange, extractField.Type));
         }
 
+        if (extractField.Target.Type.Kind == StarkTypeKind.Dynamic
+            && extractField.Type.Kind == StarkTypeKind.Integer)
+        {
+            var targetFacts = AnalyzeValue(valueName, extractField.Target, knownValues);
+            if (IsDynamicLengthField(extractField)
+                && targetFacts.LengthKind == SsaFactLatticeKind.Known
+                && targetFacts.LengthRange is { } dynamicLengthRange)
+            {
+                return CreateIntegerRangeFacts(
+                    valueName,
+                    extractField.Type,
+                    ClampToTypeRange(dynamicLengthRange, extractField.Type));
+            }
+
+            if (IsDynamicCapacityField(extractField)
+                && targetFacts.CapacityKind == SsaFactLatticeKind.Known
+                && targetFacts.CapacityRange is { } dynamicCapacityRange)
+            {
+                return CreateIntegerRangeFacts(
+                    valueName,
+                    extractField.Type,
+                    ClampToTypeRange(dynamicCapacityRange, extractField.Type));
+            }
+        }
+
+        if (extractField.Target.Type.Kind == StarkTypeKind.Dynamic
+            && extractField.Type.Kind == StarkTypeKind.RawPointer
+            && IsDynamicDataField(extractField))
+        {
+            var facts = CreateTypeFacts(valueName, extractField.Type);
+            var targetFacts = AnalyzeValue(valueName, extractField.Target, knownValues);
+            if (targetFacts.CapacityKind == SsaFactLatticeKind.Known
+                && targetFacts.CapacityRange is { } dataCapacityRange
+                && dataCapacityRange.Min > BigInteger.Zero
+                && extractField.Target.Type.ElementType is { } elementType)
+            {
+                facts = CreateNonNullFacts(valueName, extractField.Type);
+                if (TryGetTypeAlignmentBytes(elementType, out var alignmentBytes))
+                {
+                    facts = WithPointerAlignment(facts, alignmentBytes);
+                }
+            }
+
+            return facts;
+        }
+
         return CreateTypeFacts(valueName, extractField.Type);
+    }
+
+    private static SsaValueFacts AnalyzeInsertField(
+        string valueName,
+        SsaInsertFieldRValue insertField,
+        IReadOnlyDictionary<string, SsaValueFacts> knownValues)
+    {
+        if (insertField.Type.Kind != StarkTypeKind.Dynamic)
+        {
+            return CreateTypeFacts(valueName, insertField.Type);
+        }
+
+        var facts = RenameFacts(valueName, AnalyzeValue(valueName, insertField.Target, knownValues), insertField.Type);
+        if (insertField.Value.Type.Kind == StarkTypeKind.Integer)
+        {
+            var valueFacts = AnalyzeValue(valueName, insertField.Value, knownValues);
+            if (valueFacts.IntegerRangeKind == SsaFactLatticeKind.Known
+                && valueFacts.IntegerRange is { } insertedRange)
+            {
+                if (IsDynamicLengthField(insertField.FieldName, insertField.FieldIndex))
+                {
+                    var lengthRange = ClampDynamicStorageCountRange(insertedRange);
+                    facts = facts with
+                    {
+                        LengthKind = SsaFactLatticeKind.Known,
+                        LengthRange = lengthRange,
+                        InitializedPrefixKind = SsaFactLatticeKind.Known,
+                        InitializedPrefixRange = lengthRange
+                    };
+                }
+                else if (IsDynamicCapacityField(insertField.FieldName, insertField.FieldIndex))
+                {
+                    facts = facts with
+                    {
+                        CapacityKind = SsaFactLatticeKind.Known,
+                        CapacityRange = ClampDynamicStorageCountRange(insertedRange)
+                    };
+                }
+            }
+        }
+
+        return NormalizeDynamicStorageFacts(facts);
     }
 
     private static SsaValueFacts AnalyzeMakeSlice(
@@ -8445,6 +8622,34 @@ internal sealed class SsaValueFactAnalyzer
             : facts;
     }
 
+    private static SsaValueFacts AnalyzeMakeSliceFromPointer(
+        string valueName,
+        SsaMakeSliceFromPointerRValue makeSlice,
+        IReadOnlyDictionary<string, SsaValueFacts> knownValues)
+    {
+        var facts = CreateTypeFacts(valueName, makeSlice.Type);
+        var lengthFacts = AnalyzeValue(valueName, makeSlice.Length, knownValues);
+        if (lengthFacts.IntegerRangeKind == SsaFactLatticeKind.Known
+            && lengthFacts.IntegerRange is { } lengthRange)
+        {
+            facts = facts with
+            {
+                LengthKind = SsaFactLatticeKind.Known,
+                LengthRange = lengthRange
+            };
+        }
+
+        var pointerFacts = AnalyzeValue(valueName, makeSlice.Pointer, knownValues);
+        var alignmentBytes = pointerFacts.PointerAlignmentBytes
+            ?? pointerFacts.BoundedRawPointerRegion?.ElementAlignmentBytes;
+        var boundedRegion = new SsaBoundedRawPointerRegionFact(
+            makeSlice.Length,
+            lengthFacts.IntegerRangeKind == SsaFactLatticeKind.Known ? lengthFacts.IntegerRange : null,
+            alignmentBytes);
+
+        return WithBoundedRawPointerRegion(facts, boundedRegion);
+    }
+
     private static SsaValueFacts AnalyzeLoadLocal(
         string valueName,
         SsaLoadLocalRValue loadLocal,
@@ -8453,12 +8658,24 @@ internal sealed class SsaValueFactAnalyzer
         IReadOnlyDictionary<string, SsaValueFacts> knownValues)
     {
         var facts = CreateTypeFacts(valueName, loadLocal.Type);
-        if (loadLocal.Type.Kind != StarkTypeKind.Slice)
+        if (loadLocal.Type.Kind is not (StarkTypeKind.Slice or StarkTypeKind.Ascii or StarkTypeKind.Unicode or StarkTypeKind.Dynamic))
         {
             return facts;
         }
 
-        var storedLengthRanges = function.Blocks
+        if (loadLocal.Type.Kind == StarkTypeKind.Dynamic
+            && knownValues.TryGetValue(valueName, out var existingFacts)
+            && HasDynamicStorageFactPayload(existingFacts))
+        {
+            return existingFacts;
+        }
+
+        if (IsLocalAddressTaken(function, reachableBlockIds, loadLocal.LocalName))
+        {
+            return facts;
+        }
+
+        var storedFacts = function.Blocks
             .Where(block => reachableBlockIds.Contains(block.Id))
             .SelectMany(static block => block.Instructions)
             .OfType<SsaStoreLocalInstruction>()
@@ -8466,20 +8683,688 @@ internal sealed class SsaValueFactAnalyzer
                             && store.LocalType == loadLocal.Type)
             .Select(store => AnalyzeValue(valueName, store.Value, knownValues))
             .ToArray();
-        if (storedLengthRanges.Length == 0
-            || storedLengthRanges.Any(static storeFacts => storeFacts.LengthKind != SsaFactLatticeKind.Known
-                                                           || storeFacts.LengthRange is null))
+        if (storedFacts.Length == 0)
         {
             return facts;
         }
 
-        return facts with
+        return JoinFacts(valueName, loadLocal.Type, storedFacts);
+    }
+
+    private static SsaValueFacts AnalyzeDynamicStorageAllocation(
+        string valueName,
+        SsaDynamicStorageAllocationRValue allocation,
+        IReadOnlyDictionary<string, SsaValueFacts> knownValues)
+    {
+        var facts = CreateTypeFacts(valueName, allocation.Type);
+        var zero = new SsaIntegerRangeFact(BigInteger.Zero, BigInteger.Zero);
+        facts = facts with
         {
             LengthKind = SsaFactLatticeKind.Known,
-            LengthRange = new SsaIntegerRangeFact(
-                storedLengthRanges.Min(static storeFacts => storeFacts.LengthRange!.Min),
-                storedLengthRanges.Max(static storeFacts => storeFacts.LengthRange!.Max))
+            LengthRange = zero,
+            InitializedPrefixKind = SsaFactLatticeKind.Known,
+            InitializedPrefixRange = zero
         };
+
+        var capacityFacts = AnalyzeValue(valueName, allocation.Capacity, knownValues);
+        if (capacityFacts.IntegerRangeKind == SsaFactLatticeKind.Known
+            && capacityFacts.IntegerRange is { } capacityRange)
+        {
+            facts = facts with
+            {
+                CapacityKind = SsaFactLatticeKind.Known,
+                CapacityRange = ClampDynamicStorageCountRange(capacityRange)
+            };
+        }
+
+        return NormalizeDynamicStorageFacts(facts);
+    }
+
+    private sealed record DynamicStorageLocalMutation(
+        string LocalName,
+        SsaValueFacts Before,
+        SsaValueFacts OnSuccess);
+
+    private sealed record DynamicStorageBlockTransfer(
+        IReadOnlyDictionary<string, SsaValueFacts> ExitState,
+        IReadOnlyDictionary<string, DynamicStorageLocalMutation> ConditionalMutations);
+
+    private static bool RefineDynamicStorageLocalFacts(
+        SsaFunction function,
+        Dictionary<string, SsaValueFacts> values,
+        ISet<int> reachableBlockIds)
+    {
+        var definitions = CollectValueDefinitions(function);
+        var reachableBlocks = function.Blocks
+            .Where(block => reachableBlockIds.Contains(block.Id))
+            .ToArray();
+        if (reachableBlocks.Length == 0)
+        {
+            return false;
+        }
+
+        var entryStates = new Dictionary<int, Dictionary<string, SsaValueFacts>>();
+        var initializedEntries = new HashSet<int>();
+        entryStates[function.EntryBlockId] = new Dictionary<string, SsaValueFacts>(StringComparer.Ordinal);
+        initializedEntries.Add(function.EntryBlockId);
+
+        var changedFacts = false;
+        var changedStates = true;
+        var iterationLimit = Math.Max(4, reachableBlocks.Length * 4);
+        for (var iteration = 0; changedStates && iteration < iterationLimit; iteration++)
+        {
+            changedStates = false;
+            foreach (var block in reachableBlocks)
+            {
+                if (!initializedEntries.Contains(block.Id)
+                    || !entryStates.TryGetValue(block.Id, out var entryState))
+                {
+                    continue;
+                }
+
+                var transfer = AnalyzeDynamicStorageBlockTransfer(
+                    block,
+                    entryState,
+                    definitions,
+                    values,
+                    ref changedFacts);
+                foreach (var target in EnumerateTerminatorTargets(block.Terminator))
+                {
+                    if (!reachableBlockIds.Contains(target))
+                    {
+                        continue;
+                    }
+
+                    var edgeState = ApplyDynamicStorageEdgeTransfer(
+                        block.Terminator,
+                        target,
+                        transfer.ExitState,
+                        transfer.ConditionalMutations,
+                        definitions);
+                    if (MergeDynamicStorageEntryState(target, edgeState, entryStates, initializedEntries))
+                    {
+                        changedStates = true;
+                    }
+                }
+            }
+        }
+
+        return changedFacts;
+    }
+
+    private static DynamicStorageBlockTransfer AnalyzeDynamicStorageBlockTransfer(
+        SsaBasicBlock block,
+        IReadOnlyDictionary<string, SsaValueFacts> entryState,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        Dictionary<string, SsaValueFacts> values,
+        ref bool changedFacts)
+    {
+        var state = CloneDynamicStorageState(entryState);
+        var conditionalMutations = new Dictionary<string, DynamicStorageLocalMutation>(StringComparer.Ordinal);
+
+        foreach (var instruction in block.Instructions)
+        {
+            switch (instruction)
+            {
+                case SsaStoreLocalInstruction storeLocal when storeLocal.LocalType.Kind == StarkTypeKind.Dynamic:
+                {
+                    var storedFacts = AnalyzeValue(storeLocal.LocalName, storeLocal.Value, values);
+                    if (HasDynamicStorageFactPayload(storedFacts))
+                    {
+                        state[storeLocal.LocalName] = RenameFacts(storeLocal.LocalName, storedFacts, storeLocal.LocalType);
+                    }
+                    else
+                    {
+                        state.Remove(storeLocal.LocalName);
+                    }
+
+                    break;
+                }
+                case SsaStoreIndirectInstruction storeIndirect:
+                    InvalidateDynamicStorageLocalAddress(state, storeIndirect.Address, definitions);
+                    break;
+                case SsaCopyMemoryInstruction copyMemory:
+                    InvalidateDynamicStorageLocalAddress(state, copyMemory.DestinationAddress, definitions);
+                    break;
+                case SsaValueInstruction valueInstruction:
+                    AnalyzeDynamicStorageValueTransfer(
+                        valueInstruction,
+                        state,
+                        conditionalMutations,
+                        definitions,
+                        values,
+                        ref changedFacts);
+                    break;
+            }
+        }
+
+        return new DynamicStorageBlockTransfer(state, conditionalMutations);
+    }
+
+    private static void AnalyzeDynamicStorageValueTransfer(
+        SsaValueInstruction valueInstruction,
+        Dictionary<string, SsaValueFacts> state,
+        Dictionary<string, DynamicStorageLocalMutation> conditionalMutations,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        Dictionary<string, SsaValueFacts> values,
+        ref bool changedFacts)
+    {
+        switch (valueInstruction.Value)
+        {
+            case SsaLoadLocalRValue { Type.Kind: StarkTypeKind.Dynamic } loadLocal:
+                if (state.TryGetValue(loadLocal.LocalName, out var localFacts))
+                {
+                    var renamed = RenameFacts(valueInstruction.ResultName, localFacts, loadLocal.Type);
+                    if (!EqualityComparer<SsaValueFacts>.Default.Equals(values[valueInstruction.ResultName], renamed))
+                    {
+                        values[valueInstruction.ResultName] = renamed;
+                        changedFacts = true;
+                    }
+                }
+
+                return;
+            case SsaDynamicStorageReserveRValue reserve
+                when TryResolveLocalAddressRoot(reserve.StorageAddress, definitions, out var reserveLocalName):
+                ApplyUnconditionalDynamicStorageMutation(
+                    state,
+                    reserveLocalName,
+                    reserve.StorageType,
+                    current => ApplyDynamicStorageReserveAdditionalFacts(current, reserve.AdditionalCapacity, values));
+                return;
+            case SsaDynamicStorageTryReserveRValue reserve
+                when TryResolveLocalAddressRoot(reserve.StorageAddress, definitions, out var reserveLocalName):
+                ApplyConditionalDynamicStorageMutation(
+                    state,
+                    conditionalMutations,
+                    valueInstruction.ResultName,
+                    reserveLocalName,
+                    reserve.StorageType,
+                    current => ApplyDynamicStorageReserveAdditionalFacts(current, reserve.AdditionalCapacity, values));
+                return;
+            case SsaDynamicStorageTryReserveCapacityRValue reserve
+                when TryResolveLocalAddressRoot(reserve.StorageAddress, definitions, out var reserveLocalName):
+                ApplyConditionalDynamicStorageMutation(
+                    state,
+                    conditionalMutations,
+                    valueInstruction.ResultName,
+                    reserveLocalName,
+                    reserve.StorageType,
+                    current => ApplyDynamicStorageReserveCapacityFacts(current, reserve.TargetCapacity, values));
+                return;
+            case SsaDynamicStorageMoveLastRValue moveLast
+                when TryResolveLocalAddressRoot(moveLast.StorageAddress, definitions, out var moveLastLocalName):
+                ApplyUnconditionalDynamicStorageMutation(
+                    state,
+                    moveLastLocalName,
+                    moveLast.StorageType,
+                    ApplyDynamicStorageMoveOneFacts);
+                return;
+            case SsaDynamicStorageMoveAtRValue moveAt
+                when TryResolveLocalAddressRoot(moveAt.StorageAddress, definitions, out var moveAtLocalName):
+                ApplyUnconditionalDynamicStorageMutation(
+                    state,
+                    moveAtLocalName,
+                    moveAt.StorageType,
+                    ApplyDynamicStorageMoveOneFacts);
+                return;
+        }
+    }
+
+    private static void ApplyUnconditionalDynamicStorageMutation(
+        Dictionary<string, SsaValueFacts> state,
+        string localName,
+        StarkTypeSymbol storageType,
+        Func<SsaValueFacts, SsaValueFacts> mutate)
+    {
+        var before = state.TryGetValue(localName, out var known)
+            ? known
+            : CreateTypeFacts(localName, storageType);
+        var after = mutate(RenameFacts(localName, before, storageType));
+        if (HasDynamicStorageFactPayload(after))
+        {
+            state[localName] = RenameFacts(localName, after, storageType);
+        }
+        else
+        {
+            state.Remove(localName);
+        }
+    }
+
+    private static void ApplyConditionalDynamicStorageMutation(
+        Dictionary<string, SsaValueFacts> state,
+        Dictionary<string, DynamicStorageLocalMutation> conditionalMutations,
+        string resultName,
+        string localName,
+        StarkTypeSymbol storageType,
+        Func<SsaValueFacts, SsaValueFacts> mutate)
+    {
+        var before = state.TryGetValue(localName, out var known)
+            ? known
+            : CreateTypeFacts(localName, storageType);
+        before = RenameFacts(localName, before, storageType);
+        var onSuccess = RenameFacts(localName, mutate(before), storageType);
+        conditionalMutations[resultName] = new DynamicStorageLocalMutation(localName, before, onSuccess);
+
+        var joined = JoinFacts(localName, storageType, [before, onSuccess]);
+        if (HasDynamicStorageFactPayload(joined))
+        {
+            state[localName] = joined;
+        }
+        else
+        {
+            state.Remove(localName);
+        }
+    }
+
+    private static IReadOnlyDictionary<string, SsaValueFacts> ApplyDynamicStorageEdgeTransfer(
+        SsaTerminator terminator,
+        int target,
+        IReadOnlyDictionary<string, SsaValueFacts> exitState,
+        IReadOnlyDictionary<string, DynamicStorageLocalMutation> conditionalMutations,
+        IReadOnlyDictionary<string, SsaRValue> definitions)
+    {
+        if (conditionalMutations.Count == 0
+            || !TryResolveBranchConditionValue(
+                terminator,
+                target,
+                definitions,
+                out var conditionName,
+                out var branchWhenConditionTrue)
+            || !conditionalMutations.TryGetValue(conditionName, out var mutation))
+        {
+            return exitState;
+        }
+
+        var edgeState = CloneDynamicStorageState(exitState);
+        edgeState[mutation.LocalName] = branchWhenConditionTrue
+            ? mutation.OnSuccess
+            : mutation.Before;
+        return edgeState;
+    }
+
+    private static bool TryResolveBranchConditionValue(
+        SsaTerminator terminator,
+        int target,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        out string conditionName,
+        out bool branchWhenConditionTrue)
+    {
+        conditionName = string.Empty;
+        branchWhenConditionTrue = false;
+        if (terminator.Kind != SsaTerminatorKind.Branch
+            || terminator.Targets.Count != 2
+            || terminator.Condition is null
+            || terminator.Targets[0] == terminator.Targets[1])
+        {
+            return false;
+        }
+
+        bool branchTakesCondition;
+        if (target == terminator.Targets[0])
+        {
+            branchTakesCondition = true;
+        }
+        else if (target == terminator.Targets[1])
+        {
+            branchTakesCondition = false;
+        }
+        else
+        {
+            return false;
+        }
+
+        return TryResolveBooleanSource(
+            terminator.Condition,
+            branchTakesCondition,
+            definitions,
+            new HashSet<string>(StringComparer.Ordinal),
+            out conditionName,
+            out branchWhenConditionTrue);
+    }
+
+    private static bool TryResolveBooleanSource(
+        SsaValue value,
+        bool branchTakesValue,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> visitedReferences,
+        out string valueName,
+        out bool branchWhenValueTrue)
+    {
+        valueName = string.Empty;
+        branchWhenValueTrue = branchTakesValue;
+        if (value is not SsaValueReference reference
+            || !visitedReferences.Add(reference.Name))
+        {
+            return false;
+        }
+
+        if (!definitions.TryGetValue(reference.Name, out var definition))
+        {
+            valueName = reference.Name;
+            branchWhenValueTrue = branchTakesValue;
+            return true;
+        }
+
+        switch (definition)
+        {
+            case SsaUseRValue use:
+                return TryResolveBooleanSource(use.Value, branchTakesValue, definitions, visitedReferences, out valueName, out branchWhenValueTrue);
+            case SsaUnaryRValue { Operator: SsaUnaryOperator.LogicalNot } unary:
+                return TryResolveBooleanSource(unary.Operand, !branchTakesValue, definitions, visitedReferences, out valueName, out branchWhenValueTrue);
+            default:
+                valueName = reference.Name;
+                branchWhenValueTrue = branchTakesValue;
+                return true;
+        }
+    }
+
+    private static bool MergeDynamicStorageEntryState(
+        int targetBlockId,
+        IReadOnlyDictionary<string, SsaValueFacts> edgeState,
+        Dictionary<int, Dictionary<string, SsaValueFacts>> entryStates,
+        HashSet<int> initializedEntries)
+    {
+        if (!initializedEntries.Add(targetBlockId))
+        {
+            var existingState = entryStates[targetBlockId];
+            var joinedState = JoinDynamicStorageStates(existingState, edgeState);
+            if (DynamicStorageStatesEqual(existingState, joinedState))
+            {
+                return false;
+            }
+
+            entryStates[targetBlockId] = joinedState;
+            return true;
+        }
+
+        entryStates[targetBlockId] = CloneDynamicStorageState(edgeState);
+        return edgeState.Count != 0;
+    }
+
+    private static Dictionary<string, SsaValueFacts> JoinDynamicStorageStates(
+        IReadOnlyDictionary<string, SsaValueFacts> left,
+        IReadOnlyDictionary<string, SsaValueFacts> right)
+    {
+        var joined = new Dictionary<string, SsaValueFacts>(StringComparer.Ordinal);
+        foreach (var (localName, leftFacts) in left)
+        {
+            if (!right.TryGetValue(localName, out var rightFacts)
+                || leftFacts.Type.Kind != StarkTypeKind.Dynamic
+                || rightFacts.Type != leftFacts.Type)
+            {
+                continue;
+            }
+
+            var localFacts = JoinFacts(localName, leftFacts.Type, [leftFacts, rightFacts]);
+            if (HasDynamicStorageFactPayload(localFacts))
+            {
+                joined[localName] = localFacts;
+            }
+        }
+
+        return joined;
+    }
+
+    private static Dictionary<string, SsaValueFacts> CloneDynamicStorageState(
+        IReadOnlyDictionary<string, SsaValueFacts> state)
+    {
+        return new Dictionary<string, SsaValueFacts>(state, StringComparer.Ordinal);
+    }
+
+    private static bool DynamicStorageStatesEqual(
+        IReadOnlyDictionary<string, SsaValueFacts> left,
+        IReadOnlyDictionary<string, SsaValueFacts> right)
+    {
+        return left.Count == right.Count
+               && left.All(pair => right.TryGetValue(pair.Key, out var rightFacts)
+                                   && EqualityComparer<SsaValueFacts>.Default.Equals(pair.Value, rightFacts));
+    }
+
+    private static void InvalidateDynamicStorageLocalAddress(
+        Dictionary<string, SsaValueFacts> state,
+        SsaValue address,
+        IReadOnlyDictionary<string, SsaRValue> definitions)
+    {
+        if (TryResolveLocalAddressRoot(address, definitions, out var localName))
+        {
+            state.Remove(localName);
+        }
+    }
+
+    private static bool TryResolveLocalAddressRoot(
+        SsaValue value,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        out string localName)
+    {
+        return TryResolveLocalAddressRoot(value, definitions, new HashSet<string>(StringComparer.Ordinal), out localName);
+    }
+
+    private static bool TryResolveLocalAddressRoot(
+        SsaValue value,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> visitedReferences,
+        out string localName)
+    {
+        switch (value)
+        {
+            case SsaValueReference reference:
+                if (!visitedReferences.Add(reference.Name)
+                    || !definitions.TryGetValue(reference.Name, out var definition))
+                {
+                    localName = string.Empty;
+                    return false;
+                }
+
+                return definition switch
+                {
+                    SsaAddressOfLocalRValue addressOfLocal => ReturnLocalName(addressOfLocal.LocalName, out localName),
+                    SsaUseRValue use => TryResolveLocalAddressRoot(use.Value, definitions, visitedReferences, out localName),
+                    SsaConvertRValue convert when convert.TargetType.Kind == StarkTypeKind.RawPointer
+                        => TryResolveLocalAddressRoot(convert.Operand, definitions, visitedReferences, out localName),
+                    SsaFieldAddressRValue fieldAddress => TryResolveLocalAddressRoot(fieldAddress.Address, definitions, visitedReferences, out localName),
+                    SsaElementAddressRValue elementAddress => TryResolveLocalAddressRoot(elementAddress.Address, definitions, visitedReferences, out localName),
+                    _ => ReturnNoLocalName(out localName)
+                };
+            default:
+                localName = string.Empty;
+                return false;
+        }
+    }
+
+    private static bool ReturnLocalName(string value, out string localName)
+    {
+        localName = value;
+        return true;
+    }
+
+    private static bool ReturnNoLocalName(out string localName)
+    {
+        localName = string.Empty;
+        return false;
+    }
+
+    private static bool HasDynamicStorageFactPayload(SsaValueFacts facts)
+    {
+        return facts.Type.Kind == StarkTypeKind.Dynamic
+               && (facts.LengthKind == SsaFactLatticeKind.Known
+                   || facts.CapacityKind == SsaFactLatticeKind.Known
+                   || facts.InitializedPrefixKind == SsaFactLatticeKind.Known);
+    }
+
+    private static SsaValueFacts ApplyDynamicStorageReserveAdditionalFacts(
+        SsaValueFacts current,
+        SsaValue additionalCapacity,
+        IReadOnlyDictionary<string, SsaValueFacts> values)
+    {
+        var additionalFacts = AnalyzeValue("dynamic.reserve.additional", additionalCapacity, values);
+        if (additionalFacts.IntegerRangeKind != SsaFactLatticeKind.Known
+            || additionalFacts.IntegerRange is not { } additionalRange)
+        {
+            return current;
+        }
+
+        BigInteger? requiredLowerBound = null;
+        if (current.LengthKind == SsaFactLatticeKind.Known
+            && current.LengthRange is { } lengthRange)
+        {
+            requiredLowerBound = Max(BigInteger.Zero, lengthRange.Min) + Max(BigInteger.Zero, additionalRange.Min);
+        }
+
+        return NormalizeDynamicStorageFacts(RaiseDynamicStorageCapacityLowerBound(current, requiredLowerBound));
+    }
+
+    private static SsaValueFacts ApplyDynamicStorageReserveCapacityFacts(
+        SsaValueFacts current,
+        SsaValue targetCapacity,
+        IReadOnlyDictionary<string, SsaValueFacts> values)
+    {
+        var targetFacts = AnalyzeValue("dynamic.reserve.capacity", targetCapacity, values);
+        if (targetFacts.IntegerRangeKind != SsaFactLatticeKind.Known
+            || targetFacts.IntegerRange is not { } targetRange)
+        {
+            return current;
+        }
+
+        return NormalizeDynamicStorageFacts(RaiseDynamicStorageCapacityLowerBound(current, Max(BigInteger.Zero, targetRange.Min)));
+    }
+
+    private static SsaValueFacts RaiseDynamicStorageCapacityLowerBound(
+        SsaValueFacts current,
+        BigInteger? requiredLowerBound)
+    {
+        if (requiredLowerBound is null
+            && current.CapacityKind != SsaFactLatticeKind.Known)
+        {
+            return current;
+        }
+
+        var upperBound = GetDynamicStorageCountUpperBound();
+        var lowerBound = BigInteger.Zero;
+        if (current.CapacityKind == SsaFactLatticeKind.Known
+            && current.CapacityRange is { } capacityRange)
+        {
+            lowerBound = Max(BigInteger.Zero, capacityRange.Min);
+        }
+
+        if (requiredLowerBound is { } required)
+        {
+            lowerBound = Max(lowerBound, required);
+        }
+
+        lowerBound = Min(lowerBound, upperBound);
+        return current with
+        {
+            CapacityKind = SsaFactLatticeKind.Known,
+            CapacityRange = new SsaIntegerRangeFact(lowerBound, upperBound)
+        };
+    }
+
+    private static SsaValueFacts NormalizeDynamicStorageFacts(SsaValueFacts facts)
+    {
+        if (facts.Type.Kind != StarkTypeKind.Dynamic)
+        {
+            return facts;
+        }
+
+        var normalized = facts;
+        if (normalized.LengthKind == SsaFactLatticeKind.Known
+            && normalized.LengthRange is { } lengthRange)
+        {
+            var clampedLength = ClampDynamicStorageCountRange(lengthRange);
+            normalized = normalized with
+            {
+                LengthRange = clampedLength
+            };
+
+            if (normalized.InitializedPrefixKind != SsaFactLatticeKind.Known
+                || normalized.InitializedPrefixRange is null)
+            {
+                normalized = normalized with
+                {
+                    InitializedPrefixKind = SsaFactLatticeKind.Known,
+                    InitializedPrefixRange = clampedLength
+                };
+            }
+
+            var upperBound = GetDynamicStorageCountUpperBound();
+            if (normalized.CapacityKind == SsaFactLatticeKind.Known
+                && normalized.CapacityRange is { } capacityRange)
+            {
+                var clampedCapacity = ClampDynamicStorageCountRange(capacityRange);
+                var capacityMin = Max(clampedCapacity.Min, clampedLength.Min);
+                normalized = normalized with
+                {
+                    CapacityRange = new SsaIntegerRangeFact(
+                        capacityMin,
+                        Max(capacityMin, clampedCapacity.Max))
+                };
+            }
+            else
+            {
+                normalized = normalized with
+                {
+                    CapacityKind = SsaFactLatticeKind.Known,
+                    CapacityRange = new SsaIntegerRangeFact(clampedLength.Min, upperBound)
+                };
+            }
+        }
+
+        if (normalized.InitializedPrefixKind == SsaFactLatticeKind.Known
+            && normalized.InitializedPrefixRange is { } initializedRange)
+        {
+            normalized = normalized with
+            {
+                InitializedPrefixRange = ClampDynamicStorageCountRange(initializedRange)
+            };
+        }
+
+        return normalized;
+    }
+
+    private static SsaValueFacts ApplyDynamicStorageMoveOneFacts(SsaValueFacts current)
+    {
+        if (current.LengthKind != SsaFactLatticeKind.Known
+            || current.LengthRange is not { } lengthRange)
+        {
+            return current;
+        }
+
+        var newLength = new SsaIntegerRangeFact(
+            lengthRange.Min > BigInteger.Zero ? lengthRange.Min - BigInteger.One : BigInteger.Zero,
+            lengthRange.Max > BigInteger.Zero ? lengthRange.Max - BigInteger.One : BigInteger.Zero);
+
+        return NormalizeDynamicStorageFacts(current with
+        {
+            LengthKind = SsaFactLatticeKind.Known,
+            LengthRange = ClampDynamicStorageCountRange(newLength),
+            InitializedPrefixKind = SsaFactLatticeKind.Known,
+            InitializedPrefixRange = ClampDynamicStorageCountRange(newLength)
+        });
+    }
+
+    private static bool IsLocalAddressTaken(
+        SsaFunction function,
+        ISet<int> reachableBlockIds,
+        string localName)
+    {
+        foreach (var valueInstruction in function.Blocks
+                     .Where(block => reachableBlockIds.Contains(block.Id))
+                     .SelectMany(static block => block.Instructions)
+                     .OfType<SsaValueInstruction>())
+        {
+            if (RValueTakesLocalAddress(valueInstruction.Value, localName))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    internal static bool RValueTakesLocalAddress(SsaRValue value, string localName)
+    {
+        return value is SsaAddressOfLocalRValue addressOfLocal
+               && string.Equals(addressOfLocal.LocalName, localName, StringComparison.Ordinal);
     }
 
     private static SsaValueFacts AnalyzeTextSlice(
@@ -8487,7 +9372,18 @@ internal sealed class SsaValueFactAnalyzer
         SsaTextSliceRValue textSlice,
         IReadOnlyDictionary<string, SsaValueFacts> knownValues)
     {
+        var textValue = AnalyzeValue(valueName, textSlice.TextValue, knownValues);
+        var start = AnalyzeValue(valueName, textSlice.Start, knownValues);
         var length = AnalyzeValue(valueName, textSlice.Length, knownValues);
+        if (textValue.TextLiteralPayloadKind == SsaFactLatticeKind.Known
+            && textValue.TextLiteralPayload is { } payload
+            && TryGetExactNonNegativeInteger(start, out var exactStart)
+            && TryGetExactNonNegativeInteger(length, out var exactLength)
+            && TrySliceTextLiteralPayload(textSlice.Type, payload, exactStart, exactLength, out var slicedPayload))
+        {
+            return CreateTextLiteralPayloadFacts(valueName, textSlice.Type, slicedPayload);
+        }
+
         if (length.IntegerRangeKind == SsaFactLatticeKind.Known
             && length.IntegerRange is { } lengthRange)
         {
@@ -8499,6 +9395,47 @@ internal sealed class SsaValueFactAnalyzer
         }
 
         return CreateTypeFacts(valueName, textSlice.Type);
+    }
+
+    private static bool TryGetExactNonNegativeInteger(SsaValueFacts facts, out BigInteger value)
+    {
+        if (facts.IntegerRangeKind == SsaFactLatticeKind.Known
+            && facts.IntegerRange is { } range
+            && range.Min == range.Max
+            && range.Min >= BigInteger.Zero)
+        {
+            value = range.Min;
+            return true;
+        }
+
+        value = default;
+        return false;
+    }
+
+    private static bool TrySliceTextLiteralPayload(
+        StarkTypeSymbol type,
+        SsaTextLiteralPayloadFact payload,
+        BigInteger start,
+        BigInteger length,
+        out SsaTextLiteralPayloadFact slicedPayload)
+    {
+        slicedPayload = null!;
+        var sourceLength = type.Kind == StarkTypeKind.Unicode
+            ? payload.Utf32Length
+            : payload.Utf8Length;
+        var end = start + length;
+        if (start < BigInteger.Zero
+            || length < BigInteger.Zero
+            || end > sourceLength
+            || start > int.MaxValue
+            || length > int.MaxValue)
+        {
+            return false;
+        }
+
+        var slicedText = payload.DecodedText.Substring((int)start, (int)length);
+        slicedPayload = CreateTextLiteralPayload(new DecodedTextLiteral(slicedText));
+        return type.Kind != StarkTypeKind.Ascii || slicedPayload.IsAsciiOnly;
     }
 
     internal static bool TryEvaluateComparison(
@@ -8727,6 +9664,38 @@ internal sealed class SsaValueFactAnalyzer
             };
         }
 
+        var capacityRanges = facts
+            .Where(static fact => fact.CapacityKind == SsaFactLatticeKind.Known && fact.CapacityRange is not null)
+            .Select(static fact => fact.CapacityRange!)
+            .ToArray();
+        if (capacityRanges.Length == facts.Count)
+        {
+            joined = joined with
+            {
+                CapacityKind = SsaFactLatticeKind.Known,
+                CapacityRange = ClampDynamicStorageCountRange(
+                    new SsaIntegerRangeFact(
+                        capacityRanges.Min(static range => range.Min),
+                        capacityRanges.Max(static range => range.Max)))
+            };
+        }
+
+        var initializedPrefixRanges = facts
+            .Where(static fact => fact.InitializedPrefixKind == SsaFactLatticeKind.Known && fact.InitializedPrefixRange is not null)
+            .Select(static fact => fact.InitializedPrefixRange!)
+            .ToArray();
+        if (initializedPrefixRanges.Length == facts.Count)
+        {
+            joined = joined with
+            {
+                InitializedPrefixKind = SsaFactLatticeKind.Known,
+                InitializedPrefixRange = ClampDynamicStorageCountRange(
+                    new SsaIntegerRangeFact(
+                        initializedPrefixRanges.Min(static range => range.Min),
+                        initializedPrefixRanges.Max(static range => range.Max)))
+            };
+        }
+
         var textPayloads = facts
             .Where(static fact => fact.TextLiteralPayloadKind == SsaFactLatticeKind.Known
                                   && fact.TextLiteralPayload is not null)
@@ -8747,7 +9716,13 @@ internal sealed class SsaValueFactAnalyzer
                 BooleanConstant = joined.BooleanConstant,
                 Nullability = joined.Nullability,
                 PointerAlignmentKind = joined.PointerAlignmentKind,
-                PointerAlignmentBytes = joined.PointerAlignmentBytes
+                PointerAlignmentBytes = joined.PointerAlignmentBytes,
+                CapacityKind = joined.CapacityKind,
+                CapacityRange = joined.CapacityRange,
+                InitializedPrefixKind = joined.InitializedPrefixKind,
+                InitializedPrefixRange = joined.InitializedPrefixRange,
+                BoundedRawPointerRegionKind = joined.BoundedRawPointerRegionKind,
+                BoundedRawPointerRegion = joined.BoundedRawPointerRegion
             };
         }
 
@@ -8778,6 +9753,19 @@ internal sealed class SsaValueFactAnalyzer
             }
         }
 
+        var boundedRegions = facts
+            .Where(static fact => fact.BoundedRawPointerRegionKind == SsaFactLatticeKind.Known
+                                  && fact.BoundedRawPointerRegion is not null)
+            .Select(static fact => fact.BoundedRawPointerRegion!)
+            .Distinct()
+            .ToArray();
+        if (boundedRegions.Length == 1
+            && facts.All(static fact => fact.BoundedRawPointerRegionKind == SsaFactLatticeKind.Known
+                                        && fact.BoundedRawPointerRegion is not null))
+        {
+            joined = WithBoundedRawPointerRegion(joined, boundedRegions[0]);
+        }
+
         return joined;
     }
 
@@ -8788,6 +9776,35 @@ internal sealed class SsaValueFactAnalyzer
             ValueName = valueName,
             Type = type
         };
+    }
+
+    private static SsaValueFacts CreateParameterFacts(
+        string valueName,
+        TypedParameterSymbol parameter,
+        IReadOnlyList<TypedParameterSymbol> parameters)
+    {
+        var facts = CreateTypeFacts(valueName, parameter.Type);
+        if (!TryCreateBoundedRawPointerParameterRegionFact(parameter, parameters, out var boundedRegion))
+        {
+            return facts;
+        }
+
+        facts = WithBoundedRawPointerRegion(facts, boundedRegion);
+        if (boundedRegion.ElementCountRange is { } elementCountRange
+            && elementCountRange.Min > BigInteger.Zero)
+        {
+            facts = facts with
+            {
+                Nullability = SsaNullabilityFactKind.NonNull
+            };
+
+            if (boundedRegion.ElementAlignmentBytes is > 1)
+            {
+                facts = WithPointerAlignment(facts, boundedRegion.ElementAlignmentBytes.Value);
+            }
+        }
+
+        return facts;
     }
 
     private static SsaValueFacts CreateTypeFacts(string valueName, StarkTypeSymbol type)
@@ -8809,6 +9826,76 @@ internal sealed class SsaValueFactAnalyzer
         }
 
         return facts;
+    }
+
+    private static SsaIntegerRangeFact ClampDynamicStorageCountRange(SsaIntegerRangeFact range)
+    {
+        var lower = Max(BigInteger.Zero, range.Min);
+        var upper = Min(GetDynamicStorageCountUpperBound(), Max(lower, range.Max));
+        return new SsaIntegerRangeFact(lower, upper);
+    }
+
+    private static BigInteger GetDynamicStorageCountUpperBound()
+    {
+        return (BigInteger.One << 63) - BigInteger.One;
+    }
+
+    private static bool TryCreateBoundedRawPointerParameterRegionFact(
+        TypedParameterSymbol parameter,
+        IReadOnlyList<TypedParameterSymbol> parameters,
+        out SsaBoundedRawPointerRegionFact boundedRegion)
+    {
+        boundedRegion = default!;
+        if (parameter.Type.Kind != StarkTypeKind.RawPointer
+            || parameter.Type.ElementType is not { } elementType
+            || string.IsNullOrWhiteSpace(parameter.RawPointerElementCountExpression)
+            || !TryResolveBoundedRawPointerElementCount(
+                parameter.RawPointerElementCountExpression,
+                parameters,
+                out var elementCount,
+                out var elementCountRange))
+        {
+            return false;
+        }
+
+        _ = TryGetTypeAlignmentBytes(elementType, out var alignmentBytes);
+        boundedRegion = new SsaBoundedRawPointerRegionFact(
+            elementCount,
+            elementCountRange,
+            alignmentBytes > 1 ? alignmentBytes : null);
+        return true;
+    }
+
+    private static bool TryResolveBoundedRawPointerElementCount(
+        string countExpression,
+        IReadOnlyList<TypedParameterSymbol> parameters,
+        out SsaValue elementCount,
+        out SsaIntegerRangeFact? elementCountRange)
+    {
+        var normalizedExpression = countExpression.Trim();
+        if (BigInteger.TryParse(normalizedExpression, NumberStyles.None, CultureInfo.InvariantCulture, out var constantCount))
+        {
+            var constantType = StarkTypeSymbols.Integer(64);
+            elementCount = new SsaIntegerConstant(constantCount, constantType);
+            elementCountRange = new SsaIntegerRangeFact(constantCount, constantCount);
+            return true;
+        }
+
+        var countParameter = parameters.FirstOrDefault(
+            candidate => string.Equals(candidate.Name, normalizedExpression, StringComparison.Ordinal));
+        if (countParameter is null)
+        {
+            elementCount = default!;
+            elementCountRange = null;
+            return false;
+        }
+
+        elementCount = new SsaValueReference($"arg_{countParameter.Name}", countParameter.Type);
+        var countFacts = CreateTypeFacts($"arg_{countParameter.Name}", countParameter.Type);
+        elementCountRange = countFacts.IntegerRangeKind == SsaFactLatticeKind.Known
+            ? countFacts.IntegerRange
+            : null;
+        return true;
     }
 
     private static SsaValueFacts CreateIntegerConstantFacts(
@@ -9158,6 +10245,52 @@ internal sealed class SsaValueFactAnalyzer
             : facts;
     }
 
+    private static SsaValueFacts WithBoundedRawPointerRegion(
+        SsaValueFacts facts,
+        SsaBoundedRawPointerRegionFact boundedRegion)
+    {
+        return facts.Type.Kind is StarkTypeKind.RawPointer or StarkTypeKind.Slice
+            ? facts with
+            {
+                BoundedRawPointerRegionKind = SsaFactLatticeKind.Known,
+                BoundedRawPointerRegion = boundedRegion
+            }
+            : facts;
+    }
+
+    private static bool TryCanPreserveBoundedRawPointerRegionThroughConvert(
+        StarkTypeSymbol sourceType,
+        StarkTypeSymbol targetType,
+        SsaValueFacts operand,
+        out SsaBoundedRawPointerRegionFact boundedRegion)
+    {
+        boundedRegion = default!;
+        if (operand.BoundedRawPointerRegionKind != SsaFactLatticeKind.Known
+            || operand.BoundedRawPointerRegion is not { } operandRegion
+            || sourceType.Kind != StarkTypeKind.RawPointer
+            || targetType.Kind != StarkTypeKind.RawPointer
+            || sourceType.ElementType is not { } sourceElementType
+            || targetType.ElementType is not { } targetElementType
+            || NormalizeComparableElementType(sourceElementType) != NormalizeComparableElementType(targetElementType))
+        {
+            return false;
+        }
+
+        boundedRegion = operandRegion;
+        return true;
+    }
+
+    private static StarkTypeSymbol NormalizeComparableElementType(StarkTypeSymbol type)
+    {
+        return type with
+        {
+            BorrowKind = StarkBorrowKind.None,
+            AccessKind = StarkAccessKind.None,
+            InitializationKind = StarkInitializationKind.None,
+            IsMutableView = false
+        };
+    }
+
     private static bool TryNormalizePointerAlignment(
         StarkTypeSymbol pointerType,
         int? baseAlignmentBytes,
@@ -9236,6 +10369,37 @@ internal sealed class SsaValueFactAnalyzer
         return extractField.FieldIndex == 1
                || string.Equals(extractField.FieldName, "Length", StringComparison.Ordinal)
                || string.Equals(extractField.FieldName, "length", StringComparison.Ordinal);
+    }
+
+    private static bool IsDynamicLengthField(SsaExtractFieldRValue extractField)
+    {
+        return IsDynamicLengthField(extractField.FieldName, extractField.FieldIndex);
+    }
+
+    private static bool IsDynamicCapacityField(SsaExtractFieldRValue extractField)
+    {
+        return IsDynamicCapacityField(extractField.FieldName, extractField.FieldIndex);
+    }
+
+    private static bool IsDynamicDataField(SsaExtractFieldRValue extractField)
+    {
+        return extractField.FieldIndex == 0
+               || string.Equals(extractField.FieldName, "Data", StringComparison.Ordinal)
+               || string.Equals(extractField.FieldName, "data", StringComparison.Ordinal);
+    }
+
+    private static bool IsDynamicLengthField(string fieldName, int fieldIndex)
+    {
+        return fieldIndex == 1
+               || string.Equals(fieldName, "Length", StringComparison.Ordinal)
+               || string.Equals(fieldName, "length", StringComparison.Ordinal);
+    }
+
+    private static bool IsDynamicCapacityField(string fieldName, int fieldIndex)
+    {
+        return fieldIndex == 2
+               || string.Equals(fieldName, "Capacity", StringComparison.Ordinal)
+               || string.Equals(fieldName, "capacity", StringComparison.Ordinal);
     }
 
     internal static bool TryGetSystemTextLengthFunction(
@@ -9448,6 +10612,7 @@ internal sealed class SsaAsciiToUnicodeLiteralSpecializer
         out SsaFunction rewritten)
     {
         var usedValueNames = CollectDefinedValueNames(function);
+        var valueDefinitions = CollectValueDefinitions(function);
         var nextBlockId = function.Blocks.Count == 0
             ? 0
             : function.Blocks.Max(static block => block.Id) + 1;
@@ -9464,6 +10629,8 @@ internal sealed class SsaAsciiToUnicodeLiteralSpecializer
                     || !TryCreateRewritePlan(
                         moduleName,
                         facts,
+                        function,
+                        valueDefinitions,
                         valueInstruction,
                         call,
                         out var destinationStructType,
@@ -9495,6 +10662,8 @@ internal sealed class SsaAsciiToUnicodeLiteralSpecializer
     private static bool TryCreateRewritePlan(
         string moduleName,
         SsaFunctionFactModel facts,
+        SsaFunction function,
+        IReadOnlyDictionary<string, SsaRValue> valueDefinitions,
         SsaValueInstruction valueInstruction,
         SsaCallRValue call,
         out StarkTypeSymbol destinationStructType,
@@ -9510,7 +10679,14 @@ internal sealed class SsaAsciiToUnicodeLiteralSpecializer
             || valueInstruction.Value.Type.Kind != StarkTypeKind.Bool
             || call.Arguments.Count != 2
             || call.Arguments[0].Type is not { Kind: StarkTypeKind.RawPointer, ElementType: not null } destinationPointerType
-            || !TryGetKnownAsciiLiteralPayload(call.Arguments[1], facts, out sourceBytes, out sourceLiteralText))
+            || !TryGetKnownAsciiLiteralPayload(
+                call.Arguments[1],
+                facts,
+                function,
+                valueDefinitions,
+                new HashSet<string>(StringComparer.Ordinal),
+                out sourceBytes,
+                out sourceLiteralText))
         {
             return false;
         }
@@ -9855,6 +11031,9 @@ internal sealed class SsaAsciiToUnicodeLiteralSpecializer
     private static bool TryGetKnownAsciiLiteralPayload(
         SsaValue value,
         SsaFunctionFactModel facts,
+        SsaFunction function,
+        IReadOnlyDictionary<string, SsaRValue> valueDefinitions,
+        ISet<string> visitedNames,
         out byte[] sourceBytes,
         out string literalText)
     {
@@ -9878,32 +11057,272 @@ internal sealed class SsaAsciiToUnicodeLiteralSpecializer
             return true;
         }
 
-        if (value is SsaValueReference reference
-            && facts.Values.TryGetValue(reference.Name, out var valueFacts)
-            && valueFacts.Type.Kind == StarkTypeKind.Ascii
-            && valueFacts.TextLiteralPayloadKind == SsaFactLatticeKind.Known
-            && valueFacts.TextLiteralPayload is { IsAsciiOnly: true } payload)
+        if (value is SsaValueReference reference)
         {
-            try
+            if (facts.Values.TryGetValue(reference.Name, out var valueFacts)
+                && valueFacts.Type.Kind == StarkTypeKind.Ascii
+                && valueFacts.TextLiteralPayloadKind == SsaFactLatticeKind.Known
+                && valueFacts.TextLiteralPayload is { IsAsciiOnly: true } payload
+                && TryDecodeAsciiPayloadFact(payload, out sourceBytes, out literalText))
             {
-                sourceBytes = Convert.FromHexString(payload.Utf8PayloadHex);
-                if (sourceBytes.Length != payload.Utf8Length)
-                {
-                    return false;
-                }
-
-                literalText = TextLiteralDecoder.EncodeStringLiteral(payload.DecodedText);
                 return true;
             }
-            catch (FormatException)
+
+            if (visitedNames.Add($"value:{reference.Name}")
+                && valueDefinitions.TryGetValue(reference.Name, out var definition))
             {
-                sourceBytes = [];
-                literalText = string.Empty;
-                return false;
+                return TryGetKnownAsciiLiteralPayload(
+                    definition,
+                    facts,
+                    function,
+                    valueDefinitions,
+                    visitedNames,
+                    out sourceBytes,
+                    out literalText);
             }
         }
 
         return false;
+    }
+
+    private static bool TryGetKnownAsciiLiteralPayload(
+        SsaRValue value,
+        SsaFunctionFactModel facts,
+        SsaFunction function,
+        IReadOnlyDictionary<string, SsaRValue> valueDefinitions,
+        ISet<string> visitedNames,
+        out byte[] sourceBytes,
+        out string literalText)
+    {
+        sourceBytes = [];
+        literalText = string.Empty;
+
+        return value switch
+        {
+            SsaUseRValue use => TryGetKnownAsciiLiteralPayload(
+                use.Value,
+                facts,
+                function,
+                valueDefinitions,
+                visitedNames,
+                out sourceBytes,
+                out literalText),
+            SsaTextSliceRValue { Type.Kind: StarkTypeKind.Ascii } textSlice => TryGetKnownAsciiLiteralSlicePayload(
+                textSlice,
+                facts,
+                function,
+                valueDefinitions,
+                visitedNames,
+                out sourceBytes,
+                out literalText),
+            SsaLoadLocalRValue { Type.Kind: StarkTypeKind.Ascii } loadLocal => TryGetKnownAsciiLiteralPayloadFromLocal(
+                loadLocal,
+                facts,
+                function,
+                valueDefinitions,
+                visitedNames,
+                out sourceBytes,
+                out literalText),
+            SsaConvertRValue convert when convert.TargetType.Kind == StarkTypeKind.Ascii => TryGetKnownAsciiLiteralPayload(
+                convert.Operand,
+                facts,
+                function,
+                valueDefinitions,
+                visitedNames,
+                out sourceBytes,
+                out literalText),
+            _ => false
+        };
+    }
+
+    private static bool TryGetKnownAsciiLiteralSlicePayload(
+        SsaTextSliceRValue textSlice,
+        SsaFunctionFactModel facts,
+        SsaFunction function,
+        IReadOnlyDictionary<string, SsaRValue> valueDefinitions,
+        ISet<string> visitedNames,
+        out byte[] sourceBytes,
+        out string literalText)
+    {
+        sourceBytes = [];
+        literalText = string.Empty;
+
+        if (!TryGetKnownAsciiLiteralPayload(
+                textSlice.TextValue,
+                facts,
+                function,
+                valueDefinitions,
+                visitedNames,
+                out var sourcePayload,
+                out _)
+            || !TryResolveExactNonNegativeInteger(textSlice.Start, valueDefinitions, out var start)
+            || !TryResolveExactNonNegativeInteger(textSlice.Length, valueDefinitions, out var length)
+            || !TrySliceAsciiPayload(sourcePayload, start, length, out sourceBytes))
+        {
+            return false;
+        }
+
+        literalText = TextLiteralDecoder.EncodeStringLiteral(Encoding.UTF8.GetString(sourceBytes));
+        return true;
+    }
+
+    private static bool TryGetKnownAsciiLiteralPayloadFromLocal(
+        SsaLoadLocalRValue loadLocal,
+        SsaFunctionFactModel facts,
+        SsaFunction function,
+        IReadOnlyDictionary<string, SsaRValue> valueDefinitions,
+        ISet<string> visitedNames,
+        out byte[] sourceBytes,
+        out string literalText)
+    {
+        sourceBytes = [];
+        literalText = string.Empty;
+
+        if (!visitedNames.Add($"local:{loadLocal.LocalName}")
+            || LocalAddressMayBeObserved(function, loadLocal.LocalName))
+        {
+            return false;
+        }
+
+        var stores = function.Blocks
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaStoreLocalInstruction>()
+            .Where(store => string.Equals(store.LocalName, loadLocal.LocalName, StringComparison.Ordinal)
+                            && store.LocalType == loadLocal.Type)
+            .ToArray();
+        if (stores.Length != 1)
+        {
+            return false;
+        }
+
+        return TryGetKnownAsciiLiteralPayload(
+            stores[0].Value,
+            facts,
+            function,
+            valueDefinitions,
+            visitedNames,
+            out sourceBytes,
+            out literalText);
+    }
+
+    private static bool LocalAddressMayBeObserved(SsaFunction function, string localName)
+    {
+        return function.Blocks
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaValueInstruction>()
+            .Any(instruction => SsaValueFactAnalyzer.RValueTakesLocalAddress(instruction.Value, localName));
+    }
+
+    private static bool TryDecodeAsciiPayloadFact(
+        SsaTextLiteralPayloadFact payload,
+        out byte[] sourceBytes,
+        out string literalText)
+    {
+        sourceBytes = [];
+        literalText = string.Empty;
+
+        try
+        {
+            sourceBytes = Convert.FromHexString(payload.Utf8PayloadHex);
+            if (sourceBytes.Length != payload.Utf8Length)
+            {
+                return false;
+            }
+
+            literalText = TextLiteralDecoder.EncodeStringLiteral(payload.DecodedText);
+            return true;
+        }
+        catch (FormatException)
+        {
+            sourceBytes = [];
+            literalText = string.Empty;
+            return false;
+        }
+    }
+
+    private static bool TryResolveExactNonNegativeInteger(
+        SsaValue value,
+        IReadOnlyDictionary<string, SsaRValue> valueDefinitions,
+        out BigInteger exact)
+    {
+        if (TryResolveIntegerConstant(value, valueDefinitions, new HashSet<string>(StringComparer.Ordinal), out exact)
+            && exact >= BigInteger.Zero)
+        {
+            return true;
+        }
+
+        exact = default;
+        return false;
+    }
+
+    private static bool TryResolveIntegerConstant(
+        SsaValue value,
+        IReadOnlyDictionary<string, SsaRValue> valueDefinitions,
+        ISet<string> visitedValueNames,
+        out BigInteger constant)
+    {
+        switch (value)
+        {
+            case SsaIntegerConstant integer:
+                constant = integer.Value;
+                return true;
+            case SsaValueReference reference:
+                if (!visitedValueNames.Add(reference.Name)
+                    || !valueDefinitions.TryGetValue(reference.Name, out var definition))
+                {
+                    constant = default;
+                    return false;
+                }
+
+                return definition switch
+                {
+                    SsaUseRValue use => TryResolveIntegerConstant(use.Value, valueDefinitions, visitedValueNames, out constant),
+                    SsaConvertRValue convert when convert.TargetType.Kind == StarkTypeKind.Integer =>
+                        TryResolveIntegerConstant(convert.Operand, valueDefinitions, visitedValueNames, out constant),
+                    _ => Fail(out constant)
+                };
+            default:
+                constant = default;
+                return false;
+        }
+
+        static bool Fail(out BigInteger value)
+        {
+            value = default;
+            return false;
+        }
+    }
+
+    private static bool TrySliceAsciiPayload(
+        IReadOnlyList<byte> sourceBytes,
+        BigInteger start,
+        BigInteger length,
+        out byte[] slicedBytes)
+    {
+        slicedBytes = [];
+        var end = start + length;
+        if (start < BigInteger.Zero
+            || length < BigInteger.Zero
+            || start > int.MaxValue
+            || length > int.MaxValue
+            || end > sourceBytes.Count)
+        {
+            return false;
+        }
+
+        slicedBytes = sourceBytes
+            .Skip((int)start)
+            .Take((int)length)
+            .ToArray();
+        return true;
+    }
+
+    private static IReadOnlyDictionary<string, SsaRValue> CollectValueDefinitions(SsaFunction function)
+    {
+        return function.Blocks
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaValueInstruction>()
+            .ToDictionary(static instruction => instruction.ResultName, static instruction => instruction.Value, StringComparer.Ordinal);
     }
 
     private static bool IsTryConvertAsciiToUnicodeCall(string functionName, string moduleName)
@@ -10229,10 +11648,12 @@ internal sealed class SsaFactDrivenBranchPruner
             && terminator.Condition is not null
             && TryGetBooleanFact(terminator.Condition, facts, definitions, out var condition))
         {
-            return new SsaTerminator(
-                SsaTerminatorKind.Goto,
-                [terminator.Targets[condition ? 0 : 1]],
-                Location: terminator.Location);
+            return PreserveLoopMetadata(
+                terminator,
+                new SsaTerminator(
+                    SsaTerminatorKind.Goto,
+                    [terminator.Targets[condition ? 0 : 1]],
+                    Location: terminator.Location));
         }
 
         if (terminator.Kind == SsaTerminatorKind.Switch
@@ -10243,10 +11664,12 @@ internal sealed class SsaFactDrivenBranchPruner
             if (TryGetSwitchSingleton(terminator.Condition, facts, out var singleton)
                 && TryResolveSwitchTarget(singleton, switchCases, defaultTarget, out var targetBlockId))
             {
-                return new SsaTerminator(
-                    SsaTerminatorKind.Goto,
-                    [targetBlockId],
-                    Location: terminator.Location);
+                return PreserveLoopMetadata(
+                    terminator,
+                    new SsaTerminator(
+                        SsaTerminatorKind.Goto,
+                        [targetBlockId],
+                        Location: terminator.Location));
             }
 
             if (TryGetIntegerRangeFact(terminator.Condition, facts, out var range))
@@ -10257,10 +11680,12 @@ internal sealed class SsaFactDrivenBranchPruner
 
                 if (filteredCases.Length == 0)
                 {
-                    return new SsaTerminator(
-                        SsaTerminatorKind.Goto,
-                        [defaultTarget],
-                        Location: terminator.Location);
+                    return PreserveLoopMetadata(
+                        terminator,
+                        new SsaTerminator(
+                            SsaTerminatorKind.Goto,
+                            [defaultTarget],
+                            Location: terminator.Location));
                 }
 
                 if (filteredCases.Length != switchCases.Count)
@@ -10276,16 +11701,18 @@ internal sealed class SsaFactDrivenBranchPruner
                             out appendedInstructions);
                     }
 
-                    return new SsaTerminator(
-                        SsaTerminatorKind.Switch,
-                        filteredCases
-                            .Select(static switchCase => switchCase.TargetBlockId)
-                            .Distinct()
-                            .ToArray(),
-                        Condition: terminator.Condition,
-                        SwitchCases: filteredCases,
-                        DefaultTarget: defaultTarget,
-                        Location: terminator.Location);
+                    return PreserveLoopMetadata(
+                        terminator,
+                        new SsaTerminator(
+                            SsaTerminatorKind.Switch,
+                            filteredCases
+                                .Select(static switchCase => switchCase.TargetBlockId)
+                                .Distinct()
+                                .ToArray(),
+                            Condition: terminator.Condition,
+                            SwitchCases: filteredCases,
+                            DefaultTarget: defaultTarget,
+                            Location: terminator.Location));
                 }
             }
         }
@@ -10315,11 +11742,23 @@ internal sealed class SsaFactDrivenBranchPruner
                 terminator.Location)
         ];
 
-        return new SsaTerminator(
-            SsaTerminatorKind.Branch,
-            [switchCase.TargetBlockId, defaultTarget],
-            Condition: new SsaValueReference(conditionName, StarkTypeSymbols.Bool),
-            Location: terminator.Location);
+        return PreserveLoopMetadata(
+            terminator,
+            new SsaTerminator(
+                SsaTerminatorKind.Branch,
+                [switchCase.TargetBlockId, defaultTarget],
+                Condition: new SsaValueReference(conditionName, StarkTypeSymbols.Bool),
+                Location: terminator.Location));
+    }
+
+    private static SsaTerminator PreserveLoopMetadata(SsaTerminator source, SsaTerminator replacement)
+    {
+        return replacement with
+        {
+            LoopBehavior = source.LoopBehavior,
+            LoopContracts = source.LoopContracts,
+            LoopAccessGroups = source.LoopAccessGroups
+        };
     }
 
     private static bool TryGetBooleanFact(
@@ -12436,16 +13875,26 @@ internal sealed class SsaConstantPropagator
             SsaStoreLocalInstruction storeLocal => new SsaStoreLocalInstruction(
                 storeLocal.LocalName,
                 storeLocal.LocalType,
-                RewriteValue(storeLocal.Value, replacements)),
+                RewriteValue(storeLocal.Value, replacements),
+                storeLocal.Location,
+                storeLocal.WriteKind),
             SsaCopyMemoryInstruction copyMemory => new SsaCopyMemoryInstruction(
                 RewriteValue(copyMemory.DestinationAddress, replacements),
                 RewriteValue(copyMemory.SourceAddress, replacements),
                 copyMemory.CopyType,
-                copyMemory.TransferKind),
+                copyMemory.TransferKind,
+                copyMemory.Location,
+                copyMemory.ScopedNoAliasGroups,
+                copyMemory.LoopAccessGroups,
+                copyMemory.WriteKind),
             SsaStoreIndirectInstruction storeIndirect => new SsaStoreIndirectInstruction(
                 RewriteValue(storeIndirect.Address, replacements),
                 storeIndirect.ValueType,
-                RewriteValue(storeIndirect.Value, replacements)),
+                RewriteValue(storeIndirect.Value, replacements),
+                storeIndirect.Location,
+                storeIndirect.ScopedNoAliasGroups,
+                storeIndirect.LoopAccessGroups,
+                storeIndirect.WriteKind),
             SsaStoreGlobalInstruction storeGlobal => new SsaStoreGlobalInstruction(
                 storeGlobal.GlobalName,
                 storeGlobal.GlobalType,
@@ -12651,9 +14100,11 @@ internal sealed class SsaConstantPropagator
             && rewrittenCondition is not null
             && TryGetBoolConstant(ResolveConstantState(rewrittenCondition, EmptyConstantStates), out var branchCondition))
         {
-            return new SsaTerminator(
-                SsaTerminatorKind.Goto,
-                [terminator.Targets[branchCondition ? 0 : 1]]);
+            return PreserveLoopMetadata(
+                terminator,
+                new SsaTerminator(
+                    SsaTerminatorKind.Goto,
+                    [terminator.Targets[branchCondition ? 0 : 1]]));
         }
 
         if (terminator.Kind == SsaTerminatorKind.Switch
@@ -12670,7 +14121,9 @@ internal sealed class SsaConstantPropagator
                     BranchWeights: terminator.BranchWeights),
                 out var targetBlockId))
         {
-            return new SsaTerminator(SsaTerminatorKind.Goto, [targetBlockId]);
+            return PreserveLoopMetadata(
+                terminator,
+                new SsaTerminator(SsaTerminatorKind.Goto, [targetBlockId]));
         }
 
         return new SsaTerminator(
@@ -12681,7 +14134,20 @@ internal sealed class SsaConstantPropagator
             SwitchCases: rewrittenCases,
             DefaultTarget: terminator.DefaultTarget,
             Location: terminator.Location,
-            BranchWeights: terminator.BranchWeights);
+            BranchWeights: terminator.BranchWeights,
+            LoopBehavior: terminator.LoopBehavior,
+            LoopContracts: terminator.LoopContracts,
+            LoopAccessGroups: terminator.LoopAccessGroups);
+    }
+
+    private static SsaTerminator PreserveLoopMetadata(SsaTerminator source, SsaTerminator replacement)
+    {
+        return replacement with
+        {
+            LoopBehavior = source.LoopBehavior,
+            LoopContracts = source.LoopContracts,
+            LoopAccessGroups = source.LoopAccessGroups
+        };
     }
 
     private enum ConstantStateKind

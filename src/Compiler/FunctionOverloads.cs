@@ -880,7 +880,8 @@ internal static class FunctionOverloadFacts
                 parameterTypes.Select(parameter => SubstituteType(parameter, substitution)).ToArray(),
                 coreType.FunctionPointerDisjointParameterGroups,
                 coreType.FunctionPointerOverlapParameterGroups,
-                coreType.FunctionPointerSameParameterGroups);
+                coreType.FunctionPointerSameParameterGroups,
+                coreType.FunctionPointerParameterRawPointerElementCountExpressions);
         }
         else
         {

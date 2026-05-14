@@ -585,7 +585,8 @@ internal sealed partial class MidLevelIrLowerer
 
         private void EmitAssignmentCore(LoweredAssignment assignment)
         {
-            if (assignment.ReplacesWholeValue
+            if (assignment.WriteKind != MemoryWriteKind.Initialization
+                && assignment.ReplacesWholeValue
                 && assignment.TargetName is not null)
             {
                 EmitRuntimeDropIfActiveCore(assignment.TargetName, assignment.TargetType);
@@ -598,7 +599,8 @@ internal sealed partial class MidLevelIrLowerer
                     assignment.Text,
                     targetType: assignment.TargetType,
                     value: new MidLevelIrUseRValue(assignment.ResultValue),
-                    address: assignment.Address);
+                    address: assignment.Address,
+                    writeKind: assignment.WriteKind);
                 if (assignment.DynamicLengthUpdate is not null)
                 {
                     EmitDynamicStorageLengthUpdateCore(assignment.DynamicLengthUpdate, assignment.Text);
@@ -608,7 +610,13 @@ internal sealed partial class MidLevelIrLowerer
                 return;
             }
 
-            Emit(MidLevelIrStatementKind.Assign, assignment.Text, assignment.TargetName, assignment.TargetType, value: assignment.DirectValue);
+            Emit(
+                MidLevelIrStatementKind.Assign,
+                assignment.Text,
+                assignment.TargetName,
+                assignment.TargetType,
+                value: assignment.DirectValue,
+                writeKind: assignment.WriteKind);
             if (assignment.ReplacesWholeValue
                 && assignment.TargetName is not null)
             {

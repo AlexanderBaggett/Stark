@@ -24,6 +24,16 @@ internal static class ParameterMemoryContractFacts
 
         foreach (var group in explicitDisjointGroups)
         {
+            if (group.HasSubregions)
+            {
+                if (group.MemoryRegions.Count >= 2)
+                {
+                    groups.Add(group);
+                }
+
+                continue;
+            }
+
             var names = group.ParameterNames
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
@@ -63,9 +73,21 @@ internal static class ParameterMemoryContractFacts
         }
 
         return groups
-            .GroupBy(static group => string.Join("|", group.ParameterNames.Order(StringComparer.Ordinal)), StringComparer.Ordinal)
+            .GroupBy(GetDisjointGroupKey, StringComparer.Ordinal)
             .Select(static group => group.First())
             .ToArray();
+    }
+
+    private static string GetDisjointGroupKey(ParameterDisjointGroup group)
+    {
+        if (group.HasSubregions)
+        {
+            return string.Join(
+                "|",
+                group.MemoryRegions.Select(static region => region.DisplayText).Order(StringComparer.Ordinal));
+        }
+
+        return string.Join("|", group.ParameterNames.Order(StringComparer.Ordinal));
     }
 
     private static IEnumerable<string> EnumerateNamePairs(IReadOnlyList<string> names)

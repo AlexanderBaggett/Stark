@@ -175,6 +175,11 @@ Common consequences include:
 
 These are compiler outputs, not language syntax.
 They are emitted only when the implementation can prove them from the source rules plus body analysis.
+For pointer-backed `retborrow` returns, the internal ABI may attach `nonnull`
+and concrete `dereferenceable` / `align` facts to the function return and to
+call results. Direct borrow-view returns such as slices and text keep their
+ordinary aggregate view representation, and `ffi` boundaries keep the foreign
+ABI shape.
 
 ### 2.1 Parameter Memory Contracts
 
@@ -226,6 +231,8 @@ Bounded raw pointer regions produce these backend facts:
 
 - loads and stores through the region use inbounds GEP flags only when the access index is proven within the bounded region
 - parameters with statically known positive byte extents receive `nonnull`, `noundef`, `dereferenceable`, and `align` attributes when the pointer contract and target ABI rules make those attributes valid
+- parameters with runtime-sized but statically positive element counts receive `nonnull` and concrete `align` attributes without pretending the byte extent is constant-size `dereferenceable`
+- bounded raw pointer parameter count expressions inside `fnptr` types are stored on the function-pointer type using synthetic `argN` names, preserved through package-image type references, remapped from real parameter names during function-item promotion, and used to rebuild the synthetic ABI for indirect calls
 - variable-size regions emit range facts and dominated `llvm.assume` facts where those assumptions strengthen alias analysis or loop optimization without inventing false constant-size dereferenceability
 - disjoint bounded regions lower to LLVM parameter `noalias` where valid and to scoped `!alias.scope` / `!noalias` metadata on the individual memory operations that use the bounded roots
 - readonly bounded regions from `rawptr<T>[count]`, `const`, or frozen provenance lower to `readonly`, read-only memory effects, and `!invariant.load` only where permanence and replacement rules make the load invariant
@@ -301,16 +308,19 @@ storage in ordinary public APIs.
 
 `independent` on a `while` or `for` loop means loop iterations have no loop-carried memory dependencies. The loop body may still use induction variables, local scalar temporaries, and immutable reads, but a memory write in one iteration may not be read or written by another iteration.
 
-Independent loops lower to LLVM loop-dependence metadata:
+Loop behavior and independent-loop contracts lower as separate facts. A
+`willexit` loop carries a progress fact through MIR and SSA and receives
+`!llvm.loop.mustprogress` on its loop backedge. An `independent` loop carries
+memory-dependence facts through MIR and SSA and lowers to LLVM loop-dependence
+metadata:
 
 - memory operations covered by the contract receive `!llvm.access.group`
 - the loop latch receives `!llvm.loop.parallel_accesses` referencing those access groups
-- existing termination facts continue to lower to `mustprogress` or `!llvm.loop.mustprogress` where valid
 - vectorization and interleaving hints are attached only when the independent contract and target cost model justify them
 
 The contract is semantic, not a hint. If a loop marked `independent` contains a real loop-carried memory dependence, the program violates the Stark source contract. Safe Stark code must either prove the contract statically or establish the required disjointness through checked facts such as `if disjoint(...)` before entering the loop.
 
-The accepted memory-backed subset requires a single mutable integer induction variable incremented by exactly one. Slice and fixed-array memory accesses use the simple form `root[index]`; bounded raw pointer memory accesses may also use the raw pointer spelling `*(&root[index])`. Field projections are accepted when they are rooted at the per-iteration element, such as `root[index].field`, and their field path participates in the memory-root key used for dependency checks. Structured `if` statements are accepted when their condition and every branch satisfy the same dependency-validation subset. In all cases, `index` is the loop induction variable, and write/read root pairs are either the same indexed root or proven disjoint by source facts, bounded raw pointer region facts, borrow exclusivity, or an enclosing `if disjoint(...)` fact. Law calls with scalar returns are allowed after their argument memory reads have been validated; calls with unproven memory effects report `STK3027`. Accepted independent loops carry their loop contract and access groups through MIR/SSA, emit LLVM `!llvm.access.group` on covered memory operations, and attach `!llvm.loop.mustprogress` plus `!llvm.loop.parallel_accesses` metadata on the loop backedge. Unbounded pointer dereferences, address-of expressions that create new unbounded regions, member projections that are not rooted at `root[index]`, non-induction indexes, memory-backed local declarations, nested loops, early exits, and unsupported calls remain outside the accepted subset.
+The accepted memory-backed subset requires a single mutable integer induction variable incremented by exactly one. Slice and fixed-array memory accesses use the simple form `root[index]`; bounded raw pointer memory accesses may also use the raw pointer spelling `*(&root[index])`. Field projections are accepted when they are rooted at the per-iteration element, such as `root[index].field`, and their field path participates in the memory-root key used for dependency checks. Structured `if` statements are accepted when their condition and every branch satisfy the same dependency-validation subset. In all cases, `index` is the loop induction variable, and write/read root pairs are either the same indexed root or proven disjoint by source facts, bounded raw pointer region facts, borrow exclusivity, or an enclosing `if disjoint(...)` fact. Law calls with scalar returns are allowed after their argument memory reads have been validated; calls with unproven memory effects report `STK3027`. Accepted independent loops carry their loop contract and access groups through MIR/SSA, emit LLVM `!llvm.access.group` on covered memory operations, and attach `!llvm.loop.parallel_accesses` metadata on the loop backedge; `willexit` controls whether that same backedge also receives `!llvm.loop.mustprogress`. Unbounded pointer dereferences, address-of expressions that create new unbounded regions, member projections that are not rooted at `root[index]`, non-induction indexes, memory-backed local declarations, nested loops, early exits, and unsupported calls remain outside the accepted subset.
 
 ### 2.7 Const Parameters
 
@@ -512,8 +522,13 @@ form and does not receive those stronger attributes without another proof.
 Accepted `fnptr` values are also non-null. Type checking rejects `null`
 assignment and rejects aggregate initializer shapes that would zero-fill a
 function-pointer field or fixed-array element. LLVM ABI emission may therefore
-mark direct function-pointer parameters as `nonnull` without relying on a backend
-guess.
+mark direct function-pointer parameters and direct function-pointer returns as
+`nonnull` without relying on a backend guess.
+When a `fnptr` parameter is a bounded raw pointer such as
+`rawptr<T>[arg1]`, the synthetic `arg1` count is part of the callable ABI
+contract. Indirect-call lowering reconstructs a synthetic callee signature with
+that count expression, so a positive runtime count parameter can still justify
+`nonnull` and `align` on the pointer argument at the indirect call site.
 
 Non-capturing lambdas should lower like anonymous internal function items. They
 may promote to thin function pointers when required by the target type.

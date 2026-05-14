@@ -54,7 +54,8 @@ internal sealed class SsaLowerer
                 [],
                 function.BodyLoweringKind,
                 function.Location,
-                function.DisjointParameterGroups);
+                function.DisjointParameterGroups,
+                function.SameParameterGroups);
         }
 
         var builder = new FunctionSsaBuilder(function, _signatures, _globals);
@@ -170,7 +171,8 @@ internal sealed class SsaLowerer
                     .ToArray(),
                 _function.BodyLoweringKind,
                 _function.Location,
-                _function.DisjointParameterGroups);
+                _function.DisjointParameterGroups,
+                _function.SameParameterGroups);
         }
 
         private void LowerBlock(int blockId)
@@ -262,6 +264,7 @@ internal sealed class SsaLowerer
                             statement.TargetType,
                             statement.Value,
                             destinationAddressFactory: () => CreateLocalAddress(block, statement.TargetName, statement.TargetType),
+                            statement.WriteKind,
                             out var aggregateCopy,
                             out var assignmentMovedSource))
                     {
@@ -273,7 +276,12 @@ internal sealed class SsaLowerer
                     var assignedValue = LowerRValue(blockId, block, statement.Value);
                     if (_addressableLocals.Contains(statement.TargetName))
                     {
-                        block.Instructions.Add(new SsaStoreLocalInstruction(statement.TargetName, statement.TargetType, assignedValue, statement.Location ?? _function.Location));
+                        block.Instructions.Add(new SsaStoreLocalInstruction(
+                            statement.TargetName,
+                            statement.TargetType,
+                            assignedValue,
+                            statement.Location ?? _function.Location,
+                            statement.WriteKind));
                     }
                     else if (_variableTypes.ContainsKey(statement.TargetName))
                     {
@@ -298,6 +306,7 @@ internal sealed class SsaLowerer
                             statement.TargetType,
                             statement.Value,
                             destinationAddressFactory: () => LowerOperand(blockId, block, statement.Address),
+                            statement.WriteKind,
                             out var indirectAggregateCopy,
                             out var indirectMovedSource))
                     {
@@ -312,7 +321,8 @@ internal sealed class SsaLowerer
                         LowerRValue(blockId, block, statement.Value),
                         statement.Location ?? _function.Location,
                         statement.ScopedNoAliasGroups,
-                        statement.LoopAccessGroups));
+                        statement.LoopAccessGroups,
+                        statement.WriteKind));
                     InvalidateConsumedAggregateValue(blockId, block, statement.TargetType, statement.Value);
                     return;
                 case MidLevelIrStatementKind.Evaluate:
@@ -342,6 +352,7 @@ internal sealed class SsaLowerer
                     SsaTerminatorKind.Goto,
                     terminator.Targets,
                     Location: terminator.Location ?? _function.Location,
+                    LoopBehavior: terminator.LoopBehavior,
                     LoopContracts: terminator.LoopContracts,
                     LoopAccessGroups: terminator.LoopAccessGroups),
                 MidLevelIrTerminatorKind.Branch => new SsaTerminator(
@@ -350,6 +361,7 @@ internal sealed class SsaLowerer
                     Condition: terminator.Condition is null ? null : LowerOperand(blockId, block, terminator.Condition),
                     Location: terminator.Location ?? _function.Location,
                     BranchWeights: terminator.BranchWeights,
+                    LoopBehavior: terminator.LoopBehavior,
                     LoopContracts: terminator.LoopContracts,
                     LoopAccessGroups: terminator.LoopAccessGroups),
                 MidLevelIrTerminatorKind.Return => new SsaTerminator(
@@ -372,6 +384,7 @@ internal sealed class SsaLowerer
                     DefaultTarget: terminator.DefaultTarget,
                     Location: terminator.Location ?? _function.Location,
                     BranchWeights: terminator.BranchWeights,
+                    LoopBehavior: terminator.LoopBehavior,
                     LoopContracts: terminator.LoopContracts,
                     LoopAccessGroups: terminator.LoopAccessGroups),
                 _ => throw new InvalidOperationException($"Unsupported MIR terminator kind '{terminator.Kind}'.")
@@ -634,6 +647,7 @@ internal sealed class SsaLowerer
             StarkTypeSymbol targetType,
             MidLevelIrRValue value,
             Func<SsaValue> destinationAddressFactory,
+            MemoryWriteKind writeKind,
             out SsaCopyMemoryInstruction aggregateCopy,
             out AggregateMoveSource? movedSource)
         {
@@ -655,7 +669,8 @@ internal sealed class SsaLowerer
                 transferKind,
                 _currentSourceLocation ?? _function.Location,
                 _currentScopedNoAliasGroups,
-                _currentLoopAccessGroups);
+                _currentLoopAccessGroups,
+                writeKind);
             return true;
         }
 
@@ -1494,7 +1509,8 @@ internal sealed class SsaLowerer
                     storeLocal.LocalName,
                     storeLocal.LocalType,
                     RewriteValue(storeLocal.Value, replacements),
-                    storeLocal.Location),
+                    storeLocal.Location,
+                    storeLocal.WriteKind),
                 SsaCopyMemoryInstruction copyMemory => new SsaCopyMemoryInstruction(
                     RewriteValue(copyMemory.DestinationAddress, replacements),
                     RewriteValue(copyMemory.SourceAddress, replacements),
@@ -1502,14 +1518,16 @@ internal sealed class SsaLowerer
                     copyMemory.TransferKind,
                     copyMemory.Location,
                     copyMemory.ScopedNoAliasGroups,
-                    copyMemory.LoopAccessGroups),
+                    copyMemory.LoopAccessGroups,
+                    copyMemory.WriteKind),
                 SsaStoreIndirectInstruction storeIndirect => new SsaStoreIndirectInstruction(
                     RewriteValue(storeIndirect.Address, replacements),
                     storeIndirect.ValueType,
                     RewriteValue(storeIndirect.Value, replacements),
                     storeIndirect.Location,
                     storeIndirect.ScopedNoAliasGroups,
-                    storeIndirect.LoopAccessGroups),
+                    storeIndirect.LoopAccessGroups,
+                    storeIndirect.WriteKind),
                 SsaStoreGlobalInstruction storeGlobal => new SsaStoreGlobalInstruction(
                     storeGlobal.GlobalName,
                     storeGlobal.GlobalType,
@@ -1684,6 +1702,7 @@ internal sealed class SsaLowerer
                     : resolveTarget(terminator.DefaultTarget.Value),
                 Location: terminator.Location,
                 BranchWeights: terminator.BranchWeights,
+                LoopBehavior: terminator.LoopBehavior,
                 LoopContracts: terminator.LoopContracts,
                 LoopAccessGroups: terminator.LoopAccessGroups);
         }

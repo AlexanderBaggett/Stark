@@ -556,8 +556,16 @@ internal static partial class PackageImageBuilder
                 group.ParameterNames
                     .Where(static name => !string.IsNullOrWhiteSpace(name))
                     .Distinct(StringComparer.Ordinal)
-                    .ToArray()))
-            .Where(static group => group.ParameterNames.Count >= 2)
+                    .ToArray(),
+                group.HasSubregions
+                    ? group.MemoryRegions
+                        .Select(static region => new StarkPackageParameterMemoryRegionManifest(
+                            region.ParameterName,
+                            region.StartExpression,
+                            region.CountExpression))
+                        .ToArray()
+                    : null))
+            .Where(static group => group.ParameterNames.Count >= 2 || group.Regions is { Count: >= 2 })
             .ToArray();
         return manifests.Length == 0 ? null : manifests;
     }
@@ -608,16 +616,29 @@ internal static partial class PackageImageBuilder
                      .Select(static contract => contract.disjointContract())
                      .Where(static contract => contract is not null)!)
         {
-            var names = contract.expressionList()
+            var regions = contract.expressionList()
                 .expression()
-                .Select(static expression => TryGetDisjointContractParameterName(expression.GetText()))
-                .Where(static name => !string.IsNullOrWhiteSpace(name))
-                .Select(static name => name!)
+                .Select(static expression => TryGetParameterMemoryRegion(expression.GetText()))
+                .Where(static region => region is not null)
+                .Select(static region => region!)
+                .ToArray();
+            var names = regions
+                .Select(static region => region.ParameterName)
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
-            if (names.Length >= 2)
+            var hasSubregions = regions.Any(static region => !region.IsWholeParameter);
+            if (regions.Length >= 2 && (hasSubregions || names.Length >= 2))
             {
-                groups.Add(new StarkPackageParameterDisjointGroupManifest(names));
+                groups.Add(new StarkPackageParameterDisjointGroupManifest(
+                    names,
+                    hasSubregions
+                        ? regions
+                            .Select(static region => new StarkPackageParameterMemoryRegionManifest(
+                                region.ParameterName,
+                                region.StartExpression,
+                                region.CountExpression))
+                            .ToArray()
+                        : null));
             }
         }
 
@@ -674,15 +695,38 @@ internal static partial class PackageImageBuilder
 
     private static string? TryGetDisjointContractParameterName(string operandText)
     {
+        return TryGetParameterMemoryRegion(operandText)?.ParameterName;
+    }
+
+    private static ParameterMemoryRegion? TryGetParameterMemoryRegion(string operandText)
+    {
         operandText = TrimOuterParentheses(operandText);
         if (!TryReadIdentifier(operandText, 0, out var identifier, out var position))
         {
             return null;
         }
 
-        return position == operandText.Length || operandText[position] == '['
-            ? identifier
-            : null;
+        if (position == operandText.Length)
+        {
+            return new ParameterMemoryRegion(identifier);
+        }
+
+        if (operandText[position] != '[' || operandText[^1] != ']')
+        {
+            return null;
+        }
+
+        var regionText = operandText[(position + 1)..^1];
+        var separator = regionText.IndexOf(',', StringComparison.Ordinal);
+        if (separator <= 0 || separator >= regionText.Length - 1)
+        {
+            return null;
+        }
+
+        return new ParameterMemoryRegion(
+            identifier,
+            TrimOuterParentheses(regionText[..separator]),
+            TrimOuterParentheses(regionText[(separator + 1)..]));
     }
 
     private static string TrimOuterParentheses(string text)

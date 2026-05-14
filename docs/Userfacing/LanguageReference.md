@@ -466,10 +466,16 @@ clauses use synthetic names `arg0`, `arg1`, and so on. Memory-backed `fnptr`
 parameters are non-overlapping by default; use `where overlap(arg0, arg1)` when
 the indirect callee permits overlap, or `where same(arg0, arg1)` when the call
 requires identical storage.
+Bounded raw pointer parameters inside a `fnptr` use the same synthetic names in
+their count expressions. For example, `rawptr<T>[arg1]` means the first callback
+argument is valid for the element count supplied as the second callback
+argument. The bound is part of the function-pointer contract and is preserved
+through package images and indirect-call lowering.
 
 ```stark
 fnptr<fn void(borrow mut Buffer, borrow mut Buffer) where overlap(arg0, arg1)>
 fnptr<fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>) where same(arg0, arg1)>
+fnptr<fn void(rawptr<i32[min max]>[arg1], u8[1 10])>
 ```
 
 The current `fnptr` type is an ordinary safe callable pointer. Unsafe function items cannot be promoted to ordinary `fnptr` values because that would hide the unsafe requirement from later calls. Call unsafe functions directly inside an `unsafe` block, or expose a safe wrapper that checks the required conditions.
@@ -1097,7 +1103,7 @@ fn i32[0 10] CountFour() {
 }
 ```
 
-Accepted `independent` loops preserve the contract through lowering and emit LLVM loop `mustprogress` metadata. Memory operations in the accepted canonical slice, fixed-array, and bounded raw pointer region subset also receive LLVM `!llvm.access.group`, and the loop latch receives `!llvm.loop.parallel_accesses`. Raw pointer accesses in this subset may use the normal raw pointer spelling `*(&root[index])` when `root` has a bounded raw pointer region. Unbounded pointer dereferences, address-of expressions that create new unbounded regions, member access that is not rooted at `root[index]`, non-induction indexes, memory-backed local declarations, nested loops, early exits, and calls with unproven memory effects produce `STK3027`.
+Accepted `willexit` loops preserve their progress contract through lowering and emit LLVM loop `mustprogress` metadata. Accepted `independent` loops additionally preserve the no-loop-carried-memory-dependence contract through lowering. Memory operations in the accepted canonical slice, fixed-array, and bounded raw pointer region subset receive LLVM `!llvm.access.group`, and the loop latch receives `!llvm.loop.parallel_accesses`. Raw pointer accesses in this subset may use the normal raw pointer spelling `*(&root[index])` when `root` has a bounded raw pointer region. Unbounded pointer dereferences, address-of expressions that create new unbounded regions, member access that is not rooted at `root[index]`, non-induction indexes, memory-backed local declarations, nested loops, early exits, and calls with unproven memory effects produce `STK3027`.
 
 ### 10.3 Disjoint Branch Conditions
 

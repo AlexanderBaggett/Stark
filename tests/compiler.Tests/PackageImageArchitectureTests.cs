@@ -613,6 +613,76 @@ public sealed class PackageImageArchitectureTests
     }
 
     [Fact]
+    public void PackageImageBackedSubregionDisjointContractsRejectOverlappingImportedCalls()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-subregion-disjoint-");
+        var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public unsafe fn void Window(
+                    rawptr<i32[min max]>[8] source,
+                    rawmutptr<i32[min max]>[8] destination)
+                    where overlap(source, destination)
+                    where disjoint(source[2, 4], destination[0, 4]) {
+                    return;
+                }
+                """,
+                sourcePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(sourcePath);
+
+            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+            Assert.True(PackageImageLoader.TryBuildModuleSource(CreateResolvedPackageModule(facadeModule), out var sourceText));
+            Assert.Contains("where disjoint(source[2, 4], destination[0, 4])", sourceText, StringComparison.Ordinal);
+
+            var result = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    unsafe fn void Run(rawmutptr<i32[min max]>[8] buffer) {
+                        Facade.Window(buffer, buffer);
+                        return;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "type-check"));
+
+            Assert.False(result.Succeeded);
+            Assert.Contains(
+                result.Diagnostics,
+                static diagnostic => diagnostic.Code == "STK3030"
+                    && diagnostic.Message.Contains("disjoint subregion parameter contract", StringComparison.Ordinal));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
     public void PackageImageBackedRetborrowDynamicIndexTemplatesReturnElementAddresses()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-retborrow-dynamic-");

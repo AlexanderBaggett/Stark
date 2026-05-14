@@ -41,6 +41,7 @@ internal static partial class PackageImageBuilder
             ParameterTypes: type.FunctionPointerParameterTypes is { Count: > 0 }
                 ? type.FunctionPointerParameterTypes.Select(parameter => BuildPublishedAbiTypeReference(parameter, moduleName, localNamedTypes)).ToArray()
                 : null,
+            ParameterRawPointerElementCountExpressions: type.FunctionPointerParameterRawPointerElementCountExpressions,
             OverlapParameterGroups: BuildParameterOverlapGroupManifests(type.FunctionPointerOverlapParameterGroups ?? []),
             SameParameterGroups: BuildParameterSameGroupManifests(type.FunctionPointerSameParameterGroups ?? []));
     }
@@ -150,6 +151,7 @@ internal static partial class PackageImageBuilder
             ParameterTypes: type.FunctionPointerParameterTypes is { Count: > 0 }
                 ? type.FunctionPointerParameterTypes.Select(parameter => BuildTypeReference(parameter, moduleName, stripCurrentModulePrefix)).ToArray()
                 : null,
+            ParameterRawPointerElementCountExpressions: type.FunctionPointerParameterRawPointerElementCountExpressions,
             OverlapParameterGroups: BuildParameterOverlapGroupManifests(type.FunctionPointerOverlapParameterGroups ?? []),
             SameParameterGroups: BuildParameterSameGroupManifests(type.FunctionPointerSameParameterGroups ?? []));
     }
@@ -373,7 +375,8 @@ internal static partial class PackageImageLoader
                 (type.ParameterTypes ?? []).Select(parameter => BuildTypeSymbol(parameter, currentModuleName, localNamedTypes)).ToArray(),
                 BuildTypeReferenceParameterDisjointGroups(type.DisjointParameterGroups),
                 BuildParameterOverlapGroups(type.OverlapParameterGroups),
-                BuildParameterSameGroups(type.SameParameterGroups)),
+                BuildParameterSameGroups(type.SameParameterGroups),
+                type.ParameterRawPointerElementCountExpressions),
             "named" when type.TypeArguments is { Count: > 0 } => StarkTypeSymbols.GenericInstantiation(
                 normalizedNamedType ?? "<unnamed>",
                 type.TypeArguments.Select(argument => BuildTypeSymbol(argument, currentModuleName, localNamedTypes)).ToArray()),
@@ -453,7 +456,7 @@ internal static partial class PackageImageLoader
             "fixedarray" => $"{RenderTypeReference(type.ElementType!)}[{(type.FixedLength is { } fixedLength ? fixedLength.ToString() : "?")}]",
             "slice" => $"{RenderTypeReference(type.ElementType!)}[]",
             "dynamic" => $"dynamic {RenderTypeReference(type.ElementType!)}",
-            "functionpointer" => $"fnptr<{RenderTypeReferenceFunctionKind(type.FunctionKind)} {RenderTypeReference(type.ReturnType!)}({string.Join(", ", (type.ParameterTypes ?? []).Select(RenderTypeReference))}){RenderFunctionPointerMemoryContracts(type)}>",
+            "functionpointer" => $"fnptr<{RenderTypeReferenceFunctionKind(type.FunctionKind)} {RenderTypeReference(type.ReturnType!)}({string.Join(", ", (type.ParameterTypes ?? []).Select((parameter, index) => RenderFunctionPointerParameterTypeReference(parameter, type.ParameterRawPointerElementCountExpressions, index)))}){RenderFunctionPointerMemoryContracts(type)}>",
             "named" when type.TypeArguments is { Count: > 0 } => $"{type.Name}<{string.Join(", ", type.TypeArguments.Select(RenderTypeReference))}>",
             "named" => type.Name ?? "<unnamed>",
             _ => type.Name ?? type.Kind
@@ -473,6 +476,20 @@ internal static partial class PackageImageLoader
             "finite law" or "finitelaw" => "finite law",
             _ => "fn"
         };
+    }
+
+    private static string RenderFunctionPointerParameterTypeReference(
+        StarkPackageTypeReference parameterType,
+        IReadOnlyList<string?>? rawPointerElementCountExpressions,
+        int parameterIndex)
+    {
+        var typeText = RenderTypeReference(parameterType);
+        return rawPointerElementCountExpressions is not null
+               && parameterIndex >= 0
+               && parameterIndex < rawPointerElementCountExpressions.Count
+               && !string.IsNullOrWhiteSpace(rawPointerElementCountExpressions[parameterIndex])
+            ? $"{typeText}[{rawPointerElementCountExpressions[parameterIndex]}]"
+            : typeText;
     }
 
     private static string RenderFunctionPointerMemoryContracts(StarkPackageTypeReference type)
@@ -507,12 +524,34 @@ internal static partial class PackageImageLoader
         IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? groups)
     {
         var result = groups?
-            .Select(static group => group.ParameterNames
-                .Where(static name => !string.IsNullOrWhiteSpace(name))
-                .Distinct(StringComparer.Ordinal)
-                .ToArray())
-            .Where(static names => names.Length >= 2)
-            .Select(static names => new ParameterDisjointGroup(names))
+            .Select(static group =>
+            {
+                if (group.Regions is { Count: >= 2 } regions)
+                {
+                    var memoryRegions = regions
+                        .Where(static region => !string.IsNullOrWhiteSpace(region.ParameterName))
+                        .Select(static region => new ParameterMemoryRegion(
+                            region.ParameterName,
+                            region.StartExpression,
+                            region.CountExpression))
+                        .ToArray();
+                    var regionNames = memoryRegions
+                        .Select(static region => region.ParameterName)
+                        .Distinct(StringComparer.Ordinal)
+                        .ToArray();
+                    return memoryRegions.Length >= 2
+                        ? new ParameterDisjointGroup(regionNames, memoryRegions)
+                        : null;
+                }
+
+                var names = group.ParameterNames
+                    .Where(static name => !string.IsNullOrWhiteSpace(name))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                return names.Length >= 2 ? new ParameterDisjointGroup(names) : null;
+            })
+            .Where(static group => group is not null)
+            .Cast<ParameterDisjointGroup>()
             .ToArray();
         return result is { Length: > 0 } ? result : null;
     }

@@ -224,6 +224,54 @@ public sealed partial class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void InitSliceElementAssignmentCarriesInitializationWriteKindInMir()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Fill(init u32[0 max][] destination) {
+                init destination[0] = 7;
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.Contains(
+            statements,
+            static statement => statement.Kind == MidLevelIrStatementKind.StoreIndirect
+                && statement.WriteKind == MemoryWriteKind.Initialization
+                && statement.Text.Contains("init destination[0] = 7", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void OutParameterAssignmentCarriesInitializationWriteKindInMir()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Write(out u32[0 max] value) {
+                value = 7;
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.Contains(
+            statements,
+            static statement => statement.Kind == MidLevelIrStatementKind.StoreIndirect
+                && statement.WriteKind == MemoryWriteKind.Initialization
+                && statement.Text.Contains("value = 7", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void TextSlicesLowerToViewProducingMir()
     {
         var result = Compile(

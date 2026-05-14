@@ -5482,6 +5482,11 @@ internal sealed class SemanticValidator
         var pairwiseDisjoint = new HashSet<string>(StringComparer.Ordinal);
         foreach (var group in disjointGroups)
         {
+            if (group.HasSubregions)
+            {
+                continue;
+            }
+
             var names = group.ParameterNames
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();

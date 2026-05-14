@@ -1715,7 +1715,12 @@ internal sealed class SsaIrValidator
             "$indirect",
             call.Target.Type.FunctionPointerReturnType,
             call.Target.Type.FunctionPointerParameterTypes
-                .Select((parameterType, index) => new TypedParameterSymbol($"arg{index}", parameterType))
+                .Select((parameterType, index) => new TypedParameterSymbol(
+                    $"arg{index}",
+                    parameterType,
+                    RawPointerElementCountExpression: StarkTypeSymbols.GetFunctionPointerParameterRawPointerElementCountExpression(
+                        call.Target.Type,
+                        index)))
                 .ToArray(),
             Kind: call.Target.Type.FunctionPointerKind ?? StarkFunctionKind.Fn,
             DisjointParameterGroups: call.Target.Type.FunctionPointerDisjointParameterGroups ?? [],
@@ -2762,7 +2767,41 @@ internal sealed class SsaIrValidator
                 abiFunction.UserParameters[index].SourceType,
                 $"function address '{functionAddress.FunctionName}' parameter {index + 1}",
                 location);
+
+            var actualCountExpression = StarkTypeSymbols.GetFunctionPointerParameterRawPointerElementCountExpression(
+                functionAddress.Type,
+                index);
+            var expectedCountExpression = MapAbiRawPointerElementCountExpression(
+                abiFunction.UserParameters[index].RawPointerElementCountExpression,
+                abiFunction.UserParameters);
+            if (!string.Equals(actualCountExpression, expectedCountExpression, StringComparison.Ordinal))
+            {
+                Report(
+                    function,
+                    location,
+                    $"function address '{functionAddress.FunctionName}' parameter {index + 1} bounded raw-pointer count mismatch: expected '{expectedCountExpression ?? "<none>"}', got '{actualCountExpression ?? "<none>"}'.");
+            }
         }
+    }
+
+    private static string? MapAbiRawPointerElementCountExpression(
+        string? expression,
+        IReadOnlyList<AbiParameterSymbol> parameters)
+    {
+        if (string.IsNullOrWhiteSpace(expression))
+        {
+            return null;
+        }
+
+        for (var index = 0; index < parameters.Count; index++)
+        {
+            if (string.Equals(expression, parameters[index].SourceName, StringComparison.Ordinal))
+            {
+                return $"arg{index}";
+            }
+        }
+
+        return expression;
     }
 
     private bool IsOrderedComparisonSupportedType(StarkTypeSymbol type, ISet<string> activeNamedTypes)

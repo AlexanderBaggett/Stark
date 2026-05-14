@@ -1320,6 +1320,10 @@ internal sealed class TypeChecker
                         continue;
                     }
 
+                    var operandKey = regionStart is null
+                        ? $"whole:{name}"
+                        : $"region:{name}[{NormalizeExpressionText(regionStart.GetText())},{NormalizeExpressionText(regionLength!.GetText())}]";
+
                     if (regionStart is null)
                     {
                         wholeParameterNames.Add(name);
@@ -1348,11 +1352,13 @@ internal sealed class TypeChecker
                     {
                         continue;
                     }
-                    else if (!seen.Add(name))
+                    else if (!seen.Add(operandKey))
                     {
                         ReportError(
                             "STK3029",
-                            $"{Capitalize(relationName)} contract repeats parameter '{name}'.",
+                            regionStart is null
+                                ? $"{Capitalize(relationName)} contract repeats parameter '{name}'."
+                                : $"{Capitalize(relationName)} contract repeats region '{operand.GetText()}'.",
                             operand);
                     }
                     else
@@ -1515,6 +1521,16 @@ internal sealed class TypeChecker
 
         foreach (var group in explicitDisjointGroups)
         {
+            if (group.HasSubregions)
+            {
+                if (group.MemoryRegions.Count >= 2)
+                {
+                    groups.Add(group);
+                }
+
+                continue;
+            }
+
             var names = group.ParameterNames
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
@@ -1559,9 +1575,21 @@ internal sealed class TypeChecker
         }
 
         return groups
-            .GroupBy(static group => string.Join("|", group.ParameterNames.Order(StringComparer.Ordinal)), StringComparer.Ordinal)
+            .GroupBy(GetDisjointGroupKey, StringComparer.Ordinal)
             .Select(static group => group.First())
             .ToArray();
+    }
+
+    private static string GetDisjointGroupKey(ParameterDisjointGroup group)
+    {
+        if (group.HasSubregions)
+        {
+            return string.Join(
+                "|",
+                group.MemoryRegions.Select(static region => region.DisplayText).Order(StringComparer.Ordinal));
+        }
+
+        return string.Join("|", group.ParameterNames.Order(StringComparer.Ordinal));
     }
 
     private static IEnumerable<string> EnumerateNamePairs(IReadOnlyList<string> names)
@@ -2087,6 +2115,7 @@ internal sealed class TypeChecker
                     scope.Declare(CreateParameterVariableSymbol(parameter));
                 }
                 AddParameterDisjointFacts(scope, signature.DisjointGroups);
+                AddParameterSameFacts(scope, signature.SameGroups);
 
                 var previousGenericParameters = _currentFunctionGenericParameters;
                 var previousFunctionName = _currentFunctionName;
@@ -8602,6 +8631,9 @@ internal sealed class TypeChecker
         }
 
         var lambdaParameters = expression.lambdaParameterList().parameter();
+        var lambdaParameterNames = lambdaParameters
+            .Select(static parameter => parameter.Identifier().GetText())
+            .ToArray();
         var parameterNames = new List<string>(lambdaParameters.Length);
         var parametersExactlyMatchTarget = true;
 
@@ -8616,7 +8648,8 @@ internal sealed class TypeChecker
         for (var index = 0; index < lambdaParameters.Length; index++)
         {
             var parameter = lambdaParameters[index];
-            parameterNames.Add(parameter.Identifier().GetText());
+            var parameterName = lambdaParameterNames[index];
+            parameterNames.Add(parameterName);
             var parameterType = ResolveType(parameter.type_(), currentModuleName: CurrentFunctionModuleName);
             ValidateRuntimeValueType(parameterType, parameter.type_(), $"lambda parameter '{parameter.Identifier().GetText()}'");
             if (index < parameterTypes.Count && !CanAssign(parameterType, parameterTypes[index]))
@@ -8631,7 +8664,16 @@ internal sealed class TypeChecker
                 parametersExactlyMatchTarget = false;
             }
 
-            lambdaScope.Declare(new VariableSymbol(parameter.Identifier().GetText(), parameterType, IsMutable: false, IsConstant: false));
+            lambdaScope.Declare(new VariableSymbol(
+                parameterName,
+                parameterType,
+                IsMutable: false,
+                IsConstant: false,
+                RawPointerElementCountExpression: index < parameterTypes.Count
+                    ? MapFunctionPointerRawPointerElementCountExpressionToParameterNames(
+                        StarkTypeSymbols.GetFunctionPointerParameterRawPointerElementCountExpression(expectedType, index),
+                        lambdaParameterNames)
+                    : null));
         }
 
         LambdaTypingRecord? lambda = null;
@@ -9605,7 +9647,7 @@ internal sealed class TypeChecker
                         continue;
                     }
 
-                    if (MemoryCallArgumentsAreSame(leftRoot, rightRoot))
+                    if (MemoryCallArgumentsAreSame(leftRoot, rightRoot, scope))
                     {
                         continue;
                     }
@@ -9620,6 +9662,20 @@ internal sealed class TypeChecker
 
         foreach (var group in function.DisjointGroups)
         {
+            if (group.HasSubregions)
+            {
+                ValidateDisjointCallRegionGroup(
+                    function,
+                    receiverOffset,
+                    arguments,
+                    argumentBindings,
+                    memoryArgumentsByParameterName,
+                    group,
+                    displayFunctionName,
+                    scope);
+                continue;
+            }
+
             var parameterNames = group.ParameterNames
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
@@ -9667,13 +9723,173 @@ internal sealed class TypeChecker
         }
     }
 
-    private static bool MemoryCallArgumentsAreSame(MemoryArgumentRoot left, MemoryArgumentRoot right)
+    private void ValidateDisjointCallRegionGroup(
+        TypedFunctionSignature function,
+        int receiverOffset,
+        StarkParser.ArgumentListContext arguments,
+        IReadOnlyList<ExpressionBinding> argumentBindings,
+        IReadOnlyDictionary<string, DisjointMemoryArgument> wholeMemoryArgumentsByParameterName,
+        ParameterDisjointGroup group,
+        string displayFunctionName,
+        Scope scope)
+    {
+        var regions = group.MemoryRegions
+            .Where(static region => !string.IsNullOrWhiteSpace(region.ParameterName))
+            .ToArray();
+        for (var leftIndex = 0; leftIndex < regions.Length; leftIndex++)
+        {
+            if (!TryBuildDisjointCallRegionArgument(
+                    function,
+                    receiverOffset,
+                    arguments,
+                    argumentBindings,
+                    wholeMemoryArgumentsByParameterName,
+                    regions[leftIndex],
+                    scope,
+                    out var left))
+            {
+                ReportError(
+                    "STK3030",
+                    $"Call to '{displayFunctionName}' violates disjoint subregion parameter contract: region '{regions[leftIndex].DisplayText}' requires a compiler-visible memory root and non-negative bounded range proof.",
+                    TryGetDisjointRegionDiagnosticContext(function, receiverOffset, arguments, regions[leftIndex]));
+                continue;
+            }
+
+            for (var rightIndex = leftIndex + 1; rightIndex < regions.Length; rightIndex++)
+            {
+                if (!TryBuildDisjointCallRegionArgument(
+                        function,
+                        receiverOffset,
+                        arguments,
+                        argumentBindings,
+                        wholeMemoryArgumentsByParameterName,
+                        regions[rightIndex],
+                        scope,
+                        out var right))
+                {
+                    ReportError(
+                        "STK3030",
+                        $"Call to '{displayFunctionName}' violates disjoint subregion parameter contract: region '{regions[rightIndex].DisplayText}' requires a compiler-visible memory root and non-negative bounded range proof.",
+                        TryGetDisjointRegionDiagnosticContext(function, receiverOffset, arguments, regions[rightIndex]));
+                    continue;
+                }
+
+                if (left.Root is not { } leftRoot || right.Root is not { } rightRoot)
+                {
+                    continue;
+                }
+
+                if (!DisjointCallArgumentsMayOverlap(
+                        leftRoot,
+                        rightRoot,
+                        scope,
+                        requireProof: true,
+                        out var overlapRootKey))
+                {
+                    continue;
+                }
+
+                ReportError(
+                    "STK3030",
+                    $"Call to '{displayFunctionName}' violates disjoint subregion parameter contract: regions '{regions[leftIndex].DisplayText}' and '{regions[rightIndex].DisplayText}' may overlap at '{overlapRootKey}'.",
+                    rightRoot.Expression);
+            }
+        }
+    }
+
+    private bool TryBuildDisjointCallRegionArgument(
+        TypedFunctionSignature function,
+        int receiverOffset,
+        StarkParser.ArgumentListContext arguments,
+        IReadOnlyList<ExpressionBinding> argumentBindings,
+        IReadOnlyDictionary<string, DisjointMemoryArgument> wholeMemoryArgumentsByParameterName,
+        ParameterMemoryRegion region,
+        Scope scope,
+        out DisjointMemoryArgument argument)
+    {
+        argument = null!;
+        if (!wholeMemoryArgumentsByParameterName.TryGetValue(region.ParameterName, out var wholeArgument)
+            || wholeArgument.Root is not { } wholeRoot)
+        {
+            return false;
+        }
+
+        if (region.IsWholeParameter)
+        {
+            argument = wholeArgument;
+            return true;
+        }
+
+        if (region.StartExpression is not { Length: > 0 } startExpression
+            || region.CountExpression is not { Length: > 0 } countExpression
+            || !TryResolveParameterRegionExpressionRange(startExpression, function, receiverOffset, argumentBindings, out var startMin, out var startMax)
+            || !TryResolveParameterRegionExpressionRange(countExpression, function, receiverOffset, argumentBindings, out _, out var countMax)
+            || countMax <= BigInteger.Zero
+            || !TryBuildMemoryRootRangeKey(wholeRoot.RootKey, startMin, startMax, countMax, out var regionRootKey)
+            || !TryCreateMemoryArgumentRoot(
+                regionRootKey,
+                wholeRoot.Expression,
+                wholeRoot.ArgumentType,
+                wholeRoot.WasAddressOf,
+                wholeRoot.HasProvenIndependentStorage,
+                scope,
+                out var regionRoot))
+        {
+            return false;
+        }
+
+        argument = new DisjointMemoryArgument(wholeArgument.Expression, regionRoot);
+        return true;
+    }
+
+    private static ParserRuleContext TryGetDisjointRegionDiagnosticContext(
+        TypedFunctionSignature function,
+        int receiverOffset,
+        StarkParser.ArgumentListContext arguments,
+        ParameterMemoryRegion region)
+    {
+        for (var parameterIndex = 0; parameterIndex < function.Parameters.Count; parameterIndex++)
+        {
+            if (!string.Equals(function.Parameters[parameterIndex].Name, region.ParameterName, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var argumentIndex = parameterIndex - receiverOffset;
+            if (argumentIndex >= 0 && argumentIndex < arguments.argument().Length)
+            {
+                return arguments.argument(argumentIndex).expression();
+            }
+        }
+
+        return arguments;
+    }
+
+    private static bool TryResolveParameterRegionExpressionRange(
+        string expressionText,
+        TypedFunctionSignature function,
+        int receiverOffset,
+        IReadOnlyList<ExpressionBinding> argumentBindings,
+        out BigInteger min,
+        out BigInteger max)
+    {
+        return TryResolveRawPointerParameterCountRange(
+            expressionText,
+            function,
+            receiverOffset,
+            argumentBindings,
+            out min,
+            out max);
+    }
+
+    private static bool MemoryCallArgumentsAreSame(MemoryArgumentRoot left, MemoryArgumentRoot right, Scope scope)
     {
         foreach (var leftRootKey in GetDisjointQueryRootKeys(left))
         {
             foreach (var rightRootKey in GetDisjointQueryRootKeys(right))
             {
-                if (string.Equals(leftRootKey, rightRootKey, StringComparison.Ordinal))
+                if (string.Equals(leftRootKey, rightRootKey, StringComparison.Ordinal)
+                    || scope.HasSameFact(leftRootKey, rightRootKey))
                 {
                     return true;
                 }
@@ -9687,8 +9903,55 @@ internal sealed class TypeChecker
     {
         foreach (var group in disjointGroups)
         {
+            if (group.HasSubregions)
+            {
+                var rootKeys = group.MemoryRegions
+                    .Select(region => TryBuildParameterMemoryRegionRootKey(region, scope, out var rootKey) ? rootKey : null)
+                    .Where(static rootKey => !string.IsNullOrWhiteSpace(rootKey))
+                    .Select(static rootKey => rootKey!)
+                    .ToArray();
+                scope.AddDisjointFact(rootKeys);
+                continue;
+            }
+
             scope.AddDisjointFact(group.ParameterNames);
         }
+    }
+
+    private static void AddParameterSameFacts(Scope scope, IReadOnlyList<ParameterSameGroup> sameGroups)
+    {
+        foreach (var group in sameGroups)
+        {
+            scope.AddSameFact(group.ParameterNames);
+        }
+    }
+
+    private static bool TryBuildParameterMemoryRegionRootKey(
+        ParameterMemoryRegion region,
+        Scope scope,
+        out string rootKey)
+    {
+        rootKey = string.Empty;
+        if (!scope.TryLookup(region.ParameterName, out var symbol))
+        {
+            return false;
+        }
+
+        var baseRootKey = symbol.MemoryRootKey ?? region.ParameterName;
+        if (region.IsWholeParameter)
+        {
+            rootKey = baseRootKey;
+            return true;
+        }
+
+        if (region.StartExpression is not { Length: > 0 } startExpression
+            || region.CountExpression is not { Length: > 0 } countExpression
+            || !TryBuildMemoryRootRangeKey(baseRootKey, startExpression, countExpression, scope, out rootKey))
+        {
+            return false;
+        }
+
+        return true;
     }
 
     private static bool TryGetObviousMemoryArgumentRootKey(
@@ -10307,6 +10570,22 @@ internal sealed class TypeChecker
         return true;
     }
 
+    private static string? MapFunctionPointerRawPointerElementCountExpressionToParameterNames(
+        string? expression,
+        IReadOnlyList<string> parameterNames)
+    {
+        if (string.IsNullOrWhiteSpace(expression)
+            || !expression.StartsWith("arg", StringComparison.Ordinal)
+            || !int.TryParse(expression[3..], out var parameterIndex)
+            || parameterIndex < 0
+            || parameterIndex >= parameterNames.Count)
+        {
+            return expression;
+        }
+
+        return parameterNames[parameterIndex];
+    }
+
     private static bool TryGetRawPointerRegionExpression(
         StarkParser.ExpressionContext expression,
         out string rootName,
@@ -10475,20 +10754,62 @@ internal sealed class TypeChecker
         StarkParser.ExpressionContext lengthExpression,
         Scope scope)
     {
-        var startText = NormalizeExpressionText(startExpression.GetText());
-        var lengthText = NormalizeExpressionText(lengthExpression.GetText());
+        return TryBuildMemoryRootRangeKey(
+            rootKey,
+            NormalizeExpressionText(startExpression.GetText()),
+            NormalizeExpressionText(lengthExpression.GetText()),
+            scope,
+            out var rangeRootKey)
+                ? rangeRootKey
+                : null;
+    }
+
+    private static bool TryBuildMemoryRootRangeKey(
+        string rootKey,
+        string startText,
+        string lengthText,
+        Scope scope,
+        out string rangeRootKey)
+    {
+        rangeRootKey = string.Empty;
         if (!TryResolveMemoryRootIndexRange(startText, scope, out var startMin, out var startMax)
             || !TryResolveMemoryRootIndexRange(lengthText, scope, out _, out var lengthMax)
             || startMin < BigInteger.Zero
             || lengthMax <= BigInteger.Zero)
         {
-            return null;
+            return false;
         }
 
+        return TryBuildMemoryRootRangeKey(rootKey, startMin, startMax, lengthMax, out rangeRootKey);
+    }
+
+    private static bool TryBuildMemoryRootRangeKey(
+        string rootKey,
+        BigInteger startMin,
+        BigInteger startMax,
+        BigInteger lengthMax,
+        out string rangeRootKey)
+    {
+        rangeRootKey = string.Empty;
         var rangeMax = startMax + lengthMax - BigInteger.One;
-        return rangeMax >= startMin
-            ? $"{rootKey}[{startMin.ToString(CultureInfo.InvariantCulture)}..{rangeMax.ToString(CultureInfo.InvariantCulture)}]"
-            : null;
+        if (rangeMax < startMin)
+        {
+            return false;
+        }
+
+        if (TryParseMemoryRootPath(rootKey, out var path)
+            && path.Segments.Count > 0
+            && path.Segments[^1] is { Kind: MemoryRootSegmentKind.Index, RangeMin: { } baseMin, RangeMax: { } baseMax })
+        {
+            var prefix = BuildMemoryRootPrefix(path, path.Segments.Count - 1);
+            startMin += baseMin;
+            rangeMax += baseMax;
+            rangeRootKey = $"{prefix}[{startMin.ToString(CultureInfo.InvariantCulture)}..{rangeMax.ToString(CultureInfo.InvariantCulture)}]";
+            return true;
+        }
+
+        rangeRootKey = $"{rootKey}[{startMin.ToString(CultureInfo.InvariantCulture)}..{rangeMax.ToString(CultureInfo.InvariantCulture)}]";
+        return true;
     }
 
     private static bool IsSimpleMemoryRootIndexText(string text)
@@ -12012,7 +12333,8 @@ internal sealed class TypeChecker
                     parameterTypes.Select(parameter => EnsureMonomorphizedType(parameter)).ToArray(),
                     strippedType.FunctionPointerDisjointParameterGroups,
                     strippedType.FunctionPointerOverlapParameterGroups,
-                    strippedType.FunctionPointerSameParameterGroups),
+                    strippedType.FunctionPointerSameParameterGroups,
+                    strippedType.FunctionPointerParameterRawPointerElementCountExpressions),
                 borrowKind: type.BorrowKind,
                 accessKind: type.AccessKind,
                 initializationKind: type.InitializationKind,
@@ -12392,7 +12714,8 @@ internal sealed class TypeChecker
                 parameterTypes.Select(parameter => SubstituteType(parameter, substitution)).ToArray(),
                 coreType.FunctionPointerDisjointParameterGroups,
                 coreType.FunctionPointerOverlapParameterGroups,
-                coreType.FunctionPointerSameParameterGroups);
+                coreType.FunctionPointerSameParameterGroups,
+                coreType.FunctionPointerParameterRawPointerElementCountExpressions);
         }
         else
         {
@@ -15342,6 +15665,7 @@ internal sealed class TypeChecker
         private readonly Dictionary<string, VariableSymbol> _locals = new(StringComparer.Ordinal);
         private readonly Dictionary<string, VariableSymbol>? _globals;
         private readonly List<IReadOnlyList<string>> _disjointFacts = [];
+        private readonly List<IReadOnlyList<string>> _sameFacts = [];
         private readonly HashSet<string> _flowAssignedOuterLocalNames = new(StringComparer.Ordinal);
 
         public Scope(Scope parent)
@@ -15378,6 +15702,24 @@ internal sealed class TypeChecker
                                                && ContainsCoveredRoot(group, rightRootKey)
                                                && !CoveredBySameFactRoot(group, leftRootKey, rightRootKey))
                 || Parent?.HasDisjointFact(leftRootKey, rightRootKey) == true;
+        }
+
+        public void AddSameFact(IReadOnlyList<string> rootKeys)
+        {
+            var distinctRootKeys = rootKeys
+                .Where(static rootKey => !string.IsNullOrWhiteSpace(rootKey))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            if (distinctRootKeys.Length >= 2)
+            {
+                _sameFacts.Add(distinctRootKeys);
+            }
+        }
+
+        public bool HasSameFact(string leftRootKey, string rightRootKey)
+        {
+            return _sameFacts.Any(group => ContainsSameFactPair(group, leftRootKey, rightRootKey))
+                || Parent?.HasSameFact(leftRootKey, rightRootKey) == true;
         }
 
         public void Declare(VariableSymbol symbol)
@@ -15480,6 +15822,47 @@ internal sealed class TypeChecker
         {
             return group.Any(factRootKey => IsSameOrDescendantMemoryRoot(leftRootKey, factRootKey)
                                             && IsSameOrDescendantMemoryRoot(rightRootKey, factRootKey));
+        }
+
+        private static bool ContainsSameFactPair(IReadOnlyList<string> group, string leftRootKey, string rightRootKey)
+        {
+            for (var leftIndex = 0; leftIndex < group.Count; leftIndex++)
+            {
+                for (var rightIndex = 0; rightIndex < group.Count; rightIndex++)
+                {
+                    if (leftIndex == rightIndex)
+                    {
+                        continue;
+                    }
+
+                    if (TryGetDescendantSuffix(leftRootKey, group[leftIndex], out var leftSuffix)
+                        && TryGetDescendantSuffix(rightRootKey, group[rightIndex], out var rightSuffix)
+                        && string.Equals(leftSuffix, rightSuffix, StringComparison.Ordinal))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        private static bool TryGetDescendantSuffix(string rootKey, string ancestorRootKey, out string suffix)
+        {
+            if (string.Equals(rootKey, ancestorRootKey, StringComparison.Ordinal))
+            {
+                suffix = string.Empty;
+                return true;
+            }
+
+            if (IsMemoryRootAncestor(ancestorRootKey, rootKey))
+            {
+                suffix = rootKey[ancestorRootKey.Length..];
+                return true;
+            }
+
+            suffix = string.Empty;
+            return false;
         }
     }
 }
