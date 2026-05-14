@@ -25,11 +25,13 @@ href = "/reference/examples/raylib/README.md"
 
 # FFI, Raw Pointers, and Native Packages
 
-This chapter covers explicit low-level boundaries.
+This chapter builds a low-level boundary in layers: declare the foreign call,
+contain raw pointers, add region bounds where possible, then return to a safe
+Stark wrapper.
 
 {{< stark-sample "assets/book/samples/ffi-raw-pointers.stark" >}}
 
-## `unsafe ffi fn`
+## Step 1: Put The Foreign Declaration At The Boundary
 
 Use `unsafe ffi fn` for foreign-facing declarations:
 
@@ -48,16 +50,20 @@ representation instead:
 
 {{< stark-sample "assets/book/negative-samples/enum-abi-boundary.stark" >}}
 
-Use `export unsafe ffi fn` for Stark functions that must be visible to the native
+Use `export fn` for safe Stark functions that must be visible to the native
 world, such as the hosted entrypoint:
 
 ```stark
-export unsafe ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     return 0;
 }
 ```
 
-## Raw Pointers
+Add `unsafe` and `ffi` only when the exported boundary itself uses unsafe or
+foreign ABI features, such as raw pointer arguments or a platform callback
+shape.
+
+## Step 2: Keep Raw Pointer Work Small And Audited
 
 Raw pointers are the explicit low-level pointer forms:
 
@@ -89,7 +95,7 @@ Use raw pointers for FFI, runtime internals, and small carefully reviewed
 low-level boundaries. Do not use them as a general replacement for `borrow` or
 `mut borrow`.
 
-## Bounded Raw Pointer Regions
+## Step 3: Add Bounds To Raw Pointer Regions
 
 Raw pointer parameters can state an element count:
 
@@ -122,7 +128,7 @@ into an ordinary slice view. The slice keeps the raw region's root, length,
 mutability, const provenance, alignment, and disjoint facts, so the rest of the
 wrapper can use ordinary slice indexing rules.
 
-## Safe Borrows Versus Raw Pointers
+## Step 4: Return To Safe Borrows Or Status Values Quickly
 
 Safe borrows carry stronger guarantees:
 
@@ -141,7 +147,7 @@ Raw pointers carry fewer guarantees and therefore ask for more care:
 When possible, wrap raw-pointer work in a small API that returns ordinary Stark
 status/result data.
 
-## Package-Owned Native Metadata
+## Step 5: Put Native Metadata In The Package
 
 Native-backed packages should own their native build facts. A downstream
 program should not repeat linker flags for every executable that uses the
@@ -183,7 +189,7 @@ raylib-src = "/path/to/raylib/src"
 The package author writes the native requirements once. Package consumers use a
 normal Stark dependency.
 
-## C ABI Expectations
+## Step 6: Review The C ABI Surface For Smallness
 
 Keep C-facing APIs small and deliberate:
 

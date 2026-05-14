@@ -113,7 +113,7 @@ public sealed class SystemRuntimePlatformLinuxStandardLibraryTests
                 import System.Runtime.Platform
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export unsafe fn i32[min max] main() {
                     if (System.Runtime.Platform.WaitWritable((rawptr<i8[min max]>)1, 0) <= 0) {
                         return 1;
                     }
@@ -218,7 +218,7 @@ public sealed class SystemRuntimePlatformLinuxStandardLibraryTests
                 import System.Runtime.Platform
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export unsafe fn i32[min max] main() {
                     stack mut i32[min max] state = 1;
                     if (System.Runtime.Platform.FutexWait(&state, 2) != -11) {
                         return 1;
@@ -301,7 +301,7 @@ public sealed class SystemRuntimePlatformLinuxStandardLibraryTests
                 import System.Runtime.Platform
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     if (System.Runtime.Platform.ProcessId() <= 0) {
                         return 3;
                     }

@@ -56,7 +56,7 @@ public sealed class SystemPromotedIOFileSystemStandardLibraryTests : StandardLib
             }
         }
 
-        export unsafe ffi fn i32[min max] main() {
+        export fn i32[min max] main() {
             stack mut i8[min max][3] source = { 65, 66, 67 };
             stack System.IO.IOResult<System.IO.File.File> opened =
                 System.IO.File.Open("experimental-file.txt", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.None);
@@ -273,7 +273,7 @@ public sealed class SystemPromotedIOFileSystemStandardLibraryTests : StandardLib
             }
         }
 
-        export unsafe ffi fn i32[min max] main() {
+        export unsafe fn i32[min max] main() {
             stack mut System.Text.OwnedAscii currentDirectory = new();
             if (!MemoryOk(System.IO.Path.CurrentDirectory(currentDirectory))
                 || currentDirectory.Length() == 0) {

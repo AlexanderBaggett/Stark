@@ -393,7 +393,7 @@ Goal: Stark can build real multi-file programs and expose a small but useful sta
 
 ### Runtime Surface
 
-- [ ] Define program entrypoint conventions beyond raw `export unsafe ffi fn main`
+- [ ] Define program entrypoint conventions beyond raw `export fn main`
   - [ ] hosted entrypoint rules around `main`
   - [ ] freestanding entrypoint form, if supported
   - [ ] argument and environment exposure model
@@ -1154,7 +1154,7 @@ surface through native executable workflows.
 Remaining near-term gaps should come from the explicit unchecked roadmap items
 below, especially:
 
-- [ ] hosted and freestanding entrypoint conventions beyond raw `export unsafe ffi fn main`
+- [ ] hosted and freestanding entrypoint conventions beyond raw `export fn main`
 - [ ] source-level `assert` / `panic` surface over the existing trap/no-unwind failure model
 - [ ] common C interop helper conventions and examples
 - [ ] captured-lambda environment lowering and full capture-mode preservation
@@ -1703,7 +1703,7 @@ turn that book outline into published website content.
 - [x] Publish draft Part II: Stark's Core Language
   - [x] Draft Chapter 5: Values, Types, and Ranges
   - [x] Draft Chapter 6: Bindings, Mutation, and Control Flow
-  - [x] Draft Chapter 7: Ownership, Moves, and Drops
+  - [x] Draft Chapter 7: Ownership, Moves, and Cleanup
   - [x] Draft Chapter 8: Borrowing in Stark
   - [x] Draft Chapter 9: Stark Borrowing Compared With Rust
   - [ ] Draft Chapter 9.5: Stronger Slice and Array Contracts

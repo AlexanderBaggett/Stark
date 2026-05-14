@@ -732,6 +732,44 @@ body {
     color: var(--stark-muted-mid);
 }
 
+.book-lesson-path {
+    margin: 0 0 2rem;
+    padding: 1.25rem 1.5rem;
+    border: 1px solid var(--stark-line);
+    border-radius: 4px;
+    background: var(--stark-panel-muted);
+}
+
+.book-lesson-path h2 {
+    margin: 0 0 1rem;
+    padding: 0;
+    border: none;
+    font-size: 0.85rem;
+    font-family: var(--font-mono);
+    text-transform: lowercase;
+    letter-spacing: 0.02em;
+    color: var(--stark-muted);
+    font-weight: 600;
+}
+
+.book-lesson-path ol {
+    display: grid;
+    gap: 0.45rem;
+    margin: 0;
+    padding-left: 1.25rem;
+}
+
+.book-lesson-path a {
+    color: var(--stark-accent);
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.book-lesson-path a:hover {
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+}
+
 .book-reference-links {
     margin-top: 3rem;
     padding: 1.5rem;
@@ -762,6 +800,40 @@ body {
 .book-reference-links ul {
     margin: 0 0 0.5rem;
     padding-left: 1.25rem;
+}
+
+.book-checkpoint {
+    margin-top: 3rem;
+    padding: 1.5rem;
+    border: 1px solid var(--stark-line);
+    border-radius: 4px;
+    background: var(--stark-panel-muted);
+}
+
+.book-checkpoint h2 {
+    margin: 0 0 1rem;
+    padding: 0;
+    border: none;
+    font-size: 0.85rem;
+    font-family: var(--font-mono);
+    text-transform: lowercase;
+    letter-spacing: 0.02em;
+    color: var(--stark-muted);
+    font-weight: 600;
+}
+
+.book-checkpoint p {
+    margin: 0 0 0.75rem;
+    color: var(--stark-muted-mid);
+}
+
+.book-checkpoint ul {
+    margin: 0;
+    padding-left: 1.25rem;
+}
+
+.book-checkpoint li {
+    margin: 0.35rem 0;
 }
 
 .book-nav {

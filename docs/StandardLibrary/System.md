@@ -35,7 +35,7 @@ projects instead of the ordinary root namespace.
 import System
 module App
 
-export unsafe ffi fn i32 main() {
+export fn i32 main() {
     System.Console.WriteLine("Hello");
     return 0;
 }

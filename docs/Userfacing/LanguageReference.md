@@ -785,6 +785,8 @@ The main rules:
 * moves transfer ownership
 * moved values cannot be used again
 * owned values are dropped automatically at scope exit
+* assignment to an initialized owned place drops the previous value first
+* parameters owned by the callee are dropped at function exit unless moved out
 * safe borrows are non owning and non null
 * raw pointers are the only null capable pointer forms
 * safe code cannot use `forget` style escape hatches
@@ -836,7 +838,8 @@ For the full borrowing model and design rationale, see [BorrowerSystem.md](./Bor
 
 `struct` and `record` declarations may declare one destructor block.
 
-Readonly form:
+Readonly form. `PlatformClose` is a placeholder for a non-fallible platform
+cleanup helper supplied by the type implementation:
 
 ```stark
 drop {
@@ -1562,7 +1565,9 @@ The runtime contract:
 * recoverable errors are represented as ordinary values
 * panic, assert, and failure paths are unrecoverable and do not unwind
 * unrecoverable failure terminates execution through a trap or abort style path
-* the canonical hosted entrypoint is `export unsafe ffi fn i32[min max] main()`
+* the canonical safe hosted entrypoint is `export fn i32[min max] main()`
+* `main` only needs `unsafe` or `ffi` when its signature/body uses unsafe or
+  foreign boundary features, such as raw hosted `argc`/`argv`
 * normal process termination happens by returning from `main`
 * foreign unwinding into or through Stark code is unsupported
 

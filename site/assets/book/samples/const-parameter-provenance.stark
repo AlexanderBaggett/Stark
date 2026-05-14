@@ -18,7 +18,7 @@ finite law i32[min max] ForwardConst(const Table table) {
     return ReadMiddle(table);
 }
 
-export unsafe ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     if (Defaults.Values[1] + Defaults.Bias != 7) {
         return 1;
     }

@@ -33,7 +33,7 @@ Stark treats package boundaries as part of the language model. Visibility is
 not just organization. It changes what downstream code can rely on and what the
 current package can still keep private.
 
-## Source File Shape
+## Step 1: Start Each File With Imports And One Module
 
 A source file imports the modules it needs, then declares exactly one module:
 
@@ -47,11 +47,10 @@ module App
 file. `export import` deliberately re-exports that module through the package
 surface.
 
-## Module Backend Boundaries
+## Step 2: Add Backend Boundaries Only When They Are Real
 
 Backend attributes use C#-style square brackets before the declaration they
-control. Stark currently keeps this surface narrow. The supported backend
-boundary attribute is:
+control. The backend boundary attribute used in this tutorial is:
 
 ```stark
 [Backend(Opaque)]
@@ -75,7 +74,7 @@ interop code when a real backend boundary is part of the implementation
 contract. Prefer the narrowest boundary that preserves correctness and
 performance.
 
-## Visibility Levels
+## Step 3: Widen Visibility Deliberately
 
 Stark defaults to module-private declarations. Widen visibility only when there
 is a real reason:
@@ -90,7 +89,7 @@ package API without becoming a binary symbol for FFI or a native runtime entry.
 
 Use `export` for boundaries like:
 
-- `export unsafe ffi fn main`
+- `export fn main`
 - FFI-facing functions
 - intentionally stable binary entry points
 
@@ -102,13 +101,13 @@ This sample has all three visibility ideas in one small package surface:
 
 - `Rectangle` and `Area` are `public` because they are the Stark API
 - `Multiply` is `internal` because it is a package helper
-- `main` is `export unsafe ffi` because it is a native entrypoint symbol
+- `main` is `export` because it is a native entrypoint symbol
 
 In a real package, the public API and the entrypoint usually live in different
 projects. The distinction is the same: `public` is for Stark source consumers;
 `export` is for ABI-visible boundaries.
 
-## Project Manifests
+## Step 4: Put Project Shape In `Stark.toml`
 
 A Stark project is described by `Stark.toml`:
 
@@ -137,7 +136,7 @@ stdlib = { path = "../../stdlib" }
 This keeps package dependencies in project metadata instead of scattering build
 flags through scripts.
 
-## Solution Manifests
+## Step 5: Add A Solution Only For Multi-Project Work
 
 A multi-project workspace can use `Stark.solution.toml`:
 
@@ -168,7 +167,7 @@ The solution manifest answers workspace-level questions:
 
 Single-project repositories do not need a solution file.
 
-## Native Package Metadata
+## Step 6: Keep Native Facts With The Wrapping Package
 
 Native-backed packages should own their native metadata. A downstream Stark
 project should be able to depend on the package without repeating include paths

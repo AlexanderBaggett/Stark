@@ -241,7 +241,7 @@ fn void DrawGame(borrow BreakoutRaylibGame game) {
     }
 }
 
-export unsafe ffi fn i32[min max] main() {
+export unsafe fn i32[min max] main() {
     InitWindow(ScreenWidth, ScreenHeight, "Stark Raylib Breakout");
     SetTargetFPS(60);
 

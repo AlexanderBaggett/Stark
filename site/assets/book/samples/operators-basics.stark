@@ -21,7 +21,7 @@ finite law i32[min max] ChooseSign(i32[min max] value) {
     return value < 0 ? -1 : 1;
 }
 
-export unsafe ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     if (!ArithmeticWorks()) {
         return 1;
     }

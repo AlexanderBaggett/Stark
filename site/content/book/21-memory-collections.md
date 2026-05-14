@@ -21,14 +21,16 @@ href = "/reference/examples/standard-library/StandardLibrary.stark"
 
 # Memory and Collections
 
-This chapter teaches owned heap-backed library values.
+This chapter builds from the language's `dynamic T` storage primitive to the
+owned collection types most programs actually use.
 
 {{< stark-sample "assets/book/stdlib-samples/memory-collections.stark" >}}
 
-## Dynamic Storage As The Language Primitive
+## Step 1: Start With The Storage Contract
 
+Before choosing a collection, understand the storage contract it can build on.
 The language-level primitive for growable owned storage is `dynamic T`.
-Collections can use it when they need a typed backing allocation, an initialized
+Collections use it when they need a typed backing allocation, an initialized
 element prefix, and explicit spare capacity without exposing raw pointers in
 their public implementation shape.
 
@@ -43,7 +45,7 @@ storage contract those APIs can build on:
 That gives collection internals room to be fast while keeping allocation and
 initialization visible to the compiler.
 
-## `System.Memory`
+## Step 2: Choose An Allocator Through The Collection API
 
 `System.Memory` defines the allocation vocabulary used by heap-backed standard
 library values. Ordinary user code should usually allocate through constructors
@@ -63,7 +65,7 @@ stack mut System.Collections.List<i32[0 max]> values = new(allocator);
 
 The allocator identity travels with the owned backing storage.
 
-## Fallible Growth
+## Step 3: Treat Growth As A Fallible Operation
 
 Growing a collection can fail, so growth operations return status values:
 
@@ -75,7 +77,7 @@ The sample switches on `System.Memory.MemoryStatus`. This follows the same
 failure model used elsewhere in Stark: recoverable failure is data, not a
 hidden exception.
 
-## Collection Families
+## Step 4: Pick The Collection By Its Ownership Shape
 
 The first owned collection set includes:
 
@@ -88,7 +90,7 @@ The first owned collection set includes:
 These are owned values. Moving the collection moves ownership of its backing
 storage.
 
-## Elements And Borrows
+## Step 5: Move Elements Deliberately
 
 Collections own their elements. Methods that add an element generally take
 ownership of that element. Methods that return a borrowed view or borrowed item
@@ -106,11 +108,12 @@ if (!values.TryPop(popped)) {
 
 That keeps element movement visible.
 
-## Dictionary Keys
+## Step 6: Keep Dictionary Keys In The Proven Set
 
 `Dictionary<K, V>` is intentionally conservative. The first key set is limited
 to types whose hash and equality behavior the compiler can prove, such as
 `bool` and Stark integer types.
 
-General user-defined key contracts need the constrained-generic story to land
-before they become ordinary book examples.
+That is the tutorial rule: start with keys whose equality and hashing contracts
+are already known. When a later chapter introduces richer static contracts, use
+those contracts to make additional key types explicit.

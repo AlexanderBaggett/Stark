@@ -57,7 +57,7 @@ public sealed class SystemPromotedRuntimeBufferStandardLibraryTests : StandardLi
             return true;
         }
 
-        export unsafe ffi fn i32[min max] main() {
+        export fn i32[min max] main() {
             stack mut System.Runtime.Buffer.FixedByteBuffer512 fixedBuffer = new();
             stack mut i8[min max][8] source = { 1, 2, 3, 4, 5, 6, 7, 8 };
 

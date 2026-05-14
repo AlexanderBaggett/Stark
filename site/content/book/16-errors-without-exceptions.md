@@ -14,7 +14,7 @@ should be ordinary data in the signature.
 
 {{< stark-sample "assets/book/samples/out-parameter.stark" >}}
 
-## Return Status Plus Caller-Owned Output
+## Step 1: Try Status Plus Caller-Owned Output First
 
 `TryWriteAnswer` returns `bool` and writes into an `out` destination:
 
@@ -29,7 +29,7 @@ This style is useful when the successful result should be written into
 caller-owned storage. It keeps allocation out of the error path unless the API
 explicitly asks for allocation.
 
-## Result And Status Types
+## Step 2: Upgrade To A Result Enum When The Caller Needs A Value Or Error
 
 For richer APIs, use a status enum or a result enum. The exact type should say
 what callers need to know:
@@ -58,7 +58,7 @@ Use result-shaped enums when the caller needs a value on success. Use smaller
 status enums or `bool` when the caller only needs to know whether an operation
 worked.
 
-## Unrecoverable Failure
+## Step 3: Reserve Traps For Unrecoverable States
 
 Some failures are not recoverable program states. Those belong in trap-style
 paths rather than exception unwinding.
@@ -67,7 +67,7 @@ Stark has no general stack unwinding model. That is a language and runtime
 constraint, not just a missing library convenience. It keeps cleanup,
 optimization, and FFI boundaries easier to reason about.
 
-## API Shape Rule
+## Step 4: Choose The Error Shape From The Caller Workflow
 
 When designing a Stark API, ask which of these fits:
 

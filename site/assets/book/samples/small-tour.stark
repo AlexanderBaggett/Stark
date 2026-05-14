@@ -12,7 +12,7 @@ finite law i32[min max] SumTo(u32[0 max] limit) {
     return total;
 }
 
-export unsafe ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     if (SumTo(4) != 10) {
         return 1;
     }

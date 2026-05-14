@@ -16,7 +16,7 @@ public sealed class TextOrderedComparisonRuntimeTests
             """
             module Demo
 
-            export unsafe ffi fn i32[min max] main() {
+            export unsafe fn i32[min max] main() {
                 stack i32[min max][3] values = { 1, 2, 3 };
                 stack rawptr<i32[min max]> p0 = (rawptr<i32[min max]>)(&values[0]);
                 stack rawptr<i32[min max]> p1 = (rawptr<i32[min max]>)(&values[1]);

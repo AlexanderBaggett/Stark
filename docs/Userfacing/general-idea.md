@@ -134,7 +134,9 @@ And it is designed to be as fast and as optimized as possible and needs to beat 
 - Stark has no exceptions or stack unwinding
 - recoverable errors are values
 - panic/assert/failure are unrecoverable trap-or-abort paths
-- canonical hosted entrypoint is `export unsafe ffi fn i32[min max] main()`
+- canonical safe hosted entrypoint is `export fn i32[min max] main()`
+- add `unsafe` and `ffi` only when the entrypoint itself uses unsafe or foreign
+  boundary features
 
 # Tradeoffs
 - We give specificity and get speed in return

@@ -157,7 +157,7 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
                     return true;
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export unsafe fn i32[min max] main() {
                     stack mut Allocation large = Allocate(Allocator.Default(), 5000, 8);
                     if (large.Pointer == null) {
                         return 1;
@@ -515,7 +515,7 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
             import System
             module App
 
-            export unsafe ffi fn i32[min max] main() {
+            export fn i32[min max] main() {
                 System.Console.WriteLine("allocator stays unused");
                 return 0;
             }

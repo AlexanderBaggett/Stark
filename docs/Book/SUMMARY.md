@@ -19,6 +19,9 @@ C# users understand Stark's choices.
 The book should cover the same broad learning territory as the Rust Book, but
 with Stark-specific framing:
 
+- write numbered chapters as ordered tutorial steps that build on previous
+  chapters; keep appendices and language-reference pages separate from the
+  tutorial voice
 - replace a guessing-game style tutorial with an example that does not imply
   hidden allocation, hidden exceptions, dynamic dispatch, or reflection
 - teach explicit storage, integer ranges, and function guarantees early
@@ -40,7 +43,7 @@ with Stark-specific framing:
   synchronization and shared mutable state scoped to what Stark actually
   supports
 - mark async, macros, runtime object dispatch, and OOP-style inheritance as
-  absent or future work unless roadmap items land
+  absent from current tutorial examples unless roadmap items land
 
 ## Book Metadata
 
@@ -64,7 +67,7 @@ with Stark-specific framing:
    - `stark test`
 3. Hello, Stark
    - first executable
-   - `export unsafe ffi fn main`
+   - `export fn main`
    - return codes
    - using `System.Console`
 4. A Small Stark Tour
@@ -87,7 +90,7 @@ with Stark-specific framing:
    - assignment and compound assignment
    - expression typing and conversions
    - loops, switches, and guaranteed return
-7. Ownership, Moves, and Drops
+7. Ownership, Moves, and Cleanup
    - owned values by default
    - move semantics
    - reinitialization after move
@@ -104,7 +107,7 @@ with Stark-specific framing:
    - what Stark borrows from Rust's ownership model
    - where Stark is stricter: non-escaping default borrows, no safe null, no
      reference-counted standard escape hatch, narrower destructor behavior
-   - what Rust features Stark does not currently have: lifetime syntax as a
+   - what Rust features Stark does not have: lifetime syntax as a
      normal user tool, `Rc`, `RefCell`, dynamic trait objects, and general
      interior mutability
    - how Stark's `retborrow`, `frozen`, `out`, and explicit storage classes
@@ -232,36 +235,48 @@ with Stark-specific framing:
     - wrapping and saturating operations
     - float conversions
     - `strictfp` versus optimizer-friendly math
-28. Reading Stark Diagnostics
+28. Performance Tuning
+    - small measured kernels
+    - `inline`, `inlinehint`, and `noinline`
+    - default non-overlap, `where overlap`, `where same`, and `if disjoint`
+    - bounded raw pointer regions in hot loops
+    - benchmark and IR inspection workflow
+29. Unsafe Stark and Raw Pointers
+    - unsafe as a proof boundary
+    - bounded raw pointer regions
+    - scoped `assume disjoint(...)`
+    - null and mutability boundaries
+    - returning to safe Stark wrappers
+30. Reading Stark Diagnostics
     - parse diagnostics
     - type diagnostics
     - ownership and borrow diagnostics
     - package/native dependency diagnostics
-29. Looking at Generated IR
+31. Looking at Generated IR
     - MIR, SSA, and LLVM artifacts as advanced tools
     - when to inspect IR
     - relating source restrictions to generated code
 
 ## Part VI: Projects
 
-30. Project: Command-Line Text Tool
+32. Project: Command-Line Text Tool
     - arguments once the entrypoint model supports them
     - console and text processing
     - result/status handling
-31. Project: Multi-Module Package
+33. Project: Multi-Module Package
     - internal helpers
     - public package API
     - solution manifests
     - package consumption
-32. Project: File Processing Utility
+34. Project: File Processing Utility
     - file open/read/write
     - directory inspection
     - owned handles and cleanup
-33. Project: Native-Backed Package
+35. Project: Native-Backed Package
     - Raylib-style native shim
     - package-owned native metadata
     - downstream executable build
-34. Project: Performance Case Study
+36. Project: Performance Case Study
     - choose a tight loop
     - write Stark with explicit storage
     - compare against C/Rust-like implementation strategy

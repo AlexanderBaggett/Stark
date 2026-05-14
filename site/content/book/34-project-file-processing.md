@@ -1,10 +1,11 @@
 +++
-title = "32. Project: File Processing Utility"
-weight = 320
+title = "34. Project: File Processing Utility"
+weight = 340
 book_part = "Part VI: Projects"
 book_status = "draft"
-prev = "/book/31-project-multi-module-package/"
-next = "/book/33-project-native-package/"
+prev = "/book/33-project-multi-module-package/"
+next = "/book/35-project-native-package/"
+aliases = ["/book/32-project-file-processing/"]
 
 [[stdlib_refs]]
 title = "System.FileSystem"
@@ -29,14 +30,15 @@ href = "/reference/examples/standard-library/StandardLibrary.stark"
 
 # Project: File Processing Utility
 
-This project chapter uses owned standard-library handles.
+This project chapter turns the file-system sample into a utility: write a file,
+verify it, inspect paths, and clean up with explicit status handling.
 
-## Goal
+## Step 1: Define The File Workflow
 
 Build a small utility that writes a marker file, verifies it exists, inspects a
 directory, and reports status through exit codes.
 
-This project should use:
+Build the workflow from:
 
 - `System.IO.File.File` for owned file handles
 - `System.FileSystem` for path-level and directory operations
@@ -49,7 +51,7 @@ The checked sample is intentionally small: write one file, prove the path now
 exists, then delete it. That gives the project a reliable spine before adding
 directory walking, filtering, or larger text processing.
 
-## File Handles
+## Step 2: Open And Close Handles Deliberately
 
 Open a file through `System.IO.File.Open`:
 
@@ -61,7 +63,7 @@ stack mut System.IO.File.File file =
 Check `file.IsOpen()` before writing. Call `file.Close()` when the program
 needs the close status.
 
-## Directory Inspection
+## Step 3: Switch On Directory Reads
 
 Directory reads return enum-shaped data:
 
@@ -79,13 +81,13 @@ switch (next) {
 The loop is usually `while non-deterministic` because the filesystem is external
 state.
 
-## Path And Text Handling
+## Step 4: Build Paths Through Helpers
 
 Use path helpers when joining path fragments. Avoid baking platform separators
 through application logic. When path helpers allocate owned text, handle the
 allocation-aware result.
 
-## Cleanup
+## Step 5: Make Cleanup Ordering Visible
 
 Owned handles clean up at scope exit, but explicit close still matters when:
 

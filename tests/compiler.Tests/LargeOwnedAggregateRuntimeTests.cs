@@ -121,7 +121,7 @@ public sealed class LargeOwnedAggregateRuntimeTests
                     return;
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export unsafe fn i32[min max] main() {
                     reset_external_counter();
                     RunSuccessPayloadMove();
                     if (read_external_counter() != 7) {
@@ -233,7 +233,7 @@ public sealed class LargeOwnedAggregateRuntimeTests
                     return;
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export unsafe fn i32[min max] main() {
                     Counter = 0;
                     RunSuccessPayloadMove();
                     if (Counter != 7) {

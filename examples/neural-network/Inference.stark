@@ -30,7 +30,7 @@ finite law bool Predict(Sample input) {
     return Score(Encode(input)) > 0;
 }
 
-export unsafe ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     if (!Predict(new Sample(40, 20))) {
         return 1;
     }

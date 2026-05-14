@@ -286,7 +286,7 @@ public sealed class CompilerPipelineSyntaxModelTests
                     return 2;
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     return Read() + Fast();
                 }
                 """),

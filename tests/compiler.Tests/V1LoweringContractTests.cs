@@ -62,7 +62,7 @@ public sealed class V1LoweringContractTests
 
             unsafe ffi fn i32[min max] puts(ascii text);
 
-            export unsafe ffi fn i32[min max] main() {
+            export unsafe fn i32[min max] main() {
                 puts("Hello");
                 return 0;
             }
@@ -72,9 +72,47 @@ public sealed class V1LoweringContractTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("declare i32 @puts(ptr readonly)", llvm);
-        Assert.Contains("define i32 @main()", llvm);
+        Assert.Contains("i32 @main()", llvm);
         Assert.DoesNotContain("declare fastcc i32 @puts(", llvm);
         Assert.DoesNotContain("define fastcc i32 @main()", llvm);
+    }
+
+    [Fact]
+    public void SafeExportedMainDoesNotNeedUnsafeOrFfiAndUsesNativeCallingConvention()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            export fn i32[min max] main() {
+                return 0;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define noundef i32 @main()", llvm);
+        Assert.DoesNotContain("define fastcc noundef i32 @main()", llvm);
+    }
+
+    [Fact]
+    public void ExportedStarkFunctionsUseNativeCallingConventionWithoutFfiUnsafe()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            export fn i32[min max] AddOne(i32[min max] value) {
+                return value + 1;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("i32 @AddOne(i32 noundef %arg_value)", llvm);
+        Assert.DoesNotContain("define fastcc", llvm);
     }
 
     [Fact]

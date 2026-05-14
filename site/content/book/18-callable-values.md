@@ -25,7 +25,7 @@ Callable values are deliberately narrow while Stark preserves strong guarantees.
 
 {{< stark-sample "assets/book/samples/callable-values.stark" >}}
 
-## Function Items
+## Step 1: Call Named Functions Directly First
 
 A named function can be used as a function item:
 
@@ -38,7 +38,7 @@ fn i32[min max] Add(i32[min max] left, i32[min max] right) {
 Calling `Add(20, 22)` is still an ordinary direct call. The function has not
 become a raw pointer just because it has a name.
 
-## Function Pointers
+## Step 2: Promote To `fnptr` Only When Indirection Is Needed
 
 Use `fnptr` when you want an indirect callable value:
 
@@ -78,7 +78,7 @@ upgraded to a stronger callable value just because its body is simple:
 
 {{< stark-sample "assets/book/negative-samples/fnptr-kind-mismatch.stark" >}}
 
-## Non-Capturing Lambdas
+## Step 3: Use Non-Capturing Lambdas For Thin Callable Values
 
 Non-capturing lambdas can be used where a matching function pointer is expected:
 
@@ -90,7 +90,7 @@ stack fnptr<fn i32[min max](i32[min max])> increment =
 This is intentionally narrow. A non-capturing lambda has no hidden environment
 and can behave like a plain callable value.
 
-## Capturing Lambdas
+## Step 4: Keep Captures Visible At The Boundary
 
 Capturing lambdas use an explicit capture list:
 
@@ -115,7 +115,7 @@ The capture list is explicit and type-checked, but today it cannot be lowered
 into an ordinary `fnptr` value. Use a named function item or a non-capturing
 lambda when a current API expects `fnptr`.
 
-## Thread Entries
+## Step 5: Reuse Callable Rules For Thread Entries
 
 Thread entry values are callable values too. Stark keeps them explicit because
 threading widens the part of the program that can observe execution and shared

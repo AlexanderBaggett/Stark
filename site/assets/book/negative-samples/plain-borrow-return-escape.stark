@@ -8,7 +8,7 @@ finite borrow i32[min max] BadSlot(borrow Cell cell) {
     return cell.Value;
 }
 
-export unsafe ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     stack Cell cell = new Cell() {
         Value = 7
     };

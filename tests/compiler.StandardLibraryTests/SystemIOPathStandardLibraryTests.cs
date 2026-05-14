@@ -568,7 +568,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     return 0;
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export unsafe fn i32[min max] main() {
                     if (!CheckFacts()) {
                         return 1;
                     }
@@ -700,7 +700,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack mut System.Text.OwnedAscii owned = new();
 
                     if (!MemoryOk(System.IO.Path.CurrentDirectory(owned))) {
@@ -866,7 +866,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export unsafe fn i32[min max] main() {
                     stack mut System.Text.OwnedAscii joined = new();
 
                     if (!MemoryOk(System.IO.Path.TryJoin(joined, "alpha", "beta.txt"))) {
@@ -1053,7 +1053,7 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export unsafe fn i32[min max] main() {
                     stack mut System.Text.OwnedAscii cwd = new();
                     stack mut i8[min max][12] ownedNameBytes = { 111, 119, 110, 101, 100, 45, -50, -79, 46, 116, 120, 116 };
                     stack mut Ascii ownedName = new Ascii() {

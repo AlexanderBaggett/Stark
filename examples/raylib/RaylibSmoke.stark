@@ -1,7 +1,7 @@
 import Raylib
 module RaylibSmoke
 
-export unsafe ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     stack Color color = RAYWHITE();
     stack Vector2 point = Vec2(1.0f, 2.0f);
     stack Rectangle left = Rect(0.0f, 0.0f, 10.0f, 10.0f);

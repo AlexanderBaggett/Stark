@@ -1,6 +1,6 @@
 +++
 title = "Appendix D: Function Kinds and Guarantees"
-weight = 380
+weight = 400
 book_part = "Appendices"
 book_status = "draft"
 prev = "/book/appendix-c-integer-widths/"

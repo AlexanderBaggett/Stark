@@ -39,7 +39,7 @@ fn bool InitRepository() {
         && WriteHead("starkgit-demo/.starkgit/HEAD");
 }
 
-export unsafe ffi fn i32[min max] main() {
+export unsafe fn i32[min max] main() {
     if (!InitRepository()) {
         return 1;
     }

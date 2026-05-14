@@ -1,6 +1,6 @@
 module Book.Negative.CapturingLambdaFnptr
 
-export unsafe ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     stack i32[min max] offset = 1;
     stack fnptr<fn i32[min max](i32[min max])> increment =
         capture(copy offset) (i32[min max] value) => value + offset;

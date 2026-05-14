@@ -63,14 +63,169 @@ public sealed class CompilerCliTests
         Assert.Contains("--log-category <name>", text);
         Assert.Contains("--log-stage <pass-id>", text);
         Assert.Contains("--log-kind <pipeline|symbol|decision|gap>", text);
-        Assert.Contains("(default)      Run the full compilation pipeline and print a pass summary", text);
-        Assert.Contains("With no workflow flag, the compiler runs the full pipeline and prints a success summary.", text);
+        Assert.Contains("(default)      Build an executable when the root source exports main; otherwise build a library", text);
+        Assert.Contains("With no workflow flag, the compiler infers executable vs library from the root source.", text);
         Assert.Contains("Examples:", text);
+        Assert.Contains("compiler app.stark", text);
         Assert.Contains("compiler app.stark --emit-llvm -o app.ll", text);
         Assert.Contains("compiler app.stark --diagnostic-format json", text);
         Assert.Contains("--compile-only", text);
         Assert.Contains("--link-only", text);
         Assert.Equal(string.Empty, stderr.ToString());
+    }
+
+    [Fact]
+    public void DefaultExecutableOutputPathMatchesInputNameAndAddsExeForWindowsTargets()
+    {
+        var appPath = Path.Combine(Path.GetTempPath(), "hello.stark");
+
+        var linuxOutput = CompilerCli.DeriveExecutableOutputPath(
+            inputPath: appPath,
+            moduleName: null,
+            targetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null));
+        var windowsOutput = CompilerCli.DeriveExecutableOutputPath(
+            inputPath: appPath,
+            moduleName: null,
+            targetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null));
+
+        Assert.Equal(Path.Combine(Path.GetTempPath(), "hello"), linuxOutput);
+        Assert.Equal(Path.Combine(Path.GetTempPath(), "hello.exe"), windowsOutput);
+    }
+
+    [Fact]
+    public void DefaultExecutableOutputPathUsesModuleNameForStandardInput()
+    {
+        var output = CompilerCli.DeriveExecutableOutputPath(
+            inputPath: null,
+            moduleName: "Demo.App",
+            targetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null));
+
+        Assert.Equal(Path.GetFullPath("Demo.App.exe"), output);
+    }
+
+    [Fact]
+    public async Task DefaultModeInfersExecutableFromExportedMain()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-default-exe-");
+        var rootPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "App");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                module App
+
+                export fn i32[min max] main() {
+                    return 7;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [rootPath],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = outputPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+
+            Assert.NotNull(process);
+            process!.WaitForExit();
+            Assert.Equal(7, process.ExitCode);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task DefaultModeInfersLibraryWhenRootHasNoExportedMain()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var archiverPath = FindFirstAvailableTool("llvm-ar", "ar");
+        if (archiverPath is null)
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-default-lib-");
+        var rootPath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var extension = OperatingSystem.IsWindows() ? ".lib" : ".a";
+        var outputPath = Path.Combine(tempDirectory.FullName, $"libFacade{extension}");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                module Facade
+
+                public finite law i32[min max] Double(i32[min max] value) {
+                    return value + value;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [rootPath, "--archiver", archiverPath],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted static library:", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Contains("Emitted package image:", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+            Assert.True(File.Exists(manifestPath));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
     }
 
     [Fact]
@@ -1494,7 +1649,7 @@ public sealed class CompilerCliTests
                 import Geometry
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     return Geometry.Read(Geometry.Make());
                 }
                 """);
@@ -1565,7 +1720,7 @@ public sealed class CompilerCliTests
                 """
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     return 0;
                 }
                 """);
@@ -1636,7 +1791,7 @@ public sealed class CompilerCliTests
                 """
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     return 0;
                 }
                 """);
@@ -1711,7 +1866,7 @@ public sealed class CompilerCliTests
                 import System.Text
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack System.Memory.MemoryResult<System.Text.OwnedAscii> text = 0.ToAscii();
                     return 0;
                 }
@@ -1807,7 +1962,7 @@ public sealed class CompilerCliTests
                 import System.Collections
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack mut List<u32[0 2 ** 31 - 1]> values = new();
                     values.Push(1);
                     return (i32[min max])values.Count();
@@ -1914,7 +2069,7 @@ public sealed class CompilerCliTests
                 import Inlineable
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     return Opaque.Value() + Inlineable.Value();
                 }
                 """);
@@ -2045,7 +2200,7 @@ public sealed class CompilerCliTests
                 import Facade
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     return Math.Add(3, 4);
                 }
                 """);
@@ -2178,7 +2333,7 @@ public sealed class CompilerCliTests
                 import Facade
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     return Math.Open("demo.txt", Math.FileMode.Write)
                         + Math.Open("demo.txt", Math.FileMode.Write, Text.Encoding.UTF8);
                 }
@@ -2299,7 +2454,7 @@ public sealed class CompilerCliTests
                 import Syscall
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export unsafe fn i32[min max] main() {
                     if (Syscall.Syscall0(39) <= 0) {
                         return 1;
                     }
@@ -2379,7 +2534,7 @@ public sealed class CompilerCliTests
                 """
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     return 7;
                 }
                 """);
@@ -2454,7 +2609,7 @@ public sealed class CompilerCliTests
                 """
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     return 0;
                 }
                 """);
@@ -2584,7 +2739,7 @@ public sealed class CompilerCliTests
                 """
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     return 7;
                 }
                 """);

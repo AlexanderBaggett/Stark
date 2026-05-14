@@ -109,7 +109,7 @@ public sealed class SystemPromotedConsoleStandardLibraryTests : StandardLibraryT
             }
         }
 
-        export unsafe ffi fn i32[min max] main() {
+        export unsafe fn i32[min max] main() {
             stack mut System.Text.OwnedAscii owned = new();
             if (!MemoryOk(owned.AppendAscii("owned"))) {
                 return 1;

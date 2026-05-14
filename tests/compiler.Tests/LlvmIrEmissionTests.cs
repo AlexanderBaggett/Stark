@@ -1802,7 +1802,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
 
-            export unsafe ffi fn i32[min max] main() {
+            export unsafe fn i32[min max] main() {
                 Counter = 0;
                 RunSuccessPayloadMove();
                 if (Counter != 7) {
@@ -1816,7 +1816,7 @@ public sealed class LlvmIrEmissionTests
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
-        var mainBody = Regex.Match(llvm, @"define i32 @main\(\)[^{]*\{(?<body>[\s\S]*?)^}", RegexOptions.Multiline).Groups["body"].Value;
+        var mainBody = Regex.Match(llvm, @"define [^{]+ @main\(\)[^{]*\{(?<body>[\s\S]*?)^}", RegexOptions.Multiline).Groups["body"].Value;
 
         var callIndex = mainBody.IndexOf("call fastcc void @RunSuccessPayloadMove()", StringComparison.Ordinal);
         Assert.True(callIndex >= 0, mainBody);
@@ -1931,7 +1931,7 @@ public sealed class LlvmIrEmissionTests
 
             public ffi varargs unsafe fn i32[min max] printf(ascii format);
 
-            export unsafe ffi fn i32[min max] main() {
+            export unsafe fn i32[min max] main() {
                 stack i32[min max] score = 42;
                 return printf("score=%d", score);
             }
@@ -4758,7 +4758,7 @@ public sealed class LlvmIrEmissionTests
             module Hello
 
             unsafe ffi fn i32[min max] puts(ascii text);
-            export unsafe ffi fn i32[min max] main() {
+            export unsafe fn i32[min max] main() {
                 puts("Hello, world!\n");
                 return 0;
             }
@@ -5478,7 +5478,7 @@ public sealed class LlvmIrEmissionTests
                 return "Hello";
             }
 
-            export unsafe ffi fn i32[min max] main() {
+            export unsafe fn i32[min max] main() {
                 stack ascii message = Message();
                 puts(message);
                 return 0;
@@ -5955,7 +5955,7 @@ public sealed class LlvmIrEmissionTests
             internal unsafe fn Allocation Reallocate(Allocation allocation, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
             internal unsafe fn void Free(Allocation allocation);
 
-            export unsafe ffi fn i32[min max] main() {
+            export unsafe fn i32[min max] main() {
                 stack Allocator allocator = Allocator.Default();
                 stack Allocation allocation = Allocate(allocator, 16, 8);
                 stack Allocation grown = Reallocate(allocation, 32, 8);
@@ -6115,7 +6115,7 @@ public sealed class LlvmIrEmissionTests
             internal unsafe fn Allocation Reallocate(Allocation allocation, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
             internal unsafe fn void Free(Allocation allocation);
 
-            export unsafe ffi fn i32[min max] main() {
+            export unsafe fn i32[min max] main() {
                 stack Allocator allocator = Allocator.Default();
                 stack Allocation allocation = Allocate(allocator, 16, 8);
                 stack Allocation grown = Reallocate(allocation, 32, 8);
@@ -8635,7 +8635,7 @@ public sealed class LlvmIrEmissionTests
             import Geometry
             module Demo
 
-            export unsafe ffi fn i32[min max] main() {
+            export unsafe fn i32[min max] main() {
                 return Geometry.Read(Geometry.Make());
             }
             """,

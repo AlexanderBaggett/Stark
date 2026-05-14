@@ -113,7 +113,7 @@ public sealed class SystemFileSystemStandardLibraryTests : StandardLibraryTestSu
                 }
             }
 
-            export unsafe ffi fn i32[min max] main() {
+            export unsafe fn i32[min max] main() {
                 stack mut i8[min max][32] unicodePathStorage = {
                     114, 97, 119, 45, 100, 105, 114, 45,
                     105, 110, 102, 111, 47, 119, 105, 100,
@@ -395,7 +395,7 @@ public sealed class SystemFileSystemStandardLibraryTests : StandardLibraryTestSu
                     }
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export unsafe fn i32[min max] main() {
                     if (!IsOk(System.FileSystem.CreateDirectory("fs-root"))) {
                         return 1;
                     }

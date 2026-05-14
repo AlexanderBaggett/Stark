@@ -1,6 +1,6 @@
 import Math
 module App
 
-export unsafe ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     return Math.Add(3, 4);
 }

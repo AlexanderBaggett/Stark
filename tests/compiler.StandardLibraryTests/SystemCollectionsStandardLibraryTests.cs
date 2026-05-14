@@ -53,7 +53,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
                 && found == 34;
         }
 
-        export unsafe ffi fn i32[min max] main() {
+        export unsafe fn i32[min max] main() {
             stack mut List<u32[0 2 ** 31 - 1]> list = new();
             for willexit (stack mut u8[0 96] i = 0; i < 96; i += 1) {
                 if (!Ok(list.Push(i))) {
@@ -165,7 +165,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             }
         }
 
-        export unsafe ffi fn i32[min max] main() {
+        export fn i32[min max] main() {
             stack mut System.Collections.List<u32[0 2 ** 31 - 1]> stable = new();
             stack mut System.Collections.List<u32[0 2 ** 31 - 1]> experimental = new();
 
@@ -294,7 +294,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             }
         }
 
-        export unsafe ffi fn i32[min max] main() {
+        export fn i32[min max] main() {
             stack mut System.Collections.Stack<u32[0 2 ** 31 - 1]> stable = new();
             stack mut System.Collections.Stack<u32[0 2 ** 31 - 1]> experimental = new();
 
@@ -417,7 +417,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             }
         }
 
-        export unsafe ffi fn i32[min max] main() {
+        export fn i32[min max] main() {
             stack mut System.Collections.Queue<u32[0 2 ** 31 - 1]> stable = new();
             stack mut System.Collections.Queue<u32[0 2 ** 31 - 1]> experimental = new();
 
@@ -539,7 +539,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             }
         }
 
-        export unsafe ffi fn i32[min max] main() {
+        export fn i32[min max] main() {
             stack mut System.Collections.Queue<u32[0 2 ** 31 - 1]> stable = new();
             stack mut System.Collections.RingQueue<u32[0 2 ** 31 - 1]> ring = new();
 
@@ -661,7 +661,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             }
         }
 
-        export unsafe ffi fn i32[min max] main() {
+        export fn i32[min max] main() {
             stack mut System.Collections.LinkedList<u32[0 2 ** 31 - 1]> stable = new();
             stack mut System.Collections.LinkedList<u32[0 2 ** 31 - 1]> experimental = new();
 
@@ -805,7 +805,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             }
         }
 
-        export unsafe ffi fn i32[min max] main() {
+        export unsafe fn i32[min max] main() {
             stack mut System.Collections.Dictionary<u32[0 2 ** 31 - 1], u32[0 2 ** 31 - 1]> dictionary = new();
             if (!Ok(dictionary.Reserve(3)) || !IsPowerOfTwo(dictionary.Capacity())) {
                 return 1;
@@ -1480,7 +1480,7 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             return DropCounter == 300;
         }
 
-        export unsafe ffi fn i32[min max] main() {
+        export unsafe fn i32[min max] main() {
             if (!CheckListParity()) {
                 return 1;
             }

@@ -1529,71 +1529,100 @@ Completion rules:
     - [x] Document the current libSystem/POSIX backend and the Apple SDK/Command
           Line Tools requirement for final native linking.
 
-## 8. Update Website Book
+## 8. Update Website Book (/site/content/book)
 
-- [ ] Update the book portion of the website.
-  - [ ] Convert the book plan into website pages with stable URLs.
-  - [ ] Make every chapter a tutorial that builds on previous chapters.
-  - [ ] Add content for any planned chapters that do not currently exist
-  - [ ] renumber chapters after addition of new ones
-  - [ ] Include multiple code examples per chapter.
+- [x] Update the book portion of the website.
+  - [x] Convert the book plan into website pages with stable URLs.
+  - [x] Make every chapter a tutorial that builds on previous chapters.
+  - [x] Add content for any planned chapters that do not currently exist.
+  - [x] Renumber chapters after addition of new ones.
+  - [x] Include multiple code examples per chapter.
   - [x] Add compile checks for code examples where possible.
-  - [ ] Add navigation, previous/next links, and version/release labels.
-  - [ ] Keep the language reference separate from tutorial material.
-  - [ ] Update examples in /examples to use latest language capabilities.
+  - [x] Add navigation, previous/next links, and version/release labels.
+  - [x] Add generated chapter checkpoints so each numbered tutorial ends with
+    concrete outcomes derived from its steps.
+  - [x] Add generated lesson paths so each numbered tutorial starts with a
+    clickable sequence of the chapter's steps.
+  - [x] Add a book-structure guard so site builds fail if numbered chapters
+    lose tutorial steps, examples, navigation, or gain placeholder prose.
+  - [x] Keep the language reference separate from tutorial material.
+  - [x] Update examples in /examples to use latest language capabilities.
+  - Done: numbered website book chapters now cover chapters 1-36 with stable
+    URLs, previous/next links, v1.35 draft labels, chapter-specific reference
+    links, and checked code examples. Chapter 28 is now Performance Tuning and
+    Chapter 29 is now Unsafe Stark and Raw Pointers; diagnostics, generated IR,
+    and project chapters were renumbered to 30-36 with aliases for old draft
+    URLs. Numbered chapters are step-oriented tutorials; appendices remain
+    compact reference material. A follow-up pass reworked standard-library,
+    generated-IR, command-line-tool, and current-boundary text away from
+    reference-style summaries and toward buildable tutorial flow. A second pass
+    reworked the remaining core-language, package/boundary, ABI/numeric,
+    diagnostics, and project chapter steps into action-oriented tutorial
+    instructions. A final sweep brought the early-language, arrays/text,
+    testing, performance-model, performance-tuning, and unsafe chapters into
+    the same action-step style. Numbered chapters now render an automatic
+    Lesson Path and Chapter Checkpoint from their `## Step N:` headings so
+    readers get a clickable route before starting and a clear set of tutorial
+    outcomes before moving on. The site build now runs `check-book-structure.sh`
+    before Hugo so numbered chapters cannot silently regress to reference-only
+    pages without tutorial steps, examples, navigation, or placeholder-prose
+    checks. Hosted entrypoint examples now use safe `export fn main` unless
+    they actually need unsafe or foreign ABI features. The examples README was
+    updated after verifying the
+    `standard-library` example builds through the project driver.
 
 ### Chapter Checklist
 
-- [ ] Chapter 1: Introduction: Why Stark Exists
-- [ ] Chapter 2: Installing Stark and Building Programs
-- [ ] Chapter 3: Hello, Stark
-- [ ] Chapter 4: A Small Stark Tour
-- [ ] Chapter 5: Values, Types, and Ranges
-- [ ] Chapter 6: Bindings, Mutation, and Control Flow
-- [ ] Chapter 7: Ownership, Moves, and Drops
-- [ ] Chapter 8: Borrowing in Stark
-- [ ] Chapter 9: Stark Borrowing Compared With Rust
-- [ ] Chapter 10: Storage Classes and Lifetimes
-- [ ] Chapter 11: Aggregates and Layout-Aware Design
-- [ ] Chapter 12: Enums and Pattern Matching
-- [ ] Chapter 13: Arrays, Slices, Text, and Views
-- [ ] Chapter 14: Modules, Visibility, and Packages
-- [ ] Chapter 15: Function Guarantees and Effects
-- [ ] Chapter 16: Errors Without Exceptions
-- [ ] Chapter 17: Generics, Traits, Doctrines, and Specialization
-- [ ] Chapter 18: Callable Values and Thread Entries
-- [ ] Chapter 19: FFI, Raw Pointers, Function Pointers, and Native Packages
-- [ ] Chapter 20: Console, Process, and Platform Basics
-- [ ] Chapter 21: Memory and Collections
-- [ ] Chapter 22: Files, Directories, Paths, and Text
-- [ ] Chapter 23: Threading and TCP
+- [x] Chapter 1: Introduction: Why Stark Exists
+- [x] Chapter 2: Installing Stark and Building Programs
+- [x] Chapter 3: Hello, Stark
+- [x] Chapter 4: A Small Stark Tour
+- [x] Chapter 5: Values, Types, and Ranges
+- [x] Chapter 6: Bindings, Mutation, and Control Flow
+- [x] Chapter 7: Ownership, Moves, and Cleanup
+- [x] Chapter 8: Borrowing in Stark
+- [x] Chapter 9: Stark Borrowing Compared With Rust
+- [x] Chapter 10: Storage Classes and Lifetimes
+- [x] Chapter 11: Aggregates and Layout-Aware Design
+- [x] Chapter 12: Enums and Pattern Matching
+- [x] Chapter 13: Arrays, Slices, Text, and Views
+- [x] Chapter 14: Modules, Visibility, and Packages
+- [x] Chapter 15: Function Guarantees and Effects
+- [x] Chapter 16: Errors Without Exceptions
+- [x] Chapter 17: Generics, Traits, Doctrines, and Specialization
+- [x] Chapter 18: Callable Values and Thread Entries
+- [x] Chapter 19: FFI, Raw Pointers, Function Pointers, and Native Packages
+- [x] Chapter 20: Console, Process, and Platform Basics
+- [x] Chapter 21: Memory and Collections
+- [x] Chapter 22: Files, Directories, Paths, and Text
+- [x] Chapter 23: Threading and TCP
 - [x] Chapter 24: Testing Stark Code
   - Done: the website book chapter now documents `kind = "test"`,
     `System.Testing`, explicit fact runners, solution default test sets, and
     `stark test`.
-- [ ] Chapter 25: Stark's Performance Model
-- [ ] Chapter 26: Memory Layout, ABI, and Interop Expectations
-- [ ] Chapter 27: Integer, Floating-Point, and Overflow Policy
-- [ ] Chapter 28: Performance Tuning, Independent loops, inline, disjoint params, const params, 
-- [ ] Chapter 29: Unsafe stark and rawpointers
-- [ ] Chapter 30: Reading Stark Diagnostics
-- [ ] Chapter 31: Looking at Generated IR
-- [ ] Chapter 32: Project: Command-Line Text Tool
-- [ ] Chapter 33: Project: Multi-Module Package
-- [ ] Chapter 34: Project: File Processing Utility
-- [ ] Chapter 35: Project: Native-Backed Package
-- [ ] Chapter 36: Project: Performance Case Study
-- [ ] Appendices
-  - [ ] Keywords and reserved words
-  - [ ] Operators and symbols
-  - [ ] Integer widths and range rules
-  - [ ] Function kinds and guarantees
-  - [ ] Storage classes and ownership quick reference
-  - [ ] Package manifest reference
-  - [ ] Current boundaries
-  - [ ] Stark for Rust programmers
-  - [ ] Stark for C# programmers
-  - [ ] Stark for C programmers
+- [x] Chapter 25: Stark's Performance Model
+- [x] Chapter 26: Memory Layout, ABI, and Interop Expectations
+- [x] Chapter 27: Integer, Floating-Point, and Overflow Policy
+- [x] Chapter 28: Performance Tuning, Independent loops, inline, overlap/same/disjoint params, const params
+- [x] Chapter 29: Unsafe Stark and raw pointers
+- [x] Chapter 30: Reading Stark Diagnostics
+- [x] Chapter 31: Looking at Generated IR
+- [x] Chapter 32: Project: Command-Line Text Tool
+- [x] Chapter 33: Project: Multi-Module Package
+- [x] Chapter 34: Project: File Processing Utility
+- [x] Chapter 35: Project: Native-Backed Package
+- [x] Chapter 36: Project: Performance Case Study
+- [x] Appendices
+  - [x] Keywords and reserved words
+  - [x] Operators and symbols
+  - [x] Integer widths and range rules
+  - [x] Function kinds and guarantees
+  - [x] Storage classes and ownership quick reference
+  - [x] Package manifest reference
+  - [x] Current boundaries
+  - [x] Stark for Rust programmers
+  - [x] Stark for C# programmers
+  - [x] Stark for C programmers
 
 ## 9. GitHub Release Pipeline
 

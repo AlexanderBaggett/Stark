@@ -92,7 +92,7 @@ best target lowering.
 import System
 module App
 
-export unsafe ffi fn i32 main() {
+export fn i32 main() {
     stack f64 root = System.Math.Sqrt(9.0);
     stack System.Math.SinCosF64 pair = System.Math.SinCos(0.0);
     return root == 3.0 && pair.Sin == 0.0 && pair.Cos == 1.0 ? 0 : 1;

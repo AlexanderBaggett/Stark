@@ -14,7 +14,7 @@ mutation, a `while` loop, and an exported entrypoint.
 
 {{< stark-sample "assets/book/samples/small-tour.stark" >}}
 
-## Function Kinds
+## Step 1: Name The Function Guarantee
 
 `finite law` is stronger than a plain `fn`.
 
@@ -30,7 +30,12 @@ calculation over its input. It does not allocate, perform IO, synchronize, or
 cross an FFI boundary. A later API should not weaken that promise casually,
 because callers may start depending on the stronger behavior.
 
-## Explicit Storage
+The next sample expands the same idea by showing all four callable guarantees
+in one place:
+
+{{< stark-sample "assets/book/samples/function-guarantees.stark" >}}
+
+## Step 2: Put Loop State In Visible Storage
 
 The locals use `stack`. Stark does not infer hidden heap allocation for this
 kind of loop. The storage class is part of the source-level story.
@@ -43,7 +48,7 @@ The loop uses `while willexit` because progress is part of the contract Stark
 is trying to preserve. When code claims a loop exits, the source should make
 that claim visible instead of leaving it as a backend guess.
 
-## Ranged Integers
+## Step 3: Give Inputs Useful Ranges
 
 The parameter uses `i32[0 max]`, not just `i32`. Stark integer types carry range
 information because range facts are useful for diagnostics, checks, and

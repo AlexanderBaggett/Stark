@@ -12,6 +12,29 @@ This page records user-facing changes to the published Stark Book.
 
 ## v1.35 Draft
 
+- Updated hosted entrypoint examples to use safe `export fn main` unless the
+  entrypoint itself needs unsafe or foreign ABI features.
+- Added generated Chapter Checkpoints to numbered tutorials so each chapter
+  ends with concrete outcomes drawn from its steps.
+- Added generated Lesson Paths to numbered tutorials so readers see the
+  chapter route before starting.
+- Added a book-structure guard to the site build so numbered chapters keep
+  tutorial steps, examples, navigation, and no placeholder prose.
+- Restructured numbered chapters as explicit tutorial steps and inserted the
+  missing Performance Tuning and Unsafe Stark chapters before diagnostics.
+- Reworked the standard-library, generated-IR, command-line-tool, and current
+  boundary material so it reads as a buildable tutorial path instead of a
+  planning note or reference summary.
+- Reworked the remaining core-language, package/boundary, ABI/numeric,
+  diagnostics, and project chapter step headings into action-oriented tutorial
+  instructions.
+- Reworked the early-language, arrays/text, testing, performance-model,
+  performance-tuning, and unsafe chapters so their step headings also read as
+  tutorial actions instead of topic labels.
+- Renumbered diagnostics, generated-IR, and project chapters to chapters
+  30-36, with aliases for the previous draft URLs.
+- Added second checked code examples to chapters that only had one sample so
+  every numbered chapter now has multiple examples.
 - Created the website book section from the canonical outline.
 - Added draft Part I chapters for installing, compiling, and reading first
   Stark programs.

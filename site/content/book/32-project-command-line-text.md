@@ -1,10 +1,11 @@
 +++
-title = "30. Project: Command-Line Text Tool"
-weight = 300
+title = "32. Project: Command-Line Text Tool"
+weight = 320
 book_part = "Part VI: Projects"
 book_status = "draft"
-prev = "/book/29-generated-ir/"
-next = "/book/31-project-multi-module-package/"
+prev = "/book/31-generated-ir/"
+next = "/book/33-project-multi-module-package/"
+aliases = ["/book/30-project-command-line-text/"]
 
 [[stdlib_refs]]
 title = "System.Console"
@@ -21,29 +22,25 @@ href = "/reference/examples/standard-library/StandardLibrary.stark"
 
 # Project: Command-Line Text Tool
 
-This project chapter is the first larger walkthrough shape. The final version
-should use hosted command-line arguments once that entrypoint model lands. Until
-then, write the core text logic as ordinary functions and keep `main` as a small
-driver.
+This project chapter is the first larger walkthrough shape. It starts by
+separating text parsing from process startup, so the useful logic can be tested
+and reused while `main` stays a small driver.
 
-## Current Project Shape
+## Step 1: Split The Tool Into Layers
 
-The project should have three layers:
+Build the project in three layers:
 
 - parsing and validation over `ascii` or `unicode` input
 - processing functions that return status/result data
-- a tiny `export unsafe ffi fn main` that maps success/failure to an exit code
-
-That shape works today even before hosted argument arrays exist.
+- a tiny safe `export fn main` that maps success/failure to an exit code
 
 {{< stark-sample "assets/book/samples/text-tool-core.stark" >}}
 
-The sample hard-codes `"run"` only because hosted command-line argument arrays
-are not part of the current entrypoint model. The important project shape is
-already useful: parse a text view, return a status enum, and convert the status
-to a process exit code at the edge.
+The sample keeps input selection in `main`, but the important project shape is
+the same for any entrypoint: parse a text view, return a status enum, and
+convert the status to a process exit code at the edge.
 
-## Text Handling Rules
+## Step 2: Choose The Text Ownership Model
 
 Prefer caller-owned or explicitly owned text:
 
@@ -55,7 +52,7 @@ Prefer caller-owned or explicitly owned text:
 
 Do not imply hidden allocation behind every string operation.
 
-## Error Handling
+## Step 3: Return Status Instead Of Throwing
 
 Recoverable problems should return ordinary values:
 
@@ -70,7 +67,7 @@ enum ToolStatus {
 The entrypoint maps those values to process exit codes. It should not depend on
 exceptions or unwinding.
 
-## Manifest
+## Step 4: Put Build Shape In The Manifest
 
 The project manifest is the ordinary executable shape:
 
@@ -88,5 +85,5 @@ output = "text-tool"
 stdlib = { path = "../../stdlib" }
 ```
 
-When hosted command-line arguments land, this chapter should be updated to
-replace the temporary fixed-input driver with real argument parsing.
+The manifest stays boring on purpose. Source code owns parsing and status
+handling; the project file owns how the executable is built.

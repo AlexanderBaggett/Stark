@@ -90,7 +90,7 @@ public sealed class ProjectCliTests
                 """
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     return 0;
                 }
                 """);
@@ -213,7 +213,7 @@ public sealed class ProjectCliTests
                 """
                 module Tests
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     return 0;
                 }
                 """);
@@ -272,7 +272,7 @@ public sealed class ProjectCliTests
                 """
                 module Tests
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     return 7;
                 }
                 """);
@@ -407,7 +407,7 @@ public sealed class ProjectCliTests
             import Math
             module App
 
-            export unsafe ffi fn i32[min max] main() {
+            export fn i32[min max] main() {
                 return Math.Add(3, 4);
             }
             """);
@@ -490,7 +490,7 @@ public sealed class ProjectCliTests
             import Math
             module MathTests
 
-            export unsafe ffi fn i32[min max] main() {
+            export fn i32[min max] main() {
                 if (Math.Add(3, 4) == 7) {
                     return 0;
                 }

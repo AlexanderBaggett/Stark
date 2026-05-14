@@ -10,7 +10,7 @@ finite law bool MemoryOk(System.Memory.MemoryStatus status) {
     }
 }
 
-export unsafe ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     stack mut System.Collections.List<u32[0 max]> values = new();
 
     if (!MemoryOk(values.Push(10))) {

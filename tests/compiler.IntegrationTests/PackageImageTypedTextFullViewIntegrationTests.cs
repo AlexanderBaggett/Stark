@@ -82,7 +82,7 @@ public sealed class PackageImageTypedTextFullViewIntegrationTests
                 import Facade
                 module Demo
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack ascii text = Facade.WholeAscii("hello", 0);
                     if (text != "hello") {
                         return 1;

@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Stark.Parsing;
 
 namespace Stark.Compiler;
 
@@ -433,7 +434,11 @@ internal static class CompilerCli
             return await InspectPackageImageAsync(inputPath, outputPath, stdin, stdout, stderr, diagnosticFormat);
         }
 
-        var requiresTargetInfo = mode is CliMode.EmitLlvmIr or CliMode.EmitObject or CliMode.EmitLibrary or CliMode.EmitExecutable;
+        var requiresTargetInfo = mode is CliMode.Default
+            or CliMode.EmitLlvmIr
+            or CliMode.EmitObject
+            or CliMode.EmitLibrary
+            or CliMode.EmitExecutable;
         var targetInfo = ResolveTargetInfo(
             requiresTargetInfo,
             targetTriple,
@@ -445,17 +450,20 @@ internal static class CompilerCli
         var source = inputPath is not null
             ? await File.ReadAllTextAsync(inputPath)
             : await stdin.ReadToEndAsync();
+        var effectiveMode = mode == CliMode.Default
+            ? InferDefaultBuildMode(source, targetInfo)
+            : mode;
 
         var moduleResolver = ResolveModuleResolver(inputPath, searchDirectories, targetInfo);
         var pipeline = DefaultCompilerPipeline.Create();
         var compilerOptions = new CompilerOptions(
-            EmitLlvmIr: mode is CliMode.EmitLlvmIr or CliMode.EmitObject or CliMode.EmitLibrary or CliMode.EmitExecutable,
+            EmitLlvmIr: effectiveMode is CliMode.EmitLlvmIr or CliMode.EmitObject or CliMode.EmitLibrary or CliMode.EmitExecutable,
             TargetInfo: targetInfo,
-            StopAfterPassId: ResolveStopAfterPassId(mode),
+            StopAfterPassId: ResolveStopAfterPassId(effectiveMode),
             ModuleResolver: moduleResolver,
-            QualifyModuleSymbols: mode == CliMode.EmitLibrary,
+            QualifyModuleSymbols: effectiveMode == CliMode.EmitLibrary,
             OptimizationLevel: optimizationLevel,
-            InternalizeModulePrivate: mode == CliMode.EmitExecutable,
+            InternalizeModulePrivate: effectiveMode == CliMode.EmitExecutable,
             EnforceIntegerRangeStorageRules: strictIntegerRanges);
         var nativeDependencies = new NativeDependencyCliOptions(
             nativeSources,
@@ -487,7 +495,7 @@ internal static class CompilerCli
 
         await WriteDiagnosticsAsync(stderr, result.Diagnostics, diagnosticFormat, succeeded: true, source, inputPath);
 
-        switch (mode)
+        switch (effectiveMode)
         {
             case CliMode.Check:
                 await stdout.WriteLineAsync("Check succeeded.");
@@ -507,9 +515,7 @@ internal static class CompilerCli
             case CliMode.EmitPackage:
                 return await EmitPackageImageAsync(outputPath, inputPath, stdout, stderr, result, packageLibraryFile, toolchainOptions.NativeDependencies, diagnosticFormat);
             default:
-                var executedPasses = result.Executions.Count(static execution => execution.Status == PassExecutionStatus.Executed);
-                await stdout.WriteLineAsync($"Compilation pipeline succeeded. Executed {executedPasses} passes.");
-                return 0;
+                throw new InvalidOperationException($"Unhandled compiler mode '{effectiveMode}'.");
         }
     }
 
@@ -529,7 +535,7 @@ internal static class CompilerCli
             return 1;
         }
 
-        var resolvedOutputPath = outputPath ?? DeriveExecutableOutputPath(inputPath, result);
+        var resolvedOutputPath = outputPath ?? DeriveExecutableOutputPath(inputPath, result, compilerOptions.TargetInfo);
         var linkInputs = new List<string>();
         var linkedLibraries = new HashSet<string>(StringComparer.Ordinal);
         var intermediateDirectory = CreateIntermediateDirectory(toolchainOptions.SaveTempsDirectory, "stark-link-", out var cleanupDirectory);
@@ -2668,7 +2674,7 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("  test           Run tests for the current Stark project or solution");
         await stdout.WriteLineAsync();
         await stdout.WriteLineAsync("Workflows:");
-        await stdout.WriteLineAsync("  (default)      Run the full compilation pipeline and print a pass summary");
+        await stdout.WriteLineAsync("  (default)      Build an executable when the root source exports main; otherwise build a library");
         await stdout.WriteLineAsync("  --check       Validate through ownership/lifetime analysis");
         await stdout.WriteLineAsync("  --emit-mir    Print lowered MIR");
         await stdout.WriteLineAsync("  --emit-ssa    Print lowered SSA");
@@ -2722,17 +2728,18 @@ internal static class CompilerCli
         await stdout.WriteLineAsync();
         await stdout.WriteLineAsync("Notes:");
         await stdout.WriteLineAsync("  --emit-obj is compile-only.");
-        await stdout.WriteLineAsync("  --emit-lib and --emit-exe perform link/archive steps.");
+        await stdout.WriteLineAsync("  --emit-lib and --emit-exe force the archive/link workflow.");
         await stdout.WriteLineAsync("  --emit-pkg validates and emits package image JSON only.");
         await stdout.WriteLineAsync("  --inspect-pkg accepts a .starkpkg.json file path or JSON from stdin.");
-        await stdout.WriteLineAsync("  With no workflow flag, the compiler runs the full pipeline and prints a success summary.");
+        await stdout.WriteLineAsync("  With no workflow flag, the compiler infers executable vs library from the root source.");
         await stdout.WriteLineAsync("  --diagnostic-format json suppresses the text compiler log stream so stderr stays machine-readable.");
         await stdout.WriteLineAsync("  Library/package search uses -I/--search-dir and the STARK_PATH environment variable.");
         await stdout.WriteLineAsync();
         await stdout.WriteLineAsync("Examples:");
+        await stdout.WriteLineAsync("  compiler app.stark");
         await stdout.WriteLineAsync("  compiler app.stark --check");
         await stdout.WriteLineAsync("  compiler app.stark --emit-llvm -o app.ll");
-        await stdout.WriteLineAsync("  compiler app.stark --emit-exe -o app");
+        await stdout.WriteLineAsync("  compiler libFacade.stark --emit-lib -o libFacade.a");
         await stdout.WriteLineAsync("  compiler app.stark --emit-pkg -o app.starkpkg.json");
         await stdout.WriteLineAsync("  compiler libFacade.starkpkg.json --inspect-pkg");
         await stdout.WriteLineAsync("  compiler app.stark --diagnostic-format json");
@@ -2841,6 +2848,26 @@ internal static class CompilerCli
         };
     }
 
+    private static CliMode InferDefaultBuildMode(string source, LlvmTargetInfo? targetInfo)
+    {
+        var parseResult = StarkSyntax.ParseCompilationUnit(source);
+        if (!parseResult.Succeeded)
+        {
+            return CliMode.EmitExecutable;
+        }
+
+        var syntaxModel = SyntaxModelFactory.CreateWithDiagnostics(parseResult, targetInfo).Model;
+        var hasHostedEntrypoint = DeclaredFunctionSyntaxCollector
+            .Collect(parseResult, syntaxModel)
+            .Any(static function =>
+                function.ContainingTypeName is null
+                && function.Visibility == StarkVisibility.Export
+                && function.HasBody
+                && string.Equals(function.SourceName, "main", StringComparison.Ordinal));
+
+        return hasHostedEntrypoint ? CliMode.EmitExecutable : CliMode.EmitLibrary;
+    }
+
     private static LlvmTargetInfo? CreateTargetInfo(
         string? targetTriple,
         string? targetDataLayout,
@@ -2875,23 +2902,49 @@ internal static class CompilerCli
         };
     }
 
-    private static string DeriveExecutableOutputPath(string? inputPath, CompilationResult result)
+    private static string DeriveExecutableOutputPath(
+        string? inputPath,
+        CompilationResult result,
+        LlvmTargetInfo? targetInfo)
     {
+        var moduleName = result.Artifacts.TryGet(CompilerArtifactKeys.SyntaxModel, out SyntaxModel? syntaxModel)
+                         && syntaxModel is not null
+            ? syntaxModel.ModuleName
+            : null;
+
+        return DeriveExecutableOutputPath(inputPath, moduleName, targetInfo);
+    }
+
+    internal static string DeriveExecutableOutputPath(
+        string? inputPath,
+        string? moduleName,
+        LlvmTargetInfo? targetInfo)
+    {
+        string outputPath;
         if (inputPath is not null)
         {
             var fullInputPath = Path.GetFullPath(inputPath);
             var directory = Path.GetDirectoryName(fullInputPath) ?? Environment.CurrentDirectory;
-            return Path.Combine(directory, Path.GetFileNameWithoutExtension(fullInputPath));
+            outputPath = Path.Combine(directory, Path.GetFileNameWithoutExtension(fullInputPath));
+            return AddWindowsExecutableExtensionIfNeeded(outputPath, targetInfo);
         }
 
-        if (result.Artifacts.TryGet(CompilerArtifactKeys.SyntaxModel, out SyntaxModel? syntaxModel)
-            && syntaxModel is not null
-            && !string.IsNullOrWhiteSpace(syntaxModel.ModuleName))
+        if (!string.IsNullOrWhiteSpace(moduleName))
         {
-            return Path.GetFullPath(syntaxModel.ModuleName);
+            outputPath = Path.GetFullPath(moduleName);
+            return AddWindowsExecutableExtensionIfNeeded(outputPath, targetInfo);
         }
 
-        return Path.GetFullPath("a.out");
+        outputPath = IsWindowsTarget(targetInfo) ? "a" : "a.out";
+        return AddWindowsExecutableExtensionIfNeeded(Path.GetFullPath(outputPath), targetInfo);
+    }
+
+    private static string AddWindowsExecutableExtensionIfNeeded(string outputPath, LlvmTargetInfo? targetInfo)
+    {
+        return IsWindowsTarget(targetInfo)
+               && !outputPath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+            ? $"{outputPath}.exe"
+            : outputPath;
     }
 
     private static string DeriveObjectOutputPath(string? inputPath, CompilationResult result)

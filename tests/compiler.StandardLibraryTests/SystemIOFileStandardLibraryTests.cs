@@ -326,7 +326,7 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export unsafe fn i32[min max] main() {
                     stack mut i8[min max][1] buffer = { 0 };
                     stack mut System.IO.File.File read = OpenOrEmpty(System.IO.File.Open("seek.txt", System.IO.File.FileMode.Read));
                     if (!read.IsOpen()) {
@@ -519,7 +519,7 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     return;
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export unsafe fn i32[min max] main() {
                     WriteOwned();
 
                     if (!BoolOrFalse(System.IO.File.Exists("owned-test.txt"))) {
@@ -679,7 +679,7 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     return count;
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export unsafe fn i32[min max] main() {
                     stack mut System.IO.File.File defaulted = OpenOrEmpty(System.IO.File.Open("default.txt", System.IO.File.FileMode.Write));
                     defaulted.WriteLine("Default");
                     if (ReadCount("default.txt", 8) != 0) {
@@ -852,7 +852,7 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                             return new();
                     }
                 }
-                export unsafe ffi fn i32[min max] main() {
+                export unsafe fn i32[min max] main() {
                     stack mut i32[min max][1] gothicBuffer = { 66376 };
                     stack mut Unicode gothic = new Unicode() {
                         Data = &gothicBuffer[0],
@@ -1015,7 +1015,7 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                             return new();
                     }
                 }
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open("before.txt", System.IO.File.FileMode.Write));
                     if (!file.IsOpen()) {
                         return 1;
@@ -1171,7 +1171,7 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                             return new();
                     }
                 }
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open("unicode.txt", System.IO.File.FileMode.Write, System.Text.Encoding.UTF8));
                     if (!file.IsOpen()) {
                         return 1;

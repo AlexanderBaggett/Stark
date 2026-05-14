@@ -229,7 +229,7 @@ public sealed class PackageImageCliToolingTests
             import NativeDemo
             module App
 
-            export unsafe ffi fn i32[min max] main() {
+            export fn i32[min max] main() {
                 return GetValue();
             }
             """);
@@ -343,7 +343,7 @@ public sealed class PackageImageCliToolingTests
                 import NativePkgDemo
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     return GetValue();
                 }
                 """);

@@ -1,10 +1,11 @@
 +++
-title = "33. Project: Native-Backed Package"
-weight = 330
+title = "35. Project: Native-Backed Package"
+weight = 350
 book_part = "Part VI: Projects"
 book_status = "draft"
-prev = "/book/32-project-file-processing/"
-next = "/book/34-project-performance-case-study/"
+prev = "/book/34-project-file-processing/"
+next = "/book/36-project-performance-case-study/"
+aliases = ["/book/33-project-native-package/"]
 
 [[language_refs]]
 title = "Projects and Solutions"
@@ -21,16 +22,17 @@ href = "/reference/examples/raylib/README.md"
 
 # Project: Native-Backed Package
 
-This project chapter teaches the Raylib-style package pattern.
+This project chapter wraps a native library once, then lets downstream Stark
+projects consume it through ordinary package dependencies.
 
-## Goal
+## Step 1: Define The Wrapper Boundary
 
 Build a Stark package that wraps a native library and lets downstream Stark
 executables depend on it without repeating native link details.
 
-The Raylib example is the current model.
+Use the Raylib example as the concrete model for this package shape.
 
-## Stark Wrapper
+## Step 2: Write The Stark Wrapper First
 
 The Stark source declares the FFI boundary and exposes a smaller Stark API:
 
@@ -45,7 +47,7 @@ The `unsafe ffi fn native_value` declaration shows the boundary shape without
 making the ordinary safe part of the program depend on raw pointers or nullable
 safe borrows.
 
-## Native Shim
+## Step 3: Add A Boring Native Shim
 
 Use a small C shim when the native library's ABI shape is awkward for direct
 Stark declarations. The shim should translate between the native library and a
@@ -58,7 +60,7 @@ Keep the shim boring:
 - no global configuration unless unavoidable
 - small functions with clear inputs and outputs
 
-## Manifest Metadata
+## Step 4: Put Native Build Facts In The Manifest
 
 Native requirements belong in `Stark.toml`:
 
@@ -88,7 +90,7 @@ libraries = ["raylib", "GL", "m", "pthread", "dl", "rt", "X11"]
 
 User-local paths belong in config, not checked-in package files.
 
-## Downstream Executable
+## Step 5: Consume The Package Without Repeating Native Flags
 
 The executable should only name the dependency:
 
@@ -101,7 +103,7 @@ stdlib = { path = "../../stdlib" }
 That is the point of package-owned native metadata: the package carries the
 native facts, and consumers use ordinary Stark dependencies.
 
-## Review Checklist
+## Step 6: Review The Boundary Before Publishing
 
 Before treating a native-backed package as reusable, check that:
 
@@ -112,3 +114,11 @@ Before treating a native-backed package as reusable, check that:
 - manifest metadata names native sources, discovery hooks, and fallback
   libraries in the package that owns the native boundary
 - downstream examples depend on the package, not on handwritten link commands
+
+This rejected boundary is the rule to keep in mind while reviewing:
+
+{{< stark-sample "assets/book/negative-samples/enum-abi-boundary.stark" >}}
+
+Ordinary Stark enums are source-level values. Do not expose them as C ABI
+contracts unless the language and ABI design explicitly say that type is an
+interop representation.

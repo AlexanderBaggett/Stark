@@ -906,7 +906,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     Resource Backup;
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     {
                         stack Holder holder = new Holder() {
                             Token = Token.Text(new Resource() { Value = 3 }),
@@ -962,7 +962,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return 7;
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack Outer outer = new Outer() {
                         Score = MakeScore(),
                         Node = { Pair = { MakeLeft(), MakeRight() } }
@@ -1028,7 +1028,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     Pair(i32[min max], i32[min max]),
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export unsafe fn i32[min max] main() {
                     stack Many lessLeft = new Many(1, 2, 3, 4, 5);
                     stack Many lessRight = new Many(1, 2, 3, 4, 6);
 
@@ -1094,7 +1094,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     return new Box() { Value = value };
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack mut Box box = new Box() { Value = 1 };
                     box.Value + 2;
                     MakeBox(Next());
@@ -1135,7 +1135,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     Cell[2] Cells;
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack mut Holder holder = new Holder() {
                         Cells = { new Cell() { Value = 1 }, new Cell() { Value = 2 } }
                     };

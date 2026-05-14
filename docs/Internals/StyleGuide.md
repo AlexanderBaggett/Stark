@@ -228,13 +228,14 @@ If a function exists to satisfy a foreign ABI contract, spell it the way the for
 Examples:
 
 ```stark
-export unsafe ffi fn i32[min max] main()
+export fn i32[min max] main()
 {
     return 0;
 }
 ```
 
-This does not mean every `ffi` function should be lowercase.
+This does not mean every exported function or `ffi` function should be
+lowercase.
 
 The rule is:
 
@@ -302,16 +303,18 @@ If a wrapper adds no semantic value and exists only for naming, prefer direct FF
 For the hosted program entrypoint, use:
 
 ```stark
-export unsafe ffi fn i32[min max] main()
+export fn i32[min max] main()
 ```
 
 Use `main`, not `Main`.
 
 Reason:
 
-- this is an ABI/runtime convention, not an ordinary Stark API name
+- this is a runtime entrypoint convention, not an ordinary Stark API name
+- it stays safe unless the entrypoint signature/body uses unsafe or foreign
+  boundary features
 - the host toolchain expects the conventional entrypoint spelling
-- Stark should be explicit at foreign boundaries instead of pretending they are ordinary source-level calls
+- only actual foreign ABI entrypoints should opt into `ffi`
 
 ## Unsafe And Raw Pointer Boundaries
 
@@ -373,7 +376,7 @@ import System
 import Math
 module App
 
-export unsafe ffi fn i32[min max] main()
+export fn i32[min max] main()
 {
     return Math.Add(1, 2);
 }
@@ -422,7 +425,7 @@ public fn void Write(ascii text)
 import System
 module Hello
 
-export unsafe ffi fn i32[min max] main()
+export fn i32[min max] main()
 {
     System.Console.WriteLine("Hello, world!");
     return 0;
@@ -441,7 +444,7 @@ Use these defaults unless there is a strong reason not to:
 - Stark-owned globals and constants: `PascalCase`
 - imported FFI names: preserve foreign spelling exactly
 - unsafe FFI and raw pointer boundaries: keep them explicit and narrow
-- ABI entrypoint: `export unsafe ffi fn i32[min max] main`
+- safe hosted entrypoint: `export fn i32[min max] main`
 
 In short:
 

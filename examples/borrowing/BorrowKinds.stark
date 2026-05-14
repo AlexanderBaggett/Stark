@@ -17,7 +17,7 @@ struct Counter {
     }
 }
 
-export unsafe ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     stack mut Counter counter = new Counter() {
         Value = 4
     };

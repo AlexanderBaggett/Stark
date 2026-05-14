@@ -23,7 +23,7 @@ finite law bool BoolOrFalse(Option<bool> option) {
     }
 }
 
-export unsafe ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     stack Option<i32[min max]> number = Option<i32[min max]>.Some(7);
     stack Option<bool> flag = Option<bool>.Some(true);
 

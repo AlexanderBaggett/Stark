@@ -11,7 +11,7 @@ finite law bool BitOperationsWork() {
         && System.BitOperations.RotateLeft(lowBit, rotateAmount) == 8;
 }
 
-export unsafe ffi fn i32[min max] main() {
+export unsafe fn i32[min max] main() {
     if (!BitOperationsWork()) {
         return 1;
     }

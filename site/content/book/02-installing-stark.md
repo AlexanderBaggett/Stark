@@ -9,44 +9,85 @@ next = "/book/03-hello-stark/"
 
 # Installing Stark and Building Programs
 
-Stark is currently built from this repository. The compiler, standard library,
-examples, website, benchmarks, and tests live together while the binary release
-pipeline is being finalized.
+This chapter assumes the Stark compiler executable is already installed and
+available on your machine.
 
 The website [Getting Started](/getting-started/) page tracks current
-prerequisites and first-run checks outside the book narrative.
+prerequisites, installation details, and first-run checks outside the book
+narrative.
 
-## Build The Compiler
+## Step 1: Put `stark` On Your `PATH`
 
-From the repository root:
+Put the compiler binary in a stable directory, then add that directory to your
+`PATH`. The `PATH` entry is the directory containing the compiler, not the
+compiler file itself.
+
+In the examples below, replace `./stark` with the path to the compiler binary
+you downloaded or built.
+
+On macOS, the default shell is usually `zsh`:
 
 ```bash
-dotnet build Stark.slnx
+mkdir -p "$HOME/.local/bin"
+cp ./stark "$HOME/.local/bin/stark"
+chmod +x "$HOME/.local/bin/stark"
+printf '\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$HOME/.zshrc"
+exec zsh
 ```
 
-During development, examples are normally compiled through `dotnet run`:
+On Linux, the default shell is often `bash`:
 
 ```bash
-dotnet run --project src -- examples/basic-syntax/BasicSyntax.stark --check
+mkdir -p "$HOME/.local/bin"
+cp ./stark "$HOME/.local/bin/stark"
+chmod +x "$HOME/.local/bin/stark"
+printf '\nexport PATH="$HOME/.local/bin:$PATH"\n' >> "$HOME/.bashrc"
+exec bash
 ```
 
-## Direct Compiler Workflow
+On Windows, put `stark.exe` in a stable directory such as `C:\Tools\Stark`,
+then add that directory to the user `Path` from PowerShell:
 
-The low-level compiler command accepts a Stark source file and an output mode.
-Common modes are:
+```powershell
+$starkBin = "C:\Tools\Stark"
+$current = [Environment]::GetEnvironmentVariable("Path", "User")
+$parts = @($current -split ";" | Where-Object { $_ })
+if ($parts -notcontains $starkBin) {
+    [Environment]::SetEnvironmentVariable("Path", (($parts + $starkBin) -join ";"), "User")
+}
+```
+
+Open a new terminal after changing `PATH`.
+
+If you are working from a local compiler checkout instead of an installed
+binary, use that checkout's launcher in place of `stark`.
+
+## Step 2: Check The Compiler
+
+Ask the compiler for help:
+
+```bash
+stark --help
+```
+
+## Step 3: Compile One File Directly
+
+The low-level compiler command accepts a Stark source file. With no workflow
+flag, it builds an executable when the root source exports `main`; otherwise it
+builds a library/package artifact. Common explicit modes are:
 
 - `--check`
-- `--emit-exe`
 - `--emit-lib`
 - `--emit-llvm`
 
 Example:
 
 ```bash
-dotnet run --project src -- examples/arithmetic/Arithmetic.stark --emit-exe -o /tmp/stark-arithmetic
+stark examples/arithmetic/Arithmetic.stark -o /tmp/stark-arithmetic
+/tmp/stark-arithmetic
 ```
 
-## Project Workflow
+## Step 4: Build Through A Project Manifest
 
 The project driver uses `Stark.toml` and `Stark.solution.toml`.
 
@@ -58,8 +99,8 @@ example:
 From the `examples` directory:
 
 ```bash
-dotnet run --project ../src -- build
-dotnet run --project ../src -- run
+stark build hello
+stark run hello
 ```
 
 The implemented project workflow supports `build`, `run`, and `test`. Test
@@ -70,7 +111,32 @@ A solution manifest collects several projects and names defaults:
 
 {{< file-sample "static/reference/examples/Stark.solution.toml" "toml" >}}
 
-## Why Manifests Matter
+## Step 5: Add Native Package Facts When Needed
+
+Native-backed packages use the same manifest system. The Raylib wrapper in
+`examples/raylib` is a real example: the Stark package owns its Stark root, its
+native C shim, the preferred `pkg-config` discovery name, and the Linux fallback
+link metadata.
+
+{{< file-sample "static/reference/examples/raylib/Stark.toml" "toml" >}}
+
+The normal path is `pkg-config = ["raylib"]`. The fallback section is for
+systems where Raylib is built locally instead of installed through the system
+package manager. The `${native.paths.raylib-src}` value is deliberately not a
+hardcoded repository path; it is supplied by user-local configuration or the
+example build script.
+
+From the `examples` directory, a machine with Raylib available can build that
+package by name:
+
+```bash
+stark build raylib
+```
+
+The native-package project chapter returns to this example later and walks
+through the wrapper boundary in detail.
+
+## Step 6: Let Manifests Own Build Facts
 
 Manifests are not just convenience. They let Stark keep package boundaries,
 native dependencies, and build outputs explicit. That matters for optimization

@@ -30,7 +30,7 @@ they do not have the same ownership story. Stark keeps that distinction visible.
 
 {{< stark-sample "assets/book/samples/arrays-text-views.stark" >}}
 
-## Fixed Arrays Own Their Elements
+## Step 1: Start With Fixed Storage
 
 `T[N]` is a fixed array with `N` elements:
 
@@ -50,7 +50,7 @@ values[2]
 Omitted trailing fixed-array elements are zero-initialized when the target
 array size is known.
 
-## Slices Are Views
+## Step 2: Borrow Views Instead Of Inventing Backing Storage
 
 `T[]` is a slice view. It refers to backing storage created elsewhere. It does
 not allocate and it does not secretly create an array.
@@ -68,7 +68,7 @@ stack i32[min max][] view = values;
 
 That is the Stark rule in miniature: if storage exists, make it visible.
 
-## Dynamic Storage Owns Growable Capacity
+## Step 3: Use `dynamic T` When Capacity Must Grow
 
 `dynamic T` is owned, growable storage for elements of `T`. It has a visible
 `Length`, a visible `Capacity`, and spare slots that can be initialized without
@@ -96,7 +96,7 @@ implementation keeps spare capacity private:
 
 {{< stark-sample "assets/book/samples/dynamic-storage-patterns.stark" >}}
 
-## Text Views
+## Step 4: Keep Text Views Zero-Copy
 
 `ascii` is a UTF-8 text view. `unicode` is a UTF-32 text view.
 
@@ -111,7 +111,7 @@ text[start, length]
 In the sample, `text[0]` returns a one-element `ascii` view, so it can be
 compared with `"s"` or returned as `ascii`.
 
-## Owned Text
+## Step 5: Choose Owned Text When Storage Must Survive
 
 `Ascii` and `Unicode` are owning text container forms. Use them when code needs
 owned text storage rather than a borrowed view into existing text.
@@ -132,7 +132,7 @@ Unicode buffers:
 
 {{< stark-sample "assets/book/stdlib-samples/text-formatting.stark" >}}
 
-## Formatting And Parsing
+## Step 6: Format And Parse Through Explicit APIs
 
 The standard text APIs expose conversion costs and failure:
 

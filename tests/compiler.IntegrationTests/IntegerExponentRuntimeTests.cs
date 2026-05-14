@@ -16,7 +16,7 @@ public sealed class IntegerExponentRuntimeTests
             """
             module Demo
 
-            export unsafe ffi fn i32[min max] main() {
+            export fn i32[min max] main() {
                 stack i32[min max] left = 2;
                 stack i32[min max] right = 5;
                 return left ** right;

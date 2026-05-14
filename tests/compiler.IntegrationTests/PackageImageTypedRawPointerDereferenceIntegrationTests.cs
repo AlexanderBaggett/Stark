@@ -93,7 +93,7 @@ public sealed class PackageImageTypedRawPointerDereferenceIntegrationTests
                 import Facade
                 module Demo
 
-                export unsafe ffi fn i32[min max] main() {
+                export unsafe fn i32[min max] main() {
                     stack mut i32[min max] current = 5;
                     stack i32[min max] tag = 0;
                     return Facade.Observe(&current, 3, tag);
@@ -246,7 +246,7 @@ public sealed class PackageImageTypedRawPointerDereferenceIntegrationTests
                 import Facade
                 module Demo
 
-                export unsafe ffi fn i32[min max] main() {
+                export unsafe fn i32[min max] main() {
                     stack mut i32[min max][4] values = { 10, 20, 30, 40 };
                     stack mut Facade.Buffer buffer = { First = 5, Values = values };
                     stack i32[min max] tag = 0;
@@ -400,7 +400,7 @@ public sealed class PackageImageTypedRawPointerDereferenceIntegrationTests
                 import Facade
                 module Demo
 
-                export unsafe ffi fn i32[min max] main() {
+                export unsafe fn i32[min max] main() {
                     stack i32[min max] tag = 0;
                     return Facade.Observe(5, tag);
                 }

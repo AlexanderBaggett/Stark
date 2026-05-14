@@ -431,7 +431,7 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                 import Facade
                 module Demo
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack i32[min max] left = 3;
                     stack i32[min max] right = 7;
                     return Facade.Choose(left, right, true);

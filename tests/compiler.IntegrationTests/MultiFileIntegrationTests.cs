@@ -349,7 +349,7 @@ public sealed class MultiFileIntegrationTests
                 import Facade
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     return Math.Add(3, 4);
                 }
                 """);
@@ -445,7 +445,7 @@ public sealed class MultiFileIntegrationTests
                 import Globals
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     return Globals.Answer;
                 }
                 """);
@@ -520,7 +520,7 @@ public sealed class MultiFileIntegrationTests
                     }
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack mut OwnedUnicode unicodeText = new();
                     if (!StatusOk(FromAsciiToUnicode(unicodeText, "caf\u00E9"))) {
                         return 1;
@@ -618,7 +618,7 @@ public sealed class MultiFileIntegrationTests
                     }
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack mut OwnedUtf16 utf16Text = new();
                     if (!StatusOk(FromAsciiToUtf16(utf16Text, "AZ"))) {
                         return 1;

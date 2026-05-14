@@ -4,16 +4,18 @@ weight = 270
 book_part = "Part V: Performance and Systems Programming"
 book_status = "draft"
 prev = "/book/26-memory-layout-abi/"
-next = "/book/28-reading-diagnostics/"
+next = "/book/28-performance-tuning/"
 +++
 
 # Integer, Floating-Point, and Overflow Policy
 
-This chapter covers numeric behavior as part of the performance contract.
+This chapter turns numeric choices into a sequence: choose the range, choose
+the overflow policy, make conversions explicit, then decide whether floating
+point needs strict behavior.
 
 {{< stark-sample "assets/book/samples/numeric-policy.stark" >}}
 
-## Ranged Integers
+## Step 1: Choose The Integer Range First
 
 Runtime integer types name both a width family and a range:
 
@@ -27,7 +29,7 @@ Ranges help Stark prove facts about calls, branches, indexing, and arithmetic.
 They also make narrowing and widening visible when a value leaves one range and
 enters another.
 
-## Ordinary Overflow Is Not A Feature
+## Step 2: Spell Wrapping Arithmetic Deliberately
 
 Ordinary signed or unsigned overflow is not the way to request wrapping
 behavior. If code needs wrapping, write wrapping operations:
@@ -44,7 +46,7 @@ The compound forms are available too:
 value +%= step;
 ```
 
-## Saturating Arithmetic
+## Step 3: Use Saturating Arithmetic When Clamping Is The Rule
 
 Use saturating operators when the result should clamp at the numeric boundary:
 
@@ -56,7 +58,7 @@ value *| factor
 
 The sample contrasts `+%` and `+|` at the signed 32-bit maximum.
 
-## Conversions
+## Step 4: Make Representation Changes Visible
 
 Integer widening, narrowing, integer/float conversion, and raw-pointer/integer
 conversion are explicit. Stark avoids hiding representation changes in ordinary
@@ -65,7 +67,7 @@ assignment.
 If a conversion can lose range information or change representation, make it
 visible with an explicit cast or helper API.
 
-## Floating Point And `strictfp`
+## Step 5: Opt Into `strictfp` Only When The API Needs It
 
 By default, floating-point code stays optimizer-friendly. Use `strictfp` when a
 function needs strict IEEE-style floating-point behavior:

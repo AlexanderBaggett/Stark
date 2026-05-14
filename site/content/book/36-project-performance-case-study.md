@@ -1,17 +1,20 @@
 +++
-title = "34. Project: Performance Case Study"
-weight = 340
+title = "36. Project: Performance Case Study"
+weight = 360
 book_part = "Part VI: Projects"
 book_status = "draft"
-prev = "/book/33-project-native-package/"
+prev = "/book/35-project-native-package/"
 next = "/book/appendix-a-keywords/"
+aliases = ["/book/34-project-performance-case-study/"]
 +++
 
 # Project: Performance Case Study
 
-This project chapter connects Stark source restrictions to measured output.
+This project chapter walks one workload through source, measurement, IR
+inspection, and reporting. The goal is to practice the same performance loop
+used for the real benchmark suite.
 
-## Goal
+## Step 1: Pick One Small Workload
 
 Choose one small workload and follow it from Stark source to generated output
 and benchmark numbers.
@@ -33,7 +36,12 @@ benchmark can call repeatedly after the measurement harness is chosen. Keeping
 the kernel small makes it easier to compare source shape, generated output, and
 runtime measurements without mixing in unrelated setup costs.
 
-## Source Rules
+When the case study needs memory traffic, add the memory-contract version as a
+second kernel instead of burying aliasing assumptions in prose:
+
+{{< stark-sample "assets/book/samples/memory-separation-contracts.stark" >}}
+
+## Step 2: Write The Stark Version In Normal Stark Style
 
 Write the Stark version in the style the language is designed for:
 
@@ -46,7 +54,7 @@ Write the Stark version in the style the language is designed for:
 Do not contort the source just to win a benchmark. The goal is to understand
 the normal Stark performance model.
 
-## Compare Fairly
+## Step 3: Record A Fair Comparison Setup
 
 When comparing to C or Rust, record:
 
@@ -62,7 +70,7 @@ Do not compare a Stark implementation that does extra safety work to a C
 implementation that silently omits the same behavior unless the omission is
 explicitly part of the experiment.
 
-## Inspect Output
+## Step 4: Inspect Output For One Question
 
 Use generated IR to answer focused questions:
 
@@ -81,7 +89,7 @@ For the fixed-array sample, a useful first inspection question is narrower:
 does the emitted output show the loop operating over the fixed storage the
 source declared, without introducing a collection or owned text allocation?
 
-## Report Honestly
+## Step 5: Report The Result And The Remaining Gap
 
 A useful performance chapter names gaps. If Stark loses a benchmark, document
 why:

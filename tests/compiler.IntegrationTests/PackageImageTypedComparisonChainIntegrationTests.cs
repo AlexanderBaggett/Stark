@@ -112,7 +112,7 @@ public sealed class PackageImageTypedComparisonChainIntegrationTests
                 import Facade
                 module Demo
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack i32[min max] tag = 0;
                     if (!Facade.ObserveOrdered(tag)) {
                         return 21;

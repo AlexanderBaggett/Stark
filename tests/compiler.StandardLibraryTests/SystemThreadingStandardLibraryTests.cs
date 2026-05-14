@@ -69,7 +69,7 @@ public sealed class SystemThreadingStandardLibraryTests : StandardLibraryTestSui
                     }
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack ThreadEntry entry = Worker;
                     Thread.Yield();
                     Thread.SleepMilliseconds(0);

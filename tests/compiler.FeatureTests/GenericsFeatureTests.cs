@@ -16,7 +16,7 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
                 Some(T),
             }
 
-            export unsafe ffi fn i32[min max] main() {
+            export fn i32[min max] main() {
                 stack Option<i32[min max]> opt = Option<i32[min max]>.Some(42);
                 switch (opt) {
                     case Option<i32[min max]>.None:
@@ -41,7 +41,7 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
 
             record Pair<A, B>(A First, B Second) { }
 
-            export unsafe ffi fn i32[min max] main() {
+            export fn i32[min max] main() {
                 stack Pair<i32[min max], i32[min max]> p = new Pair<i32[min max], i32[min max]>(3, 7);
                 return p.First + p.Second;
             }
@@ -81,7 +81,7 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
                 }
             }
 
-            export unsafe ffi fn i32[min max] main() {
+            export fn i32[min max] main() {
                 stack Option<i32[min max]> a = Option<i32[min max]>.Some(5);
                 stack Option<bool> b = Option<bool>.Some(true);
                 stack i32[min max] sum = GetI32(a);

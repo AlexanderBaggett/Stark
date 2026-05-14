@@ -246,7 +246,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                 import System
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack System.Memory.Allocator allocator = System.Memory.Allocator.Default();
                     if (!allocator.IsDefault()) {
                         return 1;
@@ -323,7 +323,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                     }
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     if (!IsOk(System.Console.Write((unicode)"Console"))) {
                         return 1;
                     }
@@ -444,7 +444,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                         && view[183] == 116;
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export unsafe fn i32[min max] main() {
                     stack System.IO.IOResult<System.FileSystem.Directory> opened =
                         System.FileSystem.OpenDirectory("scan-root");
                     switch (opened) {
@@ -684,7 +684,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                     }
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack i32[min max] emptyStatus = CheckEmptyDirectory();
                     if (emptyStatus != 0) {
                         return 10 + emptyStatus;

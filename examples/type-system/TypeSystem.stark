@@ -31,7 +31,7 @@ finite law bool Passed(Assessment assessment) {
     return assessment == Assessment.Pass(72);
 }
 
-export unsafe ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     stack Reading reading = new Reading() {
         Value = 72,
         Trusted = true

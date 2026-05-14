@@ -18,7 +18,7 @@ finite law i32[min max] ApplyPure(
     return op(value);
 }
 
-export unsafe ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     stack fnptr<fn i32[min max](i32[min max], i32[min max])> add = Add;
     stack fnptr<fn i32[min max](i32[min max])> increment =
         (i32[min max] value) => value + 1;

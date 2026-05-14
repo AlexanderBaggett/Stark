@@ -10,12 +10,13 @@ next = "/book/18-callable-values/"
 # Generics, Traits, Doctrines, and Specialization
 
 Stark generics are meant to keep reusable code static and optimizer-friendly.
-The current useful center is source-backed generic functions and types that are
-instantiated at use sites.
+This chapter starts with source-backed generic functions and types that are
+instantiated at use sites, then adds the compile-time contracts that keep
+generic code honest.
 
 {{< stark-sample "assets/book/samples/generics-specialization.stark" >}}
 
-## Generic Functions
+## Step 1: Instantiate Generic Functions At The Call Site
 
 Generic parameters are written after the function name:
 
@@ -35,7 +36,7 @@ stack bool flag = Identity(true);
 
 These are different concrete uses of the same source function.
 
-## Generic Types
+## Step 2: Make Reusable Types Concrete Where They Are Used
 
 Structs, records, and enums can also be generic:
 
@@ -73,7 +74,7 @@ Option<bool>.Some(true)
 The source generic is reusable, but each value still has a concrete type. That
 is the key distinction to keep in mind when reading Stark generic code.
 
-## Use-Site Instantiation
+## Step 3: Let Specialization Stay Static
 
 Stark's generic model is static. A generic function used with `i32[min max]`
 and the same generic function used with `bool` are compiled as concrete
@@ -87,16 +88,15 @@ That fits Stark's performance goals:
 - more room for inlining and constant propagation
 
 The tradeoff is that generic code must be valid for the concrete operations it
-actually performs. A generic function that adds two values needs a language
-surface that proves addition is available for those values. That constrained
-generic surface is still roadmap work.
+actually performs. A generic function that adds two values needs an explicit
+static contract proving addition is available for those values.
 
-## Traits
+## Step 4: Treat Traits As Compile-Time Contracts
 
 Traits declare behavior contracts. They are compile-time contracts, not runtime
 objects.
 
-Current trait rules to remember:
+Keep these trait rules in mind while building examples:
 
 - no trait objects
 - no vtable-style runtime dispatch values
@@ -112,7 +112,7 @@ object.
 
 {{< stark-sample "assets/book/negative-samples/trait-runtime-value.stark" >}}
 
-## Doctrines
+## Step 5: Put Proof-Oriented Rules In Doctrines
 
 Doctrines are compile-time bundles of law-like behavior and constraints. They
 are intended for proof-oriented APIs rather than runtime object modeling.
@@ -128,7 +128,7 @@ The sample groups score-related laws without creating a `ScoreRules` value.
 That is the current doctrine model in miniature: organize static facts, keep the
 runtime value model concrete.
 
-## Package-Backed Generics
+## Step 6: Preserve Constraints Across Package Boundaries
 
 Generic package APIs should preserve the same story across package boundaries:
 the API is reusable, but each concrete use still has a concrete type. That lets

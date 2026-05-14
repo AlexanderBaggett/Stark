@@ -43,7 +43,7 @@ fn bool WriteMarker(ascii path) {
     return StatusOk(file.Close());
 }
 
-export unsafe ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     if (!WriteMarker("stark-book-file.txt")) {
         return 1;
     }

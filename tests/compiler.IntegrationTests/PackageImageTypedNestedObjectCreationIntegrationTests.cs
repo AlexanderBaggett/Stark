@@ -104,7 +104,7 @@ public sealed class PackageImageTypedNestedObjectCreationIntegrationTests
                 import Facade
                 module Demo
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack i32[min max] value = 4;
                     stack Facade.Outer<i32[min max]> wrapped = Facade.Wrap(value, value);
                     return wrapped.Item.Value * 10 + wrapped.Values[1];

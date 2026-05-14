@@ -33,21 +33,23 @@ href = "/reference/examples/standard-library/StandardLibrary.stark"
 
 # Files, Directories, Paths, and Text
 
-This chapter combines owned handles with text and filesystem APIs.
+This chapter builds a tiny filesystem workflow: create text, write a file,
+check the path, and clean up through owned handles.
 
 {{< stark-sample "assets/book/stdlib-samples/files-directories-paths-text.stark" >}}
 
-## Shared IO Results
+## Step 1: Switch On The IO Result First
 
-`System.IO` defines shared status and result types:
+Before opening files, learn the shared result vocabulary:
 
 - `System.IO.IOStatus`
 - `System.IO.IOResult<T>`
 - `System.IO.IOError`
 
-These are ordinary Stark enums. Use `switch` to handle success and failure.
+These are ordinary Stark enums. Use `switch` at the call site before adding more
+filesystem behavior; it keeps the happy path and cleanup path visible.
 
-## Owned File Handles
+## Step 2: Open An Owned File Handle
 
 `System.IO.File.File` is an owned file handle:
 
@@ -63,7 +65,7 @@ Close a file explicitly when the program needs ordering or a returned close
 status. Owned cleanup still exists as a backstop, but it is not a substitute for
 clear error handling.
 
-## Filesystem Operations
+## Step 3: Move Path-Level Work To `System.FileSystem`
 
 Use `System.FileSystem` for operations that are broader than an already-open
 file:
@@ -77,7 +79,7 @@ file:
 Directory iteration returns owned Stark values for entries rather than asking
 ordinary code to manage raw OS directory buffers.
 
-## Paths And Text
+## Step 4: Build Paths As Text, Not As Platform Guesses
 
 Path APIs use Stark text types. Prefer explicit path construction helpers when
 combining path fragments instead of hand-writing platform separators into
@@ -87,11 +89,11 @@ Owned path and text helpers return allocation-aware result values where
 allocation can fail. Caller-owned text buffers remain available when the caller
 should choose the destination capacity.
 
-## No Stream Abstraction Yet
+## Step 5: Keep The Example Concrete
 
-The current standard library favors concrete types: files, directories, TCP
+The standard library favors concrete types here: files, directories, TCP
 clients, TCP listeners, and owned buffers.
 
-A general stream abstraction can wait until Stark has a zero-cost static
-interface story that does not force hidden allocation, dynamic dispatch, or
-weaker optimizer facts into basic IO.
+That is intentional for the tutorial. Use the concrete type that owns the
+resource, then factor shared helper functions only when their cost and
+ownership are still visible in the signature.

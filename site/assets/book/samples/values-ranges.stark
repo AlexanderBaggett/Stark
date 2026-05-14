@@ -8,7 +8,7 @@ finite law u8[0 127] SmallUnsignedValue() {
     return 42;
 }
 
-export unsafe ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     stack u8[0 100] score = KeepScore(40);
     stack u8[0 127] byteValue = SmallUnsignedValue();
 

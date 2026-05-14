@@ -521,7 +521,7 @@ public class StandardLibraryTestSuite
                 import System
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export unsafe fn i32[min max] main() {
                     stack Unicode line = System.Console.ReadLine();
                     stack Ascii asciiLine = System.Console.ReadAsciiLine();
                     stack Unicode unit = System.Console.Read();
@@ -1132,7 +1132,7 @@ public class StandardLibraryTestSuite
                     }
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export unsafe fn i32[min max] main() {
                     stack mut i8[min max][16] asciiBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
                     stack mut Ascii ownedAscii = new Ascii() {
@@ -1276,7 +1276,7 @@ public class StandardLibraryTestSuite
                 import System
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack f64 zero = 0.0;
                     stack f64 one = 1.0;
                     stack f64 two = 2.0;
@@ -1526,7 +1526,7 @@ public class StandardLibraryTestSuite
                 import System
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack f64 two = 2.0;
                     stack f64 three = 3.0;
                     stack f64 four = 4.0;
@@ -1640,7 +1640,7 @@ public class StandardLibraryTestSuite
                     }
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     if (!IsOk(System.Console.Write("Console"))) {
                         return 1;
                     }
@@ -1741,7 +1741,7 @@ public class StandardLibraryTestSuite
                 import System
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export unsafe fn i32[min max] main() {
                     stack Unicode line = System.Console.ReadLine();
                     stack Ascii asciiLine = System.Console.ReadAsciiLine();
                     stack Unicode unit = System.Console.Read();
@@ -1835,7 +1835,7 @@ public class StandardLibraryTestSuite
                 import System.Runtime.Platform
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export unsafe fn i32[min max] main() {
                     if (System.Runtime.Platform.IsTerminal((rawptr<i8[min max]>)1)) {
                         return 1;
                     }
@@ -2122,7 +2122,7 @@ public class StandardLibraryTestSuite
                 import System.Process
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     if (System.Process.CurrentId() <= 0) {
                         return 1;
                     }
@@ -2211,7 +2211,7 @@ public class StandardLibraryTestSuite
                     }
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack mut System.Runtime.Buffer.FixedByteBuffer512 linear = new System.Runtime.Buffer.FixedByteBuffer512();
                     if (linear.Capacity() != 512 || linear.Readable() != 0 || linear.Writable() != 512) {
                         return 1;
@@ -2321,7 +2321,7 @@ public class StandardLibraryTestSuite
                 i32[min max] Value;
             }
 
-            export unsafe ffi fn i32[min max] main() {
+            export fn i32[min max] main() {
                 stack mut i32[min max] checksum = 0;
 
                 for willexit (stack mut u8[0 128] i = 0; i < 128; i += 1) {

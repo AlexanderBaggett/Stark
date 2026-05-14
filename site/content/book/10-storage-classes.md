@@ -14,7 +14,7 @@ Stark wants storage to be visible. A local declaration does not merely say
 
 {{< stark-sample "assets/book/samples/storage-lifetimes.stark" >}}
 
-## `stack`
+## Step 1: Put Temporary Values On The Stack
 
 `stack` is the ordinary local storage class:
 
@@ -33,7 +33,7 @@ the fixed array by value and writes the result into caller-owned storage through
 That is the storage habit Stark wants to encourage: make the owner visible, make
 the destination visible, and make mutation explicit with `mut` or `out`.
 
-## `heap`
+## Step 2: Use Heap Storage Only When Ownership Needs Allocation
 
 `heap` is for owned values that need allocation-backed storage. A heap value is
 still owned. It is not a garbage-collected reference and it does not make
@@ -47,7 +47,7 @@ the API deliberately returns owned allocation-backed data. Do not choose heap
 storage simply because another language would silently allocate for the same
 operation.
 
-## `arena`
+## Step 3: Group Shared-Lifetime Work In An Arena
 
 `arena` is for region-style allocation. The useful mental model is:
 
@@ -62,7 +62,7 @@ Arena storage should still be visible in the API shape. If a parser, compiler
 pass, or temporary graph builder needs an arena, pass that region deliberately
 instead of letting allocation policy disappear behind ordinary calls.
 
-## Globals
+## Step 4: Keep Globals Rare And Explicit
 
 Global declarations are not locals and do not use the same local declaration
 shape. The main global categories are:
@@ -74,7 +74,7 @@ shape. The main global categories are:
 Keep globals rare. A global widens the part of the program that can observe or
 depend on a value, which weakens local reasoning.
 
-## Why Storage Classes Matter
+## Step 5: Read Storage Choices From The Signature
 
 Storage classes are part of Stark's performance model because hidden storage is
 hidden cost. A reader should be able to tell whether code is using stack

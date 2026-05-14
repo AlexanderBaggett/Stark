@@ -15,7 +15,7 @@ visible enough that the compiler can generate simple native code.
 
 {{< stark-sample "assets/book/samples/small-tour.stark" >}}
 
-## Safe Code Is The Fast Subset
+## Step 1: Start With Safe Code As The Fast Subset
 
 Safe Stark code is designed to preserve strong facts:
 
@@ -43,7 +43,7 @@ work to start from:
 Before reaching for generated IR, first ask whether the source already says the
 facts you expect the compiler to rely on.
 
-## Memory Separation Contracts
+## Step 2: State Memory Separation Contracts
 
 `disjoint` is how Stark lets source code state that memory regions do not
 overlap. The compiler uses that fact for call validation and, when it reaches
@@ -68,7 +68,7 @@ arrays, and bounded raw pointer regions. Accepted memory operations carry LLVM
 access-group metadata, and accepted loops carry `parallel_accesses` plus the
 existing progress facts.
 
-## Bounded Raw Pointer Regions
+## Step 3: Bound Raw Pointer Regions Before Optimizing Them
 
 Raw pointer performance code can give Stark a precise region without turning
 the pointer into a safe borrow:
@@ -100,7 +100,7 @@ The slice keeps the raw region's root, length, mutability, const provenance,
 alignment, and disjoint facts, so normal slice indexing and loop validation can
 take over after the boundary conversion.
 
-## Const Parameter Provenance
+## Step 4: Preserve Const Parameter Provenance
 
 `const` on a parameter means the reachable object graph is deeply immutable.
 It is stronger than an ordinary immutable binding and stronger than a temporary
@@ -119,7 +119,7 @@ alias.
 Const is not an aliasing promise. Two const parameters may point at the same
 immutable graph, so `const` and `disjoint` remain separate contracts.
 
-## Independent Loop Contracts
+## Step 5: Mark Independent Loops Only With Proof
 
 `independent` is the loop-level form of the same proof-carrying style:
 
@@ -144,7 +144,7 @@ a bounded raw pointer region. Unbounded raw pointer dereferences, hidden roots,
 non-induction indexes, nested loops, early exits, and calls with unproven memory
 effects report `STK3027`.
 
-## No Hidden Allocation
+## Step 6: Keep Allocation Visible
 
 Allocation should be visible in the API. A growable collection may allocate
 when it grows, so its mutating methods return `System.Memory.MemoryStatus`.
@@ -153,7 +153,7 @@ buffers write their capacity in the source.
 
 Small value helpers should not hide allocation behind pleasant syntax.
 
-## No Hidden Unwinding
+## Step 7: Keep Failure Out Of Hidden Unwinding
 
 Stark has no general exception unwinding model. Recoverable failure is ordinary
 data. Unrecoverable failure is a trap-or-abort style path.
@@ -162,7 +162,7 @@ That makes cleanup and FFI boundaries easier to reason about. A C call should
 not suddenly need to understand Stark stack unwinding, and a Stark destructor
 should not become part of an exception-control-flow story.
 
-## Static Dispatch By Default
+## Step 8: Keep Dispatch Static Until You Need Indirection
 
 Ordinary function calls are direct. Generic functions are instantiated for
 concrete use sites. Traits and doctrines are compile-time contracts rather than
@@ -181,7 +181,7 @@ indirect target preserves progress, return, purity, and readonly behavior. That
 lets LLVM see call-site facts such as progress/return and memory effects even
 when the target cannot be statically inlined or devirtualized.
 
-## Explicit Storage
+## Step 9: Make Storage Choices Source-Visible
 
 `stack`, `heap`, `arena`, fixed arrays, slices, `Ascii`, and `Unicode` all
 carry storage meaning. Stark avoids making an owned backing allocation appear
@@ -190,13 +190,13 @@ choice.
 
 This is why fixed-array initializers and slice views are separate concepts.
 
-## Native Boundaries
+## Step 10: Isolate Native Boundaries
 
 FFI, raw pointers, and native package metadata are deliberately explicit. Stark
 lets you cross into C or platform APIs, but it does not pretend those calls have
 the same guarantees as ordinary safe code.
 
-## Backend Optimization Boundaries
+## Step 11: Add Backend Optimization Boundaries Sparingly
 
 By default, optimized Stark builds try to give LLVM a broad view of the program.
 When source or package bodies are available, the compiler can choose

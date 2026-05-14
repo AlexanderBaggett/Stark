@@ -51,7 +51,7 @@ public sealed class PackageImageTypedArrayInitializerIntegrationTests
                 import Facade
                 module Demo
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     return Facade.SumArray(4, 7, 0);
                 }
                 """);

@@ -93,7 +93,7 @@ public sealed class PackageImageTypedDiscardedExpressionIntegrationTests
                 import Facade
                 module Demo
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack i32[min max] tag = 0;
                     return Facade.Observe(7, tag);
                 }

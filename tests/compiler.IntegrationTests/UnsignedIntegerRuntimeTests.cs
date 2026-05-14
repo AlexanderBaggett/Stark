@@ -46,7 +46,7 @@ public sealed class UnsignedIntegerRuntimeTests
                 return 3;
             }
 
-            export unsafe ffi fn i32[min max] main() {
+            export unsafe fn i32[min max] main() {
                 stack i32[min max] small = Small();
                 if (small != 0) {
                     return small;

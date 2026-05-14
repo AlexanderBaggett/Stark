@@ -67,7 +67,7 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
                 import System.Process
                 module App
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     if (System.Process.CurrentId() <= 0) {
                         return 3;
                     }

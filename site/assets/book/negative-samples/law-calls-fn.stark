@@ -10,6 +10,6 @@ finite law i32[min max] ClaimsPureAndFinite() {
     return ReadsSharedState();
 }
 
-export unsafe ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     return ClaimsPureAndFinite();
 }

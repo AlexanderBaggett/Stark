@@ -103,7 +103,7 @@ public sealed class PackageImageTypedSwitchPatternIntegrationTests
                 import Facade
                 module Demo
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack i32[min max] tag = 0;
                     stack Facade.Wrapped<i32[min max]> wrapped =
                         Facade.Wrapped<i32[min max]>.Value { Data: new Facade.Counter(7, 11), Marker: 1 };
@@ -255,7 +255,7 @@ public sealed class PackageImageTypedSwitchPatternIntegrationTests
                 import Facade
                 module Demo
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack i32[min max] tag = 0;
                     return Facade.ReadWhole(new Facade.Counter(7, 11), tag);
                 }
@@ -411,7 +411,7 @@ public sealed class PackageImageTypedSwitchPatternIntegrationTests
                 import Facade
                 module Demo
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack Facade.Wrapped<i32[min max]> wrapped =
                         Facade.Wrapped<i32[min max]>.Pair(2, 3);
                     stack i32[min max] tag = 0;

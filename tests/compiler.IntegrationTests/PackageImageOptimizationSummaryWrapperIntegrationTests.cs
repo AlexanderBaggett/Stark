@@ -133,7 +133,7 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 import Facade
                 module Demo
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack i32[min max] seed = 40;
                     stack Facade.Outer<i32[min max]> wrapped = Facade.WrapObject(seed, 1, seed);
                     stack Facade.Boxed<i32[min max]> boxed = Facade.WrapEnum(wrapped.Item.Value, wrapped.Count, seed);
@@ -307,7 +307,7 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                     return Facade.Bump(box, delta, tag);
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack Facade.Box box = new Facade.Box(new Facade.Inner(40));
                     stack i32[min max] delta = 2;
                     stack i32[min max] tag = 0;
@@ -492,7 +492,7 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 import Facade
                 module Demo
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack i32[min max] tag = 0;
                     stack i32[min max] first = Facade.ChooseBranch(false, true, 1, 40, 9, tag);
                     stack i32[min max] second = Facade.ChooseSwitch(0, 2, 7, 9, tag);
@@ -668,7 +668,7 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 import Facade
                 module Demo
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack i32[min max] delta = 2;
                     stack i32[min max] limit = 50;
                     stack i32[min max] result = Facade.AddDelta(new Facade.Box(new Facade.Inner(40)), delta, delta);
@@ -833,7 +833,7 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 import Facade
                 module Demo
 
-                export unsafe ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack Facade.Box box = new Facade.Box(new Facade.Inner(41));
                     stack i32[min max] tag = box.Inner.Value;
                     return (i32[min max])Facade.Read(box, tag) + 1;

@@ -299,7 +299,7 @@ public sealed class SystemTextStandardLibraryTests
             return constAppended[26] == 32 && constAppended[31] == 90;
         }
 
-        export unsafe ffi fn i32[min max] main() {
+        export unsafe fn i32[min max] main() {
             if (!ProbeOwnedAscii()) {
                 return 1;
             }
@@ -1506,7 +1506,7 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                export unsafe ffi fn i32[min max] main() {
+                export unsafe fn i32[min max] main() {
                     stack mut i8[min max][320] buffer;
                     stack mut i32[min max][320] unicodeBuffer;
                     stack mut Ascii formatted = new Ascii() {

@@ -173,6 +173,31 @@ main {
     font-size: 0.85rem;
 }
 
+.book-lesson-path {
+    margin: 0 0 34px;
+    padding: 20px 22px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+}
+
+.book-lesson-path h2 {
+    margin: 0 0 10px;
+    font-size: 1rem;
+}
+
+.book-lesson-path ol {
+    display: grid;
+    gap: 8px;
+    margin: 0;
+    padding-left: 22px;
+}
+
+.book-lesson-path a {
+    font-weight: 700;
+    text-decoration: none;
+}
+
 .book-reference-links {
     margin-top: 44px;
     padding-top: 22px;
@@ -190,6 +215,32 @@ main {
 
 .book-reference-links ul {
     margin-top: 0;
+}
+
+.book-checkpoint {
+    margin-top: 44px;
+    padding: 22px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+}
+
+.book-checkpoint h2 {
+    margin-top: 0;
+}
+
+.book-checkpoint p {
+    margin-bottom: 10px;
+    color: var(--muted);
+}
+
+.book-checkpoint ul {
+    margin: 0;
+    padding-left: 22px;
+}
+
+.book-checkpoint li + li {
+    margin-top: 8px;
 }
 
 .book-nav {

@@ -20,7 +20,7 @@ unsafe fn i32[min max] ReadThroughRawPointer() {
     return *readable;
 }
 
-export unsafe ffi fn i32[min max] main() {
+export unsafe fn i32[min max] main() {
     if (ReadThroughRawPointer() != 42) {
         return 1;
     }

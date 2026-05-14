@@ -1,20 +1,22 @@
 +++
-title = "29. Looking at Generated IR"
-weight = 290
+title = "31. Looking at Generated IR"
+weight = 310
 book_part = "Part V: Performance and Systems Programming"
 book_status = "draft"
-prev = "/book/28-reading-diagnostics/"
-next = "/book/30-project-command-line-text/"
+prev = "/book/30-reading-diagnostics/"
+next = "/book/32-project-command-line-text/"
+aliases = ["/book/29-generated-ir/"]
 +++
 
 # Looking at Generated IR
 
-Most Stark programmers should not need to read generated IR every day, but it
-is useful for performance work.
+Most Stark programmers should not need to read generated IR every day. This
+chapter treats IR as a lab exercise: choose one source promise, emit the output,
+and look only for the evidence that promise survived.
 
-## When To Inspect IR
+## Step 1: Ask One Performance Question
 
-Inspect generated IR when you need to answer a performance question:
+Inspect generated IR only after you can phrase the question narrowly:
 
 - did this direct call stay direct?
 - did this generic function become a concrete instantiation?
@@ -26,7 +28,7 @@ Inspect generated IR when you need to answer a performance question:
 Do not use IR as the first way to learn ordinary Stark. Source semantics come
 first. IR is a debugging and performance tool.
 
-## MIR, SSA, And LLVM
+## Step 2: Pick The Right Artifact
 
 The compiler can expose different intermediate views:
 
@@ -39,11 +41,16 @@ The exact internal naming is not a user-facing contract. Prefer looking for
 behavioral facts: direct call versus indirect call, allocation versus no
 allocation, return value versus out pointer, or raw boundary versus safe API.
 
-## A Small Example
+## Step 3: Compile A Tiny Checked Program
 
 Use a tiny checked program when inspecting IR:
 
 {{< stark-sample "assets/book/samples/performance-tight-loop.stark" >}}
+
+If the question is about function attributes, use a sample that names the
+source guarantees directly:
+
+{{< stark-sample "assets/book/samples/function-guarantees.stark" >}}
 
 Build one small question at a time. For example:
 
@@ -58,12 +65,12 @@ include:
 - the loop counter and total are explicit local scalar values
 - the fixed array is source-visible storage
 - no collection, text, or allocator API is involved
-- the entrypoint is `export unsafe ffi fn main`
+- the entrypoint is a safe `export fn main`
 
 The point is not to memorize generated names. The point is to connect a
 specific source promise to a specific output question.
 
-## Opaque Modules In IR Work
+## Step 4: Check One Boundary Fact
 
 When a module is marked `[Backend(Opaque)]`, optimized callers should still see
 its declarations, but they should not see through its implementation for
@@ -74,7 +81,7 @@ library boundary instead of becoming inlined caller code.
 Use that as a boundary check, not as a general performance goal. Ordinary Stark
 modules are normally better when the compiler can optimize through them.
 
-## Keep IR Out Of Normal API Docs
+## Step 5: Return To Source-Level Explanations
 
 IR is excellent for investigation, but normal user-facing documentation should
 not explain features by leaking compiler internals. The book should teach the

@@ -960,7 +960,7 @@ Example:
 import System
 module Hello
 
-export unsafe ffi fn i32 main() {
+export fn i32 main() {
     System.Console.WriteLine("Hello, world!");
     System.Console.WriteErrorLine("stderr works too");
     return 0;

@@ -12,11 +12,11 @@ next = "/book/25-performance-model/"
 Stark test projects are executable projects with an explicit test manifest kind.
 They are run through `stark test`.
 
-The first implementation deliberately avoids reflection and hidden test
-discovery. A test executable owns its `main`, calls the facts it wants to run,
-and returns a process exit code.
+The tutorial shape deliberately avoids reflection and hidden test discovery. A
+test executable owns its `main`, calls the facts it wants to run, and returns a
+process exit code.
 
-## Project Shape
+## Step 1: Declare A Test Project
 
 Use `kind = "test"` and a `[test]` root:
 
@@ -41,18 +41,23 @@ From a solution directory, `stark test` runs `[defaults].test` when present. If
 no default test set is declared, it runs every member whose manifest has
 `kind = "test"`.
 
-## Assertion Shape
+A manual test executable has the same basic shape: run explicit checks and
+return a status code.
+
+{{< stark-sample "assets/book/samples/manual-test-executable.stark" >}}
+
+## Step 2: Call Assertions Explicitly
 
 `System.Testing` assertions are ordinary Stark functions. They return `bool`;
 they do not throw, allocate hidden exception objects, or unwind the stack.
 
 {{< stark-sample "assets/book/stdlib-samples/testing-project-runner.stark" >}}
 
-The `[Fact]` attributes are source metadata. In the current implementation,
-discovery is still explicit: `main` calls the facts and reports each result
-through `System.Testing.RunFact`.
+The `[Fact]` attributes are source metadata. Discovery is explicit in this
+tutorial shape: `main` calls the facts and reports each result through
+`System.Testing.RunFact`.
 
-## Result Reporting
+## Step 3: Collapse Failures To A Process Status
 
 `RunFact` writes a concise pass/fail line and returns `1` for failure. Test
 projects collapse their accumulated failure count to a process status with

@@ -578,7 +578,7 @@ public static class DefaultCompilerPipeline
                     var qualifiedName = FunctionOverloadFacts.QualifyResolvedName(
                         module,
                         FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration));
-                    effects[qualifiedName] = CreateEffectProfile(qualifiedName, function);
+                    effects[qualifiedName] = CreateEffectProfile(qualifiedName, function, declaration.Visibility);
                 }
             }
 
@@ -603,7 +603,10 @@ public static class DefaultCompilerPipeline
                 new FunctionEffectModel(loadedModules.RootModuleName, effects));
         }
 
-        private static FunctionEffectProfile CreateEffectProfile(string name, FunctionDeclarationModel function)
+        private static FunctionEffectProfile CreateEffectProfile(
+            string name,
+            FunctionDeclarationModel function,
+            StarkVisibility visibility)
         {
             if (function.Asm is not null)
             {
@@ -648,7 +651,7 @@ public static class DefaultCompilerPipeline
                 NoUnwind: true,
                 WillReturn: isFinite,
                 MustProgress: isFinite,
-                UseFastCallingConvention: !function.Modifiers.IsFfi,
+                UseFastCallingConvention: !function.Modifiers.IsFfi && visibility != StarkVisibility.Export,
                 IsFfi: function.Modifiers.IsFfi,
                 IsVarargs: function.Modifiers.IsVarargs,
                 IsHot: function.Modifiers.IsHot,

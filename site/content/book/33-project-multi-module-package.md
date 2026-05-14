@@ -1,10 +1,11 @@
 +++
-title = "31. Project: Multi-Module Package"
-weight = 310
+title = "33. Project: Multi-Module Package"
+weight = 330
 book_part = "Part VI: Projects"
 book_status = "draft"
-prev = "/book/30-project-command-line-text/"
-next = "/book/32-project-file-processing/"
+prev = "/book/32-project-command-line-text/"
+next = "/book/34-project-file-processing/"
+aliases = ["/book/31-project-multi-module-package/"]
 
 [[language_refs]]
 title = "Modules and Visibility"
@@ -25,9 +26,10 @@ href = "/reference/examples/multi-module/App.stark"
 
 # Project: Multi-Module Package
 
-This project chapter builds a package with explicit module boundaries.
+This project chapter starts from one public API and splits it into files,
+visibility, a package manifest, and a solution that can consume the package.
 
-## Goal
+## Step 1: Start From The Public Surface
 
 Build a small package with:
 
@@ -38,7 +40,7 @@ Build a small package with:
 - a `Stark.toml` manifest
 - a solution manifest that can build an app consuming the package
 
-The `examples/modules` and `examples/multi-module` directories are the current
+Use the `examples/modules` and `examples/multi-module` directories as concrete
 repository examples to mirror.
 
 The package-surface sample from the modules chapter is the single-file nucleus
@@ -49,7 +51,7 @@ of this project:
 The project version splits that shape across files: a public geometry module, a
 small internal helper, and an executable app that consumes the public API.
 
-## Module Shape
+## Step 2: Split The Surface Across Modules
 
 Each source file declares one module:
 
@@ -63,21 +65,21 @@ Keep helpers module-private by default. Use `internal` for helpers shared
 inside the package. Use `public` for declarations downstream Stark source
 should import.
 
-## Re-Exports
+## Step 3: Re-Export Only The Modules You Mean To Publish
 
 Use `export import` only when the package deliberately republishes another
 module as part of its own source API.
 
 Plain `import` is for local name resolution. It is not a package API promise.
 
-## Avoid Accidental ABI
+## Step 4: Avoid Turning Source APIs Into ABI
 
 Do not use `export` for ordinary package APIs. `export` is for ABI-visible
 symbols such as entrypoints and FFI boundaries.
 
 Most library declarations should be `public` or `internal`, not `export`.
 
-## Solution Manifest
+## Step 5: Wire The Package And App Into A Solution
 
 A solution can name both the package and a consuming app:
 

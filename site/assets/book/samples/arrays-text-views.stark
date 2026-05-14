@@ -12,7 +12,7 @@ finite law ascii FirstView(ascii text) {
     return text[0];
 }
 
-export unsafe ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     stack i32[min max][3] values = { 1, 2, 3 };
 
     if (SumThree(values) != 6) {

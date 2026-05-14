@@ -25,11 +25,13 @@ href = "/reference/examples/standard-library/StandardLibrary.stark"
 
 # Threading and TCP
 
-This chapter covers the first concurrent and networking APIs.
+This chapter builds the smallest concurrent/networking shape Stark encourages:
+start a no-capture thread, join it, then use blocking TCP APIs with safe slice
+buffers.
 
 {{< stark-sample "assets/book/stdlib-samples/threading-tcp.stark" >}}
 
-## Thread Entries
+## Step 1: Start With A No-Capture Thread Entry
 
 `System.Threading.ThreadEntry` is a no-state function pointer returning an
 integer exit code. Named functions and non-capturing lambdas are the ordinary
@@ -43,11 +45,11 @@ fn i32[min max] Worker() {
 stack System.Threading.ThreadEntry entry = Worker;
 ```
 
-Capturing thread entries are intentionally not the default example. Captures
-need a visible sharing and lifetime story before they should become ordinary
-threading code.
+Capturing thread entries are intentionally not the tutorial starting point.
+Start with a named function or non-capturing callable so ownership and sharing
+stay visible.
 
-## Thread Lifecycle
+## Step 2: Join Or Detach The Owned Handle
 
 `System.Threading.Thread` is an owned handle:
 
@@ -67,7 +69,7 @@ System.Threading.Thread.Yield();
 System.Threading.Thread.SleepMilliseconds(1);
 ```
 
-## TCP Values
+## Step 3: Create Network Values Explicitly
 
 `System.Net` defines `IPv4Address`, `IPv4Endpoint`, and shared network
 result/status types. `System.Net.Tcp` adds blocking TCP clients and listeners.
@@ -82,7 +84,7 @@ System.Net.Tcp.TcpListener.Listen(endpoint)
 
 Both return `System.Net.NetResult<T>` so network failure stays explicit.
 
-## Read And Write Buffers
+## Step 4: Read And Write Through Safe Slices
 
 TCP read/write uses safe Stark slices:
 
@@ -95,10 +97,13 @@ client.Write(buffer);
 The API boundary stays efficient without exposing raw socket pointers to
 ordinary code.
 
-## Current Synchronization Gaps
+## Step 5: Stay Inside The Implemented Threading Slice
 
-The first standard library threading slice is not a full concurrency framework.
-The following remain future work:
+The first standard-library threading slice teaches threads, joins, detach,
+sleep/yield, and blocking TCP. Keep tutorial code inside that slice unless the
+chapter is deliberately documenting a missing library surface.
+
+Do not write tutorial examples that depend on:
 
 - mutexes
 - condition variables
@@ -107,5 +112,7 @@ The following remain future work:
 - async/await
 - non-blocking socket event loops
 
-Until those land, keep shared mutable state out of examples unless the sharing
-mechanism is explicit and documented.
+Keep shared mutable state out of examples unless the sharing mechanism is
+explicit and documented. That keeps the lesson honest: readers learn the APIs
+that exist today, and they do not mistake absent synchronization types for
+hidden runtime behavior.

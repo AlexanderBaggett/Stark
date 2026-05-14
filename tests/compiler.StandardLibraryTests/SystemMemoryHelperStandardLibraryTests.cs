@@ -49,7 +49,7 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
             return values[0] == 67 && values[1] == 68 && values[2] == 69 && values[3] == 70;
         }
 
-        export unsafe ffi fn i32[min max] main() {
+        export unsafe fn i32[min max] main() {
             if (!System.Memory.SupportsDynamicAllocator(Allocator.Default())) {
                 return 1;
             }
@@ -253,7 +253,7 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
             return checksum;
         }
 
-        export unsafe ffi fn i32[min max] main() {
+        export fn i32[min max] main() {
             stack u64[0 2 ** 63 - 1] count = 32;
             stack mut i8[min max][32] byteSource = {
                 3, 3, 3, 3, 3, 3, 3, 3,
@@ -539,7 +539,7 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
             return 0;
         }
 
-        export unsafe ffi fn i32[min max] main() {
+        export fn i32[min max] main() {
             stack i32[min max] byteStatus = CheckByteMoves();
             if (byteStatus != 0) {
                 return byteStatus;
@@ -567,7 +567,7 @@ public sealed class SystemMemoryHelperStandardLibraryTests : StandardLibraryTest
             }
         }
 
-        export unsafe ffi fn i32[min max] main() {
+        export unsafe fn i32[min max] main() {
             stack u64[0 2 ** 63 - 1] four = 4;
             stack mut i8[min max][4] byteSource = { 1, 2, 3, 4 };
             stack mut dynamic i8[min max] bytes = new();

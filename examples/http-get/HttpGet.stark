@@ -17,7 +17,7 @@ internal unsafe ffi fn i64[min max] stark_https_client_read(
     i64[0 max] capacity);
 internal unsafe ffi fn void stark_https_client_close(rawptr<i8[min max]> client);
 
-export unsafe ffi fn i32[min max] main() {
+export unsafe fn i32[min max] main() {
     stack rawptr<i8[min max]> client = stark_https_client_connect("www.google.com", 443);
     if (client == null) {
         WriteErrorLine("failed to establish TLS connection to https://www.google.com/");

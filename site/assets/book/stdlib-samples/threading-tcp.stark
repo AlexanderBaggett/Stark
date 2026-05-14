@@ -36,7 +36,7 @@ fn bool EndpointShapeWorks() {
     return !closed.IsOpen() && endpoint.Port == 8080;
 }
 
-export unsafe ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     if (!EndpointShapeWorks()) {
         return 1;
     }
