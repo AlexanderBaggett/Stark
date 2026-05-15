@@ -1308,6 +1308,7 @@ internal sealed class LlvmFunctionBodyEmitter
                     || ReferencesSkippedDefinition(makeSlice.Length),
                 SsaDynamicStorageAllocationRValue allocation => ReferencesSkippedDefinition(allocation.Capacity),
                 SsaDynamicStorageFreeRValue free => ReferencesSkippedDefinition(free.Storage),
+                SsaHeapStorageFreeRValue free => ReferencesSkippedDefinition(free.Pointer),
                 SsaDynamicStorageReserveRValue reserve =>
                     ReferencesSkippedDefinition(reserve.StorageAddress)
                     || ReferencesSkippedDefinition(reserve.AdditionalCapacity),
@@ -2146,6 +2147,8 @@ internal sealed class LlvmFunctionBodyEmitter
                 ValueReferencesLocal(allocation.Capacity, localName, definitions, visitedValueNames),
             SsaDynamicStorageFreeRValue free =>
                 ValueReferencesLocal(free.Storage, localName, definitions, visitedValueNames),
+            SsaHeapStorageFreeRValue free =>
+                ValueReferencesLocal(free.Pointer, localName, definitions, visitedValueNames),
             SsaDynamicStorageReserveRValue reserve =>
                 ValueReferencesLocal(reserve.StorageAddress, localName, definitions, visitedValueNames)
                 || ValueReferencesLocal(reserve.AdditionalCapacity, localName, definitions, visitedValueNames),
@@ -4227,6 +4230,9 @@ internal sealed class LlvmFunctionBodyEmitter
                 return;
             case SsaDynamicStorageFreeRValue free:
                 EmitDynamicStorageFree(free);
+                return;
+            case SsaHeapStorageFreeRValue free:
+                EmitHeapStorageFree(free);
                 return;
             case SsaDynamicStorageReserveRValue reserve:
                 EmitDynamicStorageReserve(reserve);
@@ -7146,6 +7152,95 @@ internal sealed class LlvmFunctionBodyEmitter
             case SsaConvertRValue convert when convert.Operand.Type.Kind == StarkTypeKind.FunctionPointer
                                              && convert.TargetType.Kind == StarkTypeKind.FunctionPointer:
                 return TryCollectKnownFunctionPointerTargets(convert.Operand, targets, visitingValueNames);
+            case SsaExtractIndexRValue { ElementIndex: 0 } extractIndex
+                when extractIndex.Target.Type.Kind == StarkTypeKind.Closure:
+                return TryCollectKnownClosureInvokeTargets(
+                    extractIndex.Target,
+                    targets,
+                    visitingValueNames);
+            default:
+                return false;
+        }
+    }
+
+    private bool TryCollectKnownClosureInvokeTargets(
+        SsaValue value,
+        ISet<string> targets,
+        ISet<string> visitingValueNames)
+    {
+        switch (value)
+        {
+            case SsaClosureValue closure:
+                targets.Add(closure.InvokeFunctionName);
+                return true;
+            case SsaValueReference reference:
+                return TryCollectKnownClosureInvokeTargets(reference, targets, visitingValueNames);
+            default:
+                return false;
+        }
+    }
+
+    private bool TryCollectKnownClosureInvokeTargets(
+        SsaValueReference reference,
+        ISet<string> targets,
+        ISet<string> visitingValueNames)
+    {
+        if (!visitingValueNames.Add(reference.Name))
+        {
+            return false;
+        }
+
+        try
+        {
+            if (_trivialValueAliases.TryGetValue(reference.Name, out var alias))
+            {
+                return TryCollectKnownClosureInvokeTargets(alias, targets, visitingValueNames);
+            }
+
+            if (_valueDefinitions.TryGetValue(reference.Name, out var definition))
+            {
+                return TryCollectKnownClosureInvokeTargets(definition, targets, visitingValueNames);
+            }
+
+            if (_phisByResultName.TryGetValue(reference.Name, out var phi))
+            {
+                if (phi.Incomings.Count == 0)
+                {
+                    return false;
+                }
+
+                foreach (var incoming in phi.Incomings)
+                {
+                    if (!TryCollectKnownClosureInvokeTargets(incoming.Value, targets, visitingValueNames))
+                    {
+                        return false;
+                    }
+                }
+
+                return true;
+            }
+
+            return false;
+        }
+        finally
+        {
+            visitingValueNames.Remove(reference.Name);
+        }
+    }
+
+    private bool TryCollectKnownClosureInvokeTargets(
+        SsaRValue value,
+        ISet<string> targets,
+        ISet<string> visitingValueNames)
+    {
+        switch (value)
+        {
+            case SsaUseRValue use:
+                return TryCollectKnownClosureInvokeTargets(use.Value, targets, visitingValueNames);
+            case SsaSelectRValue select
+                when select.Type.Kind == StarkTypeKind.Closure:
+                return TryCollectKnownClosureInvokeTargets(select.WhenTrue, targets, visitingValueNames)
+                    && TryCollectKnownClosureInvokeTargets(select.WhenFalse, targets, visitingValueNames);
             default:
                 return false;
         }
@@ -8169,6 +8264,7 @@ internal sealed class LlvmFunctionBodyEmitter
                 || ValueTransitivelyUsesLocalStorage(makeSlice.Length, localName, visitedValueNames),
             SsaDynamicStorageAllocationRValue allocation => ValueTransitivelyUsesLocalStorage(allocation.Capacity, localName, visitedValueNames),
             SsaDynamicStorageFreeRValue free => ValueTransitivelyUsesLocalStorage(free.Storage, localName, visitedValueNames),
+            SsaHeapStorageFreeRValue free => ValueTransitivelyUsesLocalStorage(free.Pointer, localName, visitedValueNames),
             SsaDynamicStorageReserveRValue reserve => ValueTransitivelyUsesLocalStorage(reserve.StorageAddress, localName, visitedValueNames)
                 || ValueTransitivelyUsesLocalStorage(reserve.AdditionalCapacity, localName, visitedValueNames),
             SsaDynamicStorageTryReserveRValue reserve => ValueTransitivelyUsesLocalStorage(reserve.StorageAddress, localName, visitedValueNames)
@@ -9182,6 +9278,7 @@ internal sealed class LlvmFunctionBodyEmitter
         return value switch
         {
             SsaDynamicStorageFreeRValue free => ValueMayReferenceLocalStorage(free.Storage, localName),
+            SsaHeapStorageFreeRValue free => ValueMayReferenceLocalStorage(free.Pointer, localName),
             SsaDynamicStorageReserveRValue reserve => ValueMayReferenceLocalStorage(reserve.StorageAddress, localName),
             SsaDynamicStorageTryReserveRValue reserve => ValueMayReferenceLocalStorage(reserve.StorageAddress, localName),
             SsaDynamicStorageTryReserveCapacityRValue reserve => ValueMayReferenceLocalStorage(reserve.StorageAddress, localName),
@@ -9695,6 +9792,7 @@ internal sealed class LlvmFunctionBodyEmitter
             SsaMakeSliceFromPointerRValue makeSlice => IsNamedReference(makeSlice.Pointer, valueName) || IsNamedReference(makeSlice.Length, valueName),
             SsaDynamicStorageAllocationRValue allocation => IsNamedReference(allocation.Capacity, valueName),
             SsaDynamicStorageFreeRValue free => IsNamedReference(free.Storage, valueName),
+            SsaHeapStorageFreeRValue free => IsNamedReference(free.Pointer, valueName),
             SsaDynamicStorageReserveRValue reserve => IsNamedReference(reserve.StorageAddress, valueName) || IsNamedReference(reserve.AdditionalCapacity, valueName),
             SsaDynamicStorageTryReserveRValue reserve => IsNamedReference(reserve.StorageAddress, valueName) || IsNamedReference(reserve.AdditionalCapacity, valueName),
             SsaDynamicStorageTryReserveCapacityRValue reserve => IsNamedReference(reserve.StorageAddress, valueName) || IsNamedReference(reserve.TargetCapacity, valueName),
@@ -9984,6 +10082,12 @@ internal sealed class LlvmFunctionBodyEmitter
                 => StarkTypeSymbols.Integer(64),
             StarkTypeKind.Dynamic when index == 2
                 => StarkTypeSymbols.Integer(64),
+            StarkTypeKind.Closure when index == 0
+                => CallableValueFacts.BuildClosureInvokeFunctionPointerType(normalizedType),
+            StarkTypeKind.Closure when index == 1
+                => CallableValueFacts.BuildClosureEnvironmentPointerType(normalizedType),
+            StarkTypeKind.Closure when index == 2 && normalizedType.ClosureStorageKind == StarkClosureStorageKind.Heap
+                => CallableValueFacts.BuildClosureDropFunctionPointerType(),
             StarkTypeKind.Named when ResolveNamedTypeSymbol(normalizedType) is { } namedType
                                        && TryGetScalarizableNamedAggregateFields(namedType, out var orderedFields)
                                        && index >= 0
@@ -10045,6 +10149,7 @@ internal sealed class LlvmFunctionBodyEmitter
             StarkTypeKind.Float => "0.0",
             StarkTypeKind.Bool => "false",
             StarkTypeKind.RawPointer or StarkTypeKind.FunctionPointer => "null",
+            StarkTypeKind.Closure => "zeroinitializer",
             _ => "zeroinitializer"
         };
     }
@@ -10176,6 +10281,17 @@ internal sealed class LlvmFunctionBodyEmitter
         var pointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_free_ptr"))}";
         AppendLine($"  {pointer} = extractvalue {MapType(free.Storage.Type)} {FormatValue(free.Storage)}, 0");
         AppendLine($"  call void @{RuntimeFreeHelperName}(ptr {pointer})");
+    }
+
+    private void EmitHeapStorageFree(SsaHeapStorageFreeRValue free)
+    {
+        if (free.Pointer.Type.Kind != StarkTypeKind.RawPointer)
+        {
+            throw new UnsupportedBodyEmissionException(
+                $"Heap storage free requires a raw pointer, but found '{free.Pointer.Type.DisplayName}'.");
+        }
+
+        AppendLine($"  call void @{HeapFreeHelperName}(ptr {FormatValue(free.Pointer)})");
     }
 
     private void EmitDynamicStorageReserve(SsaDynamicStorageReserveRValue reserve)
@@ -11330,10 +11446,22 @@ internal sealed class LlvmFunctionBodyEmitter
             SsaNullConstant => "null",
             SsaGlobalAddressValue globalAddress => $"@{EscapeIdentifier(ResolveGlobalSymbolName(globalAddress.GlobalName))}",
             SsaFunctionAddressValue functionAddress => $"@{EscapeIdentifier(functionAddress.FunctionName)}",
+            SsaClosureValue closure => FormatClosureValue(closure),
             SsaZeroInitializerValue => "zeroinitializer",
             SsaUndefValue => "undef",
             _ => throw new UnsupportedBodyEmissionException($"Unsupported SSA value '{value.GetType().Name}'.")
         };
+    }
+
+    private static string FormatClosureValue(SsaClosureValue closure)
+    {
+        var invokePointer = $"ptr @{EscapeIdentifier(closure.InvokeFunctionName)}";
+        if (closure.Type.ClosureStorageKind != StarkClosureStorageKind.Heap)
+        {
+            return $"{{ {invokePointer}, ptr null }}";
+        }
+
+        return $"{{ {invokePointer}, ptr null, ptr @{EscapeIdentifier(CallableValueFacts.EmptyClosureDropFunctionName)} }}";
     }
 
     private string GetInvariantLoadMetadataSuffix(string globalName)
@@ -13786,6 +13914,9 @@ internal sealed class LlvmFunctionBodyEmitter
                     break;
                 case SsaDynamicStorageFreeRValue free:
                     VisitValue(free.Storage);
+                    break;
+                case SsaHeapStorageFreeRValue free:
+                    VisitValue(free.Pointer);
                     break;
                 case SsaDynamicStorageReserveRValue reserve:
                     VisitValue(reserve.StorageAddress);

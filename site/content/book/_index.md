@@ -12,6 +12,7 @@ The book will center on:
 - ownership, moves, deterministic drop, and reinitialization
 - `borrow`, `mut borrow`, `retborrow`, `frozen`, and `out`
 - how Stark borrowing compares with Rust borrowing
+- inline, borrowed, and heap closures with explicit capture
 - explicit storage classes such as `stack`, `heap`, `arena`, and globals
 - no hidden allocation, no hidden exceptions, and no unwinding
 - `fn`, `finite`, `law`, and `finite law`

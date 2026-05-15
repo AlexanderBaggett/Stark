@@ -15,6 +15,7 @@ internal sealed partial class MidLevelIrLowerer
         private static readonly StarkTypeSymbol I64Type = StarkTypeSymbols.Integer(64);
         private static readonly StarkTypeSymbol NonNegativeI64Type = StarkTypeSymbols.Integer(64, BigInteger.Zero, (BigInteger.One << 63) - 1);
         private const int LargeAggregateProjectionAddressThresholdBytes = 128;
+        private const string ClosureCaptureDropStatePrefix = "$closure_capture$";
 
         private enum AggregatePatternFieldKind
         {
@@ -94,7 +95,8 @@ internal sealed partial class MidLevelIrLowerer
             StarkTypeSymbol Type,
             IReadOnlyList<PlacePathSegment> Path,
             bool UsesAddressModel,
-            bool IsAddressMutable);
+            bool IsAddressMutable,
+            string? ClosureCaptureName = null);
 
         private sealed record LoweredAssignment(
             string Text,
@@ -241,6 +243,7 @@ internal sealed partial class MidLevelIrLowerer
         private readonly Dictionary<string, DynamicInitSliceProvenance> _dynamicInitSliceProvenanceByLocal = new(StringComparer.Ordinal);
         private readonly Dictionary<string, TypedParameterSymbol> _parametersByName;
         private readonly Dictionary<string, bool> _runtimeDropStates = new(StringComparer.Ordinal);
+        private readonly Dictionary<string, string> _closureCaptureMoveSourcesByTempName = new(StringComparer.Ordinal);
         private readonly List<string> _parameterDropOrder = [];
         private readonly Dictionary<string, string> _nameAliases = new(StringComparer.Ordinal);
         private readonly Stack<ConstructorReturnTarget> _constructorReturnTargets = [];
@@ -256,8 +259,12 @@ internal sealed partial class MidLevelIrLowerer
         private readonly PlaceLowerer _placeLowerer;
         private readonly RuntimeDropLowerer _runtimeDropLowerer;
         private readonly SwitchPatternLowerer _switchPatternLowerer;
+        private readonly ClosureLambdaTypingRecord? _currentClosureLambda;
+        private readonly IReadOnlyDictionary<string, ClosureCaptureFieldSymbol> _closureCaptureFieldsByName;
+        private readonly StarkTypeSymbol? _closureEnvironmentType;
         private string? _moduleNameOverride;
         private SourceLocation? _currentStatementLocation;
+        private MidLevelIrOperand? _closureEnvironmentAddress;
         private IReadOnlyDictionary<StarkParser.ObjectCreationExpressionContext, int>? _importedObjectCreationOrdinals;
         private IReadOnlyDictionary<StarkParser.EnumConstructorExpressionContext, int>? _importedEnumConstructorOrdinals;
         private IReadOnlyDictionary<StarkParser.ArgumentListContext, int>? _importedEnumCallOrdinals;
@@ -374,6 +381,17 @@ internal sealed partial class MidLevelIrLowerer
             _runtimeDropLowerer = new RuntimeDropLowerer(this);
             _switchPatternLowerer = new SwitchPatternLowerer(this);
             _parametersByName = function.Signature.Parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+            _currentClosureLambda = typeModel.ClosureLambdas.FirstOrDefault(lambda =>
+                string.Equals(lambda.FunctionName, function.Name, StringComparison.Ordinal)
+                || string.Equals(lambda.FunctionName, function.Signature.Name, StringComparison.Ordinal));
+            _closureCaptureFieldsByName = _currentClosureLambda?.CaptureFields.ToDictionary(
+                static capture => capture.Name,
+                StringComparer.Ordinal)
+                ?? new Dictionary<string, ClosureCaptureFieldSymbol>(StringComparer.Ordinal);
+            _closureEnvironmentType = _currentClosureLambda?.EnvironmentTypeName is { Length: > 0 } environmentTypeName
+                ? StarkTypeSymbols.Named(environmentTypeName)
+                : null;
+            InitializeOnceClosureCaptureDropStates();
             foreach (var parameter in function.Signature.Parameters)
             {
                 if (!RequiresRuntimeDrop(parameter.Type))
@@ -393,6 +411,39 @@ internal sealed partial class MidLevelIrLowerer
         }
 
         public bool SupportsDirectCodeGeneration { get; private set; } = true;
+
+        private static string BuildClosureCaptureDropStateKey(string captureName) =>
+            $"{ClosureCaptureDropStatePrefix}{captureName}";
+
+        private bool IsCurrentOnceHeapClosureInvoke() =>
+            _currentClosureLambda?.ClosureType is
+            {
+                ClosureStorageKind: StarkClosureStorageKind.Heap,
+                ClosureCallCapability: StarkClosureCallCapability.Once
+            };
+
+        private static bool IsOwnedClosureCaptureFieldForDrop(ClosureCaptureFieldSymbol capture) =>
+            capture.StorageKind == ClosureCaptureStorageKind.Value
+            && string.Equals(capture.Mode, "move", StringComparison.Ordinal);
+
+        private void InitializeOnceClosureCaptureDropStates()
+        {
+            if (!IsCurrentOnceHeapClosureInvoke() || _currentClosureLambda is null)
+            {
+                return;
+            }
+
+            foreach (var capture in _currentClosureLambda.CaptureFields)
+            {
+                if (!IsOwnedClosureCaptureFieldForDrop(capture)
+                    || !RequiresRuntimeDrop(capture.FieldType))
+                {
+                    continue;
+                }
+
+                _runtimeDropStates[BuildClosureCaptureDropStateKey(capture.Name)] = true;
+            }
+        }
 
         public int EntryBlockId => 0;
 
@@ -458,6 +509,7 @@ internal sealed partial class MidLevelIrLowerer
                     if (!CurrentBlock.HasTerminator)
                     {
                         EmitStorageDeadBeyondDepth(0);
+                        EmitOnceClosureEnvironmentCleanup();
                         CurrentBlock.Terminator = new MidLevelIrTerminator(
                             MidLevelIrTerminatorKind.Return,
                             Targets: [],
@@ -472,7 +524,9 @@ internal sealed partial class MidLevelIrLowerer
                         RecordMoveFromOperand(operand, _function.Signature.ReturnType);
                     }
 
+                    operand = MaterializeReturnOperandBeforeStorageCleanup(operand);
                     EmitStorageDeadBeyondDepth(0);
+                    EmitOnceClosureEnvironmentCleanup();
                     CurrentBlock.Terminator = new MidLevelIrTerminator(
                         MidLevelIrTerminatorKind.Return,
                         Targets: [],
@@ -496,11 +550,86 @@ internal sealed partial class MidLevelIrLowerer
             }
         }
 
+        public void LowerEmptyClosureDrop()
+        {
+            CompleteOpenFunctionTerminator();
+        }
+
+        public void LowerClosureEnvironmentDrop(ClosureLambdaTypingRecord lambda)
+        {
+            if (lambda.EnvironmentTypeName is not { Length: > 0 } environmentTypeName)
+            {
+                throw LoweringInvariantViolation(null, $"Heap closure drop function '{_function.Name}' has no environment type.");
+            }
+
+            var environmentType = StarkTypeSymbols.Named(environmentTypeName);
+            var environmentParameter = new MidLevelIrParameterOperand(
+                CallableValueFacts.ClosureEnvironmentParameterName,
+                CallableValueFacts.BuildClosureDropEnvironmentPointerType());
+            var typedEnvironmentPointer = EmitRequiredTemporary(
+                new MidLevelIrConvertRValue(
+                    environmentParameter,
+                    AddressType(environmentType, isMutable: true),
+                    $"{environmentParameter.Text}:typed-env"),
+                "closure_env");
+
+            for (var index = lambda.CaptureFields.Count - 1; index >= 0; index--)
+            {
+                var capture = lambda.CaptureFields[index];
+                if (!IsOwnedClosureCaptureFieldForDrop(capture)
+                    || !RequiresRuntimeDrop(capture.FieldType))
+                {
+                    continue;
+                }
+
+                if (!TryResolveField(environmentType, capture.FieldName, out _, out var fieldIndex))
+                {
+                    throw LoweringInvariantViolation(
+                        null,
+                        $"Heap closure drop function '{_function.Name}' could not resolve environment field '{capture.FieldName}'.");
+                }
+
+                var fieldAddress = EmitRequiredTemporary(
+                    new MidLevelIrFieldAddressRValue(
+                        typedEnvironmentPointer,
+                        environmentType,
+                        capture.FieldName,
+                        fieldIndex,
+                        AddressType(capture.FieldType, isMutable: true),
+                        $"{typedEnvironmentPointer.Text}.{capture.FieldName}"),
+                    "closure_field");
+                var fieldValue = EmitRequiredTemporary(
+                    new MidLevelIrLoadIndirectRValue(
+                        fieldAddress,
+                        capture.FieldType,
+                        $"{fieldAddress.Text}:load"),
+                    "closure_field");
+                EmitRuntimeDropFromOperandCore(fieldValue, capture.FieldType);
+            }
+
+            Emit(
+                MidLevelIrStatementKind.Evaluate,
+                $"free {environmentParameter.Text}",
+                value: new MidLevelIrHeapStorageFreeRValue(environmentParameter, $"free {environmentParameter.Text}"));
+            CompleteOpenFunctionTerminator();
+        }
+
         private void CompleteOpenFunctionTerminator()
         {
-            CurrentBlock.Terminator = _function.Signature.ReturnType.Kind == StarkTypeKind.Void
-                ? new MidLevelIrTerminator(MidLevelIrTerminatorKind.Return, Targets: [], Location: _functionLocation)
-                : new MidLevelIrTerminator(MidLevelIrTerminatorKind.Unreachable, Targets: [], Location: _functionLocation);
+            if (_function.Signature.ReturnType.Kind == StarkTypeKind.Void)
+            {
+                EmitOnceClosureEnvironmentCleanup();
+                CurrentBlock.Terminator = new MidLevelIrTerminator(
+                    MidLevelIrTerminatorKind.Return,
+                    Targets: [],
+                    Location: _functionLocation);
+                return;
+            }
+
+            CurrentBlock.Terminator = new MidLevelIrTerminator(
+                MidLevelIrTerminatorKind.Unreachable,
+                Targets: [],
+                Location: _functionLocation);
         }
 
         private void LowerBlock(StarkParser.BlockContext block)
@@ -1499,6 +1628,7 @@ internal sealed partial class MidLevelIrLowerer
             if (returnStatement.expression() is null)
             {
                 EmitStorageDeadBeyondDepth(0);
+                EmitOnceClosureEnvironmentCleanup();
                 CurrentBlock.Terminator = new MidLevelIrTerminator(
                     MidLevelIrTerminatorKind.Return,
                     Targets: [],
@@ -1513,7 +1643,9 @@ internal sealed partial class MidLevelIrLowerer
                 RecordMoveFromOperand(operand, _function.Signature.ReturnType);
             }
 
+            operand = MaterializeReturnOperandBeforeStorageCleanup(operand);
             EmitStorageDeadBeyondDepth(0);
+            EmitOnceClosureEnvironmentCleanup();
             CurrentBlock.Terminator = new MidLevelIrTerminator(
                 MidLevelIrTerminatorKind.Return,
                 Targets: [],
@@ -1539,6 +1671,27 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             return LowerExpressionToOperand(expression, returnType);
+        }
+
+        private MidLevelIrOperand? MaterializeReturnOperandBeforeStorageCleanup(MidLevelIrOperand? operand)
+        {
+            if (operand is null || !ReturnOperandNeedsPreCleanupMaterialization(operand))
+            {
+                return operand;
+            }
+
+            return EmitTemporary(new MidLevelIrUseRValue(operand), "return");
+        }
+
+        private bool ReturnOperandNeedsPreCleanupMaterialization(MidLevelIrOperand operand)
+        {
+            return operand switch
+            {
+                MidLevelIrLocalOperand local => IsAddressableLocal(local.Name),
+                MidLevelIrParameterOperand parameter => parameter.Type.BorrowKind != StarkBorrowKind.None
+                    || parameter.Type.InitializationKind != StarkInitializationKind.None,
+                _ => false
+            };
         }
 
         private void LowerExpressionStatement(StarkParser.ExpressionContext expression)
@@ -3438,6 +3591,46 @@ internal sealed partial class MidLevelIrLowerer
                 return expectedType is null ? callResult : CoerceOperand(callResult, expectedType);
             }
 
+            if (TryLowerClosureCallExpression(expression, out var closureCall))
+            {
+                if (closureCall.Type.Kind == StarkTypeKind.Void)
+                {
+                    throw LoweringInvariantViolation(expression, "Void closure calls cannot be lowered as value expressions.");
+                }
+
+                var callResult = EmitTemporary(closureCall, "call");
+                if (callResult is null)
+                {
+                    return null;
+                }
+
+                if (closureCall.SourceReturnType is { } sourceReturnType
+                    && StarkTypeSymbols.IsPointerBackedBorrowReturn(sourceReturnType))
+                {
+                    if (expectedType is not null
+                        && expectedType.BorrowKind != StarkBorrowKind.None
+                        && TypeCompatibilityFacts.CanAssign(expectedType, sourceReturnType))
+                    {
+                        return callResult;
+                    }
+
+                    var valueType = StarkTypeSymbols.BorrowReturnValueType(sourceReturnType);
+                    var loaded = EmitTemporary(
+                        new MidLevelIrLoadIndirectRValue(
+                            callResult,
+                            valueType,
+                            $"{callResult.Text}:load"),
+                        "load");
+                    return loaded is null
+                        ? null
+                        : expectedType is null
+                            ? loaded
+                            : CoerceOperand(loaded, expectedType);
+                }
+
+                return expectedType is null ? callResult : CoerceOperand(callResult, expectedType);
+            }
+
             if (!TryLowerPostfixOperand(expression, expectedType, out var current))
             {
                 return null;
@@ -3849,22 +4042,227 @@ internal sealed partial class MidLevelIrLowerer
             StarkParser.LambdaExpressionContext expression,
             StarkTypeSymbol? expectedType)
         {
-            if (expectedType?.Kind != StarkTypeKind.FunctionPointer)
+            if (expectedType?.Kind is not (StarkTypeKind.FunctionPointer or StarkTypeKind.Closure))
             {
-                throw LoweringInvariantViolation(expression, "Lambda expressions require an explicit function-pointer target type during MIR lowering.");
+                throw LoweringInvariantViolation(expression, "Lambda expressions require an explicit function-pointer or closure target type during MIR lowering.");
             }
 
             var line = expression.Start.Line;
             var column = expression.Start.Column + 1;
-            var lambda = _typeModel.Lambdas.LastOrDefault(lambda =>
-                lambda.Location.Line == line
-                && lambda.Location.Column == column);
-            if (lambda is null)
+            if (expectedType.Kind == StarkTypeKind.FunctionPointer)
             {
-                throw LoweringInvariantViolation(expression, "No type-checked non-capturing lambda record was found for MIR lowering.");
+                var lambda = _typeModel.Lambdas.LastOrDefault(lambda =>
+                    lambda.Location.Line == line
+                    && lambda.Location.Column == column);
+                if (lambda is null)
+                {
+                    throw LoweringInvariantViolation(expression, "No type-checked non-capturing lambda record was found for MIR lowering.");
+                }
+
+                return new MidLevelIrFunctionAddressOperand(lambda.FunctionName, expectedType);
             }
 
-            return new MidLevelIrFunctionAddressOperand(lambda.FunctionName, expectedType);
+            var closureLambda = _typeModel.ClosureLambdas.LastOrDefault(lambda =>
+                lambda.Location.Line == line
+                && lambda.Location.Column == column);
+            if (closureLambda is null)
+            {
+                throw LoweringInvariantViolation(expression, "No type-checked closure lambda record was found for MIR lowering.");
+            }
+
+            if (!closureLambda.HasCaptures)
+            {
+                return new MidLevelIrClosureValueOperand(closureLambda.FunctionName, expectedType);
+            }
+
+            return LowerCapturingClosureValue(expression, closureLambda, expectedType);
+        }
+
+        private MidLevelIrOperand? LowerCapturingClosureValue(
+            StarkParser.LambdaExpressionContext expression,
+            ClosureLambdaTypingRecord closureLambda,
+            StarkTypeSymbol expectedType)
+        {
+            if (closureLambda.EnvironmentTypeName is not { Length: > 0 } environmentTypeName)
+            {
+                throw LoweringInvariantViolation(expression, "A capturing closure lambda has no environment type name.");
+            }
+
+            var environmentType = StarkTypeSymbols.Named(environmentTypeName);
+            var environmentLocalName = AllocateTemporaryName("closure_env");
+            var environmentStorageClass = closureLambda.ClosureType.ClosureStorageKind == StarkClosureStorageKind.Heap
+                ? "heap"
+                : "stack";
+            RegisterLocal(environmentLocalName, environmentType, environmentStorageClass, isMutable: true, isConstant: false);
+            if (environmentStorageClass == "stack")
+            {
+                TrackDeclaredLocal(environmentLocalName, environmentType);
+            }
+
+            Emit(MidLevelIrStatementKind.StorageLive, environmentLocalName, environmentLocalName, environmentType);
+
+            var environmentLocal = new MidLevelIrLocalOperand(environmentLocalName, environmentType);
+            foreach (var capture in closureLambda.CaptureFields)
+            {
+                InitializeClosureEnvironmentField(environmentLocal, environmentType, capture, expression);
+            }
+
+            var environmentAddress = CreateAddressOfLocal(environmentLocalName, environmentType);
+            if (environmentAddress is null)
+            {
+                throw LoweringInvariantViolation(expression, $"Could not take the address of closure environment '{environmentLocalName}'.");
+            }
+
+            var erasedEnvironmentAddress = CoerceOperand(environmentAddress, closureLambda.EnvironmentParameterType)
+                ?? environmentAddress;
+            var invokePointerType = CallableValueFacts.BuildClosureInvokeFunctionPointerType(expectedType);
+            var withInvoke = EmitTemporary(
+                new MidLevelIrInsertIndexRValue(
+                    new MidLevelIrZeroInitializerOperand(expectedType),
+                    ElementIndex: 0,
+                    new MidLevelIrFunctionAddressOperand(closureLambda.FunctionName, invokePointerType),
+                    expectedType,
+                    $"closure<{closureLambda.FunctionName}>.invoke"),
+                "closure");
+            if (withInvoke is null)
+            {
+                throw LoweringInvariantViolation(expression, $"Could not materialize closure invoke pointer for '{closureLambda.FunctionName}'.");
+            }
+
+            var withEnvironment = EmitTemporary(
+                new MidLevelIrInsertIndexRValue(
+                    withInvoke,
+                    ElementIndex: 1,
+                    erasedEnvironmentAddress,
+                    expectedType,
+                    $"closure<{closureLambda.FunctionName}>.env"),
+                "closure");
+            if (withEnvironment is null)
+            {
+                throw LoweringInvariantViolation(expression, $"Could not materialize closure environment pointer for '{closureLambda.FunctionName}'.");
+            }
+
+            if (closureLambda.ClosureType.ClosureStorageKind != StarkClosureStorageKind.Heap)
+            {
+                return withEnvironment;
+            }
+
+            return EmitTemporary(
+                new MidLevelIrInsertIndexRValue(
+                    withEnvironment,
+                    ElementIndex: 2,
+                    new MidLevelIrFunctionAddressOperand(
+                        CallableValueFacts.BuildClosureDropFunctionName(closureLambda.FunctionName),
+                        CallableValueFacts.BuildClosureDropFunctionPointerType()),
+                    expectedType,
+                    $"closure<{closureLambda.FunctionName}>.drop"),
+                "closure");
+        }
+
+        private void InitializeClosureEnvironmentField(
+            MidLevelIrLocalOperand environmentLocal,
+            StarkTypeSymbol environmentType,
+            ClosureCaptureFieldSymbol capture,
+            StarkParser.LambdaExpressionContext expression)
+        {
+            if (!TryCreateEnvironmentFieldPlace(environmentLocal, environmentType, capture, out var fieldTarget))
+            {
+                throw LoweringInvariantViolation(
+                    expression,
+                    $"Could not resolve environment field '{capture.FieldName}' for captured variable '{capture.Name}'.");
+            }
+
+            var value = capture.StorageKind == ClosureCaptureStorageKind.Address
+                ? LowerClosureCaptureSourceAddress(capture, expression)
+                : LowerClosureCaptureSourceValue(capture, expression);
+            var coercedValue = CoerceOperand(value, capture.FieldType) ?? value;
+            EmitAssignment(BuildAssignment(fieldTarget, coercedValue, $"{environmentLocal.Name}.{capture.FieldName} = {capture.Name}") with
+            {
+                WriteKind = MemoryWriteKind.Initialization
+            });
+        }
+
+        private MidLevelIrOperand LowerClosureCaptureSourceValue(
+            ClosureCaptureFieldSymbol capture,
+            StarkParser.LambdaExpressionContext expression)
+        {
+            if (string.Equals(capture.Mode, "addr", StringComparison.Ordinal))
+            {
+                return LowerClosureCaptureSourceAddress(capture, expression);
+            }
+
+            var value = ResolveNamedOperand(capture.Name, capture.SourceType, expression);
+            if (value is null)
+            {
+                throw LoweringInvariantViolation(
+                    expression,
+                    $"Could not resolve captured variable '{capture.Name}' for closure environment initialization.");
+            }
+
+            return CoerceOperand(value, capture.FieldType) ?? value;
+        }
+
+        private MidLevelIrOperand LowerClosureCaptureSourceAddress(
+            ClosureCaptureFieldSymbol capture,
+            StarkParser.LambdaExpressionContext expression)
+        {
+            var source = TryResolveNamedValueOperand(capture.Name);
+            if (source is null)
+            {
+                throw LoweringInvariantViolation(
+                    expression,
+                    $"Could not resolve captured variable '{capture.Name}' for closure environment address capture.");
+            }
+
+            var sourcePlace = CreateRootPlaceTarget(source);
+            if (sourcePlace is null)
+            {
+                throw LoweringInvariantViolation(
+                    expression,
+                    $"Captured variable '{capture.Name}' cannot form an addressable closure environment field.");
+            }
+
+            var address = BuildAddress(sourcePlace);
+            if (address is null)
+            {
+                throw LoweringInvariantViolation(
+                    expression,
+                    $"Could not take the address of captured variable '{capture.Name}'.");
+            }
+
+            return address;
+        }
+
+        private bool TryCreateEnvironmentFieldPlace(
+            MidLevelIrLocalOperand environmentLocal,
+            StarkTypeSymbol environmentType,
+            ClosureCaptureFieldSymbol capture,
+            out PlaceTarget target)
+        {
+            target = default!;
+            if (!TryResolveField(environmentType, capture.FieldName, out _, out var fieldIndex))
+            {
+                return false;
+            }
+
+            target = new PlaceTarget(
+                environmentLocal.Name,
+                RootAddress: null,
+                RootValue: null,
+                RootType: environmentType,
+                capture.FieldType,
+                [
+                    new PlacePathSegment(
+                        PlacePathKind.Field,
+                        capture.FieldName,
+                        fieldIndex,
+                        IndexOperand: null,
+                        ParentType: environmentType,
+                        SegmentType: capture.FieldType)
+                ],
+                UsesAddressModel: true,
+                IsAddressMutable: true);
+            return true;
         }
 
         private MidLevelIrOperand? LowerTypeLayoutExpression(
@@ -5233,6 +5631,124 @@ internal sealed partial class MidLevelIrLowerer
             return TryBuildIndirectCall(target, arguments, $"{target.Text}{arguments.GetText()}", out call);
         }
 
+        private bool TryLowerClosureCallExpression(StarkParser.PostfixExpressionContext expression, out MidLevelIrIndirectCallRValue call)
+        {
+            call = default!;
+
+            if (expression.postfixPart().Length != 1
+                || expression.postfixPart()[0].argumentList() is not { } arguments)
+            {
+                return false;
+            }
+
+            if (IsEnumCaseCallTarget(expression.primaryExpression()))
+            {
+                return false;
+            }
+
+            var target = LowerPrimaryExpression(expression.primaryExpression(), expectedType: null);
+            if (target?.Type.Kind != StarkTypeKind.Closure)
+            {
+                return false;
+            }
+
+            return TryBuildClosureCall(target, arguments, $"{target.Text}{arguments.GetText()}", out call);
+        }
+
+        private bool TryBuildClosureCall(
+            MidLevelIrOperand target,
+            StarkParser.ArgumentListContext arguments,
+            string text,
+            out MidLevelIrIndirectCallRValue call)
+        {
+            call = default!;
+
+            if (target.Type.ClosureReturnType is not { } returnType
+                || target.Type.ClosureParameterTypes is not { } parameterTypes
+                || parameterTypes.Count != arguments.argument().Length)
+            {
+                return false;
+            }
+
+            var invokePointerType = CallableValueFacts.BuildClosureInvokeFunctionPointerType(target.Type);
+            var environmentPointerType = CallableValueFacts.BuildClosureEnvironmentPointerType(target.Type);
+            var invokePointer = EmitTemporary(
+                new MidLevelIrExtractIndexRValue(
+                    target,
+                    ElementIndex: 0,
+                    invokePointerType,
+                    $"{target.Text}.invoke"),
+                "closure_invoke");
+            var environmentPointer = EmitTemporary(
+                new MidLevelIrExtractIndexRValue(
+                    target,
+                    ElementIndex: 1,
+                    environmentPointerType,
+                    $"{target.Text}.env"),
+                "closure_env");
+            if (invokePointer is null || environmentPointer is null)
+            {
+                return false;
+            }
+
+            var loweredArguments = new List<MidLevelIrOperand>(arguments.argument().Length + 1)
+            {
+                environmentPointer
+            };
+            var indirectArgumentLocals = new List<string?>(arguments.argument().Length + 1)
+            {
+                null
+            };
+            var indirectArgumentAddresses = new List<MidLevelIrOperand?>(arguments.argument().Length + 1)
+            {
+                null
+            };
+
+            for (var index = 0; index < arguments.argument().Length; index++)
+            {
+                var parameterType = parameterTypes[index];
+                var lowered = LowerExpressionToOperand(arguments.argument(index).expression(), parameterType);
+                if (lowered is null)
+                {
+                    return false;
+                }
+
+                var argument = CoerceCallArgument(lowered, parameterType);
+                if (argument is null)
+                {
+                    return false;
+                }
+
+                loweredArguments.Add(argument);
+                var indirectArgumentAddress = ResolveIndirectArgumentAddress(
+                    parameterType,
+                    arguments.argument(index).expression());
+                indirectArgumentLocals.Add(indirectArgumentAddress is null
+                    ? ResolveIndirectArgumentLocal(parameterType, lowered)
+                        ?? ResolveIndirectArgumentLocal(parameterType, argument)
+                    : null);
+                indirectArgumentAddresses.Add(indirectArgumentAddress);
+                RecordMoveFromOperand(argument, parameterType);
+            }
+
+            call = new MidLevelIrIndirectCallRValue(
+                invokePointer,
+                loweredArguments,
+                StarkTypeSymbols.BorrowReturnRuntimeType(returnType),
+                text,
+                returnType,
+                indirectArgumentLocals,
+                indirectArgumentAddresses,
+                MayFree: target.Type.ClosureStorageKind == StarkClosureStorageKind.Heap
+                    && target.Type.ClosureCallCapability == StarkClosureCallCapability.Once);
+            if (target.Type.ClosureCallCapability == StarkClosureCallCapability.Once)
+            {
+                RecordMoveFromOperand(target, target.Type);
+            }
+
+            return true;
+        }
+
         private bool IsEnumCaseCallTarget(StarkParser.PrimaryExpressionContext expression)
         {
             if (expression.genericEnumCaseReference() is { } genericEnumCaseReference)
@@ -5502,6 +6018,16 @@ internal sealed partial class MidLevelIrLowerer
             out MidLevelIrCallRValue call)
         {
             call = default!;
+
+            if (receiver is null
+                && TryResolveRecordedDirectCallSignature(
+                    overloads[0].DisplaySourceName,
+                    arguments,
+                    out var recordedSignature)
+                && TryBuildCall(recordedSignature.Name, recordedSignature, receiver, receiverPlace, arguments, text, out call))
+            {
+                return true;
+            }
 
             var loweredArguments = new List<MidLevelIrOperand>(arguments.argument().Length);
             foreach (var argument in arguments.argument())
@@ -6114,6 +6640,11 @@ internal sealed partial class MidLevelIrLowerer
                 return recordedFunctionAddress;
             }
 
+            if (TryResolveRecordedClosureFunctionPromotion(name, syntax, expectedType, out var recordedClosureValue))
+            {
+                return recordedClosureValue;
+            }
+
             if (expectedType?.Kind == StarkTypeKind.FunctionPointer
                 && TryResolveFunctionAddressOperand(name, expectedType, syntax, out var functionAddress))
             {
@@ -6220,6 +6751,46 @@ internal sealed partial class MidLevelIrLowerer
                     && name.EndsWith($".{signature.SourceName}", StringComparison.Ordinal);
         }
 
+        private bool TryResolveRecordedClosureFunctionPromotion(
+            string name,
+            ParserRuleContext? syntax,
+            StarkTypeSymbol? targetType,
+            out MidLevelIrClosureValueOperand operand)
+        {
+            operand = default!;
+            var location = CreateSourceLocation(syntax?.Start);
+            var compatiblePromotions = _typeModel.ClosureFunctionPromotions
+                .Where(promotion => IsCurrentFunctionRecord(promotion.EnclosingFunctionName)
+                    && (targetType?.Kind != StarkTypeKind.Closure
+                        || TypeCompatibilityFacts.AreClosureTypesAssignable(targetType, promotion.ClosureType)))
+                .ToArray();
+            var matches = Array.Empty<ClosureFunctionPromotionTypingRecord>();
+            if (location is not null)
+            {
+                matches = compatiblePromotions
+                    .Where(promotion => promotion.Location.Line == location.Line
+                        && promotion.Location.Column == location.Column)
+                    .ToArray();
+            }
+
+            if (matches.Length == 0)
+            {
+                matches = compatiblePromotions
+                    .Where(promotion => FunctionPointerPromotionMatchesName(promotion.Signature, name))
+                    .ToArray();
+            }
+
+            if (matches.Length != 1)
+            {
+                return false;
+            }
+
+            var match = matches[0];
+            var operandType = targetType?.Kind == StarkTypeKind.Closure ? targetType : match.ClosureType;
+            operand = new MidLevelIrClosureValueOperand(match.AdapterFunctionName, operandType);
+            return true;
+        }
+
         private bool IsCurrentFunctionRecord(string? enclosingFunctionName)
         {
             if (enclosingFunctionName is null
@@ -6231,6 +6802,97 @@ internal sealed partial class MidLevelIrLowerer
 
             return enclosingFunctionName.EndsWith($".{_function.Name}", StringComparison.Ordinal)
                 || enclosingFunctionName.EndsWith($".{_function.Signature.Name}", StringComparison.Ordinal);
+        }
+
+        private bool TryCreateClosureCapturePlaceTarget(string name, out PlaceTarget target)
+        {
+            target = default!;
+            if (!_closureCaptureFieldsByName.TryGetValue(name, out var capture)
+                || _closureEnvironmentType is null)
+            {
+                return false;
+            }
+
+            var environmentAddress = GetTypedClosureEnvironmentAddress();
+            if (environmentAddress is null
+                || !TryResolveField(_closureEnvironmentType, capture.FieldName, out _, out var fieldIndex))
+            {
+                return false;
+            }
+
+            var fieldTarget = new PlaceTarget(
+                RootName: null,
+                RootAddress: environmentAddress,
+                RootValue: null,
+                RootType: _closureEnvironmentType,
+                Type: capture.FieldType,
+                Path:
+                [
+                    new PlacePathSegment(
+                        PlacePathKind.Field,
+                        capture.FieldName,
+                        fieldIndex,
+                        IndexOperand: null,
+                        ParentType: _closureEnvironmentType,
+                        SegmentType: capture.FieldType)
+                ],
+                UsesAddressModel: true,
+                IsAddressMutable: true);
+
+            if (capture.StorageKind == ClosureCaptureStorageKind.Value)
+            {
+                var fieldAddress = BuildAddress(fieldTarget);
+                if (fieldAddress is null)
+                {
+                    return false;
+                }
+
+                target = new PlaceTarget(
+                    RootName: null,
+                    RootAddress: fieldAddress,
+                    RootValue: null,
+                    RootType: capture.BodyType,
+                    Type: capture.BodyType,
+                    Path: [],
+                    UsesAddressModel: true,
+                    IsAddressMutable: CallableValueFacts.LambdaCaptureModeExposesWritableBinding(capture.Mode),
+                    ClosureCaptureName: IsOwnedClosureCaptureFieldForDrop(capture) ? capture.Name : null);
+                return true;
+            }
+
+            var capturedAddress = ReadPlace(fieldTarget);
+            target = new PlaceTarget(
+                RootName: null,
+                RootAddress: capturedAddress,
+                RootValue: null,
+                RootType: capture.BodyType,
+                Type: capture.BodyType,
+                Path: [],
+                UsesAddressModel: true,
+                IsAddressMutable: capturedAddress.Type.IsMutablePointer && CallableValueFacts.LambdaCaptureModeExposesWritableBinding(capture.Mode));
+            return true;
+        }
+
+        private MidLevelIrOperand? GetTypedClosureEnvironmentAddress()
+        {
+            if (_closureEnvironmentAddress is not null)
+            {
+                return _closureEnvironmentAddress;
+            }
+
+            if (_currentClosureLambda is null
+                || _closureEnvironmentType is null
+                || !_parametersByName.TryGetValue(CallableValueFacts.ClosureEnvironmentParameterName, out var environmentParameter))
+            {
+                return null;
+            }
+
+            var parameter = new MidLevelIrParameterOperand(environmentParameter.Name, environmentParameter.Type);
+            var typedEnvironmentPointerType = StarkTypeSymbols.RawPointer(
+                _closureEnvironmentType,
+                isMutable: environmentParameter.Type.IsMutablePointer);
+            _closureEnvironmentAddress = CoerceOperand(parameter, typedEnvironmentPointerType) ?? parameter;
+            return _closureEnvironmentAddress;
         }
 
         private MidLevelIrOperand? TryResolveNamedValueOperand(string name)
@@ -6248,6 +6910,11 @@ internal sealed partial class MidLevelIrLowerer
             if (_parametersByName.TryGetValue(name, out var parameter))
             {
                 return new MidLevelIrParameterOperand(parameter.Name, parameter.Type);
+            }
+
+            if (TryCreateClosureCapturePlaceTarget(name, out var captureTarget))
+            {
+                return ReadPlace(captureTarget);
             }
 
             if (TryResolveGlobal(name, out var global))
@@ -7864,6 +8531,13 @@ internal sealed partial class MidLevelIrLowerer
                 return true;
             }
 
+            if (TryGetSimplePostfixExpression(expression) is { } closurePostfix
+                && TryLowerClosureCallExpression(closurePostfix, out var closureCall))
+            {
+                value = closureCall;
+                return true;
+            }
+
             return false;
         }
 
@@ -8493,6 +9167,7 @@ internal sealed partial class MidLevelIrLowerer
             StarkParser.ExpressionContext expression)
         {
             if (!RequiresIndirectArgument(parameterType)
+                || parameterType.Kind == StarkTypeKind.Closure
                 || !TryExtractSimpleUnaryExpression(expression, out var unaryExpression)
                 || MayEvaluateNestedExpressionForAddress(unaryExpression)
                 || !TryResolveAssignmentTarget(unaryExpression, out var target))

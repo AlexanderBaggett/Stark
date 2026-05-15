@@ -37,5 +37,5 @@ Status: the core is covered by `ExamplesCompileRunTests.BreakoutCoreExampleCompi
 
 ## Related
 
-- [Native Package Project](/book/33-project-native-package/)
+- [Native Package Project](/book/36-project-native-package/)
 - [Raylib example](/examples/raylib/)

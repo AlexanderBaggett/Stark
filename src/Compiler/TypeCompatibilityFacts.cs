@@ -80,6 +80,11 @@ internal static class TypeCompatibilityFacts
             return AreFunctionPointerTypesAssignable(target, source);
         }
 
+        if (target.Kind == StarkTypeKind.Closure && source.Kind == StarkTypeKind.Closure)
+        {
+            return AreClosureTypesAssignable(target, source);
+        }
+
         if (target.Kind == StarkTypeKind.Slice && source.Kind == StarkTypeKind.FixedArray && target.ElementType is not null && source.ElementType is not null)
         {
             return CanAssign(target.ElementType, source.ElementType);
@@ -151,6 +156,46 @@ internal static class TypeCompatibilityFacts
         return AreFunctionPointerMemoryContractsAssignable(target, source, targetParameters);
     }
 
+    public static bool AreClosureTypesAssignable(StarkTypeSymbol target, StarkTypeSymbol source)
+    {
+        if (target.ClosureFunctionKind is not { } targetKind
+            || source.ClosureFunctionKind is not { } sourceKind
+            || target.ClosureReturnType is not { } targetReturn
+            || source.ClosureReturnType is not { } sourceReturn
+            || target.ClosureParameterTypes is not { } targetParameters
+            || source.ClosureParameterTypes is not { } sourceParameters
+            || targetParameters.Count != sourceParameters.Count)
+        {
+            return false;
+        }
+
+        if (target.ClosureStorageKind != source.ClosureStorageKind
+            || target.ClosureCallCapability != source.ClosureCallCapability
+            || !FunctionKindSatisfies(sourceKind, targetKind)
+            || !Equals(targetReturn, sourceReturn))
+        {
+            return false;
+        }
+
+        for (var index = 0; index < targetParameters.Count; index++)
+        {
+            if (!Equals(sourceParameters[index], targetParameters[index]))
+            {
+                return false;
+            }
+
+            if (!string.Equals(
+                    StarkTypeSymbols.GetClosureParameterRawPointerElementCountExpression(source, index),
+                    StarkTypeSymbols.GetClosureParameterRawPointerElementCountExpression(target, index),
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return AreClosureMemoryContractsAssignable(target, source, targetParameters);
+    }
+
     public static StarkTypeSymbol FunctionPointerTypeForSignature(TypedFunctionSignature function)
     {
         var parameterNameMap = function.Parameters
@@ -162,6 +207,35 @@ internal static class TypeCompatibilityFacts
             .ToDictionary(static pair => pair.Name, static pair => pair.SyntheticName, StringComparer.Ordinal);
 
         return StarkTypeSymbols.FunctionPointer(
+            function.Kind,
+            function.ReturnType,
+            function.Parameters.Select(static parameter => parameter.Type).ToArray(),
+            MapDisjointGroups(function.DisjointGroups, parameterNameMap),
+            MapOverlapGroups(function.OverlapGroups, parameterNameMap),
+            MapSameGroups(function.SameGroups, parameterNameMap),
+            function.Parameters
+                .Select(parameter => MapRawPointerElementCountExpression(
+                    parameter.RawPointerElementCountExpression,
+                    parameterNameMap))
+                .ToArray());
+    }
+
+    public static StarkTypeSymbol ClosureTypeForSignature(
+        TypedFunctionSignature function,
+        StarkClosureStorageKind storageKind,
+        StarkClosureCallCapability callCapability)
+    {
+        var parameterNameMap = function.Parameters
+            .Select((parameter, index) => new
+            {
+                parameter.Name,
+                SyntheticName = $"arg{index}"
+            })
+            .ToDictionary(static pair => pair.Name, static pair => pair.SyntheticName, StringComparer.Ordinal);
+
+        return StarkTypeSymbols.Closure(
+            storageKind,
+            callCapability,
             function.Kind,
             function.ReturnType,
             function.Parameters.Select(static parameter => parameter.Type).ToArray(),
@@ -262,6 +336,39 @@ internal static class TypeCompatibilityFacts
         return true;
     }
 
+    private static bool AreClosureMemoryContractsAssignable(
+        StarkTypeSymbol target,
+        StarkTypeSymbol source,
+        IReadOnlyList<StarkTypeSymbol> parameterTypes)
+    {
+        for (var leftIndex = 0; leftIndex < parameterTypes.Count; leftIndex++)
+        {
+            if (!ParameterMemoryContractFacts.IsMemoryBacked(parameterTypes[leftIndex]))
+            {
+                continue;
+            }
+
+            for (var rightIndex = leftIndex + 1; rightIndex < parameterTypes.Count; rightIndex++)
+            {
+                if (!ParameterMemoryContractFacts.IsMemoryBacked(parameterTypes[rightIndex]))
+                {
+                    continue;
+                }
+
+                var leftName = $"arg{leftIndex}";
+                var rightName = $"arg{rightIndex}";
+                var targetRelation = GetClosureParameterMemoryRelation(target, leftName, rightName);
+                var sourceRelation = GetClosureParameterMemoryRelation(source, leftName, rightName);
+                if (!SourceMemoryRelationSatisfiesTarget(sourceRelation, targetRelation))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
     private static bool SourceMemoryRelationSatisfiesTarget(
         FunctionPointerParameterMemoryRelation source,
         FunctionPointerParameterMemoryRelation target)
@@ -293,6 +400,29 @@ internal static class TypeCompatibilityFacts
         }
 
         if (ContainsParameterPair(type.FunctionPointerDisjointParameterGroups, leftName, rightName))
+        {
+            return FunctionPointerParameterMemoryRelation.Disjoint;
+        }
+
+        return FunctionPointerParameterMemoryRelation.None;
+    }
+
+    private static FunctionPointerParameterMemoryRelation GetClosureParameterMemoryRelation(
+        StarkTypeSymbol type,
+        string leftName,
+        string rightName)
+    {
+        if (ContainsParameterPair(type.ClosureSameParameterGroups, leftName, rightName))
+        {
+            return FunctionPointerParameterMemoryRelation.Same;
+        }
+
+        if (ContainsParameterPair(type.ClosureOverlapParameterGroups, leftName, rightName))
+        {
+            return FunctionPointerParameterMemoryRelation.Overlap;
+        }
+
+        if (ContainsParameterPair(type.ClosureDisjointParameterGroups, leftName, rightName))
         {
             return FunctionPointerParameterMemoryRelation.Disjoint;
         }

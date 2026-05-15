@@ -146,7 +146,7 @@ internal sealed class LlvmIrEmitter
         _objectCreationConstructors = typeModel.ObjectCreations
             .GroupBy(static record => new ObjectCreationKey(record.ExpressionText, record.Location.Line, record.Location.Column))
             .ToDictionary(static group => group.Key, static group => group.Last().Constructor);
-        _allFunctionEffects = BuildAllFunctionEffects(effectModel, specializationCodegenStrategy);
+        _allFunctionEffects = BuildAllFunctionEffects(effectModel, typeModel, ssa, specializationCodegenStrategy);
         _allFunctionSignatures = BuildAllFunctionSignatures(typeModel, ssa, specializationCodegenStrategy);
         _allAbiFunctions = BuildAllAbiFunctions(_allFunctionSignatures, abiModel, _allFunctionEffects, typeModel.NamedTypes, enumLayoutModel.Layouts);
         _importedInlineCloneSeedFunctions = importedInlineCloneSeedFunctions;
@@ -398,6 +398,14 @@ internal sealed class LlvmIrEmitter
 
         var syntheticLambdaNames = _typeModel.Lambdas
             .Select(static lambda => lambda.FunctionName)
+            .Concat(_typeModel.ClosureLambdas.Select(static lambda => lambda.FunctionName))
+            .Concat(_typeModel.ClosureLambdas
+                .Where(static lambda => lambda.ClosureType.ClosureStorageKind == StarkClosureStorageKind.Heap && lambda.HasCaptures)
+                .Select(static lambda => CallableValueFacts.BuildClosureDropFunctionName(lambda.FunctionName)))
+            .Concat(_typeModel.ClosureLambdas.Any(static lambda => lambda.ClosureType.ClosureStorageKind == StarkClosureStorageKind.Heap && !lambda.HasCaptures)
+                ? [CallableValueFacts.EmptyClosureDropFunctionName]
+                : [])
+            .Concat(_typeModel.ClosureFunctionPromotions.Select(static promotion => promotion.AdapterFunctionName))
             .ToHashSet(StringComparer.Ordinal);
 
         foreach (var clone in _closedWorldImportedLawClones.Values.OrderBy(static clone => clone.FunctionName, StringComparer.Ordinal))
@@ -449,10 +457,17 @@ internal sealed class LlvmIrEmitter
                 continue;
             }
 
-            var parameterEffects = GetParameterEffects(abiFunction.Name, hasBody: false)
-                ?? GetBuiltinParameterEffects(moduleName: string.Empty, abiFunction.Name, signature);
-            var memoryEffects = GetFunctionMemoryEffects(abiFunction.Name, hasBody: false);
             var ssaFunction = _ssa.Functions.FirstOrDefault(function => string.Equals(function.Name, abiFunction.Name, StringComparison.Ordinal));
+            var hasBody = ssaFunction is { HasBody: true };
+            var parameterEffects = GetParameterEffects(abiFunction.Name, hasBody)
+                ?? GetBuiltinParameterEffects(moduleName: string.Empty, abiFunction.Name, signature);
+            var memoryEffects = GetFunctionMemoryEffects(abiFunction.Name, hasBody);
+            if (syntheticLambdaNames.Contains(abiFunction.Name)
+                && ssaFunction is null)
+            {
+                continue;
+            }
+
             if (syntheticLambdaNames.Contains(abiFunction.Name)
                 && ssaFunction is { HasBody: true, SupportsDirectCodeGeneration: true })
             {
@@ -657,12 +672,30 @@ internal sealed class LlvmIrEmitter
 
     private static IReadOnlyDictionary<string, FunctionEffectProfile> BuildAllFunctionEffects(
         FunctionEffectModel effectModel,
+        TypeCheckModel typeModel,
+        SsaIrModule ssa,
         SpecializationCodegenStrategyModel? specializationCodegenStrategy)
     {
         var functions = effectModel.Functions.ToDictionary(
             static pair => pair.Key,
             static pair => pair.Value,
             StringComparer.Ordinal);
+
+        foreach (var adapter in typeModel.ClosureFunctionPromotions)
+        {
+            functions.TryAdd(
+                adapter.AdapterFunctionName,
+                CallableValueFacts.BuildClosureFunctionAdapterEffectProfile(adapter));
+        }
+
+        foreach (var function in ssa.Functions)
+        {
+            if (string.Equals(function.Name, CallableValueFacts.EmptyClosureDropFunctionName, StringComparison.Ordinal)
+                || function.Name.EndsWith(".__drop", StringComparison.Ordinal))
+            {
+                functions.TryAdd(function.Name, CallableValueFacts.BuildClosureDropEffectProfile(function.Name));
+            }
+        }
 
         if (specializationCodegenStrategy is null)
         {
@@ -1169,6 +1202,7 @@ internal sealed class LlvmIrEmitter
             SsaMakeSliceFromPointerRValue slice => [slice.Pointer, slice.Length],
             SsaDynamicStorageAllocationRValue allocation => [allocation.Capacity],
             SsaDynamicStorageFreeRValue free => [free.Storage],
+            SsaHeapStorageFreeRValue free => [free.Pointer],
             SsaDynamicStorageReserveRValue reserve => [reserve.StorageAddress, reserve.AdditionalCapacity],
             SsaDynamicStorageTryReserveRValue reserve => [reserve.StorageAddress, reserve.AdditionalCapacity],
             SsaDynamicStorageTryReserveCapacityRValue reserve => [reserve.StorageAddress, reserve.TargetCapacity],
@@ -1511,7 +1545,8 @@ internal sealed class LlvmIrEmitter
             .SelectMany(static function => function.Blocks)
             .SelectMany(static block => block.Instructions)
             .Any(static instruction => instruction is SsaAllocateLocalInstruction { StorageClass: "heap" }
-                or SsaDeallocateLocalInstruction { StorageClass: "heap" });
+                or SsaDeallocateLocalInstruction { StorageClass: "heap" }
+                || instruction is SsaValueInstruction { Value: SsaHeapStorageFreeRValue });
     }
 
     private bool UsesUnreachableTrapHelper()
@@ -1750,7 +1785,7 @@ internal sealed class LlvmIrEmitter
         FunctionEffectProfile effects,
         SsaFunction ssaFunction)
     {
-        return ContainsDynamicStorageAllocatorAccess(ssaFunction)
+        return ContainsAllocatorAccess(ssaFunction)
             ? effects with
             {
                 Kind = StarkFunctionKind.Fn,
@@ -1767,7 +1802,7 @@ internal sealed class LlvmIrEmitter
         Func<string, string, AbiFunctionSignature?> resolveCallAbi)
     {
         if (!RequiresSyntheticStackTemporaries(ssaFunction, resolveCallAbi)
-            && !ContainsDynamicStorageAllocatorAccess(ssaFunction))
+            && !ContainsAllocatorAccess(ssaFunction))
         {
             return memoryEffects;
         }
@@ -1783,12 +1818,33 @@ internal sealed class LlvmIrEmitter
         };
     }
 
-    private static bool ContainsDynamicStorageAllocatorAccess(SsaFunction ssaFunction)
+    private static bool ContainsAllocatorAccess(SsaFunction ssaFunction)
     {
         return ssaFunction.Blocks
             .SelectMany(static block => block.Instructions)
-            .OfType<SsaValueInstruction>()
-            .Any(static instruction => instruction.Value is SsaDynamicStorageAllocationRValue or SsaDynamicStorageFreeRValue or SsaDynamicStorageReserveRValue or SsaDynamicStorageTryReserveRValue or SsaDynamicStorageTryReserveCapacityRValue or SsaDynamicStorageMoveLastRValue or SsaDynamicStorageMoveAtRValue);
+            .Any(static instruction => instruction switch
+            {
+                SsaAllocateLocalInstruction { StorageClass: "heap" }
+                    or SsaDeallocateLocalInstruction { StorageClass: "heap" } => true,
+                SsaValueInstruction { Value: SsaDynamicStorageAllocationRValue
+                    or SsaDynamicStorageFreeRValue
+                    or SsaHeapStorageFreeRValue
+                    or SsaIndirectCallRValue { MayFree: true }
+                    or SsaDynamicStorageReserveRValue
+                    or SsaDynamicStorageTryReserveRValue
+                    or SsaDynamicStorageTryReserveCapacityRValue
+                    or SsaDynamicStorageMoveLastRValue
+                    or SsaDynamicStorageMoveAtRValue } => true,
+                SsaValueInstruction { Value: SsaCallRValue { FunctionName: var functionName } }
+                    => IsClosureDropFunctionName(functionName),
+                _ => false
+            });
+    }
+
+    private static bool IsClosureDropFunctionName(string functionName)
+    {
+        return string.Equals(functionName, CallableValueFacts.EmptyClosureDropFunctionName, StringComparison.Ordinal)
+            || functionName.EndsWith(".__drop", StringComparison.Ordinal);
     }
 
     private static bool RequiresSyntheticStackTemporaries(
@@ -2055,21 +2111,79 @@ internal sealed class LlvmIrEmitter
 
     private IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? GetParameterEffects(string functionName, bool hasBody)
     {
+        Dictionary<string, ParameterMemoryEffectSummary>? parameterEffects = null;
         if (hasBody
             && HasSsaBody(functionName)
             && TryGetRootValidationSummary(functionName, out var validation)
             && validation.Parameters is not null)
         {
-            return validation.Parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+            parameterEffects = validation.Parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
         }
-
-        if (!_publishedFunctionSemantics.TryGetValue(functionName, out var imported)
-            || imported.Parameters is null)
+        else if (_publishedFunctionSemantics.TryGetValue(functionName, out var imported)
+                 && imported.Parameters is not null)
         {
-            return null;
+            parameterEffects = imported.Parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
         }
 
-        return imported.Parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        if (hasBody
+            && TryBuildClosureEnvironmentParameterEffects(
+                functionName,
+                parameterEffects is not null
+                    && parameterEffects.TryGetValue(CallableValueFacts.ClosureEnvironmentParameterName, out var existing)
+                        ? existing
+                        : null,
+                out var closureEnvironmentEffects))
+        {
+            parameterEffects ??= new Dictionary<string, ParameterMemoryEffectSummary>(StringComparer.Ordinal);
+            parameterEffects[CallableValueFacts.ClosureEnvironmentParameterName] = closureEnvironmentEffects;
+        }
+
+        return parameterEffects;
+    }
+
+    private bool TryBuildClosureEnvironmentParameterEffects(
+        string functionName,
+        ParameterMemoryEffectSummary? existing,
+        out ParameterMemoryEffectSummary effects)
+    {
+        effects = default!;
+        var lambda = _typeModel.ClosureLambdas.FirstOrDefault(candidate =>
+            candidate.HasCaptures
+            && string.Equals(candidate.FunctionName, functionName, StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(candidate.EnvironmentTypeName));
+        if (lambda is null)
+        {
+            return false;
+        }
+
+        var environmentType = new StarkTypeSymbol(
+            StarkTypeKind.Named,
+            lambda.EnvironmentTypeName!,
+            NamedType: lambda.EnvironmentTypeName);
+        if (ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(
+                environmentType,
+                _typeModel.NamedTypes,
+                _enumLayoutModel.Layouts,
+                _publishedConcreteLayouts) is not { } layout
+            || layout.SizeBytes <= 0)
+        {
+            return false;
+        }
+
+        effects = new ParameterMemoryEffectSummary(
+            CallableValueFacts.ClosureEnvironmentParameterName,
+            lambda.EnvironmentParameterType.DisplayName,
+            IsMemoryBacked: true,
+            GuaranteedNonNull: true,
+            GuaranteedReadOnly: existing?.GuaranteedReadOnly ?? !lambda.EnvironmentParameterType.IsMutablePointer,
+            GuaranteedWriteOnly: existing?.GuaranteedWriteOnly ?? false,
+            GuaranteedNoAlias: true,
+            DereferenceableBytes: layout.SizeBytes,
+            AlignmentBytes: layout.AlignmentBytes,
+            Reads: existing?.Reads ?? true,
+            Writes: existing?.Writes ?? false,
+            CaptureKind: ParameterCaptureKind.None);
+        return true;
     }
 
     private FunctionMemoryEffectSummary? GetFunctionMemoryEffects(string functionName, bool hasBody)
@@ -2137,6 +2251,9 @@ internal sealed class LlvmIrEmitter
             StarkTypeKind.Float when type.BitWidth == 128 => "fp128",
             StarkTypeKind.RawPointer => "ptr",
             StarkTypeKind.FunctionPointer => "ptr",
+            StarkTypeKind.Closure => type.ClosureStorageKind == StarkClosureStorageKind.Heap
+                ? "{ ptr, ptr, ptr }"
+                : "{ ptr, ptr }",
             StarkTypeKind.FixedArray when type.ElementType is not null && type.FixedLength is int fixedLength => $"[{fixedLength} x {MapType(type.ElementType)}]",
             StarkTypeKind.Slice => "{ ptr, i64 }",
             StarkTypeKind.Dynamic => "{ ptr, i64, i64 }",

@@ -70,6 +70,21 @@ internal sealed partial class MidLevelIrLowerer
 
     private MidLevelIrFunction LowerFunction(HighLevelIrFunction function)
     {
+        if (string.Equals(function.Name, CallableValueFacts.EmptyClosureDropFunctionName, StringComparison.Ordinal))
+        {
+            return LowerEmptyClosureDropFunction(function);
+        }
+
+        if (TryGetClosureDropLambda(function.Name, out var closureDropLambda))
+        {
+            return LowerClosureDropFunction(function, closureDropLambda);
+        }
+
+        if (TryGetClosureFunctionAdapter(function.Name, out var closureFunctionAdapter))
+        {
+            return LowerClosureFunctionAdapter(function, closureFunctionAdapter);
+        }
+
         var loweringTemplateName = function.BodyTemplateName ?? function.Name;
         _importedFunctionTemplates.TryGetValue(loweringTemplateName, out var importedTemplateSummary);
         var keepOpenGenericTemplateDeclarationBodyless =
@@ -267,6 +282,165 @@ internal sealed partial class MidLevelIrLowerer
                 : CompilerLogOutcome.Bypassed,
             verbosity: CompilerLogVerbosity.Verbose);
 
+        return new MidLevelIrFunction(
+            function.Name,
+            BuildSignature(function.Signature),
+            function.Signature.ReturnType,
+            function.Signature.Parameters,
+            function.HasBody,
+            builder.SupportsDirectCodeGeneration,
+            builder.EntryBlockId,
+            builder.Locals,
+            builder.Blocks,
+            function.BodyLoweringKind,
+            functionLocation,
+            function.Signature.DisjointGroups,
+            function.Signature.SameGroups);
+    }
+
+    private bool TryGetClosureDropLambda(string functionName, out ClosureLambdaTypingRecord lambda)
+    {
+        lambda = _typeModel.ClosureLambdas.FirstOrDefault(candidate =>
+            candidate.ClosureType.ClosureStorageKind == StarkClosureStorageKind.Heap
+            && candidate.HasCaptures
+            && string.Equals(
+                CallableValueFacts.BuildClosureDropFunctionName(candidate.FunctionName),
+                functionName,
+                StringComparison.Ordinal))!;
+        return lambda is not null;
+    }
+
+    private bool TryGetClosureFunctionAdapter(string functionName, out ClosureFunctionPromotionTypingRecord adapter)
+    {
+        adapter = _typeModel.ClosureFunctionPromotions.FirstOrDefault(candidate =>
+            string.Equals(candidate.AdapterFunctionName, functionName, StringComparison.Ordinal))!;
+        return adapter is not null;
+    }
+
+    private MidLevelIrFunction LowerClosureFunctionAdapter(
+        HighLevelIrFunction function,
+        ClosureFunctionPromotionTypingRecord adapter)
+    {
+        var sourceArguments = function.Signature.Parameters
+            .Skip(1)
+            .Select(static parameter => (MidLevelIrOperand)new MidLevelIrParameterOperand(parameter.Name, parameter.Type))
+            .ToArray();
+        var call = new MidLevelIrCallRValue(
+            adapter.Signature.Name,
+            sourceArguments,
+            adapter.Signature.ReturnType,
+            $"{adapter.Signature.DisplaySourceName}({string.Join(", ", sourceArguments.Select(static argument => argument.Text))})");
+        var statements = new List<MidLevelIrStatement>();
+        MidLevelIrOperand? returnValue = null;
+        IReadOnlyList<MidLevelIrLocal> locals = [];
+        if (function.Signature.ReturnType.Kind == StarkTypeKind.Void)
+        {
+            statements.Add(new MidLevelIrStatement(
+                MidLevelIrStatementKind.Evaluate,
+                call.Text,
+                Value: call,
+                Location: adapter.Location));
+        }
+        else
+        {
+            const string resultName = "$closure_adapter_result";
+            statements.Add(new MidLevelIrStatement(
+                MidLevelIrStatementKind.Assign,
+                $"{resultName} = {call.Text}",
+                TargetName: resultName,
+                TargetType: function.Signature.ReturnType,
+                Value: call,
+                Location: adapter.Location));
+            returnValue = new MidLevelIrLocalOperand(resultName, function.Signature.ReturnType);
+            locals =
+            [
+                new MidLevelIrLocal(
+                    resultName,
+                    function.Signature.ReturnType,
+                    "register",
+                    IsMutable: false,
+                    IsConstant: false,
+                    Location: adapter.Location)
+            ];
+        }
+
+        var block = new MidLevelIrBasicBlock(
+            0,
+            "entry",
+            statements,
+            new MidLevelIrTerminator(
+                MidLevelIrTerminatorKind.Return,
+                [],
+                ValueText: returnValue?.Text,
+                Value: returnValue,
+                Location: adapter.Location));
+
+        return new MidLevelIrFunction(
+            function.Name,
+            BuildSignature(function.Signature),
+            function.Signature.ReturnType,
+            function.Signature.Parameters,
+            HasBody: true,
+            SupportsDirectCodeGeneration: true,
+            EntryBlockId: 0,
+            Locals: locals,
+            Blocks: [block],
+            BodyLoweringKind: function.BodyLoweringKind,
+            Location: adapter.Location,
+            DisjointParameterGroups: function.Signature.DisjointGroups,
+            SameParameterGroups: function.Signature.SameGroups);
+    }
+
+    private MidLevelIrFunction LowerEmptyClosureDropFunction(HighLevelIrFunction function)
+    {
+        using var builder = CreateSyntheticFunctionBuilder(function, SourceLocation.Synthetic());
+        builder.LowerEmptyClosureDrop();
+        return BuildLoweredFunction(function, builder, SourceLocation.Synthetic());
+    }
+
+    private MidLevelIrFunction LowerClosureDropFunction(
+        HighLevelIrFunction function,
+        ClosureLambdaTypingRecord lambda)
+    {
+        var location = lambda.Location;
+        using var builder = CreateSyntheticFunctionBuilder(function, location);
+        builder.LowerClosureEnvironmentDrop(lambda);
+        return BuildLoweredFunction(function, builder, location);
+    }
+
+    private FunctionMirBuilder CreateSyntheticFunctionBuilder(
+        HighLevelIrFunction function,
+        SourceLocation functionLocation)
+    {
+        return new FunctionMirBuilder(
+            function,
+            _typeModel.ModuleName,
+            _typeModel,
+            _enumLayoutModel,
+            _moduleGraph,
+            _typeResolver,
+            _functionsByName,
+            _constructorsByBodyKey,
+            _destructorsByTypeName,
+            _logs,
+            functionLocation.FilePath,
+            functionLocation,
+            _loweringNamedTypes,
+            _fallbackFunctions,
+            _fallbackGlobals,
+            _literalTypes,
+            _objectCreationConstructors,
+            importedTemplateSummary: null,
+            _materializedSpecializationSymbols,
+            genericTypeSubstitution: null,
+            useImportedTemplateLocalDeclarationFacts: false);
+    }
+
+    private static MidLevelIrFunction BuildLoweredFunction(
+        HighLevelIrFunction function,
+        FunctionMirBuilder builder,
+        SourceLocation functionLocation)
+    {
         return new MidLevelIrFunction(
             function.Name,
             BuildSignature(function.Signature),
@@ -699,6 +873,22 @@ internal sealed partial class MidLevelIrLowerer
                 LambdaExpression: lambdaExpression);
         }
 
+        foreach (var lambda in typeModel.ClosureLambdas)
+        {
+            if (!lambdaContexts.TryGetValue(lambda.FunctionName, out var lambdaExpression))
+            {
+                continue;
+            }
+
+            functions[lambda.FunctionName] = new FunctionLoweringContext(
+                loadedModules.RootModuleName,
+                lambda.Location.FilePath,
+                ParsedDeclaration: null,
+                Location: lambda.Location,
+                ParsedBody: null,
+                LambdaExpression: lambdaExpression);
+        }
+
         return functions;
     }
 
@@ -707,6 +897,8 @@ internal sealed partial class MidLevelIrLowerer
         TypeCheckModel typeModel)
     {
         var lambdasByLocation = typeModel.Lambdas
+            .Select(static lambda => (lambda.FunctionName, lambda.Location))
+            .Concat(typeModel.ClosureLambdas.Select(static lambda => (lambda.FunctionName, lambda.Location)))
             .GroupBy(static lambda => $"{lambda.Location.Line}:{lambda.Location.Column}")
             .ToDictionary(
                 static group => group.Key,

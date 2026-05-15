@@ -471,6 +471,30 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitFunctionPointerSignature([NotNull] StarkParser.FunctionPointerSignatureContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.closureType"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitClosureType([NotNull] StarkParser.ClosureTypeContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.closureStoragePrefix"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitClosureStoragePrefix([NotNull] StarkParser.ClosureStoragePrefixContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.closureSignature"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitClosureSignature([NotNull] StarkParser.ClosureSignatureContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.closureCallCapability"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitClosureCallCapability([NotNull] StarkParser.ClosureCallCapabilityContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.functionPointerParameterList"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
@@ -860,6 +884,12 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <param name="context">The parse tree.</param>
 	/// <return>The visitor result.</return>
 	Result VisitLambdaExpression([NotNull] StarkParser.LambdaExpressionContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.lambdaStoragePrefix"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitLambdaStoragePrefix([NotNull] StarkParser.LambdaStoragePrefixContext context);
 	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.captureClause"/>.
 	/// </summary>

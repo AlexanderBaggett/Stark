@@ -88,6 +88,26 @@ public sealed class FunctionSemanticsTests
     }
 
     [Fact]
+    public void LawFunctionsRejectPlainClosureCalls()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe law i32[min max] Bad(borrow closure<fn i32[min max]()> op) {
+                return op();
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK4106"
+                && diagnostic.Message.Contains("law-compatible closures", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void FunctionKindObligationsAllowMatchingFunctionPointerCalls()
     {
         var result = Compile(
@@ -106,6 +126,36 @@ public sealed class FunctionSemanticsTests
                 return op();
             }
             """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? validation));
+        Assert.NotNull(validation);
+
+        Assert.Equal(StarkFunctionKind.Finite, validation.Functions["UseFinite"].DeclaredKind);
+        Assert.Equal(StarkFunctionKind.Law, validation.Functions["UseLaw"].DeclaredKind);
+        Assert.Equal(StarkFunctionKind.FiniteLaw, validation.Functions["UseStrict"].DeclaredKind);
+    }
+
+    [Fact]
+    public void FunctionKindObligationsAllowMatchingClosureCalls()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe finite i32[min max] UseFinite(borrow closure<finite i32[min max]()> op) {
+                return op();
+            }
+
+            unsafe law i32[min max] UseLaw(borrow closure<law i32[min max]()> op) {
+                return op();
+            }
+
+            unsafe finite law i32[min max] UseStrict(borrow closure<finite law i32[min max]()> op) {
+                return op();
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? validation));

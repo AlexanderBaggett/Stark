@@ -809,6 +809,144 @@ public sealed class OwnershipRoadmapRegressionTests
     }
 
     [Fact]
+    public void StoredBorrowClosureFieldsRejectTemporaryEnvironments()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Holder {
+                storeborrow closure<fn i32[min max]()> Callback;
+            }
+
+            fn Holder Bad() {
+                stack i32[min max] value = 1;
+                return new Holder() {
+                    Callback = capture(copy value) () => value
+                };
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4202", "cannot store a temporary borrow", "stored field 'Callback'");
+    }
+
+    [Fact]
+    public void MoveCapturesConsumeSourceBindingAtClosureCreation()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[min max] Value;
+            }
+
+            fn i32[min max] Run() {
+                stack Box box = new Box() { Value = 7 };
+                stack heap closure<fn i32[min max]()> callback = heap capture(move box) () => box.Value;
+                return box.Value;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4200", "Value 'box'", "moved");
+    }
+
+    [Fact]
+    public void OutAndInitClosureCapturesMustBeAssignedOnEveryReturnPath()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            inline fn void RunOut(inline closure<mut fn void(bool)> body) {
+                body(true);
+                return;
+            }
+
+            inline fn void RunInit(inline closure<mut fn void(bool)> body) {
+                body(true);
+                return;
+            }
+
+            fn void BadOut(bool choose) {
+                stack mut i32[min max] value = 0;
+                RunOut(capture(out value) (bool flag) => {
+                    if (flag) {
+                        value = 1;
+                        return;
+                    }
+
+                    return;
+                });
+                return;
+            }
+
+            fn void BadInit(bool choose) {
+                stack mut i32[min max] value = 0;
+                RunInit(capture(init value) (bool flag) => {
+                    if (flag) {
+                        value = 1;
+                        return;
+                    }
+
+                    return;
+                });
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4205", "closure capture 'value' with mode 'out'", "every successful return path");
+        AssertDiagnostic(result, "STK4205", "closure capture 'value' with mode 'init'", "every successful return path");
+    }
+
+    [Fact]
+    public void OnceClosureCallsConsumeTheClosureValue()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            inline fn i32[min max] RunInlineTwice(inline closure<once fn i32[min max]()> producer) {
+                stack i32[min max] first = producer();
+                return producer();
+            }
+
+            fn i32[min max] RunHeapTwice(heap closure<once fn i32[min max]()> producer) {
+                stack i32[min max] first = producer();
+                return producer();
+            }
+
+            fn i32[min max] RunBorrowTwice(borrow closure<once fn i32[min max]()> producer) {
+                stack i32[min max] first = producer();
+                return producer();
+            }
+
+            fn i32[min max] UseInline() {
+                return RunInlineTwice(() => 1);
+            }
+
+            fn i32[min max] UseHeap() {
+                stack heap closure<once fn i32[min max]()> producer = heap () => 1;
+                return RunHeapTwice(producer);
+            }
+
+            fn i32[min max] UseBorrow() {
+                return RunBorrowTwice(() => 1);
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        Assert.True(
+            result.Diagnostics.Count(static diagnostic => diagnostic.Code == "STK4200"
+                && diagnostic.Message.Contains("Value 'producer'", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("moved", StringComparison.Ordinal)) >= 3,
+            string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
     public void ReturningBorrowFromBranchSpecificCallsStillReportsLifetimeDiagnostic()
     {
         var result = Compile(

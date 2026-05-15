@@ -697,6 +697,14 @@ internal sealed class NonLexicalBorrowLifetimeValidator
 
                 yield break;
 
+            case MidLevelIrHeapStorageFreeRValue free:
+                foreach (var name in CollectBorrowLocalUses(free.Pointer, borrowLocals))
+                {
+                    yield return name;
+                }
+
+                yield break;
+
             case MidLevelIrDynamicStorageReserveRValue reserve:
                 foreach (var name in CollectBorrowLocalUses(reserve.StorageAddress, borrowLocals))
                 {

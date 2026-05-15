@@ -181,6 +181,58 @@ public sealed class SemanticValidationTests
     }
 
     [Fact]
+    public void AggregateFieldsRejectNonEscapingBorrowClasses()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct BorrowField {
+                borrow i32[min max] Value;
+            }
+
+            struct RetBorrowField {
+                retborrow i32[min max] Value;
+            }
+
+            struct BorrowClosureField {
+                borrow closure<fn i32[min max]()> Callback;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK4005"
+                && diagnostic.Message.Contains("Field declarations may not store 'borrow i32'", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK4005"
+                && diagnostic.Message.Contains("Field declarations may not store 'retborrow i32'", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK4005"
+                && diagnostic.Message.Contains("borrow closure", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AggregateFieldsAllowExplicitStoredClosureBorrows()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Holder {
+                storeborrow closure<fn void()> Callback;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
     public void TopLevelRegisterStorageIsRejected()
     {
         var result = Compile(

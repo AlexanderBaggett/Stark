@@ -1446,6 +1446,559 @@ Completion rules:
 
 
 
+## 5. Implement Closure System For Inline, Borrowed, And Heap Callbacks
+
+- [x] Implement the focused closure system described in
+      `docs/Internals/ClosureProposal.md`.
+  - [x] 2026-05-14 design narrowed and documented: the broad closure sketch was
+        reduced to the three closure forms required for egui-style APIs and
+        performance-sensitive higher-order helpers: `inline closure<...>` for
+        call-now specialization, `borrow closure<...>` for non-escaping runtime
+        callbacks, and `heap closure<...>` for stored/returned retained
+        callbacks. The proposal explicitly keeps `fnptr<...>` thin and
+        non-capturing.
+  - [x] 2026-05-14 implementation plan captured in
+        `docs/Internals/ClosureProposal.md`: closure type shape, explicit
+        capture modes, call capabilities (`normal`, `mut`, `once`),
+        target-typed lambda conversion rules, borrow variations, heap capture
+        legality, MIR/SSA/LLVM lowering shapes, package-image requirements,
+        diagnostics, and required tests are documented for compiler engineers.
+  - [x] Add grammar and parser support for closure types and inline closure
+        parameters. Required accepted forms include
+        `inline closure<fn void(mut borrow Ui)>`,
+        `borrow closure<fn void(mut borrow Ui)>`,
+        `mut borrow closure<mut fn void(i32[min max])>`,
+        `heap closure<fn void()>`, and
+        `heap closure<once fn Packet()>`. Reuse existing function-pointer
+        signature parsing for function kind, return type, parameter types,
+        raw-pointer bound expressions, and `where overlap(...)` /
+        `where same(...)` memory contracts.
+    - [x] 2026-05-14 grammar slice landed: `Stark.g4` now has a dedicated
+          `closure` keyword, `once` call capability, `closureType`,
+          `closureSignature`, optional `inline`/`heap` closure type prefixes,
+          optional heap lambda-expression prefix for `heap capture(...) => ...`,
+          and regenerated ANTLR parser/visitor files. Parser conformance now
+          covers inline closure parameters, borrowed closure parameters,
+          mutable borrowed closure parameters, heap closure fields/returns,
+          `once` closure signatures, and closure memory contracts.
+  - [x] Extend the type model with closure type symbols. The model must record
+        storage requirement (`inline`, borrowed view, owned heap), borrow class,
+        call capability (`normal`, `mut`, `once`), function kind, return type,
+        parameter types, memory contracts, raw-pointer bounds, capture layout,
+        and environment ownership/mutability facts.
+    - [x] 2026-05-14 front-end closure type identity landed:
+          `StarkTypeKind.Closure`, `StarkClosureStorageKind`, and
+          `StarkClosureCallCapability` now keep closure type contracts distinct
+          from thin `fnptr<...>` values. Type resolution records inline/heap
+          storage prefixes, borrower qualifiers such as `borrow` and
+          `mut borrow`, call capability, function kind, return type, parameter
+          types, default non-overlap groups, explicit `where overlap(...)` /
+          `where same(...)` contracts, and bounded raw-pointer count
+          expressions. Law and finite-law closure signatures now reject `mut`
+          and `once` capability before later lowering. Type-check regression
+          coverage asserts these facts through normal function signatures and
+          generic type-alias substitution into closure signatures.
+    - [x] 2026-05-14 closure-lambda expression facts landed:
+          `ClosureLambdaTypingRecord` records the synthetic closure body name,
+          target closure type, parameter names, source location, and enclosing
+          function. Type checking now records closure lambda bodies separately
+          from non-capturing `fnptr` lambdas, and semantic/ownership/lowering
+          contract validation can find their captured locals and body facts by
+          source location.
+    - [x] 2026-05-14 closure-call facts landed: `ClosureCallTypingRecord`
+          records calls through `closure<...>` values separately from thin
+          `fnptr` indirect calls. Type checking now treats closure values as
+          callable, validates argument arity/types, bounded raw-pointer
+          parameter contracts, default non-overlap/`where overlap`/`where same`
+          memory contracts, and mutable-call capability. Semantic and
+          ownership validation recognize closure calls before MIR, and lowering
+          contract validation now has an explicit closure-call fact gate.
+    - [x] 2026-05-14 closure invoke ABI metadata landed:
+          `ClosureLambdaTypingRecord` now carries the hidden environment
+          parameter type, and generated closure invoke signatures lower as
+          `return invoke(rawptr<i8> $env, source-args...)`. Closure call
+          memory contracts and bounded raw-pointer expressions are shifted from
+          source `arg0`/`arg1` names to invoke `arg1`/`arg2` names so the hidden
+          environment slot does not corrupt user-visible contracts.
+    - [x] Add final capture environment layout records for MIR/SSA lowering:
+          ordered capture fields, field types after capture-mode projection,
+          environment storage class, drop order, and ownership transfer facts.
+      - [x] 2026-05-14 borrowed-closure environment layout records landed:
+            `ClosureLambdaTypingRecord` now carries ordered
+            `ClosureCaptureFieldSymbol` records. Each capture records source
+            type, lambda-body type, field type, capture mode, unsafe marker,
+            and whether the environment stores the captured value directly or
+            stores an address back to caller storage. Type checking also
+            creates a synthetic named environment struct in declaration order
+            so MIR, SSA, LLVM, and debug/layout code all see one deterministic
+            layout.
+  - [x] Implement target-typed lambda binding for closure targets. Lambda
+        expressions must require an explicit `fnptr` or closure target, validate
+        parameter/return compatibility, validate the body under the target
+        function kind, build capture records, reject implicit outer-local use,
+        and reject capturing lambdas converted to `fnptr<...>`.
+    - [x] 2026-05-14 lambda binding now accepts explicit closure targets while
+          preserving existing thin `fnptr<...>` behavior. Non-capturing lambdas
+          still lower as function pointers only when the target is `fnptr`.
+          Closure lambdas bind to `inline closure<...>`,
+          `borrow closure<...>`, `mut borrow closure<mut ...>`, and
+          `heap closure<...>` targets, validate exact parameter ABI types,
+          validate return/body type, record captures, reject implicit
+          uncaptured outer-local use, and continue rejecting captures converted
+          to `fnptr<...>`.
+    - [x] 2026-05-14 named function items now promote to explicit closure
+          targets as empty-environment closure values. Type checking records a
+          `ClosureFunctionPromotionTypingRecord` with the source function,
+          target closure type, adapter name, location, and enclosing function;
+          HIR/MIR synthesize a fast internal adapter with the closure
+          environment pointer plus source arguments; LLVM emits the adapter at
+          O0 and O3 devirtualizes/prunes it when the borrowed closure wrapper
+          collapses to a direct call. This covers `borrow closure<...>`,
+          `inline closure<...>`, and `heap closure<...>` target positions.
+    - [x] 2026-05-14 closure lambda bodies participate in semantic and
+          ownership validation using synthetic typed signatures, so function
+          kind, return, parameter, and captured-local facts are available before
+          MIR.
+  - [x] Implement explicit capture validation for closure targets. Enforce
+        `copy`, `move`, `read`, `mut`, `out`, `init`, `unsafe addr`, and
+        `unsafe shared` capture rules; reject duplicate captures; reject
+        capture of moved bindings; require writable bindings for `mut`/`out`/
+        `init`; enforce write-only `out`/`init`; and keep unsafe capture modes
+        gated by unsafe context.
+    - [x] 2026-05-14 existing explicit capture validation now applies to
+          closure targets: capture names are explicit, duplicate captures are
+          rejected, unknown modes are rejected, `unsafe addr`/`unsafe shared`
+          require unsafe context, `copy` rejects move-only values, and
+          `mut`/`out`/`init` require writable locals. Heap closure conversion
+          requires an explicit `heap` lambda prefix and rejects non-owning
+          `read`, `mut`, `out`, `init`, and `addr` captures because they would
+          retain local storage.
+    - [x] Add ownership-transfer/drop validation for `move` captures, borrowed
+          closure escape checks, `out`/`init` definite-write checks across
+          invocation paths, and `closure<once ...>` use-after-call validation.
+      - [x] 2026-05-14 `capture(move value)` now consumes the source binding
+            during closure creation in ownership validation, so later reads,
+            writes, returns, or second move captures of the same binding report
+            the normal use-after-move diagnostics before MIR. This applies to
+            heap and borrowed closure expressions because the ownership
+            transfer happens at the source capture site, independent of the
+            eventual environment storage.
+      - [x] 2026-05-14 heap capture escape checks now reject capturing
+            non-escaping `borrow`/`retborrow` values, including
+            `borrow closure<...>` runtime views, into owned heap closure
+            environments. Heap closures may retain owned values, raw
+            capabilities, or explicit `storeborrow` views; ordinary borrowed
+            callback views must stay in borrowed/inline closure APIs.
+      - [x] 2026-05-14 `out` and `init` captures now participate in
+            ownership validation as definite-write contracts. Closure lambda
+            bodies declare those captured names as write-required, reject
+            reads through the existing write-only type surface, and report
+            `STK4205` when any explicit return path or fallthrough path can
+            complete without assigning the captured destination. Regression
+            coverage checks both `out` and `init` captures across branching
+            closure bodies.
+      - [x] 2026-05-14 `closure<once ...>` call consumption is covered for
+            both inline and heap closures. Invoking a once closure consumes the
+            closure value in ownership validation, so a second invocation
+            reports the normal use-after-move diagnostic before MIR.
+  - [x] Implement `inline closure<...>` specialization. Inline closure
+        parameters must not materialize runtime closure objects, must become
+        part of the specialization key, must substitute the lambda body and
+        capture facts into the callee before backend emission, and must reject
+        storage, return, array, `fnptr`, or ABI-boundary uses before MIR.
+    - [x] 2026-05-14 optimized same-module inline-closure specialization
+          landed for direct inline wrapper calls: the SSA direct-call inliner
+          now accepts small inline candidates that contain closure invokes and
+          simple address/load projections, then runs cleanup, constant
+          propagation, devirtualization, and inlining in a small fixed-point
+          loop. For calls such as
+          `Apply(capture(copy offset) (value) => value + offset, 4)`, optimized
+          `Run` now lowers to the direct arithmetic body with no closure
+          environment alloca, no `{ invoke, env }` aggregate construction, no
+          indirect closure call, and no emitted inline-lambda function symbol.
+    - [x] 2026-05-14 codegen pruning now removes unreferenced inline-closure
+          lambda SSA functions after specialization. Referenced inline lambdas
+          are kept so debug/O0 or not-yet-specialized paths remain correct;
+          fully optimized call sites do not leave declaration-only
+          `Run.__lambda_*` symbols in LLVM.
+    - [x] 2026-05-14 LLVM regression coverage added for optimized inline
+          closure specialization: `Run(offset)` must contain the direct
+          `value + offset` arithmetic, must not allocate a closure environment,
+          must not construct/extract `{ ptr, ptr }`, must not call through a
+          closure invoke pointer, and must not emit the inline lambda symbol.
+    - [x] 2026-05-14 verification: `dotnet test -c Release
+          tests/compiler.Tests/compiler.Tests.csproj --no-restore` passed with
+          `1373` tests after the inline-closure SSA specialization and pruning
+          slice.
+    - [x] Finish front-end/body-substitution specialization for all
+          `inline closure<...>` uses, including non-trivial callee control
+          flow, nested inline closure parameters, mutable/once inline closure
+          capabilities, imported package typed bodies, and diagnostic coverage
+          for any inline closure call that cannot be specialized before MIR.
+      - [x] 2026-05-14 SSA body-substitution specialization now treats
+            functions with `inline closure<...>` parameters as mandatory
+            inline-specialization candidates up to a bounded hot-path
+            instruction budget. The inliner now forwards inline closure
+            arguments through nested wrappers, handles multi-block callees with
+            non-trivial control flow, preserves pointer-backed borrow/out/init
+            argument metadata, and protects caller replacement values from
+            callee SSA-name collisions.
+      - [x] 2026-05-14 inline closure capabilities now specialize for
+            `inline closure<mut fn ...>` and `inline closure<once fn ...>`.
+            Type checking no longer requires a mutable runtime closure value
+            for `mut inline closure` calls, because the optimized inline form
+            has no retained runtime object to mutate.
+      - [x] 2026-05-14 cleanup now removes dead runtime closure environment
+            slots left behind after successful inline specialization. Stores
+            into local storage that is never read or escaped are deleted before
+            the normal pure/local cleanup pass, so specialized borrowed
+            parameter closures do not keep unused environment allocas in
+            optimized LLVM.
+      - [x] 2026-05-14 borrow/out/init metadata rewriting is now part of SSA
+            body substitution. When an inlined function has pointer-backed
+            parameters, nested calls inside the clone receive the caller's real
+            indirect argument address instead of stale callee-local metadata
+            such as `self`; address-of-parameter aliases can also map through
+            caller parameters and locals. This fixed stdlib IO validation
+            failures in `Directory.ReadNext*` and `FileResult` while preserving
+            direct pointer forwarding for optimized inline closures.
+      - [x] 2026-05-14 alias-aware memory optimization was tightened for
+            multi-block inline clones: scalar local/global load forwarding may
+            delete the load only when every use of the loaded SSA value is in
+            the block being rewritten. This prevents cross-block inlined loop
+            bodies from retaining references to removed load results, fixing
+            the `ReadDirectoryEntry` undefined-value validation failure without
+            disabling same-block forwarding.
+      - [x] 2026-05-14 LLVM coverage now proves inline closure
+            specialization for named borrow parameters, nested wrapper calls,
+            closures invoked from inside control flow, mutable inline closures,
+            and once inline closures. Each optimized `Run` body must contain
+            direct specialized work and no `{ invoke, env }` construction,
+            extraction, indirect closure call, wrapper call, or emitted inline
+            lambda symbol.
+      - [x] 2026-05-14 package-backed generic inline closure specialization
+            now works from typed package-image bodies. Generic template
+            manifests preserve postfix callable invocations as typed
+            `closure-call` expressions, imported-template lowering lowers
+            those calls directly for both `closure<...>` values and thin
+            `fnptr<...>` values, and optimized consumers can specialize an
+            imported generic inline-closure wrapper down to direct arithmetic
+            with no runtime closure pair or monomorphized wrapper call left in
+            the hot function.
+      - [x] 2026-05-14 verification: `dotnet test -c Release
+            tests/compiler.Tests/compiler.Tests.csproj --no-restore` passed
+            with `1379` tests after inline closure specialization, imported
+            typed-body lowering, borrow metadata rewriting, and alias-aware
+            memory forwarding fixes.
+      - [x] Add front-end diagnostics for every accepted-looking
+            `inline closure<...>` use that cannot be specialized before
+            backend emission, including storing inline closures, returning
+            them, putting them in arrays/aggregates, crossing ABI boundaries,
+            missing package typed bodies, and generic calls where lambda
+            target-typing cannot be resolved from the available parameter
+            context.
+        - [x] 2026-05-14 front-end storage validation now treats
+              `inline closure<...>` as a direct-parameter-only specialization
+              contract. It rejects inline closures in locals, fields, returns,
+              aggregate/array element positions, nested `fnptr`/runtime
+              closure signatures, and other runtime-storage shapes before MIR;
+              direct function parameters remain valid specialization inputs.
+  - [x] Implement `borrow closure<...>` runtime views. A borrowed closure lowers
+        to `{ invoke_pointer, environment_pointer }`, with caller/call-site
+        environment storage, non-escaping lifetime checks, borrower-class
+        support for `borrow` and `mut borrow`, and strict validation for
+        `retborrow closure` / `storeborrow closure` before those forms are
+        accepted in APIs.
+    - [x] 2026-05-14 caller stack-environment lowering landed for borrowed
+          closure expressions: capture expressions allocate a synthetic stack
+          environment, initialize fields in capture-clause order, and
+          materialize the two-word closure value with the invoke pointer plus
+          erased environment pointer. Invoke bodies cast `$env` back to the
+          synthetic environment type and resolve captured names through the
+          normal MIR place/address model, so reads, writes, field projections,
+          and indexing use the same optimized path as ordinary locals.
+    - [x] Add borrowed-closure escape validation before MIR so stack
+          environments cannot be returned, stored beyond the creating scope, or
+          embedded into heap/owned state.
+      - [x] 2026-05-14 front-end storage validation now rejects
+            `borrow`/`retborrow` aggregate fields, including
+            `borrow closure<...>` and `retborrow closure<...>`, because those
+            classes are non-storable by definition. `storeborrow closure<...>`
+            remains the explicit stored-borrow surface, but ownership
+            validation rejects initializing a stored field from a capturing
+            closure expression or other non-external source lifetime. Heap
+            closure capture validation also rejects copying non-escaping
+            borrowed closure views into owned environments. Existing
+            `retborrow closure` return paths continue to use the ownership
+            lifetime checker, so returning a stack-created closure environment
+            fails before MIR.
+    - [x] Add `retborrow closure` and `storeborrow closure` grammar/type
+          validation only if those forms remain part of the language surface;
+          otherwise reject them before MIR with precise diagnostics.
+      - [x] 2026-05-14 `retborrow closure` remains valid only as a returned
+            borrow view tied to an input/storage lifetime, while
+            `storeborrow closure` is valid only for explicit stored borrowed
+            callback storage and now requires an external/noncapturing source
+            when initialized into fields.
+  - [x] Implement `heap closure<...>` owned environments. Heap closures must
+        allocate explicit heap-backed environment storage, move/copy captures
+        into declaration-order layout, own and drop captured values correctly,
+        reject stack borrow captures, support `closure<mut ...>` mutable
+        invocation, and support `closure<once ...>` consumption/use-after-call
+        validation.
+    - [x] 2026-05-14 first heap-environment allocation slice landed:
+          `heap capture(...)` closure expressions now allocate their synthetic
+          environment with the compiler heap-storage path instead of caller
+          stack storage, so returned heap closures no longer point at a dead
+          stack environment. LLVM body attribute adjustment now treats heap
+          local allocation/deallocation as allocator access, clearing invalid
+          `nofree`/`memory(none)` attributes on functions that materialize heap
+          closure environments.
+    - [x] Finish heap closure ownership: generated heap environments still need
+          layout-specific drop paths for captured owned fields, generic closure
+          environment freeing on heap-closure drop, and move/once consumption
+          rules.
+      - [x] 2026-05-14 heap closure owned-drop representation landed:
+            `heap closure<...>` values now lower as `{ invoke_pointer,
+            environment_pointer, drop_pointer }` while borrowed closures remain
+            two-word `{ invoke_pointer, environment_pointer }` views. HIR/ABI,
+            MIR, SSA, validation, concrete layout, and LLVM type mapping now
+            agree on the heap-only third slot, so heap closure ownership can be
+            moved, returned, stored, and dropped without knowing the original
+            lambda at the use site.
+      - [x] 2026-05-14 heap closure environment destructors landed:
+            captured heap closures get a synthetic `lambda.__drop(rawmutptr<i8>
+            $env)` function. The drop body casts `$env` back to the synthetic
+            environment type, drops moved owned capture fields in reverse
+            declaration order with the existing runtime-drop lowering, then
+            frees the heap environment through `__stark_heap_free`. Empty heap
+            closures use a shared no-op drop function.
+      - [x] 2026-05-14 heap closure caller-drop attributes fixed: dropping a
+            heap closure emits an indirect call through the drop pointer and is
+            marked as allocator/free-capable in SSA/LLVM effect adjustment, so
+            callers that drop heap closures no longer receive invalid `nofree`
+            or `memory(none)` attributes.
+      - [x] Finish `closure<once ...>` ownership consumption: invoking a once
+            heap closure must consume the closure value, run the body exactly
+            once, and prevent any later use or drop from double-consuming the
+            environment.
+        - [x] 2026-05-14 implementation note: once heap closure invocation now
+              consumes the closure value at the call site, marks the indirect
+              invoke as free-capable for SSA/LLVM effects, and deactivates the
+              caller's ordinary heap-closure drop state. The generated invoke
+              body tracks moved `move` capture loads back to their environment
+              fields, drops any still-owned runtime-droppable captures in
+              reverse declaration order, and frees the heap environment on
+              every return path. A moved-out owned capture transfers to the
+              return value without running the capture drop, while an uncalled
+              closure still uses the synthetic layout-specific drop function.
+  - [x] Add MIR, SSA, and LLVM lowering for closure creation/invocation/drop.
+        Required MIR forms include create-borrow-closure, create-heap-closure,
+        invoke-closure, invoke-inline-closure before specialization,
+        move-closure, and drop-closure. LLVM invoke functions should use
+        internal `fastcc` when possible and carry environment facts such as
+        `nonnull`, `dereferenceable`, `align`, `noalias`,
+        `captures(none)`, memory effects, `mustprogress`, and `willreturn`
+        where source contracts prove them.
+    - [x] 2026-05-14 HIR/MIR symbol plumbing landed for closure lambda bodies:
+          closure lambdas now materialize as synthetic HIR functions with their
+          typed signatures/effect profiles, are address-taken roots for later
+          invoke-pointer lowering, and are discoverable by MIR lowering through
+          the same source-location map used for existing non-capturing
+          `fnptr` lambdas.
+    - [x] 2026-05-14 non-capturing runtime closure values landed: closure
+          lambda expressions now lower as real two-word callable values in MIR,
+          SSA, and LLVM (`{ invoke_pointer, environment_pointer }`) instead of
+          remaining only type-checked facts. `SsaClosureValue` validates the
+          invoke function ABI, LLVM maps closure values to `{ ptr, ptr }`, and
+          closure calls extract invoke/environment slots and reuse the existing
+          indirect-call ABI path so `finite`/`law` effects, raw-pointer
+          contracts, and call attributes stay centralized.
+    - [x] 2026-05-14 closure invoke bodies now emit as synthetic LLVM
+          definitions: the LLVM module surface now treats closure lambda
+          functions the same way it treats existing non-capturing `fnptr`
+          lambda functions, so closure invoke targets with SSA bodies are not
+          left as declaration-only fallbacks.
+    - [x] 2026-05-14 empty-environment function-item closure adapters now flow
+          through MIR, SSA, ABI, LLVM, and pruning as ordinary synthetic
+          callable bodies. Borrowed-closure arguments that are runtime closure
+          views no longer require source addressability in the lowering
+          contract; the ABI path materializes a temporary view only when a
+          real address is required, while SSA inlining forwards load-only
+          closure parameters directly so optimized code does not keep an
+          unnecessary `{ invoke, env }` stack slot.
+    - [x] 2026-05-14 SSA optimization and coverage landed for closure values:
+          known closure invoke targets participate in address-taken/reference
+          tracking, constant propagation treats closure values as constants,
+          and the emitter coverage matrix now includes `SsaClosureValue`.
+    - [x] Add runtime capture environment lowering for closure expressions:
+          allocate caller stack environments for borrowed closures, allocate
+          heap environments for heap closures, initialize capture fields by
+          mode (`copy`, `move`, `read`, `mut`, `out`, `init`, unsafe modes),
+          project captured names inside invoke bodies through the hidden
+          `$env` parameter, and preserve drop/ownership facts.
+      - [x] 2026-05-14 borrowed runtime environment lowering landed for stack
+            environments. `copy`, `move`, `unsafe shared`, and `unsafe addr`
+            captures store projected values directly in the environment;
+            `read`, `mut`, `out`, and `init` captures store raw addresses to
+            caller storage. Captured-name reads and assignments inside invoke
+            bodies now flow through address-rooted `PlaceTarget`s, so mut
+            captures emit direct loads/stores through the captured address
+            instead of synthetic special-case assignment code.
+      - [x] 2026-05-14 return cleanup ordering fix landed while validating mut
+            closures: addressable return operands are now materialized before
+            scope cleanup, preventing `llvm.lifetime.end` from being emitted
+            before the final load from a returned addressable local.
+      - [x] Finish heap environment allocation/drop lowering for
+            `heap closure<...>` so retained closures never point at caller
+            stack environments.
+        - [x] 2026-05-14 heap environment allocation now uses heap local
+              storage and emits `__stark_heap_alloc`; returned heap closures
+              keep a heap pointer rather than a stack pointer.
+        - [x] Add heap closure drop lowering: free the environment exactly
+              once, emit field drops for captured owned values before freeing,
+              and ensure moved heap closures transfer ownership without double
+              free.
+          - [x] 2026-05-14 implementation note: heap closure drops now extract
+                `{ env, drop }` from the closure value, coerce the erased env
+                pointer to the drop ABI, and call the layout-specific drop
+                function. Runtime drop state treats heap closures as owned
+                values, so assignment activates the destination owner and moves
+                from locals/parameters deactivate the source owner.
+      - [x] Finish move-capture ownership transfer/drop validation for
+            non-copy captured owners and ensure moved-from locals are never
+            dropped after transfer into an environment.
+        - [x] 2026-05-14 ownership validation now moves captured source
+              bindings at closure creation, and MIR environment-field
+              initialization continues to use the normal assignment
+              `RecordMoveFromOperand` path so moved captured owners deactivate
+              their original runtime-drop slot when ownership transfers into
+              the stack or heap environment.
+    - [x] Add inline-specialization input lowering for `inline closure<...>`
+          before runtime closure materialization. Inline closure calls should
+          substitute the closure body/captures into the specialized callee and
+          emit no `{ invoke_pointer, environment_pointer }` runtime pair.
+      - [x] 2026-05-14 optimized SSA specialization now provides the
+            body-substitution result for same-module and imported-template
+            inline closure hot paths at `O3`: the final optimized LLVM does
+            not contain runtime closure pairs, environment allocas, indirect
+            invoke calls, or inline-lambda symbols for the covered cases.
+            Front-end validation now rejects the unsupported runtime-storage
+            shapes before MIR, so accepted optimized inline closure hot paths
+            specialize to direct SSA/LLVM instead of retaining runtime closure
+            pairs.
+    - [x] Add heap closure move/drop lowering for owned environments,
+          including `closure<once ...>` consumption and destructor generation
+          for captured owned fields.
+      - [x] 2026-05-14 LLVM regression coverage now includes once heap closure
+            ownership cleanup: a moved dynamic capture returned from
+            `closure<once ...>` frees only the environment in the invoke body
+            and leaves the dynamic buffer owned by the return value; an unmoved
+            dynamic capture is dropped before the invoke body frees the
+            environment; and callers invoking a once heap closure no longer emit
+            a second indirect drop call through the closure drop pointer.
+      - [x] 2026-05-14 verification: `dotnet test -c Release
+            tests/compiler.Tests/compiler.Tests.csproj --no-restore` passed
+            with `1372` tests after the heap/once closure ownership cleanup.
+  - [x] Extend package images and imported-template lowering for closure
+        signatures and inline closure typed bodies. Package images must preserve
+        call capability, function kind, parameter/return types, memory
+        contracts, raw-pointer bounds, public signatures involving closures,
+        and typed bodies needed to specialize imported inline closure targets.
+    - [x] 2026-05-14 package type references now preserve closure signatures in
+          typed package interfaces: closure kind, inline/heap storage prefix,
+          `mut`/`once` call capability, function kind, return type, parameter
+          types, raw-pointer count expressions, and overlap/same memory
+          contracts round-trip through package image manifests and generated
+          package module source.
+    - [x] Preserve imported typed bodies needed to specialize imported
+          `inline closure<...>` targets.
+      - [x] 2026-05-14 generic template package images now preserve typed
+            callable invocations through a `closure-call` expression summary,
+            round-trip that summary through package loading/source bridging,
+            and lower it back to direct MIR indirect-call form for closure and
+            function-pointer callable parameters. Regression coverage uses a
+            typed-only package manifest with the source deleted, proving the
+            consumer specializes from package typed bodies rather than local
+            source.
+  - [x] Add diagnostics for invalid closure use before MIR. Required cases:
+        missing target type, capturing lambda to `fnptr`, unknown/duplicate
+        capture modes, unsafe capture without unsafe context, uncaptured local
+        use, invalid capture mode for the source binding, borrowed closure
+        escape, heap closure capturing stack borrow, mutable closure called
+        through immutable access, once closure use-after-call, function-kind
+        violations, memory-contract violations, and missing imported typed body
+        for inline closure specialization.
+    - [x] 2026-05-14 diagnostic coverage now includes closure values used as
+          calls, mutable closure calls through immutable/non-mutable closure
+          access, closure function-kind violations in law/finite callers, and
+          closure call lowering-contract fact mismatches.
+    - [x] 2026-05-14 diagnostic coverage now includes inline-closure
+          runtime-storage misuse, nested inline closure parameter misuse inside
+          `fnptr` signatures, `out`/`init` capture definite-write failures, and
+          once-closure use-after-call failures before MIR.
+  - [x] Add parser, type-checking, ownership, MIR/SSA, LLVM, package-image, and
+        book/reference tests for the closure system. Include egui-style inline
+        examples, non-escaping borrowed callback chains, retained heap callback
+        examples, function-kind preservation, memory-contract preservation,
+        and optimized LLVM checks proving inline closures allocate no runtime
+        environment.
+    - [x] 2026-05-14 focused type/checking validation tests now cover
+          closure-lambda target typing, heap-prefix and heap-safe capture
+          diagnostics, closure calls through immutable and mutable closure
+          values, and lowering-contract recording for closure-call argument
+          facts.
+    - [x] 2026-05-14 LLVM regression coverage now checks that a
+          non-capturing closure value emits a concrete `{ ptr, ptr }` pair,
+          extracts invoke/environment slots, calls through the invoke pointer,
+          preserves `finite law` call attributes, and emits the synthetic
+          closure invoke body instead of a declaration-only fallback.
+    - [x] 2026-05-14 LLVM regression coverage now checks borrowed captured
+          closures: `copy` captures allocate and load from a synthetic
+          environment struct, `mut` captures store caller addresses in the
+          environment and write through them in the invoke body, and addressable
+          local returns are loaded before lifetime cleanup.
+    - [x] 2026-05-14 LLVM regression coverage now checks the first heap
+          captured-closure lowering slice: heap closure creation emits
+          `__stark_heap_alloc`, returns the heap environment pointer rather than
+          a stack environment pointer, and clears invalid `nofree` /
+          `memory(none)` attributes on the allocating function.
+    - [x] 2026-05-14 LLVM regression coverage now checks heap closure drop
+          lowering: heap closure values carry a drop pointer, caller functions
+          that drop heap closures do not get `nofree` / `memory(none)`, and
+          moving an owned dynamic value into a heap closure emits a
+          layout-specific drop function that frees the captured dynamic storage
+          before freeing the heap environment.
+    - [x] 2026-05-14 LLVM regression coverage now checks optimized inline
+          closure specialization for nested, control-flow, named-borrow,
+          mutable, once, and imported package-template cases. The package
+          regression also asserts that the manifest typed body records
+          `closure-call`, so later package-image changes cannot silently fall
+          back to source text or declaration-only lowering.
+    - [x] 2026-05-14 regression coverage now checks named function-item
+          promotion into explicit closure targets. Type-checking tests assert
+          `borrow`, `inline`, and `heap` closure promotion records for the
+          same source function. LLVM tests assert that O0 emits an
+          empty-environment adapter and that O3 devirtualizes the call,
+          removes the adapter, and leaves no borrowed-closure temp alloca or
+          indirect call in the optimized `Run` body.
+    - [x] 2026-05-14 verification: `dotnet test -c Release
+          tests/compiler.Tests/compiler.Tests.csproj --no-restore` passed
+          1370 tests after borrowed-closure escape validation, heap capture
+          escape validation, and move-capture ownership transfer landed.
+    - [x] 2026-05-14 language reference and book callable-value coverage were
+          updated for `inline closure`, `borrow closure`, `mut`/`once`
+          capabilities, and `heap closure` retained callbacks. The compiled
+          book sample now exercises thin `fnptr`, inline closure
+          specialization inputs, borrowed closure views, and heap closure
+          values. Verification: `dotnet run -c Release --project
+          src/compiler.csproj -- site/assets/book/samples/callable-values.stark
+          --check` succeeded, and `dotnet test -c Release
+          tests/compiler.Tests/compiler.Tests.csproj --no-restore` passed
+          1381 tests after the final closure validation slice.
+
+
+
 ## 6 Project Testing and `System.Testing`
 
 - [x] Define the Stark test-project model.
@@ -2037,3 +2590,64 @@ Completion rules:
     `1.838339`, `AsciiToUnicodeConversionRuntime` Stark/C `1.042650`,
     Rust/C `1.044174`, and `AsciiToUnicodeConversionTinyLiteral` Stark/C
     `1.005188`, Rust/C `1.126459`.
+- [x] Propagate known closure invoke targets through SSA devirtualization and
+      LLVM `!callees` metadata.
+  - Source guarantee: a closure value carries a concrete invoke function pointer
+    and environment pointer. For named function items promoted to closure
+    values, the invoke target is a synthetic empty-environment adapter; for
+    closure phis/selects, the possible invoke targets are the union of the
+    visible incoming closure values. That target set is just as precise as the
+    existing `fnptr` target set and should not be dropped when lowering extracts
+    the closure invoke slot.
+  - Gap fixed: SSA direct-call devirtualization now follows
+    `extract closure.invoke` through closure values, value references, phis, and
+    selects. Singleton closure invoke sets become direct calls, and synthetic
+    function-item closure adapters are marked as real inline candidates so O3
+    removes the adapter layer and calls the original function directly when the
+    source function itself remains callable. LLVM emission uses the same
+    closure-target walk for non-singleton sets and attaches `!callees` metadata
+    to the remaining indirect closure invoke.
+  - Correctness guard: the metadata names the actual invoke adapter functions,
+    not the user source functions, because closure invokes have the hidden
+    environment-parameter ABI. Multi-target closure calls remain indirect unless
+    a later pass can legally specialize the branch or clone the call path.
+  - Regression coverage: LLVM tests now require a local function-item closure
+    call to devirtualize through the empty-environment adapter at O3, and require
+    a two-target closure value to keep the indirect call while emitting an exact
+    two-entry `!callees` adapter set with finite/law call attributes preserved.
+  - Verification: focused closure/function-pointer target tests passed 4 tests;
+    focused `LlvmIrEmissionTests` passed 388 tests; full
+    `dotnet test -c Release tests/compiler.Tests/compiler.Tests.csproj
+    --no-restore` passed 1387 tests.
+- [x] Preserve closure environment pointer extent and capture facts through
+      synthetic lambda emission.
+  - Source guarantee: a captured closure environment is a concrete compiler-
+    generated stack or heap object with a known layout. The hidden closure
+    invoke parameter is not an arbitrary nullable raw pointer in those bodies:
+    captured closure lambdas receive a non-null environment pointer that is
+    dereferenceable for the generated environment layout, aligned to that
+    layout, private from ordinary source parameters, and not captured by the
+    invoke body.
+  - Gap fixed: LLVM emission now requests body-aware parameter effects for
+    synthetic lambda/adapter functions instead of treating them like imported
+    declarations. Captured closure lambdas also publish a precise `$env`
+    `ParameterMemoryEffectSummary`, and the LLVM function-attribute builder now
+    consumes semantic `GuaranteedNonNull`, `DereferenceableBytes`, and
+    `AlignmentBytes` facts for direct raw-pointer parameters. As a result,
+    captured closure invoke definitions now emit attributes such as `nonnull`,
+    `dereferenceable(N)`, `align N`, `noalias`, and `nocapture` on `$env`
+    whenever those facts are proven.
+  - Correctness guard: empty-environment closures and function-item adapters do
+    not receive non-null/dereferenceable environment attributes because their
+    environment pointer may legitimately be `null`. The environment extent is
+    derived from the generated environment named type, not from the erased
+    `rawptr<i8>` ABI spelling.
+  - Regression coverage: the captured-closure LLVM regression now checks the
+    synthetic lambda header for `nonnull`, `dereferenceable(4)`, `align 4`,
+    `noalias`, `readonly`, and `nocapture` on the hidden `$env` parameter while
+    preserving the existing environment load behavior.
+  - Verification: focused captured/non-capturing/function-item closure LLVM
+    tests passed 3 tests; focused `LlvmIrEmissionTests` passed 388 tests; full
+    `dotnet test -c Release tests/compiler.Tests/compiler.Tests.csproj
+    --no-restore` passed 1387 tests; and an `--emit-obj -O0` smoke test for a
+    captured closure succeeded.

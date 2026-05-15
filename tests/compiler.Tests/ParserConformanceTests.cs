@@ -62,6 +62,57 @@ public sealed class ParserConformanceTests
             """
         },
         {
+            "closure type forms parse for inline borrow and heap callbacks",
+            """
+            module Demo
+
+            struct Ui {
+                i32[min max] Frame;
+            }
+
+            struct Packet {
+                i32[min max] Code;
+            }
+
+            struct Button {
+                heap closure<fn void()> OnClick;
+                heap closure<mut fn void(i32[min max])> OnValue;
+            }
+
+            inline fn void Horizontal(
+                borrow mut Ui ui,
+                inline closure<fn void(borrow mut Ui)> body) {
+                body(ui);
+                return;
+            }
+
+            fn void WithPanel(
+                borrow mut Ui ui,
+                borrow closure<fn void(borrow mut Ui)> body) {
+                body(ui);
+                return;
+            }
+
+            fn void PushEvent(
+                mut borrow closure<mut fn void(i32[min max])> sink,
+                i32[min max] value) {
+                sink(value);
+                return;
+            }
+
+            fn heap closure<fn i32[min max](i32[min max])> MakeAdder(i32[min max] offset) {
+                return heap capture(copy offset) (i32[min max] value) => value + offset;
+            }
+
+            fn Packet BuildWith(inline closure<once fn Packet()> producer) {
+                return producer();
+            }
+
+            fn void RegisterOverlap(
+                borrow closure<fn void(borrow mut Ui, borrow mut Ui) where overlap(arg0, arg1)> body);
+            """
+        },
+        {
             "constant interpolated text literal",
             """
             module Demo

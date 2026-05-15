@@ -30,5 +30,5 @@ Status: manual/networked example.
 
 ## Related
 
-- [Threading and TCP](/book/23-threading-tcp/)
+- [Threading and TCP](/book/24-threading-tcp/)
 - [`System.Net.Tcp`](/reference/standard-library/System.Net.Tcp/)

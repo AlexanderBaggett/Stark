@@ -2507,6 +2507,34 @@ public static class DefaultCompilerPipeline
                 refined[lambda.FunctionName] = lambdaEffects;
             }
 
+            foreach (var lambda in typeModel.ClosureLambdas)
+            {
+                var lambdaEffects = CallableValueFacts.BuildClosureLambdaEffectProfile(lambda);
+                if (validationModel.Functions.TryGetValue(lambda.FunctionName, out var lambdaSummary))
+                {
+                    var effectiveKind = lambdaSummary.EffectiveKind;
+                    var isLaw = FunctionKindFacts.IsLaw(effectiveKind);
+                    var isFinite = FunctionKindFacts.IsFinite(effectiveKind);
+                    lambdaEffects = lambdaEffects with
+                    {
+                        Kind = effectiveKind,
+                        ReadsArgumentMemory = lambdaSummary.MemoryEffects?.ReadsArgumentMemory ?? lambdaEffects.ReadsArgumentMemory,
+                        IsPure = isLaw,
+                        NoSync = isLaw,
+                        NoFree = isLaw,
+                        WillReturn = isFinite,
+                        MustProgress = isFinite
+                    };
+                }
+
+                refined[lambda.FunctionName] = lambdaEffects;
+            }
+
+            foreach (var adapter in typeModel.ClosureFunctionPromotions)
+            {
+                refined[adapter.AdapterFunctionName] = CallableValueFacts.BuildClosureFunctionAdapterEffectProfile(adapter);
+            }
+
             var refinedModel = new FunctionEffectModel(effectModel.ModuleName, refined);
             context.Artifacts.Set(CompilerArtifactKeys.FunctionEffects, refinedModel);
             context.Artifacts.Set(
@@ -3313,6 +3341,49 @@ public static class DefaultCompilerPipeline
                         Effects: profile);
                 })
                 .ToArray();
+            var closureLambdaFunctions = types.ClosureLambdas
+                .Select(lambda =>
+                {
+                    var signature = types.Functions.TryGetValue(lambda.FunctionName, out var typedSignature)
+                        ? typedSignature
+                        : CallableValueFacts.BuildClosureLambdaSignature(lambda);
+                    var profile = effects.Functions.TryGetValue(lambda.FunctionName, out var lambdaEffects)
+                        ? lambdaEffects
+                        : CallableValueFacts.BuildClosureLambdaEffectProfile(lambda);
+
+                    return new HighLevelIrFunction(
+                        lambda.FunctionName,
+                        signature,
+                        HasBody: true,
+                        BodyLoweringKind: FunctionBodyLoweringKind.StarkCfg,
+                        Effects: profile);
+                })
+                .ToArray();
+            var closureFunctionAdapterFunctions = types.ClosureFunctionPromotions
+                .Select(adapter =>
+                {
+                    var signature = types.Functions.TryGetValue(adapter.AdapterFunctionName, out var typedSignature)
+                        ? typedSignature
+                        : CallableValueFacts.BuildClosureFunctionAdapterSignature(adapter);
+                    var sourceProfile = effects.Functions.TryGetValue(adapter.Signature.Name, out var resolvedSourceProfile)
+                        ? resolvedSourceProfile
+                        : CallableValueFacts.BuildClosureFunctionAdapterEffectProfile(adapter);
+                    var profile = sourceProfile with
+                    {
+                        Name = adapter.AdapterFunctionName,
+                        UseFastCallingConvention = true,
+                        InlinePreference = InlinePreference.Inline
+                    };
+
+                    return new HighLevelIrFunction(
+                        adapter.AdapterFunctionName,
+                        signature,
+                        HasBody: true,
+                        BodyLoweringKind: FunctionBodyLoweringKind.StarkCfg,
+                        Effects: profile);
+                })
+                .ToArray();
+            var closureDropFunctions = BuildClosureDropFunctions(types);
             var declarationsByQualifiedName = CollectFunctionDeclarationsByQualifiedName(loadedModules);
             var specializedFunctions = MaterializeSpecializedFunctions(
                 specializationStrategy,
@@ -3322,6 +3393,9 @@ public static class DefaultCompilerPipeline
                 fallbackSignatures);
             var functions = declaredFunctions
                 .Concat(lambdaFunctions)
+                .Concat(closureLambdaFunctions)
+                .Concat(closureFunctionAdapterFunctions)
+                .Concat(closureDropFunctions)
                 .Concat(specializedFunctions)
                 .ToArray();
 
@@ -3333,9 +3407,59 @@ public static class DefaultCompilerPipeline
                     types.AddressTakenFunctions
                         .Select(static function => function.Signature.Name)
                         .Concat(types.Lambdas.Select(static lambda => lambda.FunctionName))
+                        .Concat(types.ClosureLambdas.Select(static lambda => lambda.FunctionName))
+                        .Concat(types.ClosureFunctionPromotions.Select(static adapter => adapter.AdapterFunctionName))
+                        .Concat(closureDropFunctions.Select(static function => function.Name))
                         .Distinct(StringComparer.Ordinal)
                         .OrderBy(static name => name, StringComparer.Ordinal)
                         .ToArray()));
+        }
+
+        private static IReadOnlyList<HighLevelIrFunction> BuildClosureDropFunctions(TypeCheckModel types)
+        {
+            var functions = new List<HighLevelIrFunction>();
+            var needsEmptyDrop = false;
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var lambda in types.ClosureLambdas)
+            {
+                if (lambda.ClosureType.ClosureStorageKind != StarkClosureStorageKind.Heap)
+                {
+                    continue;
+                }
+
+                if (!lambda.HasCaptures)
+                {
+                    needsEmptyDrop = true;
+                    continue;
+                }
+
+                var functionName = CallableValueFacts.BuildClosureDropFunctionName(lambda.FunctionName);
+                if (!seen.Add(functionName))
+                {
+                    continue;
+                }
+
+                functions.Add(new HighLevelIrFunction(
+                    functionName,
+                    CallableValueFacts.BuildClosureDropSignature(functionName),
+                    HasBody: true,
+                    BodyLoweringKind: FunctionBodyLoweringKind.StarkCfg,
+                    Effects: CallableValueFacts.BuildClosureDropEffectProfile(functionName)));
+            }
+
+            if (needsEmptyDrop)
+            {
+                var functionName = CallableValueFacts.EmptyClosureDropFunctionName;
+                functions.Add(new HighLevelIrFunction(
+                    functionName,
+                    CallableValueFacts.BuildClosureDropSignature(functionName),
+                    HasBody: true,
+                    BodyLoweringKind: FunctionBodyLoweringKind.StarkCfg,
+                    Effects: CallableValueFacts.BuildClosureDropEffectProfile(functionName)));
+            }
+
+            return functions;
         }
 
         private static IReadOnlyDictionary<string, FunctionDeclarationModel> CollectFunctionDeclarationsByQualifiedName(
@@ -3682,7 +3806,7 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["devirt-ssa", "refine-function-effects", "syntax-model", "declaration-index", "monomorphization-plan", "specialization-codegen-strategy"];
+        public IReadOnlyList<string> Dependencies => ["devirt-ssa", "refine-function-effects", "syntax-model", "declaration-index", "type-check", "monomorphization-plan", "specialization-codegen-strategy"];
 
         public void Execute(CompilerPassContext context)
         {
@@ -3694,6 +3818,7 @@ public static class DefaultCompilerPipeline
             }
 
             var effectModel = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
+            var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
             var monomorphization = context.Artifacts.GetRequired(CompilerArtifactKeys.MonomorphizationPlan);
             var specializationCodegenStrategy = context.Artifacts.GetRequired(CompilerArtifactKeys.SpecializationCodegenStrategy);
             var syntaxModel = context.Artifacts.GetRequired(CompilerArtifactKeys.SyntaxModel);
@@ -3708,19 +3833,317 @@ public static class DefaultCompilerPipeline
                 modulePrivateFunctionNames.Add(functionName);
             }
 
+            foreach (var functionName in typeModel.ClosureLambdas
+                         .Where(static lambda => lambda.ClosureType.ClosureStorageKind == StarkClosureStorageKind.Inline)
+                         .Select(static lambda => lambda.FunctionName))
+            {
+                modulePrivateFunctionNames.Add(functionName);
+            }
+
             var declaredLawFunctionNames = declarationIndex.OrderedDeclarations
                 .Where(static declaration => declaration.Function is not null
                                              && FunctionKindFacts.IsLaw(declaration.Function.Kind))
                 .Select(declaration => FunctionOverloadFacts.GetResolvedLocalName(syntaxModel, declaration))
                 .ToHashSet(StringComparer.Ordinal);
             var inlinerEffectModel = BuildInlinerEffectModel(effectModel, specializationCodegenStrategy);
-            var inlined = new SsaDirectCallInliner(
+            var inliner = new SsaDirectCallInliner(
                 inlinerEffectModel,
                 modulePrivateFunctionNames,
-                declaredLawFunctionNames).Optimize(ssa);
-            var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(inlined);
-            var optimized = new SsaConstantPropagator().Optimize(cleaned);
+                declaredLawFunctionNames);
+            var cleanup = new SsaCleanupOptimizer(enableSelectPredication: false);
+            var constants = new SsaConstantPropagator();
+
+            var optimized = ssa;
+            for (var round = 0; round < 3; round++)
+            {
+                optimized = inliner.Optimize(optimized);
+                optimized = cleanup.Optimize(optimized);
+                optimized = constants.Optimize(optimized);
+                optimized = new SsaDirectCallDevirtualizer().Optimize(optimized);
+            }
+
+            optimized = cleanup.Optimize(optimized);
+            optimized = constants.Optimize(optimized);
+            optimized = PruneUnreferencedInlineClosureLambdas(optimized, typeModel);
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, optimized);
+        }
+
+        private static SsaIrModule PruneUnreferencedInlineClosureLambdas(
+            SsaIrModule module,
+            TypeCheckModel typeModel)
+        {
+            var inlineClosureLambdaNames = typeModel.ClosureLambdas
+                .Where(static lambda => lambda.ClosureType.ClosureStorageKind == StarkClosureStorageKind.Inline)
+                .Select(static lambda => lambda.FunctionName)
+                .ToHashSet(StringComparer.Ordinal);
+            var prunableSyntheticNames = inlineClosureLambdaNames
+                .Concat(typeModel.ClosureFunctionPromotions.Select(static adapter => adapter.AdapterFunctionName))
+                .ToHashSet(StringComparer.Ordinal);
+            if (prunableSyntheticNames.Count == 0)
+            {
+                return module;
+            }
+
+            var referencedFunctions = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var function in module.Functions)
+            {
+                if (!prunableSyntheticNames.Contains(function.Name))
+                {
+                    CollectReferencedFunctions(function, referencedFunctions);
+                }
+            }
+
+            var functionsByName = module.Functions.ToDictionary(static function => function.Name, StringComparer.Ordinal);
+            var pending = new Stack<string>(referencedFunctions.Where(prunableSyntheticNames.Contains));
+            while (pending.Count != 0)
+            {
+                var functionName = pending.Pop();
+                if (!functionsByName.TryGetValue(functionName, out var function))
+                {
+                    continue;
+                }
+
+                var nestedReferences = new HashSet<string>(StringComparer.Ordinal);
+                CollectReferencedFunctions(function, nestedReferences);
+                foreach (var nestedReference in nestedReferences)
+                {
+                    if (prunableSyntheticNames.Contains(nestedReference)
+                        && referencedFunctions.Add(nestedReference))
+                    {
+                        pending.Push(nestedReference);
+                    }
+                }
+            }
+
+            var prunedFunctions = module.Functions
+                .Where(function => !prunableSyntheticNames.Contains(function.Name)
+                                   || referencedFunctions.Contains(function.Name))
+                .ToArray();
+            if (prunedFunctions.Length == module.Functions.Count)
+            {
+                return module;
+            }
+
+            var prunedAddressTakenFunctions = module.AddressTakenFunctions
+                .Where(functionName => !prunableSyntheticNames.Contains(functionName)
+                                       || referencedFunctions.Contains(functionName))
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(static functionName => functionName, StringComparer.Ordinal)
+                .ToArray();
+            return new SsaIrModule(
+                module.ModuleName,
+                prunedFunctions,
+                prunedAddressTakenFunctions);
+        }
+
+        private static void CollectReferencedFunctions(
+            SsaFunction function,
+            ISet<string> referencedFunctions)
+        {
+            foreach (var block in function.Blocks)
+            {
+                foreach (var phi in block.Phis)
+                {
+                    foreach (var incoming in phi.Incomings)
+                    {
+                        CollectReferencedFunctions(incoming.Value, referencedFunctions);
+                    }
+                }
+
+                foreach (var instruction in block.Instructions)
+                {
+                    CollectReferencedFunctions(instruction, referencedFunctions);
+                }
+
+                CollectReferencedFunctions(block.Terminator, referencedFunctions);
+            }
+        }
+
+        private static void CollectReferencedFunctions(
+            SsaInstruction instruction,
+            ISet<string> referencedFunctions)
+        {
+            switch (instruction)
+            {
+                case SsaValueInstruction valueInstruction:
+                    CollectReferencedFunctions(valueInstruction.Value, referencedFunctions);
+                    break;
+                case SsaStoreLocalInstruction storeLocal:
+                    CollectReferencedFunctions(storeLocal.Value, referencedFunctions);
+                    break;
+                case SsaCopyMemoryInstruction copyMemory:
+                    CollectReferencedFunctions(copyMemory.DestinationAddress, referencedFunctions);
+                    CollectReferencedFunctions(copyMemory.SourceAddress, referencedFunctions);
+                    break;
+                case SsaStoreIndirectInstruction storeIndirect:
+                    CollectReferencedFunctions(storeIndirect.Address, referencedFunctions);
+                    CollectReferencedFunctions(storeIndirect.Value, referencedFunctions);
+                    break;
+                case SsaStoreGlobalInstruction storeGlobal:
+                    CollectReferencedFunctions(storeGlobal.Value, referencedFunctions);
+                    break;
+            }
+        }
+
+        private static void CollectReferencedFunctions(
+            SsaRValue value,
+            ISet<string> referencedFunctions)
+        {
+            switch (value)
+            {
+                case SsaUseRValue use:
+                    CollectReferencedFunctions(use.Value, referencedFunctions);
+                    break;
+                case SsaUnaryRValue unary:
+                    CollectReferencedFunctions(unary.Operand, referencedFunctions);
+                    break;
+                case SsaBinaryRValue binary:
+                    CollectReferencedFunctions(binary.Left, referencedFunctions);
+                    CollectReferencedFunctions(binary.Right, referencedFunctions);
+                    break;
+                case SsaSelectRValue select:
+                    CollectReferencedFunctions(select.Condition, referencedFunctions);
+                    CollectReferencedFunctions(select.WhenTrue, referencedFunctions);
+                    CollectReferencedFunctions(select.WhenFalse, referencedFunctions);
+                    break;
+                case SsaCallRValue call:
+                    referencedFunctions.Add(call.FunctionName);
+                    foreach (var argument in call.Arguments)
+                    {
+                        CollectReferencedFunctions(argument, referencedFunctions);
+                    }
+
+                    foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+                    {
+                        CollectReferencedFunctions(address, referencedFunctions);
+                    }
+
+                    break;
+                case SsaIndirectCallRValue indirectCall:
+                    CollectReferencedFunctions(indirectCall.Target, referencedFunctions);
+                    foreach (var argument in indirectCall.Arguments)
+                    {
+                        CollectReferencedFunctions(argument, referencedFunctions);
+                    }
+
+                    foreach (var address in indirectCall.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+                    {
+                        CollectReferencedFunctions(address, referencedFunctions);
+                    }
+
+                    break;
+                case SsaConvertRValue convert:
+                    CollectReferencedFunctions(convert.Operand, referencedFunctions);
+                    break;
+                case SsaExtractFieldRValue extractField:
+                    CollectReferencedFunctions(extractField.Target, referencedFunctions);
+                    break;
+                case SsaInsertFieldRValue insertField:
+                    CollectReferencedFunctions(insertField.Target, referencedFunctions);
+                    CollectReferencedFunctions(insertField.Value, referencedFunctions);
+                    break;
+                case SsaExtractIndexRValue extractIndex:
+                    CollectReferencedFunctions(extractIndex.Target, referencedFunctions);
+                    break;
+                case SsaInsertIndexRValue insertIndex:
+                    CollectReferencedFunctions(insertIndex.Target, referencedFunctions);
+                    CollectReferencedFunctions(insertIndex.Value, referencedFunctions);
+                    break;
+                case SsaMakeSliceFromPointerRValue makeSlice:
+                    CollectReferencedFunctions(makeSlice.Pointer, referencedFunctions);
+                    CollectReferencedFunctions(makeSlice.Length, referencedFunctions);
+                    break;
+                case SsaDynamicStorageAllocationRValue allocation:
+                    CollectReferencedFunctions(allocation.Capacity, referencedFunctions);
+                    break;
+                case SsaDynamicStorageFreeRValue free:
+                    CollectReferencedFunctions(free.Storage, referencedFunctions);
+                    break;
+                case SsaHeapStorageFreeRValue free:
+                    CollectReferencedFunctions(free.Pointer, referencedFunctions);
+                    break;
+                case SsaDynamicStorageReserveRValue reserve:
+                    CollectReferencedFunctions(reserve.StorageAddress, referencedFunctions);
+                    CollectReferencedFunctions(reserve.AdditionalCapacity, referencedFunctions);
+                    break;
+                case SsaDynamicStorageTryReserveRValue reserve:
+                    CollectReferencedFunctions(reserve.StorageAddress, referencedFunctions);
+                    CollectReferencedFunctions(reserve.AdditionalCapacity, referencedFunctions);
+                    break;
+                case SsaDynamicStorageTryReserveCapacityRValue reserve:
+                    CollectReferencedFunctions(reserve.StorageAddress, referencedFunctions);
+                    CollectReferencedFunctions(reserve.TargetCapacity, referencedFunctions);
+                    break;
+                case SsaDynamicStorageMoveLastRValue moveLast:
+                    CollectReferencedFunctions(moveLast.StorageAddress, referencedFunctions);
+                    break;
+                case SsaDynamicStorageMoveAtRValue moveAt:
+                    CollectReferencedFunctions(moveAt.StorageAddress, referencedFunctions);
+                    CollectReferencedFunctions(moveAt.Index, referencedFunctions);
+                    break;
+                case SsaLoadSliceElementRValue loadSlice:
+                    CollectReferencedFunctions(loadSlice.Slice, referencedFunctions);
+                    CollectReferencedFunctions(loadSlice.Index, referencedFunctions);
+                    break;
+                case SsaTextSliceRValue textSlice:
+                    CollectReferencedFunctions(textSlice.TextValue, referencedFunctions);
+                    CollectReferencedFunctions(textSlice.Start, referencedFunctions);
+                    CollectReferencedFunctions(textSlice.Length, referencedFunctions);
+                    break;
+                case SsaFieldAddressRValue fieldAddress:
+                    CollectReferencedFunctions(fieldAddress.Address, referencedFunctions);
+                    break;
+                case SsaElementAddressRValue elementAddress:
+                    CollectReferencedFunctions(elementAddress.Address, referencedFunctions);
+                    if (elementAddress.Index is not null)
+                    {
+                        CollectReferencedFunctions(elementAddress.Index, referencedFunctions);
+                    }
+
+                    break;
+                case SsaSliceElementAddressRValue sliceElementAddress:
+                    CollectReferencedFunctions(sliceElementAddress.Slice, referencedFunctions);
+                    CollectReferencedFunctions(sliceElementAddress.Index, referencedFunctions);
+                    break;
+                case SsaLoadIndirectRValue loadIndirect:
+                    CollectReferencedFunctions(loadIndirect.Address, referencedFunctions);
+                    break;
+            }
+        }
+
+        private static void CollectReferencedFunctions(
+            SsaTerminator terminator,
+            ISet<string> referencedFunctions)
+        {
+            if (terminator.Value is not null)
+            {
+                CollectReferencedFunctions(terminator.Value, referencedFunctions);
+            }
+
+            if (terminator.Condition is not null)
+            {
+                CollectReferencedFunctions(terminator.Condition, referencedFunctions);
+            }
+
+            foreach (var switchCase in terminator.SwitchCases ?? [])
+            {
+                CollectReferencedFunctions(switchCase.MatchValue, referencedFunctions);
+            }
+        }
+
+        private static void CollectReferencedFunctions(
+            SsaValue value,
+            ISet<string> referencedFunctions)
+        {
+            switch (value)
+            {
+                case SsaFunctionAddressValue functionAddress:
+                    referencedFunctions.Add(functionAddress.FunctionName);
+                    break;
+                case SsaClosureValue closure:
+                    referencedFunctions.Add(closure.InvokeFunctionName);
+                    break;
+            }
         }
 
         private static FunctionEffectModel BuildInlinerEffectModel(

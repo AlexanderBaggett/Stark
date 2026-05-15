@@ -59,6 +59,11 @@ internal sealed partial class MidLevelIrLowerer
                 return true;
             }
 
+            if (TryResolveClosureCaptureAssignmentTarget(postfixExpression, out target))
+            {
+                return true;
+            }
+
             if (!TryInitializePostfixState(postfixExpression.primaryExpression(), out var root, out var currentName))
             {
                 return false;
@@ -267,6 +272,33 @@ internal sealed partial class MidLevelIrLowerer
                 path,
                 usesAddressModel,
                 GetAddressMutability(root));
+            return true;
+        }
+
+        private bool TryResolveClosureCaptureAssignmentTarget(
+            StarkParser.PostfixExpressionContext postfixExpression,
+            out PlaceTarget target)
+        {
+            target = default!;
+            if (postfixExpression.primaryExpression().Identifier()?.GetText() is not { } captureName
+                || !TryCreateClosureCapturePlaceTarget(captureName, out var captureTarget))
+            {
+                return false;
+            }
+
+            var path = captureTarget.Path.ToList();
+            var currentType = captureTarget.Type;
+            if (!TryAppendPostfixPlacePath(postfixExpression, startIndex: 0, path, ref currentType))
+            {
+                return false;
+            }
+
+            target = captureTarget with
+            {
+                Type = currentType,
+                Path = path,
+                UsesAddressModel = true
+            };
             return true;
         }
 
@@ -973,10 +1005,16 @@ internal sealed partial class MidLevelIrLowerer
                         $"Address-model place '{DescribePlaceTarget(target)}' could not resolve an address.");
                 }
 
-                return EmitTemporary(
-                           new MidLevelIrLoadIndirectRValue(address, target.Type, $"{target.RootName}:load"),
-                           "load")
-                       ?? address;
+                var loaded = EmitTemporary(
+                    new MidLevelIrLoadIndirectRValue(address, target.Type, $"{target.RootName}:load"),
+                    "load");
+                if (loaded is MidLevelIrLocalOperand local
+                    && target.ClosureCaptureName is { Length: > 0 } captureName)
+                {
+                    _closureCaptureMoveSourcesByTempName[local.Name] = captureName;
+                }
+
+                return loaded ?? address;
             }
 
             if (target.RootName is null)

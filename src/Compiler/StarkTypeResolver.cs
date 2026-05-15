@@ -280,6 +280,11 @@ internal sealed class StarkTypeResolver
             return ResolveFunctionPointerType(functionPointerType, genericParameters, currentModuleName);
         }
 
+        if (type.closureType() is { } closureType)
+        {
+            return ResolveClosureType(closureType, genericParameters, currentModuleName);
+        }
+
         if (type.integerType() is { } integerType)
         {
             return ResolveIntegerType(integerType);
@@ -357,7 +362,7 @@ internal sealed class StarkTypeResolver
                 parameterType,
                 RawPointerElementCountExpression: rawPointerElementCountExpressions[index]))
             .ToArray();
-        ValidateFunctionPointerBoundedRawPointerParameterCounts(parameterTypeSyntaxes, parameters);
+        ValidateFunctionPointerBoundedRawPointerParameterCounts("function-pointer", parameterTypeSyntaxes, parameters);
         ValidateUnsupportedFunctionPointerDisjointClauses(signature);
         ValidateFunctionPointerRelationConflicts(signature);
         var overlapGroups = CreateFunctionPointerOverlapGroups(signature, parameters);
@@ -378,7 +383,60 @@ internal sealed class StarkTypeResolver
             rawPointerElementCountExpressions);
     }
 
+    private StarkTypeSymbol ResolveClosureType(
+        StarkParser.ClosureTypeContext type,
+        ISet<string>? genericParameters,
+        string? currentModuleName)
+    {
+        var signature = type.closureSignature();
+        var returnType = ResolveReturnType(signature.returnType(), genericParameters, currentModuleName);
+        var parameterTypeSyntaxes = signature.functionPointerParameterList().type_();
+        var parameterTypes = new List<StarkTypeSymbol>(parameterTypeSyntaxes.Length);
+        var rawPointerElementCountExpressions = new List<string?>(parameterTypeSyntaxes.Length);
+        foreach (var parameterTypeSyntax in parameterTypeSyntaxes)
+        {
+            parameterTypes.Add(ResolveParameterType(
+                parameterTypeSyntax,
+                genericParameters,
+                currentModuleName,
+                out var rawPointerElementCountExpression));
+            rawPointerElementCountExpressions.Add(rawPointerElementCountExpression);
+        }
+
+        var parameters = parameterTypes
+            .Select((parameterType, index) => new TypedParameterSymbol(
+                $"arg{index}",
+                parameterType,
+                RawPointerElementCountExpression: rawPointerElementCountExpressions[index]))
+            .ToArray();
+        ValidateFunctionPointerBoundedRawPointerParameterCounts("closure", parameterTypeSyntaxes, parameters);
+        ValidateUnsupportedClosureDisjointClauses(signature);
+        ValidateClosureRelationConflicts(signature);
+        var overlapGroups = CreateClosureOverlapGroups(signature, parameters);
+        var sameGroups = CreateClosureSameGroups(signature, parameters);
+        var disjointGroups = ParameterMemoryContractFacts.BuildEffectiveDisjointGroups(
+            parameters,
+            explicitDisjointGroups: [],
+            overlapGroups,
+            sameGroups,
+            applyDefaultNonOverlap: true);
+        var functionKind = ParseFunctionKind(signature.functionKind());
+        var callCapability = ParseClosureCallCapability(signature.closureCallCapability());
+        ValidateClosureCallCapability(callCapability, functionKind, signature);
+        return StarkTypeSymbols.Closure(
+            ParseClosureStorageKind(type.closureStoragePrefix()),
+            callCapability,
+            functionKind,
+            returnType,
+            parameterTypes,
+            disjointGroups,
+            overlapGroups,
+            sameGroups,
+            rawPointerElementCountExpressions);
+    }
+
     private void ValidateFunctionPointerBoundedRawPointerParameterCounts(
+        string callableKind,
         IReadOnlyList<StarkParser.Type_Context> parameterTypeSyntaxes,
         IReadOnlyList<TypedParameterSymbol> parameters)
     {
@@ -392,11 +450,12 @@ internal sealed class StarkTypeResolver
                 continue;
             }
 
-            ValidateFunctionPointerBoundedRawPointerCountExpression(parameter.Name, countExpression, parameterSymbols);
+            ValidateFunctionPointerBoundedRawPointerCountExpression(callableKind, parameter.Name, countExpression, parameterSymbols);
         }
     }
 
     private bool ValidateFunctionPointerBoundedRawPointerCountExpression(
+        string callableKind,
         string parameterName,
         StarkParser.ExpressionContext expression,
         IReadOnlyDictionary<string, TypedParameterSymbol> parameterSymbols)
@@ -407,7 +466,7 @@ internal sealed class StarkTypeResolver
             {
                 ReportError(
                     "STK3014",
-                    $"Bounded raw pointer function-pointer parameter '{parameterName}' references unknown count parameter '{boundName}'.",
+                    $"Bounded raw pointer {callableKind} parameter '{parameterName}' references unknown count parameter '{boundName}'.",
                     expression);
                 return false;
             }
@@ -416,7 +475,7 @@ internal sealed class StarkTypeResolver
             {
                 ReportError(
                     "STK3014",
-                    $"Bounded raw pointer function-pointer parameter '{parameterName}' count '{boundName}' must be an integer parameter, but found '{boundParameter.Type.DisplayName}'.",
+                    $"Bounded raw pointer {callableKind} parameter '{parameterName}' count '{boundName}' must be an integer parameter, but found '{boundParameter.Type.DisplayName}'.",
                     expression);
                 return false;
             }
@@ -425,7 +484,7 @@ internal sealed class StarkTypeResolver
             {
                 ReportError(
                     "STK3014",
-                    $"Bounded raw pointer function-pointer parameter '{parameterName}' count '{boundName}' must be provably non-negative.",
+                    $"Bounded raw pointer {callableKind} parameter '{parameterName}' count '{boundName}' must be provably non-negative.",
                     expression);
                 return false;
             }
@@ -442,14 +501,14 @@ internal sealed class StarkTypeResolver
 
             ReportError(
                 "STK3014",
-                $"Bounded raw pointer function-pointer parameter '{parameterName}' count '{expression.GetText()}' must be non-negative.",
+                $"Bounded raw pointer {callableKind} parameter '{parameterName}' count '{expression.GetText()}' must be non-negative.",
                 expression);
             return false;
         }
 
         ReportError(
             "STK3014",
-            $"Bounded raw pointer function-pointer parameter '{parameterName}' count must be a non-negative integer parameter of the form 'arg0', 'arg1', and so on, or a compile-time integer constant.",
+            $"Bounded raw pointer {callableKind} parameter '{parameterName}' count must be a non-negative integer parameter of the form 'arg0', 'arg1', and so on, or a compile-time integer constant.",
             expression);
         return false;
     }
@@ -494,6 +553,106 @@ internal sealed class StarkTypeResolver
                 static contract => contract.sameContract()?.expressionList())
             .Select(static group => new ParameterSameGroup(group))
             .ToArray();
+    }
+
+    private IReadOnlyList<ParameterOverlapGroup> CreateClosureOverlapGroups(
+        StarkParser.ClosureSignatureContext signature,
+        IReadOnlyList<TypedParameterSymbol> parameters)
+    {
+        return CreateClosureRelationGroups(
+                signature,
+                parameters,
+                relationName: "overlap",
+                static contract => contract.overlapContract()?.expressionList())
+            .Select(static group => new ParameterOverlapGroup(group))
+            .ToArray();
+    }
+
+    private IReadOnlyList<ParameterSameGroup> CreateClosureSameGroups(
+        StarkParser.ClosureSignatureContext signature,
+        IReadOnlyList<TypedParameterSymbol> parameters)
+    {
+        return CreateClosureRelationGroups(
+                signature,
+                parameters,
+                relationName: "same",
+                static contract => contract.sameContract()?.expressionList())
+            .Select(static group => new ParameterSameGroup(group))
+            .ToArray();
+    }
+
+    private IReadOnlyList<IReadOnlyList<string>> CreateClosureRelationGroups(
+        StarkParser.ClosureSignatureContext signature,
+        IReadOnlyList<TypedParameterSymbol> parameters,
+        string relationName,
+        Func<StarkParser.ParameterMemoryContractContext, StarkParser.ExpressionListContext?> selectExpressionList)
+    {
+        var parameterByName = parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        var groups = new List<IReadOnlyList<string>>();
+        foreach (var clause in signature.parameterMemoryContractClause())
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                var expressionList = selectExpressionList(contract);
+                if (expressionList is null)
+                {
+                    continue;
+                }
+
+                var names = new List<string>();
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var expression in expressionList.expression())
+                {
+                    if (!TryGetFunctionPointerContractParameterName(expression, out var name))
+                    {
+                        ReportError(
+                            "STK3029",
+                            $"Closure '{relationName}' contracts must use synthetic parameter names of the form 'arg0', 'arg1', and so on.",
+                            expression);
+                        continue;
+                    }
+
+                    if (!parameterByName.TryGetValue(name, out var parameter))
+                    {
+                        ReportError(
+                            "STK3029",
+                            $"Closure '{relationName}' contract references unknown parameter '{name}'.",
+                            expression);
+                    }
+                    else if (!ParameterMemoryContractFacts.IsMemoryBacked(parameter.Type))
+                    {
+                        ReportError(
+                            "STK3029",
+                            $"Closure '{relationName}' contract references parameter '{name}' with non-memory-backed type '{parameter.Type.DisplayName}'. Memory contracts require memory-backed parameters such as slices, text views, borrows, initialization views, or raw pointers.",
+                            expression);
+                    }
+                    else if (!seen.Add(name))
+                    {
+                        ReportError(
+                            "STK3029",
+                            $"Closure '{relationName}' contract repeats parameter '{name}'.",
+                            expression);
+                    }
+                    else
+                    {
+                        names.Add(name);
+                    }
+                }
+
+                if (names.Count < 2)
+                {
+                    ReportError(
+                        "STK3029",
+                        $"Closure 'where {relationName}(...)' contracts require at least two parameter operands.",
+                        contract);
+                    continue;
+                }
+
+                groups.Add(names.ToArray());
+            }
+        }
+
+        return groups;
     }
 
     private IReadOnlyList<IReadOnlyList<string>> CreateFunctionPointerRelationGroups(
@@ -589,6 +748,25 @@ internal sealed class StarkTypeResolver
         }
     }
 
+    private void ValidateUnsupportedClosureDisjointClauses(StarkParser.ClosureSignatureContext signature)
+    {
+        foreach (var clause in signature.parameterMemoryContractClause())
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                if (contract.disjointContract() is null)
+                {
+                    continue;
+                }
+
+                ReportError(
+                    "STK3029",
+                    "Closure whole-parameter 'where disjoint(...)' is redundant because memory-backed closure parameters are non-overlapping by default. Use 'where overlap(...)' for intentional overlap or 'where same(...)' for identical storage.",
+                    contract);
+            }
+        }
+    }
+
     private void ValidateFunctionPointerRelationConflicts(StarkParser.FunctionPointerSignatureContext signature)
     {
         var overlapPairs = CollectFunctionPointerRelationPairs(signature, static contract => contract.overlapContract()?.expressionList());
@@ -607,8 +785,59 @@ internal sealed class StarkTypeResolver
         }
     }
 
+    private void ValidateClosureRelationConflicts(StarkParser.ClosureSignatureContext signature)
+    {
+        var overlapPairs = CollectClosureRelationPairs(signature, static contract => contract.overlapContract()?.expressionList());
+        var samePairs = CollectClosureRelationPairs(signature, static contract => contract.sameContract()?.expressionList());
+        foreach (var pair in overlapPairs)
+        {
+            if (!samePairs.Contains(pair))
+            {
+                continue;
+            }
+
+            ReportError(
+                "STK3029",
+                $"Closure memory contract for parameters '{pair.Replace("|", "' and '", StringComparison.Ordinal)}' cannot be both overlap and same-memory. Use 'same' when identical storage is required.",
+                signature);
+        }
+    }
+
     private static HashSet<string> CollectFunctionPointerRelationPairs(
         StarkParser.FunctionPointerSignatureContext signature,
+        Func<StarkParser.ParameterMemoryContractContext, StarkParser.ExpressionListContext?> selectExpressionList)
+    {
+        var pairs = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var clause in signature.parameterMemoryContractClause())
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                var names = selectExpressionList(contract)?.expression()
+                    .Select(static expression => TryGetFunctionPointerContractParameterName(expression, out var name) ? name : null)
+                    .Where(static name => !string.IsNullOrWhiteSpace(name))
+                    .Select(static name => name!)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                if (names is null)
+                {
+                    continue;
+                }
+
+                for (var leftIndex = 0; leftIndex < names.Length; leftIndex++)
+                {
+                    for (var rightIndex = leftIndex + 1; rightIndex < names.Length; rightIndex++)
+                    {
+                        pairs.Add(BuildNamePairKey(names[leftIndex], names[rightIndex]));
+                    }
+                }
+            }
+        }
+
+        return pairs;
+    }
+
+    private static HashSet<string> CollectClosureRelationPairs(
+        StarkParser.ClosureSignatureContext signature,
         Func<StarkParser.ParameterMemoryContractContext, StarkParser.ExpressionListContext?> selectExpressionList)
     {
         var pairs = new HashSet<string>(StringComparer.Ordinal);
@@ -688,6 +917,43 @@ internal sealed class StarkTypeResolver
             "finitelaw" => StarkFunctionKind.FiniteLaw,
             _ => StarkFunctionKind.Fn
         };
+    }
+
+    private static StarkClosureStorageKind ParseClosureStorageKind(StarkParser.ClosureStoragePrefixContext? storagePrefix)
+    {
+        return storagePrefix?.GetText() switch
+        {
+            "inline" => StarkClosureStorageKind.Inline,
+            "heap" => StarkClosureStorageKind.Heap,
+            _ => StarkClosureStorageKind.Unspecified
+        };
+    }
+
+    private static StarkClosureCallCapability ParseClosureCallCapability(StarkParser.ClosureCallCapabilityContext? callCapability)
+    {
+        return callCapability?.GetText() switch
+        {
+            "mut" => StarkClosureCallCapability.Mut,
+            "once" => StarkClosureCallCapability.Once,
+            _ => StarkClosureCallCapability.None
+        };
+    }
+
+    private void ValidateClosureCallCapability(
+        StarkClosureCallCapability callCapability,
+        StarkFunctionKind functionKind,
+        StarkParser.ClosureSignatureContext signature)
+    {
+        if (callCapability is StarkClosureCallCapability.None
+            || !FunctionKindFacts.IsLaw(functionKind))
+        {
+            return;
+        }
+
+        ReportError(
+            "STK3014",
+            "Law and finite law closure signatures cannot use 'mut' or 'once' call capability because law closures must not hide environment mutation or consumption.",
+            signature.closureCallCapability() ?? (ParserRuleContext)signature);
     }
 
     public StarkTypeSymbol ResolveSimpleType(StarkParser.SimpleTypeContext simpleType, ISet<string>? genericParameters = null, string? currentModuleName = null)
@@ -1506,6 +1772,22 @@ internal sealed class StarkTypeResolver
                 coreType.FunctionPointerOverlapParameterGroups,
                 coreType.FunctionPointerSameParameterGroups,
                 coreType.FunctionPointerParameterRawPointerElementCountExpressions);
+        }
+        else if (coreType.Kind == StarkTypeKind.Closure
+            && coreType.ClosureFunctionKind is { } closureFunctionKind
+            && coreType.ClosureReturnType is { } closureReturnType
+            && coreType.ClosureParameterTypes is { } closureParameterTypes)
+        {
+            substitutedCore = StarkTypeSymbols.Closure(
+                coreType.ClosureStorageKind,
+                coreType.ClosureCallCapability,
+                closureFunctionKind,
+                SubstituteType(closureReturnType, substitution),
+                closureParameterTypes.Select(parameter => SubstituteType(parameter, substitution)).ToArray(),
+                coreType.ClosureDisjointParameterGroups,
+                coreType.ClosureOverlapParameterGroups,
+                coreType.ClosureSameParameterGroups,
+                coreType.ClosureParameterRawPointerElementCountExpressions);
         }
         else
         {

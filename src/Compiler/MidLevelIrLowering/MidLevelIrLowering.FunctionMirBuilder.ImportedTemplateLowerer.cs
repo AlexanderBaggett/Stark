@@ -96,6 +96,17 @@ internal sealed partial class MidLevelIrLowerer
                 return true;
             }
 
+            if (expression.Kind == ImportedTemplateTypedBodyExpressionKind.ClosureCall)
+            {
+                if (!TryBuildImportedTypedTemplateClosureCall(expression, out var closureCall))
+                {
+                    return false;
+                }
+
+                Emit(MidLevelIrStatementKind.Evaluate, RenderImportedTypedTemplateExpressionCore(expression), value: closureCall);
+                return true;
+            }
+
             if (TryLowerImportedTypedTemplateConditionalCallStatement(expression))
             {
                 return true;
@@ -1716,7 +1727,23 @@ internal sealed partial class MidLevelIrLowerer
                     }
 
                     var result = EmitTemporary(call, "call");
-                    return result is null ? null : CoerceImportedTypedTemplateCallResult(call, result, expectedType);
+                    return result is null ? null : CoerceImportedTypedTemplateCallResult(call.SourceReturnType, result, expectedType);
+                }
+
+                case ImportedTemplateTypedBodyExpressionKind.ClosureCall:
+                {
+                    if (!TryBuildImportedTypedTemplateClosureCall(expression, out var call))
+                    {
+                        return null;
+                    }
+
+                    if (call.Type.Kind == StarkTypeKind.Void)
+                    {
+                        return null;
+                    }
+
+                    var result = EmitTemporary(call, "call");
+                    return result is null ? null : CoerceImportedTypedTemplateCallResult(call.SourceReturnType, result, expectedType);
                 }
 
                 case ImportedTemplateTypedBodyExpressionKind.IndexAccess:
@@ -1766,7 +1793,7 @@ internal sealed partial class MidLevelIrLowerer
                     }
 
                     var result = EmitTemporary(memberCall, "call");
-                    return result is null ? null : CoerceImportedTypedTemplateCallResult(memberCall, result, expectedType);
+                    return result is null ? null : CoerceImportedTypedTemplateCallResult(memberCall.SourceReturnType, result, expectedType);
                 }
 
                 default:
@@ -1775,7 +1802,7 @@ internal sealed partial class MidLevelIrLowerer
         }
 
         private MidLevelIrOperand? CoerceImportedTypedTemplateCallResult(
-            MidLevelIrCallRValue call,
+            StarkTypeSymbol? sourceReturnType,
             MidLevelIrOperand result,
             StarkTypeSymbol? expectedType)
         {
@@ -1784,10 +1811,10 @@ internal sealed partial class MidLevelIrLowerer
                 return result;
             }
 
-            if (call.SourceReturnType is { } sourceReturnType
-                && StarkTypeSymbols.IsPointerBackedBorrowReturn(sourceReturnType)
+            if (sourceReturnType is { } returnType
+                && StarkTypeSymbols.IsPointerBackedBorrowReturn(returnType)
                 && expectedType.BorrowKind != StarkBorrowKind.None
-                && TypeCompatibilityFacts.CanAssign(expectedType, sourceReturnType))
+                && TypeCompatibilityFacts.CanAssign(expectedType, returnType))
             {
                 return result;
             }
@@ -2591,6 +2618,163 @@ internal sealed partial class MidLevelIrLowerer
                 loweredExplicitArguments: loweredArguments);
         }
 
+        private bool TryBuildImportedTypedTemplateClosureCall(
+            ImportedTemplateTypedBodyExpressionSummary expression,
+            out MidLevelIrIndirectCallRValue call)
+        {
+            call = default!;
+
+            if (expression.Args.Count == 0)
+            {
+                return false;
+            }
+
+            var target = LowerImportedTypedTemplateExpressionCore(expression.Args[0], expectedType: null);
+            if (target is null)
+            {
+                return false;
+            }
+
+            if (target.Type.Kind == StarkTypeKind.FunctionPointer)
+            {
+                if (target.Type.FunctionPointerReturnType is not { } functionPointerReturnType
+                    || target.Type.FunctionPointerParameterTypes is not { } functionPointerParameterTypes
+                    || functionPointerParameterTypes.Count != expression.Args.Count - 1)
+                {
+                    return false;
+                }
+
+                var functionPointerArguments = new List<MidLevelIrOperand>(functionPointerParameterTypes.Count);
+                var functionPointerIndirectLocals = new List<string?>(functionPointerParameterTypes.Count);
+                var functionPointerIndirectAddresses = new List<MidLevelIrOperand?>(functionPointerParameterTypes.Count);
+
+                for (var index = 0; index < functionPointerParameterTypes.Count; index++)
+                {
+                    var parameterType = functionPointerParameterTypes[index];
+                    var argumentExpression = expression.Args[index + 1];
+                    var lowered = LowerImportedTypedTemplateExpressionCore(argumentExpression, parameterType);
+                    if (lowered is null)
+                    {
+                        return false;
+                    }
+
+                    var argument = CoerceCallArgument(lowered, parameterType);
+                    if (argument is null)
+                    {
+                        return false;
+                    }
+
+                    functionPointerArguments.Add(argument);
+                    var indirectArgumentAddress = TryResolveImportedTypedTemplateAssignmentTarget(argumentExpression, out var argumentTarget)
+                        ? ResolveIndirectArgumentAddress(parameterType, argumentTarget)
+                        : null;
+                    functionPointerIndirectLocals.Add(indirectArgumentAddress is null
+                        ? ResolveIndirectArgumentLocal(parameterType, lowered)
+                            ?? ResolveIndirectArgumentLocal(parameterType, argument)
+                        : null);
+                    functionPointerIndirectAddresses.Add(indirectArgumentAddress);
+                    RecordMoveFromOperand(argument, parameterType);
+                }
+
+                call = new MidLevelIrIndirectCallRValue(
+                    target,
+                    functionPointerArguments,
+                    StarkTypeSymbols.BorrowReturnRuntimeType(functionPointerReturnType),
+                    RenderImportedTypedTemplateExpressionCore(expression),
+                    functionPointerReturnType,
+                    functionPointerIndirectLocals,
+                    functionPointerIndirectAddresses);
+                return true;
+            }
+
+            if (target.Type.Kind != StarkTypeKind.Closure
+                || target.Type.ClosureReturnType is not { } returnType
+                || target.Type.ClosureParameterTypes is not { } parameterTypes
+                || parameterTypes.Count != expression.Args.Count - 1)
+            {
+                return false;
+            }
+
+            var invokePointerType = CallableValueFacts.BuildClosureInvokeFunctionPointerType(target.Type);
+            var environmentPointerType = CallableValueFacts.BuildClosureEnvironmentPointerType(target.Type);
+            var invokePointer = EmitTemporary(
+                new MidLevelIrExtractIndexRValue(
+                    target,
+                    ElementIndex: 0,
+                    invokePointerType,
+                    $"{target.Text}.invoke"),
+                "closure_invoke");
+            var environmentPointer = EmitTemporary(
+                new MidLevelIrExtractIndexRValue(
+                    target,
+                    ElementIndex: 1,
+                    environmentPointerType,
+                    $"{target.Text}.env"),
+                "closure_env");
+            if (invokePointer is null || environmentPointer is null)
+            {
+                return false;
+            }
+
+            var loweredArguments = new List<MidLevelIrOperand>(expression.Args.Count)
+            {
+                environmentPointer
+            };
+            var indirectArgumentLocals = new List<string?>(expression.Args.Count)
+            {
+                null
+            };
+            var indirectArgumentAddresses = new List<MidLevelIrOperand?>(expression.Args.Count)
+            {
+                null
+            };
+
+            for (var index = 0; index < parameterTypes.Count; index++)
+            {
+                var parameterType = parameterTypes[index];
+                var argumentExpression = expression.Args[index + 1];
+                var lowered = LowerImportedTypedTemplateExpressionCore(argumentExpression, parameterType);
+                if (lowered is null)
+                {
+                    return false;
+                }
+
+                var argument = CoerceCallArgument(lowered, parameterType);
+                if (argument is null)
+                {
+                    return false;
+                }
+
+                loweredArguments.Add(argument);
+                var indirectArgumentAddress = TryResolveImportedTypedTemplateAssignmentTarget(argumentExpression, out var argumentTarget)
+                    ? ResolveIndirectArgumentAddress(parameterType, argumentTarget)
+                    : null;
+                indirectArgumentLocals.Add(indirectArgumentAddress is null
+                    ? ResolveIndirectArgumentLocal(parameterType, lowered)
+                        ?? ResolveIndirectArgumentLocal(parameterType, argument)
+                    : null);
+                indirectArgumentAddresses.Add(indirectArgumentAddress);
+                RecordMoveFromOperand(argument, parameterType);
+            }
+
+            call = new MidLevelIrIndirectCallRValue(
+                invokePointer,
+                loweredArguments,
+                StarkTypeSymbols.BorrowReturnRuntimeType(returnType),
+                RenderImportedTypedTemplateExpressionCore(expression),
+                returnType,
+                indirectArgumentLocals,
+                indirectArgumentAddresses,
+                MayFree: target.Type.ClosureStorageKind == StarkClosureStorageKind.Heap
+                    && target.Type.ClosureCallCapability == StarkClosureCallCapability.Once);
+            if (target.Type.ClosureCallCapability == StarkClosureCallCapability.Once)
+            {
+                RecordMoveFromOperand(target, target.Type);
+            }
+
+            return true;
+        }
+
         private bool TryBuildImportedTypedTemplateMemberCall(
             ImportedTemplateTypedBodyExpressionSummary expression,
             out MidLevelIrCallRValue call)
@@ -2964,6 +3148,9 @@ internal sealed partial class MidLevelIrLowerer
                 ImportedTemplateTypedBodyExpressionKind.EnumCall => $"enumcall#{expression.Ordinal}({string.Join(", ", expression.Args.Select(RenderImportedTypedTemplateExpressionCore))})",
                 ImportedTemplateTypedBodyExpressionKind.EnumValue => $"enumvalue#{expression.Ordinal}",
                 ImportedTemplateTypedBodyExpressionKind.DirectCall => $"{expression.Ordinal}({string.Join(", ", expression.Args.Select(RenderImportedTypedTemplateExpressionCore))})",
+                ImportedTemplateTypedBodyExpressionKind.ClosureCall => expression.Args.Count >= 1
+                    ? $"{RenderImportedTypedTemplateExpressionCore(expression.Args[0])}({string.Join(", ", expression.Args.Skip(1).Select(RenderImportedTypedTemplateExpressionCore))})"
+                    : "closure-call",
                 ImportedTemplateTypedBodyExpressionKind.IndexAccess => expression.Args.Count >= 1
                     ? $"{RenderImportedTypedTemplateExpressionCore(expression.Args[0])}[{string.Join(", ", expression.Args.Skip(1).Select(RenderImportedTypedTemplateExpressionCore))}]"
                     : "index",

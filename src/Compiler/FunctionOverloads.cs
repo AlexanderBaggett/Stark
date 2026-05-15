@@ -764,6 +764,37 @@ internal static class FunctionOverloadFacts
             return true;
         }
 
+        if (strippedParameterType.Kind == StarkTypeKind.Closure)
+        {
+            if (strippedArgumentType.Kind != StarkTypeKind.Closure
+                || strippedParameterType.ClosureStorageKind != strippedArgumentType.ClosureStorageKind
+                || strippedParameterType.ClosureCallCapability != strippedArgumentType.ClosureCallCapability
+                || strippedParameterType.ClosureFunctionKind != strippedArgumentType.ClosureFunctionKind
+                || strippedParameterType.ClosureReturnType is null
+                || strippedArgumentType.ClosureReturnType is null
+                || strippedParameterType.ClosureParameterTypes is not { } parameterTypes
+                || strippedArgumentType.ClosureParameterTypes is not { } argumentParameterTypes
+                || parameterTypes.Count != argumentParameterTypes.Count
+                || !TryInferTypeArguments(
+                    strippedParameterType.ClosureReturnType,
+                    strippedArgumentType.ClosureReturnType,
+                    genericParameters,
+                    substitution))
+            {
+                return false;
+            }
+
+            for (var index = 0; index < parameterTypes.Count; index++)
+            {
+                if (!TryInferTypeArguments(parameterTypes[index], argumentParameterTypes[index], genericParameters, substitution))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         return strippedParameterType == strippedArgumentType;
     }
 
@@ -810,6 +841,14 @@ internal static class FunctionOverloadFacts
                    && ContainsGenericParameter(strippedType.FunctionPointerReturnType, genericParameters)
                    || strippedType.FunctionPointerParameterTypes is { Count: > 0 }
                    && strippedType.FunctionPointerParameterTypes.Any(parameter => ContainsGenericParameter(parameter, genericParameters));
+        }
+
+        if (strippedType.Kind == StarkTypeKind.Closure)
+        {
+            return strippedType.ClosureReturnType is not null
+                   && ContainsGenericParameter(strippedType.ClosureReturnType, genericParameters)
+                   || strippedType.ClosureParameterTypes is { Count: > 0 }
+                   && strippedType.ClosureParameterTypes.Any(parameter => ContainsGenericParameter(parameter, genericParameters));
         }
 
         return strippedType.ElementType is not null
@@ -883,6 +922,22 @@ internal static class FunctionOverloadFacts
                 coreType.FunctionPointerSameParameterGroups,
                 coreType.FunctionPointerParameterRawPointerElementCountExpressions);
         }
+        else if (coreType.Kind == StarkTypeKind.Closure
+            && coreType.ClosureFunctionKind is { } closureFunctionKind
+            && coreType.ClosureReturnType is { } closureReturnType
+            && coreType.ClosureParameterTypes is { } closureParameterTypes)
+        {
+            substitutedCore = StarkTypeSymbols.Closure(
+                coreType.ClosureStorageKind,
+                coreType.ClosureCallCapability,
+                closureFunctionKind,
+                SubstituteType(closureReturnType, substitution),
+                closureParameterTypes.Select(parameter => SubstituteType(parameter, substitution)).ToArray(),
+                coreType.ClosureDisjointParameterGroups,
+                coreType.ClosureOverlapParameterGroups,
+                coreType.ClosureSameParameterGroups,
+                coreType.ClosureParameterRawPointerElementCountExpressions);
+        }
         else
         {
             substitutedCore = coreType;
@@ -912,6 +967,19 @@ internal static class FunctionOverloadFacts
                 => StarkTypeSymbols.GenericInstantiation(
                     StarkTypeSymbols.GetGenericBaseName(type.NamedType),
                     type.TypeArguments.Select(StripQualifiers).ToArray()),
+            StarkTypeKind.Closure when type.ClosureFunctionKind is { } closureFunctionKind
+                                       && type.ClosureReturnType is { } closureReturnType
+                                       && type.ClosureParameterTypes is { } closureParameterTypes
+                => StarkTypeSymbols.Closure(
+                    type.ClosureStorageKind,
+                    type.ClosureCallCapability,
+                    closureFunctionKind,
+                    StripQualifiers(closureReturnType),
+                    closureParameterTypes.Select(StripQualifiers).ToArray(),
+                    type.ClosureDisjointParameterGroups,
+                    type.ClosureOverlapParameterGroups,
+                    type.ClosureSameParameterGroups,
+                    type.ClosureParameterRawPointerElementCountExpressions),
             _ => type
         };
 

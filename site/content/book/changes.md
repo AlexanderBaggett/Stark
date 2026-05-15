@@ -31,8 +31,10 @@ This page records user-facing changes to the published Stark Book.
 - Reworked the early-language, arrays/text, testing, performance-model,
   performance-tuning, and unsafe chapters so their step headings also read as
   tutorial actions instead of topic labels.
-- Renumbered diagnostics, generated-IR, and project chapters to chapters
-  30-36, with aliases for the previous draft URLs.
+- Added a dedicated closures tutorial after the borrowing comparison and
+  renumbered later core, standard-library, performance, diagnostics, generated
+  IR, and project chapters through chapter 37, with aliases for the shifted
+  draft URLs.
 - Added second checked code examples to chapters that only had one sample so
   every numbered chapter now has multiple examples.
 - Created the website book section from the canonical outline.

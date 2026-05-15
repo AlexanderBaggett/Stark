@@ -146,6 +146,87 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void ClosureTypesResolveInFunctionSignatures()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Ui {
+                i32[min max] Frame;
+            }
+
+            struct Packet {
+                i32[min max] Code;
+            }
+
+            fn void RegisterInline(inline closure<fn void(borrow mut Ui)> body);
+            fn void RegisterBorrow(borrow closure<fn void(borrow mut Ui)> body);
+            fn void RegisterMut(mut borrow closure<mut fn void(i32[min max])> sink);
+            fn void RegisterOnce(inline closure<once finite Packet()> producer);
+            fn void RegisterOverlap(borrow closure<fn void(borrow mut Ui, borrow mut Ui) where overlap(arg0, arg1)> body);
+            unsafe fn void RegisterBounded(borrow closure<finite void(rawptr<i32[min max]>[arg1], u8[1 10])> body);
+            fn heap closure<fn i32[min max](i32[min max])> Factory(heap closure<fn i32[min max](i32[min max])> seed);
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+
+        var inline = Assert.Single(typeCheckModel.Functions["RegisterInline"].Parameters);
+        Assert.Equal(StarkTypeKind.Closure, inline.Type.Kind);
+        Assert.Equal(StarkClosureStorageKind.Inline, inline.Type.ClosureStorageKind);
+        Assert.Equal(StarkClosureCallCapability.None, inline.Type.ClosureCallCapability);
+        Assert.Equal(StarkFunctionKind.Fn, inline.Type.ClosureFunctionKind);
+
+        var borrowed = Assert.Single(typeCheckModel.Functions["RegisterBorrow"].Parameters);
+        Assert.Equal(StarkTypeKind.Closure, borrowed.Type.Kind);
+        Assert.Equal(StarkBorrowKind.Borrow, borrowed.Type.BorrowKind);
+        Assert.Equal(StarkClosureStorageKind.Unspecified, borrowed.Type.ClosureStorageKind);
+
+        var mutableBorrow = Assert.Single(typeCheckModel.Functions["RegisterMut"].Parameters);
+        Assert.Equal(StarkBorrowKind.Borrow, mutableBorrow.Type.BorrowKind);
+        Assert.True(mutableBorrow.Type.IsMutableView);
+        Assert.Equal(StarkClosureCallCapability.Mut, mutableBorrow.Type.ClosureCallCapability);
+
+        var once = Assert.Single(typeCheckModel.Functions["RegisterOnce"].Parameters);
+        Assert.Equal(StarkClosureCallCapability.Once, once.Type.ClosureCallCapability);
+        Assert.Equal(StarkFunctionKind.Finite, once.Type.ClosureFunctionKind);
+
+        var overlap = Assert.Single(typeCheckModel.Functions["RegisterOverlap"].Parameters);
+        var overlapGroup = Assert.Single(overlap.Type.ClosureOverlapParameterGroups ?? []);
+        Assert.Equal(["arg0", "arg1"], overlapGroup.ParameterNames);
+
+        var bounded = Assert.Single(typeCheckModel.Functions["RegisterBounded"].Parameters);
+        Assert.Equal("arg1", StarkTypeSymbols.GetClosureParameterRawPointerElementCountExpression(bounded.Type, 0));
+
+        var factory = typeCheckModel.Functions["Factory"];
+        Assert.Equal(StarkTypeKind.Closure, factory.ReturnType.Kind);
+        Assert.Equal(StarkClosureStorageKind.Heap, factory.ReturnType.ClosureStorageKind);
+    }
+
+    [Fact]
+    public void LawClosureTypesRejectMutableOrOnceCapabilities()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void RegisterMutableLaw(inline closure<mut law void()> body);
+            fn void RegisterOnceLaw(heap closure<once finite law void()> body);
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(
+            2,
+            result.Diagnostics.Count(diagnostic =>
+                diagnostic.Code == "STK3014"
+                && diagnostic.Message.Contains("Law and finite law closure signatures cannot use 'mut' or 'once'", StringComparison.Ordinal)));
+    }
+
+    [Fact]
     public void FunctionItemPromotionPreservesFunctionKindFacts()
     {
         var result = Compile(
@@ -402,6 +483,224 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void LambdasTypeCheckAsExplicitClosureTargets()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] ApplyBorrow(borrow closure<fn i32[min max](i32[min max])> op) {
+                return 0;
+            }
+
+            fn void ApplyInline(inline closure<fn void(i32[min max])> op) {
+                return;
+            }
+
+            fn heap closure<fn i32[min max](i32[min max])> MakeHeap(i32[min max] offset) {
+                return heap capture(copy offset) (i32[min max] value) => value + offset;
+            }
+
+            fn i32[min max] Run() {
+                stack i32[min max] offset = 1;
+                ApplyInline((i32[min max] value) => {
+                    return;
+                });
+                return ApplyBorrow(capture(copy offset) (i32[min max] value) => value + offset);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.Empty(typeCheckModel.Lambdas);
+        Assert.Equal(3, typeCheckModel.ClosureLambdas.Count);
+        Assert.Contains(typeCheckModel.ClosureLambdas, static lambda => lambda.ClosureType.ClosureStorageKind == StarkClosureStorageKind.Inline);
+        Assert.Contains(typeCheckModel.ClosureLambdas, static lambda => lambda.ClosureType.BorrowKind == StarkBorrowKind.Borrow);
+        Assert.Contains(typeCheckModel.ClosureLambdas, static lambda => lambda.ClosureType.ClosureStorageKind == StarkClosureStorageKind.Heap);
+        Assert.Contains(typeCheckModel.LambdaCaptures, static capture => capture.Name == "offset" && capture.Mode == "copy");
+    }
+
+    [Fact]
+    public void FunctionItemsPromoteToExplicitClosureTargets()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] AddOne(i32[min max] value) {
+                return value + 1;
+            }
+
+            fn i32[min max] ApplyBorrow(borrow closure<fn i32[min max](i32[min max])> op, i32[min max] value) {
+                return op(value);
+            }
+
+            inline fn i32[min max] ApplyInline(inline closure<fn i32[min max](i32[min max])> op, i32[min max] value) {
+                return op(value);
+            }
+
+            fn heap closure<fn i32[min max](i32[min max])> Make() {
+                return AddOne;
+            }
+
+            fn i32[min max] Run() {
+                stack heap closure<fn i32[min max](i32[min max])> op = Make();
+                return ApplyBorrow(AddOne, 20) + ApplyInline(AddOne, 20) + op(0);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.Equal(3, typeCheckModel.ClosureFunctionPromotions.Count);
+        Assert.All(typeCheckModel.ClosureFunctionPromotions, static promotion => Assert.Equal("AddOne", promotion.Signature.Name));
+        Assert.Contains(typeCheckModel.ClosureFunctionPromotions, static promotion => promotion.ClosureType.BorrowKind == StarkBorrowKind.Borrow);
+        Assert.Contains(typeCheckModel.ClosureFunctionPromotions, static promotion => promotion.ClosureType.ClosureStorageKind == StarkClosureStorageKind.Inline);
+        Assert.Contains(typeCheckModel.ClosureFunctionPromotions, static promotion => promotion.ClosureType.ClosureStorageKind == StarkClosureStorageKind.Heap);
+    }
+
+    [Fact]
+    public void ClosureCallsTypeCheckAndRecordArgumentFacts()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] Apply(borrow closure<finite i32[min max](i32[min max])> op, i32[min max] value) {
+                return op(value);
+            }
+
+            fn void Push(mut borrow closure<mut fn void(i32[min max])> sink) {
+                sink(7);
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "validate-lowering-contract"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.Equal(2, typeCheckModel.ClosureCalls.Count);
+        Assert.All(typeCheckModel.ClosureCalls, static call => Assert.Single(call.Arguments));
+        Assert.Contains(typeCheckModel.ClosureCalls, static call => call.ClosureType.ClosureFunctionKind == StarkFunctionKind.Finite);
+        Assert.Contains(typeCheckModel.ClosureCalls, static call => call.ClosureType.ClosureCallCapability == StarkClosureCallCapability.Mut);
+    }
+
+    [Fact]
+    public void MutableClosureCallsRequireMutableClosureAccess()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run(borrow closure<mut fn void()> op) {
+                op();
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3008"
+                && diagnostic.Message.Contains("requires mutable access to the closure value", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void HeapClosureLambdasRequireHeapPrefixAndHeapSafeCaptures()
+    {
+        var missingPrefix = Compile(
+            """
+            module Demo
+
+            fn heap closure<fn i32[min max](i32[min max])> Bad(i32[min max] offset) {
+                return capture(copy offset) (i32[min max] value) => value + offset;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(missingPrefix.Succeeded);
+        Assert.Contains(
+            missingPrefix.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3008"
+                && diagnostic.Message.Contains("must use the explicit 'heap' lambda prefix", StringComparison.Ordinal));
+
+        var borrowedCapture = Compile(
+            """
+            module Demo
+
+            fn heap closure<fn i32[min max]()> Bad(i32[min max] value) {
+                return heap capture(read value) () => value;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(borrowedCapture.Succeeded);
+        Assert.Contains(
+            borrowedCapture.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3008"
+                && diagnostic.Message.Contains("Heap closure capture mode 'read'", StringComparison.Ordinal));
+
+        var nonEscapingBorrowCapture = Compile(
+            """
+            module Demo
+
+            fn heap closure<fn i32[min max]()> Bad(borrow closure<fn i32[min max]()> op) {
+                return heap capture(copy op) () => op();
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(nonEscapingBorrowCapture.Succeeded);
+        Assert.Contains(
+            nonEscapingBorrowCapture.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3008"
+                && diagnostic.Message.Contains("non-escaping type 'borrow closure", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void InlineClosureTypesAreOnlyValidAsParameters()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn inline closure<fn void()> BadReturn() {
+                return () => {
+                    return;
+                };
+            }
+
+            fn void BadLocal() {
+                stack inline closure<fn void()> local = () => {
+                    return;
+                };
+                return;
+            }
+
+            struct BadField {
+                inline closure<fn void()> Callback;
+            }
+
+            fn void BadNestedParameter(fnptr<fn void(inline closure<fn void()>)> callback) {
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.True(
+            result.Diagnostics.Count(static diagnostic => diagnostic.Code == "STK3008"
+                && diagnostic.Message.Contains("Inline closure type", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("only valid as a function parameter directly", StringComparison.Ordinal)) >= 3,
+            string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
     public void NonCapturingLambdasCannotUseOuterLocalsWithoutCaptureList()
     {
         var result = Compile(
@@ -487,6 +786,35 @@ public sealed class TypeCheckingTests
             result.Diagnostics,
             static diagnostic => diagnostic.Code == "STK3006"
                 && diagnostic.Message.Contains("Lambda capture 'value' is listed more than once", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void LambdaParametersCannotReuseCapturedNames()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] Apply(
+                borrow closure<fn i32[min max](i32[min max])> op,
+                i32[min max] value) {
+                return op(value);
+            }
+
+            fn i32[min max] Run() {
+                stack i32[min max] value = 1;
+                return Apply(
+                    capture(copy value) (i32[min max] value) => value + 1,
+                    41);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3006"
+                && diagnostic.Message.Contains("Lambda parameter 'value' reuses a captured name", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -2962,6 +3290,32 @@ public sealed class TypeCheckingTests
         Assert.Equal(StarkTypeKind.RawPointer, parameter.Kind);
         Assert.NotNull(parameter.ElementType);
         Assert.Equal("i32", parameter.ElementType!.DisplayName);
+    }
+
+    [Fact]
+    public void GenericTypeAliasesSubstituteIntoClosureSignatures()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            alias Mapper<T> = heap closure<fn T(T)>;
+
+            fn Mapper<i32[min max]> Factory(Mapper<i32[min max]> mapper) {
+                return mapper;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.True(typeCheckModel.TypeAliases.ContainsKey("Mapper"));
+        var signature = typeCheckModel.Functions["Factory"];
+        Assert.Equal(StarkTypeKind.Closure, signature.ReturnType.Kind);
+        Assert.Equal("i32", signature.ReturnType.ClosureReturnType?.DisplayName);
+        var closureParameter = Assert.Single(signature.ReturnType.ClosureParameterTypes ?? []);
+        Assert.Equal("i32", closureParameter.DisplayName);
     }
 
     [Fact]

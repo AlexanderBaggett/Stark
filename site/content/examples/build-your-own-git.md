@@ -39,6 +39,6 @@ Status: covered by `ExamplesCompileRunTests.BuildYourOwnGitExamplesInitializeWri
 
 ## Related
 
-- [File Processing Project](/book/32-project-file-processing/)
+- [File Processing Project](/book/35-project-file-processing/)
 - [`System.FileSystem`](/reference/standard-library/System.FileSystem/)
 - [`System.IO.File`](/reference/standard-library/System.IO.File/)

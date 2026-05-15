@@ -15,6 +15,7 @@ internal sealed class LoweringContractValidator
     private readonly Dictionary<OperationKey, DirectCallTypingRecord> _directCalls;
     private readonly Dictionary<OperationKey, MemberCallTypingRecord> _memberCalls;
     private readonly Dictionary<OperationKey, IndirectCallTypingRecord> _indirectCalls;
+    private readonly Dictionary<OperationKey, ClosureCallTypingRecord> _closureCalls;
     private readonly Dictionary<OperationKey, EnumCallTypingRecord> _enumCalls;
     private readonly Dictionary<OperationKey, IndexAccessTypingRecord> _indexAccesses;
     private readonly Dictionary<OperationKey, DynamicStorageOperationTypingRecord> _dynamicStorageOperations;
@@ -25,6 +26,7 @@ internal sealed class LoweringContractValidator
     private readonly Dictionary<OperationKey, EnumConstructorTypingRecord> _enumConstructors;
     private readonly Dictionary<OperationKey, TypeLayoutExpressionTypingRecord> _typeLayoutExpressions;
     private readonly Dictionary<OperationKey, LambdaTypingRecord> _lambdas;
+    private readonly Dictionary<OperationKey, ClosureLambdaTypingRecord> _closureLambdas;
 
     private int _checkedFunctionCount;
     private int _checkedCallCount;
@@ -49,6 +51,7 @@ internal sealed class LoweringContractValidator
         _directCalls = BuildOperationMap(typeModel.DirectCalls, static record => Key(record.EnclosingFunctionName, record.Location));
         _memberCalls = BuildOperationMap(typeModel.MemberCalls, static record => Key(record.EnclosingFunctionName, record.Location));
         _indirectCalls = BuildOperationMap(typeModel.IndirectCalls, static record => Key(record.EnclosingFunctionName, record.Location));
+        _closureCalls = BuildOperationMap(typeModel.ClosureCalls, static record => Key(record.EnclosingFunctionName, record.Location));
         _enumCalls = BuildOperationMap(typeModel.EnumCalls, static record => Key(record.EnclosingFunctionName, record.Location));
         _indexAccesses = BuildOperationMap(typeModel.IndexAccesses, static record => Key(record.EnclosingFunctionName, record.Location));
         _dynamicStorageOperations = BuildOperationMap(typeModel.DynamicStorageOperations, static record => Key(record.EnclosingFunctionName, record.Location));
@@ -59,6 +62,9 @@ internal sealed class LoweringContractValidator
         _enumConstructors = BuildOperationMap(typeModel.EnumConstructors, static record => Key(record.EnclosingFunctionName, record.Location));
         _typeLayoutExpressions = BuildOperationMap(typeModel.TypeLayoutExpressions, static record => Key(record.EnclosingFunctionName, record.Location));
         _lambdas = typeModel.Lambdas
+            .GroupBy(static record => Key(record.EnclosingFunctionName, record.Location))
+            .ToDictionary(static group => group.Key, static group => group.Last());
+        _closureLambdas = typeModel.ClosureLambdas
             .GroupBy(static record => Key(record.EnclosingFunctionName, record.Location))
             .ToDictionary(static group => group.Key, static group => group.Last());
     }
@@ -225,6 +231,13 @@ internal sealed class LoweringContractValidator
                     continue;
                 }
 
+                if (TryGetRecord(_closureCalls, arguments, functionName, out var closureCall))
+                {
+                    ValidateClosureCall(closureCall, arguments, filePath);
+                    _checkedCallCount++;
+                    continue;
+                }
+
                 if (TryGetRecord(_enumCalls, arguments, functionName, out var enumCall))
                 {
                     ValidateEnumCall(enumCall, arguments, filePath);
@@ -235,7 +248,7 @@ internal sealed class LoweringContractValidator
                 ReportMissing(
                     arguments,
                     filePath,
-                    "Lowering contract is missing typed call facts for this call expression. Type checking must record a direct, member, indirect, enum-constructor, or dynamic-storage operation before MIR lowering.");
+                    "Lowering contract is missing typed call facts for this call expression. Type checking must record a direct, member, indirect, closure, enum-constructor, or dynamic-storage operation before MIR lowering.");
                 continue;
             }
 
@@ -321,10 +334,27 @@ internal sealed class LoweringContractValidator
         if (!_lambdas.TryGetValue(key, out var lambda)
             && !_lambdas.TryGetValue(key with { FunctionName = null }, out lambda))
         {
-            ReportMissing(
-                expression,
-                filePath,
-                "Lowering contract is missing typed lambda facts. Type checking must record the generated function name, function-pointer type, and parameter names before MIR lowering.");
+            if (!_closureLambdas.TryGetValue(key, out var closureLambda)
+                && !_closureLambdas.TryGetValue(key with { FunctionName = null }, out closureLambda))
+            {
+                ReportMissing(
+                    expression,
+                    filePath,
+                    "Lowering contract is missing typed lambda facts. Type checking must record the generated function name, callable target type, and parameter names before MIR lowering.");
+                return;
+            }
+
+            _checkedLambdaCount++;
+            ValidateClosureLambdaFact(closureLambda, expression, filePath);
+            if (expression.expression() is { } closureBodyExpression)
+            {
+                ValidateTree(closureBodyExpression, closureLambda.FunctionName, filePath);
+            }
+            else if (expression.block() is { } closureBlock)
+            {
+                ValidateTree(closureBlock, closureLambda.FunctionName, filePath);
+            }
+
             return;
         }
 
@@ -887,6 +917,48 @@ internal sealed class LoweringContractValidator
             filePath);
     }
 
+    private void ValidateClosureCall(
+        ClosureCallTypingRecord record,
+        StarkParser.ArgumentListContext arguments,
+        string? filePath)
+    {
+        if (record.ClosureType.Kind != StarkTypeKind.Closure
+            || record.ClosureType.ClosureParameterTypes is not { } parameterTypes
+            || record.ClosureType.ClosureReturnType is null)
+        {
+            ReportInvalid(
+                arguments,
+                filePath,
+                $"Typed closure-call fact must carry a concrete closure ABI type, but found '{record.ClosureType.DisplayName}'.");
+            return;
+        }
+
+        ValidateFunctionCallArity(
+            "closure-call",
+            record.ClosureType.DisplayName,
+            parameterTypes.Count,
+            isVarargs: false,
+            arguments.argument().Length,
+            arguments,
+            filePath);
+        var syntheticParameters = parameterTypes
+            .Select((parameterType, index) => new TypedParameterSymbol(
+                $"arg{index}",
+                parameterType,
+                RawPointerElementCountExpression: StarkTypeSymbols.GetClosureParameterRawPointerElementCountExpression(
+                    record.ClosureType,
+                    index)))
+            .ToArray();
+        ValidateCallArgumentFacts(
+            "closure-call",
+            record.ClosureType.DisplayName,
+            syntheticParameters,
+            receiverOffset: 0,
+            record.Arguments,
+            arguments,
+            filePath);
+    }
+
     private void ValidateEnumCall(
         EnumCallTypingRecord record,
         StarkParser.ArgumentListContext arguments,
@@ -1213,6 +1285,63 @@ internal sealed class LoweringContractValidator
         }
     }
 
+    private void ValidateClosureLambdaFact(
+        ClosureLambdaTypingRecord record,
+        StarkParser.LambdaExpressionContext expression,
+        string? filePath)
+    {
+        var parameterCount = expression.lambdaParameterList().parameter().Length;
+        if (record.ClosureType.Kind != StarkTypeKind.Closure
+            || record.ClosureType.ClosureParameterTypes is not { } parameterTypes
+            || record.ClosureType.ClosureReturnType is null)
+        {
+            ReportInvalid(
+                expression,
+                filePath,
+                $"Typed closure-lambda fact for '{record.FunctionName}' must carry a concrete closure type, but found '{record.ClosureType.DisplayName}'.");
+            return;
+        }
+
+        if (record.ParameterNames.Count != parameterCount
+            || parameterTypes.Count != parameterCount)
+        {
+            ReportInvalid(
+                expression,
+                filePath,
+                $"Typed closure-lambda fact for '{record.FunctionName}' has a parameter-count mismatch: recorded {record.ParameterNames.Count} name(s) and {parameterTypes.Count} ABI parameter(s), but the source lambda has {parameterCount}.");
+        }
+
+        if (!_typeModel.Functions.TryGetValue(record.FunctionName, out var signature))
+        {
+            ReportInvalid(
+                expression,
+                filePath,
+                $"Typed closure-lambda fact for '{record.FunctionName}' has no synthetic function signature in the type model.");
+            return;
+        }
+
+        if (signature.Parameters.Count != parameterCount + 1)
+        {
+            ReportInvalid(
+                expression,
+                filePath,
+                $"Typed closure-lambda fact for '{record.FunctionName}' must lower to one hidden environment parameter plus {parameterCount} source parameter(s), but the synthetic signature has {signature.Parameters.Count} parameter(s).");
+        }
+
+        if (signature.Parameters.Count > 0)
+        {
+            var environmentParameter = signature.Parameters[0];
+            if (!string.Equals(environmentParameter.Name, CallableValueFacts.ClosureEnvironmentParameterName, StringComparison.Ordinal)
+                || environmentParameter.Type != record.EnvironmentParameterType)
+            {
+                ReportInvalid(
+                    expression,
+                    filePath,
+                    $"Typed closure-lambda fact for '{record.FunctionName}' has an invalid hidden environment parameter: expected '{CallableValueFacts.ClosureEnvironmentParameterName}: {record.EnvironmentParameterType.DisplayName}'.");
+            }
+        }
+    }
+
     private bool TryGetEnumVariant(
         StarkTypeSymbol enumType,
         string variantName,
@@ -1267,8 +1396,20 @@ internal sealed class LoweringContractValidator
             return true;
         }
 
-        return type.FunctionPointerParameterTypes is { Count: > 0 }
-            && type.FunctionPointerParameterTypes.Any(parameter => ContainsGenericParameter(parameter, genericParameterNames));
+        if (type.FunctionPointerParameterTypes is { Count: > 0 }
+            && type.FunctionPointerParameterTypes.Any(parameter => ContainsGenericParameter(parameter, genericParameterNames)))
+        {
+            return true;
+        }
+
+        if (type.ClosureReturnType is not null
+            && ContainsGenericParameter(type.ClosureReturnType, genericParameterNames))
+        {
+            return true;
+        }
+
+        return type.ClosureParameterTypes is { Count: > 0 }
+            && type.ClosureParameterTypes.Any(parameter => ContainsGenericParameter(parameter, genericParameterNames));
     }
 
     private static string ClassifySwitchFamily(StarkTypeSymbol switchType, SwitchSourceShape shape)
@@ -1317,6 +1458,11 @@ internal sealed class LoweringContractValidator
             return false;
         }
 
+        if (parameter.Type.Kind == StarkTypeKind.Closure)
+        {
+            return false;
+        }
+
         return !parameter.IsConst
             && (parameter.Type.InitializationKind != StarkInitializationKind.None
                 || parameter.Type.BorrowKind != StarkBorrowKind.None);
@@ -1325,6 +1471,11 @@ internal sealed class LoweringContractValidator
     private static bool RequiresMutableCallArgument(TypedParameterSymbol parameter, bool isReceiver)
     {
         if (isReceiver)
+        {
+            return false;
+        }
+
+        if (parameter.Type.Kind == StarkTypeKind.Closure)
         {
             return false;
         }

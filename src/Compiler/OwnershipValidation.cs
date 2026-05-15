@@ -20,6 +20,7 @@ internal sealed class OwnershipValidator
     private readonly Dictionary<string, bool> _mutableGlobals = new(StringComparer.Ordinal);
     private readonly List<DynamicInitSliceLoopContext> _dynamicInitSliceLoopContexts = [];
     private ISet<string>? _currentFunctionGenericParameters;
+    private IReadOnlyDictionary<string, ClosureWriteContract>? _activeClosureWriteContracts;
     private int _unsafeDepth;
 
     public OwnershipValidator(
@@ -392,6 +393,7 @@ internal sealed class OwnershipValidator
                 }
             }
 
+            ValidateActiveClosureWriteContracts(state, summary, returnStatement);
             return;
         }
 
@@ -1183,6 +1185,16 @@ internal sealed class OwnershipValidator
                 : right.BorrowLifetime;
             if (left.Type.BorrowKind != StarkBorrowKind.None)
             {
+                if (left.ProjectionPath is { Length: > 0 } storedBorrowProjectionPath)
+                {
+                    ValidateStoredBorrowLifetime(
+                        left.Type,
+                        right,
+                        summary,
+                        context,
+                        $"stored field '{string.Join(".", storedBorrowProjectionPath)}'");
+                }
+
                 ValidateAssignedBorrowLifetime(left, right, state, summary, context);
             }
 
@@ -1478,6 +1490,82 @@ internal sealed class OwnershipValidator
                 context);
             ReportBorrowSourceNote(summary, sourceLifetime);
         }
+    }
+
+    private void ValidateStoredBorrowLifetime(
+        StarkTypeSymbol targetType,
+        ExpressionInfo value,
+        FunctionOwnershipBuilder summary,
+        ParserRuleContext context,
+        string destinationDescription)
+    {
+        if (targetType.BorrowKind != StarkBorrowKind.StoreBorrow)
+        {
+            return;
+        }
+
+        var sourceLifetime = TryInferClosureLambdaBorrowLifetime(targetType, context, out var closureLambdaLifetime)
+            ? closureLambdaLifetime
+            : value.BorrowLifetime.Kind == BorrowLifetimeKind.None
+                ? InferBorrowLifetimeFromValue(value, context.Start)
+                : value.BorrowLifetime;
+        if (sourceLifetime.Kind == BorrowLifetimeKind.External)
+        {
+            return;
+        }
+
+        var reason = sourceLifetime.Kind switch
+        {
+            BorrowLifetimeKind.LocalScope => "because it is tied to local scope.",
+            BorrowLifetimeKind.Temporary => "because it is tied to a temporary value.",
+            BorrowLifetimeKind.Unknown => "because its source lifetime could not be proven.",
+            _ => "because its source lifetime does not outlive stored borrow storage."
+        };
+
+        OwnershipError(
+            summary,
+            "STK4202",
+            $"Lifetime error: cannot store {DescribeBorrowSource(value with { BorrowLifetime = sourceLifetime })} in {destinationDescription} {reason}",
+            context);
+        ReportBorrowSourceNote(summary, sourceLifetime);
+    }
+
+    private bool TryInferClosureLambdaBorrowLifetime(
+        StarkTypeSymbol targetType,
+        ParserRuleContext context,
+        out BorrowLifetime lifetime)
+    {
+        if (targetType.Kind == StarkTypeKind.Closure
+            && TryFindLambdaExpression(context, out var lambdaExpression))
+        {
+            lifetime = lambdaExpression.captureClause() is null
+                ? BorrowLifetime.ExternalAt(Location(lambdaExpression.Start), "noncapturing closure target")
+                : BorrowLifetime.TemporaryAt(Location(lambdaExpression.Start), "capturing closure environment");
+            return true;
+        }
+
+        lifetime = BorrowLifetime.None;
+        return false;
+    }
+
+    private static bool TryFindLambdaExpression(IParseTree tree, out StarkParser.LambdaExpressionContext lambdaExpression)
+    {
+        if (tree is StarkParser.LambdaExpressionContext lambda)
+        {
+            lambdaExpression = lambda;
+            return true;
+        }
+
+        for (var index = 0; index < tree.ChildCount; index++)
+        {
+            if (TryFindLambdaExpression(tree.GetChild(index), out lambdaExpression))
+            {
+                return true;
+            }
+        }
+
+        lambdaExpression = null!;
+        return false;
     }
 
     private ExpressionInfo EvaluateConditionalExpression(
@@ -2248,13 +2336,83 @@ internal sealed class OwnershipValidator
         FunctionOwnershipBuilder summary,
         ValueUse use)
     {
-        return ApplyUse(new ExpressionInfo(use.TargetType ?? StarkTypeSymbols.Error), state, summary, use, expression);
+        EvaluateLambdaCaptureUses(expression, state, summary);
+
+        var targetType = use.TargetType ?? StarkTypeSymbols.Error;
+        var borrowLifetime = targetType.Kind == StarkTypeKind.Closure
+            && targetType.BorrowKind != StarkBorrowKind.None
+            ? expression.captureClause() is null
+                ? BorrowLifetime.ExternalAt(Location(expression.Start), "noncapturing closure target")
+                : BorrowLifetime.TemporaryAt(Location(expression.Start), "capturing closure environment")
+            : BorrowLifetime.None;
+        return ApplyUse(new ExpressionInfo(targetType, BorrowLifetime: borrowLifetime), state, summary, use, expression);
+    }
+
+    private void EvaluateLambdaCaptureUses(
+        StarkParser.LambdaExpressionContext expression,
+        FlowState state,
+        FunctionOwnershipBuilder summary)
+    {
+        if (expression.captureClause() is not { } captureClause)
+        {
+            return;
+        }
+
+        foreach (var capture in captureClause.captureBinding())
+        {
+            var mode = capture.captureMode().GetText();
+            var token = capture.Identifier().Symbol;
+            var use = mode switch
+            {
+                "move" => ValueUse.Read,
+                "out" or "init" or "addr" => ValueUse.Place,
+                _ => ValueUse.Read
+            };
+
+            var value = ResolveValue(capture.Identifier().GetText(), token, state, summary, use, allowFunctionReference: false);
+            if (string.Equals(mode, "move", StringComparison.Ordinal))
+            {
+                MarkMoveCapture(value, state, summary, token);
+            }
+        }
+    }
+
+    private void MarkMoveCapture(
+        ExpressionInfo value,
+        FlowState state,
+        FunctionOwnershipBuilder summary,
+        IToken token)
+    {
+        if (value.Variable is null)
+        {
+            return;
+        }
+
+        if (value.Variable.Origin == VariableOrigin.Global)
+        {
+            OwnershipError(summary, "STK4204", $"Cannot move-capture global or static storage '{value.Variable.Name}'.", token);
+            return;
+        }
+
+        if (!state.TryGetState(value.Variable.Id, out var stateValue))
+        {
+            OwnershipError(summary, "STK4200", $"Value '{value.Variable.Name}' is not available in the current flow state.", token);
+            return;
+        }
+
+        if (!stateValue.IsDefinitelyInitialized)
+        {
+            return;
+        }
+
+        state.SetMoved(value.Variable.Id, value.BorrowLifetime, Location(token));
+        summary.Moves.Add(value.Variable.Name);
     }
 
     private Dictionary<string, FunctionOwnershipSummary> ValidateLambdaFunctions()
     {
         var summaries = new Dictionary<string, FunctionOwnershipSummary>(StringComparer.Ordinal);
-        if (_typeModel.Lambdas.Count == 0)
+        if (_typeModel.Lambdas.Count == 0 && _typeModel.ClosureLambdas.Count == 0)
         {
             return summaries;
         }
@@ -2322,12 +2480,178 @@ internal sealed class OwnershipValidator
             summaries[signature.Name] = summary.Build();
         }
 
+        foreach (var lambda in _typeModel.ClosureLambdas)
+        {
+            if (!lambdaContexts.TryGetValue(lambda.FunctionName, out var expression))
+            {
+                continue;
+            }
+
+            var signature = _signatures.TryGetValue(lambda.FunctionName, out var typedSignature)
+                ? typedSignature
+                : CallableValueFacts.BuildClosureLambdaSignature(lambda);
+            var summary = new FunctionOwnershipBuilder(signature.Name);
+            var state = new FlowState(_typeModel.NamedTypes);
+            var functionScope = state.EnterScope();
+            var previousClosureWriteContracts = _activeClosureWriteContracts;
+            _activeClosureWriteContracts = GetClosureWriteContracts(lambda);
+
+            try
+            {
+                DeclareLambdaCaptures(state, summary, lambda.Location, lambda.EnclosingFunctionName);
+                for (var index = 0; index < signature.Parameters.Count; index++)
+                {
+                    var parameter = signature.Parameters[index];
+                    var sourceParameterIndex = string.Equals(parameter.Name, CallableValueFacts.ClosureEnvironmentParameterName, StringComparison.Ordinal)
+                        ? -1
+                        : index - 1;
+                    var declarationParameter = sourceParameterIndex >= 0
+                                               && sourceParameterIndex < expression.lambdaParameterList().parameter().Length
+                        ? expression.lambdaParameterList().parameter(sourceParameterIndex)
+                        : null;
+                    state.Declare(new VariableInfo(
+                        parameter.Name,
+                        parameter.Type,
+                        StorageClass.None,
+                        VariableOrigin.Parameter,
+                        IsMutable: false,
+                        IsConstant: false,
+                        BorrowLifetime: parameter.Type.BorrowKind == StarkBorrowKind.None
+                            ? BorrowLifetime.None
+                            : BorrowLifetime.External,
+                        DeclarationLocation: declarationParameter is null ? null : Location(declarationParameter.Identifier().Symbol)),
+                        isInitialized: true);
+                    if (parameter.Type.Kind == StarkTypeKind.Dynamic)
+                    {
+                        state.SetDynamicStoragePrefix(parameter.Name, DynamicStoragePrefixState.Unknown);
+                    }
+                }
+
+                if (expression.expression() is { } bodyExpression)
+                {
+                    var value = EvaluateExpression(
+                        bodyExpression,
+                        state,
+                        signature,
+                        summary,
+                        ValueUse.ForReturn(signature.ReturnType),
+                        allowFunctionReference: false);
+
+                    if (signature.ReturnType.BorrowKind != StarkBorrowKind.None)
+                    {
+                        ValidateReturnedBorrowLifetime(value, summary, bodyExpression);
+                    }
+
+                    ValidateActiveClosureWriteContracts(state, summary, bodyExpression);
+                }
+                else if (expression.block() is { } block)
+                {
+                    CheckBlock(block, state, signature, summary, openScope: true);
+                    ValidateActiveClosureWriteContracts(state, summary, block);
+                }
+            }
+            finally
+            {
+                _activeClosureWriteContracts = previousClosureWriteContracts;
+            }
+
+            state.ExitScope(functionScope, summary, ValidateScopeExitState, RecordImplicitDrops);
+            summaries[signature.Name] = summary.Build();
+        }
+
         return summaries;
+    }
+
+    private void DeclareLambdaCaptures(
+        FlowState state,
+        FunctionOwnershipBuilder summary,
+        SourceLocation lambdaLocation,
+        string? enclosingFunctionName)
+    {
+        foreach (var capture in _typeModel.LambdaCaptures.Where(capture =>
+                     SameLocation(capture.LambdaLocation, lambdaLocation)
+                     && string.Equals(capture.EnclosingFunctionName, enclosingFunctionName, StringComparison.Ordinal)))
+        {
+            state.Declare(new VariableInfo(
+                capture.Name,
+                CallableValueFacts.GetLambdaCaptureBodyType(capture.Type, capture.Mode),
+                StorageClass.None,
+                VariableOrigin.Local,
+                IsMutable: CallableValueFacts.LambdaCaptureModeExposesWritableBinding(capture.Mode),
+                IsConstant: false,
+                BorrowLifetime: capture.Type.BorrowKind == StarkBorrowKind.None
+                    ? BorrowLifetime.None
+                    : BorrowLifetime.External,
+                DeclarationLocation: capture.Location),
+                isInitialized: !IsClosureWriteContractCaptureMode(capture.Mode));
+        }
+    }
+
+    private IReadOnlyDictionary<string, ClosureWriteContract>? GetClosureWriteContracts(ClosureLambdaTypingRecord lambda)
+    {
+        Dictionary<string, ClosureWriteContract>? contracts = null;
+        foreach (var capture in _typeModel.LambdaCaptures.Where(capture =>
+                     SameLocation(capture.LambdaLocation, lambda.Location)
+                     && string.Equals(capture.EnclosingFunctionName, lambda.EnclosingFunctionName, StringComparison.Ordinal)
+                     && IsClosureWriteContractCaptureMode(capture.Mode)))
+        {
+            contracts ??= new Dictionary<string, ClosureWriteContract>(StringComparer.Ordinal);
+            contracts[capture.Name] = new ClosureWriteContract(capture.Mode, capture.Location);
+        }
+
+        return contracts;
+    }
+
+    private void ValidateActiveClosureWriteContracts(
+        FlowState state,
+        FunctionOwnershipBuilder summary,
+        ParserRuleContext context)
+    {
+        if (_activeClosureWriteContracts is not { Count: > 0 } contracts)
+        {
+            return;
+        }
+
+        foreach (var (name, contract) in contracts)
+        {
+            if (state.TryLookup(name, out var variable)
+                && state.TryGetState(variable.Id, out var variableState)
+                && variableState.IsDefinitelyInitialized)
+            {
+                continue;
+            }
+
+            OwnershipError(
+                summary,
+                "STK4205",
+                $"Initialization error: closure capture '{name}' with mode '{contract.Mode}' must be assigned on every successful return path.",
+                context);
+            OwnershipNote(
+                summary,
+                "STK4205",
+                $"Closure capture '{name}' was declared here.",
+                contract.Location);
+        }
+    }
+
+    private static bool IsClosureWriteContractCaptureMode(string mode)
+    {
+        return string.Equals(mode, "out", StringComparison.Ordinal)
+            || string.Equals(mode, "init", StringComparison.Ordinal);
+    }
+
+    private static bool SameLocation(SourceLocation left, SourceLocation right)
+    {
+        return left.Line == right.Line
+            && left.Column == right.Column
+            && string.Equals(left.FilePath, right.FilePath, StringComparison.Ordinal);
     }
 
     private Dictionary<string, StarkParser.LambdaExpressionContext> CollectLambdaExpressionsByFunctionName()
     {
         var lambdasByLocation = _typeModel.Lambdas
+            .Select(static lambda => (lambda.FunctionName, lambda.Location))
+            .Concat(_typeModel.ClosureLambdas.Select(static lambda => (lambda.FunctionName, lambda.Location)))
             .GroupBy(static lambda => $"{lambda.Location.Line}:{lambda.Location.Column}")
             .ToDictionary(
                 static group => group.Key,
@@ -2438,7 +2762,13 @@ internal sealed class OwnershipValidator
             var memberType = namedType is not null && namedType.Fields.TryGetValue(memberInitializer.Identifier().GetText(), out var field)
                 ? field.Type
                 : StarkTypeSymbols.Error;
-            EvaluateVariableInitializer(memberInitializer.variableInitializer(), state, signature, summary, memberType);
+            var memberValue = EvaluateVariableInitializer(memberInitializer.variableInitializer(), state, signature, summary, memberType);
+            ValidateStoredBorrowLifetime(
+                memberType,
+                memberValue,
+                summary,
+                memberInitializer,
+                $"stored field '{memberInitializer.Identifier().GetText()}'");
         }
     }
 
@@ -3097,6 +3427,35 @@ internal sealed class OwnershipValidator
                     arguments);
             }
 
+            if (target.Type.Kind == StarkTypeKind.Closure)
+            {
+                var parameterTypes = target.Type.ClosureParameterTypes ?? [];
+                for (var index = 0; index < argumentValues.Length; index++)
+                {
+                    var parameterType = index < parameterTypes.Count
+                        ? parameterTypes[index]
+                        : argumentValues[index].Type;
+                    ApplyUse(
+                        argumentValues[index],
+                        state,
+                        summary,
+                        ValueUse.ForCallArgument(parameterType),
+                        arguments.argument(index));
+                }
+
+                var closureUse = target.Type.ClosureCallCapability == StarkClosureCallCapability.Once
+                    ? ValueUse.ConsumeClosure
+                    : ValueUse.Read;
+                ApplyUse(target, state, summary, closureUse, arguments);
+
+                return ApplyUse(
+                    new ExpressionInfo(target.Type.ClosureReturnType ?? StarkTypeSymbols.Error),
+                    state,
+                    summary,
+                    use,
+                    arguments);
+            }
+
             return new ExpressionInfo(StarkTypeSymbols.Error);
         }
 
@@ -3459,7 +3818,8 @@ internal sealed class OwnershipValidator
             return value;
         }
 
-        if (use.Kind != ValueUseKind.Consume || !IsMoveOnly(value.Type))
+        if (use.Kind != ValueUseKind.Consume
+            || !use.ForceConsume && !IsMoveOnly(value.Type))
         {
             return value;
         }
@@ -4358,13 +4718,17 @@ internal sealed class OwnershipValidator
         ControlFlow
     }
 
+    private sealed record ClosureWriteContract(string Mode, SourceLocation Location);
+
     private readonly record struct ValueUse(
         ValueUseKind Kind,
         bool CaptureBorrowLifetime = false,
-        StarkTypeSymbol? TargetType = null)
+        StarkTypeSymbol? TargetType = null,
+        bool ForceConsume = false)
     {
         public static readonly ValueUse Read = new(ValueUseKind.Read);
         public static readonly ValueUse ConsumeTemporary = new(ValueUseKind.Consume);
+        public static readonly ValueUse ConsumeClosure = new(ValueUseKind.Consume, ForceConsume: true);
         public static readonly ValueUse Place = new(ValueUseKind.Place);
         public static readonly ValueUse ProjectBase = new(ValueUseKind.ProjectBase);
 

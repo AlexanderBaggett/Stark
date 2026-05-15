@@ -2074,7 +2074,7 @@ public sealed class TypeTypingDiagnosticsTests
                 }
                 """,
                 "STK3008",
-                ["Lambda expressions require an explicit function-pointer target type"]),
+                ["Lambda expressions require an explicit function-pointer or closure target type"]),
             (
                 "capturing lambda cannot convert to function pointer",
                 """

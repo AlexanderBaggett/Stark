@@ -2841,12 +2841,6 @@ internal static partial class PackageImageBuilder
 
             if (postfixPart.argumentList() is { } directArgumentList)
             {
-                if (publishedExpression.Kind != "name"
-                    || !directCallOrdinals.TryGetValue(directArgumentList, out var directCallOrdinal))
-                {
-                    return false;
-                }
-
                 var arguments = new List<StarkPackageTypedTemplateExpressionManifest>(directArgumentList.argument().Length);
                 foreach (var argument in directArgumentList.argument())
                 {
@@ -2858,10 +2852,19 @@ internal static partial class PackageImageBuilder
                     arguments.Add(publishedArgument);
                 }
 
+                if (publishedExpression.Kind == "name"
+                    && directCallOrdinals.TryGetValue(directArgumentList, out var directCallOrdinal))
+                {
+                    publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+                        Kind: "direct-call",
+                        Ordinal: directCallOrdinal,
+                        Arguments: arguments);
+                    continue;
+                }
+
                 publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
-                    Kind: "direct-call",
-                    Ordinal: directCallOrdinal,
-                    Arguments: arguments);
+                    Kind: "closure-call",
+                    Arguments: arguments.Prepend(publishedExpression).ToArray());
                 continue;
             }
 

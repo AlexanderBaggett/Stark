@@ -1119,6 +1119,10 @@ internal sealed class SsaIrValidator
                 ValidateValue(function, free.Storage, valueDefinitions, location);
                 ValidateDynamicType(function, free.Storage.Type, "dynamic storage free", location);
                 break;
+            case SsaHeapStorageFreeRValue free:
+                ValidateValue(function, free.Pointer, valueDefinitions, location);
+                ValidateRawPointerValue(function, free.Pointer, "heap storage free", location);
+                break;
             case SsaDynamicStorageReserveRValue reserve:
                 ValidateValue(function, reserve.StorageAddress, valueDefinitions, location);
                 ValidateValue(function, reserve.AdditionalCapacity, valueDefinitions, location);
@@ -1413,9 +1417,37 @@ internal sealed class SsaIrValidator
             StarkTypeKind.Slice => TryGetSliceViewElementType(function, aggregateType, index, usage, location, out elementType),
             StarkTypeKind.FixedArray => TryGetFixedArrayElementType(function, aggregateType, index, usage, location, out elementType),
             StarkTypeKind.Dynamic => TryGetDynamicStorageElementType(function, aggregateType, index, fieldName: null, usage: usage, location: location, out elementType),
+            StarkTypeKind.Closure => TryGetClosureElementType(function, aggregateType, index, usage, location, out elementType),
             StarkTypeKind.Named => TryGetNamedAggregateElementType(function, aggregateType, index, fieldName: null, usage: usage, location: location, out elementType),
             _ => ReportInvalidAggregateElementAccess(function, aggregateType, usage, "aggregate or view", location)
         };
+    }
+
+    private bool TryGetClosureElementType(
+        SsaFunction function,
+        StarkTypeSymbol aggregateType,
+        int index,
+        string usage,
+        SourceLocation? location,
+        out StarkTypeSymbol elementType)
+    {
+        elementType = index switch
+        {
+            0 => CallableValueFacts.BuildClosureInvokeFunctionPointerType(aggregateType),
+            1 => CallableValueFacts.BuildClosureEnvironmentPointerType(aggregateType),
+            2 when aggregateType.ClosureStorageKind == StarkClosureStorageKind.Heap
+                => CallableValueFacts.BuildClosureDropFunctionPointerType(),
+            _ => StarkTypeSymbols.Error
+        };
+
+        if (index is 0 or 1
+            || index == 2 && aggregateType.ClosureStorageKind == StarkClosureStorageKind.Heap)
+        {
+            return true;
+        }
+
+        Report(function, location, $"{usage} index {index} is out of range for closure value '{aggregateType.DisplayName}'.");
+        return false;
     }
 
     private bool TryGetTextViewFieldType(
@@ -2323,6 +2355,9 @@ internal sealed class SsaIrValidator
             case SsaFunctionAddressValue functionAddress:
                 ValidateFunctionAddress(function, functionAddress, location);
                 break;
+            case SsaClosureValue closure:
+                ValidateClosureValue(function, closure, location);
+                break;
             default:
                 Report(function, location, $"unsupported SSA value type '{value.GetType().Name}' reached validation.");
                 break;
@@ -2784,6 +2819,34 @@ internal sealed class SsaIrValidator
         }
     }
 
+    private void ValidateClosureValue(
+        SsaFunction function,
+        SsaClosureValue closure,
+        SourceLocation? location)
+    {
+        if (closure.Type.Kind != StarkTypeKind.Closure)
+        {
+            Report(function, location, $"closure value '{closure.InvokeFunctionName}' requires a closure type, but found '{closure.Type.DisplayName}'.");
+            return;
+        }
+
+        ValidateFunctionAddress(
+            function,
+            new SsaFunctionAddressValue(
+                closure.InvokeFunctionName,
+                CallableValueFacts.BuildClosureInvokeFunctionPointerType(closure.Type)),
+            location);
+        if (closure.Type.ClosureStorageKind == StarkClosureStorageKind.Heap)
+        {
+            ValidateFunctionAddress(
+                function,
+                new SsaFunctionAddressValue(
+                    CallableValueFacts.EmptyClosureDropFunctionName,
+                    CallableValueFacts.BuildClosureDropFunctionPointerType()),
+                location);
+        }
+    }
+
     private static string? MapAbiRawPointerElementCountExpression(
         string? expression,
         IReadOnlyList<AbiParameterSymbol> parameters)
@@ -2962,6 +3025,7 @@ internal sealed class SsaIrValidator
             StarkTypeKind.Slice or StarkTypeKind.Dynamic => expected.ElementType is not null
                 && actual.ElementType is not null
                 && HaveSameLlvmValueShape(expected.ElementType, actual.ElementType),
+            StarkTypeKind.Closure => true,
             StarkTypeKind.Named => string.Equals(expected.NamedType, actual.NamedType, StringComparison.Ordinal),
             _ => expected == actual
         };
@@ -3008,8 +3072,20 @@ internal sealed class SsaIrValidator
             return true;
         }
 
-        return normalized.FunctionPointerParameterTypes is { Count: > 0 }
-            && normalized.FunctionPointerParameterTypes.Any(ContainsUnboundGenericPlaceholder);
+        if (normalized.FunctionPointerParameterTypes is { Count: > 0 }
+            && normalized.FunctionPointerParameterTypes.Any(ContainsUnboundGenericPlaceholder))
+        {
+            return true;
+        }
+
+        if (normalized.ClosureReturnType is not null
+            && ContainsUnboundGenericPlaceholder(normalized.ClosureReturnType))
+        {
+            return true;
+        }
+
+        return normalized.ClosureParameterTypes is { Count: > 0 }
+            && normalized.ClosureParameterTypes.Any(ContainsUnboundGenericPlaceholder);
     }
 
     private string CurrentModuleName => _typeModel?.ModuleName ?? _ssa.ModuleName;

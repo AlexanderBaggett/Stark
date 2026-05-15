@@ -4,7 +4,7 @@ weight = 90
 book_part = "Part II: Stark's Core Language"
 book_status = "draft"
 prev = "/book/08-borrowing/"
-next = "/book/10-storage-classes/"
+next = "/book/10-closures/"
 
 [[language_refs]]
 title = "Borrower System"

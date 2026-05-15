@@ -337,6 +337,7 @@ nonArrayType
     : dynamicType
     | rawPointerType
     | functionPointerType
+    | closureType
     | integerType
     | simpleType
     ;
@@ -356,6 +357,24 @@ functionPointerType
 
 functionPointerSignature
     : functionKind returnType functionPointerParameterList parameterMemoryContractClause*
+    ;
+
+closureType
+    : closureStoragePrefix? CLOSURE LT closureSignature GT
+    ;
+
+closureStoragePrefix
+    : INLINE
+    | HEAP
+    ;
+
+closureSignature
+    : closureCallCapability? functionKind returnType functionPointerParameterList parameterMemoryContractClause*
+    ;
+
+closureCallCapability
+    : MUT
+    | ONCE
     ;
 
 functionPointerParameterList
@@ -693,7 +712,11 @@ primaryExpression
     ;
 
 lambdaExpression
-    : captureClause? lambdaParameterList ARROW (expression | block)
+    : lambdaStoragePrefix? captureClause? lambdaParameterList ARROW (expression | block)
+    ;
+
+lambdaStoragePrefix
+    : HEAP
     ;
 
 captureClause
@@ -839,7 +862,9 @@ DYNAMIC     : 'dynamic';
 RAWPTR      : 'rawptr';
 RAWMUTPTR   : 'rawmutptr';
 FNPTR       : 'fnptr';
+CLOSURE     : 'closure';
 MUT         : 'mut';
+ONCE        : 'once';
 DISJOINT    : 'disjoint';
 OVERLAP     : 'overlap';
 SAME        : 'same';

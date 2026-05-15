@@ -54,6 +54,536 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void NonCapturingClosureValuesLowerToInvokeAndEnvironmentPair()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            finite law i32[min max] Run() {
+                stack closure<finite law i32[min max](i32[min max])> op =
+                    (i32[min max] value) => value + 1;
+
+                return op(41);
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+
+        Assert.Contains("{ ptr @Run___lambda_", llvm, StringComparison.Ordinal);
+        Assert.Contains("ptr null", llvm, StringComparison.Ordinal);
+        Assert.Contains("extractvalue { ptr, ptr }", runBody, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i32 %", runBody, StringComparison.Ordinal);
+        Assert.Contains("willreturn", runBody, StringComparison.Ordinal);
+        Assert.Contains("mustprogress", runBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FunctionItemClosurePromotionEmitsEmptyEnvironmentAdapterAtO0()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] AddOne(i32[min max] value) {
+                return value + 1;
+            }
+
+            fn i32[min max] Apply(borrow closure<fn i32[min max](i32[min max])> op, i32[min max] value) {
+                return op(value);
+            }
+
+            fn i32[min max] Run() {
+                return Apply(AddOne, 41);
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+        var adapterBody = Regex.Match(
+            llvm,
+            @"define [^{]+@Run___closure_adapter_\d+_\d+\([^)]*\)[\s\S]*?^}",
+            RegexOptions.Multiline).Value;
+
+        Assert.Contains("store { ptr, ptr } { ptr @Run___closure_adapter_", runBody, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i32 @Apply(", runBody, StringComparison.Ordinal);
+        Assert.Contains("tail call fastcc i32 @AddOne(", adapterBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("missing-function-body", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OptimizedFunctionItemClosurePromotionDevirtualizesAndPrunesAdapter()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] AddOne(i32[min max] value) {
+                return value + 1;
+            }
+
+            fn i32[min max] Apply(borrow closure<fn i32[min max](i32[min max])> op, i32[min max] value) {
+                return op(value);
+            }
+
+            fn i32[min max] Run() {
+                return Apply(AddOne, 41);
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+
+        Assert.Contains("ret i32 42", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("closure_adapter", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("alloca { ptr, ptr }", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("extractvalue { ptr, ptr }", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc", runBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CapturingClosureCopyLowersThroughEnvironmentStorage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            finite law i32[min max] Run() {
+                stack i32[min max] offset = 7;
+                stack closure<finite law i32[min max](i32[min max])> op =
+                    capture(copy offset) (i32[min max] value) => value + offset;
+
+                return op(35);
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+        var lambdaBody = Regex.Match(
+            llvm,
+            @"define [^{]+@Run___lambda_\d+_\d+\([^)]*\)[\s\S]*?^}",
+            RegexOptions.Multiline).Value;
+
+        Assert.Contains("alloca %Run___lambda_", runBody, StringComparison.Ordinal);
+        Assert.Contains("insertvalue { ptr, ptr }", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("ptr null", runBody, StringComparison.Ordinal);
+        Assert.Contains("getelementptr", lambdaBody, StringComparison.Ordinal);
+        Assert.Contains("load i32", lambdaBody, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i32 %", runBody, StringComparison.Ordinal);
+
+        var lambdaHeader = Regex.Match(lambdaBody, @"define[^\n]+").Value;
+        Assert.Contains("nonnull", lambdaHeader, StringComparison.Ordinal);
+        Assert.Contains("dereferenceable(4)", lambdaHeader, StringComparison.Ordinal);
+        Assert.Contains("align 4", lambdaHeader, StringComparison.Ordinal);
+        Assert.Contains("noalias", lambdaHeader, StringComparison.Ordinal);
+        Assert.Contains("readonly", lambdaHeader, StringComparison.Ordinal);
+        Assert.Contains("nocapture", lambdaHeader, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MutCapturingClosureWritesThroughCapturedAddress()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] Run() {
+                stack mut i32[min max] total = 1;
+                stack mut closure<mut fn void(i32[min max])> sink =
+                    capture(mut total) (i32[min max] value) => {
+                        total = total + value;
+                        return;
+                    };
+
+                sink(5);
+                return total;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var lambdaBody = Regex.Match(
+            llvm,
+            @"define [^{]+@Run___lambda_\d+_\d+\([^)]*\)[\s\S]*?^}",
+            RegexOptions.Multiline).Value;
+
+        Assert.Contains("getelementptr", lambdaBody, StringComparison.Ordinal);
+        Assert.Contains("load ptr", lambdaBody, StringComparison.Ordinal);
+        Assert.Contains("store i32", lambdaBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HeapCapturingClosureAllocatesHeapEnvironmentAndClearsNoFreeAttributes()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn heap closure<fn i32[min max](i32[min max])> MakeAdder(i32[min max] offset) {
+                return heap capture(copy offset) (i32[min max] value) => value + offset;
+            }
+
+            fn i32[min max] Run() {
+                stack heap closure<fn i32[min max](i32[min max])> add = MakeAdder(7);
+                return add(35);
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var makeAdderHeader = ExtractDefinitionHeader(llvm, "MakeAdder");
+        var makeAdderBody = ExtractDefinitionBody(llvm, "MakeAdder");
+        var runHeader = ExtractDefinitionHeader(llvm, "Run");
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+
+        Assert.Contains("@__stark_heap_alloc", makeAdderBody, StringComparison.Ordinal);
+        Assert.Contains("insertvalue { ptr, ptr, ptr }", makeAdderBody, StringComparison.Ordinal);
+        Assert.Contains("___drop", makeAdderBody, StringComparison.Ordinal);
+        Assert.Contains("___drop(ptr", llvm, StringComparison.Ordinal);
+        Assert.Contains("call fastcc void %", runBody, StringComparison.Ordinal);
+        Assert.Contains("@__stark_heap_free", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("llvm.lifetime.end", makeAdderBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("nofree", makeAdderHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("memory(none)", makeAdderHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("nofree", runHeader, StringComparison.Ordinal);
+        Assert.DoesNotContain("memory(none)", runHeader, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HeapClosureMoveCaptureDropReleasesOwnedFieldsBeforeEnvironment()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn heap closure<fn u64[0 max]()> Make() {
+                stack mut dynamic u32[0 2 ** 31 - 1] values = new(4);
+                return heap capture(move values) () => values.Length;
+            }
+
+            fn u64[0 max] Run() {
+                stack heap closure<fn u64[0 max]()> op = Make();
+                return op();
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var dropBody = Regex.Match(
+            llvm,
+            @"define [^{]+@Make___lambda_\d+_\d+___drop\([^)]*\)[\s\S]*?^}",
+            RegexOptions.Multiline).Value;
+
+        Assert.Contains("@__stark_runtime_free", dropBody, StringComparison.Ordinal);
+        Assert.Contains("@__stark_heap_free", dropBody, StringComparison.Ordinal);
+        Assert.True(
+            dropBody.IndexOf("@__stark_runtime_free", StringComparison.Ordinal)
+            < dropBody.IndexOf("@__stark_heap_free", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void OnceHeapClosureMoveCaptureTransfersOwnedFieldAndFreesEnvironment()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn dynamic u32[0 2 ** 31 - 1] RunOnce(heap closure<once fn dynamic u32[0 2 ** 31 - 1]()> producer) {
+                return producer();
+            }
+
+            fn dynamic u32[0 2 ** 31 - 1] Build() {
+                stack mut dynamic u32[0 2 ** 31 - 1] values = new(4);
+                init values[0] = 42;
+                stack heap closure<once fn dynamic u32[0 2 ** 31 - 1]()> producer =
+                    heap capture(move values) () => {
+                        return values;
+                    };
+                return RunOnce(producer);
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runOnceBody = ExtractDefinitionBody(llvm, "RunOnce");
+        var lambdaBody = Regex.Match(
+            llvm,
+            @"define[^\n]+@Build___lambda_\d+_\d+\([^)]*\)[\s\S]*?^}",
+            RegexOptions.Multiline).Value;
+        var dropBody = Regex.Match(
+            llvm,
+            @"define [^{]+@Build___lambda_\d+_\d+___drop\([^)]*\)[\s\S]*?^}",
+            RegexOptions.Multiline).Value;
+
+        Assert.Contains("@__stark_heap_free", lambdaBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@__stark_runtime_free", lambdaBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc void %", runOnceBody, StringComparison.Ordinal);
+        Assert.Contains("@__stark_runtime_free", dropBody, StringComparison.Ordinal);
+        Assert.Contains("@__stark_heap_free", dropBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OnceHeapClosureDropsUnmovedOwnedCapturesBeforeFreeingEnvironment()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn u64[0 max] RunOnce(heap closure<once fn u64[0 max]()> producer) {
+                return producer();
+            }
+
+            fn u64[0 max] Build() {
+                stack mut dynamic u32[0 2 ** 31 - 1] values = new(4);
+                init values[0] = 42;
+                stack heap closure<once fn u64[0 max]()> producer =
+                    heap capture(move values) () => {
+                        return values.Length;
+                    };
+                return RunOnce(producer);
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runOnceBody = ExtractDefinitionBody(llvm, "RunOnce");
+        var lambdaBody = Regex.Match(
+            llvm,
+            @"define[^\n]+@Build___lambda_\d+_\d+\([^)]*\)[\s\S]*?^}",
+            RegexOptions.Multiline).Value;
+
+        Assert.Contains("@__stark_runtime_free", lambdaBody, StringComparison.Ordinal);
+        Assert.Contains("@__stark_heap_free", lambdaBody, StringComparison.Ordinal);
+        Assert.True(
+            lambdaBody.IndexOf("@__stark_runtime_free", StringComparison.Ordinal)
+            < lambdaBody.IndexOf("@__stark_heap_free", StringComparison.Ordinal));
+        Assert.DoesNotContain("call fastcc void %", runOnceBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OptimizedInlineClosureCallSpecializesAwayRuntimeClosure()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            inline fn i32[min max] Apply(
+                inline closure<fn i32[min max](i32[min max])> op,
+                i32[min max] x) {
+                return op(x);
+            }
+
+            fn i32[min max] Run(i32[min max] offset) {
+                return Apply(capture(copy offset) (i32[min max] value) => value + offset, 4);
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+
+        Assert.Contains("add nsw i32 4, %arg_offset", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("alloca %Run___lambda_", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("insertvalue { ptr, ptr }", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("extractvalue { ptr, ptr }", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@Run___lambda_", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OptimizedInlineClosureWithNamedBorrowParameterSpecializesAwayRuntimeClosure()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Ui {
+                i32[min max] Value;
+            }
+
+            inline fn void Row(
+                mut borrow Ui ui,
+                inline closure<fn void(mut borrow Ui)> body) {
+                body(ui);
+                return;
+            }
+
+            fn i32[min max] Run(mut borrow Ui ui, i32[min max] offset) {
+                Row(
+                    ui,
+                    capture(copy offset) (mut borrow Ui row) => {
+                        row.Value = offset + 1;
+                        return;
+                    });
+                return ui.Value;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+
+        Assert.Contains("add nsw i32 %arg_offset, 1", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("alloca %Run___lambda_", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("insertvalue { ptr, ptr }", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("extractvalue { ptr, ptr }", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc void %", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@Row(", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@Run___lambda_", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OptimizedInlineClosureThroughNestedWrapperSpecializesAwayRuntimeClosure()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            inline fn i32[min max] Inner(
+                inline closure<fn i32[min max](i32[min max])> op,
+                i32[min max] value) {
+                return op(value);
+            }
+
+            inline fn i32[min max] Outer(
+                inline closure<fn i32[min max](i32[min max])> op,
+                i32[min max] value) {
+                return Inner(op, value + 1);
+            }
+
+            fn i32[min max] Run(i32[min max] offset) {
+                return Outer(capture(copy offset) (i32[min max] value) => value + offset, 4);
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+
+        Assert.Matches(@"add nsw i32 (?:%arg_offset, 5|5, %arg_offset)", runBody);
+        Assert.DoesNotContain("insertvalue { ptr, ptr }", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("extractvalue { ptr, ptr }", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@Run___lambda_", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OptimizedInlineClosureInsideControlFlowSpecializesAwayRuntimeClosure()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            inline fn i32[min max] ApplyIf(
+                bool enabled,
+                inline closure<fn i32[min max](i32[min max])> op,
+                i32[min max] value) {
+                if (enabled) {
+                    return op(value);
+                }
+
+                return value;
+            }
+
+            fn i32[min max] Run(bool enabled, i32[min max] offset) {
+                return ApplyIf(enabled, capture(copy offset) (i32[min max] value) => value + offset, 4);
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+
+        Assert.Contains("add nsw i32 4, %arg_offset", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("insertvalue { ptr, ptr }", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("extractvalue { ptr, ptr }", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@Run___lambda_", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OptimizedMutableInlineClosureSpecializesAwayRuntimeClosure()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            inline fn void Twice(inline closure<mut fn void()> op) {
+                op();
+                op();
+                return;
+            }
+
+            fn i32[min max] Run(i32[min max] seed) {
+                stack mut i32[min max] value = seed;
+                Twice(capture(mut value) () => {
+                    value = value + 1;
+                    return;
+                });
+
+                return value;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+
+        Assert.Equal(2, Regex.Matches(runBody, @"add nsw i32").Count);
+        Assert.DoesNotContain("insertvalue { ptr, ptr }", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("extractvalue { ptr, ptr }", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@Run___lambda_", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OptimizedOnceInlineClosureSpecializesAwayRuntimeClosure()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            inline fn i32[min max] RunOnce(inline closure<once fn i32[min max]()> producer) {
+                return producer();
+            }
+
+            fn i32[min max] Run(i32[min max] seed) {
+                return RunOnce(capture(copy seed) () => seed + 1);
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+
+        Assert.Contains("add nsw i32 %arg_seed, 1", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("insertvalue { ptr, ptr }", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("extractvalue { ptr, ptr }", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc", runBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@Run___lambda_", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void FiniteLawFunctionPointerCallsEmitIndirectCallEffectAttributes()
     {
         var result = Compile(
@@ -184,6 +714,75 @@ public sealed class LlvmIrEmissionTests
         Assert.Matches(
             $@"!{indirectCall.Groups[1].Value} = !\{{ptr @Left, ptr @Right\}}",
             llvm);
+    }
+
+    [Fact]
+    public void ClosureFunctionItemLocalDevirtualizesAndInlinesAdapterAtO3()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            noinline finite law i32[min max] Left(i32[min max] value) {
+                return value;
+            }
+
+            finite law i32[min max] Apply(i32[min max] value) {
+                stack closure<finite law i32[min max](i32[min max])> op = Left;
+                return op(value);
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var applyBody = ExtractDefinitionBody(GetLlvmRaw(result), "Apply");
+
+        Assert.Contains("@Left(", applyBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("closure_adapter", applyBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("extractvalue { ptr, ptr }", applyBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i32 %", applyBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ClosureCallsWithFiniteKnownTargetSetsEmitCalleesMetadata()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            noinline finite law i32[min max] Left(i32[min max] value) {
+                return value;
+            }
+
+            noinline finite law i32[min max] Right(i32[min max] value) {
+                return value + 1;
+            }
+
+            finite law i32[min max] Apply(bool chooseRight, i32[min max] value) {
+                stack mut closure<finite law i32[min max](i32[min max])> op = Left;
+                if (chooseRight) {
+                    op = Right;
+                }
+
+                return op(value);
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O3));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var applyBody = ExtractDefinitionBody(llvm, "Apply");
+        var indirectCall = Regex.Match(applyBody, @"call fastcc i32 %[^(]+\([^\n]*\)[^\n]*!callees !(\d+)[^\n]*");
+
+        Assert.True(indirectCall.Success, applyBody);
+        Assert.Contains("willreturn", indirectCall.Value, StringComparison.Ordinal);
+        Assert.Contains("mustprogress", indirectCall.Value, StringComparison.Ordinal);
+        Assert.Contains("memory(argmem: read)", indirectCall.Value, StringComparison.Ordinal);
+
+        var metadataLine = Regex.Match(
+            llvm,
+            $@"!{indirectCall.Groups[1].Value} = !\{{[^\n]*\}}").Value;
+        Assert.Equal(2, Regex.Matches(metadataLine, @"ptr @Apply___closure_adapter_\d+_\d+").Count);
     }
 
     [Fact]
@@ -3549,7 +4148,8 @@ public sealed class LlvmIrEmissionTests
                         return error;
                 }
             }
-            """);
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -4789,7 +5389,8 @@ public sealed class LlvmIrEmissionTests
             unsafe finite law ascii Run(ascii input) {
                 return Echo(input);
             }
-            """);
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -5483,7 +6084,8 @@ public sealed class LlvmIrEmissionTests
                 puts(message);
                 return 0;
             }
-            """);
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -6854,7 +7456,8 @@ public sealed class LlvmIrEmissionTests
             unsafe fn i32[min max] Run() {
                 return Read(new Box() { Value = 7 });
             }
-            """);
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -7132,7 +7735,9 @@ public sealed class LlvmIrEmissionTests
                 }
             }
             """,
-            options: new CompilerOptions(EmitLlvmIr: true));
+            options: new CompilerOptions(
+                EmitLlvmIr: true,
+                OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
@@ -7183,7 +7788,9 @@ public sealed class LlvmIrEmissionTests
                 }
             }
             """,
-            options: new CompilerOptions(EmitLlvmIr: true));
+            options: new CompilerOptions(
+                EmitLlvmIr: true,
+                OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvm(result);
@@ -7417,7 +8024,8 @@ public sealed class LlvmIrEmissionTests
                 stack Box box = Make();
                 return box.Value;
             }
-            """);
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -7449,7 +8057,8 @@ public sealed class LlvmIrEmissionTests
                 stack Big value = Make();
                 return (i64[min max])value.C;
             }
-            """);
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -7511,7 +8120,8 @@ public sealed class LlvmIrEmissionTests
             unsafe fn Big Forward() {
                 return Make();
             }
-            """);
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -7548,7 +8158,8 @@ public sealed class LlvmIrEmissionTests
                 stack Big value = Make();
                 return value;
             }
-            """);
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -7617,7 +8228,8 @@ public sealed class LlvmIrEmissionTests
             unsafe fn Big Forward(Big value) {
                 return Step(value);
             }
-            """);
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -7653,7 +8265,8 @@ public sealed class LlvmIrEmissionTests
             unsafe fn i64[min max] Run() {
                 return Read(new Big() { A = 1, B = 2, C = 3 });
             }
-            """);
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -7692,7 +8305,8 @@ public sealed class LlvmIrEmissionTests
                     1);
                 return current.Left + current.Right;
             }
-            """);
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -7734,7 +8348,8 @@ public sealed class LlvmIrEmissionTests
                     1);
                 return current.A + current.D;
             }
-            """);
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -7795,7 +8410,8 @@ public sealed class LlvmIrEmissionTests
                 stack Box box = new Box() { Value = 7 };
                 return box.Read();
             }
-            """);
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -8999,7 +9615,8 @@ public sealed class LlvmIrEmissionTests
             unsafe fn i32[min max] Use(borrow Box box, i32[min max] delta) {
                 return Forward(box, delta);
             }
-            """);
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -9030,7 +9647,8 @@ public sealed class LlvmIrEmissionTests
             unsafe fn i32[min max] Use(borrow Box box) {
                 return Read(box);
             }
-            """);
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -9060,7 +9678,8 @@ public sealed class LlvmIrEmissionTests
             unsafe fn i32[min max] Use(Box[2] boxes, i32[min max] index) {
                 return Read(boxes, index);
             }
-            """);
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -9091,7 +9710,8 @@ public sealed class LlvmIrEmissionTests
             unsafe fn i64[min max] Use(borrow Box box) {
                 return Read(box);
             }
-            """);
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -9121,7 +9741,8 @@ public sealed class LlvmIrEmissionTests
             unsafe fn rawptr<i32[min max]> Use(borrow Buffer buffer, i32[min max] index) {
                 return Pin(buffer, index);
             }
-            """);
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -9152,7 +9773,8 @@ public sealed class LlvmIrEmissionTests
             unsafe fn i32[min max] Use(borrow Box box, i32[min max] delta) {
                 return AddDelta(box, delta);
             }
-            """);
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -9183,7 +9805,8 @@ public sealed class LlvmIrEmissionTests
             unsafe fn bool Use(borrow Box box, i32[min max] limit) {
                 return IsBelow(box, limit);
             }
-            """);
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -9217,7 +9840,8 @@ public sealed class LlvmIrEmissionTests
             unsafe fn i32[min max] Use(bool takeLeft, bool takeMiddle, i32[min max] left, i32[min max] middle, i32[min max] right) {
                 return ChooseBranch(takeLeft, takeMiddle, left, middle, right);
             }
-            """);
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -9252,7 +9876,8 @@ public sealed class LlvmIrEmissionTests
             unsafe fn i32[min max] Use(i32[min max] selector, i32[min max] left, i32[min max] middle, i32[min max] right) {
                 return ChooseSwitch(selector, left, middle, right);
             }
-            """);
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -9842,6 +10467,105 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void ManifestBackedGenericInlineClosureCallSpecializesFromPackageImageTypedBody()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-inline-closure-template-llvm-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public inline fn T Apply<T>(T value, inline closure<fn T(T)> op) {
+                    return op(value);
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var applyTemplate = Assert.Single(
+                facadeModule.GenericTemplates!.Functions,
+                static template => template.QualifiedResolvedName == "Facade.Apply");
+            var returnStatement = Assert.Single(applyTemplate.TypedBody!.Statements);
+            Assert.Equal("return", returnStatement.Kind);
+            Assert.Equal("closure-call", returnStatement.Expression.Kind);
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts,
+                            GenericTemplates = facadeModule.GenericTemplates
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    inline fn i32[min max] LocalApply(inline closure<fn i32[min max](i32[min max])> op) {
+                        stack i32[min max] value = 4;
+                        return Facade.Apply(value, op);
+                    }
+
+                    fn i32[min max] Run(i32[min max] offset) {
+                        return LocalApply(capture(copy offset) (i32[min max] value) => value + offset);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    EmitLlvmIr: true,
+                    OptimizationLevel: CompilerOptimizationLevel.O3,
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            var llvm = GetLlvm(consumerResult);
+            var runBody = ExtractDefinitionBody(llvm, "Run");
+
+            Assert.Contains("add nsw i32 4, %arg_offset", runBody, StringComparison.Ordinal);
+            Assert.DoesNotContain("insertvalue { ptr, ptr }", runBody, StringComparison.Ordinal);
+            Assert.DoesNotContain("extractvalue { ptr, ptr }", runBody, StringComparison.Ordinal);
+            Assert.DoesNotContain("call fastcc", runBody, StringComparison.Ordinal);
+            Assert.DoesNotContain("@Run___lambda_", llvm, StringComparison.Ordinal);
+            Assert.DoesNotContain("call fastcc i32 @__stark_mono_fn_Demo__Facade_Apply__i32(", llvm, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void ManifestBackedNestedGenericCallsInlineTransitiveSmallConcreteMonomorphizedSymbolsFromPackageImageTemplates()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-nested-generic-template-llvm-");
@@ -10127,7 +10851,8 @@ public sealed class LlvmIrEmissionTests
                 stack borrow Box aliasBox = box;
                 Touch(aliasBox);
             }
-            """);
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -10336,7 +11061,8 @@ public sealed class LlvmIrEmissionTests
             unsafe finite law i32[min max] Run(borrow mut Box box) {
                 return Inspect.Read(box);
             }
-            """);
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         Assert.True(result.Succeeded);
         var llvm = GetLlvm(result);
@@ -10918,7 +11644,7 @@ public sealed class LlvmIrEmissionTests
             """
             module Demo
 
-            unsafe fn i32[min max] Touch(rawptr<i32[min max]>[count] input, u8[0 10] count) {
+            noinline unsafe fn i32[min max] Touch(rawptr<i32[min max]>[count] input, u8[0 10] count) {
                 return *input;
             }
 

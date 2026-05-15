@@ -460,6 +460,14 @@ internal sealed class SemanticValidator
                 && coreType.FunctionPointerParameterTypes.Any(TypeContainsOpenCurrentFunctionGenericParameter);
         }
 
+        if (coreType.Kind == StarkTypeKind.Closure)
+        {
+            return coreType.ClosureReturnType is not null
+                && TypeContainsOpenCurrentFunctionGenericParameter(coreType.ClosureReturnType)
+                || coreType.ClosureParameterTypes is { Count: > 0 }
+                && coreType.ClosureParameterTypes.Any(TypeContainsOpenCurrentFunctionGenericParameter);
+        }
+
         return coreType.ElementType is not null
             && TypeContainsOpenCurrentFunctionGenericParameter(coreType.ElementType);
     }
@@ -2164,7 +2172,7 @@ internal sealed class SemanticValidator
 
     private void ValidateLambdaFunctions()
     {
-        if (_typeModel.Lambdas.Count == 0)
+        if (_typeModel.Lambdas.Count == 0 && _typeModel.ClosureLambdas.Count == 0)
         {
             return;
         }
@@ -2237,11 +2245,114 @@ internal sealed class SemanticValidator
                 CheckBlock(block, scope, declaration, effects, summary, ControlFlowContext.Root);
             }
         }
+
+        foreach (var lambda in _typeModel.ClosureLambdas)
+        {
+            if (!lambdaContexts.TryGetValue(lambda.FunctionName, out var expression))
+            {
+                continue;
+            }
+
+            var signature = _typeModel.Functions.TryGetValue(lambda.FunctionName, out var typedSignature)
+                ? typedSignature
+                : CallableValueFacts.BuildClosureLambdaSignature(lambda);
+            var effects = CallableValueFacts.BuildClosureLambdaEffectProfile(lambda);
+            var declaration = new FunctionDeclarationModel(
+                lambda.FunctionName,
+                signature.Kind,
+                signature.ReturnType.DisplayName,
+                signature.Parameters
+                    .Select(static parameter => new ParameterModel(parameter.Name, parameter.Type.DisplayName))
+                    .ToArray(),
+                new FunctionModifierSet(
+                    InlinePreference.InlineHint,
+                    HasExplicitInlinePreference: false,
+                    IsHot: false,
+                    IsCold: false,
+                    IsFfi: false,
+                    IsVarargs: false,
+                    IsStrictFp: false),
+                HasBody: true);
+
+            var summary = GetOrCreateSummary(lambda.FunctionName);
+            summary.Configure(signature.ReturnType, hasBody: true, signature.Kind);
+            summary.SetParameters(signature.Parameters, signature.DisjointGroups, _typeModel.NamedTypes, _enumLayoutModel.Layouts);
+
+            var scope = ValidationScope.CreateRoot();
+            DeclareLambdaCaptures(scope, summary, lambda.Location, lambda.EnclosingFunctionName, expression.Start);
+            foreach (var parameter in signature.Parameters)
+            {
+                DeclareVariable(
+                    scope,
+                    new VariableSymbol(
+                        parameter.Name,
+                        parameter.Type,
+                        SymbolOrigin.Parameter,
+                        LocalStorageClass.None,
+                        IsMutable: false,
+                        IsConstant: false,
+                        HasConstProvenance: parameter.IsConst),
+                    summary,
+                    expression.Start);
+            }
+
+            if (expression.expression() is { } bodyExpression)
+            {
+                var returnedValue = EvaluateExpression(
+                    bodyExpression,
+                    scope,
+                    declaration,
+                    effects,
+                    summary,
+                    allowFunctionReference: false,
+                    ExpressionObservation.Read);
+                RecordReturnCapture(returnedValue, declaration, summary);
+            }
+            else if (expression.block() is { } block)
+            {
+                summary.SetOptimizationSummary(FunctionOptimizationSummaryBuilder.Build(block));
+                CheckBlock(block, scope, declaration, effects, summary, ControlFlowContext.Root);
+            }
+        }
+    }
+
+    private void DeclareLambdaCaptures(
+        ValidationScope scope,
+        FunctionValidationBuilder summary,
+        SourceLocation lambdaLocation,
+        string? enclosingFunctionName,
+        IToken fallbackToken)
+    {
+        foreach (var capture in _typeModel.LambdaCaptures.Where(capture =>
+                     SameLocation(capture.LambdaLocation, lambdaLocation)
+                     && string.Equals(capture.EnclosingFunctionName, enclosingFunctionName, StringComparison.Ordinal)))
+        {
+            DeclareVariable(
+                scope,
+                new VariableSymbol(
+                    capture.Name,
+                    CallableValueFacts.GetLambdaCaptureBodyType(capture.Type, capture.Mode),
+                    SymbolOrigin.Local,
+                    LocalStorageClass.None,
+                    IsMutable: CallableValueFacts.LambdaCaptureModeExposesWritableBinding(capture.Mode),
+                    IsConstant: false),
+                summary,
+                fallbackToken);
+        }
+    }
+
+    private static bool SameLocation(SourceLocation left, SourceLocation right)
+    {
+        return left.Line == right.Line
+            && left.Column == right.Column
+            && string.Equals(left.FilePath, right.FilePath, StringComparison.Ordinal);
     }
 
     private Dictionary<string, StarkParser.LambdaExpressionContext> CollectLambdaExpressionsByFunctionName()
     {
         var lambdasByLocation = _typeModel.Lambdas
+            .Select(static lambda => (lambda.FunctionName, lambda.Location))
+            .Concat(_typeModel.ClosureLambdas.Select(static lambda => (lambda.FunctionName, lambda.Location)))
             .GroupBy(static lambda => $"{lambda.Location.Line}:{lambda.Location.Column}")
             .ToDictionary(
                 static group => group.Key,
@@ -2900,6 +3011,14 @@ internal sealed class SemanticValidator
                     NamedType: ResolveNamedTypeSymbol(target.Type.FunctionPointerReturnType ?? StarkTypeSymbols.Error));
             }
 
+            if (target.Type.Kind == StarkTypeKind.Closure)
+            {
+                ValidateClosureCallKind(target.Type, currentFunction, summary, arguments);
+                return new ValidationValue(
+                    target.Type.ClosureReturnType ?? StarkTypeSymbols.Error,
+                    NamedType: ResolveNamedTypeSymbol(target.Type.ClosureReturnType ?? StarkTypeSymbols.Error));
+            }
+
             return new ValidationValue(StarkTypeSymbols.Error);
         }
 
@@ -3118,6 +3237,34 @@ internal sealed class SemanticValidator
                 summary,
                 "STK4107",
                 $"Finite function '{currentFunction.Name}' may only call finite-compatible function pointers.",
+                location);
+        }
+    }
+
+    private void ValidateClosureCallKind(
+        StarkTypeSymbol closureType,
+        FunctionDeclarationModel currentFunction,
+        FunctionValidationBuilder summary,
+        ParserRuleContext location)
+    {
+        var closureKind = closureType.ClosureFunctionKind ?? StarkFunctionKind.Fn;
+        if (FunctionKindFacts.IsLaw(currentFunction.Kind) && !FunctionKindFacts.IsLaw(closureKind))
+        {
+            summary.DisqualifyLaw();
+            EffectError(
+                summary,
+                "STK4106",
+                $"Law '{currentFunction.Name}' may only call law-compatible closures.",
+                location);
+        }
+
+        if (FunctionKindFacts.IsFinite(currentFunction.Kind) && !FunctionKindFacts.IsFinite(closureKind))
+        {
+            summary.DisqualifyFinite();
+            EffectError(
+                summary,
+                "STK4107",
+                $"Finite function '{currentFunction.Name}' may only call finite-compatible closures.",
                 location);
         }
     }
@@ -4326,6 +4473,33 @@ internal sealed class SemanticValidator
                 Location(context.Start));
         }
 
+        if (usage == TypeUsage.Field && TryFindNonStorableBorrowType(type, includeTopLevel: true, out var nonStorableFieldBorrow))
+        {
+            _context.Diagnostics.Error(
+                "STK4005",
+                $"Field declarations may not store '{nonStorableFieldBorrow.DisplayName}' because 'borrow' values cannot be stored and 'retborrow' values may escape only through a return. Use 'storeborrow' only for deliberately stored borrowed views, or store an owned value instead.",
+                "semantic-validate",
+                Location(context.Start));
+        }
+
+        if (usage == TypeUsage.Global && TryFindNonStorableBorrowType(type, includeTopLevel: false, out var nonStorableGlobalBorrow))
+        {
+            _context.Diagnostics.Error(
+                "STK4005",
+                $"Global declaration type '{type.DisplayName}' contains '{nonStorableGlobalBorrow.DisplayName}', but non-escaping borrows are not allowed to escape globally. Use 'storeborrow' only for deliberately stored borrowed views, or store an owned value instead.",
+                "semantic-validate",
+                Location(context.Start));
+        }
+
+        if (usage == TypeUsage.Return && TryFindNonStorableBorrowType(type, includeTopLevel: false, out var nonStorableReturnBorrow))
+        {
+            _context.Diagnostics.Error(
+                "STK4005",
+                $"Return type '{type.DisplayName}' contains '{nonStorableReturnBorrow.DisplayName}', but 'borrow' values cannot be returned and nested 'retborrow' values cannot be lifetime-checked through owned aggregate storage. Return the borrow directly or use an owned value instead.",
+                "semantic-validate",
+                Location(context.Start));
+        }
+
         if (ContainsNestedRawPointer(type)
             && !((isFfiBoundary && usage is TypeUsage.Parameter or TypeUsage.Return)
                 || (isPlatformAbiBoundary && usage == TypeUsage.Field)))
@@ -4346,6 +4520,38 @@ internal sealed class SemanticValidator
                 Location(context.Start));
         }
 
+    }
+
+    private static bool TryFindNonStorableBorrowType(
+        StarkTypeSymbol type,
+        bool includeTopLevel,
+        out StarkTypeSymbol nonStorableBorrow)
+    {
+        if (includeTopLevel && type.BorrowKind is StarkBorrowKind.Borrow or StarkBorrowKind.RetBorrow)
+        {
+            nonStorableBorrow = type;
+            return true;
+        }
+
+        if (type.ElementType is not null
+            && TryFindNonStorableBorrowType(type.ElementType, includeTopLevel: true, out nonStorableBorrow))
+        {
+            return true;
+        }
+
+        if (type.TypeArguments is not null)
+        {
+            foreach (var typeArgument in type.TypeArguments)
+            {
+                if (TryFindNonStorableBorrowType(typeArgument, includeTopLevel: true, out nonStorableBorrow))
+                {
+                    return true;
+                }
+            }
+        }
+
+        nonStorableBorrow = StarkTypeSymbols.Error;
+        return false;
     }
 
     private bool IsPlatformAbiDeclaration(string localDeclarationName)
@@ -4433,6 +4639,23 @@ internal sealed class SemanticValidator
         if (type.FunctionPointerParameterTypes is not null)
         {
             foreach (var parameterType in type.FunctionPointerParameterTypes)
+            {
+                if (TryFindIntegerRangeStorageViolation(parameterType, out violatingType, out suggestedType, out violationKind))
+                {
+                    return true;
+                }
+            }
+        }
+
+        if (type.ClosureReturnType is not null
+            && TryFindIntegerRangeStorageViolation(type.ClosureReturnType, out violatingType, out suggestedType, out violationKind))
+        {
+            return true;
+        }
+
+        if (type.ClosureParameterTypes is not null)
+        {
+            foreach (var parameterType in type.ClosureParameterTypes)
             {
                 if (TryFindIntegerRangeStorageViolation(parameterType, out violatingType, out suggestedType, out violationKind))
                 {

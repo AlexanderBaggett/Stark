@@ -38,6 +38,7 @@ public sealed class SsaEmitterCoverageMatrixTests
             Row(nameof(SsaNullConstant), CoverageKind.PositiveLlvmEmission, "LlvmEmitterConversionTests.RawPointerToIntegerConversionEmitsPtrtoint"),
             Row(nameof(SsaGlobalAddressValue), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.ImmutableGlobalAddressesLowerWithoutPointerCasts"),
             Row(nameof(SsaFunctionAddressValue), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.FunctionPointerCallsEmitFastccIndirectCall"),
+            Row(nameof(SsaClosureValue), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.NonCapturingClosureValuesLowerToInvokeAndEnvironmentPair"),
             Row(nameof(SsaUndefValue), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.AggregateMoveInvalidatesAddressableSourceStorage"),
             Row(nameof(SsaZeroInitializerValue), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.PlainObjectCreationWithoutInitializerReturnsZeroInitializedAggregate"),
 
@@ -56,6 +57,7 @@ public sealed class SsaEmitterCoverageMatrixTests
             Row(nameof(SsaMakeSliceFromPointerRValue), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.RawSlicesFromConstPointersPreserveInvariantLoadMetadata", "LlvmIrEmissionTests.RuntimeDisjointSliceConditionUsesViewDataAndLength"),
             Row(nameof(SsaDynamicStorageAllocationRValue), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.DynamicStorageAllocationIndexInitAndDropEmitRuntimeAllocatorCalls"),
             Row(nameof(SsaDynamicStorageFreeRValue), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.DynamicStorageAllocationIndexInitAndDropEmitRuntimeAllocatorCalls"),
+            Row(nameof(SsaHeapStorageFreeRValue), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.HeapClosureMoveCaptureDropReleasesOwnedFieldsBeforeEnvironment"),
             Row(nameof(SsaDynamicStorageReserveRValue), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.DynamicStorageReserveEmitsDirectReallocatePath"),
             Row(nameof(SsaDynamicStorageTryReserveRValue), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.DynamicStorageTryReserveEmitsDirectFallibleReallocatePath"),
             Row(nameof(SsaDynamicStorageTryReserveCapacityRValue), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.DynamicStorageTryReserveCapacityEmitsExactFallibleReallocatePath"),

@@ -262,11 +262,12 @@ internal sealed class LlvmFunctionAttributeBuilder
         }
 
         AppendBoundedRawPointerRegionAttributes(attributes, parameter, abiFunction);
+        AppendParameterEffectPointerExtentAttributes(attributes, parameterEffects);
 
         if (parameter.SourceType.BorrowKind != StarkBorrowKind.None
             || parameter.SourceType.InitializationKind != StarkInitializationKind.None)
         {
-            attributes.Add("nonnull");
+            AddUniqueAttribute(attributes, "nonnull", insertionIndex: 0);
             AppendDereferenceableAttributes(attributes, parameter.SourceType);
         }
 
@@ -280,8 +281,34 @@ internal sealed class LlvmFunctionAttributeBuilder
         AppendCaptureAttribute(attributes, parameterEffects);
 
         // Plain raw pointers remain nullable and may carry arbitrary raw/FFI
-        // provenance, so do not infer nonnull or dereferenceable facts here.
+        // provenance unless semantic/lowering facts explicitly prove stronger
+        // attributes.
         return attributes;
+    }
+
+    private static void AppendParameterEffectPointerExtentAttributes(
+        List<string> attributes,
+        ParameterMemoryEffectSummary? parameterEffects)
+    {
+        if (parameterEffects is null)
+        {
+            return;
+        }
+
+        if (parameterEffects.GuaranteedNonNull)
+        {
+            AddUniqueAttribute(attributes, "nonnull", insertionIndex: 0);
+        }
+
+        if (parameterEffects.DereferenceableBytes is > 0)
+        {
+            AddOrStrengthenDereferenceableAttribute(attributes, parameterEffects.DereferenceableBytes.Value);
+        }
+
+        if (parameterEffects.AlignmentBytes is > 1)
+        {
+            AddOrStrengthenAlignAttribute(attributes, parameterEffects.AlignmentBytes.Value);
+        }
     }
 
     private void AppendBoundedRawPointerRegionAttributes(
@@ -301,16 +328,16 @@ internal sealed class LlvmFunctionAttributeBuilder
         if (BigInteger.TryParse(parameter.RawPointerElementCountExpression, NumberStyles.None, CultureInfo.InvariantCulture, out var elementCount)
             && elementCount > BigInteger.Zero)
         {
-            attributes.Add("nonnull");
+            AddUniqueAttribute(attributes, "nonnull", insertionIndex: 0);
             var byteCount = elementCount * elementLayout.SizeBytes;
             if (byteCount <= long.MaxValue)
             {
-                attributes.Add($"dereferenceable({byteCount.ToString(CultureInfo.InvariantCulture)})");
+                AddOrStrengthenDereferenceableAttribute(attributes, byteCount);
             }
 
             if (elementLayout.AlignmentBytes > 1)
             {
-                attributes.Add($"align {elementLayout.AlignmentBytes}");
+                AddOrStrengthenAlignAttribute(attributes, elementLayout.AlignmentBytes);
             }
 
             return;
@@ -321,19 +348,19 @@ internal sealed class LlvmFunctionAttributeBuilder
             return;
         }
 
-        attributes.Add("nonnull");
+        AddUniqueAttribute(attributes, "nonnull", insertionIndex: 0);
         if (TryGetBoundedRawPointerMinimumByteCount(
                 parameter.RawPointerElementCountExpression,
                 abiFunction,
                 elementLayout,
                 out var minimumByteCount))
         {
-            attributes.Add($"dereferenceable({minimumByteCount.ToString(CultureInfo.InvariantCulture)})");
+            AddOrStrengthenDereferenceableAttribute(attributes, minimumByteCount);
         }
 
         if (elementLayout.AlignmentBytes > 1)
         {
-            attributes.Add($"align {elementLayout.AlignmentBytes}");
+            AddOrStrengthenAlignAttribute(attributes, elementLayout.AlignmentBytes);
         }
     }
 
@@ -385,11 +412,77 @@ internal sealed class LlvmFunctionAttributeBuilder
             return;
         }
 
-        attributes.Add($"dereferenceable({layout.SizeBytes})");
+        AddOrStrengthenDereferenceableAttribute(attributes, layout.SizeBytes);
         if (layout.AlignmentBytes > 1)
         {
-            attributes.Add($"align {layout.AlignmentBytes}");
+            AddOrStrengthenAlignAttribute(attributes, layout.AlignmentBytes);
         }
+    }
+
+    private static void AddUniqueAttribute(List<string> attributes, string attribute, int? insertionIndex = null)
+    {
+        if (attributes.Contains(attribute, StringComparer.Ordinal))
+        {
+            return;
+        }
+
+        attributes.Insert(Math.Clamp(insertionIndex ?? attributes.Count, 0, attributes.Count), attribute);
+    }
+
+    private static void AddOrStrengthenDereferenceableAttribute(List<string> attributes, BigInteger byteCount)
+    {
+        var replacement = $"dereferenceable({byteCount.ToString(CultureInfo.InvariantCulture)})";
+        for (var index = 0; index < attributes.Count; index++)
+        {
+            if (!TryParseDereferenceableAttribute(attributes[index], out var existingByteCount))
+            {
+                continue;
+            }
+
+            if (byteCount > existingByteCount)
+            {
+                attributes[index] = replacement;
+            }
+
+            return;
+        }
+
+        attributes.Add(replacement);
+    }
+
+    private static bool TryParseDereferenceableAttribute(string attribute, out BigInteger byteCount)
+    {
+        const string prefix = "dereferenceable(";
+        byteCount = default;
+        return attribute.StartsWith(prefix, StringComparison.Ordinal)
+            && attribute.EndsWith(')')
+            && BigInteger.TryParse(
+                attribute[prefix.Length..^1],
+                NumberStyles.None,
+                CultureInfo.InvariantCulture,
+                out byteCount);
+    }
+
+    private static void AddOrStrengthenAlignAttribute(List<string> attributes, int alignmentBytes)
+    {
+        var replacement = $"align {alignmentBytes.ToString(CultureInfo.InvariantCulture)}";
+        for (var index = 0; index < attributes.Count; index++)
+        {
+            if (!attributes[index].StartsWith("align ", StringComparison.Ordinal)
+                || !int.TryParse(attributes[index][6..], NumberStyles.None, CultureInfo.InvariantCulture, out var existingAlignmentBytes))
+            {
+                continue;
+            }
+
+            if (alignmentBytes > existingAlignmentBytes)
+            {
+                attributes[index] = replacement;
+            }
+
+            return;
+        }
+
+        attributes.Add(replacement);
     }
 
     private static ParameterMemoryEffectSummary? ResolveParameterEffects(

@@ -235,6 +235,8 @@ internal sealed record StarkPackageTypeReference(
     StarkPackageTypeReference? ElementType = null,
     IReadOnlyList<StarkPackageTypeReference>? TypeArguments = null,
     string? FunctionKind = null,
+    string? ClosureStorageKind = null,
+    string? ClosureCallCapability = null,
     StarkPackageTypeReference? ReturnType = null,
     IReadOnlyList<StarkPackageTypeReference>? ParameterTypes = null,
     IReadOnlyList<string?>? ParameterRawPointerElementCountExpressions = null,

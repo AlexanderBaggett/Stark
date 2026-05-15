@@ -101,6 +101,93 @@ public sealed class PackageImageCallableValueTests
     }
 
     [Fact]
+    public void PackageImagePreservesClosureTypes()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-closures-");
+        var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "Facade.starkpkg.json");
+
+        try
+        {
+            var result = DefaultCompilerPipeline.Create().Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct Token {
+                    i32[min max] Value;
+                }
+
+                public fn void RegisterInline(inline closure<fn void(borrow mut Token)> callback);
+                public fn void RegisterBorrow(borrow closure<fn void(borrow mut Token)> callback);
+                public fn void RegisterMut(mut borrow closure<mut fn void(i32[min max])> callback);
+                public fn void RegisterOverlap(borrow closure<fn void(borrow mut Token, borrow mut Token) where overlap(arg0, arg1)> callback);
+                public unsafe fn void RegisterBounded(borrow closure<finite void(rawptr<i32[min max]>[arg1], u8[1 10])> callback);
+                public fn heap closure<fn i32[min max](i32[min max])> Factory(heap closure<fn i32[min max](i32[min max])> callback);
+                """,
+                sourcePath));
+
+            Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                result,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var module = Assert.Single(manifest.Modules, static item => item.ModuleName == "Facade");
+
+            var inlineCallback = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "RegisterInline").Parameters.Single().Type;
+            Assert.Equal("closure", inlineCallback.Kind);
+            Assert.Equal("inline", inlineCallback.ClosureStorageKind);
+            Assert.Equal("fn", inlineCallback.FunctionKind);
+
+            var borrowCallback = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "RegisterBorrow").Parameters.Single().Type;
+            Assert.Equal("closure", borrowCallback.Kind);
+            Assert.Equal("borrow", borrowCallback.BorrowKind);
+            Assert.Null(borrowCallback.ClosureStorageKind);
+
+            var mutCallback = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "RegisterMut").Parameters.Single().Type;
+            Assert.Equal("mut", mutCallback.ClosureCallCapability);
+            Assert.True(mutCallback.IsMutableView);
+
+            var overlapCallback = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "RegisterOverlap").Parameters.Single().Type;
+            var overlapGroup = Assert.Single(overlapCallback.OverlapParameterGroups ?? []);
+            Assert.Equal(["arg0", "arg1"], overlapGroup.ParameterNames);
+
+            var boundedCallback = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "RegisterBounded").Parameters.Single().Type;
+            Assert.Equal(["arg1", null], boundedCallback.ParameterRawPointerElementCountExpressions);
+
+            var factory = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "Factory");
+            Assert.Equal("closure", factory.ReturnType.Kind);
+            Assert.Equal("heap", factory.ReturnType.ClosureStorageKind);
+
+            Assert.True(PackageImageLoader.TryBuildModuleSource(
+                new ResolvedPackageModule(
+                    manifestPath,
+                    Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"),
+                    manifest,
+                    module),
+                out var sourceText));
+            Assert.Contains("inline closure<fn void(mut borrow Token)>", sourceText, StringComparison.Ordinal);
+            Assert.Contains("borrow closure<fn void(mut borrow Token)>", sourceText, StringComparison.Ordinal);
+            Assert.Contains("RegisterMut", sourceText, StringComparison.Ordinal);
+            Assert.Contains("closure<mut fn void(i32", sourceText, StringComparison.Ordinal);
+            Assert.Contains("where overlap(arg0, arg1)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("rawptr<i32", sourceText, StringComparison.Ordinal);
+            Assert.Contains("[arg1]", sourceText, StringComparison.Ordinal);
+            Assert.Contains("heap closure<fn i32", sourceText, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void PackageImageBackedExplicitConstructorWithAliasCallableParameterLowersWithoutSource()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-callable-constructor-");

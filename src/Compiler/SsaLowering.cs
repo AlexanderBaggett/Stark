@@ -451,6 +451,9 @@ internal sealed class SsaLowerer
                 MidLevelIrDynamicStorageFreeRValue free => EmitValue(block, new SsaDynamicStorageFreeRValue(
                     LowerOperand(blockId, block, free.Storage),
                     free.Text)),
+                MidLevelIrHeapStorageFreeRValue free => EmitValue(block, new SsaHeapStorageFreeRValue(
+                    LowerOperand(blockId, block, free.Pointer),
+                    free.Text)),
                 MidLevelIrDynamicStorageReserveRValue reserve => EmitValue(block, new SsaDynamicStorageReserveRValue(
                     LowerOperand(blockId, block, reserve.StorageAddress),
                     reserve.StorageType,
@@ -564,7 +567,8 @@ internal sealed class SsaLowerer
                 call.IndirectArgumentLocalNames,
                 call.IndirectArgumentAddresses?
                     .Select(address => address is null ? null : LowerOperand(blockId, block, address))
-                    .ToArray()));
+                    .ToArray(),
+                call.MayFree));
         }
 
         private SsaValue LowerOperand(int blockId, SsaBlockBuilder block, MidLevelIrOperand operand)
@@ -581,6 +585,7 @@ internal sealed class SsaLowerer
                 MidLevelIrGlobalOperand global => EmitValue(block, new SsaLoadGlobalRValue(global.Name, global.Type)),
                 MidLevelIrGlobalAddressOperand globalAddress => new SsaGlobalAddressValue(globalAddress.Name, globalAddress.PointeeType, globalAddress.Type),
                 MidLevelIrFunctionAddressOperand functionAddress => new SsaFunctionAddressValue(functionAddress.FunctionName, functionAddress.Type),
+                MidLevelIrClosureValueOperand closure => new SsaClosureValue(closure.InvokeFunctionName, closure.Type),
                 MidLevelIrIntegerConstantOperand integer => new SsaIntegerConstant(integer.Value, integer.Type),
                 MidLevelIrFloatConstantOperand floating => new SsaFloatConstant(floating.LiteralText, floating.Type),
                 MidLevelIrStringConstantOperand text => new SsaStringConstant(text.LiteralText, text.Type),
@@ -1573,7 +1578,8 @@ internal sealed class SsaLowerer
                     call.IndirectArgumentLocalNames,
                     call.IndirectArgumentAddresses?
                         .Select(address => address is null ? null : RewriteValue(address, replacements))
-                        .ToArray()),
+                        .ToArray(),
+                    call.MayFree),
                 SsaConvertRValue convert => new SsaConvertRValue(
                     RewriteValue(convert.Operand, replacements),
                     convert.TargetType,
@@ -1614,6 +1620,9 @@ internal sealed class SsaLowerer
                     allocation.Text),
                 SsaDynamicStorageFreeRValue free => new SsaDynamicStorageFreeRValue(
                     RewriteValue(free.Storage, replacements),
+                    free.Text),
+                SsaHeapStorageFreeRValue free => new SsaHeapStorageFreeRValue(
+                    RewriteValue(free.Pointer, replacements),
                     free.Text),
                 SsaDynamicStorageReserveRValue reserve => new SsaDynamicStorageReserveRValue(
                     RewriteValue(reserve.StorageAddress, replacements),

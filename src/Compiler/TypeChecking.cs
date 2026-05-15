@@ -87,10 +87,13 @@ internal sealed class TypeChecker
     private readonly List<ConversionTypingRecord> _conversions = [];
     private readonly List<DirectCallTypingRecord> _directCalls = [];
     private readonly List<FunctionPointerPromotionTypingRecord> _functionPointerPromotions = [];
+    private readonly List<ClosureFunctionPromotionTypingRecord> _closureFunctionPromotions = [];
     private readonly List<AddressTakenFunctionTypingRecord> _addressTakenFunctions = [];
     private readonly HashSet<string> _addressTakenFunctionNames = new(StringComparer.Ordinal);
     private readonly List<IndirectCallTypingRecord> _indirectCalls = [];
+    private readonly List<ClosureCallTypingRecord> _closureCalls = [];
     private readonly List<LambdaTypingRecord> _lambdas = [];
+    private readonly List<ClosureLambdaTypingRecord> _closureLambdas = [];
     private readonly List<LambdaCaptureTypingRecord> _lambdaCaptures = [];
     private readonly List<FieldAccessTypingRecord> _fieldAccesses = [];
     private readonly List<MemberCallTypingRecord> _memberCalls = [];
@@ -203,15 +206,18 @@ internal sealed class TypeChecker
             _directCalls,
             _functionPointerPromotions,
             _indirectCalls,
+            _closureCalls,
             _fieldAccesses,
             _memberCalls,
             _typeLayoutExpressions,
             _lambdas,
+            _closureLambdas,
             _lambdaCaptures,
             _addressTakenFunctions,
             _indexAccesses,
             _dynamicStorageOperations,
-            _switches);
+            _switches,
+            _closureFunctionPromotions);
     }
 
     private void CollectTypeAliasSources()
@@ -717,7 +723,11 @@ internal sealed class TypeChecker
                     foreach (var parameter in functionSyntax.ParameterList.parameter())
                     {
                         var parameterType = ResolveParameterType(parameter.type_(), genericParameters, module.SyntaxModel.ModuleName, out var rawPointerElementCountExpression);
-                        ValidateRuntimeValueType(parameterType, parameter.type_(), $"parameter '{parameter.Identifier().GetText()}'");
+                        ValidateRuntimeValueType(
+                            parameterType,
+                            parameter.type_(),
+                            $"parameter '{parameter.Identifier().GetText()}'",
+                            allowDirectInlineClosureParameter: true);
                         if (isAbiBoundary)
                         {
                             ValidateAbiTypeDoesNotDependOnEnum(parameterType, parameter, $"parameter '{parameter.Identifier().GetText()}'");
@@ -6877,6 +6887,11 @@ internal sealed class TypeChecker
             return false;
         }
 
+        if (parameter.Type.Kind == StarkTypeKind.Closure)
+        {
+            return false;
+        }
+
         return !parameter.IsConst
             && (parameter.Type.InitializationKind != StarkInitializationKind.None
                 || parameter.Type.BorrowKind != StarkBorrowKind.None);
@@ -6885,6 +6900,11 @@ internal sealed class TypeChecker
     private static bool RequiresMutableCallArgument(TypedParameterSymbol parameter, bool isReceiver)
     {
         if (isReceiver)
+        {
+            return false;
+        }
+
+        if (parameter.Type.Kind == StarkTypeKind.Closure)
         {
             return false;
         }
@@ -8073,6 +8093,29 @@ internal sealed class TypeChecker
             }
         }
 
+        if (expectedType?.Kind == StarkTypeKind.Closure
+            && binding.Type.Kind != StarkTypeKind.Closure)
+        {
+            if (binding.Function is { } function)
+            {
+                return ResolveClosureFunctionPromotion(
+                    function.DisplaySourceName,
+                    [function],
+                    expectedType,
+                    expression.Start);
+            }
+
+            if (binding.OverloadSourceName is { } overloadSourceName
+                && TryGetFunctionOverloads(overloadSourceName, out var overloads))
+            {
+                return ResolveClosureFunctionPromotion(
+                    overloadSourceName,
+                    overloads,
+                    expectedType,
+                    expression.Start);
+            }
+        }
+
         return binding;
     }
 
@@ -8608,25 +8651,27 @@ internal sealed class TypeChecker
         var lambdaLocation = Location(expression);
         var captureBindings = ValidateLambdaCaptures(expression.captureClause(), scope, lambdaLocation);
 
-        if (expectedType?.Kind != StarkTypeKind.FunctionPointer)
+        if (expectedType?.Kind is not (StarkTypeKind.FunctionPointer or StarkTypeKind.Closure))
         {
             ReportError(
                 "STK3008",
-                "Lambda expressions require an explicit function-pointer target type in this compiler slice.",
+                "Lambda expressions require an explicit function-pointer or closure target type.",
                 expression);
             return new ExpressionBinding(StarkTypeSymbols.Error, DiagnosticName: "lambda");
         }
 
-        var parameterTypes = expectedType.FunctionPointerParameterTypes ?? [];
-        var returnType = expectedType.FunctionPointerReturnType ?? StarkTypeSymbols.Error;
+        ValidateLambdaStoragePrefix(expression, expectedType);
+
+        var parameterTypes = GetCallableParameterTypes(expectedType);
+        var returnType = GetCallableReturnType(expectedType);
         var lambdaScope = Scope.CreateRoot(_globals);
         foreach (var captureBinding in captureBindings)
         {
             var capturedLocal = captureBinding.Symbol;
             lambdaScope.Declare(new VariableSymbol(
                 capturedLocal.Name,
-                GetLambdaCaptureBodyType(capturedLocal.Type, captureBinding.Mode),
-                IsMutable: CaptureModeExposesWritableBinding(captureBinding.Mode),
+                CallableValueFacts.GetLambdaCaptureBodyType(capturedLocal.Type, captureBinding.Mode),
+                IsMutable: CallableValueFacts.LambdaCaptureModeExposesWritableBinding(captureBinding.Mode),
                 IsConstant: false));
         }
 
@@ -8650,6 +8695,14 @@ internal sealed class TypeChecker
             var parameter = lambdaParameters[index];
             var parameterName = lambdaParameterNames[index];
             parameterNames.Add(parameterName);
+            if (captureBindings.Any(capture => string.Equals(capture.Symbol.Name, parameterName, StringComparison.Ordinal)))
+            {
+                ReportError(
+                    "STK3006",
+                    $"Lambda parameter '{parameterName}' reuses a captured name. Rename the parameter or remove the capture so capture bindings and lambda parameters stay distinct.",
+                    parameter.Identifier().Symbol);
+            }
+
             var parameterType = ResolveType(parameter.type_(), currentModuleName: CurrentFunctionModuleName);
             ValidateRuntimeValueType(parameterType, parameter.type_(), $"lambda parameter '{parameter.Identifier().GetText()}'");
             if (index < parameterTypes.Count && !CanAssign(parameterType, parameterTypes[index]))
@@ -8671,30 +8724,56 @@ internal sealed class TypeChecker
                 IsConstant: false,
                 RawPointerElementCountExpression: index < parameterTypes.Count
                     ? MapFunctionPointerRawPointerElementCountExpressionToParameterNames(
-                        StarkTypeSymbols.GetFunctionPointerParameterRawPointerElementCountExpression(expectedType, index),
+                        GetCallableParameterRawPointerElementCountExpression(expectedType, index),
                         lambdaParameterNames)
                     : null));
         }
 
         LambdaTypingRecord? lambda = null;
+        ClosureLambdaTypingRecord? closureLambda = null;
         if (lambdaParameters.Length == parameterTypes.Count && _currentFunctionName is { } enclosingFunctionName)
         {
-            lambda = new LambdaTypingRecord(
-                CallableValueFacts.BuildLambdaFunctionName(enclosingFunctionName, lambdaLocation),
-                expectedType,
-                parameterNames,
-                lambdaLocation,
-                enclosingFunctionName);
+            var functionName = CallableValueFacts.BuildLambdaFunctionName(enclosingFunctionName, lambdaLocation);
+            if (expectedType.Kind == StarkTypeKind.FunctionPointer)
+            {
+                lambda = new LambdaTypingRecord(
+                    functionName,
+                    expectedType,
+                    parameterNames,
+                    lambdaLocation,
+                    enclosingFunctionName);
+            }
+            else
+            {
+                var captureFields = BuildClosureCaptureFields(captureBindings);
+                var environmentTypeName = CallableValueFacts.BuildClosureEnvironmentTypeName(functionName);
+                if (captureFields.Count > 0)
+                {
+                    _namedTypes[environmentTypeName] = CallableValueFacts.BuildClosureEnvironmentNamedType(
+                        environmentTypeName,
+                        captureFields);
+                }
+
+                closureLambda = new ClosureLambdaTypingRecord(
+                    functionName,
+                    expectedType,
+                    CallableValueFacts.BuildClosureEnvironmentPointerType(expectedType),
+                    parameterNames,
+                    lambdaLocation,
+                    enclosingFunctionName,
+                    environmentTypeName,
+                    captureFields);
+            }
         }
 
         var previousFunctionName = _currentFunctionName;
-        var typeBodyAsLambdaFunction = lambda is not null
-            && captureBindings.Count == 0
+        var typeBodyAsLambdaFunction =
+            (lambda is not null && captureBindings.Count == 0 || closureLambda is not null)
             && !TypeContainsOpenCurrentFunctionGenericParameter(expectedType)
             && parametersExactlyMatchTarget;
         if (typeBodyAsLambdaFunction)
         {
-            _currentFunctionName = lambda!.FunctionName;
+            _currentFunctionName = lambda?.FunctionName ?? closureLambda!.FunctionName;
         }
 
         try
@@ -8722,18 +8801,23 @@ internal sealed class TypeChecker
 
         if (captureBindings.Count > 0)
         {
-            ReportError(
-                "STK3008",
-                "A lambda converted to 'fnptr<...>' cannot capture local state because function pointers do not carry closure storage. Use a named function item or pass captured state explicitly.",
-                (ParserRuleContext?)expression.captureClause() ?? expression);
-            return new ExpressionBinding(expectedType, DiagnosticName: "lambda");
+            if (expectedType.Kind == StarkTypeKind.FunctionPointer)
+            {
+                ReportError(
+                    "STK3008",
+                    "A lambda converted to 'fnptr<...>' cannot capture local state because function pointers do not carry closure storage. Use a named function item or pass captured state explicitly.",
+                    (ParserRuleContext?)expression.captureClause() ?? expression);
+                return new ExpressionBinding(expectedType, DiagnosticName: "lambda");
+            }
+
+            ValidateClosureCaptureLegality(expectedType, captureBindings, expression);
         }
 
         if (TypeContainsOpenCurrentFunctionGenericParameter(expectedType))
         {
             ReportError(
                 "STK3008",
-                "A lambda converted to 'fnptr<...>' requires a concrete function-pointer target type. Use a named generic function item when the target function-pointer type still contains open generic parameters.",
+                $"A lambda converted to '{expectedType.DisplayName}' requires a concrete target type. Use a named generic function item or instantiate the target type before converting the lambda.",
                 expression);
             return new ExpressionBinding(expectedType, DiagnosticName: "lambda");
         }
@@ -8742,7 +8826,7 @@ internal sealed class TypeChecker
         {
             ReportError(
                 "STK3002",
-                $"Lowered non-capturing lambdas require parameter annotations to exactly match target '{expectedType.DisplayName}' so the generated function pointer has an exact ABI signature.",
+                $"Lowered lambdas require parameter annotations to exactly match target '{expectedType.DisplayName}' so the generated callable has an exact ABI signature.",
                 expression.lambdaParameterList());
             return new ExpressionBinding(expectedType, DiagnosticName: "lambda");
         }
@@ -8753,7 +8837,130 @@ internal sealed class TypeChecker
             _functions.TryAdd(lambda.FunctionName, CallableValueFacts.BuildLambdaSignature(lambda));
         }
 
+        if (closureLambda is not null)
+        {
+            _closureLambdas.Add(closureLambda);
+            _functions.TryAdd(closureLambda.FunctionName, CallableValueFacts.BuildClosureLambdaSignature(closureLambda));
+        }
+
         return new ExpressionBinding(expectedType, DiagnosticName: "lambda");
+    }
+
+    private static IReadOnlyList<ClosureCaptureFieldSymbol> BuildClosureCaptureFields(
+        IReadOnlyList<LambdaCaptureBinding> captureBindings)
+    {
+        if (captureBindings.Count == 0)
+        {
+            return [];
+        }
+
+        return captureBindings
+            .Select(static capture =>
+            {
+                var sourceType = capture.Symbol.Type;
+                var bodyType = CallableValueFacts.GetLambdaCaptureBodyType(sourceType, capture.Mode);
+                return new ClosureCaptureFieldSymbol(
+                    capture.Symbol.Name,
+                    capture.Symbol.Name,
+                    capture.Mode,
+                    capture.IsUnsafe,
+                    sourceType,
+                    bodyType,
+                    CallableValueFacts.GetLambdaCaptureFieldType(sourceType, capture.Mode),
+                    CallableValueFacts.GetLambdaCaptureStorageKind(capture.Mode));
+            })
+            .ToArray();
+    }
+
+    private void ValidateLambdaStoragePrefix(StarkParser.LambdaExpressionContext expression, StarkTypeSymbol expectedType)
+    {
+        var hasHeapPrefix = expression.lambdaStoragePrefix()?.HEAP() is not null;
+        if (!hasHeapPrefix)
+        {
+            if (expectedType.Kind == StarkTypeKind.Closure
+                && expectedType.ClosureStorageKind == StarkClosureStorageKind.Heap)
+            {
+                ReportError(
+                    "STK3008",
+                    "A lambda converted to a heap closure must use the explicit 'heap' lambda prefix, for example `heap capture(...) (...) => ...`.",
+                    expression);
+            }
+
+            return;
+        }
+
+        if (expectedType.Kind != StarkTypeKind.Closure
+            || expectedType.ClosureStorageKind != StarkClosureStorageKind.Heap)
+        {
+            ReportError(
+                "STK3008",
+                "The 'heap' lambda prefix is only valid when the target type is `heap closure<...>`.",
+                expression.lambdaStoragePrefix() ?? (ParserRuleContext)expression);
+        }
+    }
+
+    private static IReadOnlyList<StarkTypeSymbol> GetCallableParameterTypes(StarkTypeSymbol callableType)
+    {
+        return callableType.Kind == StarkTypeKind.Closure
+            ? callableType.ClosureParameterTypes ?? []
+            : callableType.FunctionPointerParameterTypes ?? [];
+    }
+
+    private static StarkTypeSymbol GetCallableReturnType(StarkTypeSymbol callableType)
+    {
+        return callableType.Kind == StarkTypeKind.Closure
+            ? callableType.ClosureReturnType ?? StarkTypeSymbols.Error
+            : callableType.FunctionPointerReturnType ?? StarkTypeSymbols.Error;
+    }
+
+    private static string? GetCallableParameterRawPointerElementCountExpression(
+        StarkTypeSymbol callableType,
+        int parameterIndex)
+    {
+        return callableType.Kind == StarkTypeKind.Closure
+            ? StarkTypeSymbols.GetClosureParameterRawPointerElementCountExpression(callableType, parameterIndex)
+            : StarkTypeSymbols.GetFunctionPointerParameterRawPointerElementCountExpression(callableType, parameterIndex);
+    }
+
+    private void ValidateClosureCaptureLegality(
+        StarkTypeSymbol closureType,
+        IReadOnlyList<LambdaCaptureBinding> captureBindings,
+        StarkParser.LambdaExpressionContext expression)
+    {
+        if (closureType.Kind != StarkTypeKind.Closure
+            || closureType.ClosureStorageKind != StarkClosureStorageKind.Heap)
+        {
+            return;
+        }
+
+        foreach (var capture in captureBindings)
+        {
+            if (capture.Symbol.Type.BorrowKind is StarkBorrowKind.Borrow or StarkBorrowKind.RetBorrow)
+            {
+                ReportError(
+                    "STK3008",
+                    $"Heap closure capture '{capture.Symbol.Name}' has non-escaping type '{capture.Symbol.Type.DisplayName}'. Heap closures may retain only owned values, raw capabilities, or explicit 'storeborrow' views; use a borrowed or inline closure for non-owning local captures.",
+                    (ParserRuleContext?)expression.captureClause() ?? expression);
+                continue;
+            }
+
+            if (IsHeapClosureSafeCaptureMode(capture.Mode))
+            {
+                continue;
+            }
+
+            ReportError(
+                "STK3008",
+                $"Heap closure capture mode '{capture.Mode}' would retain a borrowed view of local storage. Heap closures may capture with 'copy', 'move', or an explicit unsafe shared capture; use a borrowed or inline closure for non-owning local captures.",
+                (ParserRuleContext?)expression.captureClause() ?? expression);
+        }
+    }
+
+    private static bool IsHeapClosureSafeCaptureMode(string mode)
+    {
+        return string.Equals(mode, "copy", StringComparison.Ordinal)
+            || string.Equals(mode, "move", StringComparison.Ordinal)
+            || string.Equals(mode, "shared", StringComparison.Ordinal);
     }
 
     private IReadOnlyList<LambdaCaptureBinding> ValidateLambdaCaptures(
@@ -8834,7 +9041,7 @@ internal sealed class TypeChecker
                         capture);
                 }
 
-                capturedLocals.Add(new LambdaCaptureBinding(capturedLocal, mode));
+                capturedLocals.Add(new LambdaCaptureBinding(capturedLocal, mode, hasUnsafeKeyword));
                 _lambdaCaptures.Add(new LambdaCaptureTypingRecord(
                     name,
                     mode,
@@ -8851,39 +9058,7 @@ internal sealed class TypeChecker
 
     private static bool RequiresWritableCaptureTarget(string mode)
     {
-        return string.Equals(mode, "mut", StringComparison.Ordinal)
-            || string.Equals(mode, "out", StringComparison.Ordinal)
-            || string.Equals(mode, "init", StringComparison.Ordinal);
-    }
-
-    private static bool CaptureModeExposesWritableBinding(string mode)
-    {
-        return RequiresWritableCaptureTarget(mode);
-    }
-
-    private static StarkTypeSymbol GetLambdaCaptureBodyType(StarkTypeSymbol type, string mode)
-    {
-        if (string.Equals(mode, "addr", StringComparison.Ordinal))
-        {
-            return StarkTypeSymbols.RawPointer(StarkTypeSymbols.FreezeAddressPointeeType(type), isMutable: false);
-        }
-
-        if (string.Equals(mode, "shared", StringComparison.Ordinal))
-        {
-            return StarkTypeSymbols.WithQualifiers(type, accessKind: StarkAccessKind.Shared, isMutableView: false);
-        }
-
-        if (string.Equals(mode, "out", StringComparison.Ordinal))
-        {
-            return StarkTypeSymbols.WithQualifiers(type, initializationKind: StarkInitializationKind.Out);
-        }
-
-        if (string.Equals(mode, "init", StringComparison.Ordinal))
-        {
-            return StarkTypeSymbols.WithQualifiers(type, initializationKind: StarkInitializationKind.Init);
-        }
-
-        return type;
+        return CallableValueFacts.LambdaCaptureModeExposesWritableBinding(mode);
     }
 
     private static bool CanCopyIntoLambdaEnvironment(StarkTypeSymbol type)
@@ -9050,6 +9225,11 @@ internal sealed class TypeChecker
         if (target.Function is null && target.Type.Kind == StarkTypeKind.FunctionPointer)
         {
             return InvokeIndirectCall(target, arguments, scope);
+        }
+
+        if (target.Function is null && target.Type.Kind == StarkTypeKind.Closure)
+        {
+            return InvokeClosureCall(target, arguments, scope);
         }
 
         StarkTypeSymbol[]? argumentTypes = null;
@@ -10954,6 +11134,100 @@ internal sealed class TypeChecker
         return new ExpressionBinding(returnType, NamedType: ResolveNamedTypeSymbol(returnType), DiagnosticName: $"indirect call through {DescribeExpressionTarget(target)}");
     }
 
+    private ExpressionBinding InvokeClosureCall(ExpressionBinding target, StarkParser.ArgumentListContext arguments, Scope scope)
+    {
+        if (target.Type.ClosureReturnType is not { } returnType
+            || target.Type.ClosureParameterTypes is not { } parameterTypes)
+        {
+            ReportError("STK3008", $"{DescribeExpressionTarget(target)} is not callable.", arguments);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        var expectedParameters = parameterTypes
+            .Select((parameterType, index) => new TypedParameterSymbol(
+                $"arg{index}",
+                parameterType,
+                RawPointerElementCountExpression: StarkTypeSymbols.GetClosureParameterRawPointerElementCountExpression(target.Type, index)))
+            .ToArray();
+        var displayTargetName = target.DiagnosticName ?? "closure";
+        var closureSignature = new TypedFunctionSignature(
+            displayTargetName,
+            returnType,
+            expectedParameters,
+            SourceName: displayTargetName,
+            Kind: target.Type.ClosureFunctionKind ?? StarkFunctionKind.Fn,
+            DisjointParameterGroups: target.Type.ClosureDisjointParameterGroups ?? [],
+            OverlapParameterGroups: target.Type.ClosureOverlapParameterGroups ?? [],
+            SameParameterGroups: target.Type.ClosureSameParameterGroups ?? []);
+        var argumentBindings = EvaluateArguments(arguments, expectedParameters, scope);
+
+        if (parameterTypes.Count != arguments.argument().Length)
+        {
+            ReportError(
+                "STK3009",
+                $"{DescribeExpressionTarget(target)} expects {parameterTypes.Count} arguments but received {arguments.argument().Length}.",
+                arguments);
+        }
+
+        if (target.Type.ClosureCallCapability == StarkClosureCallCapability.Mut
+            && target.Type.ClosureStorageKind != StarkClosureStorageKind.Inline
+            && !target.IsAddressMutable)
+        {
+            ReportError(
+                "STK3008",
+                $"Mutable closure call through {DescribeExpressionTarget(target)} requires mutable access to the closure value.",
+                arguments);
+        }
+
+        for (var index = 0; index < Math.Min(parameterTypes.Count, argumentBindings.Length); index++)
+        {
+            EnsureCallArgumentCompatible(
+                displayTargetName,
+                index + 1,
+                expectedParameters[index],
+                argumentBindings[index],
+                arguments.argument(index).expression());
+        }
+
+        ValidateBoundedRawPointerCallArguments(
+            closureSignature,
+            receiverOffset: 0,
+            arguments,
+            argumentBindings,
+            displayTargetName,
+            scope);
+
+        ValidateDisjointCallArguments(
+            closureSignature,
+            receiver: null,
+            receiverOffset: 0,
+            arguments,
+            argumentBindings,
+            displayTargetName,
+            scope);
+
+        _closureCalls.Add(new ClosureCallTypingRecord(
+            target.Type,
+            Location(arguments),
+            _currentFunctionName,
+            BuildCallArgumentRecords(expectedParameters, null, argumentBindings, 0)));
+
+        if (returnType.BorrowKind != StarkBorrowKind.None)
+        {
+            var valueType = StarkTypeSymbols.BorrowReturnValueType(returnType);
+            var isPointerBacked = StarkTypeSymbols.IsPointerBackedBorrowReturn(returnType);
+            return new ExpressionBinding(
+                valueType,
+                IsAssignable: isPointerBacked && returnType.IsMutableView,
+                NamedType: ResolveNamedTypeSymbol(valueType),
+                DiagnosticName: $"closure call through {DescribeExpressionTarget(target)}",
+                IsAddressable: true,
+                IsAddressMutable: returnType.IsMutableView);
+        }
+
+        return new ExpressionBinding(returnType, NamedType: ResolveNamedTypeSymbol(returnType), DiagnosticName: $"closure call through {DescribeExpressionTarget(target)}");
+    }
+
     private ExpressionBinding InvokeEnumConstructor(ExpressionBinding target, StarkParser.ArgumentListContext arguments, Scope scope)
     {
         var constructor = target.EnumConstructor!;
@@ -11697,6 +11971,11 @@ internal sealed class TypeChecker
                 return ResolveFunctionPointerPromotion(name, functions, expectedType, token);
             }
 
+            if (expectedType?.Kind == StarkTypeKind.Closure)
+            {
+                return ResolveClosureFunctionPromotion(name, functions, expectedType, token);
+            }
+
             if (!allowFunctionReference)
             {
                 ReportError(
@@ -11850,6 +12129,70 @@ internal sealed class TypeChecker
         ReportError(
             "STK3002",
             $"Function item '{name}' is ambiguous for target '{targetType.DisplayName}'.",
+            token);
+        return new ExpressionBinding(StarkTypeSymbols.Error);
+    }
+
+    private ExpressionBinding ResolveClosureFunctionPromotion(
+        string name,
+        IReadOnlyList<TypedFunctionSignature> functions,
+        StarkTypeSymbol targetType,
+        IToken token)
+    {
+        var matchingCandidates = functions
+            .Where(static function => !function.IsGeneric)
+            .Where(function => TypeCompatibilityFacts.AreClosureTypesAssignable(
+                targetType,
+                TypeCompatibilityFacts.ClosureTypeForSignature(
+                    function,
+                    targetType.ClosureStorageKind,
+                    targetType.ClosureCallCapability)))
+            .ToArray();
+        var candidates = matchingCandidates
+            .Where(function => !function.IsUnsafe || _unsafeDepth != 0)
+            .ToArray();
+
+        if (candidates.Length == 1)
+        {
+            var function = candidates[0];
+            var location = Location(token);
+            var enclosingFunctionName = _currentFunctionName ?? "module";
+            var adapterFunctionName = CallableValueFacts.BuildClosureFunctionAdapterName(enclosingFunctionName, location);
+            var promotion = new ClosureFunctionPromotionTypingRecord(
+                function,
+                targetType,
+                adapterFunctionName,
+                location,
+                _currentFunctionName);
+            _closureFunctionPromotions.Add(promotion);
+            _functions.TryAdd(adapterFunctionName, CallableValueFacts.BuildClosureFunctionAdapterSignature(promotion));
+            return new ExpressionBinding(
+                targetType,
+                Function: function,
+                DiagnosticName: $"function item '{function.DisplaySourceName}'");
+        }
+
+        if (candidates.Length == 0 && matchingCandidates.Any(static function => function.IsUnsafe))
+        {
+            ReportError(
+                "STK3024",
+                $"Unsafe function item '{name}' cannot be promoted to closure '{targetType.DisplayName}' because that closure type does not carry an unsafe requirement. Call the function directly inside an unsafe block, or wrap it in a safe function that checks the required invariants.",
+                token);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        if (candidates.Length == 0)
+        {
+            ReportError(
+                "STK3002",
+                $"Function item '{name}' cannot be promoted to closure '{targetType.DisplayName}'.",
+                token);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        ReportError(
+            "STK3002",
+            $"Function item '{name}' is ambiguous for closure target '{targetType.DisplayName}'.",
             token);
         return new ExpressionBinding(StarkTypeSymbols.Error);
     }
@@ -12340,6 +12683,27 @@ internal sealed class TypeChecker
                 initializationKind: type.InitializationKind,
                 isMutableView: type.IsMutableView);
         }
+        else if (strippedType.Kind == StarkTypeKind.Closure
+            && strippedType.ClosureFunctionKind is { } closureFunctionKind
+            && strippedType.ClosureReturnType is { } closureReturnType
+            && strippedType.ClosureParameterTypes is { } closureParameterTypes)
+        {
+            monomorphizedType = StarkTypeSymbols.WithQualifiers(
+                StarkTypeSymbols.Closure(
+                    strippedType.ClosureStorageKind,
+                    strippedType.ClosureCallCapability,
+                    closureFunctionKind,
+                    EnsureMonomorphizedType(closureReturnType),
+                    closureParameterTypes.Select(parameter => EnsureMonomorphizedType(parameter)).ToArray(),
+                    strippedType.ClosureDisjointParameterGroups,
+                    strippedType.ClosureOverlapParameterGroups,
+                    strippedType.ClosureSameParameterGroups,
+                    strippedType.ClosureParameterRawPointerElementCountExpressions),
+                borrowKind: type.BorrowKind,
+                accessKind: type.AccessKind,
+                initializationKind: type.InitializationKind,
+                isMutableView: type.IsMutableView);
+        }
 
         if (!StarkTypeSymbols.IsGenericInstantiation(monomorphizedType))
         {
@@ -12716,6 +13080,22 @@ internal sealed class TypeChecker
                 coreType.FunctionPointerOverlapParameterGroups,
                 coreType.FunctionPointerSameParameterGroups,
                 coreType.FunctionPointerParameterRawPointerElementCountExpressions);
+        }
+        else if (coreType.Kind == StarkTypeKind.Closure
+            && coreType.ClosureFunctionKind is { } closureFunctionKind
+            && coreType.ClosureReturnType is { } closureReturnType
+            && coreType.ClosureParameterTypes is { } closureParameterTypes)
+        {
+            substitutedCore = StarkTypeSymbols.Closure(
+                coreType.ClosureStorageKind,
+                coreType.ClosureCallCapability,
+                closureFunctionKind,
+                SubstituteType(closureReturnType, substitution),
+                closureParameterTypes.Select(parameter => SubstituteType(parameter, substitution)).ToArray(),
+                coreType.ClosureDisjointParameterGroups,
+                coreType.ClosureOverlapParameterGroups,
+                coreType.ClosureSameParameterGroups,
+                coreType.ClosureParameterRawPointerElementCountExpressions);
         }
         else
         {
@@ -13958,6 +14338,8 @@ internal sealed class TypeChecker
             || type.ElementType is not null && ContainsRawPointer(type.ElementType)
             || type.FunctionPointerParameterTypes is { Count: > 0 } && type.FunctionPointerParameterTypes.Any(ContainsRawPointer)
             || type.FunctionPointerReturnType is not null && ContainsRawPointer(type.FunctionPointerReturnType)
+            || type.ClosureParameterTypes is { Count: > 0 } && type.ClosureParameterTypes.Any(ContainsRawPointer)
+            || type.ClosureReturnType is not null && ContainsRawPointer(type.ClosureReturnType)
             || type.TypeArguments is { Count: > 0 } && type.TypeArguments.Any(ContainsRawPointer);
     }
 
@@ -14209,6 +14591,11 @@ internal sealed class TypeChecker
         if (target.Kind == StarkTypeKind.FunctionPointer && source.Kind == StarkTypeKind.FunctionPointer)
         {
             return TypeCompatibilityFacts.AreFunctionPointerTypesAssignable(target, source);
+        }
+
+        if (target.Kind == StarkTypeKind.Closure && source.Kind == StarkTypeKind.Closure)
+        {
+            return TypeCompatibilityFacts.AreClosureTypesAssignable(target, source);
         }
 
         return target.Kind == StarkTypeKind.Named
@@ -14823,7 +15210,11 @@ internal sealed class TypeChecker
             && namedType.Kind == DeclarationKind.Trait;
     }
 
-    private StarkTypeSymbol ValidateRuntimeValueType(StarkTypeSymbol type, ParserRuleContext context, string usage)
+    private StarkTypeSymbol ValidateRuntimeValueType(
+        StarkTypeSymbol type,
+        ParserRuleContext context,
+        string usage,
+        bool allowDirectInlineClosureParameter = false)
     {
         if (TryFindCompileTimeOnlyTypeDependency(type, out var dependencyName, out var dependencyKind))
         {
@@ -14833,7 +15224,34 @@ internal sealed class TypeChecker
                 context);
         }
 
+        if (ContainsInlineClosureType(type)
+            && !(allowDirectInlineClosureParameter && IsDirectInlineClosureType(type)))
+        {
+            ReportError(
+                "STK3008",
+                $"Inline closure type '{type.DisplayName}' is only valid as a function parameter directly because it is a specialization contract, not runtime storage. Use `borrow closure<...>` or `heap closure<...>` when {usage} needs a value.",
+                context);
+        }
+
         return type;
+    }
+
+    private static bool IsDirectInlineClosureType(StarkTypeSymbol type)
+    {
+        return type.Kind == StarkTypeKind.Closure
+            && type.ClosureStorageKind == StarkClosureStorageKind.Inline;
+    }
+
+    private static bool ContainsInlineClosureType(StarkTypeSymbol type)
+    {
+        return type.Kind == StarkTypeKind.Closure
+            && type.ClosureStorageKind == StarkClosureStorageKind.Inline
+            || type.ElementType is not null && ContainsInlineClosureType(type.ElementType)
+            || type.FunctionPointerParameterTypes is { Count: > 0 } && type.FunctionPointerParameterTypes.Any(ContainsInlineClosureType)
+            || type.FunctionPointerReturnType is not null && ContainsInlineClosureType(type.FunctionPointerReturnType)
+            || type.ClosureParameterTypes is { Count: > 0 } && type.ClosureParameterTypes.Any(ContainsInlineClosureType)
+            || type.ClosureReturnType is not null && ContainsInlineClosureType(type.ClosureReturnType)
+            || type.TypeArguments is { Count: > 0 } && type.TypeArguments.Any(ContainsInlineClosureType);
     }
 
     private void ValidateAsmSignatureSurface(
@@ -15407,6 +15825,14 @@ internal sealed class TypeChecker
                 && coreType.FunctionPointerParameterTypes.Any(TypeContainsOpenCurrentFunctionGenericParameter);
         }
 
+        if (coreType.Kind == StarkTypeKind.Closure)
+        {
+            return coreType.ClosureReturnType is not null
+                && TypeContainsOpenCurrentFunctionGenericParameter(coreType.ClosureReturnType)
+                || coreType.ClosureParameterTypes is { Count: > 0 }
+                && coreType.ClosureParameterTypes.Any(TypeContainsOpenCurrentFunctionGenericParameter);
+        }
+
         return coreType.ElementType is not null
             && TypeContainsOpenCurrentFunctionGenericParameter(coreType.ElementType);
     }
@@ -15604,7 +16030,8 @@ internal sealed class TypeChecker
 
     private sealed record LambdaCaptureBinding(
         VariableSymbol Symbol,
-        string Mode);
+        string Mode,
+        bool IsUnsafe);
 
     private sealed record ExpressionBinding(
         StarkTypeSymbol Type,

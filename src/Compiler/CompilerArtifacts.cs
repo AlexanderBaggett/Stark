@@ -99,10 +99,29 @@ internal static class FunctionKindFacts
 
 internal static class CallableValueFacts
 {
+    public const string ClosureEnvironmentParameterName = "$env";
+
     public static string BuildLambdaFunctionName(string enclosingFunctionName, SourceLocation location)
     {
         return $"{enclosingFunctionName}.__lambda_{location.Line}_{location.Column}";
     }
+
+    public static string BuildClosureEnvironmentTypeName(string lambdaFunctionName)
+    {
+        return $"{lambdaFunctionName}.__env";
+    }
+
+    public static string BuildClosureDropFunctionName(string lambdaFunctionName)
+    {
+        return $"{lambdaFunctionName}.__drop";
+    }
+
+    public static string BuildClosureFunctionAdapterName(string enclosingFunctionName, SourceLocation location)
+    {
+        return $"{enclosingFunctionName}.__closure_adapter_{location.Line}_{location.Column}";
+    }
+
+    public static string EmptyClosureDropFunctionName => "__stark_closure_drop_empty";
 
     public static TypedFunctionSignature BuildLambdaSignature(LambdaTypingRecord lambda)
     {
@@ -127,6 +146,252 @@ internal static class CallableValueFacts
             Kind: lambda.FunctionPointerType.FunctionPointerKind ?? StarkFunctionKind.Fn);
     }
 
+    public static TypedFunctionSignature BuildClosureLambdaSignature(ClosureLambdaTypingRecord lambda)
+    {
+        var returnType = lambda.ClosureType.ClosureReturnType ?? StarkTypeSymbols.Error;
+        var parameterTypes = lambda.ClosureType.ClosureParameterTypes ?? [];
+        var parameters = new List<TypedParameterSymbol>(parameterTypes.Count + 1)
+        {
+            new(
+                ClosureEnvironmentParameterName,
+                lambda.EnvironmentParameterType)
+        };
+
+        parameters.AddRange(parameterTypes.Select((type, index) => new TypedParameterSymbol(
+                lambda.ParameterNames[index],
+                type,
+                RawPointerElementCountExpression: MapFunctionPointerRawPointerElementCountExpressionToLambdaParameterNames(
+                    StarkTypeSymbols.GetClosureParameterRawPointerElementCountExpression(
+                        lambda.ClosureType,
+                        index),
+                    lambda.ParameterNames))));
+
+        return new TypedFunctionSignature(
+            lambda.FunctionName,
+            returnType,
+            parameters.ToArray(),
+            SourceName: lambda.FunctionName,
+            Kind: lambda.ClosureType.ClosureFunctionKind ?? StarkFunctionKind.Fn);
+    }
+
+    public static TypedFunctionSignature BuildClosureFunctionAdapterSignature(ClosureFunctionPromotionTypingRecord adapter)
+    {
+        var returnType = adapter.ClosureType.ClosureReturnType ?? StarkTypeSymbols.Error;
+        var parameterTypes = adapter.ClosureType.ClosureParameterTypes ?? [];
+        var parameters = new List<TypedParameterSymbol>(parameterTypes.Count + 1)
+        {
+            new(
+                ClosureEnvironmentParameterName,
+                BuildClosureEnvironmentPointerType(adapter.ClosureType))
+        };
+
+        parameters.AddRange(parameterTypes.Select((parameterType, index) => new TypedParameterSymbol(
+            $"arg{index}",
+            parameterType,
+            RawPointerElementCountExpression: StarkTypeSymbols.GetClosureParameterRawPointerElementCountExpression(
+                adapter.ClosureType,
+                index))));
+
+        return new TypedFunctionSignature(
+            adapter.AdapterFunctionName,
+            returnType,
+            parameters,
+            SourceName: adapter.AdapterFunctionName,
+            Kind: adapter.ClosureType.ClosureFunctionKind ?? StarkFunctionKind.Fn);
+    }
+
+    public static TypedFunctionSignature BuildClosureDropSignature(string functionName)
+    {
+        return new TypedFunctionSignature(
+            functionName,
+            StarkTypeSymbols.Void,
+            [
+                new TypedParameterSymbol(
+                    ClosureEnvironmentParameterName,
+                    BuildClosureDropEnvironmentPointerType())
+            ],
+            SourceName: functionName,
+            Kind: StarkFunctionKind.Fn);
+    }
+
+    public static FunctionEffectProfile BuildClosureDropEffectProfile(string functionName)
+    {
+        return new FunctionEffectProfile(
+            functionName,
+            StarkFunctionKind.Fn,
+            ReadsArgumentMemory: true,
+            IsPure: false,
+            NoSync: true,
+            NoFree: false,
+            NoUnwind: true,
+            WillReturn: true,
+            MustProgress: true,
+            UseFastCallingConvention: false,
+            IsFfi: false,
+            IsVarargs: false,
+            IsHot: false,
+            IsCold: true,
+            InlinePreference: InlinePreference.InlineHint,
+            IsStrictFp: false);
+    }
+
+    public static StarkTypeSymbol BuildClosureEnvironmentPointerType(StarkTypeSymbol closureType)
+    {
+        return StarkTypeSymbols.RawPointer(
+            StarkTypeSymbols.Integer(8),
+            isMutable: closureType.ClosureCallCapability is StarkClosureCallCapability.Mut or StarkClosureCallCapability.Once);
+    }
+
+    public static StarkTypeSymbol BuildClosureDropEnvironmentPointerType()
+    {
+        return StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: true);
+    }
+
+    public static StarkTypeSymbol BuildClosureDropFunctionPointerType()
+    {
+        return StarkTypeSymbols.FunctionPointer(
+            StarkFunctionKind.Fn,
+            StarkTypeSymbols.Void,
+            [BuildClosureDropEnvironmentPointerType()]);
+    }
+
+    public static NamedTypeSymbol BuildClosureEnvironmentNamedType(
+        string environmentTypeName,
+        IReadOnlyList<ClosureCaptureFieldSymbol> captureFields)
+    {
+        var orderedFields = captureFields
+            .Select(static capture => new FieldSymbol(capture.FieldName, capture.FieldType))
+            .ToArray();
+        var fields = orderedFields.ToDictionary(static field => field.Name, StringComparer.Ordinal);
+        return new NamedTypeSymbol(environmentTypeName, DeclarationKind.Struct, fields, orderedFields);
+    }
+
+    public static ClosureCaptureStorageKind GetLambdaCaptureStorageKind(string mode)
+    {
+        return mode is "read" or "mut" or "out" or "init"
+            ? ClosureCaptureStorageKind.Address
+            : ClosureCaptureStorageKind.Value;
+    }
+
+    public static StarkTypeSymbol GetLambdaCaptureBodyType(StarkTypeSymbol type, string mode)
+    {
+        return mode switch
+        {
+            "addr" => StarkTypeSymbols.RawPointer(StarkTypeSymbols.FreezeAddressPointeeType(type), isMutable: false),
+            "shared" => StarkTypeSymbols.WithQualifiers(type, accessKind: StarkAccessKind.Shared, isMutableView: false),
+            "out" => StarkTypeSymbols.WithQualifiers(type, initializationKind: StarkInitializationKind.Out),
+            "init" => StarkTypeSymbols.WithQualifiers(type, initializationKind: StarkInitializationKind.Init),
+            _ => type
+        };
+    }
+
+    public static StarkTypeSymbol GetLambdaCaptureFieldType(StarkTypeSymbol type, string mode)
+    {
+        var bodyType = GetLambdaCaptureBodyType(type, mode);
+        return GetLambdaCaptureStorageKind(mode) == ClosureCaptureStorageKind.Address
+            ? StarkTypeSymbols.RawPointer(GetLambdaCaptureAddressPointeeType(bodyType), isMutable: LambdaCaptureModeExposesWritableBinding(mode))
+            : bodyType;
+    }
+
+    public static StarkTypeSymbol GetLambdaCaptureAddressPointeeType(StarkTypeSymbol bodyType)
+    {
+        return StarkTypeSymbols.WithQualifiers(
+            bodyType,
+            borrowKind: StarkBorrowKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+    }
+
+    public static bool LambdaCaptureModeExposesWritableBinding(string mode)
+    {
+        return mode is "mut" or "out" or "init";
+    }
+
+    public static StarkTypeSymbol BuildClosureInvokeFunctionPointerType(StarkTypeSymbol closureType)
+    {
+        var environmentPointerType = BuildClosureEnvironmentPointerType(closureType);
+        var sourceParameterTypes = closureType.ClosureParameterTypes ?? [];
+        var parameterTypes = new List<StarkTypeSymbol>(sourceParameterTypes.Count + 1)
+        {
+            environmentPointerType
+        };
+        parameterTypes.AddRange(sourceParameterTypes);
+
+        var rawPointerBounds = new string?[parameterTypes.Count];
+        for (var index = 0; index < sourceParameterTypes.Count; index++)
+        {
+            rawPointerBounds[index + 1] = ShiftSyntheticArgumentExpression(
+                StarkTypeSymbols.GetClosureParameterRawPointerElementCountExpression(closureType, index),
+                offset: 1);
+        }
+
+        return StarkTypeSymbols.FunctionPointer(
+            closureType.ClosureFunctionKind ?? StarkFunctionKind.Fn,
+            closureType.ClosureReturnType ?? StarkTypeSymbols.Error,
+            parameterTypes,
+            ShiftDisjointGroups(closureType.ClosureDisjointParameterGroups ?? [], offset: 1),
+            ShiftOverlapGroups(closureType.ClosureOverlapParameterGroups ?? [], offset: 1),
+            ShiftSameGroups(closureType.ClosureSameParameterGroups ?? [], offset: 1),
+            rawPointerBounds);
+    }
+
+    private static IReadOnlyList<ParameterDisjointGroup> ShiftDisjointGroups(
+        IReadOnlyList<ParameterDisjointGroup> groups,
+        int offset)
+    {
+        return groups
+            .Select(group => new ParameterDisjointGroup(
+                group.ParameterNames.Select(name => ShiftSyntheticArgumentName(name, offset)).ToArray(),
+                group.MemoryRegions
+                    .Select(region => new ParameterMemoryRegion(
+                        ShiftSyntheticArgumentName(region.ParameterName, offset),
+                        ShiftSyntheticArgumentExpression(region.StartExpression, offset),
+                        ShiftSyntheticArgumentExpression(region.CountExpression, offset)))
+                    .ToArray()))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<ParameterOverlapGroup> ShiftOverlapGroups(
+        IReadOnlyList<ParameterOverlapGroup> groups,
+        int offset)
+    {
+        return groups
+            .Select(group => new ParameterOverlapGroup(group.ParameterNames.Select(name => ShiftSyntheticArgumentName(name, offset)).ToArray()))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<ParameterSameGroup> ShiftSameGroups(
+        IReadOnlyList<ParameterSameGroup> groups,
+        int offset)
+    {
+        return groups
+            .Select(group => new ParameterSameGroup(group.ParameterNames.Select(name => ShiftSyntheticArgumentName(name, offset)).ToArray()))
+            .ToArray();
+    }
+
+    private static string ShiftSyntheticArgumentName(string name, int offset)
+    {
+        return name.StartsWith("arg", StringComparison.Ordinal)
+            && int.TryParse(name[3..], out var index)
+            && index >= 0
+                ? $"arg{index + offset}"
+                : name;
+    }
+
+    private static string? ShiftSyntheticArgumentExpression(string? expression, int offset)
+    {
+        if (string.IsNullOrWhiteSpace(expression))
+        {
+            return expression;
+        }
+
+        return expression.StartsWith("arg", StringComparison.Ordinal)
+            && int.TryParse(expression[3..], out var index)
+            && index >= 0
+                ? $"arg{index + offset}"
+                : expression;
+    }
+
     private static string? MapFunctionPointerRawPointerElementCountExpressionToLambdaParameterNames(
         string? expression,
         IReadOnlyList<string> parameterNames)
@@ -146,11 +411,31 @@ internal static class CallableValueFacts
     public static FunctionEffectProfile BuildLambdaEffectProfile(LambdaTypingRecord lambda)
     {
         var kind = lambda.FunctionPointerType.FunctionPointerKind ?? StarkFunctionKind.Fn;
+        return BuildLambdaEffectProfile(lambda.FunctionName, kind);
+    }
+
+    public static FunctionEffectProfile BuildClosureLambdaEffectProfile(ClosureLambdaTypingRecord lambda)
+    {
+        var kind = lambda.ClosureType.ClosureFunctionKind ?? StarkFunctionKind.Fn;
+        return BuildLambdaEffectProfile(lambda.FunctionName, kind);
+    }
+
+    public static FunctionEffectProfile BuildClosureFunctionAdapterEffectProfile(ClosureFunctionPromotionTypingRecord adapter)
+    {
+        var kind = adapter.ClosureType.ClosureFunctionKind ?? adapter.Signature.Kind;
+        return BuildLambdaEffectProfile(adapter.AdapterFunctionName, kind) with
+        {
+            InlinePreference = InlinePreference.Inline
+        };
+    }
+
+    private static FunctionEffectProfile BuildLambdaEffectProfile(string functionName, StarkFunctionKind kind)
+    {
         var isLaw = FunctionKindFacts.IsLaw(kind);
         var isFinite = FunctionKindFacts.IsFinite(kind);
 
         return new FunctionEffectProfile(
-            lambda.FunctionName,
+            functionName,
             kind,
             ReadsArgumentMemory: false,
             IsPure: isLaw,
@@ -167,6 +452,7 @@ internal static class CallableValueFacts
             InlinePreference: InlinePreference.InlineHint,
             IsStrictFp: false);
     }
+
 }
 
 public enum InlinePreference
@@ -598,6 +884,7 @@ public enum ImportedTemplateTypedBodyExpressionKind
     EnumCall,
     EnumValue,
     DirectCall,
+    ClosureCall,
     IndexAccess,
     FieldAccess,
     MemberCall,
@@ -916,6 +1203,20 @@ public enum StarkInitializationKind
     Init
 }
 
+public enum StarkClosureStorageKind
+{
+    Unspecified,
+    Inline,
+    Heap
+}
+
+public enum StarkClosureCallCapability
+{
+    None,
+    Mut,
+    Once
+}
+
 public enum StarkTypeKind
 {
     Error,
@@ -930,6 +1231,7 @@ public enum StarkTypeKind
     Slice,
     Dynamic,
     FunctionPointer,
+    Closure,
     Named,
     Null
 }
@@ -948,6 +1250,15 @@ public sealed record StarkTypeSymbol(
     IReadOnlyList<ParameterDisjointGroup>? FunctionPointerDisjointParameterGroups = null,
     IReadOnlyList<ParameterOverlapGroup>? FunctionPointerOverlapParameterGroups = null,
     IReadOnlyList<ParameterSameGroup>? FunctionPointerSameParameterGroups = null,
+    StarkClosureStorageKind ClosureStorageKind = StarkClosureStorageKind.Unspecified,
+    StarkClosureCallCapability ClosureCallCapability = StarkClosureCallCapability.None,
+    StarkFunctionKind? ClosureFunctionKind = null,
+    StarkTypeSymbol? ClosureReturnType = null,
+    IReadOnlyList<StarkTypeSymbol>? ClosureParameterTypes = null,
+    IReadOnlyList<string?>? ClosureParameterRawPointerElementCountExpressions = null,
+    IReadOnlyList<ParameterDisjointGroup>? ClosureDisjointParameterGroups = null,
+    IReadOnlyList<ParameterOverlapGroup>? ClosureOverlapParameterGroups = null,
+    IReadOnlyList<ParameterSameGroup>? ClosureSameParameterGroups = null,
     BigInteger? RangeMin = null,
     BigInteger? RangeMax = null,
     bool IsUnsigned = false,
@@ -1026,13 +1337,7 @@ public static class StarkTypeSymbols
         IReadOnlyList<ParameterSameGroup>? sameGroups = null,
         IReadOnlyList<string?>? parameterRawPointerElementCountExpressions = null)
     {
-        var displayKind = functionKind switch
-        {
-            StarkFunctionKind.FiniteLaw => "finite law",
-            StarkFunctionKind.Finite => "finite",
-            StarkFunctionKind.Law => "law",
-            _ => "fn"
-        };
+        var displayKind = FormatCallableFunctionKind(functionKind);
         var effectiveRawPointerElementCountExpressions =
             NormalizeFunctionPointerParameterRawPointerElementCountExpressions(
                 parameterTypes,
@@ -1067,12 +1372,92 @@ public static class StarkTypeSymbols
             FunctionPointerSameParameterGroups: effectiveSameGroups);
     }
 
+    public static StarkTypeSymbol Closure(
+        StarkClosureStorageKind storageKind,
+        StarkClosureCallCapability callCapability,
+        StarkFunctionKind functionKind,
+        StarkTypeSymbol returnType,
+        IReadOnlyList<StarkTypeSymbol> parameterTypes,
+        IReadOnlyList<ParameterDisjointGroup>? disjointGroups = null,
+        IReadOnlyList<ParameterOverlapGroup>? overlapGroups = null,
+        IReadOnlyList<ParameterSameGroup>? sameGroups = null,
+        IReadOnlyList<string?>? parameterRawPointerElementCountExpressions = null)
+    {
+        var displayKind = FormatCallableFunctionKind(functionKind);
+        var storagePrefix = storageKind switch
+        {
+            StarkClosureStorageKind.Inline => "inline ",
+            StarkClosureStorageKind.Heap => "heap ",
+            _ => string.Empty
+        };
+        var capabilityPrefix = callCapability switch
+        {
+            StarkClosureCallCapability.Mut => "mut ",
+            StarkClosureCallCapability.Once => "once ",
+            _ => string.Empty
+        };
+        var effectiveRawPointerElementCountExpressions =
+            NormalizeFunctionPointerParameterRawPointerElementCountExpressions(
+                parameterTypes,
+                parameterRawPointerElementCountExpressions);
+        var parameters = parameterTypes
+            .Select((parameter, index) => new TypedParameterSymbol(
+                $"arg{index}",
+                parameter,
+                RawPointerElementCountExpression: GetFunctionPointerParameterRawPointerElementCountExpression(
+                    effectiveRawPointerElementCountExpressions,
+                    index)))
+            .ToArray();
+        var effectiveOverlapGroups = overlapGroups ?? [];
+        var effectiveSameGroups = sameGroups ?? [];
+        var effectiveDisjointGroups = disjointGroups
+            ?? ParameterMemoryContractFacts.BuildEffectiveDisjointGroups(
+                parameters,
+                explicitDisjointGroups: [],
+                overlapGroups: effectiveOverlapGroups,
+                sameGroups: effectiveSameGroups,
+                applyDefaultNonOverlap: true);
+        var displayName = $"{storagePrefix}closure<{capabilityPrefix}{displayKind} {returnType.DisplayName}({string.Join(", ", parameterTypes.Select((parameter, index) => FormatFunctionPointerParameterDisplayName(parameter, effectiveRawPointerElementCountExpressions, index)))}){FormatFunctionPointerMemoryContracts(effectiveOverlapGroups, effectiveSameGroups)}>";
+        return new StarkTypeSymbol(
+            StarkTypeKind.Closure,
+            displayName,
+            ClosureStorageKind: storageKind,
+            ClosureCallCapability: callCapability,
+            ClosureFunctionKind: functionKind,
+            ClosureReturnType: returnType,
+            ClosureParameterTypes: parameterTypes.ToArray(),
+            ClosureParameterRawPointerElementCountExpressions: effectiveRawPointerElementCountExpressions,
+            ClosureDisjointParameterGroups: effectiveDisjointGroups,
+            ClosureOverlapParameterGroups: effectiveOverlapGroups,
+            ClosureSameParameterGroups: effectiveSameGroups);
+    }
+
+    private static string FormatCallableFunctionKind(StarkFunctionKind functionKind)
+    {
+        return functionKind switch
+        {
+            StarkFunctionKind.FiniteLaw => "finite law",
+            StarkFunctionKind.Finite => "finite",
+            StarkFunctionKind.Law => "law",
+            _ => "fn"
+        };
+    }
+
     public static string? GetFunctionPointerParameterRawPointerElementCountExpression(
         StarkTypeSymbol functionPointerType,
         int parameterIndex)
     {
         return GetFunctionPointerParameterRawPointerElementCountExpression(
             functionPointerType.FunctionPointerParameterRawPointerElementCountExpressions,
+            parameterIndex);
+    }
+
+    public static string? GetClosureParameterRawPointerElementCountExpression(
+        StarkTypeSymbol closureType,
+        int parameterIndex)
+    {
+        return GetFunctionPointerParameterRawPointerElementCountExpression(
+            closureType.ClosureParameterRawPointerElementCountExpressions,
             parameterIndex);
     }
 
@@ -1338,6 +1723,7 @@ public static class StarkTypeSymbols
             StarkTypeKind.Integer or
             StarkTypeKind.Float or
             StarkTypeKind.FunctionPointer or
+            StarkTypeKind.Closure or
             StarkTypeKind.Null)
         {
             return WithQualifiers(type, accessKind: StarkAccessKind.None, isMutableView: false);
@@ -1394,6 +1780,19 @@ public static class StarkTypeSymbols
                     type.FunctionPointerOverlapParameterGroups,
                     type.FunctionPointerSameParameterGroups,
                     type.FunctionPointerParameterRawPointerElementCountExpressions),
+            StarkTypeKind.Closure when type.ClosureFunctionKind is { } closureFunctionKind
+                                       && type.ClosureReturnType is { } closureReturnType
+                                       && type.ClosureParameterTypes is { } closureParameterTypes
+                => Closure(
+                    type.ClosureStorageKind,
+                    type.ClosureCallCapability,
+                    closureFunctionKind,
+                    closureReturnType,
+                    closureParameterTypes,
+                    type.ClosureDisjointParameterGroups,
+                    type.ClosureOverlapParameterGroups,
+                    type.ClosureSameParameterGroups,
+                    type.ClosureParameterRawPointerElementCountExpressions),
             StarkTypeKind.Named when type.NamedType == OwnedAsciiName => OwnedAscii,
             StarkTypeKind.Named when type.NamedType == OwnedUnicodeName => OwnedUnicode,
             StarkTypeKind.Named when type.TypeArguments is { Count: > 0 } && type.NamedType is not null
@@ -1633,6 +2032,13 @@ public sealed record FunctionPointerPromotionTypingRecord(
     SourceLocation Location,
     string? EnclosingFunctionName = null);
 
+public sealed record ClosureFunctionPromotionTypingRecord(
+    TypedFunctionSignature Signature,
+    StarkTypeSymbol ClosureType,
+    string AdapterFunctionName,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null);
+
 public sealed record AddressTakenFunctionTypingRecord(
     TypedFunctionSignature Signature,
     SourceLocation Location,
@@ -1640,6 +2046,16 @@ public sealed record AddressTakenFunctionTypingRecord(
 
 public sealed record IndirectCallTypingRecord(
     StarkTypeSymbol FunctionPointerType,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null,
+    IReadOnlyList<CallArgumentTypingRecord>? ArgumentRecords = null)
+{
+    public IReadOnlyList<CallArgumentTypingRecord> Arguments =>
+        ArgumentRecords ?? [];
+}
+
+public sealed record ClosureCallTypingRecord(
+    StarkTypeSymbol ClosureType,
     SourceLocation Location,
     string? EnclosingFunctionName = null,
     IReadOnlyList<CallArgumentTypingRecord>? ArgumentRecords = null)
@@ -1701,6 +2117,38 @@ public sealed record LambdaTypingRecord(
     IReadOnlyList<string> ParameterNames,
     SourceLocation Location,
     string? EnclosingFunctionName = null);
+
+public sealed record ClosureLambdaTypingRecord(
+    string FunctionName,
+    StarkTypeSymbol ClosureType,
+    StarkTypeSymbol EnvironmentParameterType,
+    IReadOnlyList<string> ParameterNames,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null,
+    string? EnvironmentTypeName = null,
+    IReadOnlyList<ClosureCaptureFieldSymbol>? CaptureFieldRecords = null)
+{
+    public IReadOnlyList<ClosureCaptureFieldSymbol> CaptureFields =>
+        CaptureFieldRecords ?? [];
+
+    public bool HasCaptures => CaptureFields.Count != 0;
+}
+
+public enum ClosureCaptureStorageKind
+{
+    Value,
+    Address
+}
+
+public sealed record ClosureCaptureFieldSymbol(
+    string Name,
+    string FieldName,
+    string Mode,
+    bool IsUnsafe,
+    StarkTypeSymbol SourceType,
+    StarkTypeSymbol BodyType,
+    StarkTypeSymbol FieldType,
+    ClosureCaptureStorageKind StorageKind);
 
 public sealed record LambdaCaptureTypingRecord(
     string Name,
@@ -1855,15 +2303,18 @@ public sealed record TypeCheckModel(
     IReadOnlyList<DirectCallTypingRecord>? DirectCallRecords = null,
     IReadOnlyList<FunctionPointerPromotionTypingRecord>? FunctionPointerPromotionRecords = null,
     IReadOnlyList<IndirectCallTypingRecord>? IndirectCallRecords = null,
+    IReadOnlyList<ClosureCallTypingRecord>? ClosureCallRecords = null,
     IReadOnlyList<FieldAccessTypingRecord>? FieldAccessRecords = null,
     IReadOnlyList<MemberCallTypingRecord>? MemberCallRecords = null,
     IReadOnlyList<TypeLayoutExpressionTypingRecord>? TypeLayoutExpressionRecords = null,
     IReadOnlyList<LambdaTypingRecord>? LambdaRecords = null,
+    IReadOnlyList<ClosureLambdaTypingRecord>? ClosureLambdaRecords = null,
     IReadOnlyList<LambdaCaptureTypingRecord>? LambdaCaptureRecords = null,
     IReadOnlyList<AddressTakenFunctionTypingRecord>? AddressTakenFunctionRecords = null,
     IReadOnlyList<IndexAccessTypingRecord>? IndexAccessRecords = null,
     IReadOnlyList<DynamicStorageOperationTypingRecord>? DynamicStorageOperationRecords = null,
-    IReadOnlyList<SwitchTypingRecord>? SwitchRecords = null)
+    IReadOnlyList<SwitchTypingRecord>? SwitchRecords = null,
+    IReadOnlyList<ClosureFunctionPromotionTypingRecord>? ClosureFunctionPromotionRecords = null)
 {
     public IReadOnlyDictionary<string, IReadOnlyList<TypedFunctionSignature>> Overloads =>
         FunctionOverloads
@@ -1913,14 +2364,23 @@ public sealed record TypeCheckModel(
     public IReadOnlyList<FunctionPointerPromotionTypingRecord> FunctionPointerPromotions =>
         FunctionPointerPromotionRecords ?? [];
 
+    public IReadOnlyList<ClosureFunctionPromotionTypingRecord> ClosureFunctionPromotions =>
+        ClosureFunctionPromotionRecords ?? [];
+
     public IReadOnlyList<AddressTakenFunctionTypingRecord> AddressTakenFunctions =>
         AddressTakenFunctionRecords ?? [];
 
     public IReadOnlyList<IndirectCallTypingRecord> IndirectCalls =>
         IndirectCallRecords ?? [];
 
+    public IReadOnlyList<ClosureCallTypingRecord> ClosureCalls =>
+        ClosureCallRecords ?? [];
+
     public IReadOnlyList<LambdaTypingRecord> Lambdas =>
         LambdaRecords ?? [];
+
+    public IReadOnlyList<ClosureLambdaTypingRecord> ClosureLambdas =>
+        ClosureLambdaRecords ?? [];
 
     public IReadOnlyList<LambdaCaptureTypingRecord> LambdaCaptures =>
         LambdaCaptureRecords ?? [];
@@ -2233,6 +2693,8 @@ internal static class ConcreteTypeLayoutHelper
                 TryGetScalarLayout((floatWidth + 7) / 8),
             StarkTypeKind.RawPointer or StarkTypeKind.FunctionPointer or StarkTypeKind.Null =>
                 TryGetPointerLayout(),
+            StarkTypeKind.Closure =>
+                TryGetClosureLayout(type),
             StarkTypeKind.Slice or StarkTypeKind.Ascii or StarkTypeKind.Unicode =>
                 TryGetViewLayout(),
             StarkTypeKind.Dynamic =>
@@ -2415,6 +2877,21 @@ internal static class ConcreteTypeLayoutHelper
         sizeBytes = checked(sizeBytes + lengthLayout.SizeBytes);
         sizeBytes = AlignTo(sizeBytes, alignmentBytes);
         return new ConcreteTypeLayout(sizeBytes, alignmentBytes);
+    }
+
+    private static ConcreteTypeLayout TryGetClosureLayout(StarkTypeSymbol type)
+    {
+        var pointerLayout = TryGetPointerLayout();
+        var sizeBytes = AlignTo(pointerLayout.SizeBytes, pointerLayout.AlignmentBytes);
+        sizeBytes = checked(sizeBytes + pointerLayout.SizeBytes);
+        if (type.ClosureStorageKind == StarkClosureStorageKind.Heap)
+        {
+            sizeBytes = AlignTo(sizeBytes, pointerLayout.AlignmentBytes);
+            sizeBytes = checked(sizeBytes + pointerLayout.SizeBytes);
+        }
+
+        sizeBytes = AlignTo(sizeBytes, pointerLayout.AlignmentBytes);
+        return new ConcreteTypeLayout(sizeBytes, pointerLayout.AlignmentBytes);
     }
 
     private static ConcreteTypeLayout TryGetDynamicStorageLayout()
@@ -2670,6 +3147,9 @@ public sealed record MidLevelIrGlobalAddressOperand(string Name, StarkTypeSymbol
 public sealed record MidLevelIrFunctionAddressOperand(string FunctionName, StarkTypeSymbol Type)
     : MidLevelIrOperand(Type, FunctionName);
 
+public sealed record MidLevelIrClosureValueOperand(string InvokeFunctionName, StarkTypeSymbol Type)
+    : MidLevelIrOperand(Type, $"closure<{InvokeFunctionName}>");
+
 public sealed record MidLevelIrIntegerConstantOperand(BigInteger Value, StarkTypeSymbol Type)
     : MidLevelIrOperand(Type, Value.ToString());
 
@@ -2731,7 +3211,8 @@ public sealed record MidLevelIrIndirectCallRValue(
     string Text,
     StarkTypeSymbol? SourceReturnType = null,
     IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
-    IReadOnlyList<MidLevelIrOperand?>? IndirectArgumentAddresses = null)
+    IReadOnlyList<MidLevelIrOperand?>? IndirectArgumentAddresses = null,
+    bool MayFree = false)
     : MidLevelIrRValue(Type, Text);
 
 public sealed record MidLevelIrConvertRValue(
@@ -2794,6 +3275,11 @@ public sealed record MidLevelIrDynamicStorageAllocationRValue(
 
 public sealed record MidLevelIrDynamicStorageFreeRValue(
     MidLevelIrOperand Storage,
+    string Text)
+    : MidLevelIrRValue(StarkTypeSymbols.Void, Text);
+
+public sealed record MidLevelIrHeapStorageFreeRValue(
+    MidLevelIrOperand Pointer,
     string Text)
     : MidLevelIrRValue(StarkTypeSymbols.Void, Text);
 
@@ -2996,6 +3482,9 @@ public sealed record SsaGlobalAddressValue(string GlobalName, StarkTypeSymbol Po
 public sealed record SsaFunctionAddressValue(string FunctionName, StarkTypeSymbol Type)
     : SsaValue(Type, FunctionName);
 
+public sealed record SsaClosureValue(string InvokeFunctionName, StarkTypeSymbol Type)
+    : SsaValue(Type, $"closure<{InvokeFunctionName}>");
+
 public sealed record SsaUndefValue(StarkTypeSymbol Type)
     : SsaValue(Type, "undef");
 
@@ -3083,7 +3572,8 @@ public sealed record SsaIndirectCallRValue(
     string Text,
     StarkTypeSymbol? SourceReturnType = null,
     IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
-    IReadOnlyList<SsaValue?>? IndirectArgumentAddresses = null)
+    IReadOnlyList<SsaValue?>? IndirectArgumentAddresses = null,
+    bool MayFree = false)
     : SsaRValue(Type, Text);
 
 public sealed record SsaConvertRValue(
@@ -3146,6 +3636,11 @@ public sealed record SsaDynamicStorageAllocationRValue(
 
 public sealed record SsaDynamicStorageFreeRValue(
     SsaValue Storage,
+    string Text)
+    : SsaRValue(StarkTypeSymbols.Void, Text);
+
+public sealed record SsaHeapStorageFreeRValue(
+    SsaValue Pointer,
     string Text)
     : SsaRValue(StarkTypeSymbols.Void, Text);
 

@@ -830,6 +830,30 @@ internal static partial class PackageImageLoader
             return true;
         }
 
+        if (string.Equals(manifest.Kind, "closure-call", StringComparison.Ordinal))
+        {
+            if (manifest.Arguments is not { Count: > 0 })
+            {
+                return false;
+            }
+
+            var arguments = new List<ImportedTemplateTypedBodyExpressionSummary>(manifest.Arguments.Count);
+            foreach (var argument in manifest.Arguments)
+            {
+                if (!TryBuildImportedTypedTemplateExpression(argument, out var builtArgument))
+                {
+                    return false;
+                }
+
+                arguments.Add(builtArgument);
+            }
+
+            summary = new ImportedTemplateTypedBodyExpressionSummary(
+                ImportedTemplateTypedBodyExpressionKind.ClosureCall,
+                Arguments: arguments);
+            return true;
+        }
+
         if (string.Equals(manifest.Kind, "index-access", StringComparison.Ordinal))
         {
             if (manifest.Arguments is not { Count: >= 1 })

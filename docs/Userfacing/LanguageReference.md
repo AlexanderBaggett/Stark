@@ -530,6 +530,72 @@ capture(unsafe shared x)
 
 These modes are explicit because they weaken Stark's ordinary closed and non shared memory assumptions.
 
+### 5.7 Closure Types
+
+Closures are the capturing callable values. A closure signature reuses the
+function pointer signature shape, but the storage form is visible in the type:
+
+```stark
+inline closure<fn void(mut borrow Ui)>
+borrow closure<fn i32[min max](i32[min max])>
+mut borrow closure<mut fn void(i32[min max])>
+heap closure<fn void()>
+heap closure<once fn Packet()>
+```
+
+`inline closure<...>` is a compile time specialization contract, not runtime
+storage. It may appear directly as a function parameter and the callee is
+specialized for the lambda body and capture facts. It cannot be stored in a
+local or field, returned, placed in an array, nested inside `fnptr` or another
+runtime callable type, or converted to `fnptr`.
+
+```stark
+inline fn i32[min max] ApplyInline(
+    i32[min max] value,
+    inline closure<fn i32[min max](i32[min max])> op) {
+    return op(value);
+}
+
+fn i32[min max] RunInline(i32[min max] offset) {
+    return ApplyInline(
+        41,
+        capture(copy offset) (i32[min max] value) => value + offset);
+}
+```
+
+`borrow closure<...>` is a non escaping runtime view. It lowers to an invoke
+pointer plus an environment pointer. Captured stack storage must outlive the
+borrowed closure view, and the view cannot be returned or stored unless the API
+uses an explicit stored borrow form.
+
+```stark
+fn i32[min max] ApplyBorrow(
+    borrow closure<fn i32[min max](i32[min max])> op,
+    i32[min max] value) {
+    return op(value);
+}
+```
+
+`heap closure<...>` owns a heap allocated environment. It is the form for
+stored, returned, or retained callbacks. Heap closures may capture copied values
+and moved owned values; they reject ordinary stack borrows unless the program
+uses an explicit safe stored-borrow or unsafe shared capability.
+
+```stark
+fn heap closure<fn i32[min max](i32[min max])> MakeAdder(i32[min max] offset) {
+    return heap capture(copy offset) (i32[min max] value) => value + offset;
+}
+```
+
+Closure call capability is part of the type:
+
+* no marker: the closure may be called repeatedly without mutating or consuming
+  its environment.
+* `mut`: calling the closure may mutate the environment and requires mutable
+  access to the closure value, except for inline closures where there is no
+  runtime closure value.
+* `once`: calling the closure consumes it. A second call is a use after move.
+
 ## 6. Types
 
 ### 6.1 Builtin Types

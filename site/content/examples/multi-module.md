@@ -27,5 +27,5 @@ Status: covered by `ExamplesCompileRunTests.MultiModuleExampleCompilesAndRuns`.
 
 ## Related
 
-- [Multi-Module Package Project](/book/31-project-multi-module-package/)
+- [Multi-Module Package Project](/book/34-project-multi-module-package/)
 - [Modules and visibility](/reference/language/ModulesAndVisibility/)
