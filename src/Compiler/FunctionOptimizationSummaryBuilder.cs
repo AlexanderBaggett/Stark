@@ -877,7 +877,8 @@ internal static class FunctionOptimizationSummaryBuilder
         }
 
         var currentName = primaryExpression.Identifier()?.GetText()
-            ?? primaryExpression.qualifiedName()?.GetText();
+            ?? primaryExpression.qualifiedName()?.GetText()
+            ?? primaryExpression.genericEnumCaseReference()?.GetText();
         if (currentName is null)
         {
             return false;

@@ -1326,9 +1326,12 @@ public sealed class LlvmIrEmissionTests
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
+        var runHeader = ExtractDefinitionHeader(llvm, "Run");
         var runBody = ExtractDefinitionBody(llvm, "Run");
 
         Assert.DoesNotContain("; LLVM body emission fallback for Run", llvm);
+        Assert.Contains("memory(none)", runHeader);
+        Assert.DoesNotContain("memory(readwrite", runHeader);
         Assert.Contains("define fastcc noundef i64 @Read(ptr noundef nonnull byval(%Big)", llvm);
         Assert.Matches(@"call fastcc i64 @Read\(ptr nonnull byval\(%Big\) noalias readonly nocapture dereferenceable\(32\) align 8 %abi_callarg_value_\d+\)", runBody);
         Assert.DoesNotContain("%slot_value", runBody);
@@ -1362,10 +1365,13 @@ public sealed class LlvmIrEmissionTests
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = GetLlvmRaw(result);
+        var forwardHeader = ExtractDefinitionHeader(llvm, "Forward");
         var forwardBody = ExtractDefinitionBody(llvm, "Forward");
 
         Assert.DoesNotContain("; LLVM body emission fallback for Forward", llvm);
         Assert.Contains("define fastcc noundef i64 @Forward(ptr noundef nonnull byval(%Big)", llvm);
+        Assert.Contains("memory(argmem: read)", forwardHeader);
+        Assert.DoesNotContain("memory(readwrite", forwardHeader);
         Assert.Matches(@"call fastcc i64 @Read\(ptr nonnull byval\(%Big\) noalias readonly nocapture dereferenceable\(32\) align 8 %arg_value\)", forwardBody);
         Assert.DoesNotContain("%abi_callarg_value", forwardBody);
         Assert.DoesNotContain("load %Big", forwardBody);

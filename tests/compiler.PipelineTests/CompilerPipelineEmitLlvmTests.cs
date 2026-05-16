@@ -41,6 +41,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     """,
                     demoPath),
                 new CompilerOptions(
+                    OptimizationLevel: CompilerOptimizationLevel.O0,
                     StopAfterPassId: "emit-llvm",
                     ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
 
@@ -254,6 +255,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     """,
                     wrapperPath),
                 new CompilerOptions(
+                    OptimizationLevel: CompilerOptimizationLevel.O0,
                     StopAfterPassId: "emit-llvm",
                     ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
                     ImportedInlineCloneSeedFunctions: new HashSet<string>(StringComparer.Ordinal)

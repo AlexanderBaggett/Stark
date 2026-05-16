@@ -522,39 +522,62 @@ public class StandardLibraryTestSuite
                 module App
 
                 export unsafe fn i32[min max] main() {
-                    stack Unicode line = System.Console.ReadLine();
-                    stack Ascii asciiLine = System.Console.ReadAsciiLine();
-                    stack Unicode unit = System.Console.Read();
+                    stack mut System.Text.OwnedUnicode line = new();
+                    switch (System.Console.ReadLine()) {
+                        case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Err(var lineError):
+                            return 10;
+                        case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Ok(var lineValue):
+                            line = lineValue;
+                    }
 
-                    if (line.Length != 5) {
+                    stack mut System.Text.OwnedAscii asciiLine = new();
+                    switch (System.Console.ReadAsciiLine()) {
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var asciiError):
+                            return 11;
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var asciiValue):
+                            asciiLine = asciiValue;
+                    }
+
+                    stack mut System.Text.OwnedUnicode unit = new();
+                    switch (System.Console.Read()) {
+                        case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Err(var unitError):
+                            return 12;
+                        case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Ok(var unitValue):
+                            unit = unitValue;
+                    }
+
+                    if (line.Length() != 5) {
                         return 1;
                     }
 
-                    if (asciiLine.Length != 5) {
+                    if (asciiLine.Length() != 5) {
                         return 2;
                     }
 
-                    if (unit.Length != 1) {
+                    if (unit.Length() != 1) {
                         return 3;
                     }
 
-                    if (line.Data == null || *line.Data != 104) {
+                    stack i32[min max][] lineSlice = line.AsSlice();
+                    if (lineSlice[0] != 104) {
                         return 4;
                     }
 
-                    if (*(&line.Data[1]) != 101) {
+                    if (lineSlice[1] != 101) {
                         return 5;
                     }
 
-                    if (asciiLine.Data == null || *asciiLine.Data != 98) {
+                    stack i8[min max][] asciiSlice = asciiLine.AsSlice();
+                    if (asciiSlice[0] != 98) {
                         return 6;
                     }
 
-                    if (*(&asciiLine.Data[1]) != 121) {
+                    if (asciiSlice[1] != 121) {
                         return 7;
                     }
 
-                    if (unit.Data == null || *unit.Data != 945) {
+                    stack i32[min max][] unitSlice = unit.AsSlice();
+                    if (unitSlice[0] != 945) {
                         return 8;
                     }
 
@@ -576,7 +599,7 @@ public class StandardLibraryTestSuite
             AssertCompilerLogsEmitted(stderr.ToString());
             Assert.True(File.Exists(outputPath));
 
-            var execution = await RunProcessWithUtf8StdinAsync(outputPath, tempDirectory.FullName, "hello\nbytes\nÎ±");
+            var execution = await RunProcessWithUtf8StdinAsync(outputPath, tempDirectory.FullName, "hello\nbytes\nα");
             Assert.Equal(0, execution.ExitCode);
             Assert.Equal(string.Empty, execution.Stdout);
             Assert.Equal(string.Empty, execution.Stderr);
@@ -1742,39 +1765,62 @@ public class StandardLibraryTestSuite
                 module App
 
                 export unsafe fn i32[min max] main() {
-                    stack Unicode line = System.Console.ReadLine();
-                    stack Ascii asciiLine = System.Console.ReadAsciiLine();
-                    stack Unicode unit = System.Console.Read();
+                    stack mut System.Text.OwnedUnicode line = new();
+                    switch (System.Console.ReadLine()) {
+                        case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Err(var lineError):
+                            return 10;
+                        case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Ok(var lineValue):
+                            line = lineValue;
+                    }
 
-                    if (line.Length != 5) {
+                    stack mut System.Text.OwnedAscii asciiLine = new();
+                    switch (System.Console.ReadAsciiLine()) {
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var asciiError):
+                            return 11;
+                        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var asciiValue):
+                            asciiLine = asciiValue;
+                    }
+
+                    stack mut System.Text.OwnedUnicode unit = new();
+                    switch (System.Console.Read()) {
+                        case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Err(var unitError):
+                            return 12;
+                        case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Ok(var unitValue):
+                            unit = unitValue;
+                    }
+
+                    if (line.Length() != 5) {
                         return 1;
                     }
 
-                    if (asciiLine.Length != 5) {
+                    if (asciiLine.Length() != 5) {
                         return 2;
                     }
 
-                    if (unit.Length != 1) {
+                    if (unit.Length() != 1) {
                         return 3;
                     }
 
-                    if (line.Data == null || *line.Data != 104) {
+                    stack i32[min max][] lineSlice = line.AsSlice();
+                    if (lineSlice[0] != 104) {
                         return 4;
                     }
 
-                    if (*(&line.Data[1]) != 101) {
+                    if (lineSlice[1] != 101) {
                         return 5;
                     }
 
-                    if (asciiLine.Data == null || *asciiLine.Data != 98) {
+                    stack i8[min max][] asciiSlice = asciiLine.AsSlice();
+                    if (asciiSlice[0] != 98) {
                         return 6;
                     }
 
-                    if (*(&asciiLine.Data[1]) != 121) {
+                    if (asciiSlice[1] != 121) {
                         return 7;
                     }
 
-                    if (unit.Data == null || *unit.Data != 945) {
+                    stack i32[min max][] unitSlice = unit.AsSlice();
+                    if (unitSlice[0] != 945) {
                         return 8;
                     }
 
@@ -1796,7 +1842,7 @@ public class StandardLibraryTestSuite
             AssertCompilerLogsEmitted(stderr.ToString());
             Assert.True(File.Exists(outputPath));
 
-            var execution = await RunProcessWithUtf8StdinAsync(outputPath, appDirectory, "hello\nbytes\nÎ±");
+            var execution = await RunProcessWithUtf8StdinAsync(outputPath, appDirectory, "hello\nbytes\nα");
             Assert.Equal(0, execution.ExitCode);
             Assert.Equal(string.Empty, execution.Stdout);
             Assert.Equal(string.Empty, execution.Stderr);

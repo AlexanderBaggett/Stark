@@ -38,9 +38,9 @@ internal struct Allocation {
     Allocator Allocator;
 }
 
-internal fn Allocation Allocate(Allocator allocator, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
-internal fn Allocation Reallocate(Allocation allocation, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
-internal fn void Free(Allocation allocation);
+internal inline fn Allocation Allocate(Allocator allocator, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
+internal inline fn Allocation Reallocate(Allocation allocation, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
+internal inline fn void Free(Allocation allocation);
 
 public finite law bool SupportsDynamicAllocator(Allocator allocator) {
     return allocator.IsDefault();

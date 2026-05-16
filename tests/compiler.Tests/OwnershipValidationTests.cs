@@ -346,6 +346,34 @@ public sealed class OwnershipValidationTests
     }
 
     [Fact]
+    public void ExplicitGenericDoctrineCallsParticipateInOwnershipFlow()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box<T> {
+                T Value;
+            }
+
+            doctrine Sink<T> {
+                finite law void Consume(Box<T> value) {
+                    return;
+                }
+            }
+
+            finite law i32[min max] Run() {
+                stack Box<i32[min max]> box = new Box<i32[min max]>() { Value = 1 };
+                Sink<i32[min max]>.Consume(box);
+                return box.Value;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK4200", "Move error", "was moved and must be reinitialized");
+    }
+
+    [Fact]
     public void RuntimeTextConcatenationConsumesOwnedTextResult()
     {
         var result = Compile(

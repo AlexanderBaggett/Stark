@@ -435,11 +435,13 @@ internal sealed class TypeChecker
                     }
 
                     var traitName = QualifyName(module, traitDeclaration.Identifier().GetText());
+                    var genericParameters = GetGenericParameterNames(traitDeclaration.typeParameterList());
                     _namedTypes[traitName] = new NamedTypeSymbol(
                         traitName,
                         DeclarationKind.Trait,
                         new Dictionary<string, FieldSymbol>(StringComparer.Ordinal),
-                        []);
+                        [],
+                        GenericParameterNames: genericParameters?.ToList());
                     continue;
                 }
 
@@ -453,11 +455,13 @@ internal sealed class TypeChecker
                     }
 
                     var doctrineName = QualifyName(module, doctrineDeclaration.Identifier().GetText());
+                    var genericParameters = GetGenericParameterNames(doctrineDeclaration.typeParameterList());
                     _namedTypes[doctrineName] = new NamedTypeSymbol(
                         doctrineName,
                         DeclarationKind.Doctrine,
                         new Dictionary<string, FieldSymbol>(StringComparer.Ordinal),
-                        []);
+                        [],
+                        GenericParameterNames: genericParameters?.ToList());
                 }
             }
         }
@@ -8495,7 +8499,7 @@ internal sealed class TypeChecker
 
         if (expression.genericEnumCaseReference() is { } genericEnumCaseReference)
         {
-            return ResolveGenericEnumCaseReferenceValue(genericEnumCaseReference, allowFunctionReference);
+            return ResolveGenericMemberReferenceValue(genericEnumCaseReference, allowFunctionReference);
         }
 
         if (expression.qualifiedName() is { } qualifiedName)
@@ -12567,23 +12571,55 @@ internal sealed class TypeChecker
             Location(genericQualifiedName));
     }
 
-    private ExpressionBinding ResolveGenericEnumCaseReferenceValue(
+    private ExpressionBinding ResolveGenericMemberReferenceValue(
         StarkParser.GenericEnumCaseReferenceContext genericEnumCaseReference,
         bool allowFunctionReference)
     {
-        if (!TryResolveEnumCaseReference(genericEnumCaseReference, out var enumType, out var enumTypeSymbol, out var variant))
+        if (TryResolveEnumCaseReference(genericEnumCaseReference, out var enumType, out var enumTypeSymbol, out var variant))
+        {
+            return CreateEnumCaseValueBinding(
+                genericEnumCaseReference.GetText(),
+                enumTypeSymbol,
+                enumType,
+                variant,
+                genericEnumCaseReference.Start,
+                allowFunctionReference);
+        }
+
+        var targetType = ResolveGenericQualifiedName(genericEnumCaseReference.genericQualifiedName());
+        var namedType = ResolveNamedTypeSymbol(targetType);
+        if (namedType?.Kind is DeclarationKind.Doctrine or DeclarationKind.Trait)
+        {
+            return ApplyMemberAccess(
+                new ExpressionBinding(
+                    targetType,
+                    NamedType: namedType,
+                    DiagnosticName: namedType.Kind == DeclarationKind.Doctrine
+                        ? $"doctrine '{targetType.DisplayName}'"
+                        : $"trait '{targetType.DisplayName}'"),
+                genericEnumCaseReference.Identifier().GetText(),
+                genericEnumCaseReference);
+        }
+
+        if (namedType is not null && namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record)
+        {
+            return ApplyMemberAccess(
+                new ExpressionBinding(
+                    StarkTypeSymbols.Error,
+                    NamespaceName: targetType.NamedType,
+                    NamedType: namedType,
+                    DiagnosticName: $"type '{targetType.DisplayName}'"),
+                genericEnumCaseReference.Identifier().GetText(),
+                genericEnumCaseReference);
+        }
+
+        if (targetType.Kind != StarkTypeKind.Error)
         {
             ReportError("STK3003", $"Unknown symbol '{genericEnumCaseReference.GetText()}'.", genericEnumCaseReference);
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
 
-        return CreateEnumCaseValueBinding(
-            genericEnumCaseReference.GetText(),
-            enumTypeSymbol,
-            enumType,
-            variant,
-            genericEnumCaseReference.Start,
-            allowFunctionReference);
+        return new ExpressionBinding(StarkTypeSymbols.Error);
     }
 
     private ExpressionBinding CreateEnumCaseValueBinding(

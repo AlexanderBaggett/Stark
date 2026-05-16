@@ -124,7 +124,7 @@ public sealed class SystemPromotedConsoleStandardLibraryTests : StandardLibraryT
             if (!StatusOk(System.Console.Write("ascii:"))
                 || !StatusOk(System.Console.WriteLine(owned))
                 || !StatusOk(System.Console.Write((unicode)"unicode:"))
-                || !StatusOk(System.Console.WriteLine((unicode)"ÃƒÅ½Ã‚Â±"))
+                || !StatusOk(System.Console.WriteLine((unicode)"α"))
                 || !StatusOk(System.Console.WriteLine(fixedBuffer))
                 || !StatusOk(System.Console.WriteErrorLine("err"))) {
                 return 3;
@@ -295,8 +295,8 @@ public sealed class SystemPromotedConsoleStandardLibraryTests : StandardLibraryT
         await AssertSourceExecutableRunsAsync(
             PromotedConsoleProgram,
             "stark-stdlib-promoted-console-",
-            "alpha\r\ncafÃƒÆ’Ã‚Â©\nZ123" + new string('a', 8193),
-            "ascii:owned\nunicode:ÃƒÅ½Ã‚Â±\nBUF\n",
+            "alpha\r\ncafé\nZ123" + new string('a', 8193),
+            "ascii:owned\nunicode:α\nBUF\n",
             "err\n",
             skipWindows: true);
     }
@@ -379,4 +379,3 @@ public sealed class SystemPromotedConsoleStandardLibraryTests : StandardLibraryT
         return llvm[start..next];
     }
 }
-

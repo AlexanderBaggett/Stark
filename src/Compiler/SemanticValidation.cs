@@ -2122,7 +2122,14 @@ internal sealed class SemanticValidator
 
         if (expression.genericEnumCaseReference() is { } genericEnumCaseReference)
         {
-            return ResolveValue(genericEnumCaseReference.GetText(), scope, function, effects, summary, allowFunctionReference, observation, genericEnumCaseReference.Start);
+            return ResolveGenericMemberReference(
+                genericEnumCaseReference,
+                scope,
+                function,
+                effects,
+                summary,
+                allowFunctionReference,
+                observation);
         }
 
         if (expression.qualifiedName() is { } qualifiedName)
@@ -2422,6 +2429,48 @@ internal sealed class SemanticValidator
         }
 
         return new ValidationValue(createdType, NamedType: ResolveNamedTypeSymbol(createdType));
+    }
+
+    private ValidationValue ResolveGenericMemberReference(
+        StarkParser.GenericEnumCaseReferenceContext genericMemberReference,
+        ValidationScope scope,
+        FunctionDeclarationModel function,
+        FunctionEffectProfile effects,
+        FunctionValidationBuilder summary,
+        bool allowFunctionReference,
+        ExpressionObservation observation)
+    {
+        if (TryResolveEnumCaseReference(genericMemberReference, out var enumType, out var enumTypeSymbol, out var variant))
+        {
+            if (variant.IsUnit)
+            {
+                return new ValidationValue(enumTypeSymbol, NamedType: enumType);
+            }
+
+            return new ValidationValue(
+                enumTypeSymbol,
+                NamedType: enumType,
+                EnumConstructor: new EnumConstructorBinding(genericMemberReference.GetText(), variant));
+        }
+
+        var targetType = ResolveGenericQualifiedName(genericMemberReference.genericQualifiedName());
+        var namedType = ResolveNamedTypeSymbol(targetType);
+        if (namedType?.Kind is DeclarationKind.Doctrine or DeclarationKind.Trait)
+        {
+            return ApplyMemberAccess(
+                new ValidationValue(targetType, NamedType: namedType),
+                genericMemberReference.Identifier().GetText());
+        }
+
+        return ResolveValue(
+            genericMemberReference.GetText(),
+            scope,
+            function,
+            effects,
+            summary,
+            allowFunctionReference,
+            observation,
+            genericMemberReference.Start);
     }
 
     private void RecordDynamicStorageRuntimeEffects(
@@ -3509,7 +3558,7 @@ internal sealed class SemanticValidator
                 HasConstProvenance: HasConstProvenance(target));
         }
 
-        var methodSourceName = $"{namedType.Name}.{memberName}";
+        var methodSourceName = $"{StarkTypeSymbols.GetGenericBaseName(namedType.Name)}.{memberName}";
         if (namedType.Kind == DeclarationKind.Doctrine
             && TryGetFunctionOverloads(methodSourceName, out var doctrineMethods))
         {
@@ -3746,6 +3795,56 @@ internal sealed class SemanticValidator
 
         enumTypeSymbol = StarkTypeSymbols.Named(enumType.Name);
         return true;
+    }
+
+    private bool TryResolveEnumCaseReference(
+        StarkParser.GenericEnumCaseReferenceContext genericEnumCaseReference,
+        out NamedTypeSymbol enumType,
+        out StarkTypeSymbol enumTypeSymbol,
+        out EnumVariantSymbol variant)
+    {
+        enumType = null!;
+        enumTypeSymbol = StarkTypeSymbols.Error;
+        variant = null!;
+
+        enumTypeSymbol = ResolveGenericQualifiedName(genericEnumCaseReference.genericQualifiedName());
+        if (enumTypeSymbol.Kind != StarkTypeKind.Named
+            || enumTypeSymbol.NamedType is null
+            || !_typeModel.NamedTypes.TryGetValue(enumTypeSymbol.NamedType, out var resolvedEnumType)
+            || resolvedEnumType.Kind != DeclarationKind.Enum
+            || !resolvedEnumType.TryGetVariant(genericEnumCaseReference.Identifier().GetText(), out var resolvedVariant, out _))
+        {
+            enumTypeSymbol = StarkTypeSymbols.Error;
+            return false;
+        }
+
+        enumType = resolvedEnumType;
+        variant = resolvedVariant;
+        return true;
+    }
+
+    private StarkTypeSymbol ResolveGenericQualifiedName(StarkParser.GenericQualifiedNameContext genericQualifiedName)
+    {
+        var baseName = genericQualifiedName.qualifiedName().GetText();
+        var baseType = _typeResolver.ResolveQualifiedType(
+            baseName,
+            _currentFunctionGenericParameters,
+            genericQualifiedName.qualifiedName().Start,
+            CurrentModuleName);
+        if (baseType.Kind == StarkTypeKind.Error)
+        {
+            return StarkTypeSymbols.Error;
+        }
+
+        var typeArguments = genericQualifiedName.typeArgumentList().type_()
+            .Select(typeArgument => ResolveType(typeArgument))
+            .ToArray();
+        if (typeArguments.Any(static type => type.Kind == StarkTypeKind.Error))
+        {
+            return StarkTypeSymbols.Error;
+        }
+
+        return StarkTypeSymbols.GenericInstantiation(baseType.NamedType ?? baseName, typeArguments);
     }
 
     private bool TryResolveGlobalBySourceName(string name, out TypedGlobalSymbol global)

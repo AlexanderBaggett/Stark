@@ -61,6 +61,48 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
     }
 
     [Fact]
+    public void StdLibSourceMemoryAllocatorBuiltinsExposeFactsThroughInlineWrappers()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibMemoryAllocatorFacts.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System.Memory
+                module Demo
+
+                unsafe fn bool ExerciseAllocatorBoundary() {
+                    stack System.Memory.Allocator allocator = System.Memory.Allocator.Default();
+                    stack mut System.Memory.Allocation allocation = System.Memory.Allocate(allocator, 32, 8);
+                    if (allocation.Pointer == null) {
+                        return false;
+                    }
+
+                    allocation = System.Memory.Reallocate(allocation, 64, 8);
+                    System.Memory.Free(allocation);
+                    return true;
+                }
+                """,
+                appPath),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                OptimizationLevel: CompilerOptimizationLevel.O0,
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+        Assert.Contains("alwaysinline", FindRequiredLine(llvm, "define internal dso_local fastcc void @System_Memory_Allocate("), StringComparison.Ordinal);
+        Assert.Contains("alwaysinline", FindRequiredLine(llvm, "define internal dso_local fastcc void @System_Memory_Reallocate("), StringComparison.Ordinal);
+        Assert.Contains("alwaysinline", FindRequiredLine(llvm, "define internal dso_local fastcc void @System_Memory_Free("), StringComparison.Ordinal);
+        Assert.Contains("call noalias nonnull noundef ptr @__stark_runtime_alloc(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call nonnull noundef ptr @__stark_runtime_realloc(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call void @__stark_runtime_free(", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void StdLibSourceMemoryModuleUsesWindowsHeapAllocatorForWindowsTarget()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -521,5 +563,12 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
             }
             """);
     }
-}
 
+    private static string FindRequiredLine(string text, string needle)
+    {
+        return text
+            .Split('\n')
+            .FirstOrDefault(line => line.Contains(needle, StringComparison.Ordinal))
+            ?? throw new Xunit.Sdk.XunitException($"Expected LLVM IR to contain a line with '{needle}'.");
+    }
+}

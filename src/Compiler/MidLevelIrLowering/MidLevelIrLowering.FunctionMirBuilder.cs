@@ -3974,7 +3974,8 @@ internal sealed partial class MidLevelIrLowerer
             {
                 if (!TryBuildGenericEnumCaseName(genericEnumCaseReference, out var genericEnumCaseName))
                 {
-                    return false;
+                    currentName = genericEnumCaseReference.GetText();
+                    return true;
                 }
 
                 currentValue = TryResolveNamedValueOperand(genericEnumCaseName);

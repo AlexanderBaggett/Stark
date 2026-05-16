@@ -125,6 +125,70 @@ public sealed class CompilerPipelineOptimizeSsaTests
     }
 
     [Fact]
+    public void InlineSsaPreservesSuccessorPhiIncomingFromSplitContinuationBlocks()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                enum Status {
+                    Ok,
+                    Err
+                }
+
+                inline fn bool IsOk(Status status) {
+                    switch (status) {
+                        case Status.Ok: return true;
+                        case Status.Err: return false;
+                    }
+                }
+
+                noinline fn Status Op(u8[0 3] value) {
+                    if (value == 3) {
+                        return Status.Err;
+                    }
+
+                    return Status.Ok;
+                }
+
+                unsafe fn i32[min max] Run(u8[0 3] value) {
+                    if (!IsOk(Op(0)) || !IsOk(Op(1)) || !IsOk(Op(2)) || !IsOk(Op(value))) {
+                        return 3;
+                    }
+
+                    return 0;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "inline-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? optimizedSsa));
+        Assert.NotNull(optimizedSsa);
+
+        var run = Assert.Single(optimizedSsa.Functions, static function => function.Name == "Run");
+        Assert.Contains(
+            run.Blocks.Select(static block => block.Terminator),
+            static terminator => terminator.Kind == SsaTerminatorKind.Return
+                                 && terminator.Value is SsaIntegerConstant integer
+                                 && integer.Value.IsZero);
+
+        var joinPhi = Assert.Single(
+            run.Blocks.SelectMany(static block => block.Phis),
+            static phi => phi.VariableName.Contains("_or", StringComparison.Ordinal));
+        Assert.Contains(
+            joinPhi.Incomings,
+            incoming => incoming.Value is SsaValueReference reference
+                        && run.Blocks.Any(block => block.Id == incoming.PredecessorBlockId
+                                                   && block.Label.Contains("continue", StringComparison.Ordinal)
+                                                   && block.Instructions
+                                                       .OfType<SsaValueInstruction>()
+                                                       .Any(instruction => string.Equals(instruction.ResultName, reference.Name, StringComparison.Ordinal)
+                                                                           && instruction.Value is SsaUnaryRValue { Operator: SsaUnaryOperator.LogicalNot })));
+    }
+
+    [Fact]
     public void OptimizeSsaPreservesMaterializedGenericCallSymbols()
     {
         var pipeline = DefaultCompilerPipeline.Create();

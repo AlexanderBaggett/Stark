@@ -91,9 +91,9 @@ internal struct Allocation {
     Allocator Allocator;
 }
 
-internal fn Allocation Allocate(Allocator allocator, i64[0 max] byteLength, i64[1 max] alignment);
-internal fn Allocation Reallocate(Allocation allocation, i64[0 max] byteLength, i64[1 max] alignment);
-internal fn void Free(Allocation allocation);
+internal inline fn Allocation Allocate(Allocator allocator, i64[0 max] byteLength, i64[1 max] alignment);
+internal inline fn Allocation Reallocate(Allocation allocation, i64[0 max] byteLength, i64[1 max] alignment);
+internal inline fn void Free(Allocation allocation);
 ```
 
 The allocator identity is stored with the allocation value. Owned containers
@@ -104,6 +104,10 @@ The current default allocator lowering is compiler-backed and routes through
 Stark-owned runtime helpers rather than explicit C allocator calls. Non-zero
 allocation returns non-null storage or traps through `llvm.trap`; zero-byte
 allocation returns a null allocation value that can be safely passed to `Free`.
+The internal allocation wrappers are `inline` so optimized callers can see
+the compiler-generated allocation facts hidden inside the aggregate
+`Allocation` return value, including the fresh-allocation `noalias` fact on
+the runtime allocation helper.
 
 The runtime helper stores allocation metadata immediately before the returned
 user pointer so it can recover the operating-system allocation, allocation size,
@@ -161,7 +165,8 @@ through the allocation policy.
 - `Allocator.Default()` and `Allocator.IsDefault` are implemented as `finite law`
   member functions.
 - Internal allocate, reallocate, and free operations lower through the compiler
-  to Stark-owned runtime helpers.
+  to Stark-owned runtime helpers and are marked `inline` so allocation facts are
+  visible after ordinary backend inlining.
 - The runtime helpers provide target-aware over-alignment and recover the
   original OS allocation through header metadata.
 - Small and medium allocations reuse fixed size-class buckets and can reallocate

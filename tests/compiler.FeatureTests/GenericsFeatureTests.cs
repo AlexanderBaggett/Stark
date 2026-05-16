@@ -126,4 +126,65 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
             || model.NamedTypes.Keys.Any(k => k.StartsWith("Demo.Option<") && k.Contains("Option")),
             "nested instantiation should be registered");
     }
+
+    [Fact]
+    public void OpenGenericFunctionTemplatesDoNotEmitRuntimeAbiDeclarations()
+    {
+        var llvm = CompileToLlvm(
+            """
+            module Demo
+
+            finite law T Identity<T>(T value) {
+                return value;
+            }
+
+            finite law i32[min max] Run(i32[min max] value) {
+                return Identity(value);
+            }
+            """,
+            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.Contains("define internal dso_local fastcc noundef i32 @__stark_mono_fn_Demo__Identity__i32(", llvm);
+        Assert.Contains("call fastcc i32 @__stark_mono_fn_Demo__Identity__i32(", llvm);
+        Assert.DoesNotContain("declare fastcc noundef ptr @Identity(", llvm);
+        Assert.DoesNotContain("define fastcc noundef ptr @Identity(", llvm);
+    }
+
+    [Fact]
+    public void LargeByValueGenericSpecializationsPreserveObservableMemoryFacts()
+    {
+        var llvm = CompileToLlvm(
+            """
+            module Demo
+
+            struct Big {
+                i64[min max] A;
+                i64[min max] B;
+                i64[min max] C;
+                i64[min max] D;
+            }
+
+            inline finite law i64[min max] Read<T>(T value) {
+                return 1;
+            }
+
+            finite law i64[min max] Run(Big value) {
+                return Read(value);
+            }
+            """,
+            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        var runHeader = ExtractDefinitionHeader(llvm, "Run");
+        var specializationHeader = ExtractDefinitionHeader(llvm, "__stark_mono_fn_Demo__Read__Big");
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+
+        Assert.Contains("memory(argmem: read)", runHeader);
+        Assert.DoesNotContain("memory(readwrite", runHeader);
+        Assert.Contains("memory(argmem: read)", specializationHeader);
+        Assert.DoesNotContain("memory(readwrite", specializationHeader);
+        Assert.Contains(
+            "call fastcc i64 @__stark_mono_fn_Demo__Read__Big(ptr nonnull byval(%Big) noalias readonly nocapture dereferenceable(32) align 8 %arg_value)",
+            runBody);
+        Assert.DoesNotContain("%abi_callarg_value", runBody);
+    }
 }

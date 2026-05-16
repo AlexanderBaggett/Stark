@@ -281,6 +281,22 @@ internal sealed class LlvmIrEmitter
 
             builder.AppendLine($"; visibility: {declaration.Visibility.ToString().ToLowerInvariant()}");
 
+            if (IsTraitContractFunction(signature))
+            {
+                builder.AppendLine($"; trait contract: {resolvedName}");
+                builder.AppendLine($"; declaration omitted for trait contract '{resolvedName}' because traits have no runtime callable surface.");
+                builder.AppendLine();
+                continue;
+            }
+
+            if (IsOpenGenericTemplate(signature))
+            {
+                builder.AppendLine($"; open generic template: {resolvedName}");
+                builder.AppendLine($"; declaration omitted for open generic template '{resolvedName}' because only concrete instantiations have a runtime ABI.");
+                builder.AppendLine();
+                continue;
+            }
+
             var definitionInternalize = ShouldInternalize(declaration.Visibility);
             if (function.Asm is not null)
             {
@@ -457,6 +473,16 @@ internal sealed class LlvmIrEmitter
                 continue;
             }
 
+            if (IsTraitContractFunction(signature))
+            {
+                continue;
+            }
+
+            if (IsOpenGenericTemplate(signature))
+            {
+                continue;
+            }
+
             var ssaFunction = _ssa.Functions.FirstOrDefault(function => string.Equals(function.Name, abiFunction.Name, StringComparison.Ordinal));
             var hasBody = ssaFunction is { HasBody: true };
             var parameterEffects = GetParameterEffects(abiFunction.Name, hasBody)
@@ -514,6 +540,23 @@ internal sealed class LlvmIrEmitter
 
     private static bool IsOpenGenericTemplate(TypedFunctionSignature signature) =>
         signature.IsGeneric && !signature.IsGenericInstantiation;
+
+    private bool IsTraitContractFunction(TypedFunctionSignature signature)
+    {
+        var sourceName = signature.DisplaySourceName;
+        var separatorIndex = sourceName.LastIndexOf('.');
+        if (separatorIndex <= 0)
+        {
+            return false;
+        }
+
+        var containingTypeName = sourceName[..separatorIndex];
+        return (_typeModel.NamedTypes.TryGetValue(containingTypeName, out var namedType)
+                && namedType.Kind == DeclarationKind.Trait)
+            || _syntaxModel.Declarations.Any(declaration =>
+                declaration.Kind == DeclarationKind.Trait
+                && string.Equals(declaration.Name, containingTypeName, StringComparison.Ordinal));
+    }
 
     private static IReadOnlySet<string> CollectReferencedImportedFunctions(
         SsaIrModule ssa,
@@ -1623,7 +1666,7 @@ internal sealed class LlvmIrEmitter
     {
         var functionBuilder = new StringBuilder();
         var effectiveEffects = AdjustDefinitionEffectsForBody(effects, ssaFunction);
-        var effectiveMemoryEffects = AdjustDefinitionMemoryEffectsForBodyAndAbiLowering(memoryEffects, ssaFunction, resolveCallAbi);
+        var effectiveMemoryEffects = AdjustDefinitionMemoryEffectsForBodyAndAbiLowering(memoryEffects, ssaFunction);
         var debugFunction = TryCreateDebugFunctionContext(function, abiFunction, ssaFunction);
         var valueFacts = TryGetSsaValueFacts(ssaFunction);
         functionBuilder.AppendLine(AppendFunctionDebugScope(
@@ -1798,11 +1841,12 @@ internal sealed class LlvmIrEmitter
 
     private FunctionMemoryEffectSummary? AdjustDefinitionMemoryEffectsForBodyAndAbiLowering(
         FunctionMemoryEffectSummary? memoryEffects,
-        SsaFunction ssaFunction,
-        Func<string, string, AbiFunctionSignature?> resolveCallAbi)
+        SsaFunction ssaFunction)
     {
-        if (!RequiresSyntheticStackTemporaries(ssaFunction, resolveCallAbi)
-            && !ContainsAllocatorAccess(ssaFunction))
+        // LLVM memory effects are about externally observable memory. Private
+        // alloca scratch introduced for sret/byval lowering can stay under the
+        // source memory contract; heap/dynamic runtime calls cannot.
+        if (!ContainsAllocatorAccess(ssaFunction))
         {
             return memoryEffects;
         }
@@ -1845,32 +1889,6 @@ internal sealed class LlvmIrEmitter
     {
         return string.Equals(functionName, CallableValueFacts.EmptyClosureDropFunctionName, StringComparison.Ordinal)
             || functionName.EndsWith(".__drop", StringComparison.Ordinal);
-    }
-
-    private static bool RequiresSyntheticStackTemporaries(
-        SsaFunction ssaFunction,
-        Func<string, string, AbiFunctionSignature?> resolveCallAbi)
-    {
-        foreach (var call in ssaFunction.Blocks
-                     .SelectMany(static block => block.Instructions)
-                     .OfType<SsaValueInstruction>()
-                     .Select(static instruction => instruction.Value)
-                     .OfType<SsaCallRValue>())
-        {
-            var calleeAbi = resolveCallAbi(ssaFunction.Name, call.FunctionName);
-            if (calleeAbi is null)
-            {
-                continue;
-            }
-
-            if (calleeAbi.ReturnsIndirect
-                || calleeAbi.UserParameters.Any(AbiLoweringHeuristics.IsByValueIndirectParameter))
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private bool TryEmitAsmFunctionDefinition(

@@ -321,6 +321,7 @@ internal sealed class SsaDirectCallInliner
         var inlineSiteIndex = 0;
         var changed = false;
         var blocks = new List<SsaBasicBlock>(function.Blocks.Count);
+        var continuationPredecessorRedirects = new Dictionary<int, int>();
 
         foreach (var block in function.Blocks)
         {
@@ -375,9 +376,11 @@ internal sealed class SsaDirectCallInliner
                         inlineSiteIndex,
                         usedValueNames,
                         ref nextBlockId,
+                        out var continuationBlockId,
                         out var splitBlocks))
                 {
                     blocks.AddRange(splitBlocks);
+                    continuationPredecessorRedirects[block.Id] = continuationBlockId;
                     inlineSiteIndex++;
                     changed = true;
                     blockWasSplit = true;
@@ -399,7 +402,7 @@ internal sealed class SsaDirectCallInliner
         }
 
         var rewrittenBlocks = blocks
-            .Select(block => RewriteBlock(block, replacements))
+            .Select(block => RewriteBlock(block, replacements, continuationPredecessorRedirects))
             .ToArray();
 
         return function with { Blocks = rewrittenBlocks };
@@ -521,9 +524,11 @@ internal sealed class SsaDirectCallInliner
         int inlineSiteIndex,
         ISet<string> usedValueNames,
         ref int nextBlockId,
+        out int continuationBlockId,
         out IReadOnlyList<SsaBasicBlock> splitBlocks)
     {
         splitBlocks = [];
+        continuationBlockId = -1;
 
         if (!candidates.TryGetValue(call.FunctionName, out var candidate)
             || candidate.Blocks.Count <= 1
@@ -541,7 +546,7 @@ internal sealed class SsaDirectCallInliner
             blockIdMap[candidateBlock.Id] = nextBlockId++;
         }
 
-        var continuationBlockId = nextBlockId++;
+        continuationBlockId = nextBlockId++;
         var localReplacements = new Dictionary<string, SsaValue>(StringComparer.Ordinal);
         var parameterAddressReplacements = new Dictionary<string, SsaValue>(StringComparer.Ordinal);
         var parameterAliasInstructions = new List<SsaInstruction>();
@@ -1461,7 +1466,8 @@ internal sealed class SsaDirectCallInliner
 
     private static SsaBasicBlock RewriteBlock(
         SsaBasicBlock block,
-        IReadOnlyDictionary<string, SsaValue> replacements)
+        IReadOnlyDictionary<string, SsaValue> replacements,
+        IReadOnlyDictionary<int, int>? predecessorRedirects = null)
     {
         return block with
         {
@@ -1471,6 +1477,10 @@ internal sealed class SsaDirectCallInliner
                     Incomings = phi.Incomings
                         .Select(incoming => incoming with
                         {
+                            PredecessorBlockId = predecessorRedirects is not null
+                                                 && predecessorRedirects.TryGetValue(incoming.PredecessorBlockId, out var redirectedPredecessor)
+                                ? redirectedPredecessor
+                                : incoming.PredecessorBlockId,
                             Value = RewriteValue(incoming.Value, replacements)
                         })
                         .ToArray()
