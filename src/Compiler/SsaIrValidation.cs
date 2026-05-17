@@ -2333,8 +2333,10 @@ internal sealed class SsaIrValidator
         switch (value)
         {
             case SsaValueReference:
-            case SsaIntegerConstant:
             case SsaFloatConstant:
+                break;
+            case SsaIntegerConstant integerConstant:
+                ValidateIntegerConstant(function, integerConstant, location);
                 break;
             case SsaStringConstant stringConstant:
                 ValidateTextType(function, stringConstant.Type, "string constant", location);
@@ -2361,6 +2363,38 @@ internal sealed class SsaIrValidator
             default:
                 Report(function, location, $"unsupported SSA value type '{value.GetType().Name}' reached validation.");
                 break;
+        }
+    }
+
+    private void ValidateIntegerConstant(
+        SsaFunction function,
+        SsaIntegerConstant constant,
+        SourceLocation? location)
+    {
+        if (!IsConcreteIntegerType(constant.Type))
+        {
+            Report(
+                function,
+                location,
+                $"integer constant value '{constant.Value}' must use a concrete integer storage type, but found '{constant.Type.DisplayName}'.");
+            return;
+        }
+
+        if (!StarkTypeSymbols.IntegerValueFitsStorage(constant.Value, constant.Type))
+        {
+            Report(
+                function,
+                location,
+                $"integer constant value '{constant.Value}' does not fit storage type '{constant.Type.DisplayName}'.");
+            return;
+        }
+
+        if (!StarkTypeSymbols.IntegerValueFitsEffectiveRange(constant.Value, constant.Type))
+        {
+            Report(
+                function,
+                location,
+                $"integer constant value '{constant.Value}' is outside effective range '{constant.Type.DisplayName}'.");
         }
     }
 
@@ -2674,7 +2708,7 @@ internal sealed class SsaIrValidator
         string usage,
         SourceLocation? location)
     {
-        if (value.Type.Kind != StarkTypeKind.Integer || value.Type.BitWidth is null)
+        if (!IsConcreteIntegerType(value.Type))
         {
             Report(function, location, $"{usage} must be a concrete integer, but found '{value.Type.DisplayName}'.");
         }
@@ -2704,7 +2738,24 @@ internal sealed class SsaIrValidator
 
     private static bool IsConcreteIntegerType(StarkTypeSymbol type)
     {
-        return type.Kind == StarkTypeKind.Integer && type.BitWidth is > 0;
+        if (!StarkTypeSymbols.TryGetIntegerStorageBounds(type, out var storageMin, out var storageMax))
+        {
+            return false;
+        }
+
+        if (type.RangeMin is null && type.RangeMax is null)
+        {
+            return true;
+        }
+
+        if (type.RangeMin is not { } rangeMin || type.RangeMax is not { } rangeMax)
+        {
+            return false;
+        }
+
+        return rangeMin <= rangeMax
+               && rangeMin >= storageMin
+               && rangeMax <= storageMax;
     }
 
     private static bool IsConcreteFloatType(StarkTypeSymbol type)

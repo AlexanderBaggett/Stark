@@ -248,7 +248,7 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
             }
             """);
 
-        Assert.Contains("call fastcc i1 @TryFormatI32Ascii(", llvm);
+        Assert.DoesNotContain("call fastcc i1 @TryFormatI32Ascii(", llvm);
         Assert.Contains("call fastcc i1 @TryConcatAscii(", llvm);
         Assert.Contains("call coldcc void @__stark_unreachable_trap()", llvm);
         Assert.Contains("[32 x i8]", llvm);
@@ -273,7 +273,7 @@ public sealed class StringsFeatureTests : FeatureLlvmTestBase
             }
             """);
 
-        Assert.Contains("call fastcc i1 @TryFormatI32Unicode(", llvm);
+        Assert.DoesNotContain("call fastcc i1 @TryFormatI32Unicode(", llvm);
         Assert.Contains("call fastcc i1 @TryConcatUnicode(", llvm);
         Assert.Contains("call coldcc void @__stark_unreachable_trap()", llvm);
         Assert.Contains("[32 x i32]", llvm);

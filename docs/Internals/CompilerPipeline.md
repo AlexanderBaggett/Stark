@@ -152,29 +152,33 @@ The current default compilation pipeline is dependency-ordered rather than hard-
 27. `specialize-ascii-to-unicode-literals-ssa`
    Specializes ASCII-to-Unicode literal conversion paths using SSA value facts.
    This pass recognizes compile-time text literal payloads and rewrites supported conversion patterns into cheaper constant/view forms, then refreshes SSA value facts when it changes the graph. At `O0` and `Og`, it is bypassed.
-28. `prune-branches`
+28. `specialize-constant-text-formatting-ssa`
+   Specializes fixed-buffer text formatting calls with compile-time-known integer values.
+   This pass recognizes `System.Text.TryFormatI*/U*Ascii` and `System.Text.TryFormatI*/U*Unicode` calls whose formatted value is already known in SSA, preserves the destination null/capacity/storage failure behavior, and replaces runtime digit generation with direct constant stores or literal-data copies. At `O0` and `Og`, it is bypassed.
+29. `prune-branches`
    Removes branches and switch cases proven unreachable by SSA facts.
    This pass consumes the value-fact model, folds fact-known branch directions and switch targets, removes stale phi incomings, reruns cleanup and constant propagation, and republishes refreshed value facts. At `O0` and `Og`, it is bypassed.
-29. `memory-opt-ssa`
+30. `memory-opt-ssa`
    Runs alias-aware SSA memory optimization.
    This pass consumes refined memory/effect summaries to forward stack scalar loads, eliminate dead stack field stores, preserve memory barriers when calls or escapes can observe state, and keep only transformations justified by local storage and alias facts. It reruns cleanup, constant propagation, and value-fact analysis when it changes the graph. At `O0` and `Og`, it is bypassed.
-30. `sroa-ssa`
+31. `sroa-ssa`
    Performs scalar replacement for eligible aggregate memory operations.
    This pass removes dead aggregate copies, forwards exact scalar field/index copies when later loads can observe them, and stays conservative around moves, escaping addresses, non-scalar observations, and unsupported aggregate shapes. It reruns cleanup, constant propagation, and value-fact analysis when it changes the graph. At `O0` and `Og`, it is bypassed.
-31. `shape-branches`
+32. `shape-branches`
    Runs final branch shaping over optimized SSA.
    This pass enables select predication for simple return diamonds after the heavier SSA optimization passes have run, then refreshes value facts. At `O0` and `Og`, it republishes the existing optimized SSA unchanged.
-32. `lower-abi`
+33. `lower-abi`
    Produces a compiler-owned ABI model from typed Stark signatures and function effects.
    This is where internal aggregate parameters and returns are lowered to stable calling-convention rules, while `ffi` signatures keep their foreign-facing shape and imported Stark calls are assigned their dependency-facing symbol/ABI form.
-33. `validate-ssa`
+34. `validate-ssa`
    Validates optimized SSA against the ABI and LLVM-emission contract.
    This pass catches malformed SSA before code generation: missing value
    definitions, malformed terminators, unsupported SSA node kinds, invalid call
    ABI metadata, unsupported conversions, invalid dynamic-storage and
-   memory-copy shapes, malformed text/global/function address values, invalid
-   address forms, and operator shapes that LLVM emission cannot represent.
-34. `emit-llvm`
+   memory-copy shapes, malformed text/global/function address values,
+   compile-time-only or out-of-range integer constants, invalid address forms,
+   and operator shapes that LLVM emission cannot represent.
+35. `emit-llvm`
    Produces LLVM IR from the optimized SSA form plus semantic, type, and ABI metadata.
    The emitter generates real function bodies for accepted source bodies and
    materialized specializations, emits concrete aggregate/array/slice/string

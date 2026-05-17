@@ -1559,7 +1559,8 @@ internal sealed class SsaCleanupOptimizer
     {
         switch (value)
         {
-            case SsaIntegerConstant integer:
+            case SsaIntegerConstant integer
+                when StarkTypeSymbols.IntegerValueFitsEffectiveRange(integer.Value, integer.Type):
                 min = integer.Value;
                 max = integer.Value;
                 return true;
@@ -1578,9 +1579,7 @@ internal sealed class SsaCleanupOptimizer
                 }
 
                 var type = value.Type;
-                if (type.Kind == StarkTypeKind.Integer
-                    && type.RangeMin is { } rangeMin
-                    && type.RangeMax is { } rangeMax)
+                if (StarkTypeSymbols.TryGetEffectiveIntegerBounds(type, out var rangeMin, out var rangeMax))
                 {
                     min = rangeMin;
                     max = rangeMax;

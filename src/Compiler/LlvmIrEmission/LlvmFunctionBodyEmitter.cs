@@ -5652,29 +5652,7 @@ internal sealed class LlvmFunctionBodyEmitter
     private static bool TryGetIntegerTypeRange(StarkTypeSymbol type, out BigInteger min, out BigInteger max)
     {
         var normalizedType = NormalizeAggregateType(type);
-        if (normalizedType.Kind != StarkTypeKind.Integer || normalizedType.BitWidth is not int bitWidth || bitWidth <= 0)
-        {
-            min = default;
-            max = default;
-            return false;
-        }
-
-        if (normalizedType.RangeMin is not null && normalizedType.RangeMax is not null)
-        {
-            min = normalizedType.RangeMin.Value;
-            max = normalizedType.RangeMax.Value;
-            return true;
-        }
-
-        if (normalizedType.IsUnsigned)
-        {
-            min = BigInteger.Zero;
-            max = (BigInteger.One << bitWidth) - BigInteger.One;
-            return true;
-        }
-
-        GetSignedIntegerBounds(bitWidth, out min, out max);
-        return true;
+        return StarkTypeSymbols.TryGetEffectiveIntegerBounds(normalizedType, out min, out max);
     }
 
     private static bool HasUnsignedIntegerSemantics(StarkTypeSymbol type)

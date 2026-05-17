@@ -4116,6 +4116,12 @@ internal sealed class OwnershipValidator
 
         if (left.Kind == StarkTypeKind.Integer && right.Kind == StarkTypeKind.Integer)
         {
+            if (StarkTypeSymbols.IsCompileTimeInteger(left)
+                || StarkTypeSymbols.IsCompileTimeInteger(right))
+            {
+                return StarkTypeSymbols.CompileTimeInteger;
+            }
+
             return StarkTypeSymbols.Integer(
                 Math.Max(left.BitWidth ?? 0, right.BitWidth ?? 0),
                 isUnsigned: left.IsUnsigned && right.IsUnsigned);

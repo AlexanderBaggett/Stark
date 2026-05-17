@@ -1703,6 +1703,69 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void HugeCompileTimeIntegerConstCannotBecomeRuntimeStorage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            const Huge = 2 ** 1024;
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3013"
+                && diagnostic.Message.Contains("Type 'integer' is compile-time-only", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("a global constant type", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void HugeCompileTimeIntegerConversionReportsConcreteTargetOverflow()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe finite law i1024[min max] Run() {
+                return (i1024[min max])(2 ** 1024);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("Compile-time integer value", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("does not fit in 'i1024'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void CompileTimeUnaryIntegerConstantsReinferExactResultStorage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            const MinI32 = -(2 ** 31);
+            const MinusOne = ~0;
+
+            fn i32[min max] ReadMin() {
+                return MinI32;
+            }
+
+            fn i8[min max] ReadMinusOne() {
+                return MinusOne;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
     public void DictionaryAllowsCompilerProvenKeyTypes()
     {
         var result = Compile(

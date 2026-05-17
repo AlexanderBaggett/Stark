@@ -1,3 +1,4 @@
+using System.Numerics;
 using Stark.Compiler;
 
 namespace compiler.Tests;
@@ -301,21 +302,67 @@ public sealed partial class MidLevelIrLoweringTests
         Assert.True(function.SupportsDirectCodeGeneration);
         Assert.Contains(
             statements,
-            static statement => statement.Value is MidLevelIrConvertRValue
+            static statement => statement.Value is MidLevelIrBinaryRValue
             {
-                Operand: MidLevelIrIntegerConstantOperand { Value: var value }
+                Operator: MidLevelIrBinaryOperator.Add,
+                Left: MidLevelIrIntegerConstantOperand { Value: var left },
+                Right: MidLevelIrIntegerConstantOperand { Value: var right }
             }
-            && value == 4);
-        Assert.Contains(
-            statements,
-            static statement => statement.Value is MidLevelIrConvertRValue
-            {
-                Operand: MidLevelIrIntegerConstantOperand { Value: var value }
+            && left == 4
+            && right == 8);
+    }
+
+    [Fact]
+    public void HugeCompileTimeIntegerConversionMaterializesConcreteMirConstant()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe finite law u1024[0 max] Run() {
+                return (u1024[0 max])(2 ** 1024 - 1);
             }
-            && value == 8);
-        Assert.Contains(
-            statements,
-            static statement => statement.Value is MidLevelIrBinaryRValue { Operator: MidLevelIrBinaryOperator.Add });
+            """,
+            new CompilerOptions(StopAfterPassId: "lower-mir"));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetMir(result).Functions);
+        var returned = Assert.IsType<MidLevelIrIntegerConstantOperand>(function.Blocks[function.EntryBlockId].Terminator.Value);
+        var expected = (BigInteger.One << 1024) - BigInteger.One;
+
+        Assert.Equal(expected, returned.Value);
+        Assert.Equal(1024, returned.Type.BitWidth);
+        Assert.True(returned.Type.IsUnsigned);
+        Assert.Equal(BigInteger.Zero, returned.Type.RangeMin);
+        Assert.Equal(expected, returned.Type.RangeMax);
+        Assert.DoesNotContain(
+            function.Blocks.SelectMany(static block => block.Statements),
+            static statement => statement.Value is MidLevelIrConvertRValue);
+    }
+
+    [Fact]
+    public void ConstantNarrowingConversionMaterializesWrappedMirConstant()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe finite law i8[min max] Run() {
+                return (i8[min max])300;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "lower-mir"));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetMir(result).Functions);
+        var returned = Assert.IsType<MidLevelIrIntegerConstantOperand>(function.Blocks[function.EntryBlockId].Terminator.Value);
+
+        Assert.Equal(new BigInteger(44), returned.Value);
+        Assert.Equal(8, returned.Type.BitWidth);
+        Assert.False(returned.Type.IsUnsigned);
+        Assert.DoesNotContain(
+            function.Blocks.SelectMany(static block => block.Statements),
+            static statement => statement.Value is MidLevelIrConvertRValue);
     }
 
     [Fact]

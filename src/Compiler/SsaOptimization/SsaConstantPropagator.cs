@@ -567,6 +567,12 @@ internal sealed class SsaConstantPropagator
         var twosComplement = integer.Value & mask;
         var inverted = (~twosComplement) & mask;
         var foldedValue = integer.Type.IsUnsigned ? inverted : FromTwosComplement(inverted, bitWidth);
+        if (!StarkTypeSymbols.IntegerValueFitsEffectiveRange(foldedValue, integer.Type))
+        {
+            folded = integer;
+            return false;
+        }
+
         folded = new SsaIntegerConstant(foldedValue, integer.Type);
         return true;
     }
@@ -766,6 +772,12 @@ internal sealed class SsaConstantPropagator
         var modulus = BigInteger.One << bitWidth;
         var normalized = ((value % modulus) + modulus) % modulus;
         var wrapped = type.IsUnsigned ? normalized : FromTwosComplement(normalized, bitWidth);
+        if (!StarkTypeSymbols.IntegerValueFitsEffectiveRange(wrapped, type))
+        {
+            folded = new SsaIntegerConstant(value, type);
+            return false;
+        }
+
         folded = new SsaIntegerConstant(wrapped, type);
         return true;
     }
@@ -801,35 +813,7 @@ internal sealed class SsaConstantPropagator
 
     private static bool TryGetIntegerBounds(StarkTypeSymbol type, out BigInteger min, out BigInteger max)
     {
-        if (type.BitWidth is not int bitWidth || bitWidth <= 0)
-        {
-            min = BigInteger.Zero;
-            max = BigInteger.Zero;
-            return false;
-        }
-
-        if (type.IsUnsigned)
-        {
-            min = BigInteger.Zero;
-            max = (BigInteger.One << bitWidth) - BigInteger.One;
-            return true;
-        }
-
-        return TryGetSignedIntegerBounds(bitWidth, out min, out max);
-    }
-
-    private static bool TryGetSignedIntegerBounds(int bitWidth, out BigInteger min, out BigInteger max)
-    {
-        min = BigInteger.Zero;
-        max = BigInteger.Zero;
-        if (bitWidth <= 0)
-        {
-            return false;
-        }
-
-        min = -(BigInteger.One << (bitWidth - 1));
-        max = (BigInteger.One << (bitWidth - 1)) - 1;
-        return true;
+        return StarkTypeSymbols.TryGetEffectiveIntegerBounds(type, out min, out max);
     }
 
     private static bool TryGetValidShiftAmount(BigInteger value, int bitWidth, out int shift)

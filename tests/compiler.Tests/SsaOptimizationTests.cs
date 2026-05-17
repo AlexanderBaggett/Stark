@@ -3382,7 +3382,7 @@ public sealed class SsaOptimizationTests
     [Fact]
     public void ValueFactsClampNonWrappingArithmeticToContinuingTypeRange()
     {
-        var resultType = StarkTypeSymbols.Integer(8, BigInteger.Zero, new BigInteger(255));
+        var resultType = StarkTypeSymbols.Integer(8, BigInteger.Zero, new BigInteger(255), isUnsigned: true);
         var leftType = StarkTypeSymbols.Integer(16, new BigInteger(240), new BigInteger(250));
         var rightType = StarkTypeSymbols.Integer(16, new BigInteger(10), new BigInteger(20));
         var module = new SsaIrModule(
@@ -3434,7 +3434,7 @@ public sealed class SsaOptimizationTests
     [Fact]
     public void ValueFactsDoNotCreateInvalidRangesWhenNonWrappingArithmeticAlwaysOverflows()
     {
-        var resultType = StarkTypeSymbols.Integer(8, BigInteger.Zero, new BigInteger(255));
+        var resultType = StarkTypeSymbols.Integer(8, BigInteger.Zero, new BigInteger(255), isUnsigned: true);
         var leftType = StarkTypeSymbols.Integer(16, new BigInteger(250), new BigInteger(255));
         var rightType = StarkTypeSymbols.Integer(16, new BigInteger(10), new BigInteger(20));
         var module = new SsaIrModule(
@@ -3486,7 +3486,7 @@ public sealed class SsaOptimizationTests
     [Fact]
     public void ValueFactsKeepWrappingArithmeticConservativeWhenRangeMayWrap()
     {
-        var resultType = StarkTypeSymbols.Integer(8, BigInteger.Zero, new BigInteger(255));
+        var resultType = StarkTypeSymbols.Integer(8, BigInteger.Zero, new BigInteger(255), isUnsigned: true);
         var leftType = StarkTypeSymbols.Integer(16, new BigInteger(250), new BigInteger(255));
         var rightType = StarkTypeSymbols.Integer(16, new BigInteger(10), new BigInteger(20));
         var module = new SsaIrModule(
@@ -3538,7 +3538,7 @@ public sealed class SsaOptimizationTests
     [Fact]
     public void ValueFactsClampSaturatingArithmeticInsteadOfUsingWrappingSemantics()
     {
-        var resultType = StarkTypeSymbols.Integer(8, BigInteger.Zero, new BigInteger(255));
+        var resultType = StarkTypeSymbols.Integer(8, BigInteger.Zero, new BigInteger(255), isUnsigned: true);
         var leftType = StarkTypeSymbols.Integer(16, new BigInteger(250), new BigInteger(255));
         var rightType = StarkTypeSymbols.Integer(16, new BigInteger(10), new BigInteger(20));
         var module = new SsaIrModule(
@@ -3591,7 +3591,7 @@ public sealed class SsaOptimizationTests
     public void ValueFactsClampIntegerConversionsToTargetRange()
     {
         var sourceType = StarkTypeSymbols.Integer(16, new BigInteger(240), new BigInteger(260));
-        var targetType = StarkTypeSymbols.Integer(8, BigInteger.Zero, new BigInteger(255));
+        var targetType = StarkTypeSymbols.Integer(8, BigInteger.Zero, new BigInteger(255), isUnsigned: true);
         var module = new SsaIrModule(
             "Demo",
             [

@@ -1277,6 +1277,7 @@ public static class StarkTypeSymbols
     public static readonly StarkTypeSymbol Error = new(StarkTypeKind.Error, "<error>");
     public static readonly StarkTypeSymbol Void = new(StarkTypeKind.Void, "void");
     public static readonly StarkTypeSymbol Bool = new(StarkTypeKind.Bool, "bool");
+    public static readonly StarkTypeSymbol CompileTimeInteger = new(StarkTypeKind.Integer, "integer");
     public static readonly StarkTypeSymbol Ascii = new(StarkTypeKind.Ascii, "ascii");
     public static readonly StarkTypeSymbol Unicode = new(StarkTypeKind.Unicode, "unicode");
     public static readonly StarkTypeSymbol OwnedAscii = new(StarkTypeKind.Named, OwnedAsciiName, NamedType: OwnedAsciiName);
@@ -1304,6 +1305,68 @@ public static class StarkTypeSymbols
             RangeMin: rangeMin,
             RangeMax: rangeMax,
             IsUnsigned: isUnsigned);
+    }
+
+    public static bool IsCompileTimeInteger(StarkTypeSymbol type) =>
+        type.Kind == StarkTypeKind.Integer && type.BitWidth is null;
+
+    public static bool TryGetIntegerStorageBounds(StarkTypeSymbol type, out BigInteger min, out BigInteger max)
+    {
+        if (type.Kind != StarkTypeKind.Integer || type.BitWidth is not int bitWidth || bitWidth <= 0)
+        {
+            min = BigInteger.Zero;
+            max = BigInteger.Zero;
+            return false;
+        }
+
+        if (type.IsUnsigned)
+        {
+            min = BigInteger.Zero;
+            max = (BigInteger.One << bitWidth) - BigInteger.One;
+            return true;
+        }
+
+        min = -(BigInteger.One << (bitWidth - 1));
+        max = (BigInteger.One << (bitWidth - 1)) - BigInteger.One;
+        return true;
+    }
+
+    public static bool TryGetEffectiveIntegerBounds(StarkTypeSymbol type, out BigInteger min, out BigInteger max)
+    {
+        if (!TryGetIntegerStorageBounds(type, out min, out max))
+        {
+            return false;
+        }
+
+        if (type.RangeMin is { } rangeMin && type.RangeMax is { } rangeMax)
+        {
+            if (rangeMin > rangeMax || rangeMin < min || rangeMax > max)
+            {
+                min = BigInteger.Zero;
+                max = BigInteger.Zero;
+                return false;
+            }
+
+            min = rangeMin;
+            max = rangeMax;
+            return true;
+        }
+
+        return true;
+    }
+
+    public static bool IntegerValueFitsEffectiveRange(BigInteger value, StarkTypeSymbol type)
+    {
+        return TryGetEffectiveIntegerBounds(type, out var min, out var max)
+               && value >= min
+               && value <= max;
+    }
+
+    public static bool IntegerValueFitsStorage(BigInteger value, StarkTypeSymbol type)
+    {
+        return TryGetIntegerStorageBounds(type, out var min, out var max)
+               && value >= min
+               && value <= max;
     }
 
     public static StarkTypeSymbol Float(int bitWidth) => new(StarkTypeKind.Float, $"f{bitWidth}", BitWidth: bitWidth);

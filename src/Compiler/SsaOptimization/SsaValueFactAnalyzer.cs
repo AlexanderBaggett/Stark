@@ -533,7 +533,8 @@ internal sealed class SsaValueFactAnalyzer
     {
         switch (value)
         {
-            case SsaIntegerConstant integer:
+            case SsaIntegerConstant integer
+                when StarkTypeSymbols.IntegerValueFitsEffectiveRange(integer.Value, integer.Type):
                 singleton = integer.Value;
                 return true;
             case SsaValueReference reference
@@ -849,7 +850,10 @@ internal sealed class SsaValueFactAnalyzer
         {
             SsaValueReference reference when knownValues.TryGetValue(reference.Name, out var facts)
                 => RenameFacts(valueName, facts, value.Type),
-            SsaIntegerConstant integer => CreateIntegerConstantFacts(valueName, integer.Type, integer.Value),
+            SsaIntegerConstant integer
+                when StarkTypeSymbols.IntegerValueFitsEffectiveRange(integer.Value, integer.Type)
+                => CreateIntegerConstantFacts(valueName, integer.Type, integer.Value),
+            SsaIntegerConstant integer => CreateTypeFacts(valueName, integer.Type),
             SsaBoolConstant boolean => CreateBooleanConstantFacts(valueName, boolean.Value),
             SsaNullConstant nullConstant => CreateNullFacts(valueName, nullConstant.Type),
             SsaStringConstant text => CreateTextConstantFacts(valueName, text.Type, text.LiteralText),
@@ -3488,26 +3492,12 @@ internal sealed class SsaValueFactAnalyzer
     private static bool TryGetIntegerTypeRange(StarkTypeSymbol type, out SsaIntegerRangeFact range)
     {
         range = default!;
-        if (type.Kind != StarkTypeKind.Integer || type.BitWidth is not int bitWidth || bitWidth <= 0)
+        if (!StarkTypeSymbols.TryGetEffectiveIntegerBounds(type, out var min, out var max))
         {
             return false;
         }
 
-        if (type.RangeMin is not null && type.RangeMax is not null)
-        {
-            range = new SsaIntegerRangeFact(type.RangeMin.Value, type.RangeMax.Value);
-            return true;
-        }
-
-        if (type.IsUnsigned)
-        {
-            range = new SsaIntegerRangeFact(BigInteger.Zero, (BigInteger.One << bitWidth) - BigInteger.One);
-            return true;
-        }
-
-        range = new SsaIntegerRangeFact(
-            -(BigInteger.One << (bitWidth - 1)),
-            (BigInteger.One << (bitWidth - 1)) - BigInteger.One);
+        range = new SsaIntegerRangeFact(min, max);
         return true;
     }
 
@@ -3515,4 +3505,3 @@ internal sealed class SsaValueFactAnalyzer
 
     private static BigInteger Max(BigInteger left, BigInteger right) => left >= right ? left : right;
 }
-

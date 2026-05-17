@@ -1387,17 +1387,12 @@ internal sealed partial class MidLevelIrLowerer
 
     private static StarkTypeSymbol InferFallbackConstIntegerType(BigInteger value)
     {
-        foreach (var width in SupportedConstIntegerWidths)
+        if (IntegerRangeStorageFacts.TryGetSmallestTypeForRange(value, value, out var type))
         {
-            var min = -(BigInteger.One << (width - 1));
-            var max = (BigInteger.One << (width - 1)) - BigInteger.One;
-            if (value >= min && value <= max)
-            {
-                return StarkTypeSymbols.Integer(width, value, value);
-            }
+            return type;
         }
 
-        return StarkTypeSymbols.Integer(SupportedConstIntegerWidths[^1], value, value);
+        return StarkTypeSymbols.CompileTimeInteger;
     }
 
     private static StarkTypeSymbol ResolveFallbackConstIntegerType(IToken integerTypeToken)

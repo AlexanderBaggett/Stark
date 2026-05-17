@@ -6163,7 +6163,7 @@ internal sealed class TypeChecker
             return type;
         }
 
-        return StarkTypeSymbols.Integer(SupportedIntegerLiteralWidths[^1], value, value);
+        return StarkTypeSymbols.CompileTimeInteger;
     }
 
     private static StarkTypeSymbol InferConstUnsignedIntegerStorageType(BigInteger value)
@@ -6177,7 +6177,7 @@ internal sealed class TypeChecker
             }
         }
 
-        return StarkTypeSymbols.Integer(SupportedIntegerLiteralWidths[^1], value, value, isUnsigned: true);
+        return StarkTypeSymbols.CompileTimeInteger;
     }
 
     private static StarkTypeSymbol ResolveConstIntegerStorageType(IToken integerTypeToken)
@@ -7900,6 +7900,32 @@ internal sealed class TypeChecker
                 RequireUnsafeContext(
                     $"Raw pointer conversion from '{convertedOperand.Type.DisplayName}' to '{targetType.DisplayName}'",
                     expression);
+            }
+
+            if (StarkTypeSymbols.IsCompileTimeInteger(convertedOperand.Type)
+                && CompileTimeExpressionEvaluator.TryEvaluate(
+                    expression.unaryExpression(),
+                    out var compileTimeOperand,
+                    CreateCompileTimeEvaluationServices(scope))
+                && compileTimeOperand.Kind == CompileTimeConstantKind.Integer)
+            {
+                if (targetType.Kind == StarkTypeKind.Integer)
+                {
+                    if (!CompileTimeExpressionEvaluator.TryCoerce(compileTimeOperand, targetType, out _))
+                    {
+                        ReportError(
+                            "STK3002",
+                            $"Compile-time integer value {compileTimeOperand.IntegerValue} does not fit in '{targetType.DisplayName}'. Use a wider integer type or keep the expression compile-time-only.",
+                            expression);
+                    }
+                }
+                else
+                {
+                    ReportError(
+                        "STK3002",
+                        $"Compile-time integer value {compileTimeOperand.IntegerValue} must be converted to a concrete integer type before converting to '{targetType.DisplayName}'.",
+                        expression);
+                }
             }
 
             EnsureExplicitConversionCompatible(targetType, convertedOperand, expression);
@@ -14990,30 +15016,7 @@ internal sealed class TypeChecker
 
     private static bool TryGetEffectiveIntegerRange(StarkTypeSymbol type, out BigInteger min, out BigInteger max)
     {
-        if (type.BitWidth is not int bitWidth || bitWidth <= 0)
-        {
-            min = default;
-            max = default;
-            return false;
-        }
-
-        if (type.RangeMin is not null && type.RangeMax is not null)
-        {
-            min = type.RangeMin.Value;
-            max = type.RangeMax.Value;
-            return true;
-        }
-
-        if (type.IsUnsigned)
-        {
-            min = BigInteger.Zero;
-            max = (BigInteger.One << bitWidth) - BigInteger.One;
-            return true;
-        }
-
-        min = -(BigInteger.One << (bitWidth - 1));
-        max = (BigInteger.One << (bitWidth - 1)) - BigInteger.One;
-        return true;
+        return StarkTypeSymbols.TryGetEffectiveIntegerBounds(type, out min, out max);
     }
 
     private static bool IsProvablyNonNegativeIntegerType(StarkTypeSymbol type)
@@ -15036,6 +15039,12 @@ internal sealed class TypeChecker
 
         if (left.Kind == StarkTypeKind.Integer && right.Kind == StarkTypeKind.Integer)
         {
+            if (StarkTypeSymbols.IsCompileTimeInteger(left)
+                || StarkTypeSymbols.IsCompileTimeInteger(right))
+            {
+                return StarkTypeSymbols.CompileTimeInteger;
+            }
+
             return StarkTypeSymbols.Integer(
                 Math.Max(left.BitWidth ?? 0, right.BitWidth ?? 0),
                 isUnsigned: left.IsUnsigned && right.IsUnsigned);
@@ -15209,7 +15218,7 @@ internal sealed class TypeChecker
             }
         }
 
-        return StarkTypeSymbols.Integer(SupportedIntegerLiteralWidths[^1], value, value);
+        return StarkTypeSymbols.CompileTimeInteger;
     }
 
     private static StarkTypeSymbol InferStringLiteralType(string text)
@@ -15257,6 +15266,14 @@ internal sealed class TypeChecker
             ReportError(
                 "STK3013",
                 $"Type '{type.DisplayName}' depends on compile-time-only {DescribeCompileTimeOnlyKind(dependencyKind)} '{dependencyName}', which is not allowed for {usage}. {DescribeNoDynamicDispatchPolicy()}",
+                context);
+        }
+
+        if (StarkTypeSymbols.IsCompileTimeInteger(type))
+        {
+            ReportError(
+                "STK3013",
+                $"Type 'integer' is compile-time-only and cannot be used as runtime storage for {usage}. Convert the value to a concrete integer type whose range can hold it.",
                 context);
         }
 

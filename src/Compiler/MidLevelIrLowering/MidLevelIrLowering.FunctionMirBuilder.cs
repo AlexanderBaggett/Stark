@@ -7912,6 +7912,17 @@ internal sealed partial class MidLevelIrLowerer
 
             if (operand.Type.Kind == StarkTypeKind.Integer && targetType.Kind == StarkTypeKind.Integer)
             {
+                if (operand is MidLevelIrIntegerConstantOperand integerConstant)
+                {
+                    return TryMaterializeIntegerConstant(
+                            integerConstant.Value,
+                            integerConstant.Type,
+                            targetType,
+                            out var convertedConstant)
+                        ? new MidLevelIrIntegerConstantOperand(convertedConstant, targetType)
+                        : null;
+                }
+
                 return EmitTemporary(
                     new MidLevelIrConvertRValue(operand, targetType, $"{operand.Text}:{targetType.DisplayName}"),
                     "intcast");
@@ -9437,6 +9448,12 @@ internal sealed partial class MidLevelIrLowerer
 
             if (left.Kind == StarkTypeKind.Integer && right.Kind == StarkTypeKind.Integer)
             {
+                if (StarkTypeSymbols.IsCompileTimeInteger(left)
+                    || StarkTypeSymbols.IsCompileTimeInteger(right))
+                {
+                    return StarkTypeSymbols.CompileTimeInteger;
+                }
+
                 return StarkTypeSymbols.Integer(
                     Math.Max(left.BitWidth ?? 0, right.BitWidth ?? 0),
                     isUnsigned: left.IsUnsigned && right.IsUnsigned);
@@ -10041,7 +10058,47 @@ internal sealed partial class MidLevelIrLowerer
                 }
             }
 
-            return StarkTypeSymbols.Integer(widths[^1], value, value);
+            return StarkTypeSymbols.CompileTimeInteger;
+        }
+
+        private static bool TryMaterializeIntegerConstant(
+            BigInteger value,
+            StarkTypeSymbol sourceType,
+            StarkTypeSymbol targetType,
+            out BigInteger converted)
+        {
+            converted = value;
+            if (StarkTypeSymbols.IsCompileTimeInteger(targetType))
+            {
+                return true;
+            }
+
+            if (StarkTypeSymbols.IntegerValueFitsEffectiveRange(value, targetType))
+            {
+                return true;
+            }
+
+            if (StarkTypeSymbols.IsCompileTimeInteger(sourceType)
+                || targetType.BitWidth is not int bitWidth
+                || bitWidth <= 0)
+            {
+                return false;
+            }
+
+            var modulus = BigInteger.One << bitWidth;
+            var normalized = ((value % modulus) + modulus) % modulus;
+            converted = targetType.IsUnsigned
+                ? normalized
+                : FromTwosComplement(normalized, bitWidth);
+            return StarkTypeSymbols.IntegerValueFitsEffectiveRange(converted, targetType);
+        }
+
+        private static BigInteger FromTwosComplement(BigInteger value, int bitWidth)
+        {
+            var signBit = BigInteger.One << (bitWidth - 1);
+            return (value & signBit) != 0
+                ? value - (BigInteger.One << bitWidth)
+                : value;
         }
 
         private sealed class BasicBlockBuilder

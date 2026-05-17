@@ -2445,6 +2445,222 @@ public sealed class CompilerPipelineOptimizeSsaTests
     }
 
     [Fact]
+    public void ConstantTextFormatSpecializationRewritesLargeIntegerAsciiFormatCallsBeforeAbiLowering()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module System.Text
+
+                public unsafe finite bool TryFormatI1024Ascii(rawmutptr<Ascii> destination, i1024[min max] value);
+
+                public unsafe fn bool Run() {
+                    stack mut i8[min max][320] storage;
+                    stack mut Ascii text = new Ascii() {
+                        Data = &storage[0],
+                        Length = 0,
+                        Capacity = 320
+                    };
+
+                    return TryFormatI1024Ascii(&text, (i1024[min max])(-(2 ** 1023)));
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "specialize-constant-text-formatting-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.DoesNotContain(
+            run.Blocks
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaValueInstruction>()
+                .Select(static instruction => instruction.Value)
+                .OfType<SsaCallRValue>(),
+            static call => call.FunctionName.Contains("TryFormatI1024Ascii", StringComparison.Ordinal));
+        Assert.Contains(run.Blocks, static block => block.Label.Contains("format_const", StringComparison.Ordinal));
+        Assert.Contains(
+            run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaCopyMemoryInstruction>(),
+            static copy => copy.SourceAddress is SsaTextDataAddressValue { TextType.Kind: StarkTypeKind.Ascii }
+                           && copy.CopyType is { Kind: StarkTypeKind.FixedArray, FixedLength: 309, ElementType.BitWidth: 8 });
+        Assert.Contains(
+            run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaStoreIndirectInstruction>(),
+            static store => store.Value is SsaIntegerConstant integer
+                            && integer.Value == new System.Numerics.BigInteger(309));
+        Assert.Contains(
+            run.Blocks.SelectMany(static block => block.Phis),
+            static phi => phi.Type.Kind == StarkTypeKind.Bool && phi.Incomings.Count == 3);
+    }
+
+    [Fact]
+    public void ConstantTextFormatSpecializationRewritesLargeIntegerUnicodeFormatCallsBeforeAbiLowering()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module System.Text
+
+                public unsafe finite bool TryFormatU1024Unicode(rawmutptr<Unicode> destination, u1024[0 max] value);
+
+                public unsafe fn bool Run() {
+                    stack mut i32[min max][320] storage;
+                    stack mut Unicode text = new Unicode() {
+                        Data = &storage[0],
+                        Length = 0,
+                        Capacity = 320
+                    };
+
+                    return TryFormatU1024Unicode(&text, (u1024[0 max])(2 ** 1024 - 1));
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "specialize-constant-text-formatting-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.DoesNotContain(
+            run.Blocks
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaValueInstruction>()
+                .Select(static instruction => instruction.Value)
+                .OfType<SsaCallRValue>(),
+            static call => call.FunctionName.Contains("TryFormatU1024Unicode", StringComparison.Ordinal));
+        Assert.Contains(
+            run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaCopyMemoryInstruction>(),
+            static copy => copy.SourceAddress is SsaTextDataAddressValue { TextType.Kind: StarkTypeKind.Unicode }
+                           && copy.CopyType is { Kind: StarkTypeKind.FixedArray, FixedLength: 309, ElementType.BitWidth: 32 });
+    }
+
+    [Fact]
+    public void ConstantTextFormatSpecializationKeepsRuntimeIntegerFormatCallsOnStdLibPath()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module System.Text
+
+                public unsafe finite bool TryFormatI1024Ascii(rawmutptr<Ascii> destination, i1024[min max] value);
+
+                public unsafe fn bool Run(i1024[min max] value) {
+                    stack mut i8[min max][320] storage;
+                    stack mut Ascii text = new Ascii() {
+                        Data = &storage[0],
+                        Length = 0,
+                        Capacity = 320
+                    };
+
+                    return TryFormatI1024Ascii(&text, value);
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "specialize-constant-text-formatting-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.Contains(
+            run.Blocks
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaValueInstruction>()
+                .Select(static instruction => instruction.Value)
+                .OfType<SsaCallRValue>(),
+            static call => call.FunctionName.Contains("TryFormatI1024Ascii", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ConstantTextFormatSpecializationKeepsReadonlyDestinationIntegerFormatCalls()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module System.Text
+
+                public unsafe finite bool TryFormatI1024Ascii(rawptr<Ascii> destination, i1024[min max] value);
+
+                public unsafe fn bool Run() {
+                    stack mut i8[min max][320] storage;
+                    stack mut Ascii text = new Ascii() {
+                        Data = &storage[0],
+                        Length = 0,
+                        Capacity = 320
+                    };
+
+                    return TryFormatI1024Ascii(&text, (i1024[min max])123);
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "specialize-constant-text-formatting-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.Contains(
+            run.Blocks
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaValueInstruction>()
+                .Select(static instruction => instruction.Value)
+                .OfType<SsaCallRValue>(),
+            static call => call.FunctionName.Contains("TryFormatI1024Ascii", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ConstantTextFormatSpecializationNormalizesOutOfRangeNarrowedIntegerConstants()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module System.Text
+
+                public unsafe finite bool TryFormatI16Ascii(rawmutptr<Ascii> destination, i16[min max] value);
+
+                public unsafe fn bool Run() {
+                    stack mut i8[min max][8] storage;
+                    stack mut Ascii text = new Ascii() {
+                        Data = &storage[0],
+                        Length = 0,
+                        Capacity = 8
+                    };
+
+                    return TryFormatI16Ascii(&text, (i16[min max])((i8[min max])300));
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "specialize-constant-text-formatting-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.DoesNotContain(
+            run.Blocks
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaValueInstruction>()
+                .Select(static instruction => instruction.Value)
+                .OfType<SsaCallRValue>(),
+            static call => call.FunctionName.Contains("TryFormatI16Ascii", StringComparison.Ordinal));
+        Assert.Contains(
+            run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaStoreIndirectInstruction>(),
+            static store => store.Value is SsaIntegerConstant integer
+                            && integer.Value == new System.Numerics.BigInteger(2));
+        Assert.True(
+            run.Blocks
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaStoreIndirectInstruction>()
+                .Count(static store => store.Value is SsaIntegerConstant integer
+                                       && integer.Value == new System.Numerics.BigInteger(52)) >= 2);
+    }
+
+    [Fact]
     public void FactDrivenSwitchPruningRemovesCasesOutsideKnownInputRange()
     {
         var pipeline = DefaultCompilerPipeline.Create();

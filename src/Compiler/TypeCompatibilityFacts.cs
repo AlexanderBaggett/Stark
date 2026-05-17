@@ -590,30 +590,7 @@ internal static class TypeCompatibilityFacts
 
     private static bool TryGetEffectiveIntegerRange(StarkTypeSymbol type, out BigInteger min, out BigInteger max)
     {
-        if (type.BitWidth is not int bitWidth || bitWidth <= 0)
-        {
-            min = default;
-            max = default;
-            return false;
-        }
-
-        if (type.RangeMin is not null && type.RangeMax is not null)
-        {
-            min = type.RangeMin.Value;
-            max = type.RangeMax.Value;
-            return true;
-        }
-
-        if (type.IsUnsigned)
-        {
-            min = BigInteger.Zero;
-            max = (BigInteger.One << bitWidth) - BigInteger.One;
-            return true;
-        }
-
-        min = -(BigInteger.One << (bitWidth - 1));
-        max = (BigInteger.One << (bitWidth - 1)) - BigInteger.One;
-        return true;
+        return StarkTypeSymbols.TryGetEffectiveIntegerBounds(type, out min, out max);
     }
 
     private static bool IsBorrowAssignable(StarkBorrowKind target, StarkBorrowKind source)

@@ -1,3 +1,4 @@
+using System.Numerics;
 using Stark.Compiler;
 
 namespace compiler.Tests;
@@ -58,6 +59,44 @@ public sealed class SsaIrValidationTests
         var diagnostics = Validate(function);
 
         AssertDiagnostic(diagnostics, "STK5002", "conversion source type 'integer'", "concrete integer");
+    }
+
+    [Fact]
+    public void CompileTimeIntegerConstantFailsBeforeLlvmEmission()
+    {
+        var function = BuildReturningFunction(
+            StarkTypeSymbols.CompileTimeInteger,
+            new SsaIntegerConstant(BigInteger.One << 1024, StarkTypeSymbols.CompileTimeInteger));
+
+        var diagnostics = Validate(function);
+
+        AssertDiagnostic(diagnostics, "STK5002", "integer constant value", "concrete integer storage type", "integer");
+    }
+
+    [Fact]
+    public void IntegerConstantOutsideStorageFailsBeforeLlvmEmission()
+    {
+        var i8 = StarkTypeSymbols.Integer(8);
+        var function = BuildReturningFunction(
+            i8,
+            new SsaIntegerConstant(300, i8));
+
+        var diagnostics = Validate(function);
+
+        AssertDiagnostic(diagnostics, "STK5002", "integer constant value '300'", "does not fit storage type 'i8'");
+    }
+
+    [Fact]
+    public void IntegerConstantOutsideEffectiveRangeFailsBeforeLlvmEmission()
+    {
+        var ranged = StarkTypeSymbols.Integer(8, 0, 10);
+        var function = BuildReturningFunction(
+            ranged,
+            new SsaIntegerConstant(44, ranged));
+
+        var diagnostics = Validate(function);
+
+        AssertDiagnostic(diagnostics, "STK5002", "integer constant value '44'", "outside effective range 'i8[0 10]'");
     }
 
     [Fact]

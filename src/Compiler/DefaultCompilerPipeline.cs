@@ -49,6 +49,7 @@ public static class DefaultCompilerPipeline
             .Add(new InlineSsaIrPass())
             .Add(new SsaValueFactsPass())
             .Add(new SpecializeAsciiToUnicodeLiteralsSsaPass())
+            .Add(new SpecializeConstantTextFormattingSsaPass())
             .Add(new PruneSsaBranchesPass())
             .Add(new OptimizeSsaMemoryPass())
             .Add(new ScalarReplaceSsaAggregatesPass())
@@ -4378,6 +4379,36 @@ public static class DefaultCompilerPipeline
         }
     }
 
+    private sealed class SpecializeConstantTextFormattingSsaPass : ICompilerPass
+    {
+        public string Id => "specialize-constant-text-formatting-ssa";
+
+        public CompilerPhase Phase => CompilerPhase.Lowering;
+
+        public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
+
+        public IReadOnlyList<string> Dependencies => ["specialize-ascii-to-unicode-literals-ssa"];
+
+        public void Execute(CompilerPassContext context)
+        {
+            var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
+            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
+            {
+                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
+                return;
+            }
+
+            var specialized = new SsaConstantTextFormatSpecializer().Optimize(ssa);
+            if (ReferenceEquals(specialized, ssa))
+            {
+                return;
+            }
+
+            context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, specialized);
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer().Analyze(specialized));
+        }
+    }
+
     private sealed class PruneSsaBranchesPass : ICompilerPass
     {
         public string Id => "prune-branches";
@@ -4386,7 +4417,7 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["specialize-ascii-to-unicode-literals-ssa"];
+        public IReadOnlyList<string> Dependencies => ["specialize-constant-text-formatting-ssa"];
 
         public void Execute(CompilerPassContext context)
         {

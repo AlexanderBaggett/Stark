@@ -1173,12 +1173,26 @@ public sealed class CompilerCliTests
                 """
                 module Lib
 
-                public inline finite u8[0 102] SelectOrAdd(u8[0 100] value, bool add) {
+                public inline finite u8[0 120] SelectOrAdd(u8[0 100] value, bool add) {
+                    stack u8[0 101] v1 = value + 1;
+                    stack u8[0 102] v2 = v1 + 1;
+                    stack u8[0 103] v3 = v2 + 1;
+                    stack u8[0 104] v4 = v3 + 1;
+                    stack u8[0 105] v5 = v4 + 1;
+                    stack u8[0 106] v6 = v5 + 1;
+                    stack u8[0 107] v7 = v6 + 1;
+                    stack u8[0 108] v8 = v7 + 1;
+                    stack u8[0 109] v9 = v8 + 1;
+                    stack u8[0 110] v10 = v9 + 1;
+                    stack u8[0 111] v11 = v10 + 1;
+                    stack u8[0 112] v12 = v11 + 1;
+                    stack u8[0 113] v13 = v12 + 1;
+
                     if (add) {
-                        return value + 1;
+                        return v13;
                     }
 
-                    return value + 2;
+                    return v13 + 1;
                 }
                 """);
             await File.WriteAllTextAsync(
@@ -1187,7 +1201,7 @@ public sealed class CompilerCliTests
                 import Lib
                 module App
 
-                fn u8[0 102] Run(u8[0 100] value, bool add) {
+                fn u8[0 120] Run(u8[0 100] value, bool add) {
                     return Lib.SelectOrAdd(value, add);
                 }
                 """);

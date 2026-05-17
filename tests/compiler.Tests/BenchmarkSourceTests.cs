@@ -318,6 +318,23 @@ public sealed class BenchmarkSourceTests
     }
 
     [Fact]
+    public void TextFormattingBenchmarksSpecializeConstantIntegerFormatting()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var integerMain = CompileBenchmarkMainLlvm(repositoryRoot, "text/IntegerFormatting.stark");
+        var unicodeMain = CompileBenchmarkMainLlvm(repositoryRoot, "text/UnicodeFormatting.stark");
+
+        Assert.DoesNotContain("TryFormatI64Ascii", integerMain, StringComparison.Ordinal);
+        Assert.DoesNotContain("TryFormatU64Ascii", integerMain, StringComparison.Ordinal);
+        Assert.DoesNotContain("TryFormatI1024Ascii", integerMain, StringComparison.Ordinal);
+        Assert.DoesNotContain("TryFormatU1024Ascii", integerMain, StringComparison.Ordinal);
+        Assert.DoesNotContain("TryFormatI1024Unicode", unicodeMain, StringComparison.Ordinal);
+        Assert.DoesNotContain("TryFormatU1024Unicode", unicodeMain, StringComparison.Ordinal);
+        Assert.Contains("llvm.memcpy", integerMain, StringComparison.Ordinal);
+        Assert.Contains("llvm.memcpy", unicodeMain, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void StandardLibraryOptimizationBenchmarkGatesHaveExpectedSourceMatrix()
     {
         var repositoryRoot = FindRepositoryRoot();

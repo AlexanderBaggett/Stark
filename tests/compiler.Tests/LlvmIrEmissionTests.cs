@@ -5033,7 +5033,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("abi_ascii2unicode_store", llvm);
-        Assert.Matches(@"phi i32 \[ %v\d+, %abi_ascii2unicode_done_\d+ \]", llvm);
+        Assert.Matches(@"phi i32 \[ (?:%v\d+|2), %abi_ascii2unicode_done_\d+ \]", llvm);
         Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
     }
 
