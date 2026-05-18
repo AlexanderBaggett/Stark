@@ -2283,15 +2283,15 @@ Completion rules:
 - [x] benchmarks/io/FileBufferedReadWrite — stale after byte-write buffering fix; 2026-05-11 rerun: Rust `2103 us`, Stark `2087 us`.
 - [ ] benchmarks/io/FileSystemPathTranscode — rust 1.104452, stark 1.208904
 - [ ] benchmarks/micro/AggregatePhiFieldForwarding — rust 0.974632, stark 0.997971
-- [ ] benchmarks/micro/AlgebraicIdentitySimplification — rust 1.014934, stark 1.022554
+- [x] benchmarks/micro/AlgebraicIdentitySimplification — rust 1.014934, stark 1.022554
 - [ ] benchmarks/micro/ExplicitArithmeticRangePruning — rust 0.990526, stark 1.014211
 - [ ] benchmarks/micro/FunctionPointerDevirtualization — rust 1.007611, stark 1.01945
 - [ ] benchmarks/network/TcpScatterGatherLoopback — rust 0.970315, stark 1.196042
-- [ ] benchmarks/text/IntegerFormatting — rust 1.106406, stark 627.29316
+- [x] benchmarks/text/IntegerFormatting — rust 1.106406, stark 627.29316
 - [ ] benchmarks/text/PathJoin — rust 1.075163, stark 1.094771
 - [ ] benchmarks/text/PathRepeatedSmallOps — rust 1.029443, stark 1.07571
 - [ ] benchmarks/text/TextParsing — rust 1.092818, stark 1.319337
-- [ ] benchmarks/text/UnicodeFormatting — rust 1.047867, stark 594.463059
+- [x] benchmarks/text/UnicodeFormatting — rust 1.047867, stark 594.463059
 
 
 
