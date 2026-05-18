@@ -908,8 +908,9 @@ internal static partial class PackageImageLoader
                 if (TryRenderGenericTemplateBody(template, out var renderedBodyText))
                 {
                     templates[BuildGenericTemplateLookupKey(template.QualifiedName, template.OverloadKey)] = renderedBodyText;
-                    continue;
                 }
+
+                continue;
             }
 
             if (!string.IsNullOrEmpty(template.BodyText))

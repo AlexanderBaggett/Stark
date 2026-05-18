@@ -25,6 +25,8 @@ internal sealed class LoweringContractValidator
     private readonly Dictionary<OperationKey, ObjectCreationTypingRecord> _objectCreations;
     private readonly Dictionary<OperationKey, EnumConstructorTypingRecord> _enumConstructors;
     private readonly Dictionary<OperationKey, TypeLayoutExpressionTypingRecord> _typeLayoutExpressions;
+    private readonly Dictionary<OperationKey, LocalDeclarationTypingRecord> _localDeclarations;
+    private readonly Dictionary<OperationKey, IReadOnlyList<BoundOperation>> _boundOperations;
     private readonly Dictionary<OperationKey, LambdaTypingRecord> _lambdas;
     private readonly Dictionary<OperationKey, ClosureLambdaTypingRecord> _closureLambdas;
 
@@ -61,6 +63,12 @@ internal sealed class LoweringContractValidator
         _objectCreations = BuildOperationMap(typeModel.ObjectCreations, static record => Key(record.EnclosingFunctionName, record.Location));
         _enumConstructors = BuildOperationMap(typeModel.EnumConstructors, static record => Key(record.EnclosingFunctionName, record.Location));
         _typeLayoutExpressions = BuildOperationMap(typeModel.TypeLayoutExpressions, static record => Key(record.EnclosingFunctionName, record.Location));
+        _localDeclarations = BuildOperationMap(typeModel.LocalDeclarations, static record => Key(record.EnclosingFunctionName, record.Location));
+        _boundOperations = typeModel.BoundOperations
+            .GroupBy(static operation => Key(operation.EnclosingFunctionName, operation.Location))
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyList<BoundOperation>)group.ToArray());
         _lambdas = typeModel.Lambdas
             .GroupBy(static record => Key(record.EnclosingFunctionName, record.Location))
             .ToDictionary(static group => group.Key, static group => group.Last());
@@ -138,6 +146,18 @@ internal sealed class LoweringContractValidator
                 ValidateTypeLayoutExpression(primary, functionName, filePath);
                 break;
 
+            case StarkParser.LiteralContext literal when literal.DOLLAR() is not null && literal.StringLiteral() is not null:
+                ValidateTextInterpolation(literal, functionName, filePath);
+                break;
+
+            case StarkParser.LocalVariableDeclarationContext localVariable:
+                ValidateFixedTextStorageInitializers(localVariable, functionName, filePath);
+                break;
+
+            case StarkParser.AdditiveExpressionContext additive:
+                ValidateOptionalTextBuild(additive, functionName, filePath);
+                break;
+
             case StarkParser.SwitchStatementContext switchStatement:
                 ValidateSwitch(switchStatement, functionName, filePath);
                 break;
@@ -164,6 +184,7 @@ internal sealed class LoweringContractValidator
 
                 if (TryGetRecord(_dynamicStorageOperations, arguments, functionName, out var dynamicStorageOperation))
                 {
+                    ValidateBoundDynamicStorageOperation(dynamicStorageOperation, arguments, functionName, filePath);
                     ValidateDynamicStorageOperation(postfix, index, dynamicStorageOperation, arguments, filePath);
                     _checkedDynamicStorageOperationCount++;
                     continue;
@@ -171,6 +192,7 @@ internal sealed class LoweringContractValidator
 
                 if (TryGetRecord(_directCalls, arguments, functionName, out var directCall))
                 {
+                    ValidateBoundDirectCallOperation(directCall, arguments, functionName, filePath);
                     ValidateFunctionCallArity(
                         "direct-call",
                         directCall.Signature.DisplaySourceName,
@@ -193,6 +215,7 @@ internal sealed class LoweringContractValidator
 
                 if (TryGetRecord(_memberCalls, arguments, functionName, out var memberCall))
                 {
+                    ValidateBoundMemberCallOperation(memberCall, arguments, functionName, filePath);
                     if (memberCall.Signature.Parameters.Count == 0)
                     {
                         ReportInvalid(
@@ -226,6 +249,7 @@ internal sealed class LoweringContractValidator
 
                 if (TryGetRecord(_indirectCalls, arguments, functionName, out var indirectCall))
                 {
+                    ValidateBoundFunctionPointerCallOperation(indirectCall, arguments, functionName, filePath);
                     ValidateIndirectCall(indirectCall, arguments, filePath);
                     _checkedCallCount++;
                     continue;
@@ -233,6 +257,7 @@ internal sealed class LoweringContractValidator
 
                 if (TryGetRecord(_closureCalls, arguments, functionName, out var closureCall))
                 {
+                    ValidateBoundClosureCallOperation(closureCall, arguments, functionName, filePath);
                     ValidateClosureCall(closureCall, arguments, filePath);
                     _checkedCallCount++;
                     continue;
@@ -240,6 +265,7 @@ internal sealed class LoweringContractValidator
 
                 if (TryGetRecord(_enumCalls, arguments, functionName, out var enumCall))
                 {
+                    ValidateBoundEnumCallOperation(enumCall, arguments, functionName, filePath);
                     ValidateEnumCall(enumCall, arguments, filePath);
                     _checkedCallCount++;
                     continue;
@@ -256,7 +282,8 @@ internal sealed class LoweringContractValidator
             {
                 if (TryGetRecord(_indexAccesses, indexes, functionName, out var indexAccess))
                 {
-            ValidateIndexAccess(indexAccess, indexes, filePath);
+                    ValidateBoundIndexAccessOperation(indexAccess, indexes, functionName, filePath);
+                    ValidateIndexAccess(indexAccess, indexes, filePath);
                     _checkedIndexAccessCount++;
                     continue;
                 }
@@ -281,6 +308,7 @@ internal sealed class LoweringContractValidator
 
         if (TryGetRecord(_objectCreations, expression, functionName, out var objectCreation))
         {
+            ValidateBoundObjectCreationOperation(objectCreation, expression, functionName, filePath);
             ValidateObjectCreationFact(objectCreation, expression, filePath);
             _checkedObjectCreationCount++;
             return;
@@ -299,6 +327,7 @@ internal sealed class LoweringContractValidator
     {
         if (TryGetRecord(_enumConstructors, expression, functionName, out var enumConstructor))
         {
+            ValidateBoundEnumConstructionOperation(enumConstructor, expression, functionName, filePath);
             ValidateEnumConstructorFact(enumConstructor, expression, filePath);
             _checkedEnumConstructorCount++;
             return;
@@ -317,6 +346,7 @@ internal sealed class LoweringContractValidator
     {
         if (TryGetRecord(_typeLayoutExpressions, expression, functionName, out var layoutExpression))
         {
+            ValidateBoundLayoutQueryOperation(layoutExpression, expression, functionName, filePath);
             ValidateTypeLayoutFact(layoutExpression, expression, functionName, filePath);
             _checkedTypeLayoutExpressionCount++;
             return;
@@ -374,6 +404,7 @@ internal sealed class LoweringContractValidator
     {
         if (TryGetRecord(_switches, switchStatement, functionName, out var switchRecord))
         {
+            ValidateBoundSwitchDispatchOperation(switchRecord, switchStatement, functionName, filePath);
             ValidateSwitchFact(switchRecord, switchStatement, filePath);
             ValidateSwitchPatternFacts(switchStatement, functionName, filePath);
             _checkedSwitchCount++;
@@ -384,6 +415,423 @@ internal sealed class LoweringContractValidator
             switchStatement,
             filePath,
             "Lowering contract is missing typed switch-lowering facts. Type checking must record the switch domain, dispatch family, label counts, and structured pattern facts before MIR lowering.");
+    }
+
+    private void ValidateTextInterpolation(StarkParser.LiteralContext literal, string functionName, string? filePath)
+    {
+        if (!TryGetBoundOperation(literal, functionName, out BoundTextInterpolationOperation operation))
+        {
+            ReportMissingBoundOperation(literal, filePath, "text-interpolation");
+            return;
+        }
+
+        if (!InterpolatedText.TryParse(literal.StringLiteral()!.GetText(), out var segments, out _))
+        {
+            return;
+        }
+
+        var holeCount = segments.OfType<InterpolatedTextHoleSegment>().Count();
+        if (operation.SegmentCount != segments.Count
+            || operation.HoleCount != holeCount
+            || operation.ResultType.Kind is StarkTypeKind.Error or StarkTypeKind.Void)
+        {
+            ReportInvalid(
+                literal,
+                filePath,
+                "Bound text-interpolation operation does not match the source interpolation shape or result type.");
+        }
+    }
+
+    private void ValidateOptionalTextBuild(StarkParser.AdditiveExpressionContext additive, string functionName, string? filePath)
+    {
+        if (!TryGetBoundOperation(additive, functionName, out BoundTextBuildOperation operation))
+        {
+            if (TryGetRecord(_directCalls, additive, functionName, out var directCall)
+                && IsRuntimeTextBuildCall(directCall.Signature))
+            {
+                ReportMissingBoundOperation(additive, filePath, "text-build");
+            }
+
+            return;
+        }
+
+        var operandCount = additive.multiplicativeExpression().Length;
+        if (operation.OperandCount != operandCount
+            || operation.ResultType.Kind is StarkTypeKind.Error or StarkTypeKind.Void)
+        {
+            ReportInvalid(
+                additive,
+                filePath,
+                $"Bound text-build operation records {operation.OperandCount} operand(s), but the source has {operandCount}.");
+        }
+    }
+
+    private void ValidateRequiredTextBuild(StarkParser.AdditiveExpressionContext additive, string functionName, string? filePath)
+    {
+        if (!TryGetBoundOperation(additive, functionName, out BoundTextBuildOperation operation))
+        {
+            ReportMissingBoundOperation(additive, filePath, "text-build");
+            return;
+        }
+
+        var operands = additive.multiplicativeExpression();
+        var operators = ExtractOperators<StarkParser.MultiplicativeExpressionContext>(additive);
+        if (operands.Length < 2
+            || operators.Any(static item => item != "+")
+            || !string.Equals(operation.BuildKind, "concat", StringComparison.Ordinal)
+            || !operation.UsesFixedStorage
+            || operation.OperandCount != operands.Length
+            || operation.ResultType.Kind is StarkTypeKind.Error or StarkTypeKind.Void)
+        {
+            ReportInvalid(
+                additive,
+                filePath,
+                "Bound fixed text-build operation does not match the source concatenation shape or result type.");
+        }
+    }
+
+    private void ValidateFixedTextStorageInitializers(
+        StarkParser.LocalVariableDeclarationContext declaration,
+        string functionName,
+        string? filePath)
+    {
+        if (!TryGetRecord(_localDeclarations, declaration, functionName, out var localDeclaration)
+            || !IsTextBufferType(localDeclaration.Type))
+        {
+            return;
+        }
+
+        foreach (var declarator in declaration.variableDeclarators().variableDeclarator())
+        {
+            if (declarator.variableStorageCapacity() is null
+                || declarator.variableInitializer()?.expression() is not { } initializer)
+            {
+                continue;
+            }
+
+            if (TryGetStandaloneInterpolatedTextLiteral(initializer) is { } interpolatedLiteral)
+            {
+                ValidateTextInterpolation(interpolatedLiteral, functionName, filePath);
+                continue;
+            }
+
+            if (TryGetStandaloneAdditiveExpression(initializer) is { } additive)
+            {
+                ValidateRequiredTextBuild(additive, functionName, filePath);
+            }
+        }
+    }
+
+    private static bool IsRuntimeTextBuildCall(TypedFunctionSignature signature)
+    {
+        return signature.DisplaySourceName is "System.Text.ConcatAscii" or "System.Text.ConcatUnicode"
+            || signature.Name is "System.Text.ConcatAscii" or "System.Text.ConcatUnicode"
+            || signature.TemplateName is "System.Text.ConcatAscii" or "System.Text.ConcatUnicode";
+    }
+
+    private void ValidateBoundDirectCallOperation(
+        DirectCallTypingRecord record,
+        StarkParser.ArgumentListContext arguments,
+        string functionName,
+        string? filePath)
+    {
+        if (!TryGetBoundOperation(arguments, functionName, out BoundDirectCallOperation operation))
+        {
+            ReportMissingBoundOperation(arguments, filePath, "direct-call");
+            return;
+        }
+
+        if (!Equals(operation.Signature, record.Signature))
+        {
+            ReportInvalid(
+                arguments,
+                filePath,
+                $"Bound direct-call operation records '{operation.Signature.DisplaySourceName}', but typed call facts record '{record.Signature.DisplaySourceName}'.");
+        }
+
+        ValidateBoundCallArgumentRecords("direct-call", operation.Arguments, record.Arguments, arguments, filePath);
+    }
+
+    private void ValidateBoundMemberCallOperation(
+        MemberCallTypingRecord record,
+        StarkParser.ArgumentListContext arguments,
+        string functionName,
+        string? filePath)
+    {
+        if (!TryGetBoundOperation(arguments, functionName, out BoundMemberCallOperation operation))
+        {
+            ReportMissingBoundOperation(arguments, filePath, "member-call");
+            return;
+        }
+
+        if (!Equals(operation.Signature, record.Signature))
+        {
+            ReportInvalid(
+                arguments,
+                filePath,
+                $"Bound member-call operation records '{operation.Signature.DisplaySourceName}', but typed member-call facts record '{record.Signature.DisplaySourceName}'.");
+        }
+
+        var receiver = record.Arguments.FirstOrDefault(static argument => argument.IsReceiver);
+        if (receiver is not null)
+        {
+            if (!Equals(operation.ReceiverType, receiver.ArgumentType)
+                || operation.ReceiverIsAddressable != receiver.ArgumentIsAddressable
+                || operation.ReceiverIsMutable != receiver.ArgumentIsMutable)
+            {
+                ReportInvalid(
+                    arguments,
+                    filePath,
+                    $"Bound member-call operation for '{record.Signature.DisplaySourceName}' does not match the receiver type/addressability facts.");
+            }
+        }
+
+        ValidateBoundCallArgumentRecords("member-call", operation.Arguments, record.Arguments, arguments, filePath);
+    }
+
+    private void ValidateBoundFunctionPointerCallOperation(
+        IndirectCallTypingRecord record,
+        StarkParser.ArgumentListContext arguments,
+        string functionName,
+        string? filePath)
+    {
+        if (!TryGetBoundOperation(arguments, functionName, out BoundFunctionPointerCallOperation operation))
+        {
+            ReportMissingBoundOperation(arguments, filePath, "function-pointer-call");
+            return;
+        }
+
+        if (!Equals(operation.FunctionPointerType, record.FunctionPointerType))
+        {
+            ReportInvalid(
+                arguments,
+                filePath,
+                $"Bound function-pointer call operation records target type '{operation.FunctionPointerType.DisplayName}', but typed indirect-call facts record '{record.FunctionPointerType.DisplayName}'.");
+        }
+
+        ValidateBoundCallArgumentRecords("function-pointer-call", operation.Arguments, record.Arguments, arguments, filePath);
+    }
+
+    private void ValidateBoundClosureCallOperation(
+        ClosureCallTypingRecord record,
+        StarkParser.ArgumentListContext arguments,
+        string functionName,
+        string? filePath)
+    {
+        if (!TryGetBoundOperation(arguments, functionName, out BoundClosureCallOperation operation))
+        {
+            ReportMissingBoundOperation(arguments, filePath, "closure-call");
+            return;
+        }
+
+        if (!Equals(operation.ClosureType, record.ClosureType))
+        {
+            ReportInvalid(
+                arguments,
+                filePath,
+                $"Bound closure-call operation records target type '{operation.ClosureType.DisplayName}', but typed closure-call facts record '{record.ClosureType.DisplayName}'.");
+        }
+
+        ValidateBoundCallArgumentRecords("closure-call", operation.Arguments, record.Arguments, arguments, filePath);
+    }
+
+    private void ValidateBoundEnumCallOperation(
+        EnumCallTypingRecord record,
+        StarkParser.ArgumentListContext arguments,
+        string functionName,
+        string? filePath)
+    {
+        if (!TryGetBoundOperation(arguments, functionName, out BoundEnumCallOperation operation))
+        {
+            ReportMissingBoundOperation(arguments, filePath, "enum-call");
+            return;
+        }
+
+        if (!Equals(operation.EnumType, record.EnumType)
+            || !string.Equals(operation.VariantName, record.VariantName, StringComparison.Ordinal))
+        {
+            ReportInvalid(
+                arguments,
+                filePath,
+                $"Bound enum-call operation records '{operation.EnumType.DisplayName}.{operation.VariantName}', but typed enum-call facts record '{record.EnumType.DisplayName}.{record.VariantName}'.");
+        }
+    }
+
+    private void ValidateBoundIndexAccessOperation(
+        IndexAccessTypingRecord record,
+        StarkParser.ExpressionListContext indexes,
+        string functionName,
+        string? filePath)
+    {
+        if (!TryGetBoundOperation(indexes, functionName, out BoundIndexAccessOperation operation))
+        {
+            ReportMissingBoundOperation(indexes, filePath, "index-or-slice");
+            return;
+        }
+
+        if (!string.Equals(operation.SourceKind, record.Kind, StringComparison.Ordinal)
+            || operation.IndexCount != record.IndexCount
+            || !Equals(operation.SourceType, record.SourceType)
+            || !Equals(operation.ResultType, record.ResultType))
+        {
+            ReportInvalid(
+                indexes,
+                filePath,
+                $"Bound index operation for '{operation.SourceKind}' does not match typed index facts for '{record.Kind}'.");
+        }
+    }
+
+    private void ValidateBoundDynamicStorageOperation(
+        DynamicStorageOperationTypingRecord record,
+        StarkParser.ArgumentListContext arguments,
+        string functionName,
+        string? filePath)
+    {
+        if (!TryGetBoundOperation(arguments, functionName, out BoundDynamicStorageOperation operation))
+        {
+            ReportMissingBoundOperation(arguments, filePath, "dynamic-storage");
+            return;
+        }
+
+        if (!string.Equals(operation.OperationName, record.OperationName, StringComparison.Ordinal)
+            || operation.ArgumentCount != record.ArgumentCount
+            || operation.ReceiverIsAddressable != record.ReceiverIsAddressable
+            || operation.ReceiverIsMutable != record.ReceiverIsMutable
+            || !Equals(operation.ReceiverType, record.ReceiverType)
+            || !Equals(operation.ResultType, record.ResultType))
+        {
+            ReportInvalid(
+                arguments,
+                filePath,
+                $"Bound dynamic-storage operation for '{operation.OperationName}' does not match typed dynamic-storage facts for '{record.OperationName}'.");
+        }
+    }
+
+    private void ValidateBoundObjectCreationOperation(
+        ObjectCreationTypingRecord record,
+        StarkParser.ObjectCreationExpressionContext expression,
+        string functionName,
+        string? filePath)
+    {
+        if (!TryGetBoundOperation(expression, functionName, out BoundObjectCreationOperation operation))
+        {
+            ReportMissingBoundOperation(expression, filePath, "object-creation");
+            return;
+        }
+
+        if (!Equals(operation.CreatedType, record.CreatedType)
+            || !Equals(operation.Constructor, record.Constructor)
+            || operation.Members.Count != record.Members.Count)
+        {
+            ReportInvalid(
+                expression,
+                filePath,
+                $"Bound object-creation operation for '{operation.CreatedType.DisplayName}' does not match typed object-creation facts for '{record.CreatedType.DisplayName}'.");
+        }
+    }
+
+    private void ValidateBoundEnumConstructionOperation(
+        EnumConstructorTypingRecord record,
+        StarkParser.EnumConstructorExpressionContext expression,
+        string functionName,
+        string? filePath)
+    {
+        if (!TryGetBoundOperation(expression, functionName, out BoundEnumConstructionOperation operation))
+        {
+            ReportMissingBoundOperation(expression, filePath, "enum-construction");
+            return;
+        }
+
+        if (!Equals(operation.EnumType, record.EnumType)
+            || !string.Equals(operation.VariantName, record.VariantName, StringComparison.Ordinal)
+            || operation.Members.Count != record.Members.Count)
+        {
+            ReportInvalid(
+                expression,
+                filePath,
+                $"Bound enum-construction operation for '{operation.EnumType.DisplayName}.{operation.VariantName}' does not match typed enum-constructor facts for '{record.EnumType.DisplayName}.{record.VariantName}'.");
+        }
+    }
+
+    private void ValidateBoundLayoutQueryOperation(
+        TypeLayoutExpressionTypingRecord record,
+        StarkParser.PrimaryExpressionContext expression,
+        string functionName,
+        string? filePath)
+    {
+        if (!TryGetBoundOperation(expression, functionName, out BoundLayoutQueryOperation operation))
+        {
+            ReportMissingBoundOperation(expression, filePath, "layout-query");
+            return;
+        }
+
+        var expectedKind = string.Equals(record.Kind, "alignof", StringComparison.Ordinal)
+            ? BoundLayoutQueryKind.AlignOf
+            : BoundLayoutQueryKind.SizeOf;
+        if (operation.QueryKind != expectedKind
+            || !Equals(operation.TargetType, record.TargetType))
+        {
+            ReportInvalid(
+                expression,
+                filePath,
+                $"Bound layout-query operation records '{operation.QueryKind}' for '{operation.TargetType.DisplayName}', but typed layout facts record '{record.Kind}' for '{record.TargetType.DisplayName}'.");
+        }
+    }
+
+    private void ValidateBoundSwitchDispatchOperation(
+        SwitchTypingRecord record,
+        StarkParser.SwitchStatementContext switchStatement,
+        string functionName,
+        string? filePath)
+    {
+        if (!TryGetBoundOperation(switchStatement, functionName, out BoundSwitchDispatchOperation operation))
+        {
+            ReportMissingBoundOperation(switchStatement, filePath, "switch-dispatch");
+            return;
+        }
+
+        if (!string.Equals(operation.Family, record.Family, StringComparison.Ordinal)
+            || !Equals(operation.SwitchType, record.SwitchType)
+            || operation.SectionCount != record.SectionCount
+            || operation.LabelCount != record.LabelCount
+            || operation.ExplicitDefaultLabelCount != record.ExplicitDefaultLabelCount
+            || operation.LoweredDefaultLabelCount != record.LoweredDefaultLabelCount
+            || operation.LiteralLabelCount != record.LiteralLabelCount
+            || operation.MatchAllLabelCount != record.MatchAllLabelCount
+            || operation.CaptureLabelCount != record.CaptureLabelCount
+            || operation.StructuredPatternLabelCount != record.StructuredPatternLabelCount
+            || operation.GuardedLabelCount != record.GuardedLabelCount)
+        {
+            ReportInvalid(
+                switchStatement,
+                filePath,
+                $"Bound switch-dispatch operation for '{operation.SwitchType.DisplayName}' does not match typed switch facts for '{record.SwitchType.DisplayName}'.");
+        }
+    }
+
+    private void ValidateBoundCallArgumentRecords(
+        string factKind,
+        IReadOnlyList<CallArgumentTypingRecord> boundArguments,
+        IReadOnlyList<CallArgumentTypingRecord> typedArguments,
+        ParserRuleContext context,
+        string? filePath)
+    {
+        if (boundArguments.Count != typedArguments.Count
+            || !boundArguments.SequenceEqual(typedArguments))
+        {
+            ReportInvalid(
+                context,
+                filePath,
+                $"Bound {factKind} operation argument facts do not match typed {factKind} facts.");
+        }
+    }
+
+    private void ReportMissingBoundOperation(ParserRuleContext context, string? filePath, string operationFamily)
+    {
+        ReportMissing(
+            context,
+            filePath,
+            $"Lowering contract is missing a bound {operationFamily} operation for this executable expression. Type checking must publish a closed BoundOperation before MIR lowering.");
     }
 
     private void ValidateSwitchFact(
@@ -1591,6 +2039,162 @@ internal sealed class LoweringContractValidator
         }
 
         return facts.TryGetValue(key with { FunctionName = null }, out record!);
+    }
+
+    private bool TryGetBoundOperation<T>(
+        ParserRuleContext context,
+        string functionName,
+        out T operation)
+        where T : BoundOperation
+    {
+        var key = Key(functionName, context);
+        if (TryGetBoundOperation(key, out operation))
+        {
+            return true;
+        }
+
+        return TryGetBoundOperation(key with { FunctionName = null }, out operation);
+    }
+
+    private bool TryGetBoundOperation<T>(OperationKey key, out T operation)
+        where T : BoundOperation
+    {
+        if (_boundOperations.TryGetValue(key, out var operations))
+        {
+            foreach (var candidate in operations)
+            {
+                if (candidate is T typedOperation)
+                {
+                    operation = typedOperation;
+                    return true;
+                }
+            }
+        }
+
+        operation = null!;
+        return false;
+    }
+
+    private static bool IsTextBufferType(StarkTypeSymbol type)
+    {
+        return type.Kind == StarkTypeKind.Named
+            && type.NamedType is StarkTypeSymbols.OwnedAsciiName or StarkTypeSymbols.OwnedUnicodeName;
+    }
+
+    private static StarkParser.AdditiveExpressionContext? TryGetStandaloneAdditiveExpression(StarkParser.ExpressionContext expression)
+    {
+        var assignment = expression.assignmentExpression();
+        if (assignment.assignmentOperator() is not null || assignment.conditionalExpression() is not { } conditional)
+        {
+            return null;
+        }
+
+        if (conditional.expression().Length != 0)
+        {
+            return null;
+        }
+
+        var logicalOr = conditional.logicalOrExpression();
+        if (logicalOr.logicalAndExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var logicalAnd = logicalOr.logicalAndExpression(0);
+        if (logicalAnd.bitwiseOrExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var bitwiseOr = logicalAnd.bitwiseOrExpression(0);
+        if (bitwiseOr.bitwiseXorExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var bitwiseXor = bitwiseOr.bitwiseXorExpression(0);
+        if (bitwiseXor.bitwiseAndExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var bitwiseAnd = bitwiseXor.bitwiseAndExpression(0);
+        if (bitwiseAnd.equalityExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var equality = bitwiseAnd.equalityExpression(0);
+        if (equality.relationalExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var relational = equality.relationalExpression(0);
+        if (relational.shiftExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var shift = relational.shiftExpression(0);
+        return shift.additiveExpression().Length == 1
+            ? shift.additiveExpression(0)
+            : null;
+    }
+
+    private static StarkParser.LiteralContext? TryGetStandaloneInterpolatedTextLiteral(StarkParser.ExpressionContext expression)
+    {
+        var additive = TryGetStandaloneAdditiveExpression(expression);
+        if (additive is null || additive.multiplicativeExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var multiplicative = additive.multiplicativeExpression(0);
+        if (multiplicative.unaryExpression().Length != 1)
+        {
+            return null;
+        }
+
+        var unary = multiplicative.unaryExpression(0);
+        if (unary.powerExpression() is not { } power
+            || power.unaryExpression() is not null
+            || power.postfixExpression() is not { } postfix
+            || postfix.postfixPart().Length != 0)
+        {
+            return null;
+        }
+
+        var literal = postfix.primaryExpression().literal();
+        return literal?.DOLLAR() is not null && literal.StringLiteral() is not null
+            ? literal
+            : null;
+    }
+
+    private static IReadOnlyList<string> ExtractOperators<TOperand>(ParserRuleContext context)
+        where TOperand : ParserRuleContext
+    {
+        var operators = new List<string>();
+        var builder = new System.Text.StringBuilder();
+
+        for (var index = 0; index < context.ChildCount; index++)
+        {
+            var child = context.GetChild(index);
+            if (child is TOperand)
+            {
+                if (builder.Length > 0)
+                {
+                    operators.Add(builder.ToString());
+                    builder.Clear();
+                }
+
+                continue;
+            }
+
+            builder.Append(child.GetText());
+        }
+
+        return operators;
     }
 
     private void ReportMissing(ParserRuleContext context, string? filePath, string message)

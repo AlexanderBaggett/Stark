@@ -326,6 +326,18 @@ internal sealed class SsaLowerer
                     InvalidateConsumedAggregateValue(blockId, block, statement.TargetType, statement.Value);
                     return;
                 case MidLevelIrStatementKind.Evaluate:
+                    if (statement.Call is not null)
+                    {
+                        LowerCallStatement(blockId, block, statement.Call);
+                        return;
+                    }
+
+                    if (statement.Value is MidLevelIrCallRValue { Type.Kind: StarkTypeKind.Void }
+                        || statement.Value is MidLevelIrIndirectCallRValue { Type.Kind: StarkTypeKind.Void })
+                    {
+                        throw new InvalidOperationException("MIR void calls must reach SSA lowering as statement-only call operations.");
+                    }
+
                     if (statement.Value is not null)
                     {
                         _ = LowerRValue(blockId, block, statement.Value);
@@ -426,11 +438,13 @@ internal sealed class SsaLowerer
                 MidLevelIrExtractIndexRValue extractIndex => EmitValue(block, new SsaExtractIndexRValue(
                     LowerOperand(blockId, block, extractIndex.Target),
                     extractIndex.ElementIndex,
+                    extractIndex.OperationFamily,
                     extractIndex.Type,
                     extractIndex.Text)),
                 MidLevelIrInsertIndexRValue insertIndex => EmitValue(block, new SsaInsertIndexRValue(
                     LowerOperand(blockId, block, insertIndex.Target),
                     insertIndex.ElementIndex,
+                    insertIndex.OperationFamily,
                     LowerOperand(blockId, block, insertIndex.Value),
                     insertIndex.Type,
                     insertIndex.Text)),
@@ -571,6 +585,46 @@ internal sealed class SsaLowerer
                 call.MayFree));
         }
 
+        private void LowerCallStatement(
+            int blockId,
+            SsaBlockBuilder block,
+            MidLevelIrCallStatementOperation call)
+        {
+            switch (call)
+            {
+                case MidLevelIrDirectCallStatementOperation directCall:
+                    EmitInstruction(block, new SsaCallInstruction(
+                        directCall.FunctionName,
+                        directCall.Arguments.Select(argument => LowerOperand(blockId, block, argument)).ToArray(),
+                        directCall.ReturnType,
+                        directCall.Text,
+                        directCall.IndirectArgumentLocalNames,
+                        directCall.SourceReturnType,
+                        directCall.IndirectArgumentAddresses?
+                            .Select(address => address is null ? null : LowerOperand(blockId, block, address))
+                            .ToArray()));
+                    InvalidateMovedAggregateCallArguments(blockId, block, directCall.FunctionName, directCall.Arguments);
+                    return;
+
+                case MidLevelIrIndirectCallStatementOperation indirectCall:
+                    EmitInstruction(block, new SsaIndirectCallInstruction(
+                        LowerOperand(blockId, block, indirectCall.Target),
+                        indirectCall.Arguments.Select(argument => LowerOperand(blockId, block, argument)).ToArray(),
+                        indirectCall.ReturnType,
+                        indirectCall.Text,
+                        indirectCall.SourceReturnType,
+                        indirectCall.IndirectArgumentLocalNames,
+                        indirectCall.IndirectArgumentAddresses?
+                            .Select(address => address is null ? null : LowerOperand(blockId, block, address))
+                            .ToArray(),
+                        indirectCall.MayFree));
+                    return;
+
+                default:
+                    throw new InvalidOperationException($"Unsupported MIR call statement operation '{call.GetType().Name}'.");
+            }
+        }
+
         private SsaValue LowerOperand(int blockId, SsaBlockBuilder block, MidLevelIrOperand operand)
         {
             return operand switch
@@ -592,6 +646,8 @@ internal sealed class SsaLowerer
                 MidLevelIrBoolConstantOperand boolean => new SsaBoolConstant(boolean.Value),
                 MidLevelIrNullOperand nullValue => new SsaNullConstant(nullValue.Type),
                 MidLevelIrZeroInitializerOperand zero => new SsaZeroInitializerValue(zero.Type),
+                MidLevelIrObjectConstructionOperand construction => LowerOperand(blockId, block, construction.Value),
+                MidLevelIrEnumConstructionOperand construction => LowerOperand(blockId, block, construction.Value),
                 _ => throw new InvalidOperationException($"Unsupported MIR operand '{operand.GetType().Name}'.")
             };
         }
@@ -633,6 +689,27 @@ internal sealed class SsaLowerer
             }
 
             return result;
+        }
+
+        private void EmitInstruction(SsaBlockBuilder block, SsaInstruction instruction)
+        {
+            var location = _currentSourceLocation ?? _function.Location;
+            block.Instructions.Add(instruction switch
+            {
+                SsaCallInstruction call => call with
+                {
+                    Location = location,
+                    ScopedNoAliasGroups = _currentScopedNoAliasGroups,
+                    LoopAccessGroups = _currentLoopAccessGroups
+                },
+                SsaIndirectCallInstruction call => call with
+                {
+                    Location = location,
+                    ScopedNoAliasGroups = _currentScopedNoAliasGroups,
+                    LoopAccessGroups = _currentLoopAccessGroups
+                },
+                _ => instruction
+            });
         }
 
         private SsaValue LoadIndirectParameter(SsaBlockBuilder block, MidLevelIrParameterOperand parameter)
@@ -695,6 +772,10 @@ internal sealed class SsaLowerer
 
             switch (operand)
             {
+                case MidLevelIrObjectConstructionOperand construction:
+                    return TryGetAggregateCopySourceAddress(blockId, block, targetType, construction.Value, out sourceAddress);
+                case MidLevelIrEnumConstructionOperand construction:
+                    return TryGetAggregateCopySourceAddress(blockId, block, targetType, construction.Value, out sourceAddress);
                 case MidLevelIrLocalOperand local when _addressableLocals.Contains(local.Name):
                     sourceAddress = CreateLocalAddress(block, local.Name, local.Type);
                     return true;
@@ -782,6 +863,10 @@ internal sealed class SsaLowerer
         {
             switch (operand)
             {
+                case MidLevelIrObjectConstructionOperand construction:
+                    return TryGetOwnedAggregateMoveSource(expectedType, construction.Value, out source);
+                case MidLevelIrEnumConstructionOperand construction:
+                    return TryGetOwnedAggregateMoveSource(expectedType, construction.Value, out source);
                 case MidLevelIrLocalOperand local when local.Type == expectedType:
                     source = new AggregateMoveSource(local.Name, local.Type, _addressableLocals.Contains(local.Name));
                     return true;
@@ -814,18 +899,27 @@ internal sealed class SsaLowerer
 
         private void InvalidateMovedAggregateCallArguments(int blockId, SsaBlockBuilder block, MidLevelIrCallRValue call)
         {
-            if (!_signatures.TryGetValue(call.FunctionName, out var signature))
+            InvalidateMovedAggregateCallArguments(blockId, block, call.FunctionName, call.Arguments);
+        }
+
+        private void InvalidateMovedAggregateCallArguments(
+            int blockId,
+            SsaBlockBuilder block,
+            string functionName,
+            IReadOnlyList<MidLevelIrOperand> arguments)
+        {
+            if (!_signatures.TryGetValue(functionName, out var signature))
             {
                 return;
             }
 
-            var argumentCount = Math.Min(call.Arguments.Count, signature.Parameters.Count);
+            var argumentCount = Math.Min(arguments.Count, signature.Parameters.Count);
             for (var index = 0; index < argumentCount; index++)
             {
                 var parameterType = signature.Parameters[index].Type;
                 if (!SupportsAggregateMemoryCopy(parameterType)
                     || !ConsumesCallArgument(parameterType)
-                    || !TryGetOwnedAggregateMoveSource(parameterType, call.Arguments[index], out var movedSource))
+                    || !TryGetOwnedAggregateMoveSource(parameterType, arguments[index], out var movedSource))
                 {
                     continue;
                 }
@@ -1506,6 +1600,21 @@ internal sealed class SsaLowerer
                     valueInstruction.Location,
                     valueInstruction.ScopedNoAliasGroups,
                     valueInstruction.LoopAccessGroups),
+                SsaCallInstruction call => call with
+                {
+                    Arguments = call.Arguments.Select(argument => RewriteValue(argument, replacements)).ToArray(),
+                    IndirectArgumentAddresses = call.IndirectArgumentAddresses?
+                        .Select(address => address is null ? null : RewriteValue(address, replacements))
+                        .ToArray()
+                },
+                SsaIndirectCallInstruction call => call with
+                {
+                    Target = RewriteValue(call.Target, replacements),
+                    Arguments = call.Arguments.Select(argument => RewriteValue(argument, replacements)).ToArray(),
+                    IndirectArgumentAddresses = call.IndirectArgumentAddresses?
+                        .Select(address => address is null ? null : RewriteValue(address, replacements))
+                        .ToArray()
+                },
                 SsaAllocateLocalInstruction allocateLocal => allocateLocal,
                 SsaLifetimeStartInstruction lifetimeStart => lifetimeStart,
                 SsaLifetimeEndInstruction lifetimeEnd => lifetimeEnd,
@@ -1600,11 +1709,13 @@ internal sealed class SsaLowerer
                 SsaExtractIndexRValue extractIndex => new SsaExtractIndexRValue(
                     RewriteValue(extractIndex.Target, replacements),
                     extractIndex.ElementIndex,
+                    extractIndex.OperationFamily,
                     extractIndex.Type,
                     extractIndex.Text),
                 SsaInsertIndexRValue insertIndex => new SsaInsertIndexRValue(
                     RewriteValue(insertIndex.Target, replacements),
                     insertIndex.ElementIndex,
+                    insertIndex.OperationFamily,
                     RewriteValue(insertIndex.Value, replacements),
                     insertIndex.Type,
                     insertIndex.Text),

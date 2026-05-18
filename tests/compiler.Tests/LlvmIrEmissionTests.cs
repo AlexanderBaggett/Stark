@@ -5010,15 +5010,15 @@ public sealed class LlvmIrEmissionTests
             public inline unsafe finite bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
 
             public unsafe fn i32[min max] Run(bool choose) {
-                stack mut i32[min max][16] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                stack mut i32[min max][64] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
                 stack mut Unicode ownedUnicode = new Unicode() {
                     Data = &unicodeBuffer[0],
                     Length = 0,
-                    Capacity = 16
+                    Capacity = 64
                 };
                 stack mut i32[min max] result = 0;
                 if (choose) {
-                    TryConvertAsciiToUnicode(&ownedUnicode, "Stark");
+                    TryConvertAsciiToUnicode(&ownedUnicode, "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789stark");
                     result = 2;
                 } else {
                     result = 3;
@@ -5033,6 +5033,7 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("abi_ascii2unicode_store", llvm);
+        Assert.Contains("declare void @llvm.memcpy.p0.p0.i64(", llvm);
         Assert.Matches(@"phi i32 \[ (?:%v\d+|2), %abi_ascii2unicode_done_\d+ \]", llvm);
         Assert.DoesNotContain("call fastcc i1 @TryConvertAsciiToUnicode(", llvm);
     }

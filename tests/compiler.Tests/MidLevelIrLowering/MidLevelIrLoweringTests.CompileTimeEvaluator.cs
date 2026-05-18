@@ -109,7 +109,7 @@ public sealed partial class MidLevelIrLoweringTests
         var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
         var block = Assert.Single(function.Blocks);
 
-        Assert.Contains(block.Statements, static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Adjust" });
+        Assert.Contains(block.Statements, static statement => IsDirectCallStatement(statement, "Adjust"));
     }
 
     [Fact]

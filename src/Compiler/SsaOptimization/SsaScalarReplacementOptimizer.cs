@@ -158,29 +158,19 @@ internal sealed class SsaScalarReplacementOptimizer
         switch (instruction)
         {
             case SsaValueInstruction { Value: SsaCallRValue call }:
-                foreach (var argument in call.Arguments)
-                {
-                    AddEscapedAggregateRoots(argument, definitions, phiDefinitions, candidates, escaped);
-                }
+                AddEscapedAggregateCallRoots(call, definitions, phiDefinitions, candidates, escaped);
+                break;
 
-                foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
-                {
-                    AddEscapedAggregateRoots(address, definitions, phiDefinitions, candidates, escaped);
-                }
-
+            case SsaCallInstruction call:
+                AddEscapedAggregateCallRoots(call, definitions, phiDefinitions, candidates, escaped);
                 break;
 
             case SsaValueInstruction { Value: SsaIndirectCallRValue indirectCall }:
-                foreach (var argument in indirectCall.Arguments)
-                {
-                    AddEscapedAggregateRoots(argument, definitions, phiDefinitions, candidates, escaped);
-                }
+                AddEscapedAggregateIndirectCallRoots(indirectCall, definitions, phiDefinitions, candidates, escaped);
+                break;
 
-                foreach (var address in indirectCall.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
-                {
-                    AddEscapedAggregateRoots(address, definitions, phiDefinitions, candidates, escaped);
-                }
-
+            case SsaIndirectCallInstruction indirectCall:
+                AddEscapedAggregateIndirectCallRoots(indirectCall, definitions, phiDefinitions, candidates, escaped);
                 break;
 
             case SsaValueInstruction { Value: SsaMakeSliceFromLocalRValue makeSlice }:
@@ -202,6 +192,43 @@ internal sealed class SsaScalarReplacementOptimizer
             case SsaStoreGlobalInstruction storeGlobal:
                 AddEscapedAggregateRoots(storeGlobal.Value, definitions, phiDefinitions, candidates, escaped);
                 break;
+        }
+    }
+
+    private static void AddEscapedAggregateCallRoots(
+        ISsaDirectCallOperation call,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        IReadOnlyDictionary<string, SsaPhi> phiDefinitions,
+        IReadOnlySet<string> candidates,
+        ISet<string> escaped)
+    {
+        foreach (var argument in call.Arguments)
+        {
+            AddEscapedAggregateRoots(argument, definitions, phiDefinitions, candidates, escaped);
+        }
+
+        foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+        {
+            AddEscapedAggregateRoots(address, definitions, phiDefinitions, candidates, escaped);
+        }
+    }
+
+    private static void AddEscapedAggregateIndirectCallRoots(
+        ISsaIndirectCallOperation call,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        IReadOnlyDictionary<string, SsaPhi> phiDefinitions,
+        IReadOnlySet<string> candidates,
+        ISet<string> escaped)
+    {
+        AddEscapedAggregateRoots(call.Target, definitions, phiDefinitions, candidates, escaped);
+        foreach (var argument in call.Arguments)
+        {
+            AddEscapedAggregateRoots(argument, definitions, phiDefinitions, candidates, escaped);
+        }
+
+        foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+        {
+            AddEscapedAggregateRoots(address, definitions, phiDefinitions, candidates, escaped);
         }
     }
 
@@ -465,8 +492,12 @@ internal sealed class SsaScalarReplacementOptimizer
                 case SsaValueInstruction { Value: SsaCallRValue call }:
                     AddAggregateCallUses(call, definitions, copiedAggregateRoots, definedInBlock, use);
                     break;
+                case SsaCallInstruction call:
+                    AddAggregateCallUses(call, definitions, copiedAggregateRoots, definedInBlock, use);
+                    break;
 
                 case SsaValueInstruction { Value: SsaIndirectCallRValue }:
+                case SsaIndirectCallInstruction:
                     AddAllAggregateRootUses(copiedAggregateRoots, definedInBlock, use);
                     break;
 
@@ -536,8 +567,13 @@ internal sealed class SsaScalarReplacementOptimizer
                     AddAggregateCallLiveness(call, definitions, copiedAggregateRoots, live);
                     instructions.Add(instruction);
                     continue;
+                case SsaCallInstruction call:
+                    AddAggregateCallLiveness(call, definitions, copiedAggregateRoots, live);
+                    instructions.Add(instruction);
+                    continue;
 
                 case SsaValueInstruction { Value: SsaIndirectCallRValue }:
+                case SsaIndirectCallInstruction:
                     AddAllAggregateRootsLive(copiedAggregateRoots, live);
                     instructions.Add(instruction);
                     continue;
@@ -627,7 +663,7 @@ internal sealed class SsaScalarReplacementOptimizer
     }
 
     private void AddAggregateCallUses(
-        SsaCallRValue call,
+        ISsaDirectCallOperation call,
         IReadOnlyDictionary<string, SsaRValue> definitions,
         IReadOnlySet<string> copiedAggregateRoots,
         ISet<string> definedInBlock,
@@ -651,7 +687,7 @@ internal sealed class SsaScalarReplacementOptimizer
     }
 
     private void AddAggregateCallLiveness(
-        SsaCallRValue call,
+        ISsaDirectCallOperation call,
         IReadOnlyDictionary<string, SsaRValue> definitions,
         IReadOnlySet<string> copiedAggregateRoots,
         ISet<string> live)
@@ -1039,8 +1075,12 @@ internal sealed class SsaScalarReplacementOptimizer
                 case SsaValueInstruction { Value: SsaCallRValue call }:
                     AddCallUses(call, definitions, storedFields, definedInBlock, use);
                     break;
+                case SsaCallInstruction call:
+                    AddCallUses(call, definitions, storedFields, definedInBlock, use);
+                    break;
 
                 case SsaValueInstruction { Value: SsaIndirectCallRValue }:
+                case SsaIndirectCallInstruction:
                     AddAllFieldUses(storedFields, definedInBlock, use);
                     break;
             }
@@ -1132,8 +1172,13 @@ internal sealed class SsaScalarReplacementOptimizer
                     AddCallLiveness(call, definitions, storedFields, live);
                     instructions.Add(instruction);
                     continue;
+                case SsaCallInstruction call:
+                    AddCallLiveness(call, definitions, storedFields, live);
+                    instructions.Add(instruction);
+                    continue;
 
                 case SsaValueInstruction { Value: SsaIndirectCallRValue }:
+                case SsaIndirectCallInstruction:
                     AddAllLive(live, storedFields);
                     instructions.Add(instruction);
                     continue;
@@ -1243,7 +1288,7 @@ internal sealed class SsaScalarReplacementOptimizer
     }
 
     private void AddCallUses(
-        SsaCallRValue call,
+        ISsaDirectCallOperation call,
         IReadOnlyDictionary<string, SsaRValue> definitions,
         IReadOnlySet<FieldKey> storedFields,
         ISet<FieldKey> definedInBlock,
@@ -1270,7 +1315,7 @@ internal sealed class SsaScalarReplacementOptimizer
     }
 
     private void AddCallLiveness(
-        SsaCallRValue call,
+        ISsaDirectCallOperation call,
         IReadOnlyDictionary<string, SsaRValue> definitions,
         IReadOnlySet<FieldKey> storedFields,
         ISet<FieldKey> live)
@@ -1296,7 +1341,7 @@ internal sealed class SsaScalarReplacementOptimizer
     }
 
     private bool TryGetReadLocalMemorySet(
-        SsaCallRValue call,
+        ISsaDirectCallOperation call,
         IReadOnlyDictionary<string, SsaRValue> definitions,
         out LocalMemoryReadSet readSet)
     {
@@ -1305,7 +1350,7 @@ internal sealed class SsaScalarReplacementOptimizer
 
     private static bool TryGetReadLocalMemorySet(
         FunctionEffectModel? effectModel,
-        SsaCallRValue call,
+        ISsaDirectCallOperation call,
         IReadOnlyDictionary<string, SsaRValue> definitions,
         out LocalMemoryReadSet readSet)
     {
@@ -1697,7 +1742,7 @@ internal sealed class SsaScalarReplacementOptimizer
         }
     }
 
-    private static IEnumerable<SsaValue> EnumerateCallMemoryArguments(SsaCallRValue call)
+    private static IEnumerable<SsaValue> EnumerateCallMemoryArguments(ISsaDirectCallOperation call)
     {
         foreach (var argument in call.Arguments)
         {
@@ -1763,4 +1808,3 @@ internal sealed class SsaScalarReplacementOptimizer
         return true;
     }
 }
-

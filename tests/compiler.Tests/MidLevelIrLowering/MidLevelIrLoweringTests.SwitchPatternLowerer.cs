@@ -478,7 +478,7 @@ public sealed partial class MidLevelIrLoweringTests
 
         Assert.Equal(
             1,
-            statements.Count(static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Next" }));
+            statements.Count(static statement => IsDirectCallStatement(statement, "Next")));
     }
 
     [Fact]

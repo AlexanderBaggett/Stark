@@ -263,42 +263,17 @@ internal sealed class SsaAliasAwareMemoryOptimizer
                     continue;
 
                 case SsaValueInstruction { Value: SsaCallRValue call }:
-                    if (MayWriteGlobalMemory(call, bodyGlobalMemoryEffects))
-                    {
-                        knownGlobals.Clear();
-                        pendingGlobalStoreInstructionIndexes.Clear();
-                        knownFields.Clear();
-                        pendingFieldStoreInstructionIndexes.Clear();
-                    }
-                    else
-                    {
-                        if (MayReadGlobalMemory(call, definitions, bodyGlobalMemoryEffects))
-                        {
-                            pendingGlobalStoreInstructionIndexes.Clear();
-                        }
+                    HandleDirectCall(call);
+                    instructions.Add(rewritten);
+                    continue;
 
-                        if (TryGetReadLocalMemorySet(call, definitions, out var readLocalMemory))
-                        {
-                            foreach (var field in readLocalMemory.ExactFields)
-                            {
-                                pendingFieldStoreInstructionIndexes.Remove(field);
-                            }
-
-                            foreach (var localName in readLocalMemory.LocalRoots)
-                            {
-                                RemovePendingFieldLocal(pendingFieldStoreInstructionIndexes, localName);
-                            }
-                        }
-                        else
-                        {
-                            pendingFieldStoreInstructionIndexes.Clear();
-                        }
-                    }
-
+                case SsaCallInstruction call:
+                    HandleDirectCall(call);
                     instructions.Add(rewritten);
                     continue;
 
                 case SsaValueInstruction { Value: SsaIndirectCallRValue }:
+                case SsaIndirectCallInstruction:
                     knownGlobals.Clear();
                     pendingGlobalStoreInstructionIndexes.Clear();
                     knownFields.Clear();
@@ -487,6 +462,41 @@ internal sealed class SsaAliasAwareMemoryOptimizer
                 default:
                     instructions.Add(rewritten);
                     continue;
+            }
+        }
+
+        void HandleDirectCall(ISsaDirectCallOperation call)
+        {
+            if (MayWriteGlobalMemory(call, bodyGlobalMemoryEffects))
+            {
+                knownGlobals.Clear();
+                pendingGlobalStoreInstructionIndexes.Clear();
+                knownFields.Clear();
+                pendingFieldStoreInstructionIndexes.Clear();
+            }
+            else
+            {
+                if (MayReadGlobalMemory(call, definitions, bodyGlobalMemoryEffects))
+                {
+                    pendingGlobalStoreInstructionIndexes.Clear();
+                }
+
+                if (TryGetReadLocalMemorySet(call, definitions, out var readLocalMemory))
+                {
+                    foreach (var field in readLocalMemory.ExactFields)
+                    {
+                        pendingFieldStoreInstructionIndexes.Remove(field);
+                    }
+
+                    foreach (var localName in readLocalMemory.LocalRoots)
+                    {
+                        RemovePendingFieldLocal(pendingFieldStoreInstructionIndexes, localName);
+                    }
+                }
+                else
+                {
+                    pendingFieldStoreInstructionIndexes.Clear();
+                }
             }
         }
 
@@ -1198,23 +1208,15 @@ internal sealed class SsaAliasAwareMemoryOptimizer
                         break;
 
                     case SsaValueInstruction { Value: SsaCallRValue call }:
-                        if (MayReadGlobalMemoryFromEffectModel(call, definitions)
-                            || knownBodyEffects.TryGetValue(call.FunctionName, out var readEffects)
-                            && readEffects.ReadsGlobalMemory)
-                        {
-                            readsGlobalMemory = true;
-                        }
+                        AnalyzeDirectCall(call);
+                        break;
 
-                        if (MayWriteGlobalMemoryFromEffectModel(call)
-                            || knownBodyEffects.TryGetValue(call.FunctionName, out var writeEffects)
-                            && writeEffects.WritesGlobalMemory)
-                        {
-                            writesGlobalMemory = true;
-                        }
-
+                    case SsaCallInstruction call:
+                        AnalyzeDirectCall(call);
                         break;
 
                     case SsaValueInstruction { Value: SsaIndirectCallRValue }:
+                    case SsaIndirectCallInstruction:
                         readsGlobalMemory = true;
                         writesGlobalMemory = true;
                         break;
@@ -1222,11 +1224,28 @@ internal sealed class SsaAliasAwareMemoryOptimizer
             }
         }
 
+        void AnalyzeDirectCall(ISsaDirectCallOperation call)
+        {
+            if (MayReadGlobalMemoryFromEffectModel(call, definitions)
+                || knownBodyEffects.TryGetValue(call.FunctionName, out var readEffects)
+                && readEffects.ReadsGlobalMemory)
+            {
+                readsGlobalMemory = true;
+            }
+
+            if (MayWriteGlobalMemoryFromEffectModel(call)
+                || knownBodyEffects.TryGetValue(call.FunctionName, out var writeEffects)
+                && writeEffects.WritesGlobalMemory)
+            {
+                writesGlobalMemory = true;
+            }
+        }
+
         return new FunctionBodyGlobalMemoryEffects(readsGlobalMemory, writesGlobalMemory);
     }
 
     private bool MayWriteGlobalMemory(
-        SsaCallRValue call,
+        ISsaDirectCallOperation call,
         IReadOnlyDictionary<string, FunctionBodyGlobalMemoryEffects> bodyGlobalMemoryEffects)
     {
         return MayWriteGlobalMemoryFromEffectModel(call)
@@ -1234,7 +1253,7 @@ internal sealed class SsaAliasAwareMemoryOptimizer
                && bodyEffects.WritesGlobalMemory;
     }
 
-    private bool MayWriteGlobalMemoryFromEffectModel(SsaCallRValue call)
+    private bool MayWriteGlobalMemoryFromEffectModel(ISsaDirectCallOperation call)
     {
         return _effectModel is not { } effectModel
                || !effectModel.Functions.TryGetValue(call.FunctionName, out var effects)
@@ -1243,7 +1262,7 @@ internal sealed class SsaAliasAwareMemoryOptimizer
     }
 
     private bool MayReadGlobalMemory(
-        SsaCallRValue call,
+        ISsaDirectCallOperation call,
         IReadOnlyDictionary<string, SsaRValue> definitions,
         IReadOnlyDictionary<string, FunctionBodyGlobalMemoryEffects> bodyGlobalMemoryEffects)
     {
@@ -1253,7 +1272,7 @@ internal sealed class SsaAliasAwareMemoryOptimizer
     }
 
     private bool MayReadGlobalMemoryFromEffectModel(
-        SsaCallRValue call,
+        ISsaDirectCallOperation call,
         IReadOnlyDictionary<string, SsaRValue> definitions)
     {
         return _effectModel is not { } effectModel
@@ -1268,7 +1287,7 @@ internal sealed class SsaAliasAwareMemoryOptimizer
     }
 
     private bool TryGetReadLocalMemorySet(
-        SsaCallRValue call,
+        ISsaDirectCallOperation call,
         IReadOnlyDictionary<string, SsaRValue> definitions,
         out LocalMemoryReadSet readSet)
     {
@@ -1663,7 +1682,7 @@ internal sealed class SsaAliasAwareMemoryOptimizer
         return true;
     }
 
-    private static IEnumerable<SsaValue> EnumerateCallMemoryArguments(SsaCallRValue call)
+    private static IEnumerable<SsaValue> EnumerateCallMemoryArguments(ISsaDirectCallOperation call)
     {
         foreach (var argument in call.Arguments)
         {
@@ -1758,6 +1777,25 @@ internal sealed class SsaAliasAwareMemoryOptimizer
             SsaValueInstruction valueInstruction => valueInstruction with
             {
                 Value = RewriteRValue(valueInstruction.Value, replacements)
+            },
+            SsaCallInstruction call => call with
+            {
+                Arguments = call.Arguments
+                    .Select(argument => RewriteValue(argument, replacements))
+                    .ToArray(),
+                IndirectArgumentAddresses = call.IndirectArgumentAddresses?
+                    .Select(address => address is null ? null : RewriteValue(address, replacements))
+                    .ToArray()
+            },
+            SsaIndirectCallInstruction call => call with
+            {
+                Target = RewriteValue(call.Target, replacements),
+                Arguments = call.Arguments
+                    .Select(argument => RewriteValue(argument, replacements))
+                    .ToArray(),
+                IndirectArgumentAddresses = call.IndirectArgumentAddresses?
+                    .Select(address => address is null ? null : RewriteValue(address, replacements))
+                    .ToArray()
             },
             SsaStoreLocalInstruction storeLocal => storeLocal with
             {

@@ -306,9 +306,20 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("GetByteSliceParts", llvm, StringComparison.Ordinal);
         Assert.Contains("call fastcc i32 @System_Runtime_Platform_ShutdownSocket(", llvm, StringComparison.Ordinal);
         Assert.Contains("call fastcc i32 @System_Runtime_Platform_CloseSocket(", llvm, StringComparison.Ordinal);
-        Assert.Contains("call fastcc %System_Net_NetStatus @StatusFromPlatformResult(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef %System_Net_NetStatus @StatusFromPlatformResult(", llvm, StringComparison.Ordinal);
         Assert.Contains("@ByteCountFromPlatformResult(", llvm, StringComparison.Ordinal);
         Assert.Contains("call fastcc %System_Net_NetworkError @NetworkErrorFromPlatformResult(", llvm, StringComparison.Ordinal);
+
+        var clientCloseBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Net_NetStatus @TcpClient_Close(",
+            "Expected TcpClient.Close definition.");
+        var listenerCloseBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Net_NetStatus @TcpListener_Close(",
+            "Expected TcpListener.Close definition.");
+        AssertCloseBodyRoutesOpenHandleThroughPlatformClose(clientCloseBody);
+        AssertCloseBodyRoutesOpenHandleThroughPlatformClose(listenerCloseBody);
     }
 
     [Fact]
@@ -540,6 +551,17 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("call i32 @shutdown(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @closesocket(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@LinuxSyscall", llvm, StringComparison.Ordinal);
+    }
+
+    private static void AssertCloseBodyRoutesOpenHandleThroughPlatformClose(string body)
+    {
+        Assert.Contains("call fastcc i32 @System_Runtime_Platform_CloseSocket(", body, StringComparison.Ordinal);
+        Assert.True(
+            body.Contains("call fastcc %System_Net_NetStatus @StatusFromPlatformResult(", StringComparison.Ordinal)
+            || (body.Contains("icmp slt i32", StringComparison.Ordinal)
+                && body.Contains("call fastcc %System_Net_NetworkError @NetworkErrorFromPlatformResult(", StringComparison.Ordinal)
+                && body.Contains("insertvalue %System_Net_NetStatus", StringComparison.Ordinal)),
+            body);
     }
 
     private static void AssertCompactTag(EnumLayoutSymbol layout, int bitWidth, int maxTagValue)

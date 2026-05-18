@@ -182,6 +182,8 @@ internal static class ArtifactTextRenderer
         var rendered = instruction switch
         {
             SsaValueInstruction valueInstruction => $"{valueInstruction.ResultName} = {valueInstruction.Value.Text}",
+            SsaCallInstruction call => $"call {call.Text}",
+            SsaIndirectCallInstruction call => $"call {call.Text}",
             SsaAllocateLocalInstruction allocateLocal =>
                 allocateLocal.HasConstProvenance
                     ? $"alloca[{allocateLocal.StorageClass}, const-provenance] {allocateLocal.LocalName}: {allocateLocal.LocalType.DisplayName}"
@@ -259,6 +261,8 @@ internal static class ArtifactTextRenderer
         return instruction switch
         {
             SsaValueInstruction valueInstruction => valueInstruction.Location,
+            SsaCallInstruction call => call.Location,
+            SsaIndirectCallInstruction call => call.Location,
             SsaAllocateLocalInstruction allocateLocal => allocateLocal.Location,
             SsaLifetimeStartInstruction lifetimeStart => lifetimeStart.Location,
             SsaLifetimeEndInstruction lifetimeEnd => lifetimeEnd.Location,

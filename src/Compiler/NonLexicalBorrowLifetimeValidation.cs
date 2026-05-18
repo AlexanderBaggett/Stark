@@ -299,10 +299,47 @@ internal sealed class NonLexicalBorrowLifetimeValidator
             }
         }
 
-        if (statement.Value is MidLevelIrCallRValue call
-            && _signatures.TryGetValue(call.FunctionName, out var callee))
+        if (statement.Value is MidLevelIrCallRValue call)
         {
-            var argumentCount = Math.Min(call.Arguments.Count, callee.Parameters.Count);
+            foreach (var consumed in EnumerateConsumedDirectCallArguments(
+                         call.FunctionName,
+                         call.Arguments,
+                         functionName))
+            {
+                yield return consumed;
+            }
+        }
+
+        if (statement.Call is MidLevelIrDirectCallStatementOperation directCall)
+        {
+            foreach (var consumed in EnumerateConsumedDirectCallArguments(
+                         directCall.FunctionName,
+                         directCall.Arguments,
+                         functionName))
+            {
+                yield return consumed;
+            }
+        }
+        else if (statement.Call is MidLevelIrIndirectCallStatementOperation indirectCall)
+        {
+            foreach (var consumed in EnumerateConsumedIndirectCallArguments(
+                         indirectCall.Target,
+                         indirectCall.Arguments,
+                         functionName))
+            {
+                yield return consumed;
+            }
+        }
+    }
+
+    private IEnumerable<(OwnerSource Source, string Action, string DiagnosticKey)> EnumerateConsumedDirectCallArguments(
+        string calleeName,
+        IReadOnlyList<MidLevelIrOperand> arguments,
+        string functionName)
+    {
+        if (_signatures.TryGetValue(calleeName, out var callee))
+        {
+            var argumentCount = Math.Min(arguments.Count, callee.Parameters.Count);
             for (var index = 0; index < argumentCount; index++)
             {
                 var parameterType = callee.Parameters[index].Type;
@@ -311,16 +348,50 @@ internal sealed class NonLexicalBorrowLifetimeValidator
                     continue;
                 }
 
-                if (!TryResolveOwnerSource(call.Arguments[index], out var owner))
+                if (!TryResolveOwnerSource(arguments[index], out var owner))
                 {
                     continue;
                 }
 
                 yield return (
                     owner,
-                    $"move into call '{call.FunctionName}'",
-                    $"{functionName}|call-move|{call.FunctionName}|{index}|{owner.Kind}|{owner.Name}");
+                    $"move into call '{calleeName}'",
+                    $"{functionName}|call-move|{calleeName}|{index}|{owner.Kind}|{owner.Name}");
             }
+        }
+    }
+
+    private IEnumerable<(OwnerSource Source, string Action, string DiagnosticKey)> EnumerateConsumedIndirectCallArguments(
+        MidLevelIrOperand target,
+        IReadOnlyList<MidLevelIrOperand> arguments,
+        string functionName)
+    {
+        var parameterTypes = target.Type.FunctionPointerParameterTypes ?? target.Type.ClosureParameterTypes;
+        if (parameterTypes is null)
+        {
+            yield break;
+        }
+
+        var argumentOffset = target.Type.Kind == StarkTypeKind.Closure ? 1 : 0;
+        var argumentCount = Math.Min(arguments.Count - argumentOffset, parameterTypes.Count);
+        for (var index = 0; index < argumentCount; index++)
+        {
+            var parameterType = parameterTypes[index];
+            if (parameterType.BorrowKind != StarkBorrowKind.None || !IsMoveOnly(parameterType))
+            {
+                continue;
+            }
+
+            var argument = arguments[index + argumentOffset];
+            if (!TryResolveOwnerSource(argument, out var owner))
+            {
+                continue;
+            }
+
+            yield return (
+                owner,
+                "move into indirect call",
+                $"{functionName}|indirect-call-move|{index}|{owner.Kind}|{owner.Name}");
         }
     }
 
@@ -415,6 +486,10 @@ internal sealed class NonLexicalBorrowLifetimeValidator
     {
         switch (operand)
         {
+            case MidLevelIrObjectConstructionOperand construction:
+                return TryResolveOwnerSource(construction.Value, out owner);
+            case MidLevelIrEnumConstructionOperand construction:
+                return TryResolveOwnerSource(construction.Value, out owner);
             case MidLevelIrLocalOperand local:
                 owner = OwnerSource.Local(local.Name);
                 return true;
@@ -531,6 +606,14 @@ internal sealed class NonLexicalBorrowLifetimeValidator
         if (statement.Value is not null)
         {
             foreach (var name in CollectBorrowLocalUses(statement.Value, borrowLocals))
+            {
+                yield return name;
+            }
+        }
+
+        if (statement.Call is not null)
+        {
+            foreach (var name in CollectBorrowLocalUses(statement.Call, borrowLocals))
             {
                 yield return name;
             }
@@ -812,8 +895,63 @@ internal sealed class NonLexicalBorrowLifetimeValidator
         }
     }
 
+    private static IEnumerable<string> CollectBorrowLocalUses(
+        MidLevelIrCallStatementOperation call,
+        IReadOnlySet<string> borrowLocals)
+    {
+        switch (call)
+        {
+            case MidLevelIrDirectCallStatementOperation directCall:
+                foreach (var argument in directCall.Arguments)
+                {
+                    foreach (var name in CollectBorrowLocalUses(argument, borrowLocals))
+                    {
+                        yield return name;
+                    }
+                }
+
+                yield break;
+
+            case MidLevelIrIndirectCallStatementOperation indirectCall:
+                foreach (var name in CollectBorrowLocalUses(indirectCall.Target, borrowLocals))
+                {
+                    yield return name;
+                }
+
+                foreach (var argument in indirectCall.Arguments)
+                {
+                    foreach (var name in CollectBorrowLocalUses(argument, borrowLocals))
+                    {
+                        yield return name;
+                    }
+                }
+
+                yield break;
+        }
+    }
+
     private static IEnumerable<string> CollectBorrowLocalUses(MidLevelIrOperand operand, IReadOnlySet<string> borrowLocals)
     {
+        if (operand is MidLevelIrObjectConstructionOperand objectConstruction)
+        {
+            foreach (var name in CollectBorrowLocalUses(objectConstruction.Value, borrowLocals))
+            {
+                yield return name;
+            }
+
+            yield break;
+        }
+
+        if (operand is MidLevelIrEnumConstructionOperand enumConstruction)
+        {
+            foreach (var name in CollectBorrowLocalUses(enumConstruction.Value, borrowLocals))
+            {
+                yield return name;
+            }
+
+            yield break;
+        }
+
         if (operand is MidLevelIrLocalOperand local
             && local.Type.BorrowKind != StarkBorrowKind.None
             && borrowLocals.Contains(local.Name))

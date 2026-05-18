@@ -28,14 +28,72 @@ internal sealed class SsaIrValidator
         _ssa = ssa;
         _abiModel = abiModel;
         _typeModel = typeModel;
-        _namedTypes = typeModel?.NamedTypes ?? new Dictionary<string, NamedTypeSymbol>(StringComparer.Ordinal);
-        _enumLayouts = enumLayoutModel?.Layouts ?? new Dictionary<string, EnumLayoutSymbol>(StringComparer.Ordinal);
+        _namedTypes = BuildNamedTypes(typeModel, loadedModules);
+        _enumLayouts = BuildEnumLayouts(enumLayoutModel, loadedModules);
         _publishedConcreteLayouts = publishedConcreteLayouts ?? new Dictionary<string, ConcreteTypeLayout>(StringComparer.Ordinal);
         _specializationCodegenStrategy = specializationCodegenStrategy;
         _knownGlobals = BuildKnownGlobals(typeModel, loadedModules);
     }
 
     private sealed record KnownGlobalFact(StarkTypeSymbol? Type, GlobalBindingKind BindingKind);
+
+    private static IReadOnlyDictionary<string, NamedTypeSymbol> BuildNamedTypes(
+        TypeCheckModel? typeModel,
+        LoadedModuleSet? loadedModules)
+    {
+        var namedTypes = typeModel is null
+            ? new Dictionary<string, NamedTypeSymbol>(StringComparer.Ordinal)
+            : new Dictionary<string, NamedTypeSymbol>(typeModel.NamedTypes, StringComparer.Ordinal);
+
+        if (loadedModules is null)
+        {
+            return namedTypes;
+        }
+
+        foreach (var module in loadedModules.Modules.Values)
+        {
+            if (module.PackageImageFacts is not { NamedTypes.Count: > 0 } packageFacts)
+            {
+                continue;
+            }
+
+            foreach (var (name, namedType) in packageFacts.NamedTypes)
+            {
+                namedTypes.TryAdd(name, namedType);
+            }
+        }
+
+        return namedTypes;
+    }
+
+    private static IReadOnlyDictionary<string, EnumLayoutSymbol> BuildEnumLayouts(
+        EnumLayoutModel? enumLayoutModel,
+        LoadedModuleSet? loadedModules)
+    {
+        var enumLayouts = enumLayoutModel is null
+            ? new Dictionary<string, EnumLayoutSymbol>(StringComparer.Ordinal)
+            : new Dictionary<string, EnumLayoutSymbol>(enumLayoutModel.Layouts, StringComparer.Ordinal);
+
+        if (loadedModules is null)
+        {
+            return enumLayouts;
+        }
+
+        foreach (var module in loadedModules.Modules.Values)
+        {
+            if (module.PackageImageFacts is not { EnumLayouts.Count: > 0 } packageFacts)
+            {
+                continue;
+            }
+
+            foreach (var (name, layout) in packageFacts.EnumLayouts)
+            {
+                enumLayouts.TryAdd(name, layout);
+            }
+        }
+
+        return enumLayouts;
+    }
 
     public void Validate()
     {
@@ -961,6 +1019,25 @@ internal sealed class SsaIrValidator
             case SsaValueInstruction valueInstruction:
                 ValidateRValue(function, valueInstruction.Value, valueDefinitions, localDefinitions, currentAbi, valueInstruction.Location);
                 break;
+            case SsaCallInstruction call:
+                foreach (var argument in call.Arguments)
+                {
+                    ValidateValue(function, argument, valueDefinitions, call.Location);
+                }
+
+                ValidateOptionalValues(function, call.IndirectArgumentAddresses, valueDefinitions, call.Location);
+                ValidateDirectCall(function, call, localDefinitions, currentAbi, call.Location);
+                break;
+            case SsaIndirectCallInstruction indirectCall:
+                ValidateValue(function, indirectCall.Target, valueDefinitions, indirectCall.Location);
+                foreach (var argument in indirectCall.Arguments)
+                {
+                    ValidateValue(function, argument, valueDefinitions, indirectCall.Location);
+                }
+
+                ValidateOptionalValues(function, indirectCall.IndirectArgumentAddresses, valueDefinitions, indirectCall.Location);
+                ValidateIndirectCall(function, indirectCall, localDefinitions, currentAbi, indirectCall.Location);
+                break;
             case SsaAllocateLocalInstruction allocateLocal:
                 if (allocateLocal.StorageClass is not ("stack" or "match" or "heap"))
                 {
@@ -1347,6 +1424,13 @@ internal sealed class SsaIrValidator
         SsaExtractIndexRValue extractIndex,
         SourceLocation? location)
     {
+        ValidateIndexedOperationFamily(
+            function,
+            extractIndex.OperationFamily,
+            extractIndex.Target.Type,
+            "index extraction",
+            location);
+
         if (!TryGetAggregateElementType(
                 function,
                 extractIndex.Target.Type,
@@ -1369,6 +1453,12 @@ internal sealed class SsaIrValidator
         SourceLocation? location)
     {
         ValidateValueShape(function, insertIndex.Target.Type, insertIndex.Type, "index insertion result", location);
+        ValidateIndexedOperationFamily(
+            function,
+            insertIndex.OperationFamily,
+            insertIndex.Target.Type,
+            "index insertion",
+            location);
 
         if (!TryGetAggregateElementType(
                 function,
@@ -1384,6 +1474,33 @@ internal sealed class SsaIrValidator
         }
 
         ValidateValueShape(function, elementType, insertIndex.Value.Type, $"index insertion {insertIndex.ElementIndex} value", location);
+    }
+
+    private void ValidateIndexedOperationFamily(
+        SsaFunction function,
+        IndexedElementOperationFamily operationFamily,
+        StarkTypeSymbol targetType,
+        string usage,
+        SourceLocation? location)
+    {
+        var normalizedType = NormalizeType(targetType);
+        var isValid = operationFamily switch
+        {
+            IndexedElementOperationFamily.FixedArrayElement => normalizedType.Kind == StarkTypeKind.FixedArray,
+            IndexedElementOperationFamily.ViewComponent => normalizedType.Kind is StarkTypeKind.Slice
+                or StarkTypeKind.Ascii
+                or StarkTypeKind.Unicode,
+            IndexedElementOperationFamily.ClosureComponent => normalizedType.Kind == StarkTypeKind.Closure,
+            _ => false
+        };
+
+        if (!isValid)
+        {
+            Report(
+                function,
+                location,
+                $"{usage} operation family '{operationFamily}' is not valid for '{targetType.DisplayName}'.");
+        }
     }
 
     private bool TryGetAggregateElementType(
@@ -1692,7 +1809,7 @@ internal sealed class SsaIrValidator
 
     private void ValidateDirectCall(
         SsaFunction function,
-        SsaCallRValue call,
+        ISsaDirectCallOperation call,
         IReadOnlyDictionary<string, StarkTypeSymbol> localDefinitions,
         AbiFunctionSignature? currentAbi,
         SourceLocation? location)
@@ -1723,7 +1840,7 @@ internal sealed class SsaIrValidator
 
     private void ValidateIndirectCall(
         SsaFunction function,
-        SsaIndirectCallRValue call,
+        ISsaIndirectCallOperation call,
         IReadOnlyDictionary<string, StarkTypeSymbol> localDefinitions,
         AbiFunctionSignature? currentAbi,
         SourceLocation? location)
@@ -2994,6 +3111,11 @@ internal sealed class SsaIrValidator
     {
         var sourceType = NormalizeType(convert.Operand.Type);
         var targetType = NormalizeType(convert.TargetType);
+        if (HaveSameLlvmValueShape(sourceType, targetType))
+        {
+            return;
+        }
+
         switch (sourceType.Kind)
         {
             case StarkTypeKind.Integer when targetType.Kind == StarkTypeKind.Integer:

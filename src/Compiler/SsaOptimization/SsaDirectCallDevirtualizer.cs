@@ -69,10 +69,19 @@ internal sealed class SsaDirectCallDevirtualizer
         SsaInstruction instruction,
         FunctionPointerTargetFacts functionPointerTargets)
     {
-        return instruction is SsaValueInstruction valueInstruction
-               && TryDevirtualizeDirectFunctionAddressCall(valueInstruction.Value, functionPointerTargets, out var directCall)
-            ? valueInstruction with { Value = directCall }
-            : instruction;
+        if (instruction is SsaValueInstruction valueInstruction
+            && TryDevirtualizeDirectFunctionAddressCall(valueInstruction.Value, functionPointerTargets, out var directCall))
+        {
+            return valueInstruction with { Value = directCall };
+        }
+
+        if (instruction is SsaIndirectCallInstruction indirectCall
+            && TryDevirtualizeDirectFunctionAddressCall(indirectCall, functionPointerTargets, out var directCallInstruction))
+        {
+            return directCallInstruction;
+        }
+
+        return instruction;
     }
 
     private static bool TryDevirtualizeDirectFunctionAddressCall(
@@ -96,6 +105,32 @@ internal sealed class SsaDirectCallDevirtualizer
             indirectCall.IndirectArgumentLocalNames,
             SourceReturnType: indirectCall.SourceReturnType,
             indirectCall.IndirectArgumentAddresses);
+        return true;
+    }
+
+    private static bool TryDevirtualizeDirectFunctionAddressCall(
+        SsaIndirectCallInstruction indirectCall,
+        FunctionPointerTargetFacts functionPointerTargets,
+        out SsaCallInstruction directCall)
+    {
+        directCall = default!;
+
+        if (!functionPointerTargets.TryGetSingletonTarget(indirectCall.Target, out var functionAddress))
+        {
+            return false;
+        }
+
+        directCall = new SsaCallInstruction(
+            functionAddress.FunctionName,
+            indirectCall.Arguments,
+            indirectCall.Type,
+            indirectCall.Text,
+            indirectCall.IndirectArgumentLocalNames,
+            SourceReturnType: indirectCall.SourceReturnType,
+            IndirectArgumentAddresses: indirectCall.IndirectArgumentAddresses,
+            Location: indirectCall.Location,
+            ScopedNoAliasGroups: indirectCall.ScopedNoAliasGroups,
+            LoopAccessGroups: indirectCall.LoopAccessGroups);
         return true;
     }
 

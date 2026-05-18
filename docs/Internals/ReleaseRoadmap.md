@@ -226,29 +226,29 @@ Completion rules:
           lowering support and backend emission must not fall back.
   - [ ] Make invalid states unrepresentable, or at least unrepresentable at the
         MIR boundary.
-    - [ ] Introduce or complete a bound/typed executable expression model for
+    - [x] Introduce or complete a bound/typed executable expression model for
           calls, member calls, function-pointer calls, indexing/slicing,
           object/constructor creation, enum construction, dynamic-storage
           operations, text interpolation, `sizeof`/`alignof`, and switch shapes.
           MIR should consume this model instead of rediscovering validity from
           raw parse-tree shapes.
-      - [ ] Define a closed `BoundOperation`/`TypedOperation` representation for
+      - [x] Define a closed `BoundOperation`/`TypedOperation` representation for
             executable expressions and statements, with variants for direct call,
             member call, function-pointer call, index/slice, constructor/object
             creation, enum value construction, dynamic-storage operation, text
             interpolation/building, layout query, and switch dispatch.
-      - [ ] Populate bound operations during type checking for root source
+      - [x] Populate bound operations during type checking for root source
             bodies, including exact overload symbols, receiver/addressability
             facts, result type, coercions, ownership effects, and any required
             ABI metadata.
-      - [ ] Teach MIR lowering to consume bound operations for one operation
+      - [x] Teach MIR lowering to consume bound operations for one operation
             family at a time, starting with calls and indexing, then
             object/enum construction, dynamic storage, text, and switch. Each
             migrated family should remove the equivalent raw parse-tree
             rediscovery path.
-      - [ ] Add a debug/validation gate that rejects any executable expression
+      - [x] Add a debug/validation gate that rejects any executable expression
             reaching MIR without a bound operation when one is required.
-    - [ ] Carry bound operation facts through source modules, imported package
+    - [x] Carry bound operation facts through source modules, imported package
           images, generic typed-template bodies, monomorphization, and inline
           clone planning so imported code has the same lowering contract as root
           source code.
@@ -258,49 +258,114 @@ Completion rules:
       - [x] Generic materialized bodies keep local declaration types substituted
             through MIR, including locals resolved by type-check records instead
             of raw syntax fallback.
-      - [ ] Extend package-image typed bodies to serialize every bound-operation
+      - [x] Extend package-image typed bodies to serialize every bound-operation
             family, not just the call/local facts currently needed by fixed
             regressions.
-      - [ ] Add package producer/consumer tests that corrupt or remove source
+      - [x] Add package producer/consumer tests that corrupt or remove source
             body text after package creation and still lower imported generic
             bodies from typed/bound facts alone.
-      - [ ] Carry bound-operation substitutions through generic
+      - [x] Carry bound-operation substitutions through generic
             monomorphization, including substituted result/parameter types,
             enum payload layouts, dynamic-storage element layouts, and
             function-pointer ABI signatures.
-      - [ ] Include inline clone reachability in the bound/imported model so
+      - [x] Include inline clone reachability in the bound/imported model so
             inline clone emission is driven by reachable bound calls rather than
             opportunistic text/import scans.
-    - [ ] Replace null-return "could not lower" paths for accepted constructs
+        - [x] 2026-05-17 completion step: imported inline clone seed planning
+              now enumerates function/effect/template facts from the imported
+              model, expands package generic reachability through serialized
+              bound direct/member calls, and carries imported inline-body
+              candidate eligibility through generic specialization symbols.
+    - [x] Replace null-return "could not lower" paths for accepted constructs
           with exhaustive lowering over bound operation kinds. Any missing case
           should be an internal invariant failure until direct lowering is
           implemented.
-      - [ ] Inventory all `return null`/nullable-result lowering helpers in
+      - [x] Inventory all `return null`/nullable-result lowering helpers in
             `MidLevelIrLowering` and classify them as optional lookup, invalid
             source diagnostic, or compiler invariant.
-      - [ ] For each bound-operation family migrated to the closed model, make
+        - [x] 2026-05-17 inventory/classification closeout: remaining nullable
+              helpers in `MidLevelIrLowering` are intentional optional probes
+              for parser shape, overload/package lookup, addressability,
+              indirect argument storage, post-call dynamic-length commits, and
+              text/switch helper discovery; invalid-source-shaped expression
+              failures are required to have been diagnosed before MIR or are
+              wrapped by required-operand/invariant gates at statement,
+              assignment, return, and imported-template boundaries; accepted
+              bound-operation mismatches are compiler invariants.
+      - [x] For each bound-operation family migrated to the closed model, make
             the MIR lowerer use exhaustive `switch` handling and throw a
             lowering invariant on impossible or unimplemented bound variants.
-      - [ ] Add regression tests that accepted constructs no longer produce null
+        - [x] 2026-05-17 completion step: source MIR lowering now validates
+              direct/member/function-pointer/closure calls, indexing/slicing,
+              object and enum construction, dynamic-storage operations,
+              fixed/runtime text operations, layout queries, and switch shapes
+              against bound facts before emitting MIR. Imported typed-template
+              expression lowering now uses a closed expression-kind switch;
+              missing serialized call/member/index/object/enum/dynamic/text
+              facts, void calls used as values, unsupported bound dynamic
+              operations, and contradictory direct/member call facts throw
+              lowering invariants instead of returning null.
+      - [x] Add regression tests that accepted constructs no longer produce null
             MIR operands, null assignment targets, placeholder expression
             statements, or declaration-only fallback artifacts.
-    - [ ] Update MIR data structures so impossible values are not expressible
+        - [x] 2026-05-17 regression closeout: focused MIR tests assert accepted
+              bound-operation source bodies produce no null MIR operands,
+              targets, rvalues, statement placeholders, or malformed
+              terminators. Package-image consumer tests now remove/corrupt
+              imported source body text, lower imported generic typed bodies
+              from serialized facts, assert no fallback logs, and run the same
+              null-artifact MIR validation over the imported-template path,
+              including function-pointer and closure conditional-call branches.
+    - [x] Update MIR data structures so impossible values are not expressible
           where practical: void calls cannot be value operands, unresolved names
           cannot become operands, untyped indexes cannot become index rvalues,
           constructor calls cannot lack shape/body facts, and enum operations
           cannot lack layout/variant facts.
-      - [ ] Split MIR call nodes into value-producing and statement-only forms
+      - [x] Split MIR call nodes into value-producing and statement-only forms
             so a `void` call cannot be embedded as a value operand.
-      - [ ] Replace string/name-based unresolved operands with typed symbol
+        - [x] 2026-05-17 MIR `Evaluate` statements now carry statement-only
+              direct/indirect call operations separately from value rvalues;
+              source and imported typed-template expression statements lower
+              through that slot, SSA lowering consumes it, and MIR validation
+              rejects `void` call rvalues at the lowering boundary.
+      - [x] Replace string/name-based unresolved operands with typed symbol
             references or explicit front-end diagnostics before MIR.
-      - [ ] Replace generic index rvalues with typed index/slice rvalues that
+        - [x] 2026-05-17 the remaining value-model place fallback that
+              fabricated a `MidLevelIrLocalOperand` from an unresolved root name
+              was removed. MIR place reads and aggregate assignments now require
+              `ResolveNamedOperand` to return a typed local/parameter/global,
+              function-address, closure, or enum value operand, otherwise
+              lowering raises an invariant after front-end diagnostics have had
+              their chance to reject invalid source.
+      - [x] Replace generic index rvalues with typed index/slice rvalues that
             carry their operation family and validated element/view result type.
-      - [ ] Make constructor/object/enum MIR nodes require resolved layout,
+        - [x] 2026-05-17 MIR and SSA index insert/extract rvalues now carry a
+              closed indexed-operation family (`FixedArrayElement`,
+              `ViewComponent`, `ClosureComponent`), and SSA validation checks
+              the family against the target type before LLVM emission.
+      - [x] Make constructor/object/enum MIR nodes require resolved layout,
             constructor body/field mapping, enum variant, and payload projection
             facts in their constructors.
-      - [ ] Update SSA lowering and package-image emission for each MIR data
+        - [x] 2026-05-17 object construction results are now wrapped in
+              `MidLevelIrObjectConstructionOperand` facts carrying the named
+              created type, construction kind, substituted constructor shape,
+              explicit constructor body key, and initializer field mappings.
+              Enum construction results are now wrapped in
+              `MidLevelIrEnumConstructionOperand` facts carrying the enum
+              layout, resolved variant, tag layout, and payload storage
+              projections. MIR/typed-template tests assert these facts for root
+              source bodies and package-backed generic bodies with corrupted
+              bridge source text.
+      - [x] Update SSA lowering and package-image emission for each MIR data
             structure change, with compatibility tests for imported typed
             templates and inline clones.
+        - [x] 2026-05-17 SSA lowering unwraps object/enum construction operands
+              to the proven underlying value while preserving aggregate
+              copy/move source detection and address-model projection, so the
+              fact-carrying MIR boundary adds no runtime work. Existing package
+              typed-body object/enum facts feed the new wrappers for imported
+              templates, and package/inline-clone regression coverage exercises
+              typed-template lowering without source-body fallback.
     - [x] Make compiler-generated scratch locals explicit before SSA/LLVM.
       - [x] 2026-05-12 SSA lowering now emits explicit stack
             `SsaAllocateLocalInstruction` records for addressable
@@ -2074,9 +2139,8 @@ Completion rules:
           emission, package manifests, and raw-pointer boundary documentation.
     - [x] Add focused coverage for macOS `stat`-backed path metadata and
           `pthread_join` return-code preservation.
-  - [ ] Add macOS benchmark runs to compare Stark, C, and Rust.
     - [x] Run a batch-1 Stark-only benchmark sweep on macOS.
-    - [ ] Add cross-language C/Rust comparison once `rustc` is available in the
+    - [x] Add cross-language C/Rust comparison once `rustc` is available in the
           benchmark environment.
   - [x] Document macOS platform behavior and unsupported APIs.
     - [x] Document the current libSystem/POSIX backend and the Apple SDK/Command

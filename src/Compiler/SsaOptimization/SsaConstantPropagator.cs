@@ -909,6 +909,25 @@ internal sealed class SsaConstantPropagator
             SsaValueInstruction valueInstruction => new SsaValueInstruction(
                 valueInstruction.ResultName,
                 RewriteRValue(valueInstruction.Value, replacements)),
+            SsaCallInstruction call => call with
+            {
+                Arguments = call.Arguments
+                    .Select(argument => RewriteValue(argument, replacements))
+                    .ToArray(),
+                IndirectArgumentAddresses = call.IndirectArgumentAddresses?
+                    .Select(address => address is null ? null : RewriteValue(address, replacements))
+                    .ToArray()
+            },
+            SsaIndirectCallInstruction call => call with
+            {
+                Target = RewriteValue(call.Target, replacements),
+                Arguments = call.Arguments
+                    .Select(argument => RewriteValue(argument, replacements))
+                    .ToArray(),
+                IndirectArgumentAddresses = call.IndirectArgumentAddresses?
+                    .Select(address => address is null ? null : RewriteValue(address, replacements))
+                    .ToArray()
+            },
             SsaAllocateLocalInstruction allocateLocal => allocateLocal,
             SsaLifetimeStartInstruction lifetimeStart => lifetimeStart,
             SsaLifetimeEndInstruction lifetimeEnd => lifetimeEnd,
@@ -999,11 +1018,13 @@ internal sealed class SsaConstantPropagator
             SsaExtractIndexRValue extractIndex => new SsaExtractIndexRValue(
                 RewriteValue(extractIndex.Target, replacements),
                 extractIndex.ElementIndex,
+                extractIndex.OperationFamily,
                 extractIndex.Type,
                 extractIndex.Text),
             SsaInsertIndexRValue insertIndex => new SsaInsertIndexRValue(
                 RewriteValue(insertIndex.Target, replacements),
                 insertIndex.ElementIndex,
+                insertIndex.OperationFamily,
                 RewriteValue(insertIndex.Value, replacements),
                 insertIndex.Type,
                 insertIndex.Text),

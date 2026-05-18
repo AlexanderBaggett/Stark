@@ -77,12 +77,12 @@ internal unsafe ffi fn i32[min max] NtWriteFile(
     rawptr<i64[min max]> byteOffset,
     rawptr<i32[min max]> key);
 internal unsafe ffi fn i32[min max] WaitOnAddress(
-    rawptr<i32[min max]> address,
+    rawmutptr<i32[min max]> address,
     rawptr<i32[min max]> compareAddress,
     u64[0 2 ** 63 - 1] addressSize,
     i32[min max] milliseconds);
-internal unsafe ffi fn void WakeByAddressSingle(rawptr<i32[min max]> address);
-internal unsafe ffi fn void WakeByAddressAll(rawptr<i32[min max]> address);
+internal unsafe ffi fn void WakeByAddressSingle(rawmutptr<i32[min max]> address);
+internal unsafe ffi fn void WakeByAddressAll(rawmutptr<i32[min max]> address);
 internal unsafe ffi fn i32[min max] InitOnceExecuteOnce(
     rawmutptr<WinInitOnce> initOnce,
     fnptr<fn i32[min max](rawmutptr<WinInitOnce>, rawptr<i8[min max]>, rawmutptr<rawptr<i8[min max]>>) where overlap(arg0, arg1, arg2)> callback,
@@ -262,16 +262,16 @@ internal unsafe ffi fn i32[min max] ThreadEntryThunk(fnptr<fn i32[min max]()> en
     return entry();
 }
 
-internal unsafe fn rawptr<i8[min max]> StartThread(fnptr<fn i32[min max]()> entry) {
+internal unsafe fn rawmutptr<i8[min max]> StartThread(fnptr<fn i32[min max]()> entry) {
     stack rawmutptr<i8[min max]> handle = CreateThread(null, 0, ThreadEntryThunk, entry, 0, null);
     if (IsInvalidHandle(handle)) {
         return null;
     }
 
-    return (rawptr<i8[min max]>)handle;
+    return handle;
 }
 
-internal unsafe fn i32[min max] JoinThread(rawptr<i8[min max]> handle, rawmutptr<i32[min max]> exitCode) {
+internal unsafe fn i32[min max] JoinThread(rawmutptr<i8[min max]> handle, rawmutptr<i32[min max]> exitCode) {
     if (handle == null || exitCode == null) {
         return -1;
     }
@@ -291,7 +291,7 @@ internal unsafe fn i32[min max] JoinThread(rawptr<i8[min max]> handle, rawmutptr
     return 0;
 }
 
-internal unsafe fn i32[min max] DetachThread(rawptr<i8[min max]> handle) {
+internal unsafe fn i32[min max] DetachThread(rawmutptr<i8[min max]> handle) {
     if (handle == null) {
         return -1;
     }
@@ -754,7 +754,7 @@ internal unsafe fn i32[min max] WaitWritable(rawptr<i8[min max]> handle, i32[min
     return -10045;
 }
 
-internal unsafe fn i32[min max] FutexWait(rawptr<i32[min max]> address, i32[min max] expected) {
+internal unsafe fn i32[min max] FutexWait(rawmutptr<i32[min max]> address, i32[min max] expected) {
     if (address == null) {
         return -14;
     }
@@ -771,7 +771,7 @@ internal unsafe fn i32[min max] FutexWait(rawptr<i32[min max]> address, i32[min 
     return NegativeLastError();
 }
 
-internal unsafe fn i32[min max] FutexWake(rawptr<i32[min max]> address, i32[min max] count) {
+internal unsafe fn i32[min max] FutexWake(rawmutptr<i32[min max]> address, i32[min max] count) {
     if (address == null) {
         return -14;
     }

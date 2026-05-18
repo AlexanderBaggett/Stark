@@ -2201,17 +2201,19 @@ internal static class CompilerCli
         }
 
         var entryFunctions = CollectRootHotPathEntryFunctions(syntaxModel, loadedModules, effects);
-        var reachableFunctions = CollectHotPathReachableFunctions(entryFunctions, ssa, effects);
+        var reachableFunctions = new HashSet<string>(
+            CollectHotPathReachableFunctions(entryFunctions, ssa, effects),
+            StringComparer.Ordinal);
+        AddImportedTemplateBoundCallReachability(rootResult, loadedModules, reachableFunctions);
         var seedsByModule = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);
 
         foreach (var module in loadedModules.ImportedModules.Where(static module => !module.Reference.IsExternal))
         {
             var seeds = new HashSet<string>(StringComparer.Ordinal);
-            foreach (var declaration in module.SyntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
+            foreach (var qualifiedName in EnumerateImportedFunctionModelNames(module, effects))
             {
-                var localName = FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration);
-                var qualifiedName = FunctionOverloadFacts.QualifyResolvedName(module, localName);
-                if (reachableFunctions.Contains(qualifiedName))
+                if (reachableFunctions.Contains(qualifiedName)
+                    && TryGetImportedModuleLocalFunctionName(module.SyntaxModel.ModuleName, qualifiedName, out var localName))
                 {
                     seeds.Add(localName);
                 }
@@ -2224,6 +2226,161 @@ internal static class CompilerCli
         }
 
         return seedsByModule;
+    }
+
+    private static IEnumerable<string> EnumerateImportedFunctionModelNames(
+        LoadedModuleDocument module,
+        FunctionEffectModel effects)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var modulePrefix = $"{module.SyntaxModel.ModuleName}.";
+
+        foreach (var qualifiedName in effects.Functions.Keys)
+        {
+            if (qualifiedName.StartsWith(modulePrefix, StringComparison.Ordinal)
+                && seen.Add(qualifiedName))
+            {
+                yield return qualifiedName;
+            }
+        }
+
+        if (module.PackageImageFacts is not { } packageFacts)
+        {
+            yield break;
+        }
+
+        foreach (var qualifiedName in packageFacts.FunctionEffects.Keys)
+        {
+            if (qualifiedName.StartsWith(modulePrefix, StringComparison.Ordinal)
+                && seen.Add(qualifiedName))
+            {
+                yield return qualifiedName;
+            }
+        }
+
+        foreach (var qualifiedName in packageFacts.FunctionSignatures.Keys)
+        {
+            if (qualifiedName.StartsWith(modulePrefix, StringComparison.Ordinal)
+                && seen.Add(qualifiedName))
+            {
+                yield return qualifiedName;
+            }
+        }
+
+        foreach (var qualifiedName in packageFacts.FunctionTemplates.Keys)
+        {
+            if (qualifiedName.StartsWith(modulePrefix, StringComparison.Ordinal)
+                && seen.Add(qualifiedName))
+            {
+                yield return qualifiedName;
+            }
+        }
+    }
+
+    private static bool TryGetImportedModuleLocalFunctionName(
+        string moduleName,
+        string qualifiedName,
+        out string localName)
+    {
+        var modulePrefix = $"{moduleName}.";
+        if (!qualifiedName.StartsWith(modulePrefix, StringComparison.Ordinal)
+            || qualifiedName.Length == modulePrefix.Length)
+        {
+            localName = string.Empty;
+            return false;
+        }
+
+        localName = qualifiedName[modulePrefix.Length..];
+        return true;
+    }
+
+    private static void AddImportedTemplateBoundCallReachability(
+        CompilationResult rootResult,
+        LoadedModuleSet loadedModules,
+        HashSet<string> reachableFunctions)
+    {
+        var importedTemplates = new Dictionary<string, ImportedFunctionTemplateSummary>(StringComparer.Ordinal);
+        foreach (var module in loadedModules.ImportedModules)
+        {
+            if (module.PackageImageFacts is not { } packageFacts)
+            {
+                continue;
+            }
+
+            foreach (var (qualifiedName, template) in packageFacts.FunctionTemplates)
+            {
+                if (template.BoundOperations.Count != 0)
+                {
+                    importedTemplates[qualifiedName] = template;
+                }
+            }
+        }
+
+        if (importedTemplates.Count == 0)
+        {
+            return;
+        }
+
+        var specializationTemplateNames = rootResult.Artifacts.TryGet(
+            CompilerArtifactKeys.SpecializationCodegenStrategy,
+            out SpecializationCodegenStrategyModel? specializationStrategy)
+            && specializationStrategy is not null
+                ? specializationStrategy.Functions.ToDictionary(
+                    static function => function.SymbolName,
+                    static function => function.TemplateName,
+                    StringComparer.Ordinal)
+                : new Dictionary<string, string>(StringComparer.Ordinal);
+
+        var pending = new Queue<string>();
+        foreach (var functionName in reachableFunctions.ToArray())
+        {
+            pending.Enqueue(functionName);
+            if (specializationTemplateNames.TryGetValue(functionName, out var templateName))
+            {
+                Enqueue(templateName);
+            }
+        }
+
+        while (pending.Count != 0)
+        {
+            var functionName = pending.Dequeue();
+            if (!importedTemplates.TryGetValue(functionName, out var template))
+            {
+                continue;
+            }
+
+            foreach (var summary in template.BoundOperations)
+            {
+                switch (summary.Operation)
+                {
+                    case BoundDirectCallOperation directCall:
+                        Enqueue(directCall.Signature.Name);
+                        if (directCall.Signature.TemplateName is { } directCallTemplateName)
+                        {
+                            Enqueue(directCallTemplateName);
+                        }
+
+                        break;
+
+                    case BoundMemberCallOperation memberCall:
+                        Enqueue(memberCall.Signature.Name);
+                        if (memberCall.Signature.TemplateName is { } memberCallTemplateName)
+                        {
+                            Enqueue(memberCallTemplateName);
+                        }
+
+                        break;
+                }
+            }
+        }
+
+        void Enqueue(string functionName)
+        {
+            if (reachableFunctions.Add(functionName))
+            {
+                pending.Enqueue(functionName);
+            }
+        }
     }
 
     private static IReadOnlySet<string>? ResolveImportedInlineCloneSeedFunctions(
@@ -2302,11 +2459,15 @@ internal static class CompilerCli
             var callees = new HashSet<string>(StringComparer.Ordinal);
             foreach (var block in function.Blocks)
             {
-                foreach (var instruction in block.Instructions.OfType<SsaValueInstruction>())
+                foreach (var instruction in block.Instructions)
                 {
-                    if (instruction.Value is SsaCallRValue call)
+                    if (instruction is SsaValueInstruction { Value: SsaCallRValue call })
                     {
                         callees.Add(call.FunctionName);
+                    }
+                    else if (instruction is SsaCallInstruction statementCall)
+                    {
+                        callees.Add(statementCall.FunctionName);
                     }
                 }
             }

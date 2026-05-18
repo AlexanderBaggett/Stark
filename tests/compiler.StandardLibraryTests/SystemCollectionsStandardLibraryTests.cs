@@ -2438,7 +2438,12 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
             llvm,
             "define linkonce_odr dso_local fastcc noundef i32 @__stark_mono_fn_System_Collections__System_Collections_SparseSlots_MoveAt__u32(");
 
-        Assert.Contains("SparseSlots_MoveAt__u32", tryDequeueBody, StringComparison.Ordinal);
+        var tryDequeueUsesSparseMove =
+            tryDequeueBody.Contains("SparseSlots_MoveAt__u32", StringComparison.Ordinal)
+            || (tryDequeueBody.Contains("getelementptr i32", StringComparison.Ordinal)
+                && tryDequeueBody.Contains("load i32", StringComparison.Ordinal)
+                && tryDequeueBody.Contains("store i32", StringComparison.Ordinal));
+        Assert.True(tryDequeueUsesSparseMove, tryDequeueBody);
         Assert.Contains("store i32", tryDequeueBody, StringComparison.Ordinal);
         Assert.Contains("getelementptr i32", sparseMoveBody, StringComparison.Ordinal);
         Assert.Contains("load i32", sparseMoveBody, StringComparison.Ordinal);

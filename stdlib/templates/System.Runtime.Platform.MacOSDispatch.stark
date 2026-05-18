@@ -272,15 +272,15 @@ internal unsafe fn bool TryCurrentDirectory(rawmutptr<Ascii> destination) {
     return System.Runtime.Platform.MacOS.TryCurrentDirectory(destination);
 }
 
-internal unsafe fn rawptr<i8[min max]> StartThread(fnptr<fn i32[min max]()> entry) {
+internal unsafe fn rawmutptr<i8[min max]> StartThread(fnptr<fn i32[min max]()> entry) {
     return System.Runtime.Platform.MacOS.StartThread(entry);
 }
 
-internal unsafe fn i32[min max] JoinThread(rawptr<i8[min max]> handle, rawmutptr<i32[min max]> exitCode) {
+internal unsafe fn i32[min max] JoinThread(rawmutptr<i8[min max]> handle, rawmutptr<i32[min max]> exitCode) {
     return System.Runtime.Platform.MacOS.JoinThread(handle, exitCode);
 }
 
-internal unsafe fn i32[min max] DetachThread(rawptr<i8[min max]> handle) {
+internal unsafe fn i32[min max] DetachThread(rawmutptr<i8[min max]> handle) {
     return System.Runtime.Platform.MacOS.DetachThread(handle);
 }
 
@@ -381,10 +381,10 @@ internal unsafe fn i32[min max] WaitWritable(rawptr<i8[min max]> handle, i32[min
     return System.Runtime.Platform.MacOS.WaitWritable(handle, timeoutMilliseconds);
 }
 
-internal unsafe fn i32[min max] FutexWait(rawptr<i32[min max]> address, i32[min max] expected) {
+internal unsafe fn i32[min max] FutexWait(rawmutptr<i32[min max]> address, i32[min max] expected) {
     return System.Runtime.Platform.MacOS.FutexWait(address, expected);
 }
 
-internal unsafe fn i32[min max] FutexWake(rawptr<i32[min max]> address, i32[min max] count) {
+internal unsafe fn i32[min max] FutexWake(rawmutptr<i32[min max]> address, i32[min max] count) {
     return System.Runtime.Platform.MacOS.FutexWake(address, count);
 }

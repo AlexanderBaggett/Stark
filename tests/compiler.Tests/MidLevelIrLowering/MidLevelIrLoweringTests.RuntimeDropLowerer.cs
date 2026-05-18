@@ -38,7 +38,7 @@ public sealed partial class MidLevelIrLoweringTests
         var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
         var callIndex = Array.FindIndex(
             statements,
-            static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+            static statement => IsDirectCallStatement(statement, "Bump"));
         var storageDeadIndex = Array.FindIndex(
             statements,
             static statement => statement.Kind == MidLevelIrStatementKind.StorageDead && statement.TargetName == "box");
@@ -81,7 +81,7 @@ public sealed partial class MidLevelIrLoweringTests
 
         Assert.Contains(
             statements,
-            static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+            static statement => IsDirectCallStatement(statement, "Bump"));
         Assert.DoesNotContain(
             statements,
             static statement => statement.Kind == MidLevelIrStatementKind.Assign
@@ -126,7 +126,7 @@ public sealed partial class MidLevelIrLoweringTests
         var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
         var dropCalls = function.Blocks
             .SelectMany(static block => block.Statements)
-            .Count(static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+            .Count(static statement => IsDirectCallStatement(statement, "Bump"));
 
         Assert.Equal(2, dropCalls);
     }
@@ -170,7 +170,7 @@ public sealed partial class MidLevelIrLoweringTests
             .ToArray();
         var dropCalls = statements
             .Select((statement, index) => (statement, index))
-            .Where(static item => item.statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" })
+            .Where(static item => IsDirectCallStatement(item.statement, "Bump"))
             .ToArray();
 
         Assert.Equal(2, boxAssignments.Length);
@@ -216,7 +216,7 @@ public sealed partial class MidLevelIrLoweringTests
         Assert.Contains(function.Blocks, static block => block.Label.Contains("dynamic_drop_body", StringComparison.Ordinal));
 
         var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
-        Assert.Contains(statements, static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+        Assert.Contains(statements, static statement => IsDirectCallStatement(statement, "Bump"));
         Assert.Contains(statements, static statement => statement.Value is MidLevelIrDynamicStorageFreeRValue);
     }
 
@@ -264,7 +264,7 @@ public sealed partial class MidLevelIrLoweringTests
         var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
         var bumpCalls = function.Blocks
             .SelectMany(static block => block.Statements)
-            .Count(static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+            .Count(static statement => IsDirectCallStatement(statement, "Bump"));
 
         Assert.Equal(1, bumpCalls);
     }
@@ -317,7 +317,7 @@ public sealed partial class MidLevelIrLoweringTests
         var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
         var bumpCalls = function.Blocks
             .SelectMany(static block => block.Statements)
-            .Count(static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+            .Count(static statement => IsDirectCallStatement(statement, "Bump"));
 
         Assert.Equal(1, bumpCalls);
     }
@@ -370,7 +370,7 @@ public sealed partial class MidLevelIrLoweringTests
         var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
         var bumpCalls = function.Blocks
             .SelectMany(static block => block.Statements)
-            .Count(static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+            .Count(static statement => IsDirectCallStatement(statement, "Bump"));
 
         Assert.True(bumpCalls >= 1);
     }
@@ -429,7 +429,7 @@ public sealed partial class MidLevelIrLoweringTests
         var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
         var bumpCalls = function.Blocks
             .SelectMany(static block => block.Statements)
-            .Count(static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+            .Count(static statement => IsDirectCallStatement(statement, "Bump"));
 
         Assert.Equal(2, bumpCalls);
     }
@@ -471,7 +471,7 @@ public sealed partial class MidLevelIrLoweringTests
         var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
         var bumpCalls = function.Blocks
             .SelectMany(static block => block.Statements)
-            .Count(static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+            .Count(static statement => IsDirectCallStatement(statement, "Bump"));
 
         Assert.Equal(1, bumpCalls);
     }
@@ -518,7 +518,7 @@ public sealed partial class MidLevelIrLoweringTests
         var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
         var bumpCalls = function.Blocks
             .SelectMany(static block => block.Statements)
-            .Count(static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+            .Count(static statement => IsDirectCallStatement(statement, "Bump"));
 
         Assert.Equal(1, bumpCalls);
     }
@@ -558,7 +558,7 @@ public sealed partial class MidLevelIrLoweringTests
         var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
         var bumpCalls = function.Blocks
             .SelectMany(static block => block.Statements)
-            .Count(static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+            .Count(static statement => IsDirectCallStatement(statement, "Bump"));
 
         Assert.Equal(2, bumpCalls);
     }
@@ -599,7 +599,7 @@ public sealed partial class MidLevelIrLoweringTests
         var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
         var bumpCallIndexes = statements
             .Select((statement, index) => (statement, index))
-            .Where(static item => item.statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" })
+            .Where(static item => IsDirectCallStatement(item.statement, "Bump"))
             .Select(static item => item.index)
             .ToArray();
         var storageDeadIndex = Array.FindIndex(
@@ -653,7 +653,7 @@ public sealed partial class MidLevelIrLoweringTests
         var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
         Assert.Contains(
             statements,
-            static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Lib.Bump" });
+            static statement => IsDirectCallStatement(statement, "Lib.Bump"));
     }
 
     [Fact]
@@ -697,7 +697,7 @@ public sealed partial class MidLevelIrLoweringTests
         Assert.Contains(function.Blocks, static block => block.Label.Contains("enum_drop_", StringComparison.Ordinal));
         Assert.Contains(
             statements,
-            static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+            static statement => IsDirectCallStatement(statement, "Bump"));
         Assert.Contains(
             statements,
             static statement => statement.Kind == MidLevelIrStatementKind.StorageDead && statement.TargetName == "token");

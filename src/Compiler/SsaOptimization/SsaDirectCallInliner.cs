@@ -223,6 +223,10 @@ internal sealed class SsaDirectCallInliner
                 {
                     directCalls.Add(call.FunctionName);
                 }
+                else if (instruction is SsaCallInstruction statementCall)
+                {
+                    directCalls.Add(statementCall.FunctionName);
+                }
 
                 if (function.Blocks.Count == 1)
                 {
@@ -340,7 +344,7 @@ internal sealed class SsaDirectCallInliner
                     } valueInstruction
                     && TryInlineCall(
                         function,
-                        valueInstruction,
+                        valueInstruction.Location,
                         call,
                         candidates,
                         inlineSiteIndex,
@@ -354,6 +358,24 @@ internal sealed class SsaDirectCallInliner
                         replacements[valueInstruction.ResultName] = replacement;
                     }
 
+                    inlineSiteIndex++;
+                    changed = true;
+                    continue;
+                }
+
+                if (inlineSiteIndex < MaxInlineSitesPerFunction
+                    && rewrittenInstruction is SsaCallInstruction statementCall
+                    && TryInlineCall(
+                        function,
+                        statementCall.Location,
+                        statementCall,
+                        candidates,
+                        inlineSiteIndex,
+                        usedValueNames,
+                        out var statementClonedInstructions,
+                        out _))
+                {
+                    instructions.AddRange(statementClonedInstructions);
                     inlineSiteIndex++;
                     changed = true;
                     continue;
@@ -410,8 +432,8 @@ internal sealed class SsaDirectCallInliner
 
     private static bool TryInlineCall(
         SsaFunction caller,
-        SsaValueInstruction callInstruction,
-        SsaCallRValue call,
+        SourceLocation? callLocation,
+        ISsaDirectCallOperation call,
         IReadOnlyDictionary<string, InlineCandidate> candidates,
         int inlineSiteIndex,
         ISet<string> usedValueNames,
@@ -457,8 +479,8 @@ internal sealed class SsaDirectCallInliner
             usedValueNames,
             localReplacements,
             clones,
-            callInstruction.Location,
-            parameterAddressReplacements);
+                callLocation,
+                parameterAddressReplacements);
 
         foreach (var candidateInstruction in candidate.Instructions)
         {
@@ -494,7 +516,7 @@ internal sealed class SsaDirectCallInliner
             clones.Add(new SsaValueInstruction(
                 resultName,
                 rewrittenValue,
-                callInstruction.Location ?? valueInstruction.Location,
+                callLocation ?? valueInstruction.Location,
                 valueInstruction.ScopedNoAliasGroups,
                 valueInstruction.LoopAccessGroups));
 
@@ -670,7 +692,7 @@ internal sealed class SsaDirectCallInliner
     private static void AddParameterReplacements(
         SsaFunction caller,
         InlineCandidate candidate,
-        SsaCallRValue call,
+        ISsaDirectCallOperation call,
         int inlineSiteIndex,
         ISet<string> usedValueNames,
         IDictionary<string, SsaValue> localReplacements,
@@ -683,7 +705,8 @@ internal sealed class SsaDirectCallInliner
             var parameter = candidate.Function.Parameters[index];
             var argument = call.Arguments[index];
             if (parameterAddressReplacements is not null
-                && IsPointerBackedParameterType(parameter.Type))
+                && (IsPointerBackedParameterType(parameter.Type)
+                    || IsParameterAddressTaken(candidate, parameter.Name)))
             {
                 var indirectAddress = call.IndirectArgumentAddresses is not null
                                       && index < call.IndirectArgumentAddresses.Count
@@ -758,6 +781,18 @@ internal sealed class SsaDirectCallInliner
                 {
                     parameterAddressReplacements[parameter.Name] = temporaryArgumentAddress;
                 }
+                else if (TryCreateTemporaryArgumentAddressReplacement(
+                             argument,
+                             parameter.Type,
+                             $"arg_{parameter.Name}_slot_inl{inlineSiteIndex}",
+                             $"arg_{parameter.Name}_addr_inl{inlineSiteIndex}",
+                             usedValueNames,
+                             prologueInstructions,
+                             callLocation,
+                             out var temporaryValueArgumentAddress))
+                {
+                    parameterAddressReplacements[parameter.Name] = temporaryValueArgumentAddress;
+                }
             }
 
             if (argument is SsaValueReference reference
@@ -778,6 +813,14 @@ internal sealed class SsaDirectCallInliner
 
             localReplacements[$"arg_{parameter.Name}"] = argument;
         }
+    }
+
+    private static bool IsParameterAddressTaken(InlineCandidate candidate, string parameterName)
+    {
+        return candidate.Instructions
+            .OfType<SsaValueInstruction>()
+            .Any(instruction => instruction.Value is SsaAddressOfParameterRValue addressOfParameter
+                && string.Equals(addressOfParameter.ParameterName, parameterName, StringComparison.Ordinal));
     }
 
     private static bool TryCreateArgumentReferenceAddressReplacement(
@@ -822,7 +865,7 @@ internal sealed class SsaDirectCallInliner
 
     private static bool TryCreateIndirectLocalAddressReplacement(
         SsaFunction caller,
-        SsaCallRValue call,
+        ISsaDirectCallOperation call,
         int argumentIndex,
         StarkTypeSymbol parameterType,
         string addressBaseName,
@@ -1062,7 +1105,7 @@ internal sealed class SsaDirectCallInliner
     }
 
     private static bool HasUnsupportedIndirectArgumentMetadata(
-        SsaCallRValue call,
+        ISsaDirectCallOperation call,
         IReadOnlyList<TypedParameterSymbol> parameters)
     {
         for (var index = 0; index < call.Arguments.Count; index++)
@@ -1214,7 +1257,7 @@ internal sealed class SsaDirectCallInliner
         }
     }
 
-    private static bool HasConstantSpecializationArgument(SsaCallRValue call)
+    private static bool HasConstantSpecializationArgument(ISsaDirectCallOperation call)
     {
         return call.Arguments.Any(static argument => argument is
             SsaIntegerConstant
@@ -1277,6 +1320,22 @@ internal sealed class SsaDirectCallInliner
         {
             case SsaValueInstruction valueInstruction:
                 CollectUsedValueNames(valueInstruction.Value, names);
+                break;
+            case SsaCallInstruction call:
+                CollectDirectCallUsedValueNames(call, names);
+                break;
+            case SsaIndirectCallInstruction call:
+                CollectUsedValueNames(call.Target, names);
+                foreach (var argument in call.Arguments)
+                {
+                    CollectUsedValueNames(argument, names);
+                }
+
+                foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+                {
+                    CollectUsedValueNames(address, names);
+                }
+
                 break;
             case SsaStoreLocalInstruction storeLocal:
                 CollectUsedValueNames(storeLocal.Value, names);
@@ -1418,6 +1477,19 @@ internal sealed class SsaDirectCallInliner
         }
     }
 
+    private static void CollectDirectCallUsedValueNames(ISsaDirectCallOperation call, ISet<string> names)
+    {
+        foreach (var argument in call.Arguments)
+        {
+            CollectUsedValueNames(argument, names);
+        }
+
+        foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+        {
+            CollectUsedValueNames(address, names);
+        }
+    }
+
     private static void CollectUsedValueNames(SsaTerminator terminator, ISet<string> names)
     {
         if (terminator.Condition is not null)
@@ -1503,6 +1575,25 @@ internal sealed class SsaDirectCallInliner
             {
                 Value = RewriteRValue(valueInstruction.Value, replacements)
             },
+            SsaCallInstruction call => call with
+            {
+                Arguments = call.Arguments
+                    .Select(argument => RewriteValue(argument, replacements))
+                    .ToArray(),
+                IndirectArgumentLocalNames = RewriteIndirectArgumentLocalNames(
+                    call.IndirectArgumentLocalNames,
+                    RewriteIndirectArgumentAddresses(
+                        call.IndirectArgumentLocalNames,
+                        call.IndirectArgumentAddresses,
+                        replacements,
+                        parameterAddressReplacements: null)),
+                IndirectArgumentAddresses = RewriteIndirectArgumentAddresses(
+                    call.IndirectArgumentLocalNames,
+                    call.IndirectArgumentAddresses,
+                    replacements,
+                    parameterAddressReplacements: null)
+            },
+            SsaIndirectCallInstruction call => RewriteIndirectCallInstruction(call, replacements),
             SsaAllocateLocalInstruction allocateLocal => allocateLocal,
             SsaLifetimeStartInstruction lifetimeStart => lifetimeStart,
             SsaLifetimeEndInstruction lifetimeEnd => lifetimeEnd,
@@ -1720,6 +1811,45 @@ internal sealed class SsaDirectCallInliner
             };
     }
 
+    private static SsaInstruction RewriteIndirectCallInstruction(
+        SsaIndirectCallInstruction indirectCall,
+        IReadOnlyDictionary<string, SsaValue> replacements,
+        IReadOnlyDictionary<string, SsaValue>? parameterAddressReplacements = null)
+    {
+        var target = RewriteValue(indirectCall.Target, replacements);
+        var arguments = indirectCall.Arguments
+            .Select(argument => RewriteValue(argument, replacements))
+            .ToArray();
+        var indirectArgumentAddresses = RewriteIndirectArgumentAddresses(
+            indirectCall.IndirectArgumentLocalNames,
+            indirectCall.IndirectArgumentAddresses,
+            replacements,
+            parameterAddressReplacements);
+        var indirectArgumentLocalNames = RewriteIndirectArgumentLocalNames(
+            indirectCall.IndirectArgumentLocalNames,
+            indirectArgumentAddresses);
+
+        return target is SsaFunctionAddressValue functionAddress
+            ? new SsaCallInstruction(
+                functionAddress.FunctionName,
+                arguments,
+                indirectCall.Type,
+                indirectCall.Text,
+                indirectArgumentLocalNames,
+                SourceReturnType: indirectCall.SourceReturnType,
+                IndirectArgumentAddresses: indirectArgumentAddresses,
+                Location: indirectCall.Location,
+                ScopedNoAliasGroups: indirectCall.ScopedNoAliasGroups,
+                LoopAccessGroups: indirectCall.LoopAccessGroups)
+            : indirectCall with
+            {
+                Target = target,
+                Arguments = arguments,
+                IndirectArgumentLocalNames = indirectArgumentLocalNames,
+                IndirectArgumentAddresses = indirectArgumentAddresses
+            };
+    }
+
     private static IReadOnlyList<SsaValue?>? RewriteIndirectArgumentAddresses(
         IReadOnlyList<string?>? localNames,
         IReadOnlyList<SsaValue?>? addresses,
@@ -1888,6 +2018,13 @@ internal sealed class SsaDirectCallInliner
                                                     && (allowInlineClosureSpecialization
                                                         || resultIsUsed
                                                         || !IsInlineDroppableRValue(valueInstruction.Value)),
+            SsaCallInstruction call => IsInlineSafeDirectCall(call, ownerFunctionName),
+            SsaIndirectCallInstruction call => IsInlineSafeType(call.Type)
+                                               && IsInlineSafeValue(call.Target)
+                                               && call.Arguments.All(IsInlineSafeValue)
+                                               && HasInlineSafeIndirectArgumentMetadata(
+                                                   call.IndirectArgumentLocalNames,
+                                                   call.IndirectArgumentAddresses),
             SsaStoreIndirectInstruction storeIndirect => IsInlineSafeValue(storeIndirect.Address)
                                                          && IsInlineSafeValue(storeIndirect.Value),
             SsaCopyMemoryInstruction copyMemory => IsInlineSafeValue(copyMemory.DestinationAddress)
@@ -1895,6 +2032,16 @@ internal sealed class SsaDirectCallInliner
             SsaStoreGlobalInstruction storeGlobal => IsInlineSafeValue(storeGlobal.Value),
             _ => false
         };
+    }
+
+    private static bool IsInlineSafeDirectCall(ISsaDirectCallOperation call, string ownerFunctionName)
+    {
+        return !string.Equals(call.FunctionName, ownerFunctionName, StringComparison.Ordinal)
+               && IsInlineSafeType(call.Type)
+               && call.Arguments.All(IsInlineSafeValue)
+               && HasInlineSafeIndirectArgumentMetadata(
+                   call.IndirectArgumentLocalNames,
+                   call.IndirectArgumentAddresses);
     }
 
     private static bool TryResolveParameterAddressAlias(

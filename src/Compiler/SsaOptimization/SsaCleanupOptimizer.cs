@@ -244,6 +244,8 @@ internal sealed class SsaCleanupOptimizer
                         break;
 
                     case SsaStoreLocalInstruction:
+                    case SsaCallInstruction:
+                    case SsaIndirectCallInstruction:
                     case SsaCopyMemoryInstruction:
                     case SsaStoreIndirectInstruction:
                     case SsaStoreGlobalInstruction:
@@ -2415,6 +2417,27 @@ internal sealed class SsaCleanupOptimizer
             case SsaValueInstruction valueInstruction:
                 AddReadOrEscapedLocalSlots(valueInstruction.Value, definitions, requiredLocals);
                 break;
+            case SsaCallInstruction call:
+                AddReadOrEscapedDirectCallLocalSlots(call, definitions, requiredLocals);
+                break;
+            case SsaIndirectCallInstruction call:
+                AddLocalRoots(call.Target, definitions, requiredLocals);
+                foreach (var argument in call.Arguments)
+                {
+                    AddLocalRoots(argument, definitions, requiredLocals);
+                }
+
+                foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+                {
+                    AddLocalRoots(address, definitions, requiredLocals);
+                }
+
+                foreach (var localName in call.IndirectArgumentLocalNames?.OfType<string>() ?? [])
+                {
+                    requiredLocals.Add(localName);
+                }
+
+                break;
             case SsaStoreLocalInstruction storeLocal:
                 requiredLocals.Add(storeLocal.LocalName);
                 AddLocalRoots(storeLocal.Value, definitions, requiredLocals);
@@ -2514,6 +2537,27 @@ internal sealed class SsaCleanupOptimizer
         }
     }
 
+    private static void AddReadOrEscapedDirectCallLocalSlots(
+        ISsaDirectCallOperation call,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> requiredLocals)
+    {
+        foreach (var argument in call.Arguments)
+        {
+            AddLocalRoots(argument, definitions, requiredLocals);
+        }
+
+        foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+        {
+            AddLocalRoots(address, definitions, requiredLocals);
+        }
+
+        foreach (var localName in call.IndirectArgumentLocalNames?.OfType<string>() ?? [])
+        {
+            requiredLocals.Add(localName);
+        }
+    }
+
     private static bool TryResolveSingleLocalRoot(
         SsaValue value,
         IReadOnlyDictionary<string, SsaRValue> definitions,
@@ -2603,6 +2647,14 @@ internal sealed class SsaCleanupOptimizer
                 {
                     AddReferencedLocalSlots(valueInstruction.Value, requiredLocals);
                 }
+                else if (instruction is SsaCallInstruction directCall)
+                {
+                    AddReferencedDirectCallLocalSlots(directCall, requiredLocals);
+                }
+                else if (instruction is SsaIndirectCallInstruction indirectCall)
+                {
+                    AddReferencedIndirectCallLocalSlots(indirectCall, requiredLocals);
+                }
             }
         }
 
@@ -2642,6 +2694,22 @@ internal sealed class SsaCleanupOptimizer
                 }
 
                 break;
+        }
+    }
+
+    private static void AddReferencedDirectCallLocalSlots(ISsaDirectCallOperation call, ISet<string> requiredLocals)
+    {
+        foreach (var localName in call.IndirectArgumentLocalNames?.OfType<string>() ?? [])
+        {
+            requiredLocals.Add(localName);
+        }
+    }
+
+    private static void AddReferencedIndirectCallLocalSlots(ISsaIndirectCallOperation call, ISet<string> requiredLocals)
+    {
+        foreach (var localName in call.IndirectArgumentLocalNames?.OfType<string>() ?? [])
+        {
+            requiredLocals.Add(localName);
         }
     }
 
@@ -2714,6 +2782,12 @@ internal sealed class SsaCleanupOptimizer
         return instruction switch
         {
             SsaValueInstruction valueInstruction => EnumerateRValueOperands(valueInstruction.Value),
+            SsaCallInstruction call => call.IndirectArgumentAddresses is { Count: > 0 }
+                ? call.Arguments.Concat(call.IndirectArgumentAddresses.OfType<SsaValue>())
+                : call.Arguments,
+            SsaIndirectCallInstruction call => call.IndirectArgumentAddresses is { Count: > 0 }
+                ? call.Arguments.Prepend(call.Target).Concat(call.IndirectArgumentAddresses.OfType<SsaValue>())
+                : call.Arguments.Prepend(call.Target),
             SsaLifetimeStartInstruction => [],
             SsaLifetimeEndInstruction => [],
             SsaDeallocateLocalInstruction => [],
@@ -3402,6 +3476,25 @@ internal sealed class SsaCleanupOptimizer
             SsaValueInstruction valueInstruction => new SsaValueInstruction(
                 valueInstruction.ResultName,
                 RewriteRValue(valueInstruction.Value, replacements)),
+            SsaCallInstruction call => call with
+            {
+                Arguments = call.Arguments
+                    .Select(argument => RewriteValue(argument, replacements))
+                    .ToArray(),
+                IndirectArgumentAddresses = call.IndirectArgumentAddresses?
+                    .Select(address => address is null ? null : RewriteValue(address, replacements))
+                    .ToArray()
+            },
+            SsaIndirectCallInstruction call => call with
+            {
+                Target = RewriteValue(call.Target, replacements),
+                Arguments = call.Arguments
+                    .Select(argument => RewriteValue(argument, replacements))
+                    .ToArray(),
+                IndirectArgumentAddresses = call.IndirectArgumentAddresses?
+                    .Select(address => address is null ? null : RewriteValue(address, replacements))
+                    .ToArray()
+            },
             SsaAllocateLocalInstruction allocateLocal => allocateLocal,
             SsaLifetimeStartInstruction lifetimeStart => lifetimeStart,
             SsaLifetimeEndInstruction lifetimeEnd => lifetimeEnd,
@@ -3492,11 +3585,13 @@ internal sealed class SsaCleanupOptimizer
             SsaExtractIndexRValue extractIndex => new SsaExtractIndexRValue(
                 RewriteValue(extractIndex.Target, replacements),
                 extractIndex.ElementIndex,
+                extractIndex.OperationFamily,
                 extractIndex.Type,
                 extractIndex.Text),
             SsaInsertIndexRValue insertIndex => new SsaInsertIndexRValue(
                 RewriteValue(insertIndex.Target, replacements),
                 insertIndex.ElementIndex,
+                insertIndex.OperationFamily,
                 RewriteValue(insertIndex.Value, replacements),
                 insertIndex.Type,
                 insertIndex.Text),

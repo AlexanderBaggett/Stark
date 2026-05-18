@@ -75,6 +75,8 @@ public sealed class SsaEmitterCoverageMatrixTests
             Row(nameof(SsaLoadLocalRValue), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.DynamicArrayIndexEmitsAddressBasedLoad"),
 
             Row(nameof(SsaValueInstruction), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.StraightLineFunctionEmitsOptimizedLlvmBody"),
+            Row(nameof(SsaCallInstruction), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.DirectVoidStatementCallsWithOutParametersUseCallerStorage", "LlvmIrEmissionTests.SystemTextAsciiToUnicodeLiteralSpecializationRewritesForwardPhiIncomingLabel"),
+            Row(nameof(SsaIndirectCallInstruction), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.FunctionPointerCallsEmitFastccIndirectCall"),
             Row(nameof(SsaAllocateLocalInstruction), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.DynamicArrayIndexEmitsAddressBasedLoad", "LlvmIrEmissionTests.HeapObjectCreationUsesAllocatorLowering"),
             Row(nameof(SsaLifetimeStartInstruction), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.DynamicArrayIndexEmitsAddressBasedLoad"),
             Row(nameof(SsaLifetimeEndInstruction), CoverageKind.PositiveLlvmEmission, "LlvmIrEmissionTests.DynamicArrayIndexEmitsAddressBasedLoad"),

@@ -22,7 +22,7 @@ public enum ThreadJoinResult {
 }
 
 public struct Thread {
-    internal rawptr<i8[min max]> Handle;
+    internal rawmutptr<i8[min max]> Handle;
     internal bool Joined;
     internal bool Detached;
     internal bool StartFailed;

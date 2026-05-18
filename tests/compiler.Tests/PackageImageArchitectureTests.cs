@@ -1160,6 +1160,351 @@ public sealed class PackageImageArchitectureTests
     }
 
     [Fact]
+    public void PackageImageGenericTemplatesPublishAllBoundOperationFamilies()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-bound-ops-");
+
+        try
+        {
+            var sourcePath = Path.Combine(tempDirectory.FullName, "System.Text.stark");
+            var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "System.Text.starkpkg.json" : "libSystem.Text.starkpkg.json");
+            var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "System.Text.lib" : "libSystem.Text.a");
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    module System.Text
+
+                    public finite law ascii AsciiView(Ascii source);
+                    public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+                    enum Status {
+                        Ok,
+                        Err(i32[min max]),
+                        Named { Code: i32[min max] },
+                    }
+
+                    struct Box {
+                        i32[min max] Value;
+
+                        fn i32[min max] Get(borrow Box self) {
+                            return self.Value;
+                        }
+
+                        fn bool Fill(borrow Box self, out i32[min max] value) {
+                            value = self.Value;
+                            return true;
+                        }
+                    }
+
+                    fn i32[min max] Inc(i32[min max] value) {
+                        return value + 1;
+                    }
+
+                    unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value) {
+                        return op(value);
+                    }
+
+                    fn bool Write(out i32[min max] value) {
+                        value = 9;
+                        return true;
+                    }
+
+                    unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value) {
+                        return op(value);
+                    }
+
+                    fn i32[min max] Choose(bool flag) {
+                        switch (flag) {
+                            case true:
+                                return 1;
+                            case false:
+                                return 0;
+                        }
+                    }
+
+                    fn i32[min max] Score(Status status) {
+                        switch (status) {
+                            case Status.Ok:
+                                return 1;
+                            case Status.Err(var error):
+                                return error;
+                            case Status.Named { Code: var code }:
+                                return code;
+                        }
+                    }
+
+                    public unsafe fn T Run<T>(
+                        T input,
+                        fnptr<fn i32[min max](i32[min max])> pointerOp,
+                        closure<fn i32[min max](i32[min max])> closureOp) {
+                        stack mut Box box = new Box() { Value = 3 };
+                        stack mut i32[min max][2] values = { 4, 5 };
+                        stack mut dynamic u32[0 max] items = new(1);
+                        stack Ascii label[4 + 4] = $"ok";
+                        stack Ascii joined[12] = label + "!";
+                        stack i64[min max] boxSize = sizeof(Box);
+                        stack i64[min max] boxAlign = alignof(Box);
+                        stack mut i64[min max] marker = 0;
+                        switch (true) {
+                            case true:
+                                marker = boxSize;
+                            case false:
+                                marker = boxAlign;
+                        }
+                        stack Status ok = Status.Ok;
+                        stack Status named = Status.Named { Code: 5 };
+                        values[0] = Inc(box.Get());
+                        items.Reserve(1);
+                        if (!box.Fill(values[1])) {
+                            return input;
+                        }
+                        if (!ApplyOut(Write, values[1])) {
+                            return input;
+                        }
+                        if (Score(named) == 0) {
+                            return input;
+                        }
+                        true ? pointerOp(1) : closureOp(2);
+                        stack i32[min max] total = values[0] + values[1] + Apply(Inc, 2) + pointerOp(3) + closureOp(6) + Choose(true) + Score(Status.Ok) + Score(Status.Err(4));
+                        return input;
+                    }
+                    """,
+                    sourcePath),
+                new CompilerOptions(StopAfterPassId: "lower-abi"));
+
+            Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(result, libraryPath);
+            var module = Assert.Single(manifest.Modules, static item => item.ModuleName == "System.Text");
+            var template = Assert.Single(
+                module.EffectiveGenericTemplates!.Functions,
+                static item => item.QualifiedResolvedName == "System.Text.Run");
+            Assert.NotNull(template.TypedBody);
+            Assert.Contains("\"Kind\": \"enum-value\"", manifest.ToJson(), StringComparison.Ordinal);
+            Assert.Contains("\"EnumLayouts\"", manifest.ToJson(), StringComparison.Ordinal);
+            Assert.Contains("\"StorageCapacity\": 8", manifest.ToJson(), StringComparison.Ordinal);
+            Assert.NotNull(template.BoundOperations);
+
+            var kinds = template.BoundOperations!
+                .Select(static operation => operation.Kind)
+                .ToHashSet(StringComparer.Ordinal);
+            var requiredKinds = new HashSet<string>(
+                [
+                    "direct-call",
+                    "member-call",
+                    "function-pointer-call",
+                    "closure-call",
+                    "index-access",
+                    "object-creation",
+                    "enum-construction",
+                    "enum-call",
+                    "enum-value",
+                    "dynamic-storage-operation",
+                    "text-interpolation",
+                    "text-build",
+                    "layout-query",
+                    "switch-dispatch"
+                ],
+                StringComparer.Ordinal);
+            foreach (var requiredKind in requiredKinds)
+            {
+                Assert.Contains(requiredKind, kinds);
+            }
+
+            Assert.Contains(
+                template.BoundOperations!,
+                static operation => operation.Kind == "function-pointer-call"
+                    && operation.FunctionPointerType?.Kind == "functionpointer");
+            Assert.Contains(
+                template.BoundOperations!,
+                static operation => operation.Kind == "dynamic-storage-operation"
+                    && operation.ReceiverType?.ElementType?.Kind == "integer"
+                    && operation.ResultType.Kind == "void");
+
+            Assert.True(PackageImageLoader.TryBuildLoadedPackageImageFacts(CreateResolvedPackageModule(module), out var facts));
+            var importedTemplate = Assert.Single(facts.FunctionTemplates, static pair => pair.Key == "System.Text.Run").Value;
+            Assert.Contains(importedTemplate.BoundOperations, static operation => operation.Operation is BoundFunctionPointerCallOperation);
+            Assert.Contains(importedTemplate.BoundOperations, static operation => operation.Operation is BoundDynamicStorageOperation);
+            Assert.Contains(importedTemplate.BoundOperations, static operation => operation.Operation is BoundSwitchDispatchOperation);
+
+            var corruptedTemplates = new StarkPackageGenericTemplateSection(
+                module.EffectiveGenericTemplates!.Functions
+                    .Select(static item => item.QualifiedResolvedName == "System.Text.Run"
+                        ? item with { BodyText = "{ return this is not valid Stark; }" }
+                        : item)
+                    .ToArray());
+            var corruptedModule = module with
+            {
+                GenericTemplates = corruptedTemplates,
+                CompilerSections = module.CompilerSections is null
+                    ? null
+                    : module.CompilerSections with { GenericTemplates = corruptedTemplates }
+            };
+            var corruptedManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(item => item.ModuleName == "System.Text" ? corruptedModule : item)
+                    .ToArray()
+            };
+            File.WriteAllText(manifestPath, corruptedManifest.ToJson());
+            Assert.True(PackageImageLoader.TryBuildModuleSource(
+                new ResolvedPackageModule(manifestPath, libraryPath, corruptedManifest, corruptedModule),
+                out var corruptedSourceText));
+            Assert.DoesNotContain("this is not valid Stark", corruptedSourceText, StringComparison.Ordinal);
+            File.Delete(sourcePath);
+
+            var consumerResult = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    import System.Text
+                    module Demo
+
+                    fn i32[min max] LocalInc(i32[min max] value) {
+                        return value + 1;
+                    }
+
+                    unsafe fn i32[min max] Run() {
+                        stack fnptr<fn i32[min max](i32[min max])> pointerOp = LocalInc;
+                        stack closure<fn i32[min max](i32[min max])> closureOp =
+                            (i32[min max] value) => value + 6;
+                        return System.Text.Run(7, pointerOp, closureOp);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "emit-llvm"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(consumerResult, "Imported generic typed-body consumer builds");
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+            Assert.NotNull(mir);
+            MidLevelIrLoweringTests.AssertMirHasNoNullLoweringArtifacts(mir);
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+            Assert.NotNull(llvm);
+            Assert.DoesNotContain("this is not valid Stark", llvm!.Text, StringComparison.Ordinal);
+            Assert.Contains("__stark_mono_fn_Demo__System_Text_Run__", llvm.Text, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImageConsumerLowersImportedGenericTypedBodyAfterSourceAndBodyTextAreRemoved()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-bound-typed-consumer-");
+
+        try
+        {
+            var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+            var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+            var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    module Facade
+
+                    public struct Pair<T> {
+                        T Left;
+                        T Right;
+                    }
+
+                    public fn T Pick<T>(T left, T right, bool choose) {
+                        stack Pair<T> pair = new Pair<T>() { Left = left, Right = right };
+                        switch (choose) {
+                            case true:
+                                return pair.Left;
+                            case false:
+                                return pair.Right;
+                        }
+                    }
+                    """,
+                    sourcePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            var facadeModule = Assert.Single(manifest.Modules, static item => item.ModuleName == "Facade");
+            var pickTemplate = Assert.Single(
+                facadeModule.EffectiveGenericTemplates!.Functions,
+                static item => item.QualifiedResolvedName == "Facade.Pick");
+            Assert.NotNull(pickTemplate.TypedBody);
+            Assert.Contains(pickTemplate.BoundOperations ?? [], static operation => operation.Kind == "object-creation");
+            Assert.Contains(pickTemplate.BoundOperations ?? [], static operation => operation.Kind == "switch-dispatch");
+
+            var corruptedTemplates = new StarkPackageGenericTemplateSection(
+                facadeModule.EffectiveGenericTemplates!.Functions
+                    .Select(static template => template.QualifiedResolvedName == "Facade.Pick"
+                        ? template with { BodyText = "{ return this is not valid Stark; }" }
+                        : template)
+                    .ToArray());
+            var corruptedModule = facadeModule with
+            {
+                GenericTemplates = corruptedTemplates,
+                CompilerSections = facadeModule.CompilerSections is null
+                    ? null
+                    : facadeModule.CompilerSections with { GenericTemplates = corruptedTemplates }
+            };
+            var corruptedManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(item => item.ModuleName == "Facade" ? corruptedModule : item)
+                    .ToArray()
+            };
+            File.WriteAllText(manifestPath, corruptedManifest.ToJson());
+            File.Delete(sourcePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32[min max] Run(bool choose) {
+                        stack i32[min max] left = 3;
+                        stack i32[min max] right = 4;
+                        return Facade.Pick(left, right, choose);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "emit-llvm"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(consumerResult, "Imported generic typed-body consumer builds");
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+            Assert.NotNull(mir);
+            MidLevelIrLoweringTests.AssertMirHasNoNullLoweringArtifacts(mir);
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+            Assert.NotNull(llvm);
+            Assert.DoesNotContain("this is not valid Stark", llvm!.Text, StringComparison.Ordinal);
+            Assert.Contains("__stark_mono_fn_Demo__Facade_Pick__i32", llvm.Text, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void PackageImageLoaderPrefersTypedInterfaceImportsOverExplicitSourceSurfaceImports()
     {
         var facadeModule = new StarkPackageModuleManifest(

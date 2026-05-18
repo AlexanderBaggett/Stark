@@ -3,6 +3,7 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using Antlr4.Runtime;
+using Stark.Compiler.LlvmIrEmission;
 using Stark.Parsing;
 
 namespace Stark.Compiler;
@@ -10,11 +11,31 @@ namespace Stark.Compiler;
 internal sealed partial class MidLevelIrLowerer
 {
     private static readonly int[] SupportedConstIntegerWidths = [8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024];
+    private readonly record struct BoundOperationKey(string? FunctionName, int Line, int Column);
+
+    private sealed record BoundOperationIndex(
+        IReadOnlyDictionary<BoundOperationKey, BoundDirectCallOperation> DirectCalls,
+        IReadOnlyDictionary<BoundOperationKey, BoundMemberCallOperation> MemberCalls,
+        IReadOnlyDictionary<BoundOperationKey, BoundFunctionPointerCallOperation> FunctionPointerCalls,
+        IReadOnlyDictionary<BoundOperationKey, BoundClosureCallOperation> ClosureCalls,
+        IReadOnlyDictionary<BoundOperationKey, BoundIndexAccessOperation> IndexAccesses,
+        IReadOnlyDictionary<BoundOperationKey, BoundObjectCreationOperation> ObjectCreations,
+        IReadOnlyDictionary<BoundOperationKey, BoundEnumConstructionOperation> EnumConstructions,
+        IReadOnlyDictionary<BoundOperationKey, BoundEnumCallOperation> EnumCalls,
+        IReadOnlyDictionary<BoundOperationKey, BoundEnumValueOperation> EnumValues,
+        IReadOnlyDictionary<BoundOperationKey, BoundDynamicStorageOperation> DynamicStorageOperations,
+        IReadOnlyDictionary<BoundOperationKey, BoundTextInterpolationOperation> TextInterpolations,
+        IReadOnlyDictionary<BoundOperationKey, BoundTextBuildOperation> TextBuilds,
+        IReadOnlyDictionary<BoundOperationKey, BoundLayoutQueryOperation> LayoutQueries,
+        IReadOnlyDictionary<BoundOperationKey, BoundSwitchDispatchOperation> SwitchDispatches);
+
     private readonly CompilerLogBag _logs;
     private readonly ModuleGraph _moduleGraph;
     private readonly TypeCheckModel _typeModel;
     private readonly EnumLayoutModel _enumLayoutModel;
     private readonly IReadOnlyDictionary<string, NamedTypeSymbol> _loweringNamedTypes;
+    private readonly IReadOnlyDictionary<string, ConcreteTypeLayout> _publishedConcreteLayouts;
+    private readonly IReadOnlyDictionary<string, EnumLayoutSymbol> _publishedEnumLayouts;
     private readonly Dictionary<string, FunctionLoweringContext> _functionsByName;
     private readonly Dictionary<string, ConstructorLoweringContext> _constructorsByBodyKey;
     private readonly Dictionary<string, DestructorLoweringContext> _destructorsByTypeName;
@@ -23,6 +44,7 @@ internal sealed partial class MidLevelIrLowerer
     private readonly Dictionary<string, TypedGlobalSymbol> _fallbackGlobals;
     private readonly Dictionary<LiteralKey, StarkTypeSymbol> _literalTypes;
     private readonly Dictionary<ObjectCreationKey, TypedConstructorShape?> _objectCreationConstructors;
+    private readonly BoundOperationIndex _boundOperations;
     private readonly Dictionary<string, ImportedFunctionTemplateSummary> _importedFunctionTemplates;
     private static readonly IReadOnlyDictionary<string, StarkTypeSymbol> EmptyTypeSubstitution =
         new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
@@ -40,6 +62,8 @@ internal sealed partial class MidLevelIrLowerer
         _typeModel = typeModel;
         _enumLayoutModel = enumLayoutModel;
         _loweringNamedTypes = CollectFallbackNamedTypes(context, moduleGraph, typeModel.NamedTypes, typeModel.TypeAliases, loadedModules);
+        _publishedConcreteLayouts = LlvmSpecializationEmissionPlanner.BuildPublishedConcreteLayouts(loadedModules);
+        _publishedEnumLayouts = BuildPublishedEnumLayouts(loadedModules);
         _functionsByName = CollectFunctionsByQualifiedName(loadedModules, typeModel);
         _constructorsByBodyKey = CollectConstructorsByBodyKey(loadedModules);
         _destructorsByTypeName = CollectDestructorsByTypeName(loadedModules);
@@ -52,10 +76,63 @@ internal sealed partial class MidLevelIrLowerer
         _objectCreationConstructors = typeModel.ObjectCreations
             .GroupBy(static record => new ObjectCreationKey(record.ExpressionText, record.Location.Line, record.Location.Column))
             .ToDictionary(static group => group.Key, static group => group.Last().Constructor);
+        _boundOperations = BuildBoundOperationIndex(typeModel.BoundOperations);
         _importedFunctionTemplates = loadedModules.ImportedModules
             .Where(static module => module.PackageImageFacts is { FunctionTemplates.Count: > 0 })
             .SelectMany(static module => module.PackageImageFacts!.FunctionTemplates)
             .ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal);
+    }
+
+    private static BoundOperationIndex BuildBoundOperationIndex(IEnumerable<BoundOperation> operations)
+    {
+        var materialized = operations.ToArray();
+        return new BoundOperationIndex(
+            BuildBoundOperationMap<BoundDirectCallOperation>(materialized),
+            BuildBoundOperationMap<BoundMemberCallOperation>(materialized),
+            BuildBoundOperationMap<BoundFunctionPointerCallOperation>(materialized),
+            BuildBoundOperationMap<BoundClosureCallOperation>(materialized),
+            BuildBoundOperationMap<BoundIndexAccessOperation>(materialized),
+            BuildBoundOperationMap<BoundObjectCreationOperation>(materialized),
+            BuildBoundOperationMap<BoundEnumConstructionOperation>(materialized),
+            BuildBoundOperationMap<BoundEnumCallOperation>(materialized),
+            BuildBoundOperationMap<BoundEnumValueOperation>(materialized),
+            BuildBoundOperationMap<BoundDynamicStorageOperation>(materialized),
+            BuildBoundOperationMap<BoundTextInterpolationOperation>(materialized),
+            BuildBoundOperationMap<BoundTextBuildOperation>(materialized),
+            BuildBoundOperationMap<BoundLayoutQueryOperation>(materialized),
+            BuildBoundOperationMap<BoundSwitchDispatchOperation>(materialized));
+    }
+
+    private static IReadOnlyDictionary<string, EnumLayoutSymbol> BuildPublishedEnumLayouts(LoadedModuleSet loadedModules)
+    {
+        var layouts = new Dictionary<string, EnumLayoutSymbol>(StringComparer.Ordinal);
+        foreach (var module in loadedModules.ImportedModules)
+        {
+            if (module.PackageImageFacts is not { EnumLayouts.Count: > 0 } packageImageFacts)
+            {
+                continue;
+            }
+
+            foreach (var (qualifiedName, layout) in packageImageFacts.EnumLayouts)
+            {
+                layouts.TryAdd(qualifiedName, layout);
+            }
+        }
+
+        return layouts;
+    }
+
+    private static IReadOnlyDictionary<BoundOperationKey, TOperation> BuildBoundOperationMap<TOperation>(
+        IEnumerable<BoundOperation> operations)
+        where TOperation : BoundOperation
+    {
+        return operations
+            .OfType<TOperation>()
+            .GroupBy(static operation => new BoundOperationKey(
+                operation.EnclosingFunctionName,
+                operation.Location.Line,
+                operation.Location.Column))
+            .ToDictionary(static group => group.Key, static group => group.Last());
     }
 
     public MidLevelIrModule Lower(HighLevelIrModule hir)
@@ -182,6 +259,9 @@ internal sealed partial class MidLevelIrLowerer
             _fallbackGlobals,
             _literalTypes,
             _objectCreationConstructors,
+            _publishedConcreteLayouts,
+            _publishedEnumLayouts,
+            _boundOperations,
             importedTemplateSummary,
             _materializedSpecializationSymbols,
             function.GenericTypeSubstitution,
@@ -325,11 +405,7 @@ internal sealed partial class MidLevelIrLowerer
             .Skip(1)
             .Select(static parameter => (MidLevelIrOperand)new MidLevelIrParameterOperand(parameter.Name, parameter.Type))
             .ToArray();
-        var call = new MidLevelIrCallRValue(
-            adapter.Signature.Name,
-            sourceArguments,
-            adapter.Signature.ReturnType,
-            $"{adapter.Signature.DisplaySourceName}({string.Join(", ", sourceArguments.Select(static argument => argument.Text))})");
+        var callText = $"{adapter.Signature.DisplaySourceName}({string.Join(", ", sourceArguments.Select(static argument => argument.Text))})";
         var statements = new List<MidLevelIrStatement>();
         MidLevelIrOperand? returnValue = null;
         IReadOnlyList<MidLevelIrLocal> locals = [];
@@ -337,12 +413,21 @@ internal sealed partial class MidLevelIrLowerer
         {
             statements.Add(new MidLevelIrStatement(
                 MidLevelIrStatementKind.Evaluate,
-                call.Text,
-                Value: call,
-                Location: adapter.Location));
+                callText,
+                Location: adapter.Location,
+                Call: new MidLevelIrDirectCallStatementOperation(
+                    adapter.Signature.Name,
+                    sourceArguments,
+                    adapter.Signature.ReturnType,
+                    callText)));
         }
         else
         {
+            var call = new MidLevelIrCallRValue(
+                adapter.Signature.Name,
+                sourceArguments,
+                adapter.Signature.ReturnType,
+                callText);
             const string resultName = "$closure_adapter_result";
             statements.Add(new MidLevelIrStatement(
                 MidLevelIrStatementKind.Assign,
@@ -430,6 +515,9 @@ internal sealed partial class MidLevelIrLowerer
             _fallbackGlobals,
             _literalTypes,
             _objectCreationConstructors,
+            _publishedConcreteLayouts,
+            _publishedEnumLayouts,
+            _boundOperations,
             importedTemplateSummary: null,
             _materializedSpecializationSymbols,
             genericTypeSubstitution: null,

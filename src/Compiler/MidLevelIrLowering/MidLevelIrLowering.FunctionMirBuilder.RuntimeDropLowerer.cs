@@ -88,6 +88,18 @@ internal sealed partial class MidLevelIrLowerer
                 return;
             }
 
+            if (operand is MidLevelIrObjectConstructionOperand objectConstruction)
+            {
+                RecordMoveFromOperandCore(objectConstruction.Value, destinationType);
+                return;
+            }
+
+            if (operand is MidLevelIrEnumConstructionOperand enumConstruction)
+            {
+                RecordMoveFromOperandCore(enumConstruction.Value, destinationType);
+                return;
+            }
+
             if (operand is MidLevelIrLocalOperand closureCaptureLoad
                 && _closureCaptureMoveSourcesByTempName.TryGetValue(closureCaptureLoad.Name, out var captureName))
             {
@@ -292,8 +304,14 @@ internal sealed partial class MidLevelIrLowerer
                 return true;
             }
 
+            if (_publishedEnumLayouts.TryGetValue(type.NamedType, out layout!))
+            {
+                return true;
+            }
+
             var key = StarkTypeSymbols.GetGenericBaseName(type.NamedType);
-            return _enumLayoutModel.Layouts.TryGetValue(key, out layout!);
+            return _enumLayoutModel.Layouts.TryGetValue(key, out layout!)
+                || _publishedEnumLayouts.TryGetValue(key, out layout!);
         }
 
         private StarkTypeSymbol ApplyRuntimeDropGenericSubstitution(StarkTypeSymbol type, StarkTypeSymbol ownerType)
@@ -416,6 +434,7 @@ internal sealed partial class MidLevelIrLowerer
                 new MidLevelIrExtractIndexRValue(
                     operand,
                     ElementIndex: 1,
+                    OperationFamily: IndexedElementOperationFamily.ClosureComponent,
                     environmentPointerType,
                     $"{operand.Text}.env"),
                 "closure_drop_env");
@@ -431,6 +450,7 @@ internal sealed partial class MidLevelIrLowerer
                 new MidLevelIrExtractIndexRValue(
                     operand,
                     ElementIndex: 2,
+                    OperationFamily: IndexedElementOperationFamily.ClosureComponent,
                     dropPointerType,
                     $"{operand.Text}.drop"),
                 "closure_drop_fn");
@@ -438,7 +458,7 @@ internal sealed partial class MidLevelIrLowerer
             Emit(
                 MidLevelIrStatementKind.Evaluate,
                 $"drop {operand.Text}",
-                value: new MidLevelIrIndirectCallRValue(
+                call: new MidLevelIrIndirectCallStatementOperation(
                     dropPointer,
                     [mutableEnvironmentPointer],
                     StarkTypeSymbols.Void,
@@ -563,6 +583,7 @@ internal sealed partial class MidLevelIrLowerer
                     new MidLevelIrExtractIndexRValue(
                         aggregate,
                         index,
+                        IndexedElementOperationFamily.FixedArrayElement,
                         elementType,
                         $"{aggregate.Text}[{index}]"),
                     "index");

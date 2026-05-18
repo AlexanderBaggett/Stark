@@ -475,6 +475,109 @@ public sealed class CompilerPipelineEmitLlvmTests
             }
         }
     }
+
+    [Fact]
+    public void PackageBackedImportedGenericInlineBodiesEmitReachableInlineClonesFromTypedFacts()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-imported-generic-inline-clone-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public inline fn i32[min max] Blend<T>(T tag, i32[min max] value) {
+                    stack i32[min max] a = value + 1;
+                    stack i32[min max] b = a + 2;
+                    stack i32[min max] c = b + 3;
+                    stack i32[min max] d = c + 4;
+                    stack i32[min max] e = d + 5;
+                    stack i32[min max] f = e + 6;
+                    stack i32[min max] g = f + 7;
+                    stack i32[min max] h = g + 8;
+                    stack i32[min max] i = h + 9;
+                    stack i32[min max] j = i + 10;
+                    stack i32[min max] k = j + 11;
+                    stack i32[min max] l = k + 12;
+                    stack i32[min max] m = l + 13;
+                    return m;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+            var corruptedTemplates = new StarkPackageGenericTemplateSection(
+                facadeModule.EffectiveGenericTemplates!.Functions
+                    .Select(static template => template.QualifiedResolvedName == "Facade.Blend"
+                        ? template with { BodyText = "{ return this is not valid Stark; }" }
+                        : template)
+                    .ToArray());
+            var corruptedModule = facadeModule with
+            {
+                GenericTemplates = corruptedTemplates,
+                CompilerSections = facadeModule.CompilerSections is null
+                    ? null
+                    : facadeModule.CompilerSections with { GenericTemplates = corruptedTemplates }
+            };
+            File.WriteAllText(
+                manifestPath,
+                (manifest with
+                {
+                    Modules = manifest.Modules
+                        .Select(module => module.ModuleName == "Facade" ? corruptedModule : module)
+                        .ToArray()
+                }).ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32[min max] Run(i32[min max] left, i32[min max] right) {
+                        return Facade.Blend(left, right);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    OptimizationLevel: CompilerOptimizationLevel.O0,
+                    StopAfterPassId: "emit-llvm",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+            Assert.NotNull(plan);
+            var function = Assert.Single(plan.Functions, static function => function.TemplateName == "Facade.Blend");
+            Assert.Equal("__stark_mono_fn_Demo__Facade_Blend__i32", function.SymbolName);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+            Assert.NotNull(llvmModule);
+            Assert.DoesNotContain("this is not valid Stark", llvmModule!.Text, StringComparison.Ordinal);
+            Assert.Contains($"; closed-world imported inline body: {function.SymbolName}", llvmModule.Text, StringComparison.Ordinal);
+            Assert.Contains($"@__stark_inline_clone_{function.SymbolName}(", llvmModule.Text, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
     [Fact]
     public void ManifestBackedImportedGenericSpecializationsUseTemplateSemanticAttributesWhenFunctionSemanticsAreMissing()
     {

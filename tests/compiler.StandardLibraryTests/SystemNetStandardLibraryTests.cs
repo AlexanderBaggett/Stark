@@ -201,7 +201,9 @@ public sealed class SystemNetStandardLibraryTests : StandardLibraryTestSuite
 
         var netResult = Assert.Single(
             layouts,
-            static layout => layout.Key.StartsWith("System.Net.NetResult<", StringComparison.Ordinal)).Value;
+            static layout => layout.Key.StartsWith("System.Net.NetResult<", StringComparison.Ordinal)
+                             && layout.Value.OrderedFields.Count > 1
+                             && string.Equals(layout.Value.OrderedFields[1].Type.DisplayName, "i32", StringComparison.Ordinal)).Value;
         AssertCompactTag(netResult, bitWidth: 8, maxTagValue: 1);
         Assert.Equal(["$tag", "$Ok_0", "$Err_0"], netResult.OrderedFields.Select(static field => field.Name).ToArray());
         Assert.Equal("i32", netResult.OrderedFields[1].Type.DisplayName);

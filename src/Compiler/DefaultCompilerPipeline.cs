@@ -893,16 +893,7 @@ public static class DefaultCompilerPipeline
                         expanded,
                         pending);
                     ExpandImportedTemplateCallSummaryTriggers(
-                        importedTemplate.DirectCalls.Select(static call => call.Signature),
-                        substitution,
-                        trigger.Location,
-                        typeModel,
-                        availableFunctionSignatures,
-                        seen,
-                        expanded,
-                        pending);
-                    ExpandImportedTemplateCallSummaryTriggers(
-                        importedTemplate.MemberCalls.Select(static call => call.Signature),
+                        GetImportedTemplateReachableCallSignatures(importedTemplate),
                         substitution,
                         trigger.Location,
                         typeModel,
@@ -1325,7 +1316,7 @@ public static class DefaultCompilerPipeline
                 AddExpandedTypeTriggers(concreteTargetType, location, typeModel, seen, expanded);
             }
 
-            foreach (var callSignature in importedTemplate.DirectCalls.Select(static call => call.Signature))
+            foreach (var callSignature in GetImportedTemplateReachableCallSignatures(importedTemplate))
             {
                 AddTypeTriggersFromCallSignature(
                     callSignature,
@@ -1336,10 +1327,355 @@ public static class DefaultCompilerPipeline
                     expanded);
             }
 
-            foreach (var callSignature in importedTemplate.MemberCalls.Select(static call => call.Signature))
+            AddTypeTriggersFromImportedTemplateBoundOperations(
+                importedTemplate,
+                substitution,
+                location,
+                typeModel,
+                seen,
+                expanded);
+        }
+
+        private static IReadOnlyList<TypedFunctionSignature> GetImportedTemplateReachableCallSignatures(
+            ImportedFunctionTemplateSummary importedTemplate)
+        {
+            var boundCalls = importedTemplate.BoundOperations
+                .Select(static summary => summary.Operation)
+                .Select(static operation => operation switch
+                {
+                    BoundDirectCallOperation directCall => directCall.Signature,
+                    BoundMemberCallOperation memberCall => memberCall.Signature,
+                    _ => null
+                })
+                .Where(static signature => signature is not null)
+                .Cast<TypedFunctionSignature>()
+                .ToArray();
+            if (boundCalls.Length != 0)
             {
-                AddTypeTriggersFromCallSignature(
-                    callSignature,
+                return boundCalls;
+            }
+
+            return importedTemplate.DirectCalls.Select(static call => call.Signature)
+                .Concat(importedTemplate.MemberCalls.Select(static call => call.Signature))
+                .ToArray();
+        }
+
+        private static void AddTypeTriggersFromImportedTemplateBoundOperations(
+            ImportedFunctionTemplateSummary importedTemplate,
+            IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
+            SourceLocation location,
+            TypeCheckModel typeModel,
+            ISet<string> seen,
+            ICollection<TypeInstantiationTriggerRecord> expanded)
+        {
+            foreach (var summary in importedTemplate.BoundOperations)
+            {
+                var operation = summary.Operation;
+                AddTypeTriggersFromImportedBoundOperationType(
+                    operation.ResultType,
+                    substitution,
+                    location,
+                    typeModel,
+                    seen,
+                    expanded);
+
+                switch (operation)
+                {
+                    case BoundDirectCallOperation directCall:
+                        AddTypeTriggersFromCallSignature(
+                            directCall.Signature,
+                            substitution,
+                            location,
+                            typeModel,
+                            seen,
+                            expanded);
+                        AddTypeTriggersFromCallArguments(
+                            directCall.Arguments,
+                            substitution,
+                            location,
+                            typeModel,
+                            seen,
+                            expanded);
+                        break;
+
+                    case BoundMemberCallOperation memberCall:
+                        AddTypeTriggersFromImportedBoundOperationType(
+                            memberCall.ReceiverType,
+                            substitution,
+                            location,
+                            typeModel,
+                            seen,
+                            expanded);
+                        AddTypeTriggersFromCallSignature(
+                            memberCall.Signature,
+                            substitution,
+                            location,
+                            typeModel,
+                            seen,
+                            expanded);
+                        AddTypeTriggersFromCallArguments(
+                            memberCall.Arguments,
+                            substitution,
+                            location,
+                            typeModel,
+                            seen,
+                            expanded);
+                        break;
+
+                    case BoundFunctionPointerCallOperation functionPointerCall:
+                        AddTypeTriggersFromImportedBoundOperationType(
+                            functionPointerCall.FunctionPointerType,
+                            substitution,
+                            location,
+                            typeModel,
+                            seen,
+                            expanded);
+                        AddTypeTriggersFromCallArguments(
+                            functionPointerCall.Arguments,
+                            substitution,
+                            location,
+                            typeModel,
+                            seen,
+                            expanded);
+                        break;
+
+                    case BoundClosureCallOperation closureCall:
+                        AddTypeTriggersFromImportedBoundOperationType(
+                            closureCall.ClosureType,
+                            substitution,
+                            location,
+                            typeModel,
+                            seen,
+                            expanded);
+                        AddTypeTriggersFromCallArguments(
+                            closureCall.Arguments,
+                            substitution,
+                            location,
+                            typeModel,
+                            seen,
+                            expanded);
+                        break;
+
+                    case BoundIndexAccessOperation indexAccess:
+                        AddTypeTriggersFromImportedBoundOperationType(
+                            indexAccess.SourceType,
+                            substitution,
+                            location,
+                            typeModel,
+                            seen,
+                            expanded);
+                        break;
+
+                    case BoundDynamicStorageOperation dynamicStorage:
+                        AddTypeTriggersFromImportedBoundOperationType(
+                            dynamicStorage.ReceiverType,
+                            substitution,
+                            location,
+                            typeModel,
+                            seen,
+                            expanded);
+                        if (dynamicStorage.ReceiverType.ElementType is { } elementType)
+                        {
+                            AddTypeTriggersFromImportedBoundOperationType(
+                                elementType,
+                                substitution,
+                                location,
+                                typeModel,
+                                seen,
+                                expanded);
+                        }
+
+                        break;
+
+                    case BoundObjectCreationOperation objectCreation:
+                        AddTypeTriggersFromImportedBoundOperationType(
+                            objectCreation.CreatedType,
+                            substitution,
+                            location,
+                            typeModel,
+                            seen,
+                            expanded);
+                        if (objectCreation.Constructor is { } constructor)
+                        {
+                            foreach (var parameter in constructor.Parameters)
+                            {
+                                AddTypeTriggersFromImportedBoundOperationType(
+                                    parameter.Type,
+                                    substitution,
+                                    location,
+                                    typeModel,
+                                    seen,
+                                    expanded);
+                            }
+                        }
+
+                        foreach (var member in objectCreation.Members)
+                        {
+                            AddTypeTriggersFromImportedBoundOperationType(
+                                member.FieldType,
+                                substitution,
+                                location,
+                                typeModel,
+                                seen,
+                                expanded);
+                        }
+
+                        break;
+
+                    case BoundEnumConstructionOperation enumConstruction:
+                        AddTypeTriggersFromImportedBoundOperationType(
+                            enumConstruction.EnumType,
+                            substitution,
+                            location,
+                            typeModel,
+                            seen,
+                            expanded);
+                        foreach (var member in enumConstruction.Members)
+                        {
+                            AddTypeTriggersFromImportedBoundOperationType(
+                                member.FieldType,
+                                substitution,
+                                location,
+                                typeModel,
+                                seen,
+                                expanded);
+                        }
+
+                        break;
+
+                    case BoundEnumCallOperation enumCall:
+                        AddTypeTriggersFromImportedBoundOperationType(
+                            enumCall.EnumType,
+                            substitution,
+                            location,
+                            typeModel,
+                            seen,
+                            expanded);
+                        break;
+
+                    case BoundEnumValueOperation enumValue:
+                        AddTypeTriggersFromImportedBoundOperationType(
+                            enumValue.EnumType,
+                            substitution,
+                            location,
+                            typeModel,
+                            seen,
+                            expanded);
+                        break;
+
+                    case BoundLayoutQueryOperation layoutQuery:
+                        AddTypeTriggersFromImportedBoundOperationType(
+                            layoutQuery.TargetType,
+                            substitution,
+                            location,
+                            typeModel,
+                            seen,
+                            expanded);
+                        break;
+
+                    case BoundSwitchDispatchOperation switchDispatch:
+                        AddTypeTriggersFromImportedBoundOperationType(
+                            switchDispatch.SwitchType,
+                            substitution,
+                            location,
+                            typeModel,
+                            seen,
+                            expanded);
+                        break;
+                }
+            }
+        }
+
+        private static void AddTypeTriggersFromCallArguments(
+            IReadOnlyList<CallArgumentTypingRecord> arguments,
+            IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
+            SourceLocation location,
+            TypeCheckModel typeModel,
+            ISet<string> seen,
+            ICollection<TypeInstantiationTriggerRecord> expanded)
+        {
+            foreach (var argument in arguments)
+            {
+                AddTypeTriggersFromImportedBoundOperationType(
+                    argument.ParameterType,
+                    substitution,
+                    location,
+                    typeModel,
+                    seen,
+                    expanded);
+                AddTypeTriggersFromImportedBoundOperationType(
+                    argument.ArgumentType,
+                    substitution,
+                    location,
+                    typeModel,
+                    seen,
+                    expanded);
+            }
+        }
+
+        private static void AddTypeTriggersFromImportedBoundOperationType(
+            StarkTypeSymbol type,
+            IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
+            SourceLocation location,
+            TypeCheckModel typeModel,
+            ISet<string> seen,
+            ICollection<TypeInstantiationTriggerRecord> expanded)
+        {
+            var concreteType = FunctionOverloadFacts.SubstituteType(type, substitution);
+            if (ContainsUnboundGenericParameter(concreteType, typeModel))
+            {
+                return;
+            }
+
+            AddExpandedTypeTriggers(concreteType, location, typeModel, seen, expanded);
+
+            if (concreteType.Kind == StarkTypeKind.FunctionPointer)
+            {
+                if (concreteType.FunctionPointerReturnType is { } returnType)
+                {
+                    AddTypeTriggersFromImportedBoundOperationType(
+                        returnType,
+                        substitution,
+                        location,
+                        typeModel,
+                        seen,
+                        expanded);
+                }
+
+                foreach (var parameterType in concreteType.FunctionPointerParameterTypes ?? [])
+                {
+                    AddTypeTriggersFromImportedBoundOperationType(
+                        parameterType,
+                        substitution,
+                        location,
+                        typeModel,
+                        seen,
+                        expanded);
+                }
+
+                return;
+            }
+
+            if (concreteType.Kind != StarkTypeKind.Closure)
+            {
+                return;
+            }
+
+            if (concreteType.ClosureReturnType is { } closureReturnType)
+            {
+                AddTypeTriggersFromImportedBoundOperationType(
+                    closureReturnType,
+                    substitution,
+                    location,
+                    typeModel,
+                    seen,
+                    expanded);
+            }
+
+            foreach (var parameterType in concreteType.ClosureParameterTypes ?? [])
+            {
+                AddTypeTriggersFromImportedBoundOperationType(
+                    parameterType,
                     substitution,
                     location,
                     typeModel,
@@ -3968,6 +4304,32 @@ public static class DefaultCompilerPipeline
             {
                 case SsaValueInstruction valueInstruction:
                     CollectReferencedFunctions(valueInstruction.Value, referencedFunctions);
+                    break;
+                case SsaCallInstruction call:
+                    referencedFunctions.Add(call.FunctionName);
+                    foreach (var argument in call.Arguments)
+                    {
+                        CollectReferencedFunctions(argument, referencedFunctions);
+                    }
+
+                    foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+                    {
+                        CollectReferencedFunctions(address, referencedFunctions);
+                    }
+
+                    break;
+                case SsaIndirectCallInstruction call:
+                    CollectReferencedFunctions(call.Target, referencedFunctions);
+                    foreach (var argument in call.Arguments)
+                    {
+                        CollectReferencedFunctions(argument, referencedFunctions);
+                    }
+
+                    foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+                    {
+                        CollectReferencedFunctions(address, referencedFunctions);
+                    }
+
                     break;
                 case SsaStoreLocalInstruction storeLocal:
                     CollectReferencedFunctions(storeLocal.Value, referencedFunctions);

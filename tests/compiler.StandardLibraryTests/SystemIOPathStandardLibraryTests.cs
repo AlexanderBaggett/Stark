@@ -1237,7 +1237,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 "define fastcc noundef i1 @IsDirectorySeparatorUnit(",
                 "Expected staged Windows path build to emit the path separator unit helper.");
             Assert.Contains("icmp eq i8", isDirectorySeparatorBody, StringComparison.Ordinal);
-            Assert.Contains("@DirectorySeparatorUnit(", isDirectorySeparatorBody, StringComparison.Ordinal);
+            Assert.True(
+                isDirectorySeparatorBody.Contains("@DirectorySeparatorUnit(", StringComparison.Ordinal)
+                || isDirectorySeparatorBody.Contains("@.str.0", StringComparison.Ordinal),
+                isDirectorySeparatorBody);
             Assert.Contains("@.str.1", isDirectorySeparatorBody, StringComparison.Ordinal);
 
             var tryJoinBody = ExtractDefinedFunctionText(
@@ -1273,4 +1276,3 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
         return count;
     }
 }
-

@@ -46,16 +46,35 @@ internal sealed partial class MidLevelIrLowerer
                     "Switch expression was accepted but could not be lowered to a MIR operand.");
             }
 
-            var lowered = switchValue.Type.Kind switch
+            var hasBoundSwitch = TryResolveBoundSwitchDispatch(switchStatement, out var boundSwitch);
+            if (hasBoundSwitch
+                && !HasSameStorageType(ApplyGenericSubstitution(boundSwitch.SwitchType), switchValue.Type))
             {
-                StarkTypeKind.Integer or StarkTypeKind.Bool =>
-                    TryLowerNativeSwitch(switchStatement, switchValue)
-                    || TryLowerGuardedSwitch(switchStatement, switchValue),
-                StarkTypeKind.Ascii or StarkTypeKind.Unicode =>
-                    TryLowerPartitionedTextSwitch(switchStatement, switchValue)
-                    || TryLowerGuardedSwitch(switchStatement, switchValue),
-                _ => TryLowerGuardedSwitch(switchStatement, switchValue)
-            };
+                throw LoweringInvariantViolation(
+                    switchStatement,
+                    $"Bound switch dispatch type '{ApplyGenericSubstitution(boundSwitch.SwitchType).DisplayName}' does not match lowered switch value type '{switchValue.Type.DisplayName}'.");
+            }
+
+            var lowered = hasBoundSwitch
+                ? boundSwitch.Family switch
+                {
+                    SwitchLoweringFamilies.Native => TryLowerNativeSwitch(switchStatement, switchValue),
+                    SwitchLoweringFamilies.PartitionedText => TryLowerPartitionedTextSwitch(switchStatement, switchValue),
+                    SwitchLoweringFamilies.Guarded => TryLowerGuardedSwitch(switchStatement, switchValue),
+                    _ => throw LoweringInvariantViolation(
+                        switchStatement,
+                        $"Bound switch dispatch family '{boundSwitch.Family}' has no MIR lowering case.")
+                }
+                : switchValue.Type.Kind switch
+                {
+                    StarkTypeKind.Integer or StarkTypeKind.Bool =>
+                        TryLowerNativeSwitch(switchStatement, switchValue)
+                        || TryLowerGuardedSwitch(switchStatement, switchValue),
+                    StarkTypeKind.Ascii or StarkTypeKind.Unicode =>
+                        TryLowerPartitionedTextSwitch(switchStatement, switchValue)
+                        || TryLowerGuardedSwitch(switchStatement, switchValue),
+                    _ => TryLowerGuardedSwitch(switchStatement, switchValue)
+                };
 
             if (lowered)
             {

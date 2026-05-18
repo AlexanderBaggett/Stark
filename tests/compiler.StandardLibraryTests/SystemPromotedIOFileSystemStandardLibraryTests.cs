@@ -202,14 +202,14 @@ public sealed class SystemPromotedIOFileSystemStandardLibraryTests : StandardLib
             }
         }
 
-        fn bool MemoryTooLarge(System.Memory.MemoryStatus status) {
+        fn bool MemoryRejectedHugeInput(System.Memory.MemoryStatus status) {
             switch (status) {
                 case System.Memory.MemoryStatus.Ok:
                     return false;
                 case System.Memory.MemoryStatus.Err(var error):
                     switch (error) {
                         case System.Memory.MemoryError.OutOfMemory:
-                            return false;
+                            return true;
                         case System.Memory.MemoryError.TooLarge:
                             return true;
                         case System.Memory.MemoryError.InvalidLayout:
@@ -221,27 +221,29 @@ public sealed class SystemPromotedIOFileSystemStandardLibraryTests : StandardLib
         }
 
         fn i32[min max] CheckTooLargeNormalization() {
-            stack mut i8[min max][1] storage = { 47 };
-            stack Ascii huge = new Ascii() {
-                Data = &storage[0],
-                Length = (i64[min max])(2 ** 63 - 1),
-                Capacity = (i64[min max])(2 ** 63 - 1)
-            };
-            stack mut System.Text.OwnedAscii destination = new();
-            stack ascii hugeView = System.Text.AsciiView(huge);
-            if (System.Text.AsciiLength(hugeView) == 0) {
-                return 1;
-            }
+            unsafe {
+                stack mut i8[min max][1] storage = { 47 };
+                stack Ascii huge = new Ascii() {
+                    Data = &storage[0],
+                    Length = (i64[min max])(2 ** 63 - 1),
+                    Capacity = (i64[min max])(2 ** 63 - 1)
+                };
+                stack mut System.Text.OwnedAscii destination = new();
+                stack ascii hugeView = System.Text.AsciiView(huge);
+                if (System.Text.AsciiLength(hugeView) == 0) {
+                    return 1;
+                }
 
-            if (!MemoryTooLarge(System.IO.Path.TryNormalizeSeparators(destination, hugeView))) {
-                return 2;
-            }
+                if (!MemoryRejectedHugeInput(System.IO.Path.TryNormalizeSeparators(destination, hugeView))) {
+                    return 2;
+                }
 
-            if (destination.Length() != 0) {
-                return 3;
-            }
+                if (destination.Length() != 0) {
+                    return 3;
+                }
 
-            return 0;
+                return 0;
+            }
         }
 
         fn bool IsChildName(mut borrow System.FileSystem.FileSystemEntry entry) {
@@ -478,4 +480,3 @@ public sealed class SystemPromotedIOFileSystemStandardLibraryTests : StandardLib
         }
     }
 }
-

@@ -748,6 +748,7 @@ public sealed class SsaOptimizationTests
                                     new SsaInsertIndexRValue(
                                         new SsaZeroInitializerValue(arrayType),
                                         0,
+                                        IndexedElementOperationFamily.FixedArrayElement,
                                         new SsaValueReference("arg_value", valueType),
                                         arrayType,
                                         "left[0]"))
@@ -763,6 +764,7 @@ public sealed class SsaOptimizationTests
                                     new SsaInsertIndexRValue(
                                         new SsaZeroInitializerValue(arrayType),
                                         0,
+                                        IndexedElementOperationFamily.FixedArrayElement,
                                         new SsaValueReference("arg_value", valueType),
                                         arrayType,
                                         "right[0]"))
@@ -787,6 +789,7 @@ public sealed class SsaOptimizationTests
                                     new SsaExtractIndexRValue(
                                         new SsaValueReference("array_phi", arrayType),
                                         0,
+                                        IndexedElementOperationFamily.FixedArrayElement,
                                         valueType,
                                         "values[0]"))
                             ],
@@ -991,6 +994,7 @@ public sealed class SsaOptimizationTests
                                     new SsaInsertIndexRValue(
                                         new SsaZeroInitializerValue(arrayType),
                                         0,
+                                        IndexedElementOperationFamily.FixedArrayElement,
                                         new SsaValueReference("arg_value", valueType),
                                         arrayType,
                                         "left[0]")),
@@ -999,6 +1003,7 @@ public sealed class SsaOptimizationTests
                                     new SsaInsertIndexRValue(
                                         new SsaZeroInitializerValue(arrayType),
                                         0,
+                                        IndexedElementOperationFamily.FixedArrayElement,
                                         new SsaValueReference("arg_value", valueType),
                                         arrayType,
                                         "right[0]")),
@@ -1015,6 +1020,7 @@ public sealed class SsaOptimizationTests
                                     new SsaExtractIndexRValue(
                                         new SsaValueReference("selected_array", arrayType),
                                         0,
+                                        IndexedElementOperationFamily.FixedArrayElement,
                                         valueType,
                                         "values[0]"))
                             ],

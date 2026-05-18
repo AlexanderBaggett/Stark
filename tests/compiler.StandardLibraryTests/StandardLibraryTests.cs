@@ -1310,7 +1310,7 @@ public class StandardLibraryTestSuite
                     stack i32[min max] threeI32 = 3;
                     stack i32[min max] fourI32 = 4;
                     stack i32[min max] thirtyOne = 31;
-                    stack i32[min max] minI32 = -(2 ** 31);
+                    stack i32[min max] minI32 = (i32[min max])(-(2 ** 31));
                     stack i64[min max] oneI64 = 1;
                     stack i64[min max] twoI64 = 2;
                     stack i64[min max] threeI64 = 3;

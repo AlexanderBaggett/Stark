@@ -218,6 +218,19 @@ internal static partial class PackageImageLoader
                 return false;
             }
 
+            foreach (var type in compilerFacts.NamedTypes ?? [])
+            {
+                if (!TryLoadTypedTypeManifest(
+                        type,
+                        module.Module.ModuleName,
+                        localNamedTypes,
+                        loadedNamedTypes,
+                        loadedConstructors))
+                {
+                    return false;
+                }
+            }
+
             foreach (var functionEffect in compilerFacts.FunctionEffects)
             {
                 if (!TryParseFunctionKind(functionEffect.Kind, out var kind)
@@ -315,6 +328,14 @@ internal static partial class PackageImageLoader
 
                 templateSemantics = importedTemplateSemantics;
                 loadedFunctionSemantics.TryAdd(functionTemplate.QualifiedResolvedName, importedTemplateSemantics);
+            }
+
+            var boundOperationSummaries = BuildImportedTemplateBoundOperations(
+                functionTemplate.BoundOperations,
+                functionTemplate.QualifiedResolvedName);
+            if (functionTemplate.BoundOperations is not null && boundOperationSummaries is null)
+            {
+                return false;
             }
 
             loadedFunctionTemplates[functionTemplate.QualifiedResolvedName] = new ImportedFunctionTemplateSummary(
@@ -443,6 +464,24 @@ internal static partial class PackageImageLoader
                             OverlapParameterGroups: BuildParameterOverlapGroups(memberCall.OverlapParameterGroups),
                             SameParameterGroups: BuildParameterSameGroups(memberCall.SameParameterGroups))))
                     .ToArray(),
+                FunctionAddressSummaries: functionTemplate.FunctionAddresses?
+                    .Select(functionAddress => new ImportedTemplateFunctionAddressSummary(
+                        functionAddress.Ordinal,
+                        new TypedFunctionSignature(
+                            functionAddress.QualifiedResolvedName,
+                            BuildTypeSymbol(functionAddress.ReturnType),
+                            functionAddress.Parameters
+                                .Select(BuildTypedParameterSymbol)
+                                .ToArray(),
+                            SourceName: functionAddress.QualifiedSourceName,
+                            TemplateName: functionAddress.QualifiedTemplateName,
+                            TypeArguments: functionAddress.TypeArguments?.Select(BuildTypeSymbol).ToArray(),
+                            DisjointParameterGroups: BuildParameterDisjointGroups(functionAddress.Parameters, functionAddress.DisjointParameterGroups),
+                            OverlapParameterGroups: BuildParameterOverlapGroups(functionAddress.OverlapParameterGroups),
+                            SameParameterGroups: BuildParameterSameGroups(functionAddress.SameParameterGroups)),
+                        BuildTypeSymbol(functionAddress.TargetType)))
+                    .ToArray(),
+                BoundOperationSummaries: boundOperationSummaries,
                 BackendOptimizationMode: templateBackendOptimizationMode);
         }
 
@@ -533,12 +572,109 @@ internal static partial class PackageImageLoader
             names.Add(type.Name);
         }
 
+        foreach (var type in module.Module.EffectiveCompilerFacts?.NamedTypes ?? [])
+        {
+            names.Add(type.Name);
+        }
+
         foreach (var typeAlias in module.Module.EffectiveTypedInterface?.TypeAliases ?? [])
         {
             names.Add(typeAlias.Name);
         }
 
         return names;
+    }
+
+    private static bool TryLoadTypedTypeManifest(
+        StarkPackageTypedTypeManifest type,
+        string moduleName,
+        ISet<string> localNamedTypes,
+        IDictionary<string, NamedTypeSymbol> loadedNamedTypes,
+        IDictionary<string, IReadOnlyList<TypedConstructorShape>> loadedConstructors)
+    {
+        if (!TryParseTypeDeclarationKind(type.Kind, out var declarationKind))
+        {
+            return false;
+        }
+
+        var qualifiedName = type.QualifiedName;
+        var genericParameterNames = type.GenericParameters?.Count > 0 ? type.GenericParameters.ToList() : null;
+        if (declarationKind == DeclarationKind.Enum)
+        {
+            var variants = (type.Variants ?? [])
+                .Select(variant => new EnumVariantSymbol(
+                    variant.Name,
+                    variant.UsesNamedFields,
+                    variant.Fields
+                        .Select((field, index) => new EnumVariantFieldSymbol(
+                            index,
+                            variant.UsesNamedFields ? field.Name : null,
+                            BuildTypeSymbol(field.Type, moduleName, localNamedTypes)))
+                        .ToArray()))
+                .ToArray();
+            loadedNamedTypes[qualifiedName] = new NamedTypeSymbol(
+                qualifiedName,
+                declarationKind,
+                new Dictionary<string, FieldSymbol>(StringComparer.Ordinal),
+                [],
+                EnumVariants: variants,
+                GenericParameterNames: genericParameterNames);
+        }
+        else
+        {
+            var fields = new Dictionary<string, FieldSymbol>(StringComparer.Ordinal);
+            var orderedFields = new List<FieldSymbol>(type.Fields.Count);
+            foreach (var field in type.Fields)
+            {
+                if (!TryParseVisibility(field.Visibility ?? "public", out var fieldVisibility))
+                {
+                    return false;
+                }
+
+                var fieldSymbol = new FieldSymbol(
+                    field.Name,
+                    BuildTypeSymbol(field.Type, moduleName, localNamedTypes),
+                    fieldVisibility,
+                    moduleName);
+                fields[field.Name] = fieldSymbol;
+                orderedFields.Add(fieldSymbol);
+            }
+
+            loadedNamedTypes[qualifiedName] = new NamedTypeSymbol(
+                qualifiedName,
+                declarationKind,
+                fields,
+                orderedFields,
+                GenericParameterNames: genericParameterNames);
+        }
+
+        var constructors = new List<TypedConstructorShape>();
+        if (type.PrimaryConstructorParameters is { Count: > 0 })
+        {
+            constructors.Add(new TypedConstructorShape(
+                type.Name,
+                type.PrimaryConstructorParameters
+                    .Select(parameter => BuildTypedParameterSymbol(parameter, moduleName, localNamedTypes))
+                    .ToArray(),
+                IsPrimaryShape: true));
+        }
+
+        foreach (var constructor in type.Constructors ?? [])
+        {
+            constructors.Add(new TypedConstructorShape(
+                type.Name,
+                constructor.Parameters
+                    .Select(parameter => BuildTypedParameterSymbol(parameter, moduleName, localNamedTypes))
+                    .ToArray(),
+                IsPrimaryShape: false));
+        }
+
+        if (constructors.Count > 0)
+        {
+            loadedConstructors[qualifiedName] = constructors;
+        }
+
+        return true;
     }
 
     private static TypedParameterSymbol BuildTypedParameterSymbol(
@@ -562,6 +698,375 @@ internal static partial class PackageImageLoader
             parameter.IsDisjoint,
             parameter.IsConst,
             parameter.RawPointerElementCountExpression);
+    }
+
+    private static IReadOnlyList<ImportedTemplateBoundOperationSummary>? BuildImportedTemplateBoundOperations(
+        IReadOnlyList<StarkPackageTemplateBoundOperationManifest>? operations,
+        string fallbackEnclosingFunctionName)
+    {
+        if (operations is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var summaries = new List<ImportedTemplateBoundOperationSummary>(operations.Count);
+        foreach (var operation in operations)
+        {
+            if (!TryBuildImportedTemplateBoundOperation(operation, fallbackEnclosingFunctionName, out var summary))
+            {
+                return null;
+            }
+
+            summaries.Add(summary);
+        }
+
+        return summaries;
+    }
+
+    private static bool TryBuildImportedTemplateBoundOperation(
+        StarkPackageTemplateBoundOperationManifest operation,
+        string fallbackEnclosingFunctionName,
+        out ImportedTemplateBoundOperationSummary summary)
+    {
+        summary = null!;
+        var location = new SourceLocation(
+            FilePath: null,
+            operation.Line,
+            operation.Column);
+        var enclosingFunctionName = string.IsNullOrWhiteSpace(operation.EnclosingFunctionName)
+            ? fallbackEnclosingFunctionName
+            : operation.EnclosingFunctionName;
+        var resultType = BuildTypeSymbol(operation.ResultType);
+
+        BoundOperation boundOperation;
+        switch (operation.Kind)
+        {
+            case "direct-call":
+                if (!TryBuildImportedTemplateBoundSignature(operation, out var directSignature))
+                {
+                    return false;
+                }
+
+                boundOperation = new BoundDirectCallOperation(
+                    directSignature,
+                    BuildImportedTemplateCallArguments(operation.CallArguments),
+                    location,
+                    enclosingFunctionName);
+                break;
+
+            case "member-call":
+                if (!TryBuildImportedTemplateBoundSignature(operation, out var memberSignature)
+                    || operation.ReceiverType is null)
+                {
+                    return false;
+                }
+
+                boundOperation = new BoundMemberCallOperation(
+                    memberSignature,
+                    BuildTypeSymbol(operation.ReceiverType),
+                    operation.ReceiverIsAddressable ?? false,
+                    operation.ReceiverIsMutable ?? false,
+                    BuildImportedTemplateCallArguments(operation.CallArguments),
+                    location,
+                    enclosingFunctionName);
+                break;
+
+            case "function-pointer-call":
+                if (operation.FunctionPointerType is null)
+                {
+                    return false;
+                }
+
+                boundOperation = new BoundFunctionPointerCallOperation(
+                    BuildTypeSymbol(operation.FunctionPointerType),
+                    BuildImportedTemplateCallArguments(operation.CallArguments),
+                    location,
+                    enclosingFunctionName);
+                break;
+
+            case "closure-call":
+                if (operation.ClosureType is null)
+                {
+                    return false;
+                }
+
+                boundOperation = new BoundClosureCallOperation(
+                    BuildTypeSymbol(operation.ClosureType),
+                    BuildImportedTemplateCallArguments(operation.CallArguments),
+                    location,
+                    enclosingFunctionName);
+                break;
+
+            case "index-access":
+            case "slice-access":
+                if (operation.AccessKind is null
+                    || operation.SourceKind is null
+                    || operation.SourceType is null
+                    || operation.IndexCount is null)
+                {
+                    return false;
+                }
+
+                boundOperation = new BoundIndexAccessOperation(
+                    ParseBoundIndexAccessKind(operation.AccessKind),
+                    operation.SourceKind,
+                    BuildTypeSymbol(operation.SourceType),
+                    resultType,
+                    operation.IndexCount.Value,
+                    location,
+                    enclosingFunctionName);
+                break;
+
+            case "dynamic-storage-operation":
+                if (operation.OperationName is null
+                    || operation.ReceiverType is null
+                    || operation.ArgumentCount is null)
+                {
+                    return false;
+                }
+
+                boundOperation = new BoundDynamicStorageOperation(
+                    operation.OperationName,
+                    BuildTypeSymbol(operation.ReceiverType),
+                    resultType,
+                    operation.ArgumentCount.Value,
+                    operation.ReceiverIsAddressable ?? false,
+                    operation.ReceiverIsMutable ?? false,
+                    location,
+                    enclosingFunctionName);
+                break;
+
+            case "object-creation":
+                if (operation.CreatedType is null)
+                {
+                    return false;
+                }
+
+                boundOperation = new BoundObjectCreationOperation(
+                    operation.ExpressionText ?? string.Empty,
+                    BuildTypeSymbol(operation.CreatedType),
+                    BuildImportedTemplateConstructorShape(operation.Constructor),
+                    operation.InitializerMembers?
+                        .Select(member => new ObjectInitializerMemberTypingRecord(
+                            member.FieldName,
+                            member.FieldIndex,
+                            BuildTypeSymbol(member.FieldType)))
+                        .ToArray(),
+                    location,
+                    enclosingFunctionName);
+                break;
+
+            case "enum-construction":
+                if (operation.EnumType is null || operation.VariantName is null)
+                {
+                    return false;
+                }
+
+                boundOperation = new BoundEnumConstructionOperation(
+                    BuildTypeSymbol(operation.EnumType),
+                    operation.VariantName,
+                    operation.EnumMembers?
+                        .Select(member => new EnumConstructorMemberTypingRecord(
+                            member.FieldName,
+                            member.FieldIndex,
+                            BuildTypeSymbol(member.FieldType)))
+                        .ToArray(),
+                    location,
+                    enclosingFunctionName);
+                break;
+
+            case "enum-call":
+                if (operation.EnumType is null || operation.VariantName is null)
+                {
+                    return false;
+                }
+
+                boundOperation = new BoundEnumCallOperation(
+                    BuildTypeSymbol(operation.EnumType),
+                    operation.VariantName,
+                    location,
+                    enclosingFunctionName);
+                break;
+
+            case "enum-value":
+                if (operation.EnumType is null || operation.VariantName is null)
+                {
+                    return false;
+                }
+
+                boundOperation = new BoundEnumValueOperation(
+                    BuildTypeSymbol(operation.EnumType),
+                    operation.VariantName,
+                    location,
+                    enclosingFunctionName);
+                break;
+
+            case "text-interpolation":
+                if (operation.SegmentCount is null
+                    || operation.HoleCount is null
+                    || operation.UsesFixedStorage is null)
+                {
+                    return false;
+                }
+
+                boundOperation = new BoundTextInterpolationOperation(
+                    resultType,
+                    operation.SegmentCount.Value,
+                    operation.HoleCount.Value,
+                    operation.UsesFixedStorage.Value,
+                    location,
+                    enclosingFunctionName);
+                break;
+
+            case "text-build":
+                if (operation.BuildKind is null
+                    || operation.OperandCount is null
+                    || operation.UsesFixedStorage is null)
+                {
+                    return false;
+                }
+
+                boundOperation = new BoundTextBuildOperation(
+                    operation.BuildKind,
+                    resultType,
+                    operation.OperandCount.Value,
+                    operation.UsesFixedStorage.Value,
+                    location,
+                    enclosingFunctionName);
+                break;
+
+            case "layout-query":
+                if (operation.QueryKind is null || operation.TargetType is null)
+                {
+                    return false;
+                }
+
+                boundOperation = new BoundLayoutQueryOperation(
+                    ParseBoundLayoutQueryKind(operation.QueryKind),
+                    BuildTypeSymbol(operation.TargetType),
+                    resultType,
+                    location,
+                    enclosingFunctionName);
+                break;
+
+            case "switch-dispatch":
+                if (operation.SwitchFamily is null
+                    || operation.SwitchType is null
+                    || operation.SectionCount is null
+                    || operation.LabelCount is null
+                    || operation.ExplicitDefaultLabelCount is null
+                    || operation.LoweredDefaultLabelCount is null
+                    || operation.LiteralLabelCount is null
+                    || operation.MatchAllLabelCount is null
+                    || operation.CaptureLabelCount is null
+                    || operation.StructuredPatternLabelCount is null
+                    || operation.GuardedLabelCount is null)
+                {
+                    return false;
+                }
+
+                boundOperation = new BoundSwitchDispatchOperation(
+                    operation.SwitchFamily,
+                    BuildTypeSymbol(operation.SwitchType),
+                    operation.SectionCount.Value,
+                    operation.LabelCount.Value,
+                    operation.ExplicitDefaultLabelCount.Value,
+                    operation.LoweredDefaultLabelCount.Value,
+                    operation.LiteralLabelCount.Value,
+                    operation.MatchAllLabelCount.Value,
+                    operation.CaptureLabelCount.Value,
+                    operation.StructuredPatternLabelCount.Value,
+                    operation.GuardedLabelCount.Value,
+                    location,
+                    enclosingFunctionName);
+                break;
+
+            default:
+                return false;
+        }
+
+        summary = new ImportedTemplateBoundOperationSummary(operation.Ordinal, boundOperation);
+        return true;
+    }
+
+    private static bool TryBuildImportedTemplateBoundSignature(
+        StarkPackageTemplateBoundOperationManifest operation,
+        out TypedFunctionSignature signature)
+    {
+        signature = null!;
+
+        if (operation.QualifiedResolvedName is null)
+        {
+            return false;
+        }
+
+        var parameters = operation.Parameters ?? [];
+        signature = new TypedFunctionSignature(
+            operation.QualifiedResolvedName,
+            BuildTypeSymbol(operation.ReturnType ?? operation.ResultType),
+            parameters.Select(BuildTypedParameterSymbol).ToArray(),
+            SourceName: operation.QualifiedSourceName,
+            TemplateName: operation.QualifiedTemplateName,
+            TypeArguments: operation.TypeArguments?.Select(BuildTypeSymbol).ToArray(),
+            DisjointParameterGroups: BuildParameterDisjointGroups(parameters, operation.DisjointParameterGroups),
+            OverlapParameterGroups: BuildParameterOverlapGroups(operation.OverlapParameterGroups),
+            SameParameterGroups: BuildParameterSameGroups(operation.SameParameterGroups));
+        return true;
+    }
+
+    private static IReadOnlyList<CallArgumentTypingRecord>? BuildImportedTemplateCallArguments(
+        IReadOnlyList<StarkPackageTemplateCallArgumentManifest>? arguments)
+    {
+        return arguments is { Count: > 0 }
+            ? arguments
+                .Select(argument => new CallArgumentTypingRecord(
+                    argument.ParameterIndex,
+                    argument.SourceArgumentIndex,
+                    BuildTypeSymbol(argument.ParameterType),
+                    BuildTypeSymbol(argument.ArgumentType),
+                    argument.IsReceiver,
+                    argument.RequiresAddressable,
+                    argument.RequiresMutable,
+                    argument.RequiresConstProvenance,
+                    argument.ArgumentIsAddressable,
+                    argument.ArgumentIsMutable,
+                    argument.ArgumentHasConstProvenance))
+                .ToArray()
+            : null;
+    }
+
+    private static TypedConstructorShape? BuildImportedTemplateConstructorShape(
+        StarkPackagePublishedConstructorShapeManifest? constructor)
+    {
+        return constructor is null
+            ? null
+            : new TypedConstructorShape(
+                constructor.TypeName,
+                constructor.Parameters
+                    .Select(BuildTypedParameterSymbol)
+                    .ToArray(),
+                constructor.IsPrimaryShape);
+    }
+
+    private static BoundIndexAccessKind ParseBoundIndexAccessKind(string kind)
+    {
+        return kind switch
+        {
+            "slice" => BoundIndexAccessKind.Slice,
+            "text-element" => BoundIndexAccessKind.TextElement,
+            "text-slice" => BoundIndexAccessKind.TextSlice,
+            "dynamic-element" => BoundIndexAccessKind.DynamicElement,
+            "dynamic-slice" => BoundIndexAccessKind.DynamicSlice,
+            "raw-pointer-region" => BoundIndexAccessKind.RawPointerRegion,
+            _ => BoundIndexAccessKind.Element
+        };
+    }
+
+    private static BoundLayoutQueryKind ParseBoundLayoutQueryKind(string kind)
+    {
+        return string.Equals(kind, "alignof", StringComparison.Ordinal)
+            ? BoundLayoutQueryKind.AlignOf
+            : BoundLayoutQueryKind.SizeOf;
     }
 
     private static bool TryBuildAbiFunctionSignature(

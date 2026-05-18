@@ -40,6 +40,7 @@ internal sealed class LlvmIrEmitter
     private readonly IReadOnlyDictionary<string, TypedFunctionSignature> _allFunctionSignatures;
     private readonly IReadOnlyDictionary<string, AbiFunctionSignature> _allAbiFunctions;
     private readonly IReadOnlySet<string>? _importedInlineCloneSeedFunctions;
+    private readonly IReadOnlySet<string>? _ownedFunctionDefinitionFilter;
     private readonly IReadOnlyDictionary<string, ConcreteTypeLayout> _publishedConcreteLayouts;
     private readonly IReadOnlyDictionary<string, ImportedFunctionSemanticSummary> _publishedFunctionSemantics;
     private readonly IReadOnlyDictionary<string, string> _specializationTemplateNames;
@@ -150,6 +151,7 @@ internal sealed class LlvmIrEmitter
         _allFunctionSignatures = BuildAllFunctionSignatures(typeModel, ssa, specializationCodegenStrategy);
         _allAbiFunctions = BuildAllAbiFunctions(_allFunctionSignatures, abiModel, _allFunctionEffects, typeModel.NamedTypes, enumLayoutModel.Layouts);
         _importedInlineCloneSeedFunctions = importedInlineCloneSeedFunctions;
+        _ownedFunctionDefinitionFilter = BuildOwnedFunctionDefinitionFilter();
         _publishedConcreteLayouts = BuildPublishedConcreteLayouts(loadedModules);
         _publishedFunctionSemantics = BuildPublishedFunctionSemantics(loadedModules, specializationCodegenStrategy);
         _specializationTemplateNames = BuildSpecializationTemplateNames(specializationCodegenStrategy);
@@ -162,7 +164,8 @@ internal sealed class LlvmIrEmitter
         _referencedImportedFunctions = CollectReferencedImportedFunctions(
             ssa,
             _closedWorldImportedLawClones.Values,
-            _closedWorldImportedInlineBodies.Values);
+            _closedWorldImportedInlineBodies.Values,
+            _ownedFunctionDefinitionFilter);
         _debugInfo = new DebugMetadataEmitter(
             input.FilePath ?? $"{syntaxModel.ModuleName}.stark",
             _isOptimizedBuild,
@@ -293,6 +296,15 @@ internal sealed class LlvmIrEmitter
             {
                 builder.AppendLine($"; open generic template: {resolvedName}");
                 builder.AppendLine($"; declaration omitted for open generic template '{resolvedName}' because only concrete instantiations have a runtime ABI.");
+                builder.AppendLine();
+                continue;
+            }
+
+            if (_ownedFunctionDefinitionFilter is not null
+                && !_ownedFunctionDefinitionFilter.Contains(resolvedName))
+            {
+                builder.AppendLine($"; source dependency body pruned: {resolvedName}");
+                builder.AppendLine(BuildDeclarationSignature(false, signature, abiSignature, effects, memoryEffects, parameterEffects));
                 builder.AppendLine();
                 continue;
             }
@@ -488,6 +500,14 @@ internal sealed class LlvmIrEmitter
             var parameterEffects = GetParameterEffects(abiFunction.Name, hasBody)
                 ?? GetBuiltinParameterEffects(moduleName: string.Empty, abiFunction.Name, signature);
             var memoryEffects = GetFunctionMemoryEffects(abiFunction.Name, hasBody);
+            if (_ownedFunctionDefinitionFilter is not null
+                && hasBody
+                && IsOwnedModuleFunctionName(abiFunction.Name)
+                && !_ownedFunctionDefinitionFilter.Contains(abiFunction.Name))
+            {
+                continue;
+            }
+
             if (syntheticLambdaNames.Contains(abiFunction.Name)
                 && ssaFunction is null)
             {
@@ -533,13 +553,62 @@ internal sealed class LlvmIrEmitter
             builder.AppendLine();
         }
 
+        EmitReferencedImportedFunctionDeclarations(builder, handledFunctionNames);
+
         _debugInfo.EmitModuleMetadata(builder);
 
         return new LlvmIrModule(_syntaxModel.ModuleName, builder.ToString().TrimEnd(), _ssa.AddressTakenFunctions);
     }
 
+    private void EmitReferencedImportedFunctionDeclarations(
+        StringBuilder builder,
+        ISet<string> handledFunctionNames)
+    {
+        foreach (var functionName in _referencedImportedFunctions.OrderBy(static name => name, StringComparer.Ordinal))
+        {
+            if (handledFunctionNames.Contains(functionName)
+                || _abiModel.Functions.ContainsKey(functionName)
+                || !_allAbiFunctions.TryGetValue(functionName, out var abiFunction)
+                || !_allFunctionSignatures.TryGetValue(functionName, out var signature)
+                || !_allFunctionEffects.TryGetValue(functionName, out var effects))
+            {
+                continue;
+            }
+
+            if (IsTraitContractFunction(signature)
+                || IsOpenGenericTemplate(signature))
+            {
+                continue;
+            }
+
+            var parameterEffects = GetParameterEffects(functionName, hasBody: false)
+                ?? GetBuiltinParameterEffects(moduleName: string.Empty, functionName, signature);
+            var memoryEffects = GetFunctionMemoryEffects(functionName, hasBody: false);
+            if (TryEmitBuiltinFunctionDefinition(
+                    builder,
+                    internalize: true,
+                    moduleName: string.Empty,
+                    signature,
+                    abiFunction,
+                    effects,
+                    memoryEffects,
+                    parameterEffects))
+            {
+                builder.AppendLine();
+                continue;
+            }
+
+            builder.AppendLine($"; referenced imported declaration: {functionName}");
+            builder.AppendLine(BuildDeclarationSignature(false, signature, abiFunction, effects, memoryEffects, parameterEffects));
+            builder.AppendLine();
+        }
+    }
+
     private static bool IsOpenGenericTemplate(TypedFunctionSignature signature) =>
         signature.IsGeneric && !signature.IsGenericInstantiation;
+
+    private static bool IsOwnedModuleFunctionName(string functionName) =>
+        !functionName.Contains('.', StringComparison.Ordinal);
 
     private bool IsTraitContractFunction(TypedFunctionSignature signature)
     {
@@ -561,12 +630,19 @@ internal sealed class LlvmIrEmitter
     private static IReadOnlySet<string> CollectReferencedImportedFunctions(
         SsaIrModule ssa,
         IEnumerable<ImportedLawClonePlan> importedLawClones,
-        IEnumerable<ImportedInlineBodyPlan> importedInlineBodies)
+        IEnumerable<ImportedInlineBodyPlan> importedInlineBodies,
+        IReadOnlySet<string>? ownedFunctionDefinitionFilter)
     {
         var referencedFunctions = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var function in ssa.Functions)
         {
+            if (ownedFunctionDefinitionFilter is not null
+                && !ownedFunctionDefinitionFilter.Contains(function.Name))
+            {
+                continue;
+            }
+
             CollectReferencedFunctions(function, referencedFunctions);
         }
 
@@ -592,6 +668,10 @@ internal sealed class LlvmIrEmitter
                 if (instruction is SsaValueInstruction { Value: SsaCallRValue call })
                 {
                     referencedFunctions.Add(call.FunctionName);
+                }
+                else if (instruction is SsaCallInstruction statementCall)
+                {
+                    referencedFunctions.Add(statementCall.FunctionName);
                 }
             }
         }
@@ -923,7 +1003,94 @@ internal sealed class LlvmIrEmitter
             _enumLayoutModel,
             _allFunctionEffects,
             _allFunctionSignatures,
-            _importedInlineCloneSeedFunctions);
+            _importedInlineCloneSeedFunctions,
+            _specializationTemplateNames);
+    }
+
+    private IReadOnlySet<string>? BuildOwnedFunctionDefinitionFilter()
+    {
+        if (_importedInlineCloneSeedFunctions is null)
+        {
+            return null;
+        }
+
+        var localFunctionNames = _ssa.Functions
+            .Where(static function => function.HasBody)
+            .Select(static function => function.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var declaration in _syntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
+        {
+            localFunctionNames.Add(FunctionOverloadFacts.GetResolvedLocalName(_syntaxModel, declaration));
+        }
+
+        var callsByFunction = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (var function in _ssa.Functions)
+        {
+            var callees = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var block in function.Blocks)
+            {
+                foreach (var instruction in block.Instructions)
+                {
+                    if (instruction is SsaValueInstruction { Value: SsaCallRValue call })
+                    {
+                        AddLocalCallee(callees, localFunctionNames, NormalizeOwnedFunctionName(call.FunctionName));
+                    }
+                    else if (instruction is SsaCallInstruction statementCall)
+                    {
+                        AddLocalCallee(callees, localFunctionNames, NormalizeOwnedFunctionName(statementCall.FunctionName));
+                    }
+                }
+            }
+
+            callsByFunction[function.Name] = callees;
+        }
+
+        var reachable = new HashSet<string>(StringComparer.Ordinal);
+        var pending = new Queue<string>();
+        foreach (var seed in _importedInlineCloneSeedFunctions)
+        {
+            var localSeed = NormalizeOwnedFunctionName(seed);
+            if (localFunctionNames.Contains(localSeed))
+            {
+                pending.Enqueue(localSeed);
+            }
+        }
+
+        while (pending.Count != 0)
+        {
+            var functionName = pending.Dequeue();
+            if (!reachable.Add(functionName)
+                || !callsByFunction.TryGetValue(functionName, out var callees))
+            {
+                continue;
+            }
+
+            foreach (var callee in callees)
+            {
+                pending.Enqueue(callee);
+            }
+        }
+
+        return reachable;
+    }
+
+    private string NormalizeOwnedFunctionName(string functionName)
+    {
+        var modulePrefix = $"{_syntaxModel.ModuleName}.";
+        return functionName.StartsWith(modulePrefix, StringComparison.Ordinal)
+            ? functionName[modulePrefix.Length..]
+            : functionName;
+    }
+
+    private static void AddLocalCallee(
+        ISet<string> callees,
+        IReadOnlySet<string> localFunctionNames,
+        string functionName)
+    {
+        if (localFunctionNames.Contains(functionName))
+        {
+            callees.Add(functionName);
+        }
     }
 
     private IReadOnlyDictionary<string, ImportedGlobalDeclarationPlan> BuildImportedCloneReferencedGlobalDeclarations()
@@ -1212,6 +1379,12 @@ internal sealed class LlvmIrEmitter
         return instruction switch
         {
             SsaValueInstruction valueInstruction => EnumerateRValueOperands(valueInstruction.Value),
+            SsaCallInstruction call => call.IndirectArgumentAddresses is { Count: > 0 }
+                ? call.Arguments.Concat(call.IndirectArgumentAddresses.OfType<SsaValue>())
+                : call.Arguments,
+            SsaIndirectCallInstruction call => call.IndirectArgumentAddresses is { Count: > 0 }
+                ? call.Arguments.Prepend(call.Target).Concat(call.IndirectArgumentAddresses.OfType<SsaValue>())
+                : call.Arguments.Prepend(call.Target),
             SsaLifetimeStartInstruction => [],
             SsaLifetimeEndInstruction => [],
             SsaDeallocateLocalInstruction => [],
@@ -1881,6 +2054,9 @@ internal sealed class LlvmIrEmitter
                     or SsaDynamicStorageMoveAtRValue } => true,
                 SsaValueInstruction { Value: SsaCallRValue { FunctionName: var functionName } }
                     => IsClosureDropFunctionName(functionName),
+                SsaCallInstruction { FunctionName: var functionName }
+                    => IsClosureDropFunctionName(functionName),
+                SsaIndirectCallInstruction { MayFree: true } => true,
                 _ => false
             });
     }
@@ -2361,6 +2537,32 @@ internal sealed class LlvmIrEmitter
                         case SsaValueInstruction valueInstruction:
                             AddStringConstant(valueInstruction.Value, result, ref index);
                             break;
+                        case SsaCallInstruction call:
+                            foreach (var argument in call.Arguments)
+                            {
+                                AddStringConstant(argument, result, ref index);
+                            }
+
+                            foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+                            {
+                                AddStringConstant(address, result, ref index);
+                            }
+
+                            AddAsciiToUnicodeLiteralMemcpyConstant(call, result, ref index);
+                            break;
+                        case SsaIndirectCallInstruction call:
+                            AddStringConstant(call.Target, result, ref index);
+                            foreach (var argument in call.Arguments)
+                            {
+                                AddStringConstant(argument, result, ref index);
+                            }
+
+                            foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+                            {
+                                AddStringConstant(address, result, ref index);
+                            }
+
+                            break;
                         case SsaCopyMemoryInstruction copyMemory:
                             AddStringConstant(copyMemory.DestinationAddress, result, ref index);
                             AddStringConstant(copyMemory.SourceAddress, result, ref index);
@@ -2707,7 +2909,7 @@ internal sealed class LlvmIrEmitter
     }
 
     private static void AddAsciiToUnicodeLiteralMemcpyConstant(
-        SsaCallRValue call,
+        ISsaDirectCallOperation call,
         Dictionary<StringConstantKey, EmittedStringConstant> constants,
         ref int index)
     {

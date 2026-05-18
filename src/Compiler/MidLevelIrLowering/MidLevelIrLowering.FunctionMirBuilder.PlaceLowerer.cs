@@ -1024,7 +1024,14 @@ internal sealed partial class MidLevelIrLowerer
                     $"Value-model place '{DescribePlaceTarget(target)}' has no named root to read.");
             }
 
-            var current = ResolveNamedOperand(target.RootName) ?? new MidLevelIrLocalOperand(target.RootName, target.RootType);
+            var current = ResolveNamedOperand(target.RootName);
+            if (current is null)
+            {
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Value-model place '{DescribePlaceTarget(target)}' has no resolved root operand.");
+            }
+
             foreach (var segment in target.Path)
             {
                 var extracted = segment.Kind == PlacePathKind.ConstantArrayIndex
@@ -1097,7 +1104,14 @@ internal sealed partial class MidLevelIrLowerer
                     $"Aggregate assignment target '{DescribePlaceTarget(target)}' has no named root.");
             }
 
-            var root = ResolveNamedOperand(target.RootName) ?? new MidLevelIrLocalOperand(target.RootName, target.RootType);
+            var root = ResolveNamedOperand(target.RootName);
+            if (root is null)
+            {
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Aggregate assignment target '{DescribePlaceTarget(target)}' has no resolved root operand.");
+            }
+
             var updatedRoot = ApplyAggregatePathUpdate(root, target.Path, 0, assignedValue, text);
             if (updatedRoot is null)
             {
@@ -1138,6 +1152,7 @@ internal sealed partial class MidLevelIrLowerer
                         new MidLevelIrInsertIndexRValue(
                             aggregate,
                             segment.ConstantIndex!.Value,
+                            IndexedElementOperationFamily.FixedArrayElement,
                             coercedValue,
                             aggregate.Type,
                             text),
@@ -1172,6 +1187,7 @@ internal sealed partial class MidLevelIrLowerer
                     new MidLevelIrInsertIndexRValue(
                         aggregate,
                         segment.ConstantIndex!.Value,
+                        IndexedElementOperationFamily.FixedArrayElement,
                         updatedNested,
                         aggregate.Type,
                         text),
@@ -1368,6 +1384,7 @@ internal sealed partial class MidLevelIrLowerer
                 new MidLevelIrExtractIndexRValue(
                     target,
                     constantIndex,
+                    IndexedElementOperationFamily.FixedArrayElement,
                     elementType,
                     $"{target.Text}[{constantIndex}]"),
                 "index");

@@ -84,6 +84,7 @@ internal sealed class TypeChecker
     private readonly List<EnumPatternTypingRecord> _enumPatterns = [];
     private readonly List<AggregatePatternTypingRecord> _aggregatePatterns = [];
     private readonly List<LocalDeclarationTypingRecord> _localDeclarations = [];
+    private readonly List<LocalStorageCapacityTypingRecord> _localStorageCapacities = [];
     private readonly List<ConversionTypingRecord> _conversions = [];
     private readonly List<DirectCallTypingRecord> _directCalls = [];
     private readonly List<FunctionPointerPromotionTypingRecord> _functionPointerPromotions = [];
@@ -102,6 +103,7 @@ internal sealed class TypeChecker
     private readonly List<IndexAccessTypingRecord> _indexAccesses = [];
     private readonly List<DynamicStorageOperationTypingRecord> _dynamicStorageOperations = [];
     private readonly List<SwitchTypingRecord> _switches = [];
+    private readonly List<BoundOperation> _boundOperations = [];
     private readonly List<FunctionInstantiationTriggerRecord> _functionInstantiationTriggers = [];
     private readonly List<DeferredFunctionInstantiationTriggerRecord> _deferredFunctionInstantiationTriggers = [];
     private readonly List<DeferredTypeInstantiationTriggerRecord> _deferredTypeInstantiationTriggers = [];
@@ -202,6 +204,7 @@ internal sealed class TypeChecker
             _enumPatterns,
             _aggregatePatterns,
             _localDeclarations,
+            _localStorageCapacities,
             _conversions,
             _directCalls,
             _functionPointerPromotions,
@@ -217,7 +220,8 @@ internal sealed class TypeChecker
             _indexAccesses,
             _dynamicStorageOperations,
             _switches,
-            _closureFunctionPromotions);
+            _closureFunctionPromotions,
+            _boundOperations);
     }
 
     private void CollectTypeAliasSources()
@@ -4034,8 +4038,10 @@ internal sealed class TypeChecker
     private void RecordSwitch(StarkParser.SwitchStatementContext switchStatement, StarkTypeSymbol switchType)
     {
         var shape = InspectSwitchShape(switchStatement);
+        var family = ClassifySwitchFamily(switchType, shape);
+        var location = Location(switchStatement);
         _switches.Add(new SwitchTypingRecord(
-            ClassifySwitchFamily(switchType, shape),
+            family,
             switchType,
             shape.SectionCount,
             shape.LabelCount,
@@ -4046,7 +4052,21 @@ internal sealed class TypeChecker
             shape.CaptureLabelCount,
             shape.StructuredPatternLabelCount,
             shape.GuardedLabelCount,
-            Location(switchStatement),
+            location,
+            _currentFunctionName));
+        _boundOperations.Add(new BoundSwitchDispatchOperation(
+            family,
+            switchType,
+            shape.SectionCount,
+            shape.LabelCount,
+            shape.ExplicitDefaultLabelCount,
+            shape.LoweredDefaultLabelCount,
+            shape.LiteralLabelCount,
+            shape.MatchAllLabelCount,
+            shape.CaptureLabelCount,
+            shape.StructuredPatternLabelCount,
+            shape.GuardedLabelCount,
+            location,
             _currentFunctionName));
     }
 
@@ -5661,7 +5681,12 @@ internal sealed class TypeChecker
                 declaredType,
                 storageClass,
                 scope,
-                out _);
+                out var fixedTextStorageCapacity);
+            if (hasFixedTextStorage)
+            {
+                RecordLocalStorageCapacity(declarationKind, declarator, fixedTextStorageCapacity);
+            }
+
             if (declarator.variableInitializer() is null)
             {
                 if (hasFixedTextStorage)
@@ -6375,18 +6400,38 @@ internal sealed class TypeChecker
             _currentFunctionName));
     }
 
+    private void RecordLocalStorageCapacity(
+        string declarationKind,
+        StarkParser.VariableDeclaratorContext declarator,
+        int capacity)
+    {
+        _localStorageCapacities.Add(new LocalStorageCapacityTypingRecord(
+            declarationKind,
+            declarator.Identifier().GetText(),
+            capacity,
+            Location(declarator),
+            _currentFunctionName));
+    }
+
     private void RecordEnumConstructor(
         StarkTypeSymbol enumType,
         string variantName,
         ParserRuleContext constructorContext,
         IReadOnlyList<EnumConstructorMemberTypingRecord>? members = null)
     {
+        var location = Location(constructorContext);
         _enumConstructors.Add(new EnumConstructorTypingRecord(
             enumType,
             variantName,
-            Location(constructorContext),
+            location,
             _currentFunctionName,
             members));
+        _boundOperations.Add(new BoundEnumConstructionOperation(
+            enumType,
+            variantName,
+            members,
+            location,
+            _currentFunctionName));
     }
 
     private void RecordEnumCall(
@@ -6394,10 +6439,16 @@ internal sealed class TypeChecker
         string variantName,
         ParserRuleContext callContext)
     {
+        var location = Location(callContext);
         _enumCalls.Add(new EnumCallTypingRecord(
             enumType,
             variantName,
-            Location(callContext),
+            location,
+            _currentFunctionName));
+        _boundOperations.Add(new BoundEnumCallOperation(
+            enumType,
+            variantName,
+            location,
             _currentFunctionName));
     }
 
@@ -6406,10 +6457,16 @@ internal sealed class TypeChecker
         string variantName,
         IToken token)
     {
+        var location = Location(token);
         _enumValues.Add(new EnumValueTypingRecord(
             enumType,
             variantName,
-            Location(token),
+            location,
+            _currentFunctionName));
+        _boundOperations.Add(new BoundEnumValueOperation(
+            enumType,
+            variantName,
+            location,
             _currentFunctionName));
     }
 
@@ -6754,11 +6811,17 @@ internal sealed class TypeChecker
         ParserRuleContext callContext,
         IReadOnlyList<CallArgumentTypingRecord>? arguments = null)
     {
+        var location = Location(callContext);
         _directCalls.Add(new DirectCallTypingRecord(
             signature,
-            Location(callContext),
+            location,
             _currentFunctionName,
             arguments));
+        _boundOperations.Add(new BoundDirectCallOperation(
+            signature,
+            arguments,
+            location,
+            _currentFunctionName));
     }
 
     private void RecordConversion(
@@ -6790,11 +6853,21 @@ internal sealed class TypeChecker
         ParserRuleContext callContext,
         IReadOnlyList<CallArgumentTypingRecord>? arguments = null)
     {
+        var location = Location(callContext);
         _memberCalls.Add(new MemberCallTypingRecord(
             signature,
-            Location(callContext),
+            location,
             _currentFunctionName,
             arguments));
+        var receiver = arguments?.FirstOrDefault(static argument => argument.IsReceiver);
+        _boundOperations.Add(new BoundMemberCallOperation(
+            signature,
+            receiver?.ArgumentType ?? signature.Parameters.FirstOrDefault()?.Type ?? StarkTypeSymbols.Error,
+            receiver?.ArgumentIsAddressable ?? false,
+            receiver?.ArgumentIsMutable ?? false,
+            arguments,
+            location,
+            _currentFunctionName));
     }
 
     private void RecordIndexAccess(
@@ -6804,12 +6877,21 @@ internal sealed class TypeChecker
         int indexCount,
         ParserRuleContext context)
     {
+        var location = Location(context);
         _indexAccesses.Add(new IndexAccessTypingRecord(
             kind,
             sourceType,
             resultType,
             indexCount,
-            Location(context),
+            location,
+            _currentFunctionName));
+        _boundOperations.Add(new BoundIndexAccessOperation(
+            ClassifyBoundIndexAccess(kind),
+            kind,
+            sourceType,
+            resultType,
+            indexCount,
+            location,
             _currentFunctionName));
     }
 
@@ -6820,15 +6902,41 @@ internal sealed class TypeChecker
         int argumentCount,
         ParserRuleContext context)
     {
+        var location = Location(context);
         _dynamicStorageOperations.Add(new DynamicStorageOperationTypingRecord(
             operationName,
             receiver.Type,
             resultType,
             argumentCount,
-            Location(context),
+            location,
             _currentFunctionName,
             ReceiverIsAddressable: receiver.IsAddressable,
             ReceiverIsMutable: receiver.IsAddressMutable));
+        _boundOperations.Add(new BoundDynamicStorageOperation(
+            operationName,
+            receiver.Type,
+            resultType,
+            argumentCount,
+            receiver.IsAddressable,
+            receiver.IsAddressMutable,
+            location,
+            _currentFunctionName));
+    }
+
+    private static BoundIndexAccessKind ClassifyBoundIndexAccess(string kind)
+    {
+        return kind switch
+        {
+            "element" => BoundIndexAccessKind.Element,
+            "text-element" => BoundIndexAccessKind.TextElement,
+            "text-slice" => BoundIndexAccessKind.TextSlice,
+            "dynamic-element" => BoundIndexAccessKind.DynamicElement,
+            "dynamic-slice" => BoundIndexAccessKind.DynamicSlice,
+            "raw-pointer-region" => BoundIndexAccessKind.RawPointerRegion,
+            _ => kind.Contains("slice", StringComparison.Ordinal)
+                ? BoundIndexAccessKind.Slice
+                : BoundIndexAccessKind.Element
+        };
     }
 
     private IReadOnlyList<CallArgumentTypingRecord> BuildCallArgumentRecords(
@@ -8488,15 +8596,22 @@ internal sealed class TypeChecker
                 expression.type_(),
                 _currentFunctionGenericParameters,
                 _currentFunctionModuleName);
+            var location = Location(expression);
             _typeLayoutExpressions.Add(new TypeLayoutExpressionTypingRecord(
                 kind,
                 targetType,
-                Location(expression),
+                location,
                 _currentFunctionName));
 
             var resultType = expression.ALIGNOF() is not null
                 ? StarkTypeSymbols.Integer(64, BigInteger.One, new BigInteger(long.MaxValue))
                 : StarkTypeSymbols.Integer(64, BigInteger.Zero, new BigInteger(long.MaxValue));
+            _boundOperations.Add(new BoundLayoutQueryOperation(
+                expression.ALIGNOF() is not null ? BoundLayoutQueryKind.AlignOf : BoundLayoutQueryKind.SizeOf,
+                targetType,
+                resultType,
+                location,
+                _currentFunctionName));
 
             return new ExpressionBinding(
                 resultType,
@@ -8607,19 +8722,28 @@ internal sealed class TypeChecker
 
         if (ShouldTrackObjectCreation(expression) || matchedConstructor is not null)
         {
+            var typedConstructor = matchedConstructor is null
+                ? null
+                : new TypedConstructorShape(
+                    createdType.DisplayName,
+                    matchedConstructor.Parameters,
+                    matchedConstructor.IsPrimaryShape,
+                    matchedConstructor.BodyKey);
+            var location = Location(expression.Start);
             _objectCreations.Add(new ObjectCreationTypingRecord(
                 expression.GetText(),
                 createdType,
-                matchedConstructor is null
-                    ? null
-                    : new TypedConstructorShape(
-                        createdType.DisplayName,
-                        matchedConstructor.Parameters,
-                        matchedConstructor.IsPrimaryShape,
-                        matchedConstructor.BodyKey),
-                Location(expression.Start),
+                typedConstructor,
+                location,
                 _currentFunctionName,
                 initializerMembers));
+            _boundOperations.Add(new BoundObjectCreationOperation(
+                expression.GetText(),
+                createdType,
+                typedConstructor,
+                initializerMembers,
+                location,
+                _currentFunctionName));
         }
 
         return new ExpressionBinding(createdType, NamedType: ResolveNamedTypeSymbol(createdType), DiagnosticName: $"new '{createdType.DisplayName}'");
@@ -11142,11 +11266,18 @@ internal sealed class TypeChecker
             displayTargetName,
             scope);
 
+        var callArguments = BuildCallArgumentRecords(expectedParameters, null, argumentBindings, 0);
+        var location = Location(arguments);
         _indirectCalls.Add(new IndirectCallTypingRecord(
             target.Type,
-            Location(arguments),
+            location,
             _currentFunctionName,
-            BuildCallArgumentRecords(expectedParameters, null, argumentBindings, 0)));
+            callArguments));
+        _boundOperations.Add(new BoundFunctionPointerCallOperation(
+            target.Type,
+            callArguments,
+            location,
+            _currentFunctionName));
 
         if (returnType.BorrowKind != StarkBorrowKind.None)
         {
@@ -11236,11 +11367,18 @@ internal sealed class TypeChecker
             displayTargetName,
             scope);
 
+        var callArguments = BuildCallArgumentRecords(expectedParameters, null, argumentBindings, 0);
+        var location = Location(arguments);
         _closureCalls.Add(new ClosureCallTypingRecord(
             target.Type,
-            Location(arguments),
+            location,
             _currentFunctionName,
-            BuildCallArgumentRecords(expectedParameters, null, argumentBindings, 0)));
+            callArguments));
+        _boundOperations.Add(new BoundClosureCallOperation(
+            target.Type,
+            callArguments,
+            location,
+            _currentFunctionName));
 
         if (returnType.BorrowKind != StarkBorrowKind.None)
         {
@@ -11578,6 +11716,7 @@ internal sealed class TypeChecker
             {
                 if (variant.IsUnit)
                 {
+                    RecordEnumValue(enumTypeSymbol, variant.Name, context.Start);
                     return new ExpressionBinding(enumTypeSymbol, NamedType: enumType, DiagnosticName: $"enum case '{qualifiedName}'");
                 }
 
@@ -12499,6 +12638,13 @@ internal sealed class TypeChecker
 
         if (isFixedTextStorageInterpolation)
         {
+            _boundOperations.Add(new BoundTextInterpolationOperation(
+                expectedType!,
+                segments.Count,
+                segments.OfType<InterpolatedTextHoleSegment>().Count(),
+                UsesFixedStorage: true,
+                Location(literal),
+                _currentFunctionName));
             return new ExpressionBinding(
                 expectedType!,
                 NamedType: ResolveNamedTypeSymbol(expectedType!),
@@ -12517,6 +12663,13 @@ internal sealed class TypeChecker
 
         var type = InferStringLiteralType(foldedLiteral);
         _literals.Add(new LiteralTypingRecord(literal.GetText(), type, Location(literal)));
+        _boundOperations.Add(new BoundTextInterpolationOperation(
+            type,
+            segments.Count,
+            segments.OfType<InterpolatedTextHoleSegment>().Count(),
+            UsesFixedStorage: false,
+            Location(literal),
+            _currentFunctionName));
         var textLiteralHasMemoryRoot = type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode;
         var bindingResult = new ExpressionBinding(
             type,
@@ -13677,6 +13830,13 @@ internal sealed class TypeChecker
 
         if (isFixedTextStorageConcat)
         {
+            _boundOperations.Add(new BoundTextBuildOperation(
+                "concat",
+                expectedType!,
+                operands.Count,
+                UsesFixedStorage: true,
+                Location(context),
+                _currentFunctionName));
             return new ExpressionBinding(
                 expectedType!,
                 NamedType: ResolveNamedTypeSymbol(expectedType!),
@@ -13735,6 +13895,13 @@ internal sealed class TypeChecker
 
         var signature = CacheFunctionInstantiation(resolution.Match!);
         RecordDirectCall(signature, context);
+        _boundOperations.Add(new BoundTextBuildOperation(
+            "runtime-concat",
+            signature.ReturnType,
+            OperandCount: 2,
+            UsesFixedStorage: false,
+            Location(context),
+            _currentFunctionName));
         result = new ExpressionBinding(
             signature.ReturnType,
             NamedType: ResolveNamedTypeSymbol(signature.ReturnType),

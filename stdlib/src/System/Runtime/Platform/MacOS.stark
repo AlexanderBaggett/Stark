@@ -49,12 +49,12 @@ internal unsafe ffi fn rawmutptr<i8[min max]> opendir(rawptr<i8[min max]> path);
 internal unsafe ffi fn rawmutptr<i8[min max]> readdir(rawptr<i8[min max]> directory);
 internal unsafe ffi fn i32[min max] closedir(rawptr<i8[min max]> directory);
 internal unsafe ffi fn i32[min max] pthread_create(
-    rawmutptr<rawptr<i8[min max]>> thread,
+    rawmutptr<rawmutptr<i8[min max]>> thread,
     rawptr<i8[min max]> attributes,
     fnptr<fn rawmutptr<i8[min max]>(fnptr<fn i32[min max]()>)> start,
     fnptr<fn i32[min max]()> argument);
-internal unsafe ffi fn i32[min max] pthread_join(rawptr<i8[min max]> thread, rawmutptr<rawmutptr<i8[min max]>> value);
-internal unsafe ffi fn i32[min max] pthread_detach(rawptr<i8[min max]> thread);
+internal unsafe ffi fn i32[min max] pthread_join(rawmutptr<i8[min max]> thread, rawmutptr<rawmutptr<i8[min max]>> value);
+internal unsafe ffi fn i32[min max] pthread_detach(rawmutptr<i8[min max]> thread);
 internal unsafe ffi fn i32[min max] sched_yield();
 internal unsafe ffi fn i32[min max] nanosleep(rawptr<MacOSTimespec> request, rawptr<MacOSTimespec> remaining);
 internal unsafe ffi fn i32[min max] socket(i32[min max] domain, i32[min max] socketType, i32[min max] protocol);
@@ -70,9 +70,9 @@ internal unsafe ffi fn i32[min max] shutdown(i32[min max] socketHandle, i32[min 
 internal unsafe ffi fn i32[min max] fcntl(i32[min max] fileDescriptor, i32[min max] command, i32[min max] value);
 internal unsafe ffi fn i32[min max] setsockopt(i32[min max] socketHandle, i32[min max] level, i32[min max] optionName, rawptr<i8[min max]> optionValue, i32[min max] optionLength);
 internal unsafe ffi fn i32[min max] poll(rawmutptr<MacOSPollFd> descriptors, i32[min max] descriptorCount, i32[min max] timeoutMilliseconds);
-internal unsafe ffi fn i32[min max] os_sync_wait_on_address(rawptr<i8[min max]> address, i64[min max] value, u64[0 2 ** 63 - 1] size, i32[min max] flags);
-internal unsafe ffi fn i32[min max] os_sync_wake_by_address_any(rawptr<i8[min max]> address, u64[0 2 ** 63 - 1] size, i32[min max] flags);
-internal unsafe ffi fn i32[min max] os_sync_wake_by_address_all(rawptr<i8[min max]> address, u64[0 2 ** 63 - 1] size, i32[min max] flags);
+internal unsafe ffi fn i32[min max] os_sync_wait_on_address(rawmutptr<i8[min max]> address, i64[min max] value, u64[0 2 ** 63 - 1] size, i32[min max] flags);
+internal unsafe ffi fn i32[min max] os_sync_wake_by_address_any(rawmutptr<i8[min max]> address, u64[0 2 ** 63 - 1] size, i32[min max] flags);
+internal unsafe ffi fn i32[min max] os_sync_wake_by_address_all(rawmutptr<i8[min max]> address, u64[0 2 ** 63 - 1] size, i32[min max] flags);
 
 const MacOSPathBufferCapacity = 4096;
 const MacOSOpenReadOnlyFlag = 0;
@@ -1233,8 +1233,8 @@ internal unsafe ffi fn rawmutptr<i8[min max]> ThreadEntryThunk(fnptr<fn i32[min 
     return (rawmutptr<i8[min max]>)exitCode;
 }
 
-internal unsafe fn rawptr<i8[min max]> StartThread(fnptr<fn i32[min max]()> entry) {
-    stack mut rawptr<i8[min max]> thread = null;
+internal unsafe fn rawmutptr<i8[min max]> StartThread(fnptr<fn i32[min max]()> entry) {
+    stack mut rawmutptr<i8[min max]> thread = null;
     stack i32[min max] result = pthread_create(&thread, null, ThreadEntryThunk, entry);
     if (result != 0) {
         return null;
@@ -1243,7 +1243,7 @@ internal unsafe fn rawptr<i8[min max]> StartThread(fnptr<fn i32[min max]()> entr
     return thread;
 }
 
-internal unsafe fn i32[min max] JoinThread(rawptr<i8[min max]> handle, rawmutptr<i32[min max]> exitCode) {
+internal unsafe fn i32[min max] JoinThread(rawmutptr<i8[min max]> handle, rawmutptr<i32[min max]> exitCode) {
     if (handle == null || exitCode == null) {
         return -1;
     }
@@ -1258,7 +1258,7 @@ internal unsafe fn i32[min max] JoinThread(rawptr<i8[min max]> handle, rawmutptr
     return 0;
 }
 
-internal unsafe fn i32[min max] DetachThread(rawptr<i8[min max]> handle) {
+internal unsafe fn i32[min max] DetachThread(rawmutptr<i8[min max]> handle) {
     if (handle == null) {
         return -1;
     }
@@ -1321,7 +1321,7 @@ internal unsafe fn i32[min max] WaitWritable(rawptr<i8[min max]> handle, i32[min
     return WaitForEvents(handle, (i16[min max])MacOSPollWritableEvent, timeoutMilliseconds);
 }
 
-internal unsafe fn i32[min max] FutexWait(rawptr<i32[min max]> address, i32[min max] expected) {
+internal unsafe fn i32[min max] FutexWait(rawmutptr<i32[min max]> address, i32[min max] expected) {
     if (address == null) {
         return -14;
     }
@@ -1331,7 +1331,7 @@ internal unsafe fn i32[min max] FutexWait(rawptr<i32[min max]> address, i32[min 
     }
 
     stack i32[min max] result = os_sync_wait_on_address(
-        (rawptr<i8[min max]>)address,
+        (rawmutptr<i8[min max]>)address,
         (i64[min max])expected,
         MacOSSyncAddressSizeI32,
         MacOSSyncAddressDefaultFlags);
@@ -1342,7 +1342,7 @@ internal unsafe fn i32[min max] FutexWait(rawptr<i32[min max]> address, i32[min 
     return NegativeErrno();
 }
 
-internal unsafe fn i32[min max] FutexWake(rawptr<i32[min max]> address, i32[min max] count) {
+internal unsafe fn i32[min max] FutexWake(rawmutptr<i32[min max]> address, i32[min max] count) {
     if (address == null) {
         return -14;
     }
@@ -1353,14 +1353,14 @@ internal unsafe fn i32[min max] FutexWake(rawptr<i32[min max]> address, i32[min 
 
     if (count == 1) {
         os_sync_wake_by_address_any(
-            (rawptr<i8[min max]>)address,
+            (rawmutptr<i8[min max]>)address,
             MacOSSyncAddressSizeI32,
             MacOSSyncAddressDefaultFlags);
         return 0;
     }
 
     os_sync_wake_by_address_all(
-        (rawptr<i8[min max]>)address,
+        (rawmutptr<i8[min max]>)address,
         MacOSSyncAddressSizeI32,
         MacOSSyncAddressDefaultFlags);
     return 0;

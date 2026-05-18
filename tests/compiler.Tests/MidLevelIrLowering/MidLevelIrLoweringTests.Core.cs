@@ -145,6 +145,17 @@ public sealed partial class MidLevelIrLoweringTests
         Assert.Contains(statements, static statement => statement.Value is MidLevelIrInsertFieldRValue { FieldName: "$Integer_0" });
         Assert.Contains(statements, static statement => statement.Value is MidLevelIrInsertFieldRValue { FieldName: "$Move_X" });
         Assert.Contains(statements, static statement => statement.Value is MidLevelIrInsertFieldRValue { FieldName: "$Move_Y" });
+
+        var constructions = statements
+            .Select(static statement => statement.Value)
+            .OfType<MidLevelIrUseRValue>()
+            .Select(static use => use.Operand)
+            .OfType<MidLevelIrEnumConstructionOperand>()
+            .Select(static construction => construction.Facts)
+            .ToArray();
+        Assert.Contains(constructions, static facts => facts.Variant.Name == "End" && facts.PayloadFields.Count == 0);
+        Assert.Contains(constructions, static facts => facts.Variant.Name == "Integer" && facts.PayloadFields.Count == 1);
+        Assert.Contains(constructions, static facts => facts.Variant.Name == "Move" && facts.PayloadFields.Count == 2);
     }
 
     [Fact]
@@ -169,7 +180,7 @@ public sealed partial class MidLevelIrLoweringTests
         Assert.True(run.SupportsDirectCodeGeneration);
         Assert.Single(
             run.Blocks.SelectMany(static block => block.Statements),
-            static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Next" });
+            static statement => IsDirectCallStatement(statement, "Next"));
         Assert.Contains(run.Blocks, block => block.Label.Contains("cmpchain_next_1", StringComparison.Ordinal));
         Assert.Contains(run.Blocks, block => block.Label.Contains("cmpchain_false_0", StringComparison.Ordinal));
         Assert.Contains(run.Blocks, block => block.Label.Contains("cmpchain_join", StringComparison.Ordinal));
@@ -246,8 +257,34 @@ public sealed partial class MidLevelIrLoweringTests
 
         var trueBlock = Assert.Single(function.Blocks, static block => block.Label.Contains("cond_true", StringComparison.Ordinal));
         var falseBlock = Assert.Single(function.Blocks, static block => block.Label.Contains("cond_false", StringComparison.Ordinal));
-        Assert.Contains(trueBlock.Statements, static statement => statement.Kind == MidLevelIrStatementKind.Evaluate && statement.Value is MidLevelIrCallRValue call && call.FunctionName == "Reset");
-        Assert.Contains(falseBlock.Statements, static statement => statement.Kind == MidLevelIrStatementKind.Evaluate && statement.Value is MidLevelIrCallRValue call && call.FunctionName == "Reset");
+        Assert.Contains(trueBlock.Statements, static statement => statement.Kind == MidLevelIrStatementKind.Evaluate && IsDirectCallStatement(statement, "Reset"));
+        Assert.Contains(falseBlock.Statements, static statement => statement.Kind == MidLevelIrStatementKind.Evaluate && IsDirectCallStatement(statement, "Reset"));
+    }
+
+    [Fact]
+    public void VoidFunctionPointerCallsLowerAsStatementOnlyOperations()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            noinline finite law void Target(i32[min max] value) {
+                return;
+            }
+
+            unsafe fn void Run() {
+                stack fnptr<fn void(i32[min max])> op = Target;
+                op(1);
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.Contains(statements, static statement => statement.Call is MidLevelIrIndirectCallStatementOperation);
+        Assert.DoesNotContain(statements, static statement => statement.Value is MidLevelIrIndirectCallRValue { Type.Kind: StarkTypeKind.Void });
     }
 
     [Fact]
@@ -639,6 +676,15 @@ public sealed partial class MidLevelIrLoweringTests
         Assert.True(function.SupportsDirectCodeGeneration);
         Assert.Contains(statements, static statement => statement.Value is MidLevelIrInsertFieldRValue);
         Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractFieldRValue);
+
+        var construction = Assert.Single(statements
+            .Select(static statement => statement.Value)
+            .OfType<MidLevelIrUseRValue>()
+            .Select(static use => use.Operand)
+            .OfType<MidLevelIrObjectConstructionOperand>());
+        Assert.Equal(MidLevelIrObjectConstructionKind.Initializer, construction.Facts.Kind);
+        Assert.Equal("Box", construction.Facts.TypeName);
+        Assert.Single(construction.Facts.InitializerMembers, static member => member.FieldName == "Value" && member.FieldIndex == 0);
     }
 
     [Fact]
@@ -682,6 +728,15 @@ public sealed partial class MidLevelIrLoweringTests
         Assert.Equal(2, insertTexts.Length);
         Assert.Contains(".Left = First()", insertTexts[0], StringComparison.Ordinal);
         Assert.Contains(".Right = Second()", insertTexts[1], StringComparison.Ordinal);
+
+        var construction = Assert.Single(statements
+            .Select(static statement => statement.Value)
+            .OfType<MidLevelIrUseRValue>()
+            .Select(static use => use.Operand)
+            .OfType<MidLevelIrObjectConstructionOperand>());
+        Assert.Equal(MidLevelIrObjectConstructionKind.PrimaryConstructor, construction.Facts.Kind);
+        Assert.NotNull(construction.Facts.Constructor);
+        Assert.True(construction.Facts.Constructor!.IsPrimaryShape);
     }
 
     [Fact]

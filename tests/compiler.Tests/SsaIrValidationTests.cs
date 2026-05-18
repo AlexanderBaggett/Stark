@@ -1173,42 +1173,30 @@ public sealed class SsaIrValidationTests
     }
 
     [Fact]
-    public void ExtractIndexOutOfRangeFailsBeforeLlvmEmission()
+    public void ExtractIndexOutOfRangeIsUnrepresentable()
     {
         var arrayType = StarkTypeSymbols.FixedArray(I32, fixedLength: 2);
-        var function = BuildVoidFunction([
-            new SsaValueInstruction(
-                "v0",
-                new SsaExtractIndexRValue(
-                    new SsaZeroInitializerValue(arrayType),
-                    2,
-                    I32,
-                    "values[2]"))
-        ]);
 
-        var diagnostics = Validate(function);
-
-        AssertDiagnostic(diagnostics, "STK5002", "index extraction index '2'", "out of range", "length 2");
+        Assert.Throws<ArgumentOutOfRangeException>(() => new SsaExtractIndexRValue(
+            new SsaZeroInitializerValue(arrayType),
+            2,
+            IndexedElementOperationFamily.FixedArrayElement,
+            I32,
+            "values[2]"));
     }
 
     [Fact]
-    public void InsertIndexValueMismatchFailsBeforeLlvmEmission()
+    public void InsertIndexValueMismatchIsUnrepresentable()
     {
         var arrayType = StarkTypeSymbols.FixedArray(I32, fixedLength: 2);
-        var function = BuildVoidFunction([
-            new SsaValueInstruction(
-                "v0",
-                new SsaInsertIndexRValue(
-                    new SsaZeroInitializerValue(arrayType),
-                    1,
-                    new SsaBoolConstant(true),
-                    arrayType,
-                    "values[1] = true"))
-        ]);
 
-        var diagnostics = Validate(function);
-
-        AssertDiagnostic(diagnostics, "STK5002", "index insertion 1 value", "i32", "bool");
+        Assert.Throws<ArgumentException>(() => new SsaInsertIndexRValue(
+            new SsaZeroInitializerValue(arrayType),
+            1,
+            IndexedElementOperationFamily.FixedArrayElement,
+            new SsaBoolConstant(true),
+            arrayType,
+            "values[1] = true"));
     }
 
     [Fact]
@@ -1221,6 +1209,7 @@ public sealed class SsaIrValidationTests
                 new SsaExtractIndexRValue(
                     new SsaZeroInitializerValue(sliceType),
                     0,
+                    IndexedElementOperationFamily.ViewComponent,
                     StarkTypeSymbols.RawPointer(I32, isMutable: false),
                     "values.Data")),
             new SsaValueInstruction(
@@ -1228,6 +1217,7 @@ public sealed class SsaIrValidationTests
                 new SsaExtractIndexRValue(
                     new SsaZeroInitializerValue(sliceType),
                     1,
+                    IndexedElementOperationFamily.ViewComponent,
                     StarkTypeSymbols.Integer(64),
                     "values.Length"))
         ]);
@@ -1235,6 +1225,46 @@ public sealed class SsaIrValidationTests
         var diagnostics = Validate(function);
 
         Assert.Empty(diagnostics);
+    }
+
+    [Fact]
+    public void SliceViewNoOpRetypeSupportsImmutableComponentExtraction()
+    {
+        var mutableSliceType = StarkTypeSymbols.ApplyQualifiers(StarkTypeSymbols.Slice(I32), isMutableView: true);
+        var sliceType = StarkTypeSymbols.Slice(I32);
+        var function = BuildVoidFunction([
+            new SsaValueInstruction(
+                "view",
+                new SsaConvertRValue(
+                    new SsaZeroInitializerValue(mutableSliceType),
+                    sliceType,
+                    "view:i32[]")),
+            new SsaValueInstruction(
+                "data",
+                new SsaExtractIndexRValue(
+                    new SsaValueReference("view", sliceType),
+                    0,
+                    IndexedElementOperationFamily.ViewComponent,
+                    StarkTypeSymbols.RawPointer(I32, isMutable: false),
+                    "view.Data"))
+        ]);
+
+        var diagnostics = Validate(function);
+
+        Assert.Empty(diagnostics);
+    }
+
+    [Fact]
+    public void IndexOperationFamilyMismatchIsUnrepresentable()
+    {
+        var arrayType = StarkTypeSymbols.FixedArray(I32, fixedLength: 2);
+
+        Assert.Throws<ArgumentException>(() => new SsaExtractIndexRValue(
+            new SsaZeroInitializerValue(arrayType),
+            0,
+            IndexedElementOperationFamily.ViewComponent,
+            I32,
+            "values[0]"));
     }
 
     [Fact]
@@ -1246,6 +1276,7 @@ public sealed class SsaIrValidationTests
                 new SsaExtractIndexRValue(
                     new SsaStringConstant("abc", StarkTypeSymbols.Ascii),
                     0,
+                    IndexedElementOperationFamily.ViewComponent,
                     StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: false),
                     "text.Data")),
             new SsaValueInstruction(
@@ -1253,6 +1284,7 @@ public sealed class SsaIrValidationTests
                 new SsaExtractIndexRValue(
                     new SsaStringConstant("abc", StarkTypeSymbols.Ascii),
                     1,
+                    IndexedElementOperationFamily.ViewComponent,
                     StarkTypeSymbols.Integer(64),
                     "text.Length"))
         ]);

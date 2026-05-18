@@ -5,7 +5,9 @@ namespace compiler.Tests;
 public sealed class LoweringContractValidationTests
 {
     private const string ContractSource = """
-        module Demo
+        module System.Text
+
+        public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
 
         enum Status {
             Ok,
@@ -64,9 +66,13 @@ public sealed class LoweringContractValidationTests
             stack mut Box box = new Box() { Value = 3 };
             stack mut i32[min max][2] values = { 4, 5 };
             stack fnptr<fn i32[min max](i32[min max])> lambda = (i32[min max] value) => Inc(value);
+            stack closure<finite law i32[min max](i32[min max])> closureOp =
+                (i32[min max] value) => value + 6;
             stack mut dynamic u32[0 max] items = new(1);
             stack i64[min max] boxSize = sizeof(Box);
             stack i64[min max] boxAlign = alignof(Box);
+            stack Ascii label[8] = $"ok";
+            stack Ascii joined[12] = label + "!";
             values[0] = Inc(box.Get());
             items.Reserve(1);
             if (!box.Fill(values[1])) {
@@ -75,7 +81,7 @@ public sealed class LoweringContractValidationTests
             if (!ApplyOut(Write, values[1])) {
                 return 0;
             }
-            return values[0] + values[1] + Apply(Inc, 2) + Apply(lambda, 3) + Choose(true) + Score(Status.Err(4));
+            return values[0] + values[1] + Apply(Inc, 2) + Apply(lambda, 3) + closureOp(6) + Choose(true) + Score(Status.Err(4));
         }
         """;
 
@@ -87,7 +93,7 @@ public sealed class LoweringContractValidationTests
         AssertSucceeded(result);
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LoweringContractValidation, out LoweringContractValidationModel? model));
         Assert.NotNull(model);
-        Assert.Equal("Demo", model.ModuleName);
+        Assert.Equal("System.Text", model.ModuleName);
         Assert.True(model.CheckedFunctionCount >= 4);
         Assert.True(model.CheckedCallCount >= 5);
         Assert.True(model.CheckedIndexAccessCount >= 2);
@@ -96,6 +102,20 @@ public sealed class LoweringContractValidationTests
         Assert.True(model.CheckedTypeLayoutExpressionCount >= 2);
         Assert.True(model.CheckedDynamicStorageOperationCount >= 1);
         Assert.True(model.CheckedSwitchCount >= 2);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeModel));
+        Assert.NotNull(typeModel);
+        Assert.Contains(typeModel.BoundOperations, static operation => operation.Kind == BoundOperationKind.DirectCall);
+        Assert.Contains(typeModel.BoundOperations, static operation => operation.Kind == BoundOperationKind.MemberCall);
+        Assert.Contains(typeModel.BoundOperations, static operation => operation.Kind == BoundOperationKind.FunctionPointerCall);
+        Assert.Contains(typeModel.BoundOperations, static operation => operation.Kind == BoundOperationKind.ClosureCall);
+        Assert.Contains(typeModel.BoundOperations, static operation => operation.Kind == BoundOperationKind.IndexAccess);
+        Assert.Contains(typeModel.BoundOperations, static operation => operation.Kind == BoundOperationKind.ObjectCreation);
+        Assert.Contains(typeModel.BoundOperations, static operation => operation.Kind == BoundOperationKind.EnumCall);
+        Assert.Contains(typeModel.BoundOperations, static operation => operation.Kind == BoundOperationKind.DynamicStorageOperation);
+        Assert.Contains(typeModel.BoundOperations, static operation => operation.Kind == BoundOperationKind.TextInterpolation);
+        Assert.Contains(typeModel.BoundOperations, static operation => operation.Kind == BoundOperationKind.TextBuild);
+        Assert.Contains(typeModel.BoundOperations, static operation => operation.Kind == BoundOperationKind.LayoutQuery);
+        Assert.Contains(typeModel.BoundOperations, static operation => operation.Kind == BoundOperationKind.SwitchDispatch);
         Assert.Contains(
             result.Executions,
             execution => execution.PassId == "validate-lowering-contract"
@@ -104,6 +124,138 @@ public sealed class LoweringContractValidationTests
             result.Executions,
             execution => execution.PassId == "lower-hir"
                 && execution.Status == PassExecutionStatus.Executed);
+    }
+
+    [Fact]
+    public void MissingBoundCallOperationFactsFailBeforeMir()
+    {
+        var (loadedModules, typeModel) = CompileThroughOwnership(ContractSource);
+        var brokenModel = typeModel with
+        {
+            BoundOperationRecords = typeModel.BoundOperations
+                .Where(static operation => operation is not BoundDirectCallOperation)
+                .ToArray()
+        };
+        var context = CreateValidationContext(ContractSource);
+
+        new LoweringContractValidator(context, loadedModules, brokenModel).Validate();
+
+        Assert.Contains(
+            context.Diagnostics.Items,
+            diagnostic => diagnostic.Code == "STK5003"
+                && diagnostic.Stage == "validate-lowering-contract"
+                && diagnostic.Message.Contains("bound direct-call operation", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void MissingBoundIndexOperationFactsFailBeforeMir()
+    {
+        var (loadedModules, typeModel) = CompileThroughOwnership(ContractSource);
+        var brokenModel = typeModel with
+        {
+            BoundOperationRecords = typeModel.BoundOperations
+                .Where(static operation => operation is not BoundIndexAccessOperation)
+                .ToArray()
+        };
+        var context = CreateValidationContext(ContractSource);
+
+        new LoweringContractValidator(context, loadedModules, brokenModel).Validate();
+
+        Assert.Contains(
+            context.Diagnostics.Items,
+            diagnostic => diagnostic.Code == "STK5003"
+                && diagnostic.Stage == "validate-lowering-contract"
+                && diagnostic.Message.Contains("bound index-or-slice operation", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void MissingBoundObjectCreationOperationFactsFailBeforeMir()
+    {
+        var (loadedModules, typeModel) = CompileThroughOwnership(ContractSource);
+        var brokenModel = typeModel with
+        {
+            BoundOperationRecords = typeModel.BoundOperations
+                .Where(static operation => operation is not BoundObjectCreationOperation)
+                .ToArray()
+        };
+        var context = CreateValidationContext(ContractSource);
+
+        new LoweringContractValidator(context, loadedModules, brokenModel).Validate();
+
+        Assert.Contains(
+            context.Diagnostics.Items,
+            diagnostic => diagnostic.Code == "STK5003"
+                && diagnostic.Stage == "validate-lowering-contract"
+                && diagnostic.Message.Contains("bound object-creation operation", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void MissingBoundDynamicStorageOperationFactsFailBeforeMir()
+    {
+        var (loadedModules, typeModel) = CompileThroughOwnership(ContractSource);
+        var brokenModel = typeModel with
+        {
+            BoundOperationRecords = typeModel.BoundOperations
+                .Where(static operation => operation is not BoundDynamicStorageOperation)
+                .ToArray()
+        };
+        var context = CreateValidationContext(ContractSource);
+
+        new LoweringContractValidator(context, loadedModules, brokenModel).Validate();
+
+        Assert.Contains(
+            context.Diagnostics.Items,
+            diagnostic => diagnostic.Code == "STK5003"
+                && diagnostic.Stage == "validate-lowering-contract"
+                && diagnostic.Message.Contains("bound dynamic-storage operation", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void MissingBoundTextOperationFactsFailBeforeMir()
+    {
+        var (loadedModules, typeModel) = CompileThroughOwnership(ContractSource);
+        var brokenModel = typeModel with
+        {
+            BoundOperationRecords = typeModel.BoundOperations
+                .Where(static operation => operation is not BoundTextInterpolationOperation
+                    && operation is not BoundTextBuildOperation)
+                .ToArray()
+        };
+        var context = CreateValidationContext(ContractSource);
+
+        new LoweringContractValidator(context, loadedModules, brokenModel).Validate();
+
+        Assert.Contains(
+            context.Diagnostics.Items,
+            diagnostic => diagnostic.Code == "STK5003"
+                && diagnostic.Stage == "validate-lowering-contract"
+                && diagnostic.Message.Contains("bound text-interpolation operation", StringComparison.Ordinal));
+        Assert.Contains(
+            context.Diagnostics.Items,
+            diagnostic => diagnostic.Code == "STK5003"
+                && diagnostic.Stage == "validate-lowering-contract"
+                && diagnostic.Message.Contains("bound text-build operation", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void MissingBoundSwitchOperationFactsFailBeforeMir()
+    {
+        var (loadedModules, typeModel) = CompileThroughOwnership(ContractSource);
+        var brokenModel = typeModel with
+        {
+            BoundOperationRecords = typeModel.BoundOperations
+                .Where(static operation => operation is not BoundSwitchDispatchOperation)
+                .ToArray()
+        };
+        var context = CreateValidationContext(ContractSource);
+
+        new LoweringContractValidator(context, loadedModules, brokenModel).Validate();
+
+        Assert.Contains(
+            context.Diagnostics.Items,
+            diagnostic => diagnostic.Code == "STK5003"
+                && diagnostic.Stage == "validate-lowering-contract"
+                && diagnostic.Message.Contains("bound switch-dispatch operation", StringComparison.Ordinal));
     }
 
     [Fact]

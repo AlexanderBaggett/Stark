@@ -88,7 +88,8 @@ internal static partial class PackageImageLoader
                 StorageClass: manifest.StorageClass,
                 IsMutable: manifest.IsMutable,
                 IsConstant: manifest.IsConstant,
-                Type: BuildTypeSymbol(manifest.Type));
+                Type: BuildTypeSymbol(manifest.Type),
+                StorageCapacity: manifest.StorageCapacity);
             return true;
         }
 
@@ -918,6 +919,93 @@ internal static partial class PackageImageLoader
             summary = new ImportedTemplateTypedBodyExpressionSummary(
                 ImportedTemplateTypedBodyExpressionKind.MemberCall,
                 Ordinal: manifest.Ordinal,
+                Arguments: arguments);
+            return true;
+        }
+
+        if (string.Equals(manifest.Kind, "function-address", StringComparison.Ordinal))
+        {
+            if (manifest.Ordinal is null)
+            {
+                return false;
+            }
+
+            summary = new ImportedTemplateTypedBodyExpressionSummary(
+                ImportedTemplateTypedBodyExpressionKind.FunctionAddress,
+                Ordinal: manifest.Ordinal);
+            return true;
+        }
+
+        if (string.Equals(manifest.Kind, "dynamic-storage-operation", StringComparison.Ordinal))
+        {
+            if (manifest.Ordinal is null || manifest.Arguments is not { Count: > 0 })
+            {
+                return false;
+            }
+
+            var arguments = new List<ImportedTemplateTypedBodyExpressionSummary>(manifest.Arguments.Count);
+            foreach (var argument in manifest.Arguments)
+            {
+                if (!TryBuildImportedTypedTemplateExpression(argument, out var builtArgument))
+                {
+                    return false;
+                }
+
+                arguments.Add(builtArgument);
+            }
+
+            summary = new ImportedTemplateTypedBodyExpressionSummary(
+                ImportedTemplateTypedBodyExpressionKind.DynamicStorageOperation,
+                Ordinal: manifest.Ordinal,
+                Arguments: arguments);
+            return true;
+        }
+
+        if (string.Equals(manifest.Kind, "text-interpolation", StringComparison.Ordinal))
+        {
+            if (manifest.LiteralText is null)
+            {
+                return false;
+            }
+
+            var arguments = new List<ImportedTemplateTypedBodyExpressionSummary>((manifest.Arguments ?? []).Count);
+            foreach (var argument in manifest.Arguments ?? [])
+            {
+                if (!TryBuildImportedTypedTemplateExpression(argument, out var builtArgument))
+                {
+                    return false;
+                }
+
+                arguments.Add(builtArgument);
+            }
+
+            summary = new ImportedTemplateTypedBodyExpressionSummary(
+                ImportedTemplateTypedBodyExpressionKind.TextInterpolation,
+                LiteralText: manifest.LiteralText,
+                Arguments: arguments);
+            return true;
+        }
+
+        if (string.Equals(manifest.Kind, "text-build", StringComparison.Ordinal))
+        {
+            if (manifest.Arguments is not { Count: > 0 })
+            {
+                return false;
+            }
+
+            var arguments = new List<ImportedTemplateTypedBodyExpressionSummary>(manifest.Arguments.Count);
+            foreach (var argument in manifest.Arguments)
+            {
+                if (!TryBuildImportedTypedTemplateExpression(argument, out var builtArgument))
+                {
+                    return false;
+                }
+
+                arguments.Add(builtArgument);
+            }
+
+            summary = new ImportedTemplateTypedBodyExpressionSummary(
+                ImportedTemplateTypedBodyExpressionKind.TextBuild,
                 Arguments: arguments);
             return true;
         }

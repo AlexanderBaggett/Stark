@@ -134,6 +134,65 @@ public sealed class SsaLoweringTests
     }
 
     [Fact]
+    public void VoidCallStatementsLowerToStatementOnlySsaInstructions()
+    {
+        var functionPointerType = StarkTypeSymbols.FunctionPointer(
+            StarkFunctionKind.Fn,
+            StarkTypeSymbols.Void,
+            [StarkTypeSymbols.Integer(32)]);
+        var mir = new MidLevelIrModule(
+            "Demo",
+            [
+                new MidLevelIrFunction(
+                    "Run",
+                    "Run() -> void",
+                    StarkTypeSymbols.Void,
+                    [],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Locals: [],
+                    Blocks:
+                    [
+                        new MidLevelIrBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [
+                                new MidLevelIrStatement(
+                                    MidLevelIrStatementKind.Evaluate,
+                                    "Drop(1)",
+                                    Call: new MidLevelIrDirectCallStatementOperation(
+                                        "Drop",
+                                        [new MidLevelIrIntegerConstantOperand(1, StarkTypeSymbols.Integer(32))],
+                                        StarkTypeSymbols.Void,
+                                        "Drop(1)")),
+                                new MidLevelIrStatement(
+                                    MidLevelIrStatementKind.Evaluate,
+                                    "op(2)",
+                                    Call: new MidLevelIrIndirectCallStatementOperation(
+                                        new MidLevelIrFunctionAddressOperand("Drop", functionPointerType),
+                                        [new MidLevelIrIntegerConstantOperand(2, StarkTypeSymbols.Integer(32))],
+                                        StarkTypeSymbols.Void,
+                                        "op(2)"))
+                            ],
+                            new MidLevelIrTerminator(MidLevelIrTerminatorKind.Return, []))
+                    ])
+            ]);
+
+        var lowered = new SsaLowerer().Lower(mir);
+        var instructions = Assert.Single(lowered.Functions).Blocks.SelectMany(static block => block.Instructions).ToArray();
+
+        Assert.Contains(instructions, static instruction => instruction is SsaCallInstruction { FunctionName: "Drop", Type.Kind: StarkTypeKind.Void });
+        Assert.Contains(instructions, static instruction => instruction is SsaIndirectCallInstruction { Type.Kind: StarkTypeKind.Void });
+        Assert.DoesNotContain(
+            instructions,
+            static instruction => instruction is SsaValueInstruction
+            {
+                Value: SsaCallRValue { Type.Kind: StarkTypeKind.Void } or SsaIndirectCallRValue { Type.Kind: StarkTypeKind.Void }
+            });
+    }
+
+    [Fact]
     public void LoopHeaderProducesPhiForBackedgeValue()
     {
         var result = Compile(
@@ -451,7 +510,7 @@ public sealed class SsaLoweringTests
         var function = Assert.Single(GetSsa(result).Functions, static function => function.Name == "Run");
         var instructions = function.Blocks.SelectMany(static block => block.Instructions).ToArray();
 
-        Assert.Contains(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaCallRValue { FunctionName: "Touch" } });
+        Assert.Contains(instructions, static instruction => instruction is SsaCallInstruction { FunctionName: "Touch" });
         Assert.Contains(
             instructions,
             static instruction => instruction is SsaStoreLocalInstruction

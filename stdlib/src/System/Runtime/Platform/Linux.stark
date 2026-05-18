@@ -25,14 +25,14 @@ internal unsafe ffi asm(x86_64) fn i64[min max] LinuxMapThreadRegion(i64[min max
     "xorq %rdi, %rdi\nmovq $$9, %rax\nmovq $$3, %rdx\nmovq $$131106, %r10\nmovq $$-1, %r8\nxorq %r9, %r9\nsyscall"
 }
 
-internal unsafe ffi asm(x86_64) fn i32[min max] LinuxReleaseThreadReference(rawptr<i8[min max]> control)
+internal unsafe ffi asm(x86_64) fn i32[min max] LinuxReleaseThreadReference(rawmutptr<i8[min max]> control)
     in("rdi") control,
     out("rax") return
 {
     "movl $$-1, %eax\nlock xaddl %eax, 32(%rdi)"
 }
 
-internal unsafe ffi asm(x86_64) fn i64[min max] LinuxCloneThread(i64[min max] flags, rawptr<i8[min max]> childStack, rawptr<i8[min max]> control)
+internal unsafe ffi asm(x86_64) fn i64[min max] LinuxCloneThread(i64[min max] flags, rawptr<i8[min max]> childStack, rawmutptr<i8[min max]> control)
     in("rdi") flags,
     in("rsi") childStack,
     in("r12") control,
@@ -199,14 +199,14 @@ internal unsafe ffi asm(aarch64) fn i64[min max] LinuxMapThreadRegion(i64[min ma
     "mov x0, xzr\nsub x0, x0, #38"
 }
 
-internal unsafe ffi asm(aarch64) fn i32[min max] LinuxReleaseThreadReference(rawptr<i8[min max]> control)
+internal unsafe ffi asm(aarch64) fn i32[min max] LinuxReleaseThreadReference(rawmutptr<i8[min max]> control)
     in("x1") control,
     out("x0") return
 {
     "mov x0, xzr\nsub x0, x0, #38"
 }
 
-internal unsafe ffi asm(aarch64) fn i64[min max] LinuxCloneThread(i64[min max] flags, rawptr<i8[min max]> childStack, rawptr<i8[min max]> control)
+internal unsafe ffi asm(aarch64) fn i64[min max] LinuxCloneThread(i64[min max] flags, rawptr<i8[min max]> childStack, rawmutptr<i8[min max]> control)
     in("x1") flags,
     in("x2") childStack,
     in("x3") control,
@@ -359,14 +359,14 @@ internal unsafe ffi asm(riscv64) fn i64[min max] LinuxMapThreadRegion(i64[min ma
     "li a0, -38"
 }
 
-internal unsafe ffi asm(riscv64) fn i32[min max] LinuxReleaseThreadReference(rawptr<i8[min max]> control)
+internal unsafe ffi asm(riscv64) fn i32[min max] LinuxReleaseThreadReference(rawmutptr<i8[min max]> control)
     in("a1") control,
     out("a0") return
 {
     "li a0, -38"
 }
 
-internal unsafe ffi asm(riscv64) fn i64[min max] LinuxCloneThread(i64[min max] flags, rawptr<i8[min max]> childStack, rawptr<i8[min max]> control)
+internal unsafe ffi asm(riscv64) fn i64[min max] LinuxCloneThread(i64[min max] flags, rawptr<i8[min max]> childStack, rawmutptr<i8[min max]> control)
     in("a1") flags,
     in("a2") childStack,
     in("a3") control,
@@ -519,14 +519,14 @@ internal unsafe ffi asm(x86) fn i64[min max] LinuxMapThreadRegion(i64[min max] l
     "movl $$-38, %eax"
 }
 
-internal unsafe ffi asm(x86) fn i32[min max] LinuxReleaseThreadReference(rawptr<i8[min max]> control)
+internal unsafe ffi asm(x86) fn i32[min max] LinuxReleaseThreadReference(rawmutptr<i8[min max]> control)
     in("ebx") control,
     out("eax") return
 {
     "movl $$-38, %eax"
 }
 
-internal unsafe ffi asm(x86) fn i64[min max] LinuxCloneThread(i64[min max] flags, rawptr<i8[min max]> childStack, rawptr<i8[min max]> control)
+internal unsafe ffi asm(x86) fn i64[min max] LinuxCloneThread(i64[min max] flags, rawptr<i8[min max]> childStack, rawmutptr<i8[min max]> control)
     in("ebx") flags,
     in("ecx") childStack,
     in("edx") control,
@@ -679,14 +679,14 @@ internal unsafe ffi asm(arm) fn i64[min max] LinuxMapThreadRegion(i64[min max] l
     "sub r0, r0, r0\nsub r0, r0, #38"
 }
 
-internal unsafe ffi asm(arm) fn i32[min max] LinuxReleaseThreadReference(rawptr<i8[min max]> control)
+internal unsafe ffi asm(arm) fn i32[min max] LinuxReleaseThreadReference(rawmutptr<i8[min max]> control)
     in("r1") control,
     out("r0") return
 {
     "sub r0, r0, r0\nsub r0, r0, #38"
 }
 
-internal unsafe ffi asm(arm) fn i64[min max] LinuxCloneThread(i64[min max] flags, rawptr<i8[min max]> childStack, rawptr<i8[min max]> control)
+internal unsafe ffi asm(arm) fn i64[min max] LinuxCloneThread(i64[min max] flags, rawptr<i8[min max]> childStack, rawmutptr<i8[min max]> control)
     in("r1") flags,
     in("r2") childStack,
     in("r3") control,
@@ -934,15 +934,15 @@ internal unsafe fn i32[min max] UnmapThreadRegion(rawptr<i8[min max]> region, i6
         length);
 }
 
-internal unsafe fn i32[min max] ReleaseThreadReference(rawptr<LinuxThreadControl> control) {
+internal unsafe fn i32[min max] ReleaseThreadReference(rawmutptr<LinuxThreadControl> control) {
     if (control == null) {
         return -1;
     }
 
-    return LinuxReleaseThreadReference((rawptr<i8[min max]>)control);
+    return LinuxReleaseThreadReference((rawmutptr<i8[min max]>)control);
 }
 
-internal unsafe fn rawptr<i8[min max]> StartThread(fnptr<fn i32[min max]()> entry) {
+internal unsafe fn rawmutptr<i8[min max]> StartThread(fnptr<fn i32[min max]()> entry) {
     stack i64[min max] regionResult = LinuxMapThreadRegion(LinuxThreadRegionBytes);
     if (regionResult < 0) {
         return null;
@@ -963,21 +963,21 @@ internal unsafe fn rawptr<i8[min max]> StartThread(fnptr<fn i32[min max]()> entr
     stack i64[min max] cloneResult = LinuxCloneThread(
         LinuxThreadCloneFlags,
         childStack,
-        (rawptr<i8[min max]>)control);
+        (rawmutptr<i8[min max]>)control);
     if (cloneResult < 0) {
         UnmapThreadRegion((rawptr<i8[min max]>)region, LinuxThreadRegionBytes);
         return null;
     }
 
-    return (rawptr<i8[min max]>)control;
+    return (rawmutptr<i8[min max]>)control;
 }
 
-internal unsafe fn i32[min max] JoinThread(rawptr<i8[min max]> handle, rawmutptr<i32[min max]> exitCode) {
+internal unsafe fn i32[min max] JoinThread(rawmutptr<i8[min max]> handle, rawmutptr<i32[min max]> exitCode) {
     if (handle == null || exitCode == null) {
         return -1;
     }
 
-    stack rawptr<LinuxThreadControl> control = (rawptr<LinuxThreadControl>)handle;
+    stack rawmutptr<LinuxThreadControl> control = (rawmutptr<LinuxThreadControl>)handle;
     while willexit ((*control).State == LinuxThreadStateRunning) {
         FutexWait(&(*control).State, LinuxThreadStateRunning);
     }
@@ -992,12 +992,12 @@ internal unsafe fn i32[min max] JoinThread(rawptr<i8[min max]> handle, rawmutptr
     return 0;
 }
 
-internal unsafe fn i32[min max] DetachThread(rawptr<i8[min max]> handle) {
+internal unsafe fn i32[min max] DetachThread(rawmutptr<i8[min max]> handle) {
     if (handle == null) {
         return -1;
     }
 
-    stack rawptr<LinuxThreadControl> control = (rawptr<LinuxThreadControl>)handle;
+    stack rawmutptr<LinuxThreadControl> control = (rawmutptr<LinuxThreadControl>)handle;
     stack rawptr<i8[min max]> region = (rawptr<i8[min max]>)(*control).Region;
     stack i64[min max] regionLength = (*control).RegionLength;
     if (ReleaseThreadReference(control) == 1) {
@@ -1094,7 +1094,7 @@ internal unsafe fn i32[min max] WaitWritable(rawptr<i8[min max]> handle, i32[min
     return WaitForEvents(handle, LinuxEpollWritableEvent, timeoutMilliseconds);
 }
 
-internal unsafe fn i32[min max] FutexWait(rawptr<i32[min max]> address, i32[min max] expected) {
+internal unsafe fn i32[min max] FutexWait(rawmutptr<i32[min max]> address, i32[min max] expected) {
     if (address == null) {
         return -14;
     }
@@ -1107,7 +1107,7 @@ internal unsafe fn i32[min max] FutexWait(rawptr<i32[min max]> address, i32[min 
         0);
 }
 
-internal unsafe fn i32[min max] FutexWake(rawptr<i32[min max]> address, i32[min max] count) {
+internal unsafe fn i32[min max] FutexWake(rawmutptr<i32[min max]> address, i32[min max] count) {
     if (address == null) {
         return -14;
     }

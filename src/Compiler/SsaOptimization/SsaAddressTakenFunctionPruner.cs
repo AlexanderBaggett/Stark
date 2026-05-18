@@ -62,6 +62,31 @@ internal static class SsaAddressTakenFunctionPruner
             case SsaValueInstruction valueInstruction:
                 AddReferencedFunctionAddresses(valueInstruction.Value, referencedFunctions);
                 break;
+            case SsaCallInstruction call:
+                foreach (var argument in call.Arguments)
+                {
+                    AddReferencedFunctionAddress(argument, referencedFunctions);
+                }
+
+                foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+                {
+                    AddReferencedFunctionAddress(address, referencedFunctions);
+                }
+
+                break;
+            case SsaIndirectCallInstruction call:
+                AddReferencedFunctionAddress(call.Target, referencedFunctions);
+                foreach (var argument in call.Arguments)
+                {
+                    AddReferencedFunctionAddress(argument, referencedFunctions);
+                }
+
+                foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+                {
+                    AddReferencedFunctionAddress(address, referencedFunctions);
+                }
+
+                break;
             case SsaStoreLocalInstruction storeLocal:
                 AddReferencedFunctionAddress(storeLocal.Value, referencedFunctions);
                 break;
@@ -219,4 +244,3 @@ internal static class SsaAddressTakenFunctionPruner
         }
     }
 }
-

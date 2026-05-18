@@ -6,6 +6,45 @@ namespace compiler.PipelineTests;
 
 public sealed class CompilerPipelineLowerMirTests
 {
+    private static bool IsDirectCallStatement(MidLevelIrStatement statement, string functionName)
+    {
+        return statement.Value is MidLevelIrCallRValue directValueCall
+                   && string.Equals(directValueCall.FunctionName, functionName, StringComparison.Ordinal)
+               || statement.Call is MidLevelIrDirectCallStatementOperation directStatementCall
+                   && string.Equals(directStatementCall.FunctionName, functionName, StringComparison.Ordinal);
+    }
+
+    private static IEnumerable<string> DirectCallNames(MidLevelIrFunction function)
+    {
+        foreach (var statement in function.Blocks.SelectMany(static block => block.Statements))
+        {
+            if (statement.Value is MidLevelIrCallRValue directValueCall)
+            {
+                yield return directValueCall.FunctionName;
+            }
+            else if (statement.Call is MidLevelIrDirectCallStatementOperation directStatementCall)
+            {
+                yield return directStatementCall.FunctionName;
+            }
+        }
+    }
+
+    private static IEnumerable<MidLevelIrCallRValue> DirectValueCalls(MidLevelIrFunction function)
+    {
+        return function.Blocks
+            .SelectMany(static block => block.Statements)
+            .Select(static statement => statement.Value)
+            .OfType<MidLevelIrCallRValue>();
+    }
+
+    private static IEnumerable<MidLevelIrDirectCallStatementOperation> DirectStatementCalls(MidLevelIrFunction function)
+    {
+        return function.Blocks
+            .SelectMany(static block => block.Statements)
+            .Select(static statement => statement.Call)
+            .OfType<MidLevelIrDirectCallStatementOperation>();
+    }
+
     [Fact]
     public void ExplicitConstructorBodiesLowerIntoObjectCreation()
     {
@@ -46,6 +85,20 @@ public sealed class CompilerPipelineLowerMirTests
         Assert.True(
             statements.Count(static statement => statement.Value is MidLevelIrInsertFieldRValue { FieldName: "Value" }) >= 2,
             string.Join(Environment.NewLine, statements.Select(static statement => statement.Text)));
+
+        var constructions = statements
+            .Select(static statement => statement.Value)
+            .OfType<MidLevelIrUseRValue>()
+            .Select(static use => use.Operand)
+            .OfType<MidLevelIrObjectConstructionOperand>()
+            .ToArray();
+        Assert.Equal(2, constructions.Length);
+        Assert.All(constructions, construction =>
+        {
+            Assert.Equal(MidLevelIrObjectConstructionKind.ExplicitConstructor, construction.Facts.Kind);
+            Assert.NotNull(construction.Facts.Constructor);
+            Assert.False(string.IsNullOrWhiteSpace(construction.Facts.ConstructorBodyKey));
+        });
     }
 
     [Fact]
@@ -2648,6 +2701,17 @@ public sealed class CompilerPipelineLowerMirTests
             Assert.Contains(
                 specialized.Blocks.SelectMany(static block => block.Statements).Select(static statement => statement.Value),
                 static value => value is MidLevelIrInsertFieldRValue { FieldName: "Value" });
+            var construction = Assert.Single(specialized.Blocks
+                .SelectMany(static block => block.Statements)
+                .Select(static statement => statement.Value)
+                .OfType<MidLevelIrUseRValue>()
+                .Select(static use => use.Operand)
+                .Concat(specialized.Blocks.Select(static block => block.Terminator.Value).OfType<MidLevelIrOperand>())
+                .OfType<MidLevelIrObjectConstructionOperand>());
+            Assert.Equal(MidLevelIrObjectConstructionKind.PrimaryConstructor, construction.Facts.Kind);
+            Assert.NotNull(construction.Facts.Constructor);
+            Assert.True(construction.Facts.Constructor!.IsPrimaryShape);
+            Assert.Equal(StarkTypeKind.Integer, construction.Facts.Constructor.Parameters[0].Type.Kind);
         }
         finally
         {
@@ -4587,8 +4651,8 @@ public sealed class CompilerPipelineLowerMirTests
             var specialized = Assert.Single(mir.Functions, static function => function.Name == "__stark_mono_fn_Demo__Facade_ForwardReset__i32");
             Assert.True(specialized.SupportsDirectCodeGeneration);
             Assert.Contains(
-                specialized.Blocks.SelectMany(static block => block.Statements).Select(static statement => statement.Value),
-                static value => value is MidLevelIrCallRValue { FunctionName: "Facade.ResetValue" });
+                specialized.Blocks.SelectMany(static block => block.Statements),
+                static statement => IsDirectCallStatement(statement, "Facade.ResetValue"));
         }
         finally
         {
@@ -4706,8 +4770,8 @@ public sealed class CompilerPipelineLowerMirTests
             var specialized = Assert.Single(mir.Functions, static function => function.Name == "__stark_mono_fn_Demo__Facade_ForwardMethodReset__i32");
             Assert.True(specialized.SupportsDirectCodeGeneration);
             Assert.Contains(
-                specialized.Blocks.SelectMany(static block => block.Statements).Select(static statement => statement.Value),
-                static value => value is MidLevelIrCallRValue { FunctionName: "Facade.ResetBox.Reset" });
+                specialized.Blocks.SelectMany(static block => block.Statements),
+                static statement => IsDirectCallStatement(statement, "Facade.ResetBox.Reset"));
         }
         finally
         {
@@ -4832,9 +4896,7 @@ public sealed class CompilerPipelineLowerMirTests
 
             var resetCalls = specialized.Blocks
                 .SelectMany(static block => block.Statements)
-                .Select(static statement => statement.Value)
-                .OfType<MidLevelIrCallRValue>()
-                .Count(static value => value.FunctionName == "Facade.ResetValue");
+                .Count(static statement => IsDirectCallStatement(statement, "Facade.ResetValue"));
             Assert.Equal(2, resetCalls);
         }
         finally
@@ -5927,8 +5989,8 @@ public sealed class CompilerPipelineLowerMirTests
             var specialized = Assert.Single(mir.Functions, static function => function.Name == "__stark_mono_fn_Demo__Facade_GuardedReset__i32");
             Assert.True(specialized.SupportsDirectCodeGeneration);
             Assert.Contains(
-                specialized.Blocks.SelectMany(static block => block.Statements).Select(static statement => statement.Value),
-                static value => value is MidLevelIrCallRValue { FunctionName: "Facade.ResetValue" });
+                specialized.Blocks.SelectMany(static block => block.Statements),
+                static statement => IsDirectCallStatement(statement, "Facade.ResetValue"));
         }
         finally
         {
@@ -6606,6 +6668,16 @@ public sealed class CompilerPipelineLowerMirTests
             var integerConstants = CollectMirIntegerConstants(specialized);
             Assert.Contains(System.Numerics.BigInteger.One, integerConstants);
             Assert.DoesNotContain(new System.Numerics.BigInteger(2), integerConstants);
+            var construction = Assert.Single(specialized.Blocks
+                .SelectMany(static block => block.Statements)
+                .Select(static statement => statement.Value)
+                .OfType<MidLevelIrUseRValue>()
+                .Select(static use => use.Operand)
+                .Concat(specialized.Blocks.Select(static block => block.Terminator.Value).OfType<MidLevelIrOperand>())
+                .OfType<MidLevelIrEnumConstructionOperand>());
+            Assert.Equal("Value", construction.Facts.Variant.Name);
+            Assert.Equal(2, construction.Facts.PayloadFields.Count);
+            Assert.All(construction.Facts.PayloadFields, field => Assert.NotEqual(StarkTypeKind.Error, field.FieldType.Kind));
         }
         finally
         {

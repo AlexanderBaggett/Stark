@@ -509,7 +509,7 @@ public sealed partial class MidLevelIrLoweringTests
         var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
 
         Assert.True(function.SupportsDirectCodeGeneration);
-        Assert.Contains(statements, static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Make" });
+        Assert.Contains(statements, static statement => IsDirectCallStatement(statement, "Make"));
         Assert.Contains(
             statements,
             static statement => statement.Value is MidLevelIrExtractFieldRValue { FieldName: "Cells" });

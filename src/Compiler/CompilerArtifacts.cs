@@ -774,6 +774,8 @@ public sealed record ImportedFunctionTemplateSummary(
     IReadOnlyList<ImportedTemplateDirectCallSummary>? DirectCallSummaries = null,
     IReadOnlyList<ImportedTemplateFieldAccessSummary>? FieldAccessSummaries = null,
     IReadOnlyList<ImportedTemplateMemberCallSummary>? MemberCallSummaries = null,
+    IReadOnlyList<ImportedTemplateFunctionAddressSummary>? FunctionAddressSummaries = null,
+    IReadOnlyList<ImportedTemplateBoundOperationSummary>? BoundOperationSummaries = null,
     ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default)
 {
     public ImportedFunctionSemanticSummary? Semantics => SemanticSummary;
@@ -831,6 +833,12 @@ public sealed record ImportedFunctionTemplateSummary(
 
     public IReadOnlyList<ImportedTemplateMemberCallSummary> MemberCalls =>
         MemberCallSummaries ?? [];
+
+    public IReadOnlyList<ImportedTemplateFunctionAddressSummary> FunctionAddresses =>
+        FunctionAddressSummaries ?? [];
+
+    public IReadOnlyList<ImportedTemplateBoundOperationSummary> BoundOperations =>
+        BoundOperationSummaries ?? [];
 }
 
 public enum ImportedTemplateTypedBodyStatementKind
@@ -888,6 +896,10 @@ public enum ImportedTemplateTypedBodyExpressionKind
     IndexAccess,
     FieldAccess,
     MemberCall,
+    FunctionAddress,
+    DynamicStorageOperation,
+    TextInterpolation,
+    TextBuild,
     TypeLayout
 }
 
@@ -949,6 +961,7 @@ public sealed record ImportedTemplateTypedBodyStatementSummary(
     bool IsMutable = false,
     bool IsConstant = false,
     StarkTypeSymbol? Type = null,
+    int? StorageCapacity = null,
     string? LoopBehavior = null,
     IReadOnlyList<ImportedTemplateTypedSwitchCaseSummary>? SwitchCaseSummaries = null,
     IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? InitializerStatements = null,
@@ -1069,9 +1082,18 @@ public sealed record ImportedTemplateMemberCallSummary(
     int Ordinal,
     TypedFunctionSignature Signature);
 
+public sealed record ImportedTemplateFunctionAddressSummary(
+    int Ordinal,
+    TypedFunctionSignature Signature,
+    StarkTypeSymbol TargetType);
+
 public sealed record ImportedTemplateConversionSummary(
     int Ordinal,
     StarkTypeSymbol TargetType);
+
+public sealed record ImportedTemplateBoundOperationSummary(
+    int? Ordinal,
+    BoundOperation Operation);
 
 public sealed record LoadedPackageImageFacts(
     IReadOnlyDictionary<string, FunctionEffectProfile> FunctionEffects,
@@ -2066,6 +2088,13 @@ public sealed record LocalDeclarationTypingRecord(
     SourceLocation Location,
     string? EnclosingFunctionName = null);
 
+public sealed record LocalStorageCapacityTypingRecord(
+    string Kind,
+    string Name,
+    int Capacity,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null);
+
 public sealed record CallArgumentTypingRecord(
     int ParameterIndex,
     int SourceArgumentIndex,
@@ -2144,6 +2173,214 @@ public sealed record DynamicStorageOperationTypingRecord(
     string? EnclosingFunctionName = null,
     bool ReceiverIsAddressable = true,
     bool ReceiverIsMutable = true);
+
+public enum BoundOperationKind
+{
+    DirectCall,
+    MemberCall,
+    FunctionPointerCall,
+    ClosureCall,
+    IndexAccess,
+    SliceAccess,
+    ObjectCreation,
+    EnumConstruction,
+    EnumCall,
+    EnumValue,
+    DynamicStorageOperation,
+    TextInterpolation,
+    TextBuild,
+    LayoutQuery,
+    SwitchDispatch
+}
+
+public enum BoundIndexAccessKind
+{
+    Element,
+    Slice,
+    TextElement,
+    TextSlice,
+    DynamicElement,
+    DynamicSlice,
+    RawPointerRegion
+}
+
+public enum BoundLayoutQueryKind
+{
+    SizeOf,
+    AlignOf
+}
+
+public abstract record BoundOperation(
+    BoundOperationKind Kind,
+    StarkTypeSymbol ResultType,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null);
+
+public sealed record BoundDirectCallOperation(
+    TypedFunctionSignature Signature,
+    IReadOnlyList<CallArgumentTypingRecord>? ArgumentRecords,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(BoundOperationKind.DirectCall, Signature.ReturnType, Location, EnclosingFunctionName)
+{
+    public IReadOnlyList<CallArgumentTypingRecord> Arguments =>
+        ArgumentRecords ?? [];
+}
+
+public sealed record BoundMemberCallOperation(
+    TypedFunctionSignature Signature,
+    StarkTypeSymbol ReceiverType,
+    bool ReceiverIsAddressable,
+    bool ReceiverIsMutable,
+    IReadOnlyList<CallArgumentTypingRecord>? ArgumentRecords,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(BoundOperationKind.MemberCall, Signature.ReturnType, Location, EnclosingFunctionName)
+{
+    public IReadOnlyList<CallArgumentTypingRecord> Arguments =>
+        ArgumentRecords ?? [];
+}
+
+public sealed record BoundFunctionPointerCallOperation(
+    StarkTypeSymbol FunctionPointerType,
+    IReadOnlyList<CallArgumentTypingRecord>? ArgumentRecords,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(
+        BoundOperationKind.FunctionPointerCall,
+        FunctionPointerType.FunctionPointerReturnType ?? StarkTypeSymbols.Error,
+        Location,
+        EnclosingFunctionName)
+{
+    public IReadOnlyList<CallArgumentTypingRecord> Arguments =>
+        ArgumentRecords ?? [];
+}
+
+public sealed record BoundClosureCallOperation(
+    StarkTypeSymbol ClosureType,
+    IReadOnlyList<CallArgumentTypingRecord>? ArgumentRecords,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(
+        BoundOperationKind.ClosureCall,
+        ClosureType.ClosureReturnType ?? StarkTypeSymbols.Error,
+        Location,
+        EnclosingFunctionName)
+{
+    public IReadOnlyList<CallArgumentTypingRecord> Arguments =>
+        ArgumentRecords ?? [];
+}
+
+public sealed record BoundIndexAccessOperation(
+    BoundIndexAccessKind AccessKind,
+    string SourceKind,
+    StarkTypeSymbol SourceType,
+    StarkTypeSymbol ResultType,
+    int IndexCount,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(
+        AccessKind is BoundIndexAccessKind.Slice
+            or BoundIndexAccessKind.TextSlice
+            or BoundIndexAccessKind.DynamicSlice
+            or BoundIndexAccessKind.RawPointerRegion
+            ? BoundOperationKind.SliceAccess
+            : BoundOperationKind.IndexAccess,
+        ResultType,
+        Location,
+        EnclosingFunctionName);
+
+public sealed record BoundDynamicStorageOperation(
+    string OperationName,
+    StarkTypeSymbol ReceiverType,
+    StarkTypeSymbol ResultType,
+    int ArgumentCount,
+    bool ReceiverIsAddressable,
+    bool ReceiverIsMutable,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(BoundOperationKind.DynamicStorageOperation, ResultType, Location, EnclosingFunctionName);
+
+public sealed record BoundObjectCreationOperation(
+    string ExpressionText,
+    StarkTypeSymbol CreatedType,
+    TypedConstructorShape? Constructor,
+    IReadOnlyList<ObjectInitializerMemberTypingRecord>? InitializerMembers,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(BoundOperationKind.ObjectCreation, CreatedType, Location, EnclosingFunctionName)
+{
+    public IReadOnlyList<ObjectInitializerMemberTypingRecord> Members =>
+        InitializerMembers ?? [];
+}
+
+public sealed record BoundEnumConstructionOperation(
+    StarkTypeSymbol EnumType,
+    string VariantName,
+    IReadOnlyList<EnumConstructorMemberTypingRecord>? MemberRecords,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(BoundOperationKind.EnumConstruction, EnumType, Location, EnclosingFunctionName)
+{
+    public IReadOnlyList<EnumConstructorMemberTypingRecord> Members =>
+        MemberRecords ?? [];
+}
+
+public sealed record BoundEnumCallOperation(
+    StarkTypeSymbol EnumType,
+    string VariantName,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(BoundOperationKind.EnumCall, EnumType, Location, EnclosingFunctionName);
+
+public sealed record BoundEnumValueOperation(
+    StarkTypeSymbol EnumType,
+    string VariantName,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(BoundOperationKind.EnumValue, EnumType, Location, EnclosingFunctionName);
+
+public sealed record BoundTextInterpolationOperation(
+    StarkTypeSymbol ResultType,
+    int SegmentCount,
+    int HoleCount,
+    bool UsesFixedStorage,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(BoundOperationKind.TextInterpolation, ResultType, Location, EnclosingFunctionName);
+
+public sealed record BoundTextBuildOperation(
+    string BuildKind,
+    StarkTypeSymbol ResultType,
+    int OperandCount,
+    bool UsesFixedStorage,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(BoundOperationKind.TextBuild, ResultType, Location, EnclosingFunctionName);
+
+public sealed record BoundLayoutQueryOperation(
+    BoundLayoutQueryKind QueryKind,
+    StarkTypeSymbol TargetType,
+    StarkTypeSymbol ResultType,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(BoundOperationKind.LayoutQuery, ResultType, Location, EnclosingFunctionName);
+
+public sealed record BoundSwitchDispatchOperation(
+    string Family,
+    StarkTypeSymbol SwitchType,
+    int SectionCount,
+    int LabelCount,
+    int ExplicitDefaultLabelCount,
+    int LoweredDefaultLabelCount,
+    int LiteralLabelCount,
+    int MatchAllLabelCount,
+    int CaptureLabelCount,
+    int StructuredPatternLabelCount,
+    int GuardedLabelCount,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(BoundOperationKind.SwitchDispatch, StarkTypeSymbols.Void, Location, EnclosingFunctionName);
 
 public static class SwitchLoweringFamilies
 {
@@ -2362,6 +2599,7 @@ public sealed record TypeCheckModel(
     IReadOnlyList<EnumPatternTypingRecord>? EnumPatternRecords = null,
     IReadOnlyList<AggregatePatternTypingRecord>? AggregatePatternRecords = null,
     IReadOnlyList<LocalDeclarationTypingRecord>? LocalDeclarationRecords = null,
+    IReadOnlyList<LocalStorageCapacityTypingRecord>? LocalStorageCapacityRecords = null,
     IReadOnlyList<ConversionTypingRecord>? ConversionRecords = null,
     IReadOnlyList<DirectCallTypingRecord>? DirectCallRecords = null,
     IReadOnlyList<FunctionPointerPromotionTypingRecord>? FunctionPointerPromotionRecords = null,
@@ -2377,7 +2615,8 @@ public sealed record TypeCheckModel(
     IReadOnlyList<IndexAccessTypingRecord>? IndexAccessRecords = null,
     IReadOnlyList<DynamicStorageOperationTypingRecord>? DynamicStorageOperationRecords = null,
     IReadOnlyList<SwitchTypingRecord>? SwitchRecords = null,
-    IReadOnlyList<ClosureFunctionPromotionTypingRecord>? ClosureFunctionPromotionRecords = null)
+    IReadOnlyList<ClosureFunctionPromotionTypingRecord>? ClosureFunctionPromotionRecords = null,
+    IReadOnlyList<BoundOperation>? BoundOperationRecords = null)
 {
     public IReadOnlyDictionary<string, IReadOnlyList<TypedFunctionSignature>> Overloads =>
         FunctionOverloads
@@ -2417,6 +2656,9 @@ public sealed record TypeCheckModel(
 
     public IReadOnlyList<LocalDeclarationTypingRecord> LocalDeclarations =>
         LocalDeclarationRecords ?? [];
+
+    public IReadOnlyList<LocalStorageCapacityTypingRecord> LocalStorageCapacities =>
+        LocalStorageCapacityRecords ?? [];
 
     public IReadOnlyList<ConversionTypingRecord> Conversions =>
         ConversionRecords ?? [];
@@ -2465,6 +2707,9 @@ public sealed record TypeCheckModel(
 
     public IReadOnlyList<SwitchTypingRecord> Switches =>
         SwitchRecords ?? [];
+
+    public IReadOnlyList<BoundOperation> BoundOperations =>
+        BoundOperationRecords ?? [];
 }
 
 internal static class TemplateLocalDeclarationFacts
@@ -3174,6 +3419,13 @@ public enum MidLevelIrBinaryOperator
     GreaterThanOrEqual
 }
 
+public enum IndexedElementOperationFamily
+{
+    FixedArrayElement,
+    ViewComponent,
+    ClosureComponent
+}
+
 public enum MidLevelIrTerminatorKind
 {
     Goto,
@@ -3231,6 +3483,47 @@ public sealed record MidLevelIrNullOperand(StarkTypeSymbol Type)
 public sealed record MidLevelIrZeroInitializerOperand(StarkTypeSymbol Type)
     : MidLevelIrOperand(Type, "zeroinitializer");
 
+public enum MidLevelIrObjectConstructionKind
+{
+    Empty,
+    PrimaryConstructor,
+    ExplicitConstructor,
+    Initializer,
+    ConstructorAndInitializer
+}
+
+public sealed record MidLevelIrObjectConstructionFacts(
+    StarkTypeSymbol CreatedType,
+    string TypeName,
+    MidLevelIrObjectConstructionKind Kind,
+    TypedConstructorShape? Constructor,
+    IReadOnlyList<ObjectInitializerMemberTypingRecord> InitializerMembers,
+    string? ConstructorBodyKey = null);
+
+public sealed record MidLevelIrObjectConstructionOperand(
+    MidLevelIrOperand Value,
+    MidLevelIrObjectConstructionFacts Facts)
+    : MidLevelIrOperand(MidLevelIrArtifactValidation.ValidateObjectConstruction(Value, Facts), Value.Text);
+
+public sealed record MidLevelIrEnumPayloadFieldConstructionFacts(
+    string FieldName,
+    int FieldIndex,
+    StarkTypeSymbol FieldType,
+    string StorageFieldName,
+    int StorageFieldIndex,
+    StarkTypeSymbol StorageFieldType);
+
+public sealed record MidLevelIrEnumConstructionFacts(
+    StarkTypeSymbol EnumType,
+    EnumLayoutSymbol Layout,
+    EnumVariantLayoutSymbol Variant,
+    IReadOnlyList<MidLevelIrEnumPayloadFieldConstructionFacts> PayloadFields);
+
+public sealed record MidLevelIrEnumConstructionOperand(
+    MidLevelIrOperand Value,
+    MidLevelIrEnumConstructionFacts Facts)
+    : MidLevelIrOperand(MidLevelIrArtifactValidation.ValidateEnumConstruction(Value, Facts), Value.Text);
+
 public abstract record MidLevelIrRValue(StarkTypeSymbol Type, string Text);
 
 public sealed record MidLevelIrUseRValue(MidLevelIrOperand Operand)
@@ -3260,12 +3553,38 @@ public sealed record MidLevelIrCallRValue(
     StarkTypeSymbol? SourceReturnType = null,
     IReadOnlyList<MidLevelIrOperand?>? IndirectArgumentAddresses = null,
     IReadOnlyList<MidLevelIrDynamicStorageLengthCommit>? PostCallDynamicLengthCommits = null)
-    : MidLevelIrRValue(Type, Text);
+    : MidLevelIrRValue(MidLevelIrArtifactValidation.ValidateValueCallType(Type, FunctionName), Text);
 
 public sealed record MidLevelIrDynamicStorageLengthCommit(
     MidLevelIrOperand StorageAddress,
     StarkTypeSymbol StorageType,
     MidLevelIrOperand InitializedLength);
+
+public abstract record MidLevelIrCallStatementOperation(
+    StarkTypeSymbol ReturnType,
+    string Text);
+
+public sealed record MidLevelIrDirectCallStatementOperation(
+    string FunctionName,
+    IReadOnlyList<MidLevelIrOperand> Arguments,
+    StarkTypeSymbol ReturnType,
+    string Text,
+    IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
+    StarkTypeSymbol? SourceReturnType = null,
+    IReadOnlyList<MidLevelIrOperand?>? IndirectArgumentAddresses = null,
+    IReadOnlyList<MidLevelIrDynamicStorageLengthCommit>? PostCallDynamicLengthCommits = null)
+    : MidLevelIrCallStatementOperation(ReturnType, Text);
+
+public sealed record MidLevelIrIndirectCallStatementOperation(
+    MidLevelIrOperand Target,
+    IReadOnlyList<MidLevelIrOperand> Arguments,
+    StarkTypeSymbol ReturnType,
+    string Text,
+    StarkTypeSymbol? SourceReturnType = null,
+    IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
+    IReadOnlyList<MidLevelIrOperand?>? IndirectArgumentAddresses = null,
+    bool MayFree = false)
+    : MidLevelIrCallStatementOperation(ReturnType, Text);
 
 public sealed record MidLevelIrIndirectCallRValue(
     MidLevelIrOperand Target,
@@ -3276,7 +3595,7 @@ public sealed record MidLevelIrIndirectCallRValue(
     IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
     IReadOnlyList<MidLevelIrOperand?>? IndirectArgumentAddresses = null,
     bool MayFree = false)
-    : MidLevelIrRValue(Type, Text);
+    : MidLevelIrRValue(MidLevelIrArtifactValidation.ValidateValueCallType(Type, Text), Text);
 
 public sealed record MidLevelIrConvertRValue(
     MidLevelIrOperand Operand,
@@ -3304,17 +3623,363 @@ public sealed record MidLevelIrInsertFieldRValue(
 public sealed record MidLevelIrExtractIndexRValue(
     MidLevelIrOperand Target,
     int ElementIndex,
+    IndexedElementOperationFamily OperationFamily,
     StarkTypeSymbol Type,
     string Text)
-    : MidLevelIrRValue(Type, Text);
+    : MidLevelIrRValue(MidLevelIrArtifactValidation.ValidateIndexExtraction(Target, ElementIndex, OperationFamily, Type, Text), Text);
 
 public sealed record MidLevelIrInsertIndexRValue(
     MidLevelIrOperand Target,
     int ElementIndex,
+    IndexedElementOperationFamily OperationFamily,
     MidLevelIrOperand Value,
     StarkTypeSymbol Type,
     string Text)
-    : MidLevelIrRValue(Type, Text);
+    : MidLevelIrRValue(MidLevelIrArtifactValidation.ValidateIndexInsertion(Target, ElementIndex, OperationFamily, Value, Type, Text), Text);
+
+internal static class MidLevelIrArtifactValidation
+{
+    public static StarkTypeSymbol ValidateValueCallType(StarkTypeSymbol type, string callName)
+    {
+        if (type.Kind == StarkTypeKind.Void)
+        {
+            throw new ArgumentException(
+                $"MIR value call '{callName}' cannot have void result type. Use a statement-only call operation instead.",
+                nameof(type));
+        }
+
+        return type;
+    }
+
+    public static StarkTypeSymbol ValidateIndexExtraction(
+        MidLevelIrOperand target,
+        int elementIndex,
+        IndexedElementOperationFamily operationFamily,
+        StarkTypeSymbol resultType,
+        string text)
+    {
+        var elementType = GetIndexElementType(target.Type, elementIndex, operationFamily, text, "MIR");
+        if (!HaveSameIndexType(elementType, resultType))
+        {
+            throw new ArgumentException(
+                $"MIR index extraction '{text}' result type '{resultType.DisplayName}' does not match indexed element type '{elementType.DisplayName}'.",
+                nameof(resultType));
+        }
+
+        return resultType;
+    }
+
+    public static StarkTypeSymbol ValidateIndexInsertion(
+        MidLevelIrOperand target,
+        int elementIndex,
+        IndexedElementOperationFamily operationFamily,
+        MidLevelIrOperand value,
+        StarkTypeSymbol resultType,
+        string text)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+
+        var elementType = GetIndexElementType(target.Type, elementIndex, operationFamily, text, "MIR");
+        if (!HaveSameIndexType(target.Type, resultType))
+        {
+            throw new ArgumentException(
+                $"MIR index insertion '{text}' result type '{resultType.DisplayName}' does not match target type '{target.Type.DisplayName}'.",
+                nameof(resultType));
+        }
+
+        if (!HaveSameIndexType(elementType, value.Type))
+        {
+            throw new ArgumentException(
+                $"MIR index insertion '{text}' value type '{value.Type.DisplayName}' does not match indexed element type '{elementType.DisplayName}'.",
+                nameof(value));
+        }
+
+        return resultType;
+    }
+
+    private static StarkTypeSymbol GetIndexElementType(
+        StarkTypeSymbol targetType,
+        int elementIndex,
+        IndexedElementOperationFamily operationFamily,
+        string text,
+        string artifactName)
+    {
+        return operationFamily switch
+        {
+            IndexedElementOperationFamily.FixedArrayElement => GetFixedArrayIndexElementType(targetType, elementIndex, text, artifactName),
+            IndexedElementOperationFamily.ViewComponent => GetViewIndexElementType(targetType, elementIndex, text, artifactName),
+            IndexedElementOperationFamily.ClosureComponent => GetClosureIndexElementType(targetType, elementIndex, text, artifactName),
+            _ => throw new ArgumentException(
+                $"{artifactName} index operation '{text}' uses unsupported operation family '{operationFamily}'.",
+                nameof(operationFamily))
+        };
+    }
+
+    private static StarkTypeSymbol GetFixedArrayIndexElementType(
+        StarkTypeSymbol targetType,
+        int elementIndex,
+        string text,
+        string artifactName)
+    {
+        if (targetType.Kind != StarkTypeKind.FixedArray
+            || targetType.ElementType is not { } elementType
+            || targetType.FixedLength is not int fixedLength)
+        {
+            throw new ArgumentException(
+                $"{artifactName} fixed-array index operation '{text}' requires a fixed-array target, but found '{targetType.DisplayName}'.",
+                nameof(targetType));
+        }
+
+        if (elementIndex < 0 || elementIndex >= fixedLength)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(elementIndex),
+                $"{artifactName} fixed-array index operation '{text}' index '{elementIndex}' is out of range for '{targetType.DisplayName}' with length {fixedLength}.");
+        }
+
+        return elementType;
+    }
+
+    private static StarkTypeSymbol GetViewIndexElementType(
+        StarkTypeSymbol targetType,
+        int elementIndex,
+        string text,
+        string artifactName)
+    {
+        if (elementIndex is not 0 and not 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(elementIndex),
+                $"{artifactName} view index operation '{text}' index '{elementIndex}' is out of range for '{targetType.DisplayName}' with 2 component(s).");
+        }
+
+        return targetType.Kind switch
+        {
+            StarkTypeKind.Slice when targetType.ElementType is { } elementType => elementIndex == 0
+                ? StarkTypeSymbols.RawPointer(elementType, isMutable: targetType.IsMutableView)
+                : StarkTypeSymbols.Integer(64),
+            StarkTypeKind.Ascii => elementIndex == 0
+                ? StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: false)
+                : StarkTypeSymbols.Integer(64),
+            StarkTypeKind.Unicode => elementIndex == 0
+                ? StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(32), isMutable: false)
+                : StarkTypeSymbols.Integer(64),
+            StarkTypeKind.Slice => throw new ArgumentException(
+                $"{artifactName} view index operation '{text}' requires a slice with a known element type, but found '{targetType.DisplayName}'.",
+                nameof(targetType)),
+            _ => throw new ArgumentException(
+                $"{artifactName} view index operation '{text}' requires a slice or text target, but found '{targetType.DisplayName}'.",
+                nameof(targetType))
+        };
+    }
+
+    private static StarkTypeSymbol GetClosureIndexElementType(
+        StarkTypeSymbol targetType,
+        int elementIndex,
+        string text,
+        string artifactName)
+    {
+        if (targetType.Kind != StarkTypeKind.Closure)
+        {
+            throw new ArgumentException(
+                $"{artifactName} closure index operation '{text}' requires a closure target, but found '{targetType.DisplayName}'.",
+                nameof(targetType));
+        }
+
+        var elementType = elementIndex switch
+        {
+            0 => CallableValueFacts.BuildClosureInvokeFunctionPointerType(targetType),
+            1 => CallableValueFacts.BuildClosureEnvironmentPointerType(targetType),
+            2 when targetType.ClosureStorageKind == StarkClosureStorageKind.Heap
+                => CallableValueFacts.BuildClosureDropFunctionPointerType(),
+            _ => StarkTypeSymbols.Error
+        };
+
+        if (elementType.Kind == StarkTypeKind.Error)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(elementIndex),
+                $"{artifactName} closure index operation '{text}' index '{elementIndex}' is out of range or unresolved for closure value '{targetType.DisplayName}'.");
+        }
+
+        return elementType;
+    }
+
+    private static bool HaveSameIndexType(StarkTypeSymbol expectedType, StarkTypeSymbol actualType)
+    {
+        return expectedType == actualType
+            || expectedType.Kind == actualType.Kind
+            && string.Equals(expectedType.DisplayName, actualType.DisplayName, StringComparison.Ordinal);
+    }
+
+    public static StarkTypeSymbol ValidateObjectConstruction(
+        MidLevelIrOperand value,
+        MidLevelIrObjectConstructionFacts facts)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        ArgumentNullException.ThrowIfNull(facts);
+        ArgumentNullException.ThrowIfNull(facts.InitializerMembers);
+
+        if (facts.CreatedType.Kind != StarkTypeKind.Named || string.IsNullOrWhiteSpace(facts.CreatedType.NamedType))
+        {
+            throw new ArgumentException(
+                $"MIR object construction requires a named created type, but received '{facts.CreatedType.DisplayName}'.",
+                nameof(facts));
+        }
+
+        if (value.Type != facts.CreatedType)
+        {
+            throw new ArgumentException(
+                $"MIR object construction value type '{value.Type.DisplayName}' does not match constructed type '{facts.CreatedType.DisplayName}'.",
+                nameof(value));
+        }
+
+        if (string.IsNullOrWhiteSpace(facts.TypeName))
+        {
+            throw new ArgumentException("MIR object construction facts require a type name.", nameof(facts));
+        }
+
+        switch (facts.Kind)
+        {
+            case MidLevelIrObjectConstructionKind.Empty:
+            case MidLevelIrObjectConstructionKind.Initializer:
+                if (facts.Constructor is not null || facts.ConstructorBodyKey is not null)
+                {
+                    throw new ArgumentException(
+                        $"MIR object construction kind '{facts.Kind}' cannot carry constructor facts.",
+                        nameof(facts));
+                }
+
+                break;
+
+            case MidLevelIrObjectConstructionKind.PrimaryConstructor:
+                if (facts.Constructor is not { IsPrimaryShape: true } || facts.ConstructorBodyKey is not null)
+                {
+                    throw new ArgumentException(
+                        "MIR primary-constructor object construction requires a primary constructor shape and no body key.",
+                        nameof(facts));
+                }
+
+                break;
+
+            case MidLevelIrObjectConstructionKind.ExplicitConstructor:
+                if (facts.Constructor is not { IsPrimaryShape: false }
+                    || string.IsNullOrWhiteSpace(facts.ConstructorBodyKey)
+                    || !string.Equals(facts.Constructor.BodyKey, facts.ConstructorBodyKey, StringComparison.Ordinal))
+                {
+                    throw new ArgumentException(
+                        "MIR explicit-constructor object construction requires a resolved constructor body key.",
+                        nameof(facts));
+                }
+
+                break;
+
+            case MidLevelIrObjectConstructionKind.ConstructorAndInitializer:
+                if (facts.Constructor is null)
+                {
+                    throw new ArgumentException(
+                        "MIR constructor-plus-initializer object construction requires constructor facts.",
+                        nameof(facts));
+                }
+
+                if (!facts.Constructor.IsPrimaryShape
+                    && (string.IsNullOrWhiteSpace(facts.ConstructorBodyKey)
+                        || !string.Equals(facts.Constructor.BodyKey, facts.ConstructorBodyKey, StringComparison.Ordinal)))
+                {
+                    throw new ArgumentException(
+                        "MIR explicit constructor-plus-initializer object construction requires a resolved constructor body key.",
+                        nameof(facts));
+                }
+
+                break;
+
+            default:
+                throw new ArgumentException(
+                    $"Unsupported MIR object construction kind '{facts.Kind}'.",
+                    nameof(facts));
+        }
+
+        foreach (var member in facts.InitializerMembers)
+        {
+            if (string.IsNullOrWhiteSpace(member.FieldName)
+                || member.FieldIndex < 0
+                || member.FieldType.Kind == StarkTypeKind.Error)
+            {
+                throw new ArgumentException(
+                    $"MIR object construction has invalid initializer member fact '{member}'.",
+                    nameof(facts));
+            }
+        }
+
+        return facts.CreatedType;
+    }
+
+    public static StarkTypeSymbol ValidateEnumConstruction(
+        MidLevelIrOperand value,
+        MidLevelIrEnumConstructionFacts facts)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        ArgumentNullException.ThrowIfNull(facts);
+        ArgumentNullException.ThrowIfNull(facts.Layout);
+        ArgumentNullException.ThrowIfNull(facts.Variant);
+        ArgumentNullException.ThrowIfNull(facts.PayloadFields);
+
+        if (facts.EnumType.Kind != StarkTypeKind.Named || string.IsNullOrWhiteSpace(facts.EnumType.NamedType))
+        {
+            throw new ArgumentException(
+                $"MIR enum construction requires a named enum type, but received '{facts.EnumType.DisplayName}'.",
+                nameof(facts));
+        }
+
+        if (value.Type != facts.EnumType)
+        {
+            throw new ArgumentException(
+                $"MIR enum construction value type '{value.Type.DisplayName}' does not match enum type '{facts.EnumType.DisplayName}'.",
+                nameof(value));
+        }
+
+        if (facts.Layout.Kind != EnumLayoutKind.DirectTag)
+        {
+            throw new ArgumentException(
+                $"MIR enum construction does not support layout kind '{facts.Layout.Kind}'.",
+                nameof(facts));
+        }
+
+        if (!facts.Layout.TryGetVariant(facts.Variant.Name, out var layoutVariant)
+            || !ReferenceEquals(layoutVariant, facts.Variant) && layoutVariant != facts.Variant)
+        {
+            throw new ArgumentException(
+                $"MIR enum construction variant '{facts.Variant.Name}' is not present in layout '{facts.Layout.EnumName}'.",
+                nameof(facts));
+        }
+
+        if (facts.PayloadFields.Count != facts.Variant.Fields.Count)
+        {
+            throw new ArgumentException(
+                $"MIR enum construction for '{facts.Variant.Name}' carries {facts.PayloadFields.Count} payload fact(s), but the variant requires {facts.Variant.Fields.Count}.",
+                nameof(facts));
+        }
+
+        for (var index = 0; index < facts.PayloadFields.Count; index++)
+        {
+            var payload = facts.PayloadFields[index];
+            var field = facts.Variant.Fields[index];
+            if (payload.FieldIndex != index
+                || payload.FieldType != field.Type
+                || !string.Equals(payload.StorageFieldName, field.StorageFieldName, StringComparison.Ordinal)
+                || payload.StorageFieldIndex != field.StorageFieldIndex
+                || payload.StorageFieldType != field.Type
+                || string.IsNullOrWhiteSpace(payload.FieldName))
+            {
+                throw new ArgumentException(
+                    $"MIR enum construction payload fact {index} does not match variant field '{field.StorageFieldName}'.",
+                    nameof(facts));
+            }
+        }
+
+        return facts.EnumType;
+    }
+}
 
 public sealed record MidLevelIrMakeSliceFromLocalRValue(
     string LocalName,
@@ -3456,7 +4121,8 @@ public sealed record MidLevelIrStatement(
     SourceLocation? Location = null,
     IReadOnlyList<ScopedNoAliasGroup>? ScopedNoAliasGroups = null,
     IReadOnlyList<string>? LoopAccessGroups = null,
-    MemoryWriteKind WriteKind = MemoryWriteKind.Replacement);
+    MemoryWriteKind WriteKind = MemoryWriteKind.Replacement,
+    MidLevelIrCallStatementOperation? Call = null);
 
 public sealed record MidLevelIrSwitchCase(
     string Label,
@@ -3618,6 +4284,42 @@ public sealed record SsaSelectRValue(
     string Text)
     : SsaRValue(Type, Text);
 
+public interface ISsaDirectCallOperation
+{
+    string FunctionName { get; }
+
+    IReadOnlyList<SsaValue> Arguments { get; }
+
+    StarkTypeSymbol Type { get; }
+
+    string Text { get; }
+
+    IReadOnlyList<string?>? IndirectArgumentLocalNames { get; }
+
+    StarkTypeSymbol? SourceReturnType { get; }
+
+    IReadOnlyList<SsaValue?>? IndirectArgumentAddresses { get; }
+}
+
+public interface ISsaIndirectCallOperation
+{
+    SsaValue Target { get; }
+
+    IReadOnlyList<SsaValue> Arguments { get; }
+
+    StarkTypeSymbol Type { get; }
+
+    string Text { get; }
+
+    StarkTypeSymbol? SourceReturnType { get; }
+
+    IReadOnlyList<string?>? IndirectArgumentLocalNames { get; }
+
+    IReadOnlyList<SsaValue?>? IndirectArgumentAddresses { get; }
+
+    bool MayFree { get; }
+}
+
 public sealed record SsaCallRValue(
     string FunctionName,
     IReadOnlyList<SsaValue> Arguments,
@@ -3626,7 +4328,8 @@ public sealed record SsaCallRValue(
     IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
     StarkTypeSymbol? SourceReturnType = null,
     IReadOnlyList<SsaValue?>? IndirectArgumentAddresses = null)
-    : SsaRValue(Type, Text);
+    : SsaRValue(SsaArtifactValidation.ValidateValueCallType(Type, FunctionName), Text),
+        ISsaDirectCallOperation;
 
 public sealed record SsaIndirectCallRValue(
     SsaValue Target,
@@ -3637,7 +4340,184 @@ public sealed record SsaIndirectCallRValue(
     IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
     IReadOnlyList<SsaValue?>? IndirectArgumentAddresses = null,
     bool MayFree = false)
-    : SsaRValue(Type, Text);
+    : SsaRValue(SsaArtifactValidation.ValidateValueCallType(Type, Text), Text),
+        ISsaIndirectCallOperation;
+
+internal static class SsaArtifactValidation
+{
+    public static StarkTypeSymbol ValidateValueCallType(StarkTypeSymbol type, string callName)
+    {
+        if (type.Kind == StarkTypeKind.Void)
+        {
+            throw new ArgumentException(
+                $"SSA value call '{callName}' cannot have void result type. Use a statement-only call instruction instead.",
+                nameof(type));
+        }
+
+        return type;
+    }
+
+    public static StarkTypeSymbol ValidateIndexExtraction(
+        SsaValue target,
+        int elementIndex,
+        IndexedElementOperationFamily operationFamily,
+        StarkTypeSymbol resultType,
+        string text)
+    {
+        var elementType = GetIndexElementType(target.Type, elementIndex, operationFamily, text, "SSA");
+        if (!HaveSameIndexType(elementType, resultType))
+        {
+            throw new ArgumentException(
+                $"SSA index extraction '{text}' result type '{resultType.DisplayName}' does not match indexed element type '{elementType.DisplayName}'.",
+                nameof(resultType));
+        }
+
+        return resultType;
+    }
+
+    public static StarkTypeSymbol ValidateIndexInsertion(
+        SsaValue target,
+        int elementIndex,
+        IndexedElementOperationFamily operationFamily,
+        SsaValue value,
+        StarkTypeSymbol resultType,
+        string text)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+
+        var elementType = GetIndexElementType(target.Type, elementIndex, operationFamily, text, "SSA");
+        if (!HaveSameIndexType(target.Type, resultType))
+        {
+            throw new ArgumentException(
+                $"SSA index insertion '{text}' result type '{resultType.DisplayName}' does not match target type '{target.Type.DisplayName}'.",
+                nameof(resultType));
+        }
+
+        if (!HaveSameIndexType(elementType, value.Type))
+        {
+            throw new ArgumentException(
+                $"SSA index insertion '{text}' value type '{value.Type.DisplayName}' does not match indexed element type '{elementType.DisplayName}'.",
+                nameof(value));
+        }
+
+        return resultType;
+    }
+
+    private static StarkTypeSymbol GetIndexElementType(
+        StarkTypeSymbol targetType,
+        int elementIndex,
+        IndexedElementOperationFamily operationFamily,
+        string text,
+        string artifactName)
+    {
+        return operationFamily switch
+        {
+            IndexedElementOperationFamily.FixedArrayElement => GetFixedArrayIndexElementType(targetType, elementIndex, text, artifactName),
+            IndexedElementOperationFamily.ViewComponent => GetViewIndexElementType(targetType, elementIndex, text, artifactName),
+            IndexedElementOperationFamily.ClosureComponent => GetClosureIndexElementType(targetType, elementIndex, text, artifactName),
+            _ => throw new ArgumentException(
+                $"{artifactName} index operation '{text}' uses unsupported operation family '{operationFamily}'.",
+                nameof(operationFamily))
+        };
+    }
+
+    private static StarkTypeSymbol GetFixedArrayIndexElementType(
+        StarkTypeSymbol targetType,
+        int elementIndex,
+        string text,
+        string artifactName)
+    {
+        if (targetType.Kind != StarkTypeKind.FixedArray
+            || targetType.ElementType is not { } elementType
+            || targetType.FixedLength is not int fixedLength)
+        {
+            throw new ArgumentException(
+                $"{artifactName} fixed-array index operation '{text}' requires a fixed-array target, but found '{targetType.DisplayName}'.",
+                nameof(targetType));
+        }
+
+        if (elementIndex < 0 || elementIndex >= fixedLength)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(elementIndex),
+                $"{artifactName} fixed-array index operation '{text}' index '{elementIndex}' is out of range for '{targetType.DisplayName}' with length {fixedLength}.");
+        }
+
+        return elementType;
+    }
+
+    private static StarkTypeSymbol GetViewIndexElementType(
+        StarkTypeSymbol targetType,
+        int elementIndex,
+        string text,
+        string artifactName)
+    {
+        if (elementIndex is not 0 and not 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(elementIndex),
+                $"{artifactName} view index operation '{text}' index '{elementIndex}' is out of range for '{targetType.DisplayName}' with 2 component(s).");
+        }
+
+        return targetType.Kind switch
+        {
+            StarkTypeKind.Slice when targetType.ElementType is { } elementType => elementIndex == 0
+                ? StarkTypeSymbols.RawPointer(elementType, isMutable: targetType.IsMutableView)
+                : StarkTypeSymbols.Integer(64),
+            StarkTypeKind.Ascii => elementIndex == 0
+                ? StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: false)
+                : StarkTypeSymbols.Integer(64),
+            StarkTypeKind.Unicode => elementIndex == 0
+                ? StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(32), isMutable: false)
+                : StarkTypeSymbols.Integer(64),
+            StarkTypeKind.Slice => throw new ArgumentException(
+                $"{artifactName} view index operation '{text}' requires a slice with a known element type, but found '{targetType.DisplayName}'.",
+                nameof(targetType)),
+            _ => throw new ArgumentException(
+                $"{artifactName} view index operation '{text}' requires a slice or text target, but found '{targetType.DisplayName}'.",
+                nameof(targetType))
+        };
+    }
+
+    private static StarkTypeSymbol GetClosureIndexElementType(
+        StarkTypeSymbol targetType,
+        int elementIndex,
+        string text,
+        string artifactName)
+    {
+        if (targetType.Kind != StarkTypeKind.Closure)
+        {
+            throw new ArgumentException(
+                $"{artifactName} closure index operation '{text}' requires a closure target, but found '{targetType.DisplayName}'.",
+                nameof(targetType));
+        }
+
+        var elementType = elementIndex switch
+        {
+            0 => CallableValueFacts.BuildClosureInvokeFunctionPointerType(targetType),
+            1 => CallableValueFacts.BuildClosureEnvironmentPointerType(targetType),
+            2 when targetType.ClosureStorageKind == StarkClosureStorageKind.Heap
+                => CallableValueFacts.BuildClosureDropFunctionPointerType(),
+            _ => StarkTypeSymbols.Error
+        };
+
+        if (elementType.Kind == StarkTypeKind.Error)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(elementIndex),
+                $"{artifactName} closure index operation '{text}' index '{elementIndex}' is out of range or unresolved for closure value '{targetType.DisplayName}'.");
+        }
+
+        return elementType;
+    }
+
+    private static bool HaveSameIndexType(StarkTypeSymbol expectedType, StarkTypeSymbol actualType)
+    {
+        return expectedType == actualType
+            || expectedType.Kind == actualType.Kind
+            && string.Equals(expectedType.DisplayName, actualType.DisplayName, StringComparison.Ordinal);
+    }
+}
 
 public sealed record SsaConvertRValue(
     SsaValue Operand,
@@ -3665,17 +4545,19 @@ public sealed record SsaInsertFieldRValue(
 public sealed record SsaExtractIndexRValue(
     SsaValue Target,
     int ElementIndex,
+    IndexedElementOperationFamily OperationFamily,
     StarkTypeSymbol Type,
     string Text)
-    : SsaRValue(Type, Text);
+    : SsaRValue(SsaArtifactValidation.ValidateIndexExtraction(Target, ElementIndex, OperationFamily, Type, Text), Text);
 
 public sealed record SsaInsertIndexRValue(
     SsaValue Target,
     int ElementIndex,
+    IndexedElementOperationFamily OperationFamily,
     SsaValue Value,
     StarkTypeSymbol Type,
     string Text)
-    : SsaRValue(Type, Text);
+    : SsaRValue(SsaArtifactValidation.ValidateIndexInsertion(Target, ElementIndex, OperationFamily, Value, Type, Text), Text);
 
 public sealed record SsaMakeSliceFromLocalRValue(
     string LocalName,
@@ -3836,6 +4718,35 @@ public sealed record SsaValueInstruction(
     IReadOnlyList<ScopedNoAliasGroup>? ScopedNoAliasGroups = null,
     IReadOnlyList<string>? LoopAccessGroups = null)
     : SsaInstruction;
+
+public sealed record SsaCallInstruction(
+    string FunctionName,
+    IReadOnlyList<SsaValue> Arguments,
+    StarkTypeSymbol Type,
+    string Text,
+    IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
+    StarkTypeSymbol? SourceReturnType = null,
+    IReadOnlyList<SsaValue?>? IndirectArgumentAddresses = null,
+    SourceLocation? Location = null,
+    IReadOnlyList<ScopedNoAliasGroup>? ScopedNoAliasGroups = null,
+    IReadOnlyList<string>? LoopAccessGroups = null)
+    : SsaInstruction,
+        ISsaDirectCallOperation;
+
+public sealed record SsaIndirectCallInstruction(
+    SsaValue Target,
+    IReadOnlyList<SsaValue> Arguments,
+    StarkTypeSymbol Type,
+    string Text,
+    StarkTypeSymbol? SourceReturnType = null,
+    IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
+    IReadOnlyList<SsaValue?>? IndirectArgumentAddresses = null,
+    bool MayFree = false,
+    SourceLocation? Location = null,
+    IReadOnlyList<ScopedNoAliasGroup>? ScopedNoAliasGroups = null,
+    IReadOnlyList<string>? LoopAccessGroups = null)
+    : SsaInstruction,
+        ISsaIndirectCallOperation;
 
 public sealed record SsaAllocateLocalInstruction(
     string LocalName,

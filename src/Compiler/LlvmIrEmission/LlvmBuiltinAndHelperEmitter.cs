@@ -4205,20 +4205,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             {
                 foreach (var instruction in block.Instructions)
                 {
-                    if (instruction is not SsaValueInstruction
-                        {
-                            Value: SsaCallRValue
-                            {
-                                Arguments:
-                                [
-                                    _,
-                                    SsaStringConstant
-                                    {
-                                        Type.Kind: StarkTypeKind.Ascii
-                                    } source
-                                ]
-                            } call
-                        }
+                    if (!TryGetAsciiToUnicodeLiteralCall(instruction, out var call, out var source)
                         || !IsPotentialTryConvertAsciiToUnicodeCall(call.FunctionName)
                         || !TextLiteralDecoder.TryDecode(
                             source.LiteralText,
@@ -4237,6 +4224,53 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         }
 
         return false;
+    }
+
+    private static bool TryGetAsciiToUnicodeLiteralCall(
+        SsaInstruction instruction,
+        out ISsaDirectCallOperation call,
+        out SsaStringConstant source)
+    {
+        switch (instruction)
+        {
+            case SsaValueInstruction
+            {
+                Value: SsaCallRValue
+                {
+                    Arguments:
+                    [
+                        _,
+                        SsaStringConstant
+                        {
+                            Type.Kind: StarkTypeKind.Ascii
+                        } valueSource
+                    ]
+                } valueCall
+            }:
+                call = valueCall;
+                source = valueSource;
+                return true;
+
+            case SsaCallInstruction
+            {
+                Arguments:
+                [
+                    _,
+                    SsaStringConstant
+                    {
+                        Type.Kind: StarkTypeKind.Ascii
+                    } statementSource
+                ]
+            } statementCall:
+                call = statementCall;
+                source = statementSource;
+                return true;
+
+            default:
+                call = default!;
+                source = default!;
+                return false;
+        }
     }
 
     private static bool IsPotentialTryConvertAsciiToUnicodeCall(string functionName)

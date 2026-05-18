@@ -45,6 +45,7 @@ internal static partial class PackageImageBuilder
             var typedTypeAliases = new List<StarkPackageTypedTypeAliasManifest>();
             var functionEffects = new List<StarkPackageFunctionEffectManifest>();
             var abiFunctions = new List<StarkPackageAbiFunctionManifest>();
+            var compilerFactNamedTypes = new List<StarkPackageTypedTypeManifest>();
             var concreteLayouts = new List<StarkPackageConcreteTypeLayoutManifest>();
             var enumLayouts = new List<StarkPackageEnumLayoutManifest>();
             var functionSemantics = new List<StarkPackageFunctionSemanticManifest>();
@@ -187,10 +188,29 @@ internal static partial class PackageImageBuilder
                 }
             }
 
+            AddModuleLocalFunctionCompilerFacts(
+                module,
+                abiModel,
+                effectModel,
+                validationModel,
+                functionEffects,
+                abiFunctions,
+                functionSemantics);
+            AddModuleLocalNamedTypeCompilerFacts(
+                module,
+                moduleGraph,
+                typeModel,
+                abiModel,
+                effectModel,
+                compilerFactNamedTypes);
+
             foreach (var genericTemplate in BuildGenericFunctionTemplates(module, typeModel, validationModel))
             {
                 genericTemplates.Add(genericTemplate);
             }
+
+            AddModuleConcreteLayoutFacts(module, typeModel, enumLayoutModel, concreteLayouts);
+            AddModuleEnumLayoutFacts(module, enumLayoutModel, enumLayouts);
 
             if (reExports.Length == 0
                 && functions.Count == 0
@@ -230,6 +250,7 @@ internal static partial class PackageImageBuilder
                     CompilerFacts: new StarkPackageCompilerFactsSection(
                         functionEffects,
                         AbiFunctions: abiFunctions,
+                        NamedTypes: compilerFactNamedTypes.Count == 0 ? null : compilerFactNamedTypes,
                         ConcreteLayouts: concreteLayouts,
                         EnumLayouts: enumLayouts,
                         FunctionSemantics: functionSemantics,
@@ -245,6 +266,174 @@ internal static partial class PackageImageBuilder
             Path.GetFileName(libraryOutputPath),
             modules,
             NormalizeNativeDependencies(nativeDependencies));
+    }
+
+    private static void AddModuleConcreteLayoutFacts(
+        LoadedModuleDocument module,
+        TypeCheckModel typeModel,
+        EnumLayoutModel enumLayoutModel,
+        List<StarkPackageConcreteTypeLayoutManifest> concreteLayouts)
+    {
+        var localNamedTypes = GetModuleLocalNamedTypes(module);
+        if (localNamedTypes.Count == 0)
+        {
+            return;
+        }
+
+        var publishedLayouts = concreteLayouts
+            .Select(static layout => layout.QualifiedTypeName)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var namedType in typeModel.NamedTypes.Values.OrderBy(static type => type.Name, StringComparer.Ordinal))
+        {
+            var qualifiedName = QualifyPackageLocalNamedTypeName(module.SyntaxModel.ModuleName, localNamedTypes, namedType.Name);
+            if (qualifiedName is null || publishedLayouts.Contains(qualifiedName))
+            {
+                continue;
+            }
+
+            if (TryBuildConcreteLayoutManifest(namedType, qualifiedName, typeModel, enumLayoutModel, out var concreteLayoutManifest))
+            {
+                concreteLayouts.Add(concreteLayoutManifest);
+                publishedLayouts.Add(qualifiedName);
+            }
+        }
+    }
+
+    private static void AddModuleLocalFunctionCompilerFacts(
+        LoadedModuleDocument module,
+        AbiModel abiModel,
+        FunctionEffectModel effectModel,
+        SemanticValidationModel? validationModel,
+        List<StarkPackageFunctionEffectManifest> functionEffects,
+        List<StarkPackageAbiFunctionManifest> abiFunctions,
+        List<StarkPackageFunctionSemanticManifest> functionSemantics)
+    {
+        var publishedEffects = functionEffects
+            .Select(static function => function.QualifiedResolvedName)
+            .ToHashSet(StringComparer.Ordinal);
+        var publishedAbiFunctions = abiFunctions
+            .Select(static function => function.QualifiedResolvedName)
+            .ToHashSet(StringComparer.Ordinal);
+        var publishedSemantics = functionSemantics
+            .Select(static function => function.QualifiedResolvedName)
+            .ToHashSet(StringComparer.Ordinal);
+
+        foreach (var declaration in module.SyntaxModel.Declarations
+                     .Where(static declaration => declaration.Function is not null)
+                     .OrderBy(static declaration => declaration.Name, StringComparer.Ordinal))
+        {
+            var resolvedLocalName = FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration);
+            var qualifiedResolvedName = $"{module.SyntaxModel.ModuleName}.{resolvedLocalName}";
+
+            if (!publishedEffects.Contains(qualifiedResolvedName)
+                && TryBuildFunctionEffectManifest(module, declaration, effectModel, out var functionEffectManifest))
+            {
+                functionEffects.Add(functionEffectManifest);
+                publishedEffects.Add(qualifiedResolvedName);
+            }
+
+            if (!publishedAbiFunctions.Contains(qualifiedResolvedName)
+                && TryBuildAbiFunctionManifest(module, declaration, abiModel, out var abiFunctionManifest))
+            {
+                abiFunctions.Add(abiFunctionManifest);
+                publishedAbiFunctions.Add(qualifiedResolvedName);
+            }
+
+            if (validationModel is not null
+                && !publishedSemantics.Contains(qualifiedResolvedName)
+                && TryBuildFunctionSemanticManifest(module, declaration, validationModel, out var functionSemanticManifest))
+            {
+                functionSemantics.Add(functionSemanticManifest);
+                publishedSemantics.Add(qualifiedResolvedName);
+            }
+        }
+    }
+
+    private static void AddModuleLocalNamedTypeCompilerFacts(
+        LoadedModuleDocument module,
+        ModuleGraph moduleGraph,
+        TypeCheckModel typeModel,
+        AbiModel abiModel,
+        FunctionEffectModel effectModel,
+        List<StarkPackageTypedTypeManifest> namedTypes)
+    {
+        var publishedTypes = new HashSet<string>(StringComparer.Ordinal);
+
+        foreach (var declaration in module.SyntaxModel.Declarations
+                     .Where(static declaration => declaration.Kind is DeclarationKind.Struct
+                         or DeclarationKind.Record
+                         or DeclarationKind.Trait
+                         or DeclarationKind.Doctrine
+                         or DeclarationKind.Enum)
+                     .OrderBy(static declaration => declaration.Name, StringComparer.Ordinal))
+        {
+            var lookupName = LookupName(module.SyntaxModel.ModuleName, module.Reference.IsRoot, declaration.Name);
+            if (!typeModel.NamedTypes.TryGetValue(lookupName, out var namedType)
+                || !publishedTypes.Add($"{module.SyntaxModel.ModuleName}.{declaration.Name}"))
+            {
+                continue;
+            }
+
+            namedTypes.Add(BuildTypedTypeManifest(
+                module,
+                declaration,
+                $"{module.SyntaxModel.ModuleName}.{declaration.Name}",
+                declaration.Visibility.ToString().ToLowerInvariant(),
+                namedType,
+                typeModel,
+                abiModel,
+                effectModel,
+                moduleGraph));
+        }
+    }
+
+    private static string? QualifyPackageLocalNamedTypeName(
+        string moduleName,
+        ISet<string> localNamedTypes,
+        string namedTypeName)
+    {
+        if (string.IsNullOrWhiteSpace(namedTypeName))
+        {
+            return null;
+        }
+
+        if (namedTypeName.Contains('.', StringComparison.Ordinal))
+        {
+            return namedTypeName.StartsWith($"{moduleName}.", StringComparison.Ordinal)
+                ? namedTypeName
+                : null;
+        }
+
+        return localNamedTypes.Contains(namedTypeName)
+            ? $"{moduleName}.{namedTypeName}"
+            : null;
+    }
+
+    private static void AddModuleEnumLayoutFacts(
+        LoadedModuleDocument module,
+        EnumLayoutModel enumLayoutModel,
+        List<StarkPackageEnumLayoutManifest> enumLayouts)
+    {
+        var localNamedTypes = GetModuleLocalNamedTypes(module);
+        if (localNamedTypes.Count == 0)
+        {
+            return;
+        }
+
+        var publishedLayouts = enumLayouts
+            .Select(static layout => layout.QualifiedTypeName)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var (enumName, enumLayout) in enumLayoutModel.Layouts.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
+        {
+            var qualifiedName = QualifyPackageLocalNamedTypeName(module.SyntaxModel.ModuleName, localNamedTypes, enumName);
+            if (qualifiedName is null || publishedLayouts.Contains(qualifiedName))
+            {
+                continue;
+            }
+
+            enumLayouts.Add(BuildEnumLayoutManifest(module, qualifiedName, enumLayout));
+            publishedLayouts.Add(qualifiedName);
+        }
     }
 
     private static StarkPackageNativeDependencyManifest? NormalizeNativeDependencies(StarkPackageNativeDependencyManifest? dependencies)
