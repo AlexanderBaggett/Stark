@@ -1,0 +1,13 @@
+{{- with resources.Get "custom.css" }}
+  {{- $customCss := . | resources.Minify | fingerprint }}
+  <link
+    rel="preload"
+    href="{{ $customCss.RelPermalink }}"
+    as="style"
+  />
+  <link
+    rel="stylesheet"
+    href="{{ $customCss.RelPermalink }}"
+    media="all"
+  />
+{{- end }}

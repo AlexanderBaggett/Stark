@@ -80,13 +80,13 @@
     </section>
     <nav class="book-nav" aria-label="Book chapter navigation">
         {{ with .Params.prev }}
-            <a href="{{ . | relURL }}">Previous</a>
+            <a href="{{ . | relURL }}"><span>Previous</span></a>
         {{ else }}
             <span></span>
         {{ end }}
-        <a href="{{ "/book/" | relURL }}">Contents</a>
+        <a href="{{ "/book/" | relURL }}"><span>Contents</span></a>
         {{ with .Params.next }}
-            <a href="{{ . | relURL }}">Next</a>
+            <a href="{{ . | relURL }}"><span>Next</span></a>
         {{ else }}
             <span></span>
         {{ end }}
