@@ -41,69 +41,49 @@ internal sealed partial class MidLevelIrLowerer
             var switchValue = LowerExpressionToOperand(switchStatement.expression());
             if (switchValue is null)
             {
-                MarkUnsupported(switchStatement, "Switch expression could not be lowered.");
-                return;
+                throw LoweringInvariantViolation(
+                    switchStatement.expression(),
+                    "Switch expression was accepted but could not be lowered to a MIR operand.");
             }
 
-            var lowered = switchValue.Type.Kind switch
+            var hasBoundSwitch = TryResolveBoundSwitchDispatch(switchStatement, out var boundSwitch);
+            if (hasBoundSwitch
+                && !HasSameStorageType(ApplyGenericSubstitution(boundSwitch.SwitchType), switchValue.Type))
             {
-                StarkTypeKind.Integer or StarkTypeKind.Bool =>
-                    TryLowerNativeSwitch(switchStatement, switchValue)
-                    || TryLowerGuardedSwitch(switchStatement, switchValue),
-                StarkTypeKind.Ascii or StarkTypeKind.Unicode =>
-                    TryLowerPartitionedTextSwitch(switchStatement, switchValue)
-                    || TryLowerGuardedSwitch(switchStatement, switchValue),
-                _ => TryLowerGuardedSwitch(switchStatement, switchValue)
-            };
+                throw LoweringInvariantViolation(
+                    switchStatement,
+                    $"Bound switch dispatch type '{ApplyGenericSubstitution(boundSwitch.SwitchType).DisplayName}' does not match lowered switch value type '{switchValue.Type.DisplayName}'.");
+            }
+
+            var lowered = hasBoundSwitch
+                ? boundSwitch.Family switch
+                {
+                    SwitchLoweringFamilies.Native => TryLowerNativeSwitch(switchStatement, switchValue),
+                    SwitchLoweringFamilies.PartitionedText => TryLowerPartitionedTextSwitch(switchStatement, switchValue),
+                    SwitchLoweringFamilies.Guarded => TryLowerGuardedSwitch(switchStatement, switchValue),
+                    _ => throw LoweringInvariantViolation(
+                        switchStatement,
+                        $"Bound switch dispatch family '{boundSwitch.Family}' has no MIR lowering case.")
+                }
+                : switchValue.Type.Kind switch
+                {
+                    StarkTypeKind.Integer or StarkTypeKind.Bool =>
+                        TryLowerNativeSwitch(switchStatement, switchValue)
+                        || TryLowerGuardedSwitch(switchStatement, switchValue),
+                    StarkTypeKind.Ascii or StarkTypeKind.Unicode =>
+                        TryLowerPartitionedTextSwitch(switchStatement, switchValue)
+                        || TryLowerGuardedSwitch(switchStatement, switchValue),
+                    _ => TryLowerGuardedSwitch(switchStatement, switchValue)
+                };
 
             if (lowered)
             {
                 return;
             }
 
-            MarkUnsupported(switchStatement, "Switch shape is outside the current direct MIR lowering subset.");
-
-            var exitBlock = CreateBlock("switch_exit");
-            var sectionBlocks = switchStatement.switchSection()
-                .Select((section, index) => (Section: section, Block: CreateBlock($"switch_case_{index}")))
-                .ToArray();
-
-            var cases = new List<MidLevelIrSwitchCase>();
-            foreach (var (section, block) in sectionBlocks)
-            {
-                foreach (var label in section.switchLabel())
-                {
-                    var labelText = label.DEFAULT() is not null ? "default" : label.GetText();
-                    cases.Add(new MidLevelIrSwitchCase(labelText, block.Id));
-                }
-            }
-
-            CurrentBlock.Terminator = new MidLevelIrTerminator(
-                MidLevelIrTerminatorKind.Switch,
-                sectionBlocks.Select(static item => item.Block.Id).Append(exitBlock.Id).ToArray(),
-                ConditionText: switchStatement.expression().GetText(),
-                SwitchCases: cases);
-
-            _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
-            try
-            {
-                foreach (var (section, block) in sectionBlocks)
-                {
-                    CurrentBlock = block;
-                    foreach (var nested in section.statement())
-                    {
-                        LowerStatement(nested);
-                    }
-
-                    EnsureGoto(exitBlock.Id);
-                }
-            }
-            finally
-            {
-                _breakTargets.Pop();
-            }
-
-            CurrentBlock = exitBlock;
+            throw LoweringInvariantViolation(
+                switchStatement,
+                "Accepted switch shape could not be lowered by native, partitioned text, or guarded switch lowering.");
         }
 
         private bool TryLowerNativeSwitch(

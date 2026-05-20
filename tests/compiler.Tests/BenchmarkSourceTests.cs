@@ -33,6 +33,7 @@ public sealed class BenchmarkSourceTests
             Assert.True(
                 result.Succeeded,
                 $"{benchmarkSource}{Environment.NewLine}{string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString()))}");
+            FallbackLogAssertions.AssertNoFallbackLogs(result, "Normal benchmark builds", benchmarkSource);
             Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
             Assert.NotNull(llvmModule);
             Assert.DoesNotContain("@malloc(", llvmModule.Text, StringComparison.Ordinal);
@@ -42,11 +43,11 @@ public sealed class BenchmarkSourceTests
     }
 
     [Fact]
-    public void ExperimentalMemoryCopyFillHotLoopUsesInfallibleHelpers()
+    public void MemoryCopyFillHotLoopUsesInfallibleHelpers()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var benchmarkSource = Path.Combine(repositoryRoot, "benchmarks", "allocator", "ExperimentalMemoryCopyFill.stark");
+        var benchmarkSource = Path.Combine(repositoryRoot, "benchmarks", "allocator", "MemoryCopyFill.stark");
         var targetInfo = new LlvmTargetInfo("x86_64-unknown-linux-gnu", null);
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(File.ReadAllText(benchmarkSource), benchmarkSource),
@@ -68,43 +69,43 @@ public sealed class BenchmarkSourceTests
             "define i32 @main(",
             "Expected benchmark main definition to be emitted.");
 
-        Assert.Contains("@__stark_inline_clone_System_Experimental_Memory_CopyBytesDisjointInfallible(", mainBody, StringComparison.Ordinal);
-        Assert.Contains("@__stark_inline_clone_System_Experimental_Memory_FillInitializedBytesInfallible(", mainBody, StringComparison.Ordinal);
-        Assert.Contains("@__stark_inline_clone_System_Experimental_Memory_CopyCodePointsDisjointInfallible(", mainBody, StringComparison.Ordinal);
-        Assert.Contains("@__stark_inline_clone_System_Experimental_Memory_FillInitializedCodePointsInfallible(", mainBody, StringComparison.Ordinal);
-        Assert.Contains("@__stark_inline_clone_System_Experimental_Memory_ReserveBytes(", mainBody, StringComparison.Ordinal);
-        Assert.Contains("@__stark_inline_clone_System_Experimental_Memory_ReserveCodePoints(", mainBody, StringComparison.Ordinal);
-        Assert.Contains("@__stark_inline_clone_System_Experimental_Memory_MoveBytesInfallible(", mainBody, StringComparison.Ordinal);
-        Assert.Contains("@__stark_inline_clone_System_Experimental_Memory_MoveCodePointsInfallible(", mainBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("@System_Experimental_Memory_CopyBytesDisjointInfallible(", mainBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("@System_Experimental_Memory_FillInitializedBytesInfallible(", mainBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("@System_Experimental_Memory_CopyCodePointsDisjointInfallible(", mainBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("@System_Experimental_Memory_FillInitializedCodePointsInfallible(", mainBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("@System_Experimental_Memory_ReserveBytes(", mainBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("@System_Experimental_Memory_ReserveCodePoints(", mainBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("@System_Experimental_Memory_MoveBytesInfallible(", mainBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("@System_Experimental_Memory_MoveCodePointsInfallible(", mainBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("@System_Experimental_Memory_CopyBytesDisjoint(", mainBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("@System_Experimental_Memory_FillInitializedBytes(", mainBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("@System_Experimental_Memory_CopyCodePointsDisjoint(", mainBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("@System_Experimental_Memory_FillInitializedCodePoints(", mainBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("@System_Experimental_Memory_MoveBytes(", mainBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("@System_Experimental_Memory_MoveCodePoints(", mainBody, StringComparison.Ordinal);
-        Assert.Contains("; closed-world imported inline body: System.Experimental.Memory.ReserveBytes", llvm, StringComparison.Ordinal);
-        Assert.Contains("; closed-world imported inline body: System.Experimental.Memory.CopyBytesDisjointInfallible", llvm, StringComparison.Ordinal);
-        Assert.Contains("; closed-world imported inline body: System.Experimental.Memory.MoveBytesInfallible", llvm, StringComparison.Ordinal);
+        Assert.Contains("@__stark_inline_clone_System_Memory_CopyBytesDisjointInfallible(", mainBody, StringComparison.Ordinal);
+        Assert.Contains("@__stark_inline_clone_System_Memory_FillInitializedBytesInfallible(", mainBody, StringComparison.Ordinal);
+        Assert.Contains("@__stark_inline_clone_System_Memory_CopyCodePointsDisjointInfallible(", mainBody, StringComparison.Ordinal);
+        Assert.Contains("@__stark_inline_clone_System_Memory_FillInitializedCodePointsInfallible(", mainBody, StringComparison.Ordinal);
+        Assert.Contains("@__stark_inline_clone_System_Memory_ReserveBytes(", mainBody, StringComparison.Ordinal);
+        Assert.Contains("@__stark_inline_clone_System_Memory_ReserveCodePoints(", mainBody, StringComparison.Ordinal);
+        Assert.Contains("@__stark_inline_clone_System_Memory_MoveBytesInfallible(", mainBody, StringComparison.Ordinal);
+        Assert.Contains("@__stark_inline_clone_System_Memory_MoveCodePointsInfallible(", mainBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Memory_CopyBytesDisjointInfallible(", mainBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Memory_FillInitializedBytesInfallible(", mainBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Memory_CopyCodePointsDisjointInfallible(", mainBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Memory_FillInitializedCodePointsInfallible(", mainBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Memory_ReserveBytes(", mainBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Memory_ReserveCodePoints(", mainBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Memory_MoveBytesInfallible(", mainBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Memory_MoveCodePointsInfallible(", mainBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Memory_CopyBytesDisjoint(", mainBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Memory_FillInitializedBytes(", mainBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Memory_CopyCodePointsDisjoint(", mainBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Memory_FillInitializedCodePoints(", mainBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Memory_MoveBytes(", mainBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Memory_MoveCodePoints(", mainBody, StringComparison.Ordinal);
+        Assert.Contains("; closed-world imported inline body: System.Memory.ReserveBytes", llvm, StringComparison.Ordinal);
+        Assert.Contains("; closed-world imported inline body: System.Memory.CopyBytesDisjointInfallible", llvm, StringComparison.Ordinal);
+        Assert.Contains("; closed-world imported inline body: System.Memory.MoveBytesInfallible", llvm, StringComparison.Ordinal);
 
         var copyCodePointsClone = ExtractDefinedFunctionText(
             llvm,
-            "define internal dso_local fastcc void @__stark_inline_clone_System_Experimental_Memory_CopyCodePointsDisjointInfallible(",
+            "define internal dso_local fastcc void @__stark_inline_clone_System_Memory_CopyCodePointsDisjointInfallible(",
             "Expected code-point copy inline clone to be emitted.");
         var moveBytesClone = ExtractDefinedFunctionText(
             llvm,
-            "define internal dso_local fastcc void @__stark_inline_clone_System_Experimental_Memory_MoveBytesInfallible(",
+            "define internal dso_local fastcc void @__stark_inline_clone_System_Memory_MoveBytesInfallible(",
             "Expected byte move inline clone to be emitted.");
         var moveCodePointsClone = ExtractDefinedFunctionText(
             llvm,
-            "define internal dso_local fastcc void @__stark_inline_clone_System_Experimental_Memory_MoveCodePointsInfallible(",
+            "define internal dso_local fastcc void @__stark_inline_clone_System_Memory_MoveCodePointsInfallible(",
             "Expected code-point move inline clone to be emitted.");
 
         Assert.Contains("@llvm.memcpy.p0.p0.i64", copyCodePointsClone, StringComparison.Ordinal);
@@ -117,28 +118,6 @@ public sealed class BenchmarkSourceTests
     }
 
     [Fact]
-    public void ImplementationIdenticalAllocatorExperimentalBenchmarksMatchStableLlvm()
-    {
-        var repositoryRoot = FindRepositoryRoot();
-        var pairs = new[]
-        {
-            ("allocator/HeapLocalBucketReuse.stark", "allocator/ExperimentalHeapLocalBucketReuse.stark"),
-            ("allocator/SystemMemoryBucketReallocate.stark", "allocator/ExperimentalSystemMemoryBucketReallocate.stark"),
-            ("allocator/SystemMemoryFallbackReallocate.stark", "allocator/ExperimentalSystemMemoryFallbackReallocate.stark")
-        };
-
-        foreach (var (stableRelativePath, experimentalRelativePath) in pairs)
-        {
-            var stableLlvm = CompileBenchmarkMainLlvm(repositoryRoot, stableRelativePath);
-            var experimentalLlvm = CompileBenchmarkMainLlvm(repositoryRoot, experimentalRelativePath);
-
-            Assert.Equal(
-                NormalizeLlvmForMaterialComparison(stableLlvm),
-                NormalizeLlvmForMaterialComparison(experimentalLlvm));
-        }
-    }
-
-    [Fact]
     public void WindowsAllocatorBenchmarksUseHeapReAllocFastPath()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -146,11 +125,8 @@ public sealed class BenchmarkSourceTests
         var relativePaths = new[]
         {
             "allocator/MemoryDynamicReserveGrowth.stark",
-            "allocator/ExperimentalMemoryDynamicReserveGrowth.stark",
             "allocator/SystemMemoryFallbackReallocate.stark",
-            "allocator/ExperimentalSystemMemoryFallbackReallocate.stark",
-            "allocator/SystemMemoryBucketReallocate.stark",
-            "allocator/ExperimentalSystemMemoryBucketReallocate.stark"
+            "allocator/SystemMemoryBucketReallocate.stark"
         };
 
         foreach (var relativePath in relativePaths)
@@ -173,18 +149,23 @@ public sealed class BenchmarkSourceTests
     }
 
     [Fact]
-    public void WindowsExperimentalDirectoryEnumerationUsesAllocationFreeInfoPath()
+    public void WindowsDirectoryEnumerationUsesAllocationFreeInfoPath()
     {
         var repositoryRoot = FindRepositoryRoot();
         var targetInfo = new LlvmTargetInfo("x86_64-pc-windows-msvc", null);
-        var llvm = CompileBenchmarkLlvm(repositoryRoot, "io/ExperimentalDirectoryEnumeration.stark", targetInfo);
+        var llvm = CompileBenchmarkLlvm(repositoryRoot, "io/DirectoryEnumeration.stark", targetInfo);
         var enumerateOnceBody = ExtractDefinedFunctionText(
             llvm,
             "define fastcc noundef i64 @EnumerateOnce()",
-            "Expected ExperimentalDirectoryEnumeration EnumerateOnce definition to be emitted.");
+            "Expected DirectoryEnumeration EnumerateOnce definition to be emitted.");
 
-        Assert.Contains("@System_Experimental_FileSystem_Directory_ReadNextInfo(", enumerateOnceBody, StringComparison.Ordinal);
-        Assert.DoesNotContain("@System_Experimental_FileSystem_Directory_ReadNext(", enumerateOnceBody, StringComparison.Ordinal);
+        Assert.Contains("ReadRemainingNameLengthChecksumRaw", enumerateOnceBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_FileSystem_Directory_ReadNextInfoRaw(", enumerateOnceBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_FileSystem_Directory_ReadNextInfo(", enumerateOnceBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_FileSystem_Directory_ReadNext(", enumerateOnceBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Runtime_Buffer_FixedByteBuffer8192_WritePointer(", enumerateOnceBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Runtime_Buffer_FixedByteBuffer8192_Capacity(", enumerateOnceBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("System_FileSystem_DirectoryReadInfoResult", enumerateOnceBody, StringComparison.Ordinal);
         Assert.DoesNotContain("__stark_runtime_alloc", enumerateOnceBody, StringComparison.Ordinal);
         Assert.DoesNotContain("__stark_runtime_free", enumerateOnceBody, StringComparison.Ordinal);
         Assert.DoesNotContain("i64 8192, i1 false", enumerateOnceBody, StringComparison.Ordinal);
@@ -192,7 +173,169 @@ public sealed class BenchmarkSourceTests
     }
 
     [Fact]
-    public void ExperimentalStandardLibraryOptimizationBenchmarkGatesHaveExpectedSourceMatrix()
+    public void DirectoryEnumerationDoesNotExposeLargeDirectoryPayloadAsSsaValue()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var targetInfo = NativeToolchain.TryDetectDefaultTargetInfo(out var detected)
+            ? detected
+            : new LlvmTargetInfo("x86_64-unknown-linux-gnu", null);
+        var llvm = CompileBenchmarkLlvm(repositoryRoot, "io/DirectoryEnumeration.stark", targetInfo);
+        var enumerateOnceBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i64 @EnumerateOnce()",
+            "Expected DirectoryEnumeration EnumerateOnce definition to be emitted.");
+
+        Assert.DoesNotMatch(
+            @"load %System_FileSystem_Directory, ptr %abi_extract_field_load_",
+            enumerateOnceBody);
+        Assert.DoesNotMatch(
+            @"store %System_FileSystem_Directory %v\d+, ptr %slot_directory",
+            enumerateOnceBody);
+        Assert.DoesNotContain("%slot_directory = alloca", enumerateOnceBody, StringComparison.Ordinal);
+        Assert.DoesNotMatch(
+            @"llvm\.memcpy[^\n]+%slot_directory",
+            enumerateOnceBody);
+        Assert.DoesNotContain("load %System_FileSystem_Directory", enumerateOnceBody, StringComparison.Ordinal);
+        Assert.Contains("ReadRemainingNameLengthChecksumRaw", enumerateOnceBody, StringComparison.Ordinal);
+        Assert.Contains("ReadDirectoryNameLengthChecksum", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_FileSystem_Directory_ReadNextInfoRaw(", enumerateOnceBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_FileSystem_Directory_ReadNextInfo(", enumerateOnceBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@EntryLength(", enumerateOnceBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@IsEnd(", enumerateOnceBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Runtime_Buffer_FixedByteBuffer8192_WritePointer(", enumerateOnceBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Runtime_Buffer_FixedByteBuffer8192_Capacity(", enumerateOnceBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("DirectoryEntryKindFromLinuxType", enumerateOnceBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("ReadDirectoryEntryInfo", enumerateOnceBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("System_FileSystem_DirectoryReadInfoResult", enumerateOnceBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@IOOk(", enumerateOnceBody, StringComparison.Ordinal);
+        Assert.True(
+            Regex.Matches(enumerateOnceBody, @"\bfca(?:\.[A-Za-z0-9_]+)+", RegexOptions.CultureInvariant).Count < 16,
+            "Expected DirectoryEnumeration EnumerateOnce to avoid per-byte fca field extraction for the inline directory buffer.");
+        Assert.DoesNotMatch(
+            @"llvm\.memcpy[^\n]+ptr [^,]+%slot_[^,]*drop[^,]*, ptr [^,]+%slot_directory, i64 8248",
+            enumerateOnceBody);
+    }
+
+    [Fact]
+    public void FileOpenDoesNotExposeLargeFilePayloadAsSsaValue()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var targetInfo = NativeToolchain.TryDetectDefaultTargetInfo(out var detected)
+            ? detected
+            : new LlvmTargetInfo("x86_64-unknown-linux-gnu", null);
+        var llvm = CompileSourceLlvm(
+            repositoryRoot,
+            """
+            import System.IO
+            import System.IO.File
+            module Demo
+
+            unsafe fn i32[min max] OpenAndClose() {
+                stack System.IO.IOResult<System.IO.File.File> opened =
+                    System.IO.File.Open("large-file-payload-test.tmp", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.None);
+                switch (opened) {
+                    case System.IO.IOResult<System.IO.File.File>.Err(var openError):
+                        return 1;
+                    case System.IO.IOResult<System.IO.File.File>.Ok(var fileValue):
+                        stack mut System.IO.File.File file = fileValue;
+                        switch (file.Close()) {
+                            case System.IO.IOStatus.Ok:
+                                return 0;
+                            case System.IO.IOStatus.Err(var closeError):
+                                return 2;
+                        }
+                }
+            }
+            """,
+            "/virtual/FileOpenPayloadRegression.stark",
+            targetInfo);
+        var openAndCloseBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i32 @OpenAndClose()",
+            "Expected OpenAndClose definition to be emitted.");
+
+        Assert.DoesNotMatch(
+            @"load %System_IO_File_File, ptr %abi_extract_field_load_",
+            openAndCloseBody);
+        Assert.DoesNotMatch(
+            @"store %System_IO_File_File %v\d+, ptr %slot_file",
+            openAndCloseBody);
+        Assert.DoesNotContain("%slot_file = alloca", openAndCloseBody, StringComparison.Ordinal);
+        Assert.DoesNotMatch(
+            @"llvm\.memcpy[^\n]+%slot_file",
+            openAndCloseBody);
+        Assert.DoesNotContain("load %System_IO_File_File", openAndCloseBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("@llvm.memcpy.inline.p0.p0.i64", openAndCloseBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DictionaryInsertDropFieldUpdatesDoNotStoreDeferredAggregateValues()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var hasNativeToolchain = NativeToolchain.TryDetectDefaultTargetInfo(out var detectedTargetInfo);
+        var targetInfo = hasNativeToolchain
+            ? detectedTargetInfo
+            : new LlvmTargetInfo("x86_64-unknown-linux-gnu", null);
+        var llvm = CompileBenchmarkLlvm(repositoryRoot, "collections/DictionaryInsert.stark", targetInfo);
+        var mainBody = ExtractDefinedFunctionText(
+            llvm,
+            "define i32 @main(",
+            "Expected DictionaryInsert benchmark main definition to be emitted.");
+
+        Assert.DoesNotMatch(
+            @"store %System_Collections_Dictionary[^,\n]* %v\d+, ptr %slot_values",
+            mainBody);
+        Assert.DoesNotContain("insertvalue %System_Collections_Dictionary", mainBody, StringComparison.Ordinal);
+        Assert.Contains("store ptr null, ptr %abi_insert_field_store_", mainBody, StringComparison.Ordinal);
+        Assert.Matches(@"store i64 0, ptr %(abi_insert_field_store_|v)\d+", mainBody);
+
+        if (!hasNativeToolchain)
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-dictionary-llvm-");
+        try
+        {
+            var objectPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "DictionaryInsert.obj" : "DictionaryInsert.o");
+            var objectResult = NativeToolchain.EmitObject(llvm, objectPath, targetInfo: targetInfo);
+
+            Assert.True(
+                objectResult.Succeeded,
+                objectResult.StandardOutput + Environment.NewLine + objectResult.StandardError);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void TextFormattingBenchmarksSpecializeConstantIntegerFormatting()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var integerMain = CompileBenchmarkMainLlvm(repositoryRoot, "text/ConstantIntegerFormatting.stark");
+        var unicodeMain = CompileBenchmarkMainLlvm(repositoryRoot, "text/UnicodeFormatting.stark");
+
+        Assert.DoesNotContain("TryFormatI64Ascii", integerMain, StringComparison.Ordinal);
+        Assert.DoesNotContain("TryFormatU64Ascii", integerMain, StringComparison.Ordinal);
+        Assert.DoesNotContain("TryFormatI1024Ascii", integerMain, StringComparison.Ordinal);
+        Assert.DoesNotContain("TryFormatU1024Ascii", integerMain, StringComparison.Ordinal);
+        Assert.DoesNotContain("TryFormatI1024Unicode", unicodeMain, StringComparison.Ordinal);
+        Assert.DoesNotContain("TryFormatU1024Unicode", unicodeMain, StringComparison.Ordinal);
+        Assert.Contains("llvm.memcpy", integerMain, StringComparison.Ordinal);
+        Assert.Contains("llvm.memcpy", unicodeMain, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void StandardLibraryOptimizationBenchmarkGatesHaveExpectedSourceMatrix()
     {
         var repositoryRoot = FindRepositoryRoot();
         var benchmarkRoot = Path.Combine(repositoryRoot, "benchmarks");
@@ -201,8 +344,8 @@ public sealed class BenchmarkSourceTests
             new BenchmarkGate("allocator", "MemoryDynamicReserveGrowth"),
             new BenchmarkGate("allocator", "SystemMemoryFallbackReallocate"),
             new BenchmarkGate("allocator", "SystemMemoryBucketReallocate"),
-            new BenchmarkGate("runtime", "RuntimeBufferFixed", HasStableStark: false),
-            new BenchmarkGate("runtime", "RuntimeBufferDynamic", HasStableStark: false),
+            new BenchmarkGate("runtime", "RuntimeBufferFixed"),
+            new BenchmarkGate("runtime", "RuntimeBufferDynamic"),
             new BenchmarkGate("network", "TcpLoopbackThroughput"),
             new BenchmarkGate("network", "TcpScatterGatherLoopback"),
             new BenchmarkGate("console", "ConsoleWrites"),
@@ -213,44 +356,52 @@ public sealed class BenchmarkSourceTests
             new BenchmarkGate("collections", "DictionaryMixed"),
             new BenchmarkGate("text", "TextConcatCopy"),
             new BenchmarkGate("text", "PathJoin"),
-            new BenchmarkGate("text", "PathNormalize", HasStableStark: false),
+            new BenchmarkGate("text", "PathNormalize"),
             new BenchmarkGate("text", "PathQueries"),
             new BenchmarkGate("text", "UnicodeFormatting"),
             new BenchmarkGate("io", "DirectoryEnumeration")
         };
 
+        Assert.Empty(Directory.GetFiles(benchmarkRoot, "Experimental*.stark", SearchOption.AllDirectories));
+
         foreach (var gate in gates)
         {
             var directory = Path.Combine(benchmarkRoot, gate.Directory);
-            Assert.True(File.Exists(Path.Combine(directory, $"Experimental{gate.Name}.stark")), $"Missing experimental Stark benchmark for {gate.Directory}/{gate.Name}.");
             Assert.True(File.Exists(Path.Combine(directory, $"{gate.Name}.c")), $"Missing C benchmark for {gate.Directory}/{gate.Name}.");
             Assert.True(File.Exists(Path.Combine(directory, $"{gate.Name}.rs")), $"Missing Rust benchmark for {gate.Directory}/{gate.Name}.");
-
-            if (gate.HasStableStark)
-            {
-                Assert.True(File.Exists(Path.Combine(directory, $"{gate.Name}.stark")), $"Missing stable Stark benchmark for {gate.Directory}/{gate.Name}.");
-            }
+            Assert.True(File.Exists(Path.Combine(directory, $"{gate.Name}.stark")), $"Missing Stark benchmark for {gate.Directory}/{gate.Name}.");
         }
     }
 
     [Fact]
-    public void BenchmarkHarnessReportsExperimentalStarkAsLanguageVariant()
+    public void BenchmarkHarnessReportsCanonicalStarkOnly()
     {
         var repositoryRoot = FindRepositoryRoot();
         var script = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "run-benchmarks.ps1"));
+        var bashScript = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "run-benchmarks.sh"));
+        var codegenScript = File.ReadAllText(Path.Combine(repositoryRoot, "scripts", "analyze-benchmark-codegen.ps1"));
 
-        Assert.Contains("$stem.StartsWith(\"Experimental\", [StringComparison]::Ordinal)", script, StringComparison.Ordinal);
-        Assert.Contains("$languageLabel = \"stark-experimental\"", script, StringComparison.Ordinal);
         Assert.Contains("Emit-Row \"benchmark,language", script, StringComparison.Ordinal);
         Assert.Contains("llvm_object_us,link_us,toolchain_us,binary_bytes", script, StringComparison.Ordinal);
         Assert.Contains("median_us,avg_us", script, StringComparison.Ordinal);
         Assert.Contains("c_median_ratio", script, StringComparison.Ordinal);
         Assert.Contains("STARK_BENCH_SUBSET", script, StringComparison.Ordinal);
         Assert.Contains("STARK_BENCH_RUNTIME_ONLY", script, StringComparison.Ordinal);
+        Assert.Contains("benchmark-stderr", bashScript, StringComparison.Ordinal);
+        Assert.Contains("Captured benchmark stderr:", bashScript, StringComparison.Ordinal);
         Assert.DoesNotContain("benchmark,language,collection", script, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("stark-experimental", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("StartsWith(\"Experimental\"", script, StringComparison.Ordinal);
         Assert.DoesNotContain("stable-stark", script, StringComparison.Ordinal);
         Assert.DoesNotContain("dynamic-stark", script, StringComparison.Ordinal);
         Assert.DoesNotContain("experimental-ring-stark", script, StringComparison.Ordinal);
+
+        foreach (var harness in new[] { bashScript, codegenScript })
+        {
+            Assert.DoesNotContain("stark-experimental", harness, StringComparison.Ordinal);
+            Assert.DoesNotContain("StartsWith(\"Experimental\"", harness, StringComparison.Ordinal);
+            Assert.DoesNotContain("Get-ExperimentalBenchmarkId", harness, StringComparison.Ordinal);
+        }
     }
 
     private static string FindRepositoryRoot()
@@ -316,8 +467,22 @@ public sealed class BenchmarkSourceTests
     {
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
         var benchmarkSource = Path.Combine(repositoryRoot, "benchmarks", relativePath);
+        return CompileSourceLlvm(
+            repositoryRoot,
+            File.ReadAllText(benchmarkSource),
+            benchmarkSource,
+            targetInfo);
+    }
+
+    private static string CompileSourceLlvm(
+        string repositoryRoot,
+        string source,
+        string sourcePath,
+        LlvmTargetInfo targetInfo)
+    {
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
         var result = DefaultCompilerPipeline.Create().Run(
-            new CompilationInput(File.ReadAllText(benchmarkSource), benchmarkSource),
+            new CompilationInput(source, sourcePath),
             new CompilerOptions(
                 EmitLlvmIr: true,
                 OptimizationLevel: CompilerOptimizationLevel.O3,
@@ -329,7 +494,7 @@ public sealed class BenchmarkSourceTests
 
         Assert.True(
             result.Succeeded,
-            $"{benchmarkSource}{Environment.NewLine}{string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString()))}");
+            $"{sourcePath}{Environment.NewLine}{string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString()))}");
 
         return result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
     }
@@ -343,5 +508,5 @@ public sealed class BenchmarkSourceTests
         return normalized.Trim();
     }
 
-    private readonly record struct BenchmarkGate(string Directory, string Name, bool HasStableStark = true);
+    private readonly record struct BenchmarkGate(string Directory, string Name);
 }

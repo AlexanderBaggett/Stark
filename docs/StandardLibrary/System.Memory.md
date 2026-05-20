@@ -7,6 +7,21 @@ helpers.
 The module is intentionally small. Ordinary user code should allocate through
 constructors such as `new()` and `new(allocator)`, not through raw pointer APIs.
 
+## Memory-Region Contracts
+
+Stark parameters are non-overlapping by default when they describe caller
+storage. `System.Memory` keeps that default for disjoint fast paths such as
+`AppendBytesDisjoint`, `CopyBytesDisjointInfallible`, and
+`CopyCodePointsDisjointInfallible`. APIs whose algorithm intentionally accepts
+overlap spell that explicitly with `where overlap(...)`; examples include
+`AppendBytes`, `AppendCodePoints`, `CopyBytes`, `CopyCodePoints`,
+`MoveBytes`, and `MoveCodePoints`.
+
+When adding a new memory helper, prefer the disjoint default for the fastest
+path. Add `where overlap(source, destination)` only when the implementation is
+actually overlap-safe, and use an internal disjoint helper for the hot path when
+runtime checks can prove separation.
+
 ## Initial Public Surface
 
 ```stark
@@ -70,15 +85,15 @@ standard library:
 
 ```stark
 internal struct Allocation {
-    rawmutptr<i8[-128 127]> Pointer;
+    rawmutptr<i8[min max]> Pointer;
     i64[0 max] ByteLength;
     i64[1 max] Alignment;
     Allocator Allocator;
 }
 
-internal fn Allocation Allocate(Allocator allocator, i64[0 max] byteLength, i64[1 max] alignment);
-internal fn Allocation Reallocate(Allocation allocation, i64[0 max] byteLength, i64[1 max] alignment);
-internal fn void Free(Allocation allocation);
+internal inline fn Allocation Allocate(Allocator allocator, i64[0 max] byteLength, i64[1 max] alignment);
+internal inline fn Allocation Reallocate(Allocation allocation, i64[0 max] byteLength, i64[1 max] alignment);
+internal inline fn void Free(Allocation allocation);
 ```
 
 The allocator identity is stored with the allocation value. Owned containers
@@ -89,6 +104,10 @@ The current default allocator lowering is compiler-backed and routes through
 Stark-owned runtime helpers rather than explicit C allocator calls. Non-zero
 allocation returns non-null storage or traps through `llvm.trap`; zero-byte
 allocation returns a null allocation value that can be safely passed to `Free`.
+The internal allocation wrappers are `inline` so optimized callers can see
+the compiler-generated allocation facts hidden inside the aggregate
+`Allocation` return value, including the fresh-allocation `noalias` fact on
+the runtime allocation helper.
 
 The runtime helper stores allocation metadata immediately before the returned
 user pointer so it can recover the operating-system allocation, allocation size,
@@ -146,7 +165,8 @@ through the allocation policy.
 - `Allocator.Default()` and `Allocator.IsDefault` are implemented as `finite law`
   member functions.
 - Internal allocate, reallocate, and free operations lower through the compiler
-  to Stark-owned runtime helpers.
+  to Stark-owned runtime helpers and are marked `inline` so allocation facts are
+  visible after ordinary backend inlining.
 - The runtime helpers provide target-aware over-alignment and recover the
   original OS allocation through header metadata.
 - Small and medium allocations reuse fixed size-class buckets and can reallocate

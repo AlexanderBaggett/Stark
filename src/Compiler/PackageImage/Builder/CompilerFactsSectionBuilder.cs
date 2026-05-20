@@ -104,6 +104,7 @@ internal static partial class PackageImageBuilder
         LoadedModuleDocument module,
         TopLevelDeclarationModel declaration,
         SemanticValidationModel validationModel,
+        OwnershipValidationModel? ownershipModel,
         out StarkPackageFunctionSemanticManifest manifest)
     {
         manifest = default!;
@@ -115,6 +116,7 @@ internal static partial class PackageImageBuilder
             lookupName,
             $"{module.SyntaxModel.ModuleName}.{resolvedLocalName}",
             validationModel,
+            ownershipModel,
             out manifest);
     }
 
@@ -123,6 +125,7 @@ internal static partial class PackageImageBuilder
         string lookupName,
         string qualifiedResolvedName,
         SemanticValidationModel validationModel,
+        OwnershipValidationModel? ownershipModel,
         out StarkPackageFunctionSemanticManifest manifest)
     {
         manifest = default!;
@@ -207,7 +210,119 @@ internal static partial class PackageImageBuilder
                     validation.OptimizationSummary.IsSingleReturnComparisonWrapper,
                     validation.OptimizationSummary.IsSingleReturnAggregateConstructionWrapper,
                     validation.OptimizationSummary.IsSimpleLocalUpdateWrapper,
-                    validation.OptimizationSummary.IsTerminalSelectionWrapper));
+                    validation.OptimizationSummary.IsTerminalSelectionWrapper),
+            Ownership: TryBuildFunctionOwnershipManifest(
+                module,
+                lookupName,
+                qualifiedResolvedName,
+                ownershipModel,
+                out var ownershipManifest)
+                ? ownershipManifest
+                : null);
         return true;
+    }
+
+    private static bool TryBuildFunctionOwnershipManifest(
+        LoadedModuleDocument module,
+        string lookupName,
+        string qualifiedResolvedName,
+        OwnershipValidationModel? ownershipModel,
+        out StarkPackageFunctionOwnershipManifest manifest)
+    {
+        manifest = default!;
+        if (ownershipModel is null)
+        {
+            return false;
+        }
+
+        if (!ownershipModel.Functions.TryGetValue(lookupName, out var ownership)
+            && !ownershipModel.Functions.TryGetValue(qualifiedResolvedName, out ownership))
+        {
+            return false;
+        }
+
+        manifest = new StarkPackageFunctionOwnershipManifest(
+            ownership.OwnershipValid,
+            ownership.ImplicitDrops.ToArray(),
+            ownership.Moves.ToArray(),
+            ownership.Events.Count == 0
+                ? null
+                : ownership.Events
+                    .Select(ev => new StarkPackageOwnershipEventManifest(
+                        RenderOwnershipEventKind(ev.Kind),
+                        BuildOwnershipPlaceManifest(module, ev.Place),
+                        ev.Location is null
+                            ? null
+                            : new StarkPackageSourceLocation(ev.Location.FilePath, ev.Location.Line, ev.Location.Column)))
+                    .ToArray(),
+            ownership.Roots.Count == 0
+                ? null
+                : ownership.Roots
+                    .Select(root => new StarkPackageOwnershipRootManifest(
+                        root.Name,
+                        BuildPublishedAbiTypeReference(root.Type, module),
+                        RenderOwnershipRootKind(root.RootKind),
+                        root.IsMutable,
+                        root.IsConstant,
+                        root.IsAddressTaken,
+                        root.HasRawPointerEscape,
+                        root.HasMove,
+                        root.HasPartialMove,
+                        root.HasImplicitDrop,
+                        root.HasAssignmentDrop,
+                        root.HasReinitialization,
+                        root.RequiresDrop,
+                        RenderOwnershipAvailability(root.FinalAvailability)))
+                    .ToArray());
+        return true;
+    }
+
+    private static StarkPackageOwnershipPlaceManifest BuildOwnershipPlaceManifest(
+        LoadedModuleDocument module,
+        OwnershipPlaceSummary place)
+    {
+        return new StarkPackageOwnershipPlaceManifest(
+            place.RootName,
+            BuildPublishedAbiTypeReference(place.Type, module),
+            place.Projections.Count == 0 ? null : place.Projections.ToArray(),
+            place.HasIndexProjection);
+    }
+
+    private static string RenderOwnershipEventKind(OwnershipEventKind kind)
+    {
+        return kind switch
+        {
+            OwnershipEventKind.Move => "move",
+            OwnershipEventKind.FieldMove => "field-move",
+            OwnershipEventKind.ImplicitDrop => "implicit-drop",
+            OwnershipEventKind.AssignmentDrop => "assignment-drop",
+            OwnershipEventKind.Reinitialize => "reinitialize",
+            OwnershipEventKind.AddressTaken => "address-taken",
+            _ => kind.ToString().ToLowerInvariant()
+        };
+    }
+
+    private static string RenderOwnershipRootKind(OwnershipStorageRootKind kind)
+    {
+        return kind switch
+        {
+            OwnershipStorageRootKind.Local => "local",
+            OwnershipStorageRootKind.Parameter => "parameter",
+            OwnershipStorageRootKind.Global => "global",
+            _ => kind.ToString().ToLowerInvariant()
+        };
+    }
+
+    private static string RenderOwnershipAvailability(OwnershipRootAvailabilityKind kind)
+    {
+        return kind switch
+        {
+            OwnershipRootAvailabilityKind.Initialized => "initialized",
+            OwnershipRootAvailabilityKind.Uninitialized => "uninitialized",
+            OwnershipRootAvailabilityKind.PartiallyInitialized => "partially-initialized",
+            OwnershipRootAvailabilityKind.Moved => "moved",
+            OwnershipRootAvailabilityKind.ControlFlow => "control-flow",
+            _ => "unknown"
+        };
     }
 }

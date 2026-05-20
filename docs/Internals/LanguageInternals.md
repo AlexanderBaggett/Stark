@@ -6,6 +6,45 @@ For syntax, source rules, and the user-facing language contract, see [LanguageRe
 The goal of this document is explanatory rather than normative.
 If there is ever a conflict, the source-level contract belongs in the language reference.
 
+## 0. Compiler Layer Contract
+
+The compiler pipeline has one central validity rule: MIR lowering is not a
+language-validity filter. If source text is grammatically invalid, parsing must
+reject it. If source text is grammatically valid but not a valid Stark program,
+the declaration, symbol, type-checking, semantic validation, ownership
+validation, or explicit pre-MIR contract validation stages must reject it before
+MIR is built.
+
+Once a function reaches MIR lowering without diagnostics, the compiler has
+accepted the program's executable semantics. From that point forward, lowering
+and backend code generation are obligated to preserve those semantics or report
+an internal compiler invariant failure. They must not silently turn accepted
+source constructs into declaration-only functions, fallback bodies, or
+`unsupported-lowering` artifacts.
+
+In practice this means each layer has a narrow responsibility:
+
+- parsing rejects malformed token and grammar shapes only
+- declaration and symbol stages resolve modules, names, overload sets,
+  visibility, and function/type ownership of declarations
+- type checking records executable operation facts such as call targets,
+  receiver binding, argument coercions, indexing kind, constructor shape,
+  enum layout use, dynamic-storage operation shape, function-pointer ABI shape,
+  and `sizeof`/`alignof` target types
+- semantic and ownership validation reject effect, borrowing, drop, lifetime,
+  mutability, and memory-contract violations
+- MIR lowering consumes the accepted typed facts and constructs MIR directly
+- SSA, optimization, ABI lowering, LLVM emission, package-image lowering, and
+  imported-template lowering must preserve the same accepted-program contract
+
+Lowering invariant violations are compiler bugs, not user diagnostics. They are
+still useful guardrails, but every invariant that can be reached by
+grammatically valid invalid source should also have an earlier diagnostic test.
+The long-term direction is to make invalid states unrepresentable at the MIR
+boundary by carrying a typed executable expression model through source modules,
+package images, generic template bodies, monomorphization, and inline clone
+planning.
+
 ## 1. Backend Relationship
 
 Stark is intentionally stricter than mainstream systems languages in a number of places because those restrictions let the compiler prove more about a program.
@@ -136,23 +175,33 @@ Common consequences include:
 
 These are compiler outputs, not language syntax.
 They are emitted only when the implementation can prove them from the source rules plus body analysis.
+For pointer-backed `retborrow` returns, the internal ABI may attach `nonnull`
+and concrete `dereferenceable` / `align` facts to the function return and to
+call results. Direct borrow-view returns such as slices and text keep their
+ordinary aggregate view representation, and `ffi` boundaries keep the foreign
+ABI shape.
 
-### 2.1 Disjoint Function Parameters
+### 2.1 Parameter Memory Contracts
 
-`disjoint` is Stark's source-level contract for memory regions that do not overlap.
-The parameter-prefix form and the relational `where disjoint(...)` form both feed the same internal memory-separation fact model.
+Memory-backed callable parameters are non-overlapping by default. The type checker turns each accepted function signature into pairwise parameter memory facts after overload resolution and generic substitution. `where overlap(...)` removes the default non-overlap obligation for the listed relation, and `where same(...)` records a same-region obligation that safe callers must prove.
 
-The compiler accepts disjoint contracts only for memory-backed parameters and memory-region expressions: slices, text views, borrows, initialization views, bounded raw pointer regions, and raw pointers. Scalar value parameters are rejected because there is no source memory region for the contract to describe.
+Function-pointer types carry the same relation facts. Because `fnptr` parameter
+lists do not bind source names, function-pointer memory contracts use synthetic
+names `arg0`, `arg1`, and so on, and those facts are preserved through function
+item promotion, package-image type references, imported templates, type
+substitution, indirect-call validation, and LLVM indirect-call attributes.
 
-Each `disjoint(...)` relation forms a pairwise non-overlap group. `where disjoint(a, b, c)` records `a` separate from `b`, `a` separate from `c`, and `b` separate from `c`. Multiple groups remain independent: `where disjoint(a, b), disjoint(c, d)` records only the two stated pairs and does not record any relationship between `a` or `b` and `c` or `d`.
+The default applies to parameters that describe reachable caller storage: slices, text views, borrows, initialization views, bounded raw pointer regions, and raw pointers. Scalar value parameters and ordinary by-value owned aggregates do not receive a user-facing non-overlap obligation merely because the ABI may pass them indirectly.
 
-Disjointness facts are not transitive. `disjoint(a, b), disjoint(b, c)` does not prove `disjoint(a, c)` unless that relation is also stated or separately proven.
+`disjoint`, `overlap`, and `same` clauses are pairwise within each listed group. `where overlap(a, b, c)` removes default non-overlap for `a/b`, `a/c`, and `b/c`; it does not affect any unlisted parameter. `where same(a, b)` is stronger than overlap: the caller must prove both arguments have the same memory root and compatible region identity.
 
-For a four-parameter function where `a` and `b` do not overlap and `c` and `d` do not overlap, but cross-group pairs such as `b` and `d` may overlap, the source form is `where disjoint(a, b), disjoint(c, d)`. For a four-parameter function where all parameters are mutually separate, the source form is `where disjoint(a, b, c, d)`.
+Explicit `where disjoint(...)` remains useful for subregions and computed memory-region expressions. Whole-parameter disjoint groups on ordinary Stark functions are redundant with the default and are rejected with a fix-it diagnostic. FFI and assembly declarations do not receive default Stark non-overlap, so explicit whole-parameter `disjoint` remains the opt-in spelling at external ABI boundaries.
 
-Safe call-site validation uses the proof facts the compiler can see directly: explicit disjoint parameter facts, runtime `if disjoint(...)` branch facts, independent local storage roots, exclusive mutable borrow roots, `out`/`init` destination roots, immutable slice/text-view backing roots, bounded raw pointer parameter regions, raw pointer region expressions, method receiver roots, distinct field projections, distinct literal indexes, non-overlapping integer index ranges, and compiler-visible text slice ranges. Unknown unbounded raw pointers, call results or other arguments without a statically identifiable memory root, and overlapping or unknown index ranges remain rejected outside `unsafe`.
+Memory relations are not transitive. `same(a, b), same(b, c)` does not prove `same(a, c)` unless that relation is also stated or separately proven, and `overlap(a, b)` does not permit overlap between `a` and any unlisted parameter.
 
-For function parameters, disjointness gives the compiler these backend facts:
+Call-site validation uses the proof facts the compiler can see directly: default parameter facts, explicit memory-contract clauses, runtime `if disjoint(...)` branch facts, scoped `unsafe assume disjoint(...)` facts, independent local storage roots, exclusive mutable borrow roots, `out`/`init` destination roots, immutable slice/text-view backing roots, bounded raw pointer parameter regions, raw pointer region expressions, method receiver roots, distinct field projections, distinct literal indexes, non-overlapping integer index ranges, and compiler-visible text slice ranges. Unknown unbounded raw pointers, call results or other arguments without a statically identifiable memory root, and overlapping or unknown index ranges are rejected for default non-overlap obligations unless a specific scoped proof covers that relation.
+
+For function parameters, proven non-overlap gives the compiler these backend facts:
 
 - a parameter whose whole reachable memory region is disjoint from every other accessible pointer region is emitted with LLVM `noalias` when the LLVM parameter rules allow it
 - individual loads, stores, and memory-touching calls through disjoint roots carry scoped `!alias.scope` and `!noalias` metadata
@@ -160,7 +209,7 @@ For function parameters, disjointness gives the compiler these backend facts:
 - disjoint output or initialization destinations compose with `writeonly`, `initializes(...)`, and dead-store reasoning when the initialized byte range is known
 - disjoint readonly inputs compose with `readonly`, `captures(none)`, or read-only `captures(...)` facts
 
-The compiler treats disjointness as a memory-range fact, not as a root-identity fact. Two slices or raw pointer regions from the same allocation can be disjoint when their element ranges do not overlap. Two different values are not considered disjoint merely because their names differ.
+The compiler treats non-overlap as a memory-range fact, not as a root-identity fact. Two slices or raw pointer regions from the same allocation can be disjoint when their element ranges do not overlap. Two different local values are not considered disjoint merely because their names differ; local pointer facts remain provenance-based, so pointer copies and simple casts preserve same-region identity.
 
 ### 2.2 Branch-Scoped Disjointness
 
@@ -169,6 +218,8 @@ The compiler treats disjointness as a memory-range fact, not as a root-identity 
 For contiguous slices, text views, bounded raw pointer parameters, and raw pointer region expressions, the check lowers to pointer-range comparisons over the data pointer, element size, and length. Once the true branch is selected, memory operations through the checked regions receive scoped `!alias.scope` and `!noalias` metadata. If the fact is introduced inside a nested scope or loop body, the compiler uses a distinct alias-scope domain for that scope and emits `llvm.experimental.noalias.scope.decl` when the selected LLVM representation needs an explicit scope boundary.
 
 The runtime check is a source-level fact boundary. Optimizer metadata must not be attached outside the dominated true-branch region unless later analysis proves the fact still holds.
+
+`unsafe assume disjoint(a, b) statement` creates the same scoped fact without a runtime branch. It is the explicit unsafe boundary for trusted external separation facts. Inside an already unsafe context, the parser also accepts `assume disjoint(a, b) statement`; outside an unsafe context, bare `assume` is rejected before MIR. The assertion must name visible memory roots or representable subregions, so the compiler can attach the fact only to the intended roots. It does not make an ordinary `unsafe` block a blanket aliasing escape hatch, and it does not suppress same-root overlap, hidden helper-call roots, or pointer values laundered through integers.
 
 ### 2.3 Bounded Raw Pointer Regions
 
@@ -180,6 +231,8 @@ Bounded raw pointer regions produce these backend facts:
 
 - loads and stores through the region use inbounds GEP flags only when the access index is proven within the bounded region
 - parameters with statically known positive byte extents receive `nonnull`, `noundef`, `dereferenceable`, and `align` attributes when the pointer contract and target ABI rules make those attributes valid
+- parameters with runtime-sized but statically positive element counts receive `nonnull` and concrete `align` attributes without pretending the byte extent is constant-size `dereferenceable`
+- bounded raw pointer parameter count expressions inside `fnptr` types are stored on the function-pointer type using synthetic `argN` names, preserved through package-image type references, remapped from real parameter names during function-item promotion, and used to rebuild the synthetic ABI for indirect calls
 - variable-size regions emit range facts and dominated `llvm.assume` facts where those assumptions strengthen alias analysis or loop optimization without inventing false constant-size dereferenceability
 - disjoint bounded regions lower to LLVM parameter `noalias` where valid and to scoped `!alias.scope` / `!noalias` metadata on the individual memory operations that use the bounded roots
 - readonly bounded regions from `rawptr<T>[count]`, `const`, or frozen provenance lower to `readonly`, read-only memory effects, and `!invariant.load` only where permanence and replacement rules make the load invariant
@@ -230,49 +283,44 @@ Backend facts from dynamic storage include:
 
 Sparse data structures use explicit source facts for initialized slots. When the compiler can see the initialized range or slot identity, reads, moves, and drops are safe. When a data structure keeps a dynamic sparse state that the type checker cannot prove from control flow, the proof boundary is explicit and unsafe; it does not require converting the storage to a raw pointer. Code that uses an unsafe sparse proof is responsible for preserving the runtime dynamic owner invariant before ordinary safe code observes or drops the owner.
 
-### 2.5 Standard Library Comparison Implementations
+The standard library's `System.Collections.SparseSlots<T>` is the current
+internal sparse initialized-slot view for ring-shaped collections. It owns the
+allocation, moves only the caller-declared live ring range during growth, and
+exposes direct slot move/borrow helpers so `Queue<T>` and `RingQueue<T>` avoid
+per-slot enum tags in their hot paths.
 
-The standard library keeps stable public modules under their ordinary names,
-such as `System.Collections`, while new-feature rewrites live under
-`System.Experimental.*` modules. The comparison modules are source-visible and
-imported explicitly by benchmarks or tests, but they are not re-exported from
-the root `System` module.
+### 2.5 Standard Library Promotion Status
 
-This keeps current APIs stable while letting benchmarks select old and new
-implementations side by side:
+The release standard library exposes only canonical `System.*` modules. The
+temporary `System.Experimental.*` comparison modules used during promotion have
+been removed from `stdlib/src`, and package images are expected to contain only
+canonical modules and root re-exports.
 
-```stark
-import System.Collections
-import System.Experimental.Collections
-```
-
-Comparison modules use the same operation names where the source contract is
-the same, but their fully qualified type names are distinct. For example,
-`System.Collections.List<T>` remains the current raw-pointer-backed public
-collection, while `System.Experimental.Collections.List<T>` is the
-dynamic-storage comparison collection.
-
-Dynamic-storage comparison types inherit the language-level dynamic storage
-contract. `dynamic T.TryReserve(additional)` returns an explicit success bit,
+Promoted collection, text, runtime-buffer, IO, filesystem, console, and network
+modules keep the dynamic-storage contracts validated during the comparison
+period. `dynamic T.TryReserve(additional)` returns an explicit success bit,
 preserves the initialized prefix on success, and leaves the owner unchanged on
-failure. Comparison modules use it to map capacity overflow, byte-size overflow,
-and allocation failure into `System.Memory.MemoryStatus` without exposing raw
-pointers or relying on trapping allocator paths.
+failure. Standard-library code maps capacity overflow, byte-size overflow, and
+allocation failure into status/result values without exposing raw allocation
+storage in ordinary public APIs.
 
 ### 2.6 Independent Loops
 
 `independent` on a `while` or `for` loop means loop iterations have no loop-carried memory dependencies. The loop body may still use induction variables, local scalar temporaries, and immutable reads, but a memory write in one iteration may not be read or written by another iteration.
 
-Independent loops lower to LLVM loop-dependence metadata:
+Loop behavior and independent-loop contracts lower as separate facts. A
+`willexit` loop carries a progress fact through MIR and SSA and receives
+`!llvm.loop.mustprogress` on its loop backedge. An `independent` loop carries
+memory-dependence facts through MIR and SSA and lowers to LLVM loop-dependence
+metadata:
 
 - memory operations covered by the contract receive `!llvm.access.group`
 - the loop latch receives `!llvm.loop.parallel_accesses` referencing those access groups
-- existing termination facts continue to lower to `mustprogress` or `!llvm.loop.mustprogress` where valid
 - vectorization and interleaving hints are attached only when the independent contract and target cost model justify them
 
 The contract is semantic, not a hint. If a loop marked `independent` contains a real loop-carried memory dependence, the program violates the Stark source contract. Safe Stark code must either prove the contract statically or establish the required disjointness through checked facts such as `if disjoint(...)` before entering the loop.
 
-The accepted memory-backed subset requires a single mutable integer induction variable incremented by exactly one. Slice and fixed-array memory accesses use the simple form `root[index]`; bounded raw pointer memory accesses may also use the raw pointer spelling `*(&root[index])`. Field projections are accepted when they are rooted at the per-iteration element, such as `root[index].field`, and their field path participates in the memory-root key used for dependency checks. Structured `if` statements are accepted when their condition and every branch satisfy the same dependency-validation subset. In all cases, `index` is the loop induction variable, and write/read root pairs are either the same indexed root or proven disjoint by source facts, bounded raw pointer region facts, borrow exclusivity, or an enclosing `if disjoint(...)` fact. Law calls with scalar returns are allowed after their argument memory reads have been validated; calls with unproven memory effects report `STK3027`. Accepted independent loops carry their loop contract and access groups through MIR/SSA, emit LLVM `!llvm.access.group` on covered memory operations, and attach `!llvm.loop.mustprogress` plus `!llvm.loop.parallel_accesses` metadata on the loop backedge. Unbounded pointer dereferences, address-of expressions that create new unbounded regions, member projections that are not rooted at `root[index]`, non-induction indexes, memory-backed local declarations, nested loops, early exits, and unsupported calls remain outside the accepted subset.
+The accepted memory-backed subset requires a single mutable integer induction variable incremented by exactly one. Slice and fixed-array memory accesses use the simple form `root[index]`; bounded raw pointer memory accesses may also use the raw pointer spelling `*(&root[index])`. Field projections are accepted when they are rooted at the per-iteration element, such as `root[index].field`, and their field path participates in the memory-root key used for dependency checks. Structured `if` statements are accepted when their condition and every branch satisfy the same dependency-validation subset. In all cases, `index` is the loop induction variable, and write/read root pairs are either the same indexed root or proven disjoint by source facts, bounded raw pointer region facts, borrow exclusivity, or an enclosing `if disjoint(...)` fact. Law calls with scalar returns are allowed after their argument memory reads have been validated; calls with unproven memory effects report `STK3027`. Accepted independent loops carry their loop contract and access groups through MIR/SSA, emit LLVM `!llvm.access.group` on covered memory operations, and attach `!llvm.loop.parallel_accesses` metadata on the loop backedge; `willexit` controls whether that same backedge also receives `!llvm.loop.mustprogress`. Unbounded pointer dereferences, address-of expressions that create new unbounded regions, member projections that are not rooted at `root[index]`, non-induction indexes, memory-backed local declarations, nested loops, early exits, and unsupported calls remain outside the accepted subset.
 
 ### 2.7 Const Parameters
 
@@ -286,7 +334,7 @@ Const parameters produce these backend facts:
 - loads through permanently immutable const provenance carry `!invariant.load` when the loaded object cannot be replaced for the lifetime represented in IR
 - projections from const parameters preserve frozen/readonly provenance and keep raw conversions from regaining mutable authority
 
-Const does not imply disjointness. Multiple const parameters may alias the same immutable object graph. The compiler emits `noalias` for const parameters only when a separate disjointness fact is present or proven.
+Const does not imply local disjointness. Multiple local const views may alias the same immutable object graph. Memory-backed function parameters remain non-overlapping by default unless the callee declares `where overlap(...)` or `where same(...)`; the compiler emits `noalias` only when the resulting parameter contract and call-site proof make the fact sound.
 
 ## 3. Internal ABI and FFI Boundaries
 
@@ -411,7 +459,7 @@ Unsigned integer widths (`u8` through `u1024`) are first-class integer type
 facts. They are not represented internally as signed integers that merely happen
 to have non-negative ranges. The parser and type resolver still apply the normal
 explicit range rule, but for `uN` the type-relative `min` endpoint is `0` and
-`max` is `2**N - 1`.
+`max` is `2 ** N - 1`.
 
 The unsigned fact is preserved through type checking, lowering, LLVM emission,
 and package images so operations with signedness-sensitive meaning can choose
@@ -426,8 +474,8 @@ For integer constants, the type checker records the exact single-value range on
 the smallest supported integer width that can represent the value. It does not
 preserve a user-written integer range for scalar const storage, because the exact
 value is already known and can be propagated as an LLVM constant. For example,
-`const BoardWidth = 80;` is stored as `i8[80 80]`, while
-`const BigCount = 2**16;` is stored as `i24[65536 65536]`.
+`const BoardWidth = 80;` is stored as `u8[80 80]`, while
+`const BigCount = 2 ** 16;` is stored as `u24[2 ** 16 2 ** 16]`.
 
 For floating-point constants, the type checker follows the literal spelling.
 An unsuffixed decimal such as `80.0` is `f64`; an `f`-suffixed decimal such as
@@ -455,12 +503,32 @@ When a function item is converted to a function-pointer type, the compiler
 records that the function is address-taken. The runtime representation is a
 thin code pointer. Calls through the pointer are indirect unless the compiler
 can recover a singleton target set. Where the target set remains known, the
-LLVM emitter may use indirect-call target metadata such as `!callees`.
+LLVM emitter attaches indirect-call target metadata such as `!callees` when
+every possible SSA target is a known function address. Opaque targets from
+parameters, memory loads, call results, or external ABI boundaries do not get
+target metadata.
 
 Function-pointer types carry the source function kind as part of the type. A
 `fnptr<law ...>` target has stronger source obligations than a general
 `fnptr<fn ...>` target, and the compiler may preserve those obligations in
-call-effect summaries and package-image facts.
+call-effect summaries and package-image facts. The runtime representation is
+still a thin code pointer; the kind is a compiler contract, not a different
+pointer ABI. LLVM lowering uses the preserved kind at indirect call sites:
+`fnptr<finite ...>` calls may receive `willreturn` and `mustprogress`, while
+`fnptr<law ...>` calls may receive the strongest sound readonly/purity,
+`nosync`, `nofree`, and memory-effect attributes. `fnptr<finite law ...>`
+combines both sets. Plain `fnptr<fn ...>` remains the general indirect-call
+form and does not receive those stronger attributes without another proof.
+Accepted `fnptr` values are also non-null. Type checking rejects `null`
+assignment and rejects aggregate initializer shapes that would zero-fill a
+function-pointer field or fixed-array element. LLVM ABI emission may therefore
+mark direct function-pointer parameters and direct function-pointer returns as
+`nonnull` without relying on a backend guess.
+When a `fnptr` parameter is a bounded raw pointer such as
+`rawptr<T>[arg1]`, the synthetic `arg1` count is part of the callable ABI
+contract. Indirect-call lowering reconstructs a synthetic callee signature with
+that count expression, so a positive runtime count parameter can still justify
+`nonnull` and `align` on the pointer argument at the indirect call site.
 
 Non-capturing lambdas should lower like anonymous internal function items. They
 may promote to thin function pointers when required by the target type.

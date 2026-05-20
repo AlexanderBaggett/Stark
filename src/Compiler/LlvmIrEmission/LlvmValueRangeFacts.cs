@@ -139,17 +139,14 @@ internal static class LlvmValueRangeFacts
             return false;
         }
 
-        bitWidth = width;
-        if (normalizedType.RangeMin is not null && normalizedType.RangeMax is not null)
+        if (StarkTypeSymbols.TryGetEffectiveIntegerBounds(normalizedType, out min, out max))
         {
-            min = normalizedType.RangeMin.Value;
-            max = normalizedType.RangeMax.Value;
+            bitWidth = width;
             return true;
         }
 
-        min = -(BigInteger.One << (width - 1));
-        max = (BigInteger.One << (width - 1)) - BigInteger.One;
-        return true;
+        bitWidth = default;
+        return false;
     }
 
     private static string FormatTwosComplementInteger(BigInteger value, int bitWidth)

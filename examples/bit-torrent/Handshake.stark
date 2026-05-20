@@ -169,6 +169,6 @@ finite i32[min max] RunProgramStatus() {
     return 0;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe fn i32[min max] main() {
     return RunProgramStatus();
 }

@@ -14,6 +14,6 @@ public finite law i32[min max] Area(Rectangle rectangle) {
     return Multiply(rectangle.Width, rectangle.Height);
 }
 
-public finite law i32[min max] ScaleArea(Rectangle rectangle, i32[1 10] scale) {
+public finite law i32[min max] ScaleArea(Rectangle rectangle, u8[1 10] scale) {
     return Area(rectangle) * scale;
 }

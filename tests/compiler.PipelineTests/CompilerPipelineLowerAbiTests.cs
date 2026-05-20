@@ -17,16 +17,16 @@ public sealed class CompilerPipelineLowerAbiTests
                 module Demo
 
                 struct Big {
-                    i64[-9223372036854775808 9223372036854775807] A;
-                    i64[-9223372036854775808 9223372036854775807] B;
-                    i64[-9223372036854775808 9223372036854775807] C;
+                    i64[min max] A;
+                    i64[min max] B;
+                    i64[min max] C;
                 }
 
                 fn T Bounce<T>(T value) {
                     return value;
                 }
 
-                fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                fn i32[min max] Run(i32[min max] value) {
                     return Bounce(value);
                 }
 
@@ -75,14 +75,14 @@ public sealed class CompilerPipelineLowerAbiTests
                 module Facade
 
                 public struct Big {
-                    i64[-9223372036854775808 9223372036854775807] A;
-                    i64[-9223372036854775808 9223372036854775807] B;
-                    i64[-9223372036854775808 9223372036854775807] C;
+                    i64[min max] A;
+                    i64[min max] B;
+                    i64[min max] C;
                 }
 
                 public fn Big Make();
-                public fn i64[-9223372036854775808 9223372036854775807] Read(Big value);
-                public fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] value);
+                public fn i64[min max] Read(Big value);
+                public fn i32[min max] Add(i32[min max] value);
                 """,
                 facadePath));
 
@@ -121,7 +121,7 @@ public sealed class CompilerPipelineLowerAbiTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
+                    unsafe fn i32[min max] Run() {
                         return 0;
                     }
                     """,
@@ -183,7 +183,7 @@ public sealed class CompilerPipelineLowerAbiTests
                 module Facade
 
                 public struct Counter {
-                    i32[-2147483648 2147483647] Value;
+                    i32[min max] Value;
 
                     fn void Reset(borrow mut Counter self) {
                         self.Value = 0;

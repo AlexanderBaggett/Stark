@@ -20,7 +20,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Lib
 
-                export inline finite i32[0 102] SelectOrAdd(i32[0 100] value, bool add) {
+                export inline finite u8[0 102] SelectOrAdd(u8[0 100] value, bool add) {
                     if (add) {
                         return value + 1;
                     }
@@ -35,12 +35,13 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Lib
                     module Demo
 
-                    fn i32[0 102] Run(i32[0 100] value, bool add) {
+                    fn u8[0 102] Run(u8[0 100] value, bool add) {
                         return Lib.SelectOrAdd(value, add);
                     }
                     """,
                     demoPath),
                 new CompilerOptions(
+                    OptimizationLevel: CompilerOptimizationLevel.O0,
                     StopAfterPassId: "emit-llvm",
                     ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
 
@@ -81,6 +82,209 @@ public sealed class CompilerPipelineEmitLlvmTests
     }
 
     [Fact]
+    public void SourceBackedImportedInlineFunctionsDeclareModulePrivateConstsUsedByClone()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-source-imported-inline-const-llvm-pipeline-");
+        var libPath = Path.Combine(tempDirectory.FullName, "Lib.stark");
+        var demoPath = Path.Combine(tempDirectory.FullName, "Demo.stark");
+
+        try
+        {
+            File.WriteAllText(
+                libPath,
+                """
+                module Lib
+
+                const Offset = 7;
+
+                export inline fn i32[min max] AddOffset(i32[min max] value) {
+                    return value + Offset;
+                }
+                """);
+
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    import Lib
+                    module Demo
+
+                    fn i32[min max] Run(i32[min max] value) {
+                        return Lib.AddOffset(value);
+                    }
+                    """,
+                    demoPath),
+                new CompilerOptions(
+                    StopAfterPassId: "emit-llvm",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+            Assert.Contains("; closed-world imported inline body: Lib.AddOffset", llvm, StringComparison.Ordinal);
+            Assert.Contains("; imported inline const definition: Lib.Offset", llvm, StringComparison.Ordinal);
+            Assert.True(
+                System.Text.RegularExpressions.Regex.IsMatch(
+                    llvm,
+                    @"@Lib_Offset = internal (?:unnamed_addr )?constant i\d+ 7",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+                "Expected the imported inline clone to bring in the module-private const definition it references.");
+            Assert.Contains("ptr @Lib_Offset", llvm, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void SourceBackedImportedInlineFunctionsCloneModulePrivateCalleeDependencies()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-source-imported-inline-private-callee-llvm-pipeline-");
+        var libPath = Path.Combine(tempDirectory.FullName, "Lib.stark");
+        var demoPath = Path.Combine(tempDirectory.FullName, "Demo.stark");
+
+        try
+        {
+            File.WriteAllText(
+                libPath,
+                """
+                module Lib
+
+                const Offset = 7;
+
+                fn u8[0 100] ApplyOffset(u8[0 93] value) {
+                    return value + Offset;
+                }
+
+                export inline fn u8[0 100] AddOffset(u8[0 93] value) {
+                    return ApplyOffset(value);
+                }
+                """);
+
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    import Lib
+                    module Demo
+
+                    fn u8[0 100] Run(u8[0 93] value) {
+                        return Lib.AddOffset(value);
+                    }
+                    """,
+                    demoPath),
+                new CompilerOptions(
+                    StopAfterPassId: "emit-llvm",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+            Assert.Contains("; closed-world imported inline body: Lib.ApplyOffset", llvm, StringComparison.Ordinal);
+            Assert.True(
+                System.Text.RegularExpressions.Regex.IsMatch(
+                    llvm,
+                    @"call fastcc[^\r\n]*@__stark_inline_clone_Lib_ApplyOffset\(",
+                    System.Text.RegularExpressions.RegexOptions.CultureInvariant),
+                "Expected the imported inline clone to call an internal clone for its module-private helper.");
+            Assert.DoesNotContain("call fastcc i8 @Lib_ApplyOffset(", llvm, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void SourceBackedImportedInlineCloneSeedsRestrictEmissionToReachableRootPath()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-source-imported-inline-seed-llvm-pipeline-");
+        var basePath = Path.Combine(tempDirectory.FullName, "Base.stark");
+        var wrapperPath = Path.Combine(tempDirectory.FullName, "Wrapper.stark");
+
+        try
+        {
+            File.WriteAllText(
+                basePath,
+                """
+                module Base
+
+                export inline fn i32[min max] Used(i32[min max] value, bool add) {
+                    if (add) {
+                        return value + 1;
+                    }
+
+                    return value + 3;
+                }
+
+                export inline fn i32[min max] Unused(i32[min max] value, bool add) {
+                    if (add) {
+                        return value + 2;
+                    }
+
+                    return value + 4;
+                }
+                """);
+
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    import Base
+                    module Wrapper
+
+                    export fn i32[min max] UsedEntry(i32[min max] value, bool add) {
+                        return Base.Used(value, add);
+                    }
+
+                    export fn i32[min max] UnusedEntry(i32[min max] value, bool add) {
+                        return Base.Unused(value, add);
+                    }
+                    """,
+                    wrapperPath),
+                new CompilerOptions(
+                    OptimizationLevel: CompilerOptimizationLevel.O0,
+                    StopAfterPassId: "emit-llvm",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    ImportedInlineCloneSeedFunctions: new HashSet<string>(StringComparer.Ordinal)
+                    {
+                        "UsedEntry"
+                    }));
+
+            Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+            Assert.Contains("; closed-world imported inline body: Base.Used", llvm, StringComparison.Ordinal);
+            Assert.DoesNotContain("; closed-world imported inline body: Base.Unused", llvm, StringComparison.Ordinal);
+            Assert.Contains("@__stark_inline_clone_Base_Used(", llvm, StringComparison.Ordinal);
+            Assert.DoesNotContain("@__stark_inline_clone_Base_Unused(", llvm, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void SourceBackedImportedNoInlineFunctionsStayAbiDeclarations()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-source-imported-noinline-body-llvm-pipeline-");
@@ -94,7 +298,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Lib
 
-                public noinline finite i32[0 102] SelectOrAdd(i32[0 100] value, bool add) {
+                public noinline finite u8[0 102] SelectOrAdd(u8[0 100] value, bool add) {
                     if (add) {
                         return value + 1;
                     }
@@ -109,7 +313,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Lib
                     module Demo
 
-                    fn i32[0 102] Run(i32[0 100] value, bool add) {
+                    fn u8[0 102] Run(u8[0 100] value, bool add) {
                         return Lib.SelectOrAdd(value, add);
                     }
                     """,
@@ -224,7 +428,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right, bool takeRight) {
+                    fn i32[min max] Run(i32[min max] left, i32[min max] right, bool takeRight) {
                         return Facade.Choose(left, right, takeRight);
                     }
                     """,
@@ -271,6 +475,109 @@ public sealed class CompilerPipelineEmitLlvmTests
             }
         }
     }
+
+    [Fact]
+    public void PackageBackedImportedGenericInlineBodiesEmitReachableInlineClonesFromTypedFacts()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-imported-generic-inline-clone-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public inline fn i32[min max] Blend<T>(T tag, i32[min max] value) {
+                    stack i32[min max] a = value + 1;
+                    stack i32[min max] b = a + 2;
+                    stack i32[min max] c = b + 3;
+                    stack i32[min max] d = c + 4;
+                    stack i32[min max] e = d + 5;
+                    stack i32[min max] f = e + 6;
+                    stack i32[min max] g = f + 7;
+                    stack i32[min max] h = g + 8;
+                    stack i32[min max] i = h + 9;
+                    stack i32[min max] j = i + 10;
+                    stack i32[min max] k = j + 11;
+                    stack i32[min max] l = k + 12;
+                    stack i32[min max] m = l + 13;
+                    return m;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+            var corruptedTemplates = new StarkPackageGenericTemplateSection(
+                facadeModule.EffectiveGenericTemplates!.Functions
+                    .Select(static template => template.QualifiedResolvedName == "Facade.Blend"
+                        ? template with { BodyText = "{ return this is not valid Stark; }" }
+                        : template)
+                    .ToArray());
+            var corruptedModule = facadeModule with
+            {
+                GenericTemplates = corruptedTemplates,
+                CompilerSections = facadeModule.CompilerSections is null
+                    ? null
+                    : facadeModule.CompilerSections with { GenericTemplates = corruptedTemplates }
+            };
+            File.WriteAllText(
+                manifestPath,
+                (manifest with
+                {
+                    Modules = manifest.Modules
+                        .Select(module => module.ModuleName == "Facade" ? corruptedModule : module)
+                        .ToArray()
+                }).ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32[min max] Run(i32[min max] left, i32[min max] right) {
+                        return Facade.Blend(left, right);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    OptimizationLevel: CompilerOptimizationLevel.O0,
+                    StopAfterPassId: "emit-llvm",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+            Assert.NotNull(plan);
+            var function = Assert.Single(plan.Functions, static function => function.TemplateName == "Facade.Blend");
+            Assert.Equal("__stark_mono_fn_Demo__Facade_Blend__i32", function.SymbolName);
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+            Assert.NotNull(llvmModule);
+            Assert.DoesNotContain("this is not valid Stark", llvmModule!.Text, StringComparison.Ordinal);
+            Assert.Contains($"; closed-world imported inline body: {function.SymbolName}", llvmModule.Text, StringComparison.Ordinal);
+            Assert.Contains($"@__stark_inline_clone_{function.SymbolName}(", llvmModule.Text, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
     [Fact]
     public void ManifestBackedImportedGenericSpecializationsUseTemplateSemanticAttributesWhenFunctionSemanticsAreMissing()
     {
@@ -286,11 +593,11 @@ public sealed class CompilerPipelineEmitLlvmTests
                 module Facade
 
                 public struct Box {
-                    i32[-2147483648 2147483647] Value;
+                    i32[min max] Value;
                 }
 
                 public fn void Touch<T>(borrow Box box, T tag) {
-                    stack i32[-2147483648 2147483647] copy = box.Value;
+                    stack i32[min max] copy = box.Value;
                     return;
                 }
                 """,
@@ -328,7 +635,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn void Run(borrow Facade.Box box, i32[-2147483648 2147483647] value) {
+                    fn void Run(borrow Facade.Box box, i32[min max] value) {
                         Facade.Touch(box, value);
                         return;
                     }
@@ -380,6 +687,136 @@ public sealed class CompilerPipelineEmitLlvmTests
 
 
     [Fact]
+    public void ManifestBackedImportedGenericSpecializationsPreserveRegionFactsWithoutSourceBodies()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-generic-region-facts-llvm-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public unsafe fn i32[min max] CopyFirst<T>(
+                    rawmutptr<i32[min max]> left,
+                    rawmutptr<i32[min max]> right,
+                    T tag) {
+                    *left = 7;
+                    return *right;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            Assert.NotNull(facadeModule.EffectiveTypedInterface);
+            Assert.NotNull(facadeModule.EffectiveCompilerFacts);
+            Assert.NotNull(facadeModule.EffectiveGenericTemplates);
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? WithEffectiveLegacyCompilerSectionCopies(module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.EffectiveTypedInterface,
+                            CompilerFacts = facadeModule.EffectiveCompilerFacts,
+                            GenericTemplates = facadeModule.EffectiveGenericTemplates,
+                            CompilerSections = new StarkPackageCompilerSectionsManifest(
+                                TypedInterface: facadeModule.EffectiveTypedInterface,
+                                CompilerFacts: facadeModule.EffectiveCompilerFacts,
+                                GenericTemplates: facadeModule.EffectiveGenericTemplates),
+                            SourceSurface = new StarkPackageSourceSurfaceSection(
+                                Imports: facadeModule.EffectiveSourceSurface.Imports,
+                                ReExports: facadeModule.EffectiveSourceSurface.ReExports,
+                                Functions: [],
+                                Types: [],
+                                Globals: [],
+                                TypeAliases: [])
+                        })
+                        : module)
+                    .ToArray()
+            };
+
+            var typedOnlyFacadeModule = WithEffectiveLegacyCompilerSectionCopies(
+                Assert.Single(typedOnlyManifest.Modules, static module => module.ModuleName == "Facade"));
+            Assert.True(
+                PackageImageLoader.TryBuildModuleSource(
+                    new ResolvedPackageModule(
+                        manifestPath,
+                        Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"),
+                        typedOnlyManifest,
+                        typedOnlyFacadeModule),
+                    out var sourceText));
+            Assert.Contains("public unsafe fn i32[min max] CopyFirst<T>", sourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("*left = 7;", sourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("return *right;", sourceText, StringComparison.Ordinal);
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    unsafe fn i32[min max] Run() {
+                        stack mut i32[min max] left = 0;
+                        stack mut i32[min max] right = 5;
+                        return Facade.CopyFirst(&left, &right, 0);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "emit-llvm",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+            Assert.NotNull(plan);
+            var function = Assert.Single(plan.Functions, static function => function.TemplateName == "Facade.CopyFirst");
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+            Assert.NotNull(llvmModule);
+            var definition = System.Text.RegularExpressions.Regex.Match(
+                llvmModule.Text,
+                $@"define internal[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*\)[\s\S]*?^}}",
+                System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+            Assert.True(definition.Success, $"Expected an internal LLVM body for imported specialization '{function.SymbolName}'.");
+            Assert.Contains("ptr noundef noalias nocapture %arg_left", definition.Value, StringComparison.Ordinal);
+            Assert.Contains("ptr noundef noalias nocapture %arg_right", definition.Value, StringComparison.Ordinal);
+            Assert.Contains($"stark.noalias.{function.SymbolName}.param.left", llvmModule.Text, StringComparison.Ordinal);
+            Assert.Contains($"stark.noalias.{function.SymbolName}.param.right", llvmModule.Text, StringComparison.Ordinal);
+            Assert.Matches(@"store i32 .* !alias\.scope !\d+, !noalias !\d+", definition.Value);
+            Assert.Matches(@"load i32, ptr .* !alias\.scope !\d+, !noalias !\d+", definition.Value);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+
+    [Fact]
     public void ManifestBackedImportedPlainFnGenericsThatStrengthenToLawInlineWhenTemplateSemanticsSurviveWithoutFunctionSemantics()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-plain-fn-generic-template-semantics-llvm-pipeline-");
@@ -393,7 +830,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Math
 
-                public fn i32[-2147483648 2147483647] AddTag<T>(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right, T tag) {
+                public fn i32[min max] AddTag<T>(i32[min max] left, i32[min max] right, T tag) {
                     return left + right;
                 }
                 """,
@@ -431,7 +868,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Math
                     module Demo
 
-                    law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                    law i32[min max] Run(i32[min max] left, i32[min max] right) {
                         return Math.AddTag(left, right, left);
                     }
                     """,
@@ -508,13 +945,13 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Facade
 
-                public record Box(i32[-2147483648 2147483647] Value) {
-                    fn i32[-2147483648 2147483647] Bump(borrow Box self, i32[-2147483648 2147483647] delta) {
+                public record Box(i32[min max] Value) {
+                    fn i32[min max] Bump(borrow Box self, i32[min max] delta) {
                         return self.Value + delta;
                     }
                 }
 
-                public fn i32[-2147483648 2147483647] Forward<T>(borrow Box box, i32[-2147483648 2147483647] delta, T tag) {
+                public fn i32[min max] Forward<T>(borrow Box box, i32[min max] delta, T tag) {
                     return box.Bump(delta);
                 }
                 """,
@@ -562,7 +999,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(borrow Facade.Box box, i32[-2147483648 2147483647] delta) {
+                    fn i32[min max] Run(borrow Facade.Box box, i32[min max] delta) {
                         return Facade.Forward(box, delta, delta);
                     }
                     """,
@@ -625,10 +1062,10 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Facade
 
-                public record Inner(i32[-2147483648 2147483647] Value) { }
+                public record Inner(i32[min max] Value) { }
                 public record Box(Inner Inner) { }
 
-                public fn i32[-2147483648 2147483647] Read<T>(borrow Box box, T tag) {
+                public fn i32[min max] Read<T>(borrow Box box, T tag) {
                     return box.Inner.Value;
                 }
                 """,
@@ -676,7 +1113,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(borrow Facade.Box box) {
+                    fn i32[min max] Run(borrow Facade.Box box) {
                         return Facade.Read(box, box.Inner.Value);
                     }
                     """,
@@ -739,9 +1176,9 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Facade
 
-                public record Box(i32[-2147483648 2147483647] Value) { }
+                public record Box(i32[min max] Value) { }
 
-                public fn i32[-2147483648 2147483647] Read<T>(Box[2] boxes, i32[-2147483648 2147483647] index, T tag) {
+                public fn i32[min max] Read<T>(Box[2] boxes, i32[min max] index, T tag) {
                     return boxes[index].Value;
                 }
                 """,
@@ -789,7 +1226,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(Facade.Box[2] boxes, i32[-2147483648 2147483647] index) {
+                    fn i32[min max] Run(Facade.Box[2] boxes, i32[min max] index) {
                         return Facade.Read(boxes, index, index);
                     }
                     """,
@@ -853,11 +1290,11 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Facade
 
-                public record Inner(i32[-2147483648 2147483647] Value) { }
+                public record Inner(i32[min max] Value) { }
                 public record Box(Inner Inner) { }
 
-                public fn i64[-9223372036854775808 9223372036854775807] Read<T>(borrow Box box, T tag) {
-                    return (i64[-9223372036854775808 9223372036854775807])box.Inner.Value;
+                public fn i64[min max] Read<T>(borrow Box box, T tag) {
+                    return (i64[min max])box.Inner.Value;
                 }
                 """,
                 facadePath));
@@ -904,7 +1341,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn i64[-9223372036854775808 9223372036854775807] Run(borrow Facade.Box box) {
+                    fn i64[min max] Run(borrow Facade.Box box) {
                         return Facade.Read(box, box.Inner.Value);
                     }
                     """,
@@ -966,9 +1403,9 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Facade
 
-                public record Buffer(i32[-2147483648 2147483647][2] Values) { }
+                public record Buffer(i32[min max][2] Values) { }
 
-                public fn rawptr<i32[-2147483648 2147483647]> Pin<T>(borrow Buffer buffer, i32[-2147483648 2147483647] index, T tag) {
+                public unsafe fn rawptr<i32[min max]> Pin<T>(borrow Buffer buffer, i32[min max] index, T tag) {
                     return &buffer.Values[index];
                 }
                 """,
@@ -1016,7 +1453,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn rawptr<i32[-2147483648 2147483647]> Run(borrow Facade.Buffer buffer, i32[-2147483648 2147483647] index) {
+                    unsafe fn rawptr<i32[min max]> Run(borrow Facade.Buffer buffer, i32[min max] index) {
                         return Facade.Pin(buffer, index, index);
                     }
                     """,
@@ -1091,10 +1528,10 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Facade
 
-                public record Inner(i32[-2147483648 2147483647] Value) { }
+                public record Inner(i32[min max] Value) { }
                 public record Box(Inner Inner) { }
 
-                public fn i32[-2147483648 2147483647] AddDelta<T>(borrow Box box, i32[-2147483648 2147483647] delta, T tag) {
+                public fn i32[min max] AddDelta<T>(borrow Box box, i32[min max] delta, T tag) {
                     return box.Inner.Value + delta;
                 }
                 """,
@@ -1142,7 +1579,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(borrow Facade.Box box, i32[-2147483648 2147483647] delta) {
+                    fn i32[min max] Run(borrow Facade.Box box, i32[min max] delta) {
                         return Facade.AddDelta(box, delta, delta);
                     }
                     """,
@@ -1206,10 +1643,10 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Facade
 
-                public record Inner(i32[-2147483648 2147483647] Value) { }
+                public record Inner(i32[min max] Value) { }
                 public record Box(Inner Inner) { }
 
-                public fn bool IsBelow<T>(borrow Box box, i32[-2147483648 2147483647] limit, T tag) {
+                public fn bool IsBelow<T>(borrow Box box, i32[min max] limit, T tag) {
                     return box.Inner.Value < limit;
                 }
                 """,
@@ -1257,7 +1694,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn bool Run(borrow Facade.Box box, i32[-2147483648 2147483647] limit) {
+                    fn bool Run(borrow Facade.Box box, i32[min max] limit) {
                         return Facade.IsBelow(box, limit, limit);
                     }
                     """,
@@ -1320,7 +1757,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Facade
 
-                public fn i32[-2147483648 2147483647] ChooseBranch<T>(bool takeLeft, bool takeMiddle, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right, T tag) {
+                public fn i32[min max] ChooseBranch<T>(bool takeLeft, bool takeMiddle, i32[min max] left, i32[min max] middle, i32[min max] right, T tag) {
                     if (takeLeft) {
                         return left;
                     } else if (takeMiddle) {
@@ -1372,7 +1809,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(bool takeLeft, bool takeMiddle, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right) {
+                    fn i32[min max] Run(bool takeLeft, bool takeMiddle, i32[min max] left, i32[min max] middle, i32[min max] right) {
                         return Facade.ChooseBranch(takeLeft, takeMiddle, left, middle, right, right);
                     }
                     """,
@@ -1433,7 +1870,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Facade
 
-                public fn i32[-2147483648 2147483647] ChooseSwitch<T>(i32[-2147483648 2147483647] selector, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right, T tag) {
+                public fn i32[min max] ChooseSwitch<T>(i32[min max] selector, i32[min max] left, i32[min max] middle, i32[min max] right, T tag) {
                     switch (selector) {
                         case 0:
                             return left;
@@ -1486,7 +1923,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] selector, i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right) {
+                    fn i32[min max] Run(i32[min max] selector, i32[min max] left, i32[min max] middle, i32[min max] right) {
                         return Facade.ChooseSwitch(selector, left, middle, right, right);
                     }
                     """,
@@ -1553,10 +1990,10 @@ public sealed class CompilerPipelineEmitLlvmTests
 
                 public struct Outer<T> {
                     Inner<T> Item;
-                    i32[-2147483648 2147483647] Count;
+                    i32[min max] Count;
                 }
 
-                public fn Outer<T> Wrap<T>(T value, i32[-2147483648 2147483647] count, T tag) {
+                public fn Outer<T> Wrap<T>(T value, i32[min max] count, T tag) {
                     return new Outer<T>() {
                         Item = { Value = value },
                         Count = count
@@ -1606,7 +2043,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn Facade.Outer<i32[-2147483648 2147483647]> Run(i32[-2147483648 2147483647] value, i32[-2147483648 2147483647] count) {
+                    fn Facade.Outer<i32[min max]> Run(i32[min max] value, i32[min max] count) {
                         return Facade.Wrap(value, count, value);
                     }
                     """,
@@ -1670,10 +2107,10 @@ public sealed class CompilerPipelineEmitLlvmTests
 
                 public enum Boxed<T> {
                     None,
-                    Value { Data: T, Tag: i32[-2147483648 2147483647] },
+                    Value { Data: T, Tag: i32[min max] },
                 }
 
-                public fn Boxed<T> Wrap<T>(T value, i32[-2147483648 2147483647] tag, T marker) {
+                public fn Boxed<T> Wrap<T>(T value, i32[min max] tag, T marker) {
                     return Boxed<T>.Value { Data: value, Tag: tag };
                 }
                 """,
@@ -1719,7 +2156,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn Facade.Boxed<i32[-2147483648 2147483647]> Run(i32[-2147483648 2147483647] value, i32[-2147483648 2147483647] tag) {
+                    fn Facade.Boxed<i32[min max]> Run(i32[min max] value, i32[min max] tag) {
                         return Facade.Wrap(value, tag, value);
                     }
                     """,
@@ -1780,11 +2217,11 @@ public sealed class CompilerPipelineEmitLlvmTests
                 """
                 module Facade
 
-                public record Inner(i32[-2147483648 2147483647] Value) { }
+                public record Inner(i32[min max] Value) { }
                 public record Box(Inner Inner) { }
 
-                public fn i32[-2147483648 2147483647] Bump<T>(borrow Box box, i32[-2147483648 2147483647] delta, T tag) {
-                    stack mut i32[-2147483648 2147483647] current = box.Inner.Value;
+                public fn i32[min max] Bump<T>(borrow Box box, i32[min max] delta, T tag) {
+                    stack mut i32[min max] current = box.Inner.Value;
                     current += delta;
                     return current;
                 }
@@ -1832,7 +2269,7 @@ public sealed class CompilerPipelineEmitLlvmTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(borrow Facade.Box box, i32[-2147483648 2147483647] delta) {
+                    fn i32[min max] Run(borrow Facade.Box box, i32[min max] delta) {
                         return Facade.Bump(box, delta, delta);
                     }
                     """,
@@ -1890,15 +2327,15 @@ public sealed class CompilerPipelineEmitLlvmTests
                 module Demo
 
                 struct Box {
-                    i32[-2147483648 2147483647] Value;
+                    i32[min max] Value;
                 }
 
                 const Box Current = new Box() { Value = 5 };
 
-                fn i32[-2147483648 2147483647] Run() {
-                    stack mut i32[-2147483648 2147483647] local = 3;
-                    stack rawptr<i32[-2147483648 2147483647]> localPtr = &local;
-                    stack rawptr<frozen i32[-2147483648 2147483647]> constPtr = &(Current.Value);
+                unsafe fn i32[min max] Run() {
+                    stack mut i32[min max] local = 3;
+                    stack rawptr<i32[min max]> localPtr = &local;
+                    stack rawptr<frozen i32[min max]> constPtr = &(Current.Value);
                     return (*localPtr) + (*constPtr);
                 }
                 """,

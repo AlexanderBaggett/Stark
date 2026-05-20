@@ -9,16 +9,25 @@ It re-exports:
 - `System.Console`
 - `System.FileSystem`
 - `System.IO`
+- `System.IO.File`
+- `System.IO.Path`
 - `System.Math`
 - `System.Memory`
 - `System.Net`
 - `System.Net.Tcp`
 - `System.Process`
-- `System.Text`
 - `System.Threading`
 
-It also imports internal runtime support and the `System.Syscall` module during package build, but `System.Syscall` is not re-exported through `System`.
+It also imports internal runtime support, `System.Syscall`, and `System.Testing`
+during package build, but those modules are not re-exported through `System`.
 Internal runtime modules such as `System.Runtime.Buffer` are compiled into the package implementation and may appear in package images as internal implementation surface, but they are not public root re-exports or supported user import surface.
+
+`System.Text` is still a public module, but it is intentionally not re-exported
+by `System` because its current low-level caller-buffer APIs expose explicit
+unsafe raw pointers. Code that needs text helpers should import `System.Text`
+directly.
+`System.Testing` is also explicit-import only so assertion helpers stay in test
+projects instead of the ordinary root namespace.
 
 ## Example
 
@@ -26,7 +35,7 @@ Internal runtime modules such as `System.Runtime.Buffer` are compiled into the p
 import System
 module App
 
-export ffi fn i32 main() {
+export fn i32 main() {
     System.Console.WriteLine("Hello");
     return 0;
 }
@@ -46,4 +55,6 @@ export ffi fn i32 main() {
 - `System.Net` currently exposes the shared networking error/result/status vocabulary plus IPv4 address and endpoint value types.
 - `System.Net.Tcp` currently exposes `TcpShutdown` plus owned `TcpClient` and `TcpListener` lifecycle shells. `TcpClient.Connect` returns `NetResult<TcpClient>` and is backed by Linux `socket`/`connect` and Windows Winsock; `TcpClient.Read` and `TcpClient.Write` use safe byte slices and Linux read/write syscall paths or Winsock `recv`/`send`; `TcpListener.Listen` is backed by Linux `socket`/`bind`/`listen` and Windows Winsock; `TcpListener.Accept` is backed by Linux `accept4` and Winsock `accept`; `TcpClient.Shutdown` is backed by Linux `shutdown` and Winsock `shutdown`; `Close` is routed through the platform socket-close boundary for open handles, with Linux using `close(2)` and Windows using `closesocket`.
 - `System.Process` currently exposes `CurrentId` and `Exit` as the public process helper surface over the internal platform layer.
+- `System.Testing` currently exposes boolean/equality assertions and an explicit `RunFact` helper for `stark test` executables.
+- `System.Text` currently exposes owned text helpers, parsers, formatters, and low-level caller-buffer conversion APIs through explicit `import System.Text`.
 - `System.Net.Http` is intentionally not planned for the standard library. HTTP should be provided by packages built on `System.Net.Tcp`.

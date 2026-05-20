@@ -91,7 +91,7 @@ internal static partial class PackageImageLoader
                 && type.PrimaryConstructorParameters is { Count: > 0 })
             {
                 builder.Append('(');
-                builder.Append(string.Join(", ", type.PrimaryConstructorParameters.Select(static parameter => RenderParameter(parameter))));
+                builder.Append(string.Join(", ", type.PrimaryConstructorParameters.Select(static parameter => RenderParameter(parameter, emitDisjointPrefix: false))));
                 builder.Append(')');
             }
 
@@ -157,7 +157,7 @@ internal static partial class PackageImageLoader
                         builder.Append("    ");
                         builder.Append(type.Name);
                         builder.Append('(');
-                        builder.Append(string.Join(", ", constructor.Parameters.Select(static parameter => RenderParameter(parameter))));
+                        builder.Append(string.Join(", ", constructor.Parameters.Select(static parameter => RenderParameter(parameter, emitDisjointPrefix: false))));
                         builder.Append(") ");
                         builder.AppendLine(constructor.BodyText);
                         builder.AppendLine();
@@ -223,14 +223,14 @@ internal static partial class PackageImageLoader
                         builder.Append(' ');
                     }
 
-                    if (method.IsFfi)
-                    {
-                        builder.Append("ffi ");
-                    }
-
                     if (method.IsUnsafe)
                     {
                         builder.Append("unsafe ");
+                    }
+
+                    if (method.IsFfi)
+                    {
+                        builder.Append("ffi ");
                     }
 
                     builder.Append(RenderFunctionKind(method.Kind));
@@ -246,9 +246,15 @@ internal static partial class PackageImageLoader
                     }
 
                     builder.Append('(');
-                    builder.Append(string.Join(", ", method.Parameters.Select(static parameter => RenderParameter(parameter))));
+                    builder.Append(string.Join(", ", method.Parameters.Select(parameter => RenderParameter(parameter, emitDisjointPrefix: method.IsFfi))));
                     builder.Append(')');
-                    AppendDisjointParameterGroups(builder, method.Parameters, method.DisjointParameterGroups);
+                    AppendParameterMemoryContractGroups(
+                        builder,
+                        method.Parameters,
+                        method.DisjointParameterGroups,
+                        method.OverlapParameterGroups,
+                        method.SameParameterGroups,
+                        emitDisjointGroups: method.IsFfi);
                     if (methodBodyText is null)
                     {
                         builder.AppendLine(";");
@@ -276,7 +282,9 @@ internal static partial class PackageImageLoader
                 builder.Append(RenderConstGlobalType(global.Type));
                 builder.Append(' ');
                 builder.Append(global.Name);
-                builder.AppendLine(" = 0;");
+                builder.Append(" = ");
+                builder.Append(RenderConstantInitializer(global.ConstantInitializer));
+                builder.AppendLine(";");
             }
             else
             {
@@ -480,10 +488,10 @@ internal static partial class PackageImageLoader
         };
     }
 
-    private static string RenderParameter(StarkPackageParameterManifest parameter)
+    private static string RenderParameter(StarkPackageParameterManifest parameter, bool emitDisjointPrefix)
     {
         var parts = new List<string>(4);
-        if (parameter.IsDisjoint)
+        if (emitDisjointPrefix && parameter.IsDisjoint)
         {
             parts.Add("disjoint");
         }
@@ -514,33 +522,72 @@ internal static partial class PackageImageLoader
             : $"{typeText}[{parameter.RawPointerElementCountExpression}]";
     }
 
-    private static void AppendDisjointParameterGroups(
+    private static void AppendParameterMemoryContractGroups(
         StringBuilder builder,
         IReadOnlyList<StarkPackageParameterManifest> parameters,
-        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? groups)
+        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? disjointGroups,
+        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? overlapGroups,
+        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? sameGroups,
+        bool emitDisjointGroups)
+    {
+        var disjointGroupsToEmit = emitDisjointGroups
+            ? disjointGroups
+            : disjointGroups?
+                .Where(static group => group.Regions is { Count: >= 2 })
+                .ToArray();
+        if (disjointGroupsToEmit is { Count: > 0 })
+        {
+            AppendParameterMemoryContractGroups(builder, parameters, "disjoint", disjointGroupsToEmit, skipFullyPrefixedDisjointGroups: true);
+        }
+
+        AppendParameterMemoryContractGroups(builder, parameters, "overlap", overlapGroups, skipFullyPrefixedDisjointGroups: false);
+        AppendParameterMemoryContractGroups(builder, parameters, "same", sameGroups, skipFullyPrefixedDisjointGroups: false);
+    }
+
+    private static void AppendParameterMemoryContractGroups(
+        StringBuilder builder,
+        IReadOnlyList<StarkPackageParameterManifest> parameters,
+        string relationName,
+        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? groups,
+        bool skipFullyPrefixedDisjointGroups)
     {
         if (groups is null || groups.Count == 0)
         {
             return;
         }
 
-        var prefixedParameters = parameters
-            .Where(static parameter => parameter.IsDisjoint)
-            .Select(static parameter => parameter.Name)
-            .ToHashSet(StringComparer.Ordinal);
+        var prefixedParameters = skipFullyPrefixedDisjointGroups
+            ? parameters
+                .Where(static parameter => parameter.IsDisjoint)
+                .Select(static parameter => parameter.Name)
+                .ToHashSet(StringComparer.Ordinal)
+            : [];
         foreach (var group in groups)
         {
+            var operands = group.Regions is { Count: >= 2 }
+                ? group.Regions
+                    .Where(static region => !string.IsNullOrWhiteSpace(region.ParameterName))
+                    .Select(static region => string.IsNullOrWhiteSpace(region.StartExpression)
+                        || string.IsNullOrWhiteSpace(region.CountExpression)
+                            ? region.ParameterName
+                            : $"{region.ParameterName}[{region.StartExpression}, {region.CountExpression}]")
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray()
+                : null;
             var names = group.ParameterNames
                 .Where(static name => !string.IsNullOrWhiteSpace(name))
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
-            if (names.Length < 2 || names.All(prefixedParameters.Contains))
+            if (operands is null && (names.Length < 2 || names.All(prefixedParameters.Contains))
+                || operands is { Length: < 2 })
             {
                 continue;
             }
 
-            builder.Append(" where disjoint(");
-            builder.Append(string.Join(", ", names));
+            builder.Append(" where ");
+            builder.Append(relationName);
+            builder.Append('(');
+            builder.Append(string.Join(", ", operands ?? names));
             builder.Append(')');
         }
     }
@@ -571,6 +618,11 @@ internal static partial class PackageImageLoader
             builder.Append(' ');
         }
 
+        if (function.IsUnsafe)
+        {
+            builder.Append("unsafe ");
+        }
+
         if (function.IsFfi)
         {
             builder.Append("ffi ");
@@ -579,11 +631,6 @@ internal static partial class PackageImageLoader
         if (function.IsVarargs)
         {
             builder.Append("varargs ");
-        }
-
-        if (function.IsUnsafe)
-        {
-            builder.Append("unsafe ");
         }
 
         if (function.Asm is not null)
@@ -606,9 +653,16 @@ internal static partial class PackageImageLoader
         }
 
         builder.Append('(');
-        builder.Append(string.Join(", ", function.Parameters.Select(static parameter => RenderParameter(parameter))));
+        var emitDisjointContracts = function.IsFfi || function.Asm is not null;
+        builder.Append(string.Join(", ", function.Parameters.Select(parameter => RenderParameter(parameter, emitDisjointPrefix: emitDisjointContracts))));
         builder.Append(')');
-        AppendDisjointParameterGroups(builder, function.Parameters, function.DisjointParameterGroups);
+        AppendParameterMemoryContractGroups(
+            builder,
+            function.Parameters,
+            function.DisjointParameterGroups,
+            function.OverlapParameterGroups,
+            function.SameParameterGroups,
+            emitDisjointContracts);
 
         if (function.Asm is null && bodyText is null)
         {
@@ -694,7 +748,9 @@ internal static partial class PackageImageLoader
         string? publishedOverloadKey = null,
         bool isUnsafe = false,
         ModuleBackendOptimizationMode backendOptimizationMode = ModuleBackendOptimizationMode.Default,
-        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? disjointParameterGroups = null)
+        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? disjointParameterGroups = null,
+        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? overlapParameterGroups = null,
+        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? sameParameterGroups = null)
     {
         var parsedInlinePreference = ParseInlinePreferenceOrDefault(inlinePreference);
         return new FunctionDeclarationModel(
@@ -725,7 +781,9 @@ internal static partial class PackageImageLoader
             IsStatic: isStatic,
             Attributes: BuildBackendAttributes(backendOptimizationMode),
             BackendOptimizationMode: backendOptimizationMode,
-            DisjointParameterGroups: BuildParameterDisjointGroups(parameters, disjointParameterGroups));
+            DisjointParameterGroups: BuildParameterDisjointGroups(parameters, disjointParameterGroups),
+            OverlapParameterGroups: BuildParameterOverlapGroups(overlapParameterGroups),
+            SameParameterGroups: BuildParameterSameGroups(sameParameterGroups));
     }
 
     private static IReadOnlyList<ParameterDisjointGroup>? BuildParameterDisjointGroups(
@@ -745,6 +803,24 @@ internal static partial class PackageImageLoader
 
         foreach (var group in groups ?? [])
         {
+            if (group.Regions is { Count: >= 2 } regions)
+            {
+                result.Add(new ParameterDisjointGroup(
+                    regions
+                        .Select(static region => region.ParameterName)
+                        .Where(static name => !string.IsNullOrWhiteSpace(name))
+                        .Distinct(StringComparer.Ordinal)
+                        .ToArray(),
+                    regions
+                        .Where(static region => !string.IsNullOrWhiteSpace(region.ParameterName))
+                        .Select(static region => new ParameterMemoryRegion(
+                            region.ParameterName,
+                            region.StartExpression,
+                            region.CountExpression))
+                        .ToArray()));
+                continue;
+            }
+
             var names = group.ParameterNames
                 .Where(static name => !string.IsNullOrWhiteSpace(name))
                 .Distinct(StringComparer.Ordinal)
@@ -756,6 +832,42 @@ internal static partial class PackageImageLoader
         }
 
         return result.Count == 0 ? null : result;
+    }
+
+    private static IReadOnlyList<ParameterOverlapGroup>? BuildParameterOverlapGroups(
+        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? groups)
+    {
+        var result = BuildParameterRelationGroups(groups)
+            .Select(static group => new ParameterOverlapGroup(group))
+            .ToArray();
+        return result.Length == 0 ? null : result;
+    }
+
+    private static IReadOnlyList<ParameterSameGroup>? BuildParameterSameGroups(
+        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? groups)
+    {
+        var result = BuildParameterRelationGroups(groups)
+            .Select(static group => new ParameterSameGroup(group))
+            .ToArray();
+        return result.Length == 0 ? null : result;
+    }
+
+    private static IReadOnlyList<IReadOnlyList<string>> BuildParameterRelationGroups(
+        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? groups)
+    {
+        if (groups is not { Count: > 0 })
+        {
+            return [];
+        }
+
+        return groups
+            .Select(static group => group.ParameterNames
+                .Where(static name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray())
+            .Where(static names => names.Length >= 2)
+            .Cast<IReadOnlyList<string>>()
+            .ToArray();
     }
 
     private static bool ParameterDisjointGroupsEqual(
@@ -798,8 +910,9 @@ internal static partial class PackageImageLoader
                 if (TryRenderGenericTemplateBody(template, out var renderedBodyText))
                 {
                     templates[BuildGenericTemplateLookupKey(template.QualifiedName, template.OverloadKey)] = renderedBodyText;
-                    continue;
                 }
+
+                continue;
             }
 
             if (!string.IsNullOrEmpty(template.BodyText))
@@ -1534,6 +1647,9 @@ internal static partial class PackageImageLoader
             ImportedTemplateTypedBodyExpressionKind.DirectCall => expression.Ordinal is { } directCallOrdinal && directCallsByOrdinal.TryGetValue(directCallOrdinal, out var directCall)
                 ? RenderDirectCall(directCall, expression, objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)
                 : string.Empty,
+            ImportedTemplateTypedBodyExpressionKind.ClosureCall => expression.Args.Count >= 1
+                ? $"{RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}({string.Join(", ", expression.Args.Skip(1).Select(argument => RenderImportedTypedTemplateExpression(argument, objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)))})"
+                : string.Empty,
             ImportedTemplateTypedBodyExpressionKind.IndexAccess => expression.Args.Count >= 1
                 ? $"{RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}[{string.Join(", ", expression.Args.Skip(1).Select(argument => RenderImportedTypedTemplateExpression(argument, objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)))}]"
                 : string.Empty,
@@ -2096,7 +2212,9 @@ internal static partial class PackageImageLoader
             function.IsUnsafe,
             function.IsVarargs,
             function.BackendOptimizationMode,
-            DisjointParameterGroups: function.DisjointParameterGroups);
+            DisjointParameterGroups: function.DisjointParameterGroups,
+            OverlapParameterGroups: function.OverlapParameterGroups,
+            SameParameterGroups: function.SameParameterGroups);
     }
 
     private static StarkPackageTypeManifest ConvertTypeManifest(StarkPackageTypedTypeManifest type)
@@ -2151,7 +2269,9 @@ internal static partial class PackageImageLoader
                 method.IsUnsafe,
                 method.IsVarargs,
                 method.BackendOptimizationMode,
-                DisjointParameterGroups: method.DisjointParameterGroups))
+                DisjointParameterGroups: method.DisjointParameterGroups,
+                OverlapParameterGroups: method.OverlapParameterGroups,
+                SameParameterGroups: method.SameParameterGroups))
                 .ToArray(),
             type.Destructor,
             BackendOptimizationMode: type.BackendOptimizationMode);
@@ -2165,7 +2285,29 @@ internal static partial class PackageImageLoader
             global.Visibility,
             global.Kind,
             RenderTypeReference(global.Type),
-            global.IsMutable);
+            global.IsMutable,
+            global.ConstantInitializer);
+    }
+
+    private static string RenderConstantInitializer(StarkPackageTypedConstantInitializerManifest? initializer)
+    {
+        if (initializer is null)
+        {
+            return "0";
+        }
+
+        return initializer.Kind switch
+        {
+            "integer" => initializer.IntegerValue ?? "0",
+            "float" => initializer.FloatLiteralText ?? "0.0",
+            "bool" => initializer.BoolValue == true ? "true" : "false",
+            "text" => initializer.TextLiteralText ?? "\"\"",
+            "null" => "null",
+            "fixedarray" when initializer.Elements is { Count: > 0 } =>
+                $"{{ {string.Join(", ", initializer.Elements.Select(RenderConstantInitializer))} }}",
+            "fixedarray" => "{ }",
+            _ => "0"
+        };
     }
 
     private static StarkPackageTypeAliasManifest ConvertTypeAliasManifest(StarkPackageTypedTypeAliasManifest typeAlias)

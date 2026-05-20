@@ -13,10 +13,10 @@ public sealed partial class MidLevelIrLoweringTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack mut Box box = new Box() { Value = 1 };
                 box.Value = 2;
                 return box.Value;
@@ -40,10 +40,10 @@ public sealed partial class MidLevelIrLoweringTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack mut Box box = new Box() { Value = 1 };
                 box.Value += 2;
                 return box.Value;
@@ -69,8 +69,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
-                stack i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
+            unsafe fn i32[min max] Run() {
+                stack i32[min max][3] values = { 1, 2, 3 };
                 return values[1];
             }
             """);
@@ -92,10 +92,10 @@ public sealed partial class MidLevelIrLoweringTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647][3] Values;
+                i32[min max][3] Values;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack Box box = new Box() { Values = { 1, 2 } };
                 return box.Values[2];
             }
@@ -118,8 +118,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
-                stack mut i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
+            unsafe fn i32[min max] Run() {
+                stack mut i32[min max][3] values = { 1, 2, 3 };
                 values[1] = 9;
                 return values[1];
             }
@@ -135,15 +135,79 @@ public sealed partial class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void LargeFixedArrayConstantIndexReadsAndWritesUseAddressBasedMemoryAccess()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn i8[min max] Run() {
+                stack mut i8[min max][256] values;
+                values[7] = 42;
+                return values[7];
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(function.Locals, static local => local.Name == "values" && local.IsAddressable);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrAddressOfLocalRValue { LocalName: "values" });
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrElementAddressRValue { ConstantIndex: 7 });
+        Assert.Contains(statements, static statement => statement.Kind == MidLevelIrStatementKind.StoreIndirect);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrLoadIndirectRValue);
+        Assert.DoesNotContain(
+            statements,
+            static statement => statement.Value is MidLevelIrInsertIndexRValue && statement.Text.Contains("values[7] = 42", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void LargeAggregateFieldAndConstantIndexReadsAndWritesUseAddressBasedMemoryAccess()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Big {
+                i8[min max][256] Data;
+                i32[min max] Count;
+            }
+
+            unsafe fn i8[min max] Run() {
+                stack mut Big big = new Big() { Data = { 0 }, Count = 0 };
+                big.Data[7] = 42;
+                return big.Data[7];
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(function.Locals, static local => local.Name == "big" && local.IsAddressable);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrAddressOfLocalRValue { LocalName: "big" });
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrFieldAddressRValue { FieldName: "Data" });
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrElementAddressRValue { ConstantIndex: 7 });
+        Assert.Contains(statements, static statement => statement.Kind == MidLevelIrStatementKind.StoreIndirect);
+        Assert.Contains(statements, static statement => statement.Value is MidLevelIrLoadIndirectRValue);
+        Assert.DoesNotContain(
+            statements,
+            static statement => statement.Value is MidLevelIrInsertFieldRValue && statement.Text.Contains("big.Data[7] = 42", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void LocalFixedArrayCanLowerToSliceAndDynamicSliceRead()
     {
         var result = Compile(
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
-                stack i32[-2147483648 2147483647][3] values = { 4, 7, 9 };
-                stack i32[-2147483648 2147483647][] view = values;
+            unsafe fn i32[min max] Run(i32[min max] index) {
+                stack i32[min max][3] values = { 4, 7, 9 };
+                stack i32[min max][] view = values;
                 return view[index];
             }
             """);
@@ -160,13 +224,61 @@ public sealed partial class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void InitSliceElementAssignmentCarriesInitializationWriteKindInMir()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Fill(init u32[0 max][] destination) {
+                init destination[0] = 7;
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.Contains(
+            statements,
+            static statement => statement.Kind == MidLevelIrStatementKind.StoreIndirect
+                && statement.WriteKind == MemoryWriteKind.Initialization
+                && statement.Text.Contains("init destination[0] = 7", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void OutParameterAssignmentCarriesInitializationWriteKindInMir()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Write(out u32[0 max] value) {
+                value = 7;
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.Contains(
+            statements,
+            static statement => statement.Kind == MidLevelIrStatementKind.StoreIndirect
+                && statement.WriteKind == MemoryWriteKind.Initialization
+                && statement.Text.Contains("value = 7", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void TextSlicesLowerToViewProducingMir()
     {
         var result = Compile(
             """
             module Demo
 
-            fn ascii Run(ascii text, i32[-2147483648 2147483647] start, i32[-2147483648 2147483647] length) {
+            unsafe fn ascii Run(ascii text, i32[min max] start, i32[min max] length) {
                 return text[start, length];
             }
             """);
@@ -195,11 +307,11 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn ascii SliceAscii(ascii text) {
+            unsafe fn ascii SliceAscii(ascii text) {
                 return text[];
             }
 
-            fn unicode SliceUnicode(unicode text) {
+            unsafe fn unicode SliceUnicode(unicode text) {
                 return text[];
             }
             """);
@@ -227,11 +339,11 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn ascii PickAscii(ascii text, i32[-2147483648 2147483647] index) {
+            unsafe fn ascii PickAscii(ascii text, i32[min max] index) {
                 return text[index];
             }
 
-            fn unicode PickUnicode(unicode text, i32[-2147483648 2147483647] index) {
+            unsafe fn unicode PickUnicode(unicode text, i32[min max] index) {
                 return text[index];
             }
             """);
@@ -263,8 +375,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
-                stack mut i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
+            unsafe fn i32[min max] Run(i32[min max] index) {
+                stack mut i32[min max][3] values = { 1, 2, 3 };
                 values[index] = 9;
                 return values[index];
             }
@@ -289,7 +401,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647][3] values, i32[-2147483648 2147483647] index) {
+            unsafe fn i32[min max] Run(i32[min max][3] values, i32[min max] index) {
                 return values[index];
             }
             """);
@@ -312,14 +424,14 @@ public sealed partial class MidLevelIrLoweringTests
             module Demo
 
             struct Cell {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             struct Holder {
                 Cell[2] Cells;
             }
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
+            unsafe fn i32[min max] Run(i32[min max] index) {
                 stack mut Holder holder = new Holder() {
                     Cells = { new Cell() { Value = 1 }, new Cell() { Value = 2 } }
                 };
@@ -350,7 +462,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(mut i32[-2147483648 2147483647][] view, i32[-2147483648 2147483647] index) {
+            unsafe fn i32[min max] Run(mut i32[min max][] view, i32[min max] index) {
                 view[index] = 9;
                 return view[index];
             }
@@ -374,20 +486,20 @@ public sealed partial class MidLevelIrLoweringTests
             module Demo
 
             struct Cell {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             struct Holder {
                 Cell[2] Cells;
             }
 
-            fn Holder Make() {
+            unsafe fn Holder Make() {
                 return new Holder() {
                     Cells = { new Cell() { Value = 3 }, new Cell() { Value = 5 } }
                 };
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 return Make().Cells[1].Value;
             }
             """);
@@ -397,7 +509,7 @@ public sealed partial class MidLevelIrLoweringTests
         var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
 
         Assert.True(function.SupportsDirectCodeGeneration);
-        Assert.Contains(statements, static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Make" });
+        Assert.Contains(statements, static statement => IsDirectCallStatement(statement, "Make"));
         Assert.Contains(
             statements,
             static statement => statement.Value is MidLevelIrExtractFieldRValue { FieldName: "Cells" });
@@ -414,11 +526,11 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i64[-9223372036854775808 9223372036854775807] bits) {
-                stack mut i32[-2147483648 2147483647] value = 1;
-                stack rawmutptr<i32[-2147483648 2147483647]> ptr = &value;
-                stack rawptr<i32[-2147483648 2147483647]> readonlyPtr = (rawptr<i32[-2147483648 2147483647]>)ptr;
-                *ptr = (i32[-2147483648 2147483647])bits;
+            unsafe fn i32[min max] Run(i64[min max] bits) {
+                stack mut i32[min max] value = 1;
+                stack rawmutptr<i32[min max]> ptr = &value;
+                stack rawptr<i32[min max]> readonlyPtr = (rawptr<i32[min max]>)ptr;
+                *ptr = (i32[min max])bits;
                 return *readonlyPtr;
             }
             """);
@@ -452,12 +564,12 @@ public sealed partial class MidLevelIrLoweringTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] input) {
+            unsafe fn i32[min max] Run(i32[min max] input) {
                 stack mut Box box = new Box() { Value = 1 };
                 *(&(box.Value)) = input;
                 Counter = *(&(box.Value));
@@ -487,13 +599,13 @@ public sealed partial class MidLevelIrLoweringTests
             module Demo
 
             struct Buffer {
-                i8[-128 127][16] Storage;
-                i64[-9223372036854775808 9223372036854775807] WritePos;
+                i8[min max][16] Storage;
+                i64[min max] WritePos;
             }
 
-            fn i32[-2147483648 2147483647] Touch(rawmutptr<Buffer> buffer, i64[-9223372036854775808 9223372036854775807] index, i8[-128 127] value) {
+            unsafe fn i32[min max] Touch(rawmutptr<Buffer> buffer, i64[min max] index, i8[min max] value) {
                 *(&(*buffer).Storage[index]) = value;
-                return (i32[-2147483648 2147483647])*(&(*buffer).Storage[index]);
+                return (i32[min max])*(&(*buffer).Storage[index]);
             }
             """);
 
@@ -516,17 +628,17 @@ public sealed partial class MidLevelIrLoweringTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            static i32[-2147483648 2147483647] Counter = 0;
+            static i32[min max] Counter = 0;
             static Box Current = new Box() { Value = 5 };
 
-            fn rawptr<i32[-2147483648 2147483647]> CounterPtr() {
+            unsafe fn rawptr<i32[min max]> CounterPtr() {
                 return &Counter;
             }
 
-            fn rawptr<i32[-2147483648 2147483647]> FieldPtr() {
+            unsafe fn rawptr<i32[min max]> FieldPtr() {
                 return &(Current.Value);
             }
             """);
@@ -569,16 +681,16 @@ public sealed partial class MidLevelIrLoweringTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             const Box Current = new Box() { Value = 5 };
 
-            fn rawptr<frozen Box> BoxPtr() {
+            unsafe fn rawptr<frozen Box> BoxPtr() {
                 return &Current;
             }
 
-            fn rawptr<frozen i32[-2147483648 2147483647]> FieldPtr() {
+            unsafe fn rawptr<frozen i32[min max]> FieldPtr() {
                 return &(Current.Value);
             }
             """);
@@ -623,10 +735,10 @@ public sealed partial class MidLevelIrLoweringTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            fn rawptr<frozen i32[-2147483648 2147483647]> FieldPtr(const Box box) {
+            unsafe fn rawptr<frozen i32[min max]> FieldPtr(const Box box) {
                 return &(box.Value);
             }
             """);
@@ -668,8 +780,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn rawptr<frozen i32[-2147483648 2147483647]> Forward(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
-                stack rawptr<frozen i32[-2147483648 2147483647]> local = ptr;
+            unsafe fn rawptr<frozen i32[min max]> Forward(const rawmutptr<i32[min max]> ptr) {
+                stack rawptr<frozen i32[min max]> local = ptr;
                 return local;
             }
             """);
@@ -688,7 +800,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn rawptr<frozen i32[-2147483648 2147483647]> FirstPtr(frozen i32[-2147483648 2147483647][] view) {
+            unsafe fn rawptr<frozen i32[min max]> FirstPtr(frozen i32[min max][] view) {
                 return &(view[0]);
             }
             """);

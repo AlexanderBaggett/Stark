@@ -11,32 +11,32 @@ public sealed class UnsignedIntegerRuntimeTests
             """
             module Demo
 
-            const u96 WideHigh = 2**95;
-            const u96 WideLow = 2**94;
+            const u96 WideHigh = 2 ** 95;
+            const u96 WideLow = 2 ** 94;
 
-            fn i32[-2147483648 2147483647] Small() {
-                stack u8[0 max] maxValue = 255;
+            fn i32[min max] Small() {
+                stack u8[0 max] maxValue = (u8[0 max])(2 ** 8 - 1);
                 stack u8[0 max] divisor = 2;
                 stack u8[0 max] threshold = 200;
-                if (maxValue > threshold && maxValue / divisor == 127 && maxValue >> 4 == 15) {
+                if (maxValue > threshold && maxValue / divisor == (u8[0 max])(2 ** 7 - 1) && maxValue >> 4 == 15) {
                     return 0;
                 }
 
                 return 1;
             }
 
-            fn i32[-2147483648 2147483647] Medium() {
-                stack u32[0 max] maxValue = 4294967295;
+            fn i32[min max] Medium() {
+                stack u32[0 max] maxValue = (u32[0 max])(2 ** 32 - 1);
                 stack u32[0 max] high = 4000000000;
-                stack u32[0 max] divisor = 65536;
-                if (maxValue > high && maxValue / divisor == 65535) {
+                stack u32[0 max] divisor = (u32[0 max])(2 ** 16);
+                if (maxValue > high && maxValue / divisor == (u32[0 max])(2 ** 16 - 1)) {
                     return 0;
                 }
 
                 return 2;
             }
 
-            fn i32[-2147483648 2147483647] Wide() {
+            fn i32[min max] Wide() {
                 stack u96[0 max] high = WideHigh;
                 stack u96[0 max] low = WideLow;
                 if (high > low) {
@@ -46,13 +46,13 @@ public sealed class UnsignedIntegerRuntimeTests
                 return 3;
             }
 
-            export ffi fn i32[-2147483648 2147483647] main() {
-                stack i32[-2147483648 2147483647] small = Small();
+            export unsafe fn i32[min max] main() {
+                stack i32[min max] small = Small();
                 if (small != 0) {
                     return small;
                 }
 
-                stack i32[-2147483648 2147483647] medium = Medium();
+                stack i32[min max] medium = Medium();
                 if (medium != 0) {
                     return medium;
                 }

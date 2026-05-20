@@ -14,7 +14,7 @@ fn bool CurrentProcessLooksValid() {
     return System.Process.CurrentId() > 0;
 }
 
-export ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     if (!CurrentProcessLooksValid()) {
         return 1;
     }

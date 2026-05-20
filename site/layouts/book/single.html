@@ -1,12 +1,44 @@
 {{ define "main" }}
 {{ partial "page-header" . }}
 <article class="gdoc-markdown gdoc-markdown__align--left book-page" id="main-content" tabindex="-1">
+    {{ $stepHeadings := findRE "(?m)^## Step [0-9]+: .+$" .RawContent }}
+    {{ $content := .Content }}
     <p class="book-kicker">
         {{ with .Params.book_part }}{{ . }}{{ end }}
         {{ with .Params.book_status }}<span>{{ . }}</span>{{ end }}
         {{ with site.Params.bookVersion }}<span>{{ . }}</span>{{ end }}
     </p>
-    {{ .Content }}
+    {{ $h1Blocks := findRE "(?s)^\\s*<div class=\"flex align-center gdoc-page__anchorwrap\">\\s*<h1.*?</div>" $content 1 }}
+    {{ if and $stepHeadings $h1Blocks }}
+        {{ $h1Block := index $h1Blocks 0 }}
+        {{ $content = replace $content $h1Block "" }}
+        {{ $h1Block | safeHTML }}
+    {{ end }}
+    {{ if $stepHeadings }}
+        <section class="book-lesson-path" aria-label="Lesson path">
+            <h2>Lesson Path</h2>
+            <ol>
+                {{ range $stepHeadings }}
+                    {{ $heading := replaceRE "^##\\s*" "" . }}
+                    {{ $label := replaceRE "^Step [0-9]+:\\s*" "" $heading }}
+                    <li><a href="#{{ $heading | anchorize }}">{{ $label | markdownify }}</a></li>
+                {{ end }}
+            </ol>
+        </section>
+    {{ end }}
+    {{ $content | safeHTML }}
+    {{ if $stepHeadings }}
+        <section class="book-checkpoint" aria-label="Chapter checkpoint">
+            <h2>Chapter Checkpoint</h2>
+            <p>Before moving on, make sure you can:</p>
+            <ul>
+                {{ range $stepHeadings }}
+                    {{ $step := replaceRE "^## Step [0-9]+:\\s*" "" . }}
+                    <li>{{ $step | markdownify }}</li>
+                {{ end }}
+            </ul>
+        </section>
+    {{ end }}
     {{ $languageRefs := .Params.language_refs }}
     {{ if not $languageRefs }}
         {{ $languageRefs = slice (dict "title" "Language Reference" "href" "/reference/language/LanguageReference/") }}
@@ -48,13 +80,13 @@
     </section>
     <nav class="book-nav" aria-label="Book chapter navigation">
         {{ with .Params.prev }}
-            <a href="{{ . | relURL }}">Previous</a>
+            <a href="{{ . | relURL }}"><span>Previous</span></a>
         {{ else }}
             <span></span>
         {{ end }}
-        <a href="{{ "/book/" | relURL }}">Contents</a>
+        <a href="{{ "/book/" | relURL }}"><span>Contents</span></a>
         {{ with .Params.next }}
-            <a href="{{ . | relURL }}">Next</a>
+            <a href="{{ . | relURL }}"><span>Next</span></a>
         {{ else }}
             <span></span>
         {{ end }}

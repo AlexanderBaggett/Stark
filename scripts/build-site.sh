@@ -22,6 +22,7 @@ if [[ "${VERSION_OUTPUT}" != *"v${PINNED_VERSION}"* ]]; then
     exit 1
 fi
 
+"${SCRIPT_DIR}/check-book-structure.sh"
 "${SCRIPT_DIR}/export-reference-sources.sh"
 "${SCRIPT_DIR}/export-book.sh"
 "${HUGO}" --source "${SITE_DIR}" --destination "${OUTPUT_DIR}" --cleanDestinationDir

@@ -1,16 +1,16 @@
 module System.BitOperations
 
-public finite law i32[-2147483648 2147483647] LeadingZeroCount(i32[-2147483648 2147483647] value);
-public finite law i64[-9223372036854775808 9223372036854775807] LeadingZeroCount(i64[-9223372036854775808 9223372036854775807] value);
+public finite law i32[min max] LeadingZeroCount(i32[min max] value);
+public finite law i64[min max] LeadingZeroCount(i64[min max] value);
 
-public finite law i32[-2147483648 2147483647] TrailingZeroCount(i32[-2147483648 2147483647] value);
-public finite law i64[-9223372036854775808 9223372036854775807] TrailingZeroCount(i64[-9223372036854775808 9223372036854775807] value);
+public finite law i32[min max] TrailingZeroCount(i32[min max] value);
+public finite law i64[min max] TrailingZeroCount(i64[min max] value);
 
-public finite law i32[-2147483648 2147483647] PopCount(i32[-2147483648 2147483647] value);
-public finite law i64[-9223372036854775808 9223372036854775807] PopCount(i64[-9223372036854775808 9223372036854775807] value);
+public finite law i32[min max] PopCount(i32[min max] value);
+public finite law i64[min max] PopCount(i64[min max] value);
 
-public finite law i32[-2147483648 2147483647] RotateLeft(i32[-2147483648 2147483647] value, i32[-2147483648 2147483647] amount);
-public finite law i64[-9223372036854775808 9223372036854775807] RotateLeft(i64[-9223372036854775808 9223372036854775807] value, i64[-9223372036854775808 9223372036854775807] amount);
+public finite law i32[min max] RotateLeft(i32[min max] value, i32[min max] amount);
+public finite law i64[min max] RotateLeft(i64[min max] value, i64[min max] amount);
 
-public finite law i32[-2147483648 2147483647] RotateRight(i32[-2147483648 2147483647] value, i32[-2147483648 2147483647] amount);
-public finite law i64[-9223372036854775808 9223372036854775807] RotateRight(i64[-9223372036854775808 9223372036854775807] value, i64[-9223372036854775808 9223372036854775807] amount);
+public finite law i32[min max] RotateRight(i32[min max] value, i32[min max] amount);
+public finite law i64[min max] RotateRight(i64[min max] value, i64[min max] amount);

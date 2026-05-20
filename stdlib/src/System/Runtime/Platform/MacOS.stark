@@ -1,0 +1,1694 @@
+import System.Runtime.Buffer
+import System.Memory
+module System.Runtime.Platform.MacOS
+
+internal unsafe finite law rawptr<i8[min max]> AsciiData(ascii source);
+internal finite law i64[min max] AsciiLength(ascii source);
+internal unsafe finite law rawptr<i32[min max]> UnicodeData(unicode source);
+internal finite law i64[min max] UnicodeLength(unicode source);
+internal unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right)
+    where overlap(left, right);
+
+internal struct MacOSTimespec {
+    i64[min max] Seconds;
+    i64[min max] Nanoseconds;
+}
+
+internal struct MacOSPollFd {
+    i32[min max] FileDescriptor;
+    i16[min max] Events;
+    i16[min max] Revents;
+}
+
+internal struct MacOSIovec {
+    rawptr<i8[min max]> Base;
+    u64[0 2 ** 63 - 1] Length;
+}
+
+internal struct MacOSHandle {
+    i32[min max] FileDescriptor;
+    rawmutptr<i8[min max]> AllocationPointer;
+}
+
+internal unsafe ffi fn void exit(i32[min max] status);
+internal unsafe ffi fn i32[min max] getpid();
+internal unsafe ffi varargs fn i32[min max] open(rawptr<i8[min max]> path, i32[min max] flags);
+internal unsafe ffi fn i32[min max] close(i32[min max] fileDescriptor);
+internal unsafe ffi fn i32[min max] fsync(i32[min max] fileDescriptor);
+internal unsafe ffi fn i64[min max] read(i32[min max] fileDescriptor, rawmutptr<i8[min max]> buffer, u64[0 2 ** 63 - 1] byteCount);
+internal unsafe ffi fn i64[min max] write(i32[min max] fileDescriptor, rawptr<i8[min max]> buffer, u64[0 2 ** 63 - 1] byteCount);
+internal unsafe ffi fn i64[min max] lseek(i32[min max] fileDescriptor, i64[min max] offset, i32[min max] whence);
+internal unsafe ffi fn i32[min max] unlink(rawptr<i8[min max]> path);
+internal unsafe ffi fn i32[min max] rename(rawptr<i8[min max]> oldPath, rawptr<i8[min max]> newPath);
+internal unsafe ffi fn i32[min max] stat(rawptr<i8[min max]> path, rawmutptr<i8[min max]> buffer);
+internal unsafe ffi fn i32[min max] mkdir(rawptr<i8[min max]> path, i32[min max] mode);
+internal unsafe ffi fn i32[min max] rmdir(rawptr<i8[min max]> path);
+internal unsafe ffi fn rawmutptr<i8[min max]> getcwd(rawmutptr<i8[min max]> buffer, u64[0 2 ** 63 - 1] size);
+internal unsafe ffi fn i32[min max] isatty(i32[min max] fileDescriptor);
+internal unsafe ffi fn rawmutptr<i8[min max]> opendir(rawptr<i8[min max]> path);
+internal unsafe ffi fn rawmutptr<i8[min max]> readdir(rawptr<i8[min max]> directory);
+internal unsafe ffi fn i32[min max] closedir(rawptr<i8[min max]> directory);
+internal unsafe ffi fn i32[min max] pthread_create(
+    rawmutptr<rawmutptr<i8[min max]>> thread,
+    rawptr<i8[min max]> attributes,
+    fnptr<fn rawmutptr<i8[min max]>(fnptr<fn i32[min max]()>)> start,
+    fnptr<fn i32[min max]()> argument);
+internal unsafe ffi fn i32[min max] pthread_join(rawmutptr<i8[min max]> thread, rawmutptr<rawmutptr<i8[min max]>> value);
+internal unsafe ffi fn i32[min max] pthread_detach(rawmutptr<i8[min max]> thread);
+internal unsafe ffi fn i32[min max] sched_yield();
+internal unsafe ffi fn i32[min max] nanosleep(rawptr<MacOSTimespec> request, rawptr<MacOSTimespec> remaining);
+internal unsafe ffi fn i32[min max] socket(i32[min max] domain, i32[min max] socketType, i32[min max] protocol);
+internal unsafe ffi fn i32[min max] connect(i32[min max] socketHandle, rawptr<i8[min max]> address, i32[min max] addressLength);
+internal unsafe ffi fn i32[min max] bind(i32[min max] socketHandle, rawptr<i8[min max]> address, i32[min max] addressLength);
+internal unsafe ffi fn i32[min max] listen(i32[min max] socketHandle, i32[min max] backlog);
+internal unsafe ffi fn i32[min max] accept(i32[min max] socketHandle, rawmutptr<i8[min max]> address, rawmutptr<i32[min max]> addressLength);
+internal unsafe ffi fn i64[min max] recv(i32[min max] socketHandle, rawmutptr<i8[min max]> buffer, u64[0 2 ** 63 - 1] length, i32[min max] flags);
+internal unsafe ffi fn i64[min max] send(i32[min max] socketHandle, rawptr<i8[min max]> buffer, u64[0 2 ** 63 - 1] length, i32[min max] flags);
+internal unsafe ffi fn i64[min max] readv(i32[min max] fileDescriptor, rawmutptr<MacOSIovec> vectors, i32[min max] vectorCount);
+internal unsafe ffi fn i64[min max] writev(i32[min max] fileDescriptor, rawmutptr<MacOSIovec> vectors, i32[min max] vectorCount);
+internal unsafe ffi fn i32[min max] shutdown(i32[min max] socketHandle, i32[min max] how);
+internal unsafe ffi fn i32[min max] fcntl(i32[min max] fileDescriptor, i32[min max] command, i32[min max] value);
+internal unsafe ffi fn i32[min max] setsockopt(i32[min max] socketHandle, i32[min max] level, i32[min max] optionName, rawptr<i8[min max]> optionValue, i32[min max] optionLength);
+internal unsafe ffi fn i32[min max] poll(rawmutptr<MacOSPollFd> descriptors, i32[min max] descriptorCount, i32[min max] timeoutMilliseconds);
+internal unsafe ffi fn i32[min max] os_sync_wait_on_address(rawmutptr<i8[min max]> address, i64[min max] value, u64[0 2 ** 63 - 1] size, i32[min max] flags);
+internal unsafe ffi fn i32[min max] os_sync_wake_by_address_any(rawmutptr<i8[min max]> address, u64[0 2 ** 63 - 1] size, i32[min max] flags);
+internal unsafe ffi fn i32[min max] os_sync_wake_by_address_all(rawmutptr<i8[min max]> address, u64[0 2 ** 63 - 1] size, i32[min max] flags);
+
+const MacOSPathBufferCapacity = 4096;
+const MacOSOpenReadOnlyFlag = 0;
+const MacOSOpenWriteOnlyFlag = 1;
+const MacOSOpenReadWriteFlag = 2;
+const MacOSOpenAppendFlag = 8;
+const MacOSOpenCreateFlag = 512;
+const MacOSOpenTruncateFlag = 1024;
+const MacOSOpenCloseOnExecFlag = 16777216;
+const MacOSDefaultCreateMode = 420;
+const MacOSDefaultDirectoryMode = 493;
+const MacOSStatModeOffset = 4;
+const MacOSStatTypeMask = 61440;
+const MacOSStatRegularType = 32768;
+const MacOSStatDirectoryType = 16384;
+const MacOSAddressFamilyInet = 2;
+const MacOSSocketStream = 1;
+const MacOSSocketProtocolTcp = 6;
+const MacOSSockaddrInLength = 16;
+const MacOSDefaultTcpListenBacklog = 128;
+const MacOSFileControlSetFd = 2;
+const MacOSFileDescriptorCloseOnExec = 1;
+const MacOSSolSocket = 2 ** 16 - 1;
+const MacOSSocketReuseAddress = 4;
+const MacOSSocketNoSigPipe = 4130;
+const MacOSPollReadableEvent = 1;
+const MacOSPollWritableEvent = 4;
+const MacOSDirectoryEntryNameLengthOffset = 18;
+const MacOSDirectoryEntryTypeOffset = 20;
+const MacOSDirectoryEntryNameOffset = 21;
+const MacOSDirectoryEntryFileType = 8;
+const MacOSDirectoryEntryDirectoryType = 4;
+const MacOSDirectoryEntrySymlinkType = 10;
+const MacOSSyncAddressSizeI32 = 4;
+const MacOSSyncAddressDefaultFlags = 0;
+
+internal unsafe fn i32[min max] NegativeErrno() {
+    return -1;
+}
+
+internal unsafe fn rawptr<i8[min max]> FdToHandle(i32[min max] fileDescriptor) {
+    if (fileDescriptor < 0) {
+        return null;
+    }
+
+    stack System.Memory.Allocation allocation = System.Memory.Allocate(
+        System.Memory.Allocator.Default(),
+        (u64[0 2 ** 63 - 1])sizeof(MacOSHandle),
+        alignof(MacOSHandle));
+    if (allocation.Pointer == null) {
+        close(fileDescriptor);
+        return null;
+    }
+
+    stack rawmutptr<MacOSHandle> handle = (rawmutptr<MacOSHandle>)allocation.Pointer;
+    *handle = new MacOSHandle() {
+        FileDescriptor = fileDescriptor,
+        AllocationPointer = allocation.Pointer
+    };
+    return (rawptr<i8[min max]>)handle;
+}
+
+internal unsafe inline finite law i32[min max] HandleToFd(rawptr<i8[min max]> handle) {
+    if (handle == null) {
+        return -1;
+    }
+
+    stack rawptr<MacOSHandle> typedHandle = (rawptr<MacOSHandle>)handle;
+    return (*typedHandle).FileDescriptor;
+}
+
+internal unsafe fn bool TryBuildMacOSPath(rawmutptr<Ascii> destination, ascii path) {
+    return TryConcatAscii(destination, path, "\0");
+}
+
+internal unsafe fn i64[min max] CStringLength(rawptr<i8[min max]> data, i64[min max] capacity) {
+    if (data == null || capacity <= 0) {
+        return 0;
+    }
+
+    stack mut i64[min max] length = 0;
+    while willexit (length < capacity) {
+        if (*(&data[length]) == (i8[min max])0) {
+            return length;
+        }
+
+        length += 1;
+    }
+
+    return capacity;
+}
+
+internal fn i32[min max] UnsignedShort(i16[min max] value) {
+    if (value < 0) {
+        return ((i32[min max])value) + (i32[min max])(2 ** 16);
+    }
+
+    return (i32[min max])value;
+}
+
+internal fn i32[min max] UnsignedByte(i8[min max] value) {
+    if (value < 0) {
+        return ((i32[min max])value) + 256;
+    }
+
+    return (i32[min max])value;
+}
+
+internal unsafe finite law bool IsDotDirectoryEntry(rawptr<i8[min max]> data, i64[min max] length) {
+    if (data == null) {
+        return false;
+    }
+
+    if (length == 1) {
+        return *(&data[0]) == (i8[min max])46;
+    }
+
+    if (length == 2) {
+        return *(&data[0]) == (i8[min max])46 && *(&data[1]) == (i8[min max])46;
+    }
+
+    return false;
+}
+
+internal inline fn i32[min max] DirectoryEntryKindFromMacOSType(i32[min max] entryType) {
+    if (entryType == MacOSDirectoryEntryFileType) {
+        return 1;
+    }
+
+    if (entryType == MacOSDirectoryEntryDirectoryType) {
+        return 2;
+    }
+
+    if (entryType == MacOSDirectoryEntrySymlinkType) {
+        return 3;
+    }
+
+    return 0;
+}
+
+internal unsafe fn i32[min max] WriteBufferToFd(
+    i32[min max] fileDescriptor,
+    rawptr<i8[min max]>[length] buffer,
+    u64[0 2 ** 63 - 1] length)
+{
+    if (length == 0) {
+        return 0;
+    }
+
+    if (buffer == null) {
+        return -14;
+    }
+
+    stack mut u64[0 2 ** 63 - 1] remaining = length;
+    stack mut u64[0 2 ** 63 - 1] written = 0;
+    while willexit (remaining > 0) {
+        stack rawptr<i8[min max]> data = &buffer[written];
+        stack i64[min max] result = write(fileDescriptor, data, remaining);
+        if (result < 0) {
+            return NegativeErrno();
+        }
+
+        if (result == 0) {
+            return -1;
+        }
+
+        stack u64[0 2 ** 63 - 1] chunk = (u64[0 2 ** 63 - 1])result;
+        written += chunk;
+        remaining -= chunk;
+    }
+
+    return 0;
+}
+
+internal unsafe fn i32[min max] WriteBufferToHandle(
+    rawptr<i8[min max]> handle,
+    rawptr<i8[min max]>[length] buffer,
+    u64[0 2 ** 63 - 1] length)
+    where overlap(handle, buffer)
+{
+    if (handle == null) {
+        return -1;
+    }
+
+    return WriteBufferToFd(HandleToFd(handle), buffer, length);
+}
+
+internal unsafe fn i32[min max] WriteBufferLineToHandle(
+    rawptr<i8[min max]> handle,
+    rawptr<i8[min max]>[length] buffer,
+    u64[0 2 ** 63 - 1] length)
+    where overlap(handle, buffer)
+{
+    if (handle == null) {
+        return -1;
+    }
+
+    return WriteBufferLineToFd(HandleToFd(handle), buffer, length);
+}
+
+internal unsafe fn i32[min max] WriteBufferLineToFd(
+    i32[min max] fileDescriptor,
+    rawptr<i8[min max]>[length] buffer,
+    u64[0 2 ** 63 - 1] length)
+{
+    if (length > 0 && buffer == null) {
+        return -14;
+    }
+
+    if (length < 8192) {
+        stack mut System.Runtime.Buffer.FixedByteBuffer8192 lineBuffer = new System.Runtime.Buffer.FixedByteBuffer8192();
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < length; index += 1) {
+            lineBuffer.Storage[index] = *(&buffer[index]);
+        }
+
+        lineBuffer.Storage[length] = (i8[min max])10;
+        return WriteBufferToFd(fileDescriptor, &lineBuffer.Storage[0], (u64[0 2 ** 63 - 1])(length + 1));
+    }
+
+    stack i32[min max] status = WriteBufferToFd(fileDescriptor, buffer, length);
+    if (status != 0) {
+        return status;
+    }
+
+    stack mut i8[min max][1] newline = { 10 };
+    return WriteBufferToFd(fileDescriptor, &newline[0], 1);
+}
+
+internal unsafe fn i32[min max] FlushEncodedWriteBuffer(
+    rawptr<i8[min max]> handle,
+    mut borrow System.Runtime.Buffer.FixedByteBuffer4096 buffer)
+    where overlap(handle, buffer)
+{
+    if (handle == null) {
+        return -1;
+    }
+
+    return FlushEncodedWriteBufferToFd(HandleToFd(handle), buffer);
+}
+
+internal unsafe fn i32[min max] FlushEncodedWriteBufferToFd(
+    i32[min max] fileDescriptor,
+    mut borrow System.Runtime.Buffer.FixedByteBuffer4096 buffer)
+{
+    while willexit (true) {
+        stack mut u64[0 2 ** 63 - 1] readPosition = buffer.ReadPosition;
+        stack u64[0 2 ** 63 - 1] writePosition = buffer.WritePosition;
+        if (readPosition >= writePosition) {
+            buffer.Clear();
+            return 0;
+        }
+
+        stack rawptr<i8[min max]> data = &buffer.Storage[readPosition];
+        stack u64[0 2 ** 63 - 1] readable = writePosition - readPosition;
+        stack i64[min max] result = write(fileDescriptor, data, readable);
+        if (result < 0) {
+            return NegativeErrno();
+        }
+
+        if (result == 0) {
+            return -1;
+        }
+
+        readPosition = (u64[0 2 ** 63 - 1])(readPosition + (u64[0 2 ** 63 - 1])result);
+        if (readPosition >= writePosition) {
+            buffer.Clear();
+            continue;
+        }
+
+        buffer.ReadPosition = readPosition;
+    }
+}
+
+internal fn i32[min max] NormalizeUnicodeCodePoint(i32[min max] codePoint) {
+    if (codePoint < 0) {
+        return 65533;
+    }
+
+    if (55296 <= codePoint && codePoint <= 57343) {
+        return 65533;
+    }
+
+    if (codePoint > 1114111) {
+        return 65533;
+    }
+
+    return codePoint;
+}
+
+internal fn i64[min max] Utf8EncodedLength(i32[min max] codePoint) {
+    stack i32[min max] scalar = NormalizeUnicodeCodePoint(codePoint);
+
+    if (scalar <= 127) {
+        return 1;
+    }
+
+    if (scalar <= 2047) {
+        return 2;
+    }
+
+    if (scalar <= (i32[min max])(2 ** 16 - 1)) {
+        return 3;
+    }
+
+    return 4;
+}
+
+internal fn void AppendUtf8CodePoint(
+    mut borrow System.Runtime.Buffer.FixedByteBuffer4096 buffer,
+    i32[min max] codePoint)
+{
+    stack i32[min max] scalar = NormalizeUnicodeCodePoint(codePoint);
+    stack u64[0 2 ** 63 - 1] writePosition = buffer.WritePosition;
+
+    if (scalar <= 127) {
+        buffer.Storage[writePosition] = (i8[min max])scalar;
+        buffer.WritePosition = (u64[0 2 ** 63 - 1])(writePosition + 1);
+        return;
+    }
+
+    if (scalar <= 2047) {
+        buffer.Storage[writePosition] = (i8[min max])((scalar >> 6) | 192);
+        buffer.Storage[writePosition + 1] = (i8[min max])((scalar & 63) | 128);
+        buffer.WritePosition = (u64[0 2 ** 63 - 1])(writePosition + 2);
+        return;
+    }
+
+    if (scalar <= (i32[min max])(2 ** 16 - 1)) {
+        buffer.Storage[writePosition] = (i8[min max])((scalar >> 12) | 224);
+        buffer.Storage[writePosition + 1] = (i8[min max])(((scalar >> 6) & 63) | 128);
+        buffer.Storage[writePosition + 2] = (i8[min max])((scalar & 63) | 128);
+        buffer.WritePosition = (u64[0 2 ** 63 - 1])(writePosition + 3);
+        return;
+    }
+
+    buffer.Storage[writePosition] = (i8[min max])((scalar >> 18) | 240);
+    buffer.Storage[writePosition + 1] = (i8[min max])(((scalar >> 12) & 63) | 128);
+    buffer.Storage[writePosition + 2] = (i8[min max])(((scalar >> 6) & 63) | 128);
+    buffer.Storage[writePosition + 3] = (i8[min max])((scalar & 63) | 128);
+    buffer.WritePosition = (u64[0 2 ** 63 - 1])(writePosition + 4);
+}
+
+internal unsafe fn i32[min max] WriteAsciiToHandle(rawptr<i8[min max]> handle, ascii text)
+    where overlap(handle, text) {
+    if (handle == null) {
+        return -1;
+    }
+
+    return WriteAsciiToFd(HandleToFd(handle), text);
+}
+
+internal unsafe fn i32[min max] WriteAsciiToFd(i32[min max] fileDescriptor, ascii text) {
+    stack mut i64[min max] remaining = AsciiLength(text);
+    stack mut i64[min max] written = 0;
+
+    while willexit (remaining > 0) {
+        stack ascii chunk = text[written, remaining];
+        stack rawptr<i8[min max]> data = AsciiData(chunk);
+        stack i64[min max] result = write(fileDescriptor, data, (u64[0 2 ** 63 - 1])remaining);
+        if (result < 0) {
+            return NegativeErrno();
+        }
+
+        if (result == 0) {
+            return -1;
+        }
+
+        written += result;
+        remaining -= result;
+    }
+
+    return 0;
+}
+
+internal unsafe fn i32[min max] WriteUnicodeToHandle(rawptr<i8[min max]> handle, unicode text)
+    where overlap(handle, text) {
+    if (handle == null) {
+        return -1;
+    }
+
+    return WriteUnicodeToFd(HandleToFd(handle), text);
+}
+
+internal unsafe fn i32[min max] WriteUnicodeToFd(i32[min max] fileDescriptor, unicode text) {
+    stack i64[min max] length = UnicodeLength(text);
+    if (length <= 0) {
+        return 0;
+    }
+
+    stack mut System.Runtime.Buffer.FixedByteBuffer4096 utf8Buffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+    stack mut i64[min max] index = 0;
+
+    while willexit (index < length) {
+        stack unicode unit = text[index, 1];
+        stack rawptr<i32[min max]> data = UnicodeData(unit);
+        stack i32[min max] codePoint = *data;
+        stack i64[min max] required = Utf8EncodedLength(codePoint);
+
+        if (utf8Buffer.Writable() < required) {
+            stack i32[min max] flushStatus = FlushEncodedWriteBufferToFd(fileDescriptor, utf8Buffer);
+            if (flushStatus != 0) {
+                return flushStatus;
+            }
+        }
+
+        AppendUtf8CodePoint(utf8Buffer, codePoint);
+        index += 1;
+    }
+
+    return FlushEncodedWriteBufferToFd(fileDescriptor, utf8Buffer);
+}
+
+internal unsafe fn i32[min max] WriteAsciiLineToHandle(rawptr<i8[min max]> handle, ascii text)
+    where overlap(handle, text) {
+    if (handle == null) {
+        return -1;
+    }
+
+    return WriteAsciiLineToFd(HandleToFd(handle), text);
+}
+
+internal unsafe fn i32[min max] WriteAsciiLineToFd(i32[min max] fileDescriptor, ascii text) {
+    stack i64[min max] length = AsciiLength(text);
+    if (length < 0) {
+        return -1;
+    }
+
+    if (length == 0) {
+        return WriteBufferLineToFd(fileDescriptor, null, 0);
+    }
+
+    stack ascii view = text[0, length];
+    return WriteBufferLineToFd(fileDescriptor, AsciiData(view), (u64[0 2 ** 63 - 1])length);
+}
+
+internal unsafe fn i32[min max] WriteUnicodeLineToHandle(rawptr<i8[min max]> handle, unicode text)
+    where overlap(handle, text) {
+    if (handle == null) {
+        return -1;
+    }
+
+    return WriteUnicodeLineToFd(HandleToFd(handle), text);
+}
+
+internal unsafe fn i32[min max] WriteUnicodeLineToFd(i32[min max] fileDescriptor, unicode text) {
+    stack i64[min max] length = UnicodeLength(text);
+    if (length < 0) {
+        return -1;
+    }
+
+    stack mut System.Runtime.Buffer.FixedByteBuffer4096 utf8Buffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+    stack mut i64[min max] index = 0;
+
+    while willexit (index < length) {
+        stack unicode unit = text[index, 1];
+        stack rawptr<i32[min max]> data = UnicodeData(unit);
+        stack i32[min max] codePoint = *data;
+        stack i64[min max] required = Utf8EncodedLength(codePoint);
+
+        if (utf8Buffer.Writable() < required) {
+            stack i32[min max] flushStatus = FlushEncodedWriteBufferToFd(fileDescriptor, utf8Buffer);
+            if (flushStatus != 0) {
+                return flushStatus;
+            }
+        }
+
+        AppendUtf8CodePoint(utf8Buffer, codePoint);
+        index += 1;
+    }
+
+    if (utf8Buffer.Writable() < 1) {
+        stack i32[min max] flushStatus = FlushEncodedWriteBufferToFd(fileDescriptor, utf8Buffer);
+        if (flushStatus != 0) {
+            return flushStatus;
+        }
+    }
+
+    AppendUtf8CodePoint(utf8Buffer, 10);
+    return FlushEncodedWriteBufferToFd(fileDescriptor, utf8Buffer);
+}
+
+internal fn void ExitProcess(i32[min max] code) {
+    unsafe {
+        exit(code);
+        return;
+    }
+}
+
+internal fn i32[min max] ProcessId() {
+    unsafe {
+        return getpid();
+    }
+}
+
+internal fn i32[min max] WriteStdoutAscii(ascii text) {
+    unsafe {
+        return WriteAsciiToFd(1, text);
+    }
+}
+
+internal fn i32[min max] WriteStdoutUnicode(unicode text) {
+    unsafe {
+        return WriteUnicodeToFd(1, text);
+    }
+}
+
+internal unsafe fn i32[min max] WriteStdoutBytes(rawptr<i8[min max]>[length] data, u64[0 2 ** 63 - 1] length) {
+    return WriteBufferToFd(1, data, length);
+}
+
+internal fn i32[min max] WriteStdoutAsciiLine(ascii text) {
+    unsafe {
+        return WriteAsciiLineToFd(1, text);
+    }
+}
+
+internal fn i32[min max] WriteStdoutUnicodeLine(unicode text) {
+    unsafe {
+        return WriteUnicodeLineToFd(1, text);
+    }
+}
+
+internal unsafe fn i32[min max] WriteStdoutBytesLine(rawptr<i8[min max]>[length] data, u64[0 2 ** 63 - 1] length) {
+    return WriteBufferLineToFd(1, data, length);
+}
+
+internal fn i32[min max] WriteStderrAscii(ascii text) {
+    unsafe {
+        return WriteAsciiToFd(2, text);
+    }
+}
+
+internal fn i32[min max] WriteStderrUnicode(unicode text) {
+    unsafe {
+        return WriteUnicodeToFd(2, text);
+    }
+}
+
+internal unsafe fn i32[min max] WriteStderrBytes(rawptr<i8[min max]>[length] data, u64[0 2 ** 63 - 1] length) {
+    return WriteBufferToFd(2, data, length);
+}
+
+internal fn i32[min max] WriteStderrAsciiLine(ascii text) {
+    unsafe {
+        return WriteAsciiLineToFd(2, text);
+    }
+}
+
+internal fn i32[min max] WriteStderrUnicodeLine(unicode text) {
+    unsafe {
+        return WriteUnicodeLineToFd(2, text);
+    }
+}
+
+internal unsafe fn i32[min max] WriteStderrBytesLine(rawptr<i8[min max]>[length] data, u64[0 2 ** 63 - 1] length) {
+    return WriteBufferLineToFd(2, data, length);
+}
+
+internal unsafe fn rawptr<i8[min max]> OpenFileWithFlags(ascii path, i32[min max] flags, i32[min max] mode) {
+    stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+    stack mut Ascii preparedPath = new Ascii();
+    preparedPath.Data = pathBuffer.WritePointer();
+    preparedPath.Length = 0;
+    preparedPath.Capacity = pathBuffer.Writable();
+
+    if (!TryBuildMacOSPath(&preparedPath, path)) {
+        return null;
+    }
+
+    stack i32[min max] fileDescriptor = open(preparedPath.Data, flags, mode);
+    if (fileDescriptor < 0) {
+        return null;
+    }
+
+    return FdToHandle(fileDescriptor);
+}
+
+internal unsafe fn rawptr<i8[min max]> OpenStdin() {
+    return OpenFileRead("/dev/stdin");
+}
+
+internal unsafe fn void CloseStdin(rawptr<i8[min max]> handle) {
+    if (handle != null) {
+        CloseFile(handle);
+    }
+
+    return;
+}
+
+internal unsafe fn i64[min max] ReadStdin(rawmutptr<i8[min max]>[capacity] buffer, u64[0 2 ** 63 - 1] capacity) {
+    if (buffer == null || capacity == 0) {
+        return 0;
+    }
+
+    stack rawptr<i8[min max]> handle = OpenFileRead("/dev/stdin");
+    if (handle == null) {
+        return 0;
+    }
+
+    stack i64[min max] readCount = ReadFileBytes(buffer, capacity, handle);
+    CloseFile(handle);
+    return readCount;
+}
+
+internal unsafe inline fn i32[min max] WriteAscii(rawptr<i8[min max]> handle, ascii text)
+    where overlap(handle, text) {
+    return WriteAsciiToHandle(handle, text);
+}
+
+internal inline finite law ascii DirectorySeparator() {
+    return "/";
+}
+
+internal inline finite law ascii AlternateDirectorySeparator() {
+    return "";
+}
+
+internal inline finite law ascii PathSeparator() {
+    return ":";
+}
+
+internal inline finite law bool IsDirectorySeparator(ascii value) {
+    unsafe {
+        return *AsciiData(value) == (i8[min max])47;
+    }
+}
+
+internal unsafe fn bool IsTerminal(rawptr<i8[min max]> handle) {
+    if (handle == null) {
+        return false;
+    }
+
+    return isatty(HandleToFd(handle)) != 0;
+}
+
+internal unsafe inline fn i32[min max] WriteUnicode(rawptr<i8[min max]> handle, unicode text)
+    where overlap(handle, text) {
+    return WriteUnicodeToHandle(handle, text);
+}
+
+internal unsafe fn rawptr<i8[min max]> OpenFileRead(ascii path) {
+    return OpenFileWithFlags(path, (i32[min max])(MacOSOpenReadOnlyFlag | MacOSOpenCloseOnExecFlag), 0);
+}
+
+internal unsafe fn rawptr<i8[min max]> OpenFileWrite(ascii path) {
+    return OpenFileWithFlags(
+        path,
+        (i32[min max])(MacOSOpenWriteOnlyFlag | MacOSOpenCreateFlag | MacOSOpenTruncateFlag | MacOSOpenCloseOnExecFlag),
+        MacOSDefaultCreateMode);
+}
+
+internal unsafe fn rawptr<i8[min max]> OpenFileAppend(ascii path) {
+    return OpenFileWithFlags(
+        path,
+        (i32[min max])(MacOSOpenWriteOnlyFlag | MacOSOpenCreateFlag | MacOSOpenAppendFlag | MacOSOpenCloseOnExecFlag),
+        MacOSDefaultCreateMode);
+}
+
+internal unsafe fn rawptr<i8[min max]> OpenFileReadWrite(ascii path) {
+    return OpenFileWithFlags(path, (i32[min max])(MacOSOpenReadWriteFlag | MacOSOpenCloseOnExecFlag), 0);
+}
+
+internal unsafe inline fn i32[min max] CloseFile(rawptr<i8[min max]> handle) {
+    if (handle == null) {
+        return 0;
+    }
+
+    stack rawptr<MacOSHandle> typedHandle = (rawptr<MacOSHandle>)handle;
+    stack System.Memory.Allocation allocation = new System.Memory.Allocation() {
+        Pointer = (*typedHandle).AllocationPointer,
+        ByteLength = (u64[0 2 ** 63 - 1])sizeof(MacOSHandle),
+        Alignment = alignof(MacOSHandle),
+        Allocator = System.Memory.Allocator.Default()
+    };
+    stack i32[min max] result = close((*typedHandle).FileDescriptor);
+    System.Memory.Free(allocation);
+    if (result == 0) {
+        return 0;
+    }
+
+    return NegativeErrno();
+}
+
+internal unsafe fn i32[min max] FlushFile(rawptr<i8[min max]> handle) {
+    if (handle == null) {
+        return -1;
+    }
+
+    if (fsync(HandleToFd(handle)) == 0) {
+        return 0;
+    }
+
+    return NegativeErrno();
+}
+
+internal unsafe fn i64[min max] ReadFile(rawmutptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle)
+    where overlap(buffer, handle) {
+    if (handle == null || buffer == null || size <= 0 || count <= 0) {
+        return 0;
+    }
+
+    stack i64[min max] bytesRequested = size * count;
+    stack i64[min max] result = read(HandleToFd(handle), buffer, (u64[0 2 ** 63 - 1])bytesRequested);
+    if (result <= 0) {
+        return 0;
+    }
+
+    return result / size;
+}
+
+internal unsafe fn i64[min max] WriteFile(rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle)
+    where overlap(buffer, handle) {
+    if (handle == null || buffer == null || size <= 0 || count <= 0) {
+        return 0;
+    }
+
+    stack i64[min max] bytesRequested = size * count;
+    stack i64[min max] result = write(HandleToFd(handle), buffer, (u64[0 2 ** 63 - 1])bytesRequested);
+    if (result <= 0) {
+        return 0;
+    }
+
+    return result / size;
+}
+
+internal unsafe inline fn i64[min max] ReadFileBytes(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle)
+    where overlap(buffer, handle) {
+    if (handle == null || buffer == null || length == 0) {
+        return 0;
+    }
+
+    stack i64[min max] result = read(HandleToFd(handle), buffer, length);
+    if (result <= 0) {
+        return 0;
+    }
+
+    return result;
+}
+
+internal unsafe inline fn i64[min max] WriteFileBytes(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle)
+    where overlap(buffer, handle) {
+    if (handle == null || buffer == null || length == 0) {
+        return 0;
+    }
+
+    stack i64[min max] result = write(HandleToFd(handle), buffer, length);
+    if (result <= 0) {
+        return 0;
+    }
+
+    return result;
+}
+
+internal unsafe inline fn i64[min max] ReadFileBytesFast(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle)
+    where overlap(buffer, handle) {
+    return ReadFileBytes(buffer, length, handle);
+}
+
+internal unsafe inline fn i64[min max] WriteFileBytesFast(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle)
+    where overlap(buffer, handle) {
+    return WriteFileBytes(buffer, length, handle);
+}
+
+internal unsafe inline fn i64[min max] SeekFile(rawptr<i8[min max]> handle, i64[min max] offset, i32[min max] origin) {
+    if (handle == null) {
+        return -1;
+    }
+
+    stack i64[min max] result = lseek(HandleToFd(handle), offset, origin);
+    if (result < 0) {
+        return (i64[min max])NegativeErrno();
+    }
+
+    return result;
+}
+
+internal fn i32[min max] DeleteFile(ascii path) {
+    unsafe {
+        stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+        stack mut Ascii preparedPath = new Ascii();
+        preparedPath.Data = pathBuffer.WritePointer();
+        preparedPath.Length = 0;
+        preparedPath.Capacity = pathBuffer.Writable();
+
+        if (!TryBuildMacOSPath(&preparedPath, path)) {
+            return -1;
+        }
+
+        if (unlink(preparedPath.Data) == 0) {
+            return 0;
+        }
+
+        return NegativeErrno();
+    }
+}
+
+internal fn i32[min max] MoveFile(ascii oldPath, ascii newPath) {
+    unsafe {
+        stack mut System.Runtime.Buffer.FixedByteBuffer4096 oldPathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+        stack mut System.Runtime.Buffer.FixedByteBuffer4096 newPathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+        stack mut Ascii preparedOldPath = new Ascii();
+        preparedOldPath.Data = oldPathBuffer.WritePointer();
+        preparedOldPath.Length = 0;
+        preparedOldPath.Capacity = oldPathBuffer.Writable();
+        stack mut Ascii preparedNewPath = new Ascii();
+        preparedNewPath.Data = newPathBuffer.WritePointer();
+        preparedNewPath.Length = 0;
+        preparedNewPath.Capacity = newPathBuffer.Writable();
+
+        if (!TryBuildMacOSPath(&preparedOldPath, oldPath)
+            || !TryBuildMacOSPath(&preparedNewPath, newPath)) {
+            return -1;
+        }
+
+        if (rename(preparedOldPath.Data, preparedNewPath.Data) == 0) {
+            return 0;
+        }
+
+        return NegativeErrno();
+    }
+}
+
+internal unsafe fn bool TryReadPathMode(ascii path, rawmutptr<i32[min max]> mode) {
+    if (mode == null) {
+        return false;
+    }
+
+    stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+    stack mut System.Runtime.Buffer.FixedByteBuffer512 statBuffer = new System.Runtime.Buffer.FixedByteBuffer512();
+    stack mut Ascii preparedPath = new Ascii();
+    preparedPath.Data = pathBuffer.WritePointer();
+    preparedPath.Length = 0;
+    preparedPath.Capacity = pathBuffer.Writable();
+
+    if (!TryBuildMacOSPath(&preparedPath, path)) {
+        return false;
+    }
+
+    stack rawmutptr<i8[min max]> statData = statBuffer.WritePointer();
+    if (statData == null) {
+        return false;
+    }
+
+    if (stat(preparedPath.Data, statData) != 0) {
+        return false;
+    }
+
+    stack rawptr<i16[min max]> modePointer = (rawptr<i16[min max]>)(&statData[MacOSStatModeOffset]);
+    *mode = UnsignedShort(*modePointer);
+    return true;
+}
+
+internal fn bool PathExists(ascii path) {
+    unsafe {
+        stack mut i32[min max] mode = 0;
+        return TryReadPathMode(path, &mode);
+    }
+}
+
+internal fn bool FileExists(ascii path) {
+    return PathExists(path);
+}
+
+internal fn bool IsDirectory(ascii path) {
+    unsafe {
+        stack mut i32[min max] mode = 0;
+        if (!TryReadPathMode(path, &mode)) {
+            return false;
+        }
+
+        return (mode & MacOSStatTypeMask) == MacOSStatDirectoryType;
+    }
+}
+
+internal fn bool IsFile(ascii path) {
+    unsafe {
+        stack mut i32[min max] mode = 0;
+        if (!TryReadPathMode(path, &mode)) {
+            return false;
+        }
+
+        return (mode & MacOSStatTypeMask) == MacOSStatRegularType;
+    }
+}
+
+internal fn i32[min max] CreateDirectory(ascii path) {
+    unsafe {
+        stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+        stack mut Ascii preparedPath = new Ascii();
+        preparedPath.Data = pathBuffer.WritePointer();
+        preparedPath.Length = 0;
+        preparedPath.Capacity = pathBuffer.Writable();
+
+        if (!TryBuildMacOSPath(&preparedPath, path)) {
+            return -1;
+        }
+
+        if (mkdir(preparedPath.Data, MacOSDefaultDirectoryMode) == 0) {
+            return 0;
+        }
+
+        return NegativeErrno();
+    }
+}
+
+internal fn i32[min max] DeleteDirectory(ascii path) {
+    unsafe {
+        stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+        stack mut Ascii preparedPath = new Ascii();
+        preparedPath.Data = pathBuffer.WritePointer();
+        preparedPath.Length = 0;
+        preparedPath.Capacity = pathBuffer.Writable();
+
+        if (!TryBuildMacOSPath(&preparedPath, path)) {
+            return -1;
+        }
+
+        if (rmdir(preparedPath.Data) == 0) {
+            return 0;
+        }
+
+        return NegativeErrno();
+    }
+}
+
+internal unsafe fn rawptr<i8[min max]> OpenDirectory(ascii path)
+{
+    stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
+    stack mut Ascii preparedPath = new Ascii();
+    preparedPath.Data = pathBuffer.WritePointer();
+    preparedPath.Length = 0;
+    preparedPath.Capacity = pathBuffer.Writable();
+
+    if (!TryBuildMacOSPath(&preparedPath, path)) {
+        return null;
+    }
+
+    return (rawptr<i8[min max]>)opendir(preparedPath.Data);
+}
+
+internal unsafe fn rawptr<i8[min max]> OpenDirectoryFast(ascii path)
+{
+    return OpenDirectory(path);
+}
+
+internal unsafe fn rawptr<i8[min max]> OpenDirectoryFastInto(
+    ascii path,
+    rawmutptr<i8[min max]>[capacity] buffer,
+    u64[0 2 ** 63 - 1] capacity,
+    rawmutptr<i64[min max]> initialLength)
+{
+    if (initialLength != null) {
+        *initialLength = 0;
+    }
+
+    return OpenDirectory(path);
+}
+
+internal inline fn u64[0 2 ** 63 - 1] DirectoryBufferCapacity() {
+    return 1;
+}
+
+internal unsafe inline fn i32[min max] CloseDirectory(rawptr<i8[min max]> handle) {
+    if (handle == null) {
+        return 0;
+    }
+
+    if (closedir(handle) == 0) {
+        return 0;
+    }
+
+    return NegativeErrno();
+}
+
+internal unsafe fn i32[min max] ReadDirectoryEntry(
+    rawptr<i8[min max]> handle,
+    rawmutptr<i8[min max]>[capacity] buffer,
+    u64[0 2 ** 63 - 1] capacity,
+    rawmutptr<i64[min max]> readPos,
+    rawmutptr<i64[min max]> readLength,
+    rawmutptr<Ascii> name,
+    rawmutptr<i32[min max]> kind)
+    where overlap(handle, buffer),
+          overlap(handle, readPos),
+          overlap(handle, readLength),
+          overlap(handle, name),
+          overlap(handle, kind)
+{
+    if (handle == null || name == null || kind == null) {
+        return -1;
+    }
+
+    stack rawmutptr<i8[min max]> nameData = (*name).Data;
+    stack i64[min max] nameCapacity = (*name).Capacity;
+
+    while willexit (true) {
+        stack rawmutptr<i8[min max]> entry = readdir(handle);
+        if (entry == null) {
+            *kind = 0;
+            *name = new Ascii() {
+                Data = nameData,
+                Length = -1,
+                Capacity = nameCapacity
+            };
+            return 0;
+        }
+
+        stack rawptr<i16[min max]> nameLengthPointer = (rawptr<i16[min max]>)(&entry[MacOSDirectoryEntryNameLengthOffset]);
+        stack i64[min max] entryNameLength = (i64[min max])UnsignedShort(*nameLengthPointer);
+        stack rawptr<i8[min max]> entryNameData = (rawptr<i8[min max]>)(&entry[MacOSDirectoryEntryNameOffset]);
+
+        if (IsDotDirectoryEntry(entryNameData, entryNameLength)) {
+            continue;
+        }
+
+        if (entryNameLength > nameCapacity || (entryNameLength > 0 && nameData == null)) {
+            *kind = -1;
+            *name = new Ascii() {
+                Data = nameData,
+                Length = -2,
+                Capacity = nameCapacity
+            };
+            return -1;
+        }
+
+        stack mut i64[min max] copyIndex = 0;
+        while willexit (copyIndex < entryNameLength) {
+            *(&nameData[copyIndex]) = *(&entryNameData[copyIndex]);
+            copyIndex += 1;
+        }
+
+        stack i8[min max] rawEntryType = *(&entry[MacOSDirectoryEntryTypeOffset]);
+        *name = new Ascii() {
+            Data = nameData,
+            Length = entryNameLength,
+            Capacity = nameCapacity
+        };
+        *kind = DirectoryEntryKindFromMacOSType(UnsignedByte(rawEntryType));
+        return 1;
+    }
+}
+
+internal unsafe inline fn i32[min max] ReadDirectoryEntryInfo(
+    rawptr<i8[min max]> handle,
+    rawmutptr<i8[min max]>[capacity] buffer,
+    u64[0 2 ** 63 - 1] capacity,
+    rawmutptr<i64[min max]> readPos,
+    rawmutptr<i64[min max]> readLength,
+    rawmutptr<i64[min max]> nameLength,
+    rawmutptr<i32[min max]> kind)
+    where overlap(handle, buffer),
+          overlap(handle, readPos),
+          overlap(handle, readLength),
+          overlap(handle, nameLength),
+          overlap(handle, kind)
+{
+    if (handle == null || nameLength == null || kind == null) {
+        return -1;
+    }
+
+    while willexit (true) {
+        stack rawmutptr<i8[min max]> entry = readdir(handle);
+        if (entry == null) {
+            *kind = 0;
+            *nameLength = -1;
+            return 0;
+        }
+
+        stack rawptr<i16[min max]> nameLengthPointer = (rawptr<i16[min max]>)(&entry[MacOSDirectoryEntryNameLengthOffset]);
+        stack i64[min max] entryNameLength = (i64[min max])UnsignedShort(*nameLengthPointer);
+        stack rawptr<i8[min max]> entryNameData = (rawptr<i8[min max]>)(&entry[MacOSDirectoryEntryNameOffset]);
+
+        if (IsDotDirectoryEntry(entryNameData, entryNameLength)) {
+            continue;
+        }
+
+        stack i8[min max] rawEntryType = *(&entry[MacOSDirectoryEntryTypeOffset]);
+        *nameLength = entryNameLength;
+        *kind = DirectoryEntryKindFromMacOSType(UnsignedByte(rawEntryType));
+        return 1;
+    }
+}
+
+internal unsafe inline fn i64[min max] ReadDirectoryNameLengthChecksum(
+    rawptr<i8[min max]> handle,
+    rawmutptr<i8[min max]>[capacity] buffer,
+    u64[0 2 ** 63 - 1] capacity,
+    rawmutptr<i64[min max]> readPos,
+    rawmutptr<i64[min max]> readLength,
+    i64[min max] expectedCount)
+    where overlap(handle, buffer),
+          overlap(handle, readPos),
+          overlap(handle, readLength)
+{
+    if (expectedCount < 0) {
+        return -1;
+    }
+
+    stack mut i64[min max] checksum = 0;
+    stack mut i64[min max] count = 0;
+    while willexit (true) {
+        stack mut i64[min max] nameLength = 0;
+        stack mut i32[min max] kind = 0;
+        stack i32[min max] status = ReadDirectoryEntryInfo(handle, buffer, capacity, readPos, readLength, &nameLength, &kind);
+        if (status == 0) {
+            if (count == expectedCount) {
+                return checksum;
+            }
+
+            return -1;
+        }
+
+        if (status != 1 || nameLength < 0) {
+            return -1;
+        }
+
+        checksum += nameLength;
+        count += 1;
+        if (count > expectedCount) {
+            return -1;
+        }
+    }
+}
+
+internal unsafe fn bool TryCurrentDirectory(rawmutptr<Ascii> destination) {
+    stack rawmutptr<i8[min max]> data = (*destination).Data;
+    stack i64[min max] capacity = (*destination).Capacity;
+
+    if (data == null || capacity <= 0) {
+        *destination = new Ascii() {
+            Data = data,
+            Length = 0,
+            Capacity = capacity
+        };
+        return false;
+    }
+
+    stack rawmutptr<i8[min max]> result = getcwd(data, (u64[0 2 ** 63 - 1])capacity);
+    if (result == null) {
+        *destination = new Ascii() {
+            Data = data,
+            Length = 0,
+            Capacity = capacity
+        };
+        return false;
+    }
+
+    *destination = new Ascii() {
+        Data = data,
+        Length = CStringLength((rawptr<i8[min max]>)data, capacity),
+        Capacity = capacity
+    };
+    return true;
+}
+
+internal unsafe ffi fn rawmutptr<i8[min max]> ThreadEntryThunk(fnptr<fn i32[min max]()> entry) {
+    stack i32[min max] exitCode = entry();
+    return (rawmutptr<i8[min max]>)exitCode;
+}
+
+internal unsafe fn rawmutptr<i8[min max]> StartThread(fnptr<fn i32[min max]()> entry) {
+    stack mut rawmutptr<i8[min max]> thread = null;
+    stack i32[min max] result = pthread_create(&thread, null, ThreadEntryThunk, entry);
+    if (result != 0) {
+        return null;
+    }
+
+    return thread;
+}
+
+internal unsafe fn i32[min max] JoinThread(rawmutptr<i8[min max]> handle, rawmutptr<i32[min max]> exitCode) {
+    if (handle == null || exitCode == null) {
+        return -1;
+    }
+
+    stack mut rawmutptr<i8[min max]> threadResult = null;
+    stack i32[min max] status = pthread_join(handle, &threadResult);
+    if (status != 0) {
+        return -status;
+    }
+
+    *exitCode = (i32[min max])threadResult;
+    return 0;
+}
+
+internal unsafe fn i32[min max] DetachThread(rawmutptr<i8[min max]> handle) {
+    if (handle == null) {
+        return -1;
+    }
+
+    stack i32[min max] status = pthread_detach(handle);
+    if (status != 0) {
+        return -status;
+    }
+
+    return 0;
+}
+
+internal fn void YieldThread() {
+    unsafe {
+        sched_yield();
+        return;
+    }
+}
+
+internal fn void SleepThreadMilliseconds(u64[0 2 ** 63 - 1] milliseconds) {
+    unsafe {
+        if (milliseconds == 0) {
+            return;
+        }
+
+        stack MacOSTimespec request = new MacOSTimespec() {
+            Seconds = (i64[min max])(milliseconds / 1000),
+            Nanoseconds = (i64[min max])((milliseconds % 1000) * 1000000)
+        };
+        nanosleep(&request, null);
+        return;
+    }
+}
+
+internal unsafe fn i32[min max] WaitForEvents(rawptr<i8[min max]> handle, i16[min max] events, i32[min max] timeoutMilliseconds) {
+    if (handle == null) {
+        return -1;
+    }
+
+    stack mut MacOSPollFd[1] descriptors;
+    init descriptors[0] = new MacOSPollFd() {
+        FileDescriptor = HandleToFd(handle),
+        Events = events,
+        Revents = 0
+    };
+
+    stack i32[min max] result = poll(&descriptors[0], 1, timeoutMilliseconds);
+    if (result < 0) {
+        return NegativeErrno();
+    }
+
+    return result;
+}
+
+internal unsafe fn i32[min max] WaitReadable(rawptr<i8[min max]> handle, i32[min max] timeoutMilliseconds) {
+    return WaitForEvents(handle, (i16[min max])MacOSPollReadableEvent, timeoutMilliseconds);
+}
+
+internal unsafe fn i32[min max] WaitWritable(rawptr<i8[min max]> handle, i32[min max] timeoutMilliseconds) {
+    return WaitForEvents(handle, (i16[min max])MacOSPollWritableEvent, timeoutMilliseconds);
+}
+
+internal unsafe fn i32[min max] FutexWait(rawmutptr<i32[min max]> address, i32[min max] expected) {
+    if (address == null) {
+        return -14;
+    }
+
+    if (*address != expected) {
+        return -11;
+    }
+
+    stack i32[min max] result = os_sync_wait_on_address(
+        (rawmutptr<i8[min max]>)address,
+        (i64[min max])expected,
+        MacOSSyncAddressSizeI32,
+        MacOSSyncAddressDefaultFlags);
+    if (result == 0) {
+        return 0;
+    }
+
+    return NegativeErrno();
+}
+
+internal unsafe fn i32[min max] FutexWake(rawmutptr<i32[min max]> address, i32[min max] count) {
+    if (address == null) {
+        return -14;
+    }
+
+    if (count <= 0) {
+        return 0;
+    }
+
+    if (count == 1) {
+        os_sync_wake_by_address_any(
+            (rawmutptr<i8[min max]>)address,
+            MacOSSyncAddressSizeI32,
+            MacOSSyncAddressDefaultFlags);
+        return 0;
+    }
+
+    os_sync_wake_by_address_all(
+        (rawmutptr<i8[min max]>)address,
+        MacOSSyncAddressSizeI32,
+        MacOSSyncAddressDefaultFlags);
+    return 0;
+}
+
+internal unsafe fn void WriteTcpIPv4Sockaddr(
+    rawmutptr<i8[min max]> destination,
+    u8[0 max] a,
+    u8[0 max] b,
+    u8[0 max] c,
+    u8[0 max] d,
+    u16[0 max] port)
+{
+    if (destination == null) {
+        return;
+    }
+
+    stack mut i64[min max] index = 0;
+    while willexit (index < MacOSSockaddrInLength) {
+        *(&destination[index]) = (i8[min max])0;
+        index += 1;
+    }
+
+    stack i32[min max] portValue = (i32[min max])port;
+    *(&destination[0]) = (i8[min max])MacOSSockaddrInLength;
+    *(&destination[1]) = (i8[min max])MacOSAddressFamilyInet;
+    *(&destination[2]) = (i8[min max])(portValue >> 8);
+    *(&destination[3]) = (i8[min max])(portValue & 255);
+    *(&destination[4]) = (i8[min max])a;
+    *(&destination[5]) = (i8[min max])b;
+    *(&destination[6]) = (i8[min max])c;
+    *(&destination[7]) = (i8[min max])d;
+}
+
+internal unsafe fn void PrepareSocket(i32[min max] fileDescriptor) {
+    fcntl(fileDescriptor, MacOSFileControlSetFd, MacOSFileDescriptorCloseOnExec);
+
+    stack mut i32[min max] enabled = 1;
+    setsockopt(
+        fileDescriptor,
+        MacOSSolSocket,
+        MacOSSocketNoSigPipe,
+        (rawptr<i8[min max]>)(&enabled),
+        4);
+    return;
+}
+
+internal unsafe fn rawptr<i8[min max]> OpenTcpSocket(rawmutptr<i32[min max]> status) {
+    stack i32[min max] fileDescriptor = socket(MacOSAddressFamilyInet, MacOSSocketStream, MacOSSocketProtocolTcp);
+    if (fileDescriptor < 0) {
+        if (status != null) {
+            *status = NegativeErrno();
+        }
+
+        return null;
+    }
+
+    PrepareSocket(fileDescriptor);
+    return FdToHandle(fileDescriptor);
+}
+
+internal unsafe fn rawptr<i8[min max]> ConnectTcpIPv4(
+    u8[0 max] a,
+    u8[0 max] b,
+    u8[0 max] c,
+    u8[0 max] d,
+    u16[0 max] port,
+    rawmutptr<i32[min max]> status)
+{
+    if (status != null) {
+        *status = 0;
+    }
+
+    stack rawptr<i8[min max]> handle = OpenTcpSocket(status);
+    if (handle == null) {
+        return null;
+    }
+
+    stack mut i8[min max][16] address;
+    WriteTcpIPv4Sockaddr(&address[0], a, b, c, d, port);
+
+    if (connect(HandleToFd(handle), (rawptr<i8[min max]>)(&address[0]), MacOSSockaddrInLength) != 0) {
+        stack i32[min max] error = NegativeErrno();
+        CloseSocket(handle);
+        if (status != null) {
+            *status = error;
+        }
+
+        return null;
+    }
+
+    return handle;
+}
+
+internal unsafe fn rawptr<i8[min max]> ListenTcpIPv4(
+    u8[0 max] a,
+    u8[0 max] b,
+    u8[0 max] c,
+    u8[0 max] d,
+    u16[0 max] port,
+    rawmutptr<i32[min max]> status)
+{
+    if (status != null) {
+        *status = 0;
+    }
+
+    stack rawptr<i8[min max]> handle = OpenTcpSocket(status);
+    if (handle == null) {
+        return null;
+    }
+
+    stack mut i32[min max] enabled = 1;
+    setsockopt(
+        HandleToFd(handle),
+        MacOSSolSocket,
+        MacOSSocketReuseAddress,
+        (rawptr<i8[min max]>)(&enabled),
+        4);
+
+    stack mut i8[min max][16] address;
+    WriteTcpIPv4Sockaddr(&address[0], a, b, c, d, port);
+
+    if (bind(HandleToFd(handle), (rawptr<i8[min max]>)(&address[0]), MacOSSockaddrInLength) != 0) {
+        stack i32[min max] error = NegativeErrno();
+        CloseSocket(handle);
+        if (status != null) {
+            *status = error;
+        }
+
+        return null;
+    }
+
+    if (listen(HandleToFd(handle), MacOSDefaultTcpListenBacklog) != 0) {
+        stack i32[min max] error = NegativeErrno();
+        CloseSocket(handle);
+        if (status != null) {
+            *status = error;
+        }
+
+        return null;
+    }
+
+    return handle;
+}
+
+internal unsafe fn i64[min max] ReadSocket(
+    rawptr<i8[min max]> handle,
+    rawmutptr<i8[min max]>[capacity] buffer,
+    u64[0 2 ** 63 - 1] capacity)
+    where overlap(handle, buffer)
+{
+    if (handle == null) {
+        return -107;
+    }
+
+    if (capacity == 0) {
+        return 0;
+    }
+
+    if (buffer == null) {
+        return -14;
+    }
+
+    stack i64[min max] result = recv(HandleToFd(handle), buffer, capacity, 0);
+    if (result < 0) {
+        return (i64[min max])NegativeErrno();
+    }
+
+    return result;
+}
+
+internal unsafe fn i64[min max] WriteSocket(
+    rawptr<i8[min max]> handle,
+    rawptr<i8[min max]>[length] buffer,
+    u64[0 2 ** 63 - 1] length)
+    where overlap(handle, buffer)
+{
+    if (handle == null) {
+        return -107;
+    }
+
+    if (length == 0) {
+        return 0;
+    }
+
+    if (buffer == null) {
+        return -14;
+    }
+
+    stack i64[min max] result = send(HandleToFd(handle), buffer, length, 0);
+    if (result < 0) {
+        return (i64[min max])NegativeErrno();
+    }
+
+    return result;
+}
+
+internal unsafe fn i64[min max] ReadSocketVector2(
+    rawptr<i8[min max]> handle,
+    rawmutptr<i8[min max]>[firstCapacity] firstBuffer,
+    u64[0 2 ** 63 - 1] firstCapacity,
+    rawmutptr<i8[min max]>[secondCapacity] secondBuffer,
+    u64[0 2 ** 63 - 1] secondCapacity)
+    where overlap(handle, firstBuffer),
+          overlap(handle, secondBuffer)
+{
+    if (firstCapacity == 0) {
+        return ReadSocket(handle, secondBuffer, secondCapacity);
+    }
+
+    if (secondCapacity == 0) {
+        return ReadSocket(handle, firstBuffer, firstCapacity);
+    }
+
+    if (handle == null) {
+        return -107;
+    }
+
+    if (firstBuffer == null || secondBuffer == null) {
+        return -14;
+    }
+
+    stack mut MacOSIovec[2] vectors;
+    init vectors[0] = new MacOSIovec() {
+        Base = (rawptr<i8[min max]>)firstBuffer,
+        Length = firstCapacity
+    };
+    init vectors[1] = new MacOSIovec() {
+        Base = (rawptr<i8[min max]>)secondBuffer,
+        Length = secondCapacity
+    };
+
+    stack i64[min max] result = readv(HandleToFd(handle), &vectors[0], 2);
+    if (result < 0) {
+        return (i64[min max])NegativeErrno();
+    }
+
+    return result;
+}
+
+internal unsafe fn i64[min max] WriteSocketVector2(
+    rawptr<i8[min max]> handle,
+    rawptr<i8[min max]>[firstLength] firstBuffer,
+    u64[0 2 ** 63 - 1] firstLength,
+    rawptr<i8[min max]>[secondLength] secondBuffer,
+    u64[0 2 ** 63 - 1] secondLength)
+    where overlap(handle, firstBuffer),
+          overlap(handle, secondBuffer)
+{
+    if (firstLength == 0) {
+        return WriteSocket(handle, secondBuffer, secondLength);
+    }
+
+    if (secondLength == 0) {
+        return WriteSocket(handle, firstBuffer, firstLength);
+    }
+
+    if (handle == null) {
+        return -107;
+    }
+
+    if (firstBuffer == null || secondBuffer == null) {
+        return -14;
+    }
+
+    stack mut MacOSIovec[2] vectors;
+    init vectors[0] = new MacOSIovec() {
+        Base = firstBuffer,
+        Length = firstLength
+    };
+    init vectors[1] = new MacOSIovec() {
+        Base = secondBuffer,
+        Length = secondLength
+    };
+
+    stack i64[min max] result = writev(HandleToFd(handle), &vectors[0], 2);
+    if (result < 0) {
+        return (i64[min max])NegativeErrno();
+    }
+
+    return result;
+}
+
+internal unsafe fn rawptr<i8[min max]> AcceptSocket(
+    rawptr<i8[min max]> handle,
+    rawmutptr<i32[min max]> status)
+{
+    if (status != null) {
+        *status = 0;
+    }
+
+    if (handle == null) {
+        if (status != null) {
+            *status = -107;
+        }
+
+        return null;
+    }
+
+    stack i32[min max] accepted = accept(HandleToFd(handle), null, null);
+    if (accepted < 0) {
+        if (status != null) {
+            *status = NegativeErrno();
+        }
+
+        return null;
+    }
+
+    PrepareSocket(accepted);
+    return FdToHandle(accepted);
+}
+
+internal unsafe fn i32[min max] ShutdownSocket(rawptr<i8[min max]> handle, i32[min max] how) {
+    if (handle == null) {
+        return -107;
+    }
+
+    if (how < 0 || how > 2) {
+        return -95;
+    }
+
+    if (shutdown(HandleToFd(handle), how) == 0) {
+        return 0;
+    }
+
+    return NegativeErrno();
+}
+
+internal unsafe fn i32[min max] CloseSocket(rawptr<i8[min max]> handle) {
+    return CloseFile(handle);
+}

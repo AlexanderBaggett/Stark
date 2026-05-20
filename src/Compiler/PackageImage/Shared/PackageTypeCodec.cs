@@ -17,6 +17,9 @@ internal static partial class PackageImageBuilder
         var normalizedNamedType = type.NamedType is null
             ? null
             : QualifyModuleLocalNamedType(type, moduleName, localNamedTypes);
+        var callableFunctionKind = GetPackageCallableFunctionKind(type);
+        var callableReturnType = GetCallableReturnType(type);
+        var callableParameterTypes = GetCallableParameterTypes(type);
         return new StarkPackageTypeReference(
             type.Kind.ToString().ToLowerInvariant(),
             Name: normalizedNamedType,
@@ -34,13 +37,18 @@ internal static partial class PackageImageBuilder
             TypeArguments: type.TypeArguments is { Count: > 0 }
                 ? type.TypeArguments.Select(argument => BuildPublishedAbiTypeReference(argument, moduleName, localNamedTypes)).ToArray()
                 : null,
-            FunctionKind: type.FunctionPointerKind is null ? null : RenderPackageFunctionKind(type.FunctionPointerKind.Value),
-            ReturnType: type.FunctionPointerReturnType is null
+            FunctionKind: callableFunctionKind is null ? null : RenderPackageFunctionKind(callableFunctionKind.Value),
+            ClosureStorageKind: type.Kind == StarkTypeKind.Closure ? RenderPackageClosureStorageKind(type.ClosureStorageKind) : null,
+            ClosureCallCapability: type.Kind == StarkTypeKind.Closure ? RenderPackageClosureCallCapability(type.ClosureCallCapability) : null,
+            ReturnType: callableReturnType is null
                 ? null
-                : BuildPublishedAbiTypeReference(type.FunctionPointerReturnType, moduleName, localNamedTypes),
-            ParameterTypes: type.FunctionPointerParameterTypes is { Count: > 0 }
-                ? type.FunctionPointerParameterTypes.Select(parameter => BuildPublishedAbiTypeReference(parameter, moduleName, localNamedTypes)).ToArray()
-                : null);
+                : BuildPublishedAbiTypeReference(callableReturnType, moduleName, localNamedTypes),
+            ParameterTypes: callableParameterTypes is { Count: > 0 }
+                ? callableParameterTypes.Select(parameter => BuildPublishedAbiTypeReference(parameter, moduleName, localNamedTypes)).ToArray()
+                : null,
+            ParameterRawPointerElementCountExpressions: GetCallableRawPointerElementCountExpressions(type),
+            OverlapParameterGroups: BuildParameterOverlapGroupManifests(GetCallableOverlapParameterGroups(type)),
+            SameParameterGroups: BuildParameterSameGroupManifests(GetCallableSameParameterGroups(type)));
     }
 
     private static string ComputePublishedPackageAbiSymbolName(
@@ -124,6 +132,9 @@ internal static partial class PackageImageBuilder
         var normalizedNamedType = type.NamedType is null
             ? null
             : NormalizeNamedType(type, moduleName, stripCurrentModulePrefix);
+        var callableFunctionKind = GetPackageCallableFunctionKind(type);
+        var callableReturnType = GetCallableReturnType(type);
+        var callableParameterTypes = GetCallableParameterTypes(type);
         return new StarkPackageTypeReference(
             type.Kind.ToString().ToLowerInvariant(),
             Name: normalizedNamedType,
@@ -141,13 +152,78 @@ internal static partial class PackageImageBuilder
             TypeArguments: type.TypeArguments is { Count: > 0 }
                 ? type.TypeArguments.Select(argument => BuildTypeReference(argument, moduleName, stripCurrentModulePrefix)).ToArray()
                 : null,
-            FunctionKind: type.FunctionPointerKind is null ? null : RenderPackageFunctionKind(type.FunctionPointerKind.Value),
-            ReturnType: type.FunctionPointerReturnType is null
+            FunctionKind: callableFunctionKind is null ? null : RenderPackageFunctionKind(callableFunctionKind.Value),
+            ClosureStorageKind: type.Kind == StarkTypeKind.Closure ? RenderPackageClosureStorageKind(type.ClosureStorageKind) : null,
+            ClosureCallCapability: type.Kind == StarkTypeKind.Closure ? RenderPackageClosureCallCapability(type.ClosureCallCapability) : null,
+            ReturnType: callableReturnType is null
                 ? null
-                : BuildTypeReference(type.FunctionPointerReturnType, moduleName, stripCurrentModulePrefix),
-            ParameterTypes: type.FunctionPointerParameterTypes is { Count: > 0 }
-                ? type.FunctionPointerParameterTypes.Select(parameter => BuildTypeReference(parameter, moduleName, stripCurrentModulePrefix)).ToArray()
-                : null);
+                : BuildTypeReference(callableReturnType, moduleName, stripCurrentModulePrefix),
+            ParameterTypes: callableParameterTypes is { Count: > 0 }
+                ? callableParameterTypes.Select(parameter => BuildTypeReference(parameter, moduleName, stripCurrentModulePrefix)).ToArray()
+                : null,
+            ParameterRawPointerElementCountExpressions: GetCallableRawPointerElementCountExpressions(type),
+            OverlapParameterGroups: BuildParameterOverlapGroupManifests(GetCallableOverlapParameterGroups(type)),
+            SameParameterGroups: BuildParameterSameGroupManifests(GetCallableSameParameterGroups(type)));
+    }
+
+    private static StarkFunctionKind? GetPackageCallableFunctionKind(StarkTypeSymbol type)
+    {
+        return type.Kind switch
+        {
+            StarkTypeKind.FunctionPointer => type.FunctionPointerKind,
+            StarkTypeKind.Closure => type.ClosureFunctionKind,
+            _ => null
+        };
+    }
+
+    private static StarkTypeSymbol? GetCallableReturnType(StarkTypeSymbol type)
+    {
+        return type.Kind switch
+        {
+            StarkTypeKind.FunctionPointer => type.FunctionPointerReturnType,
+            StarkTypeKind.Closure => type.ClosureReturnType,
+            _ => null
+        };
+    }
+
+    private static IReadOnlyList<StarkTypeSymbol>? GetCallableParameterTypes(StarkTypeSymbol type)
+    {
+        return type.Kind switch
+        {
+            StarkTypeKind.FunctionPointer => type.FunctionPointerParameterTypes,
+            StarkTypeKind.Closure => type.ClosureParameterTypes,
+            _ => null
+        };
+    }
+
+    private static IReadOnlyList<string?>? GetCallableRawPointerElementCountExpressions(StarkTypeSymbol type)
+    {
+        return type.Kind switch
+        {
+            StarkTypeKind.FunctionPointer => type.FunctionPointerParameterRawPointerElementCountExpressions,
+            StarkTypeKind.Closure => type.ClosureParameterRawPointerElementCountExpressions,
+            _ => null
+        };
+    }
+
+    private static IReadOnlyList<ParameterOverlapGroup> GetCallableOverlapParameterGroups(StarkTypeSymbol type)
+    {
+        return type.Kind switch
+        {
+            StarkTypeKind.FunctionPointer => type.FunctionPointerOverlapParameterGroups ?? [],
+            StarkTypeKind.Closure => type.ClosureOverlapParameterGroups ?? [],
+            _ => []
+        };
+    }
+
+    private static IReadOnlyList<ParameterSameGroup> GetCallableSameParameterGroups(StarkTypeSymbol type)
+    {
+        return type.Kind switch
+        {
+            StarkTypeKind.FunctionPointer => type.FunctionPointerSameParameterGroups ?? [],
+            StarkTypeKind.Closure => type.ClosureSameParameterGroups ?? [],
+            _ => []
+        };
     }
 
     private static string RenderPackageFunctionKind(StarkFunctionKind kind)
@@ -158,6 +234,26 @@ internal static partial class PackageImageBuilder
             StarkFunctionKind.Law => "law",
             StarkFunctionKind.FiniteLaw => "finite law",
             _ => "fn"
+        };
+    }
+
+    private static string? RenderPackageClosureStorageKind(StarkClosureStorageKind storageKind)
+    {
+        return storageKind switch
+        {
+            StarkClosureStorageKind.Inline => "inline",
+            StarkClosureStorageKind.Heap => "heap",
+            _ => null
+        };
+    }
+
+    private static string? RenderPackageClosureCallCapability(StarkClosureCallCapability callCapability)
+    {
+        return callCapability switch
+        {
+            StarkClosureCallCapability.Mut => "mut",
+            StarkClosureCallCapability.Once => "once",
+            _ => null
         };
     }
 
@@ -366,7 +462,21 @@ internal static partial class PackageImageLoader
             "functionpointer" when type.ReturnType is not null => StarkTypeSymbols.FunctionPointer(
                 ParsePackageFunctionKind(type.FunctionKind),
                 BuildTypeSymbol(type.ReturnType, currentModuleName, localNamedTypes),
-                (type.ParameterTypes ?? []).Select(parameter => BuildTypeSymbol(parameter, currentModuleName, localNamedTypes)).ToArray()),
+                (type.ParameterTypes ?? []).Select(parameter => BuildTypeSymbol(parameter, currentModuleName, localNamedTypes)).ToArray(),
+                BuildTypeReferenceParameterDisjointGroups(type.DisjointParameterGroups),
+                BuildParameterOverlapGroups(type.OverlapParameterGroups),
+                BuildParameterSameGroups(type.SameParameterGroups),
+                type.ParameterRawPointerElementCountExpressions),
+            "closure" when type.ReturnType is not null => StarkTypeSymbols.Closure(
+                ParsePackageClosureStorageKind(type.ClosureStorageKind),
+                ParsePackageClosureCallCapability(type.ClosureCallCapability),
+                ParsePackageFunctionKind(type.FunctionKind),
+                BuildTypeSymbol(type.ReturnType, currentModuleName, localNamedTypes),
+                (type.ParameterTypes ?? []).Select(parameter => BuildTypeSymbol(parameter, currentModuleName, localNamedTypes)).ToArray(),
+                BuildTypeReferenceParameterDisjointGroups(type.DisjointParameterGroups),
+                BuildParameterOverlapGroups(type.OverlapParameterGroups),
+                BuildParameterSameGroups(type.SameParameterGroups),
+                type.ParameterRawPointerElementCountExpressions),
             "named" when type.TypeArguments is { Count: > 0 } => StarkTypeSymbols.GenericInstantiation(
                 normalizedNamedType ?? "<unnamed>",
                 type.TypeArguments.Select(argument => BuildTypeSymbol(argument, currentModuleName, localNamedTypes)).ToArray()),
@@ -390,6 +500,26 @@ internal static partial class PackageImageLoader
             "law" => StarkFunctionKind.Law,
             "finite law" or "finitelaw" => StarkFunctionKind.FiniteLaw,
             _ => StarkFunctionKind.Fn
+        };
+    }
+
+    private static StarkClosureStorageKind ParsePackageClosureStorageKind(string? storageKind)
+    {
+        return storageKind switch
+        {
+            "inline" => StarkClosureStorageKind.Inline,
+            "heap" => StarkClosureStorageKind.Heap,
+            _ => StarkClosureStorageKind.Unspecified
+        };
+    }
+
+    private static StarkClosureCallCapability ParsePackageClosureCallCapability(string? callCapability)
+    {
+        return callCapability switch
+        {
+            "mut" => StarkClosureCallCapability.Mut,
+            "once" => StarkClosureCallCapability.Once,
+            _ => StarkClosureCallCapability.None
         };
     }
 
@@ -446,7 +576,8 @@ internal static partial class PackageImageLoader
             "fixedarray" => $"{RenderTypeReference(type.ElementType!)}[{(type.FixedLength is { } fixedLength ? fixedLength.ToString() : "?")}]",
             "slice" => $"{RenderTypeReference(type.ElementType!)}[]",
             "dynamic" => $"dynamic {RenderTypeReference(type.ElementType!)}",
-            "functionpointer" => $"fnptr<{RenderTypeReferenceFunctionKind(type.FunctionKind)} {RenderTypeReference(type.ReturnType!)}({string.Join(", ", (type.ParameterTypes ?? []).Select(RenderTypeReference))})>",
+            "functionpointer" => $"fnptr<{RenderTypeReferenceFunctionKind(type.FunctionKind)} {RenderTypeReference(type.ReturnType!)}({string.Join(", ", (type.ParameterTypes ?? []).Select((parameter, index) => RenderFunctionPointerParameterTypeReference(parameter, type.ParameterRawPointerElementCountExpressions, index)))}){RenderFunctionPointerMemoryContracts(type)}>",
+            "closure" => $"{RenderClosureStoragePrefix(type.ClosureStorageKind)}closure<{RenderClosureCallCapabilityPrefix(type.ClosureCallCapability)}{RenderTypeReferenceFunctionKind(type.FunctionKind)} {RenderTypeReference(type.ReturnType!)}({string.Join(", ", (type.ParameterTypes ?? []).Select((parameter, index) => RenderFunctionPointerParameterTypeReference(parameter, type.ParameterRawPointerElementCountExpressions, index)))}){RenderFunctionPointerMemoryContracts(type)}>",
             "named" when type.TypeArguments is { Count: > 0 } => $"{type.Name}<{string.Join(", ", type.TypeArguments.Select(RenderTypeReference))}>",
             "named" => type.Name ?? "<unnamed>",
             _ => type.Name ?? type.Kind
@@ -466,6 +597,104 @@ internal static partial class PackageImageLoader
             "finite law" or "finitelaw" => "finite law",
             _ => "fn"
         };
+    }
+
+    private static string RenderClosureStoragePrefix(string? storageKind)
+    {
+        return storageKind switch
+        {
+            "inline" => "inline ",
+            "heap" => "heap ",
+            _ => string.Empty
+        };
+    }
+
+    private static string RenderClosureCallCapabilityPrefix(string? callCapability)
+    {
+        return callCapability switch
+        {
+            "mut" => "mut ",
+            "once" => "once ",
+            _ => string.Empty
+        };
+    }
+
+    private static string RenderFunctionPointerParameterTypeReference(
+        StarkPackageTypeReference parameterType,
+        IReadOnlyList<string?>? rawPointerElementCountExpressions,
+        int parameterIndex)
+    {
+        var typeText = RenderTypeReference(parameterType);
+        return rawPointerElementCountExpressions is not null
+               && parameterIndex >= 0
+               && parameterIndex < rawPointerElementCountExpressions.Count
+               && !string.IsNullOrWhiteSpace(rawPointerElementCountExpressions[parameterIndex])
+            ? $"{typeText}[{rawPointerElementCountExpressions[parameterIndex]}]"
+            : typeText;
+    }
+
+    private static string RenderFunctionPointerMemoryContracts(StarkPackageTypeReference type)
+    {
+        var clauses = new List<string>();
+        AppendFunctionPointerMemoryContractClauses(clauses, "overlap", type.OverlapParameterGroups);
+        AppendFunctionPointerMemoryContractClauses(clauses, "same", type.SameParameterGroups);
+        return clauses.Count == 0
+            ? string.Empty
+            : $" where {string.Join(", ", clauses)}";
+    }
+
+    private static void AppendFunctionPointerMemoryContractClauses(
+        List<string> clauses,
+        string relationName,
+        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? groups)
+    {
+        foreach (var group in groups ?? [])
+        {
+            var names = group.ParameterNames
+                .Where(static name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            if (names.Length >= 2)
+            {
+                clauses.Add($"{relationName}({string.Join(", ", names)})");
+            }
+        }
+    }
+
+    private static IReadOnlyList<ParameterDisjointGroup>? BuildTypeReferenceParameterDisjointGroups(
+        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? groups)
+    {
+        var result = groups?
+            .Select(static group =>
+            {
+                if (group.Regions is { Count: >= 2 } regions)
+                {
+                    var memoryRegions = regions
+                        .Where(static region => !string.IsNullOrWhiteSpace(region.ParameterName))
+                        .Select(static region => new ParameterMemoryRegion(
+                            region.ParameterName,
+                            region.StartExpression,
+                            region.CountExpression))
+                        .ToArray();
+                    var regionNames = memoryRegions
+                        .Select(static region => region.ParameterName)
+                        .Distinct(StringComparer.Ordinal)
+                        .ToArray();
+                    return memoryRegions.Length >= 2
+                        ? new ParameterDisjointGroup(regionNames, memoryRegions)
+                        : null;
+                }
+
+                var names = group.ParameterNames
+                    .Where(static name => !string.IsNullOrWhiteSpace(name))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                return names.Length >= 2 ? new ParameterDisjointGroup(names) : null;
+            })
+            .Where(static group => group is not null)
+            .Cast<ParameterDisjointGroup>()
+            .ToArray();
+        return result is { Length: > 0 } ? result : null;
     }
 }
 
@@ -493,9 +722,31 @@ file static class PackageImageIntegerTypeText
 
         if (rangeMin is not null && rangeMax is not null)
         {
-            return $"{prefix}{normalizedBitWidth}[{rangeMin} {rangeMax}]";
+            var renderedMin = RenderEndpoint(rangeMin, min, isLowerEndpoint: true, isUnsigned);
+            var renderedMax = RenderEndpoint(rangeMax, max, isLowerEndpoint: false, isUnsigned);
+            return $"{prefix}{normalizedBitWidth}[{renderedMin} {renderedMax}]";
         }
 
         return $"{prefix}{normalizedBitWidth}[{min} {max}]";
+    }
+
+    private static string RenderEndpoint(
+        string endpoint,
+        BigInteger typeBoundary,
+        bool isLowerEndpoint,
+        bool isUnsigned)
+    {
+        if (!BigInteger.TryParse(endpoint, out var value)
+            || value != typeBoundary)
+        {
+            return endpoint;
+        }
+
+        if (!isLowerEndpoint)
+        {
+            return "max";
+        }
+
+        return isUnsigned ? "0" : "min";
     }
 }

@@ -1,5 +1,5 @@
 param(
-    [int]$Runs = $(if ($env:STARK_BENCH_RUNS) { [int]$env:STARK_BENCH_RUNS } else { 20 }),
+    [int]$Runs = $(if ($env:STARK_BENCH_RUNS) { [int]$env:STARK_BENCH_RUNS } else { 100 }),
     [string]$Filter = $env:STARK_BENCH_FILTER,
     [string]$Subset = $env:STARK_BENCH_SUBSET,
     [string]$Target = $env:STARK_TARGET,
@@ -93,12 +93,6 @@ function Get-BenchmarkVariantDescriptor {
         return $null
     }
 
-    $prefix = ""
-    if ($stem.StartsWith("Experimental", [StringComparison]::Ordinal)) {
-        $prefix = "Experimental"
-        $stem = $stem.Substring("Experimental".Length)
-    }
-
     if ($category -ne "collections") {
         $subsystem = switch ($category) {
             "allocator" { "Memory" }
@@ -115,7 +109,6 @@ function Get-BenchmarkVariantDescriptor {
         }
 
         return [PSCustomObject]@{
-            Prefix = $prefix
             BenchmarkGroup = "benchmarks/$category/$stem"
         }
     }
@@ -153,7 +146,6 @@ function Get-BenchmarkVariantDescriptor {
 
     $canonicalStem = "$collection$scenario"
     return [PSCustomObject]@{
-        Prefix = $prefix
         BenchmarkGroup = "benchmarks/collections/$canonicalStem"
     }
 }
@@ -172,16 +164,9 @@ function Get-BenchmarkLabel {
         }
     }
 
-    $languageLabel = $Language
-    if ($Language -eq "stark") {
-        if ($descriptor.Prefix -eq "Experimental") {
-            $languageLabel = "stark-experimental"
-        }
-    }
-
     return [PSCustomObject]@{
         BenchmarkGroup = $descriptor.BenchmarkGroup
-        Language = $languageLabel
+        Language = $Language
     }
 }
 
@@ -864,6 +849,7 @@ function Write-MachineMetadata {
         "benchmark_compile_columns=compile_us total benchmark build wall time; llvm_object_us/link_us/toolchain_us from Stark --toolchain-metrics when available",
         "stark_target=$(if ([string]::IsNullOrWhiteSpace($Target)) { 'host-default' } else { $Target })",
         "stark_flags=--emit-exe -O3",
+        "stark_compiler_configuration=Release",
         "stark_compiler_args=$(if ([string]::IsNullOrWhiteSpace($ExtraCompilerArgs)) { '<none>' } else { $ExtraCompilerArgs })",
         "c_compiler=$CCompiler",
         "c_flags=$($cFlags -join ' ')",
@@ -962,6 +948,8 @@ function Compile-AndTimeStark {
     $metricsPath = "$OutputPath.metrics"
     $arguments = @(
         "run",
+        "-c",
+        "Release",
         "--project",
         (Join-Path $repoRoot "src"),
         "--",
@@ -1147,7 +1135,7 @@ try {
             RelativePath = $relativePath
             BenchmarkId = $benchmarkId
             BenchmarkGroup = $label.BenchmarkGroup
-            VariantOrder = if ($stem.StartsWith("Experimental", [StringComparison]::Ordinal)) { 1 } else { 0 }
+            VariantOrder = 0
         }
     } | Sort-Object BenchmarkGroup, VariantOrder, RelativePath)
 

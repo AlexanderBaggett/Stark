@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Stark.Parsing;
 
 namespace Stark.Compiler;
 
@@ -13,7 +14,7 @@ internal sealed record ModuleOptimizationSafetyFacts(
 
 internal static class CompilerCli
 {
-    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only|--emit-pkg|--emit-package|--inspect-pkg|--inspect-package] [-I dir|--search-dir dir]* [-L dir|--library-dir dir]* [--link-arg arg]* [--native-source path]* [--native-include-dir dir]* [--native-library-dir dir]* [--native-library name]* [--native-pkg-config name]* [--native-link-arg arg]* [--package-library-file name] [-o output] [--target triple] [--target-data-layout layout] [--target-cpu cpu] [--target-feature feature]* [--relocation-model mode] [--code-model model] [-O0|-Og|-O1|-O2|-O3|--optimize level] [--linker tool] [--archiver tool] [--save-temps dir] [--toolchain-metrics path] [--diagnostic-format format] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
+    private const string Usage = "Usage: compiler [path-to-stark-file] [--check|--emit-mir|--emit-ssa|--emit-llvm|--emit-obj|--compile-only|--emit-lib|--emit-exe|--link-only|--emit-pkg|--emit-package|--inspect-pkg|--inspect-package] [-I dir|--search-dir dir]* [-L dir|--library-dir dir]* [--link-arg arg]* [--native-source path]* [--native-include-dir dir]* [--native-library-dir dir]* [--native-library name]* [--native-pkg-config name]* [--native-link-arg arg]* [--package-library-file name] [-o output] [--target triple] [--target-data-layout layout] [--target-cpu cpu] [--target-feature feature]* [--relocation-model mode] [--code-model model] [-O0|-Og|-O1|-O2|-O3|--optimize level] [--strict-integer-ranges] [--linker tool] [--archiver tool] [--save-temps dir] [--toolchain-metrics path] [--diagnostic-format format] [--log-level level] [--log-verbosity mode] [--log-category name]* [--log-stage pass]* [--log-kind kind]*";
     private const int DiagnosticTabWidth = 4;
 
     public static async Task<int> RunAsync(string[] args, TextReader stdin, TextWriter stdout, TextWriter stderr)
@@ -53,6 +54,7 @@ internal static class CompilerCli
         var logCategories = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var logStages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var logKinds = new HashSet<CompilerLogKind>();
+        var strictIntegerRanges = true;
         var showHelp = false;
 
         for (var index = 0; index < args.Length; index++)
@@ -143,6 +145,12 @@ internal static class CompilerCli
             if (TryParseOptimizationLevelArgument(argument, out var shortOptimizationLevel))
             {
                 optimizationLevel = shortOptimizationLevel;
+                continue;
+            }
+
+            if (string.Equals(argument, "--strict-integer-ranges", StringComparison.Ordinal))
+            {
+                strictIntegerRanges = true;
                 continue;
             }
 
@@ -426,7 +434,11 @@ internal static class CompilerCli
             return await InspectPackageImageAsync(inputPath, outputPath, stdin, stdout, stderr, diagnosticFormat);
         }
 
-        var requiresTargetInfo = mode is CliMode.EmitLlvmIr or CliMode.EmitObject or CliMode.EmitLibrary or CliMode.EmitExecutable;
+        var requiresTargetInfo = mode is CliMode.Default
+            or CliMode.EmitLlvmIr
+            or CliMode.EmitObject
+            or CliMode.EmitLibrary
+            or CliMode.EmitExecutable;
         var targetInfo = ResolveTargetInfo(
             requiresTargetInfo,
             targetTriple,
@@ -438,17 +450,21 @@ internal static class CompilerCli
         var source = inputPath is not null
             ? await File.ReadAllTextAsync(inputPath)
             : await stdin.ReadToEndAsync();
+        var effectiveMode = mode == CliMode.Default
+            ? InferDefaultBuildMode(source, targetInfo)
+            : mode;
 
         var moduleResolver = ResolveModuleResolver(inputPath, searchDirectories, targetInfo);
         var pipeline = DefaultCompilerPipeline.Create();
         var compilerOptions = new CompilerOptions(
-            EmitLlvmIr: mode is CliMode.EmitLlvmIr or CliMode.EmitObject or CliMode.EmitLibrary or CliMode.EmitExecutable,
+            EmitLlvmIr: effectiveMode is CliMode.EmitLlvmIr or CliMode.EmitObject or CliMode.EmitLibrary or CliMode.EmitExecutable,
             TargetInfo: targetInfo,
-            StopAfterPassId: ResolveStopAfterPassId(mode),
+            StopAfterPassId: ResolveStopAfterPassId(effectiveMode),
             ModuleResolver: moduleResolver,
-            QualifyModuleSymbols: mode == CliMode.EmitLibrary,
+            QualifyModuleSymbols: effectiveMode == CliMode.EmitLibrary,
             OptimizationLevel: optimizationLevel,
-            InternalizeModulePrivate: mode == CliMode.EmitExecutable);
+            InternalizeModulePrivate: effectiveMode == CliMode.EmitExecutable,
+            EnforceIntegerRangeStorageRules: strictIntegerRanges);
         var nativeDependencies = new NativeDependencyCliOptions(
             nativeSources,
             nativeIncludeDirectories,
@@ -479,7 +495,7 @@ internal static class CompilerCli
 
         await WriteDiagnosticsAsync(stderr, result.Diagnostics, diagnosticFormat, succeeded: true, source, inputPath);
 
-        switch (mode)
+        switch (effectiveMode)
         {
             case CliMode.Check:
                 await stdout.WriteLineAsync("Check succeeded.");
@@ -499,9 +515,7 @@ internal static class CompilerCli
             case CliMode.EmitPackage:
                 return await EmitPackageImageAsync(outputPath, inputPath, stdout, stderr, result, packageLibraryFile, toolchainOptions.NativeDependencies, diagnosticFormat);
             default:
-                var executedPasses = result.Executions.Count(static execution => execution.Status == PassExecutionStatus.Executed);
-                await stdout.WriteLineAsync($"Compilation pipeline succeeded. Executed {executedPasses} passes.");
-                return 0;
+                throw new InvalidOperationException($"Unhandled compiler mode '{effectiveMode}'.");
         }
     }
 
@@ -521,7 +535,7 @@ internal static class CompilerCli
             return 1;
         }
 
-        var resolvedOutputPath = outputPath ?? DeriveExecutableOutputPath(inputPath, result);
+        var resolvedOutputPath = outputPath ?? DeriveExecutableOutputPath(inputPath, result, compilerOptions.TargetInfo);
         var linkInputs = new List<string>();
         var linkedLibraries = new HashSet<string>(StringComparer.Ordinal);
         var intermediateDirectory = CreateIntermediateDirectory(toolchainOptions.SaveTempsDirectory, "stark-link-", out var cleanupDirectory);
@@ -579,6 +593,7 @@ internal static class CompilerCli
                     sourceDependencyModules.Add(module);
                 }
 
+                var importedInlineCloneSeedsByModule = BuildImportedInlineCloneSeedsByModule(result);
                 var sourceDependencyResult = CompileAndEmitReferencedDependencyObjects(
                     sourceDependencyModules,
                     llvmModule.Text,
@@ -586,7 +601,8 @@ internal static class CompilerCli
                     intermediateDirectory,
                     preserveTemps: toolchainOptions.SaveTempsDirectory is not null,
                     toolchainMetrics: toolchainMetrics,
-                    enableLto: enableDependencyLto);
+                    enableLto: enableDependencyLto,
+                    importedInlineCloneSeedsByModule);
                 if (!sourceDependencyResult.Success)
                 {
                     await WriteDiagnosticsAsync(stderr, sourceDependencyResult.Diagnostics, diagnosticFormat, succeeded: false);
@@ -2021,7 +2037,7 @@ internal static class CompilerCli
         ToolchainMetrics? toolchainMetrics = null,
         bool enableLto = false)
     {
-        var dependencyResult = CompileDependencyLlvm(module, rootOptions);
+        var dependencyResult = CompileDependencyLlvm(module, rootOptions, importedInlineCloneSeedFunctions: null);
         if (!dependencyResult.Success)
         {
             return new DependencyCompileResult(
@@ -2050,12 +2066,16 @@ internal static class CompilerCli
         string intermediateDirectory,
         bool preserveTemps,
         ToolchainMetrics? toolchainMetrics,
-        bool enableLto)
+        bool enableLto,
+        IReadOnlyDictionary<string, IReadOnlySet<string>>? importedInlineCloneSeedsByModule)
     {
         var compiledModules = new List<DependencyLlvmCompileResult>(modules.Count);
         foreach (var module in modules)
         {
-            var dependencyResult = CompileDependencyLlvm(module, rootOptions);
+            var dependencyResult = CompileDependencyLlvm(
+                module,
+                rootOptions,
+                ResolveImportedInlineCloneSeedFunctions(module, importedInlineCloneSeedsByModule));
             if (!dependencyResult.Success)
             {
                 return new SourceDependencyLinkResult(
@@ -2165,9 +2185,326 @@ internal static class CompilerCli
         return llvmText.Contains("__stark_mono_", StringComparison.Ordinal);
     }
 
+    private static IReadOnlyDictionary<string, IReadOnlySet<string>>? BuildImportedInlineCloneSeedsByModule(
+        CompilationResult rootResult)
+    {
+        if (!rootResult.Artifacts.TryGet(CompilerArtifactKeys.SyntaxModel, out SyntaxModel? syntaxModel)
+            || syntaxModel is null
+            || !rootResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules)
+            || loadedModules is null
+            || !rootResult.Artifacts.TryGet(CompilerArtifactKeys.FunctionEffects, out FunctionEffectModel? effects)
+            || effects is null
+            || !rootResult.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa)
+            || ssa is null)
+        {
+            return null;
+        }
+
+        var entryFunctions = CollectRootHotPathEntryFunctions(syntaxModel, loadedModules, effects);
+        var reachableFunctions = new HashSet<string>(
+            CollectHotPathReachableFunctions(entryFunctions, ssa, effects),
+            StringComparer.Ordinal);
+        AddImportedTemplateBoundCallReachability(rootResult, loadedModules, reachableFunctions);
+        var seedsByModule = new Dictionary<string, IReadOnlySet<string>>(StringComparer.Ordinal);
+
+        foreach (var module in loadedModules.ImportedModules.Where(static module => !module.Reference.IsExternal))
+        {
+            var seeds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var qualifiedName in EnumerateImportedFunctionModelNames(module, effects))
+            {
+                if (reachableFunctions.Contains(qualifiedName)
+                    && TryGetImportedModuleLocalFunctionName(module.SyntaxModel.ModuleName, qualifiedName, out var localName))
+                {
+                    seeds.Add(localName);
+                }
+            }
+
+            if (seeds.Count != 0)
+            {
+                seedsByModule[module.SyntaxModel.ModuleName] = seeds;
+            }
+        }
+
+        return seedsByModule;
+    }
+
+    private static IEnumerable<string> EnumerateImportedFunctionModelNames(
+        LoadedModuleDocument module,
+        FunctionEffectModel effects)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var modulePrefix = $"{module.SyntaxModel.ModuleName}.";
+
+        foreach (var qualifiedName in effects.Functions.Keys)
+        {
+            if (qualifiedName.StartsWith(modulePrefix, StringComparison.Ordinal)
+                && seen.Add(qualifiedName))
+            {
+                yield return qualifiedName;
+            }
+        }
+
+        if (module.PackageImageFacts is not { } packageFacts)
+        {
+            yield break;
+        }
+
+        foreach (var qualifiedName in packageFacts.FunctionEffects.Keys)
+        {
+            if (qualifiedName.StartsWith(modulePrefix, StringComparison.Ordinal)
+                && seen.Add(qualifiedName))
+            {
+                yield return qualifiedName;
+            }
+        }
+
+        foreach (var qualifiedName in packageFacts.FunctionSignatures.Keys)
+        {
+            if (qualifiedName.StartsWith(modulePrefix, StringComparison.Ordinal)
+                && seen.Add(qualifiedName))
+            {
+                yield return qualifiedName;
+            }
+        }
+
+        foreach (var qualifiedName in packageFacts.FunctionTemplates.Keys)
+        {
+            if (qualifiedName.StartsWith(modulePrefix, StringComparison.Ordinal)
+                && seen.Add(qualifiedName))
+            {
+                yield return qualifiedName;
+            }
+        }
+    }
+
+    private static bool TryGetImportedModuleLocalFunctionName(
+        string moduleName,
+        string qualifiedName,
+        out string localName)
+    {
+        var modulePrefix = $"{moduleName}.";
+        if (!qualifiedName.StartsWith(modulePrefix, StringComparison.Ordinal)
+            || qualifiedName.Length == modulePrefix.Length)
+        {
+            localName = string.Empty;
+            return false;
+        }
+
+        localName = qualifiedName[modulePrefix.Length..];
+        return true;
+    }
+
+    private static void AddImportedTemplateBoundCallReachability(
+        CompilationResult rootResult,
+        LoadedModuleSet loadedModules,
+        HashSet<string> reachableFunctions)
+    {
+        var importedTemplates = new Dictionary<string, ImportedFunctionTemplateSummary>(StringComparer.Ordinal);
+        foreach (var module in loadedModules.ImportedModules)
+        {
+            if (module.PackageImageFacts is not { } packageFacts)
+            {
+                continue;
+            }
+
+            foreach (var (qualifiedName, template) in packageFacts.FunctionTemplates)
+            {
+                if (template.BoundOperations.Count != 0)
+                {
+                    importedTemplates[qualifiedName] = template;
+                }
+            }
+        }
+
+        if (importedTemplates.Count == 0)
+        {
+            return;
+        }
+
+        var specializationTemplateNames = rootResult.Artifacts.TryGet(
+            CompilerArtifactKeys.SpecializationCodegenStrategy,
+            out SpecializationCodegenStrategyModel? specializationStrategy)
+            && specializationStrategy is not null
+                ? specializationStrategy.Functions.ToDictionary(
+                    static function => function.SymbolName,
+                    static function => function.TemplateName,
+                    StringComparer.Ordinal)
+                : new Dictionary<string, string>(StringComparer.Ordinal);
+
+        var pending = new Queue<string>();
+        foreach (var functionName in reachableFunctions.ToArray())
+        {
+            pending.Enqueue(functionName);
+            if (specializationTemplateNames.TryGetValue(functionName, out var templateName))
+            {
+                Enqueue(templateName);
+            }
+        }
+
+        while (pending.Count != 0)
+        {
+            var functionName = pending.Dequeue();
+            if (!importedTemplates.TryGetValue(functionName, out var template))
+            {
+                continue;
+            }
+
+            foreach (var summary in template.BoundOperations)
+            {
+                switch (summary.Operation)
+                {
+                    case BoundDirectCallOperation directCall:
+                        Enqueue(directCall.Signature.Name);
+                        if (directCall.Signature.TemplateName is { } directCallTemplateName)
+                        {
+                            Enqueue(directCallTemplateName);
+                        }
+
+                        break;
+
+                    case BoundMemberCallOperation memberCall:
+                        Enqueue(memberCall.Signature.Name);
+                        if (memberCall.Signature.TemplateName is { } memberCallTemplateName)
+                        {
+                            Enqueue(memberCallTemplateName);
+                        }
+
+                        break;
+                }
+            }
+        }
+
+        void Enqueue(string functionName)
+        {
+            if (reachableFunctions.Add(functionName))
+            {
+                pending.Enqueue(functionName);
+            }
+        }
+    }
+
+    private static IReadOnlySet<string>? ResolveImportedInlineCloneSeedFunctions(
+        LoadedModuleDocument module,
+        IReadOnlyDictionary<string, IReadOnlySet<string>>? importedInlineCloneSeedsByModule)
+    {
+        if (importedInlineCloneSeedsByModule is null)
+        {
+            return null;
+        }
+
+        return importedInlineCloneSeedsByModule.TryGetValue(module.SyntaxModel.ModuleName, out var seeds)
+            ? seeds
+            : new HashSet<string>(StringComparer.Ordinal);
+    }
+
+    private static IReadOnlySet<string> CollectRootHotPathEntryFunctions(
+        SyntaxModel syntaxModel,
+        LoadedModuleSet loadedModules,
+        FunctionEffectModel effects)
+    {
+        if (!loadedModules.TryGet(loadedModules.RootModuleName, out var rootModule) || rootModule is null)
+        {
+            return new HashSet<string>(StringComparer.Ordinal);
+        }
+
+        var rootFunctions = rootModule.SyntaxModel.Declarations
+            .Where(static declaration => declaration.Function is not null)
+            .Select(declaration => new
+            {
+                Name = FunctionOverloadFacts.GetResolvedLocalName(syntaxModel, declaration),
+                Declaration = declaration
+            })
+            .ToArray();
+
+        var hotFunctions = rootFunctions
+            .Where(function =>
+                effects.Functions.TryGetValue(function.Name, out var functionEffects)
+                && functionEffects.IsHot
+                && !functionEffects.IsCold)
+            .Select(static function => function.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        if (hotFunctions.Count != 0)
+        {
+            return hotFunctions;
+        }
+
+        var exportedFunctions = rootFunctions
+            .Where(function =>
+                function.Declaration.Visibility == StarkVisibility.Export
+                && effects.Functions.TryGetValue(function.Name, out var functionEffects)
+                && !functionEffects.IsCold)
+            .Select(static function => function.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        if (exportedFunctions.Count != 0)
+        {
+            return exportedFunctions;
+        }
+
+        return rootFunctions
+            .Where(function =>
+                !effects.Functions.TryGetValue(function.Name, out var functionEffects)
+                || !functionEffects.IsCold)
+            .Select(static function => function.Name)
+            .ToHashSet(StringComparer.Ordinal);
+    }
+
+    private static IReadOnlySet<string> CollectHotPathReachableFunctions(
+        IReadOnlySet<string> entryFunctions,
+        SsaIrModule ssa,
+        FunctionEffectModel effects)
+    {
+        var callsByFunction = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (var function in ssa.Functions)
+        {
+            var callees = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var block in function.Blocks)
+            {
+                foreach (var instruction in block.Instructions)
+                {
+                    if (instruction is SsaValueInstruction { Value: SsaCallRValue call })
+                    {
+                        callees.Add(call.FunctionName);
+                    }
+                    else if (instruction is SsaCallInstruction statementCall)
+                    {
+                        callees.Add(statementCall.FunctionName);
+                    }
+                }
+            }
+
+            callsByFunction[function.Name] = callees;
+        }
+
+        var reachable = new HashSet<string>(StringComparer.Ordinal);
+        var pending = new Queue<string>(entryFunctions);
+        while (pending.Count != 0)
+        {
+            var functionName = pending.Dequeue();
+            if (effects.Functions.TryGetValue(functionName, out var functionEffects)
+                && functionEffects.IsCold)
+            {
+                continue;
+            }
+
+            if (!reachable.Add(functionName)
+                || !callsByFunction.TryGetValue(functionName, out var callees))
+            {
+                continue;
+            }
+
+            foreach (var callee in callees)
+            {
+                pending.Enqueue(callee);
+            }
+        }
+
+        return reachable;
+    }
+
     private static DependencyLlvmCompileResult CompileDependencyLlvm(
         LoadedModuleDocument module,
-        CompilerOptions rootOptions)
+        CompilerOptions rootOptions,
+        IReadOnlySet<string>? importedInlineCloneSeedFunctions)
     {
         if (rootOptions.ModuleResolver is not IModuleSourceResolver sourceResolver
             || !sourceResolver.TryLoadModuleSource(module.Reference, out var sourceText, out var sourceFilePath))
@@ -2190,7 +2527,8 @@ internal static class CompilerCli
             {
                 EmitLlvmIr = true,
                 StopAfterPassId = null,
-                QualifyModuleSymbols = true
+                QualifyModuleSymbols = true,
+                ImportedInlineCloneSeedFunctions = importedInlineCloneSeedFunctions
             });
 
         if (!dependencyResult.Succeeded)
@@ -2497,7 +2835,7 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("  test           Run tests for the current Stark project or solution");
         await stdout.WriteLineAsync();
         await stdout.WriteLineAsync("Workflows:");
-        await stdout.WriteLineAsync("  (default)      Run the full compilation pipeline and print a pass summary");
+        await stdout.WriteLineAsync("  (default)      Build an executable when the root source exports main; otherwise build a library");
         await stdout.WriteLineAsync("  --check       Validate through ownership/lifetime analysis");
         await stdout.WriteLineAsync("  --emit-mir    Print lowered MIR");
         await stdout.WriteLineAsync("  --emit-ssa    Print lowered SSA");
@@ -2528,6 +2866,7 @@ internal static class CompilerCli
         await stdout.WriteLineAsync("  --code-model <tiny|small|kernel|medium|large>  Forward an explicit LLVM code model");
         await stdout.WriteLineAsync("  -O0|-Og|-O1|-O2|-O3            Select the optimization level for frontend/codegen behavior (default: -O3)");
         await stdout.WriteLineAsync("  --optimize <0|g|1|2|3>         Long-form optimization level control");
+        await stdout.WriteLineAsync("  --strict-integer-ranges        Keep strict integer range storage checks enabled (default)");
         await stdout.WriteLineAsync("  --linker <tool>                Override the executable linker tool");
         await stdout.WriteLineAsync("  --archiver <tool>              Override the static library archiver tool");
         await stdout.WriteLineAsync("  --link-arg <arg>               Pass an additional argument through to the linker");
@@ -2550,17 +2889,18 @@ internal static class CompilerCli
         await stdout.WriteLineAsync();
         await stdout.WriteLineAsync("Notes:");
         await stdout.WriteLineAsync("  --emit-obj is compile-only.");
-        await stdout.WriteLineAsync("  --emit-lib and --emit-exe perform link/archive steps.");
+        await stdout.WriteLineAsync("  --emit-lib and --emit-exe force the archive/link workflow.");
         await stdout.WriteLineAsync("  --emit-pkg validates and emits package image JSON only.");
         await stdout.WriteLineAsync("  --inspect-pkg accepts a .starkpkg.json file path or JSON from stdin.");
-        await stdout.WriteLineAsync("  With no workflow flag, the compiler runs the full pipeline and prints a success summary.");
+        await stdout.WriteLineAsync("  With no workflow flag, the compiler infers executable vs library from the root source.");
         await stdout.WriteLineAsync("  --diagnostic-format json suppresses the text compiler log stream so stderr stays machine-readable.");
         await stdout.WriteLineAsync("  Library/package search uses -I/--search-dir and the STARK_PATH environment variable.");
         await stdout.WriteLineAsync();
         await stdout.WriteLineAsync("Examples:");
+        await stdout.WriteLineAsync("  compiler app.stark");
         await stdout.WriteLineAsync("  compiler app.stark --check");
         await stdout.WriteLineAsync("  compiler app.stark --emit-llvm -o app.ll");
-        await stdout.WriteLineAsync("  compiler app.stark --emit-exe -o app");
+        await stdout.WriteLineAsync("  compiler libFacade.stark --emit-lib -o libFacade.a");
         await stdout.WriteLineAsync("  compiler app.stark --emit-pkg -o app.starkpkg.json");
         await stdout.WriteLineAsync("  compiler libFacade.starkpkg.json --inspect-pkg");
         await stdout.WriteLineAsync("  compiler app.stark --diagnostic-format json");
@@ -2669,6 +3009,26 @@ internal static class CompilerCli
         };
     }
 
+    private static CliMode InferDefaultBuildMode(string source, LlvmTargetInfo? targetInfo)
+    {
+        var parseResult = StarkSyntax.ParseCompilationUnit(source);
+        if (!parseResult.Succeeded)
+        {
+            return CliMode.EmitExecutable;
+        }
+
+        var syntaxModel = SyntaxModelFactory.CreateWithDiagnostics(parseResult, targetInfo).Model;
+        var hasHostedEntrypoint = DeclaredFunctionSyntaxCollector
+            .Collect(parseResult, syntaxModel)
+            .Any(static function =>
+                function.ContainingTypeName is null
+                && function.Visibility == StarkVisibility.Export
+                && function.HasBody
+                && string.Equals(function.SourceName, "main", StringComparison.Ordinal));
+
+        return hasHostedEntrypoint ? CliMode.EmitExecutable : CliMode.EmitLibrary;
+    }
+
     private static LlvmTargetInfo? CreateTargetInfo(
         string? targetTriple,
         string? targetDataLayout,
@@ -2703,23 +3063,49 @@ internal static class CompilerCli
         };
     }
 
-    private static string DeriveExecutableOutputPath(string? inputPath, CompilationResult result)
+    private static string DeriveExecutableOutputPath(
+        string? inputPath,
+        CompilationResult result,
+        LlvmTargetInfo? targetInfo)
     {
+        var moduleName = result.Artifacts.TryGet(CompilerArtifactKeys.SyntaxModel, out SyntaxModel? syntaxModel)
+                         && syntaxModel is not null
+            ? syntaxModel.ModuleName
+            : null;
+
+        return DeriveExecutableOutputPath(inputPath, moduleName, targetInfo);
+    }
+
+    internal static string DeriveExecutableOutputPath(
+        string? inputPath,
+        string? moduleName,
+        LlvmTargetInfo? targetInfo)
+    {
+        string outputPath;
         if (inputPath is not null)
         {
             var fullInputPath = Path.GetFullPath(inputPath);
             var directory = Path.GetDirectoryName(fullInputPath) ?? Environment.CurrentDirectory;
-            return Path.Combine(directory, Path.GetFileNameWithoutExtension(fullInputPath));
+            outputPath = Path.Combine(directory, Path.GetFileNameWithoutExtension(fullInputPath));
+            return AddWindowsExecutableExtensionIfNeeded(outputPath, targetInfo);
         }
 
-        if (result.Artifacts.TryGet(CompilerArtifactKeys.SyntaxModel, out SyntaxModel? syntaxModel)
-            && syntaxModel is not null
-            && !string.IsNullOrWhiteSpace(syntaxModel.ModuleName))
+        if (!string.IsNullOrWhiteSpace(moduleName))
         {
-            return Path.GetFullPath(syntaxModel.ModuleName);
+            outputPath = Path.GetFullPath(moduleName);
+            return AddWindowsExecutableExtensionIfNeeded(outputPath, targetInfo);
         }
 
-        return Path.GetFullPath("a.out");
+        outputPath = IsWindowsTarget(targetInfo) ? "a" : "a.out";
+        return AddWindowsExecutableExtensionIfNeeded(Path.GetFullPath(outputPath), targetInfo);
+    }
+
+    private static string AddWindowsExecutableExtensionIfNeeded(string outputPath, LlvmTargetInfo? targetInfo)
+    {
+        return IsWindowsTarget(targetInfo)
+               && !outputPath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+            ? $"{outputPath}.exe"
+            : outputPath;
     }
 
     private static string DeriveObjectOutputPath(string? inputPath, CompilationResult result)

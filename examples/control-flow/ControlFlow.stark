@@ -1,6 +1,6 @@
 module ControlFlow
 
-export ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     stack mut i32[min max] index = 0;
     stack mut i32[min max] total = 0;
 

@@ -1,4 +1,5 @@
 using System.Numerics;
+using Antlr4.Runtime;
 using Stark.Parsing;
 
 namespace Stark.Compiler;
@@ -18,6 +19,26 @@ internal sealed partial class MidLevelIrLowerer
 
             public bool TryEvaluateExpression(
                 StarkParser.ExpressionContext expression,
+                string moduleName,
+                CompileTimeEvaluationState? state,
+                HashSet<string>? activeCalls,
+                out CompileTimeConstant constant)
+            {
+                activeCalls ??= new HashSet<string>(StringComparer.Ordinal);
+                TryResolveCompileTimeIdentifier? nameResolver = state is null
+                    ? null
+                    : new TryResolveCompileTimeIdentifier(state.TryResolve);
+                TryEvaluateCompileTimePostfixExpression postfixResolver =
+                    (StarkParser.PostfixExpressionContext postfix, CompileTimeEvaluationServices _, out CompileTimeConstant value) =>
+                        TryEvaluateLawCall(postfix, moduleName, state, activeCalls, out value);
+                var services = new CompileTimeEvaluationServices(
+                    TryResolveIdentifier: nameResolver,
+                    TryEvaluatePostfixExpression: postfixResolver);
+                return CompileTimeExpressionEvaluator.TryEvaluate(expression, out constant, services);
+            }
+
+            public bool TryEvaluateExpressionNode(
+                ParserRuleContext expression,
                 string moduleName,
                 CompileTimeEvaluationState? state,
                 HashSet<string>? activeCalls,
@@ -290,6 +311,26 @@ internal sealed partial class MidLevelIrLowerer
                 if (statement.block() is { } block)
                 {
                     return TryExecuteBlock(block, moduleName, state, activeCalls, returnType, out returned, out returnValue);
+                }
+
+                if (statement.unsafeStatement() is { } unsafeStatement)
+                {
+                    if (unsafeStatement.block() is { } unsafeBlock)
+                    {
+                        return TryExecuteBlock(unsafeBlock, moduleName, state, activeCalls, returnType, out returned, out returnValue);
+                    }
+
+                    if (unsafeStatement.assumeStatement()?.statement() is { } unsafeAssumedStatement)
+                    {
+                        return TryExecuteScopedStatement(unsafeAssumedStatement, moduleName, state, activeCalls, returnType, out returned, out returnValue);
+                    }
+
+                    return false;
+                }
+
+                if (statement.assumeStatement() is { } assumeStatement)
+                {
+                    return TryExecuteScopedStatement(assumeStatement.statement(), moduleName, state, activeCalls, returnType, out returned, out returnValue);
                 }
 
                 if (statement.localConstantDeclaration() is { } localConstant)

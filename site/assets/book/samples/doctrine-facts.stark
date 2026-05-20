@@ -1,16 +1,16 @@
 module Book.DoctrineFacts
 
 doctrine ScoreRules {
-    finite law bool IsPassing(i32[0 100] score) {
+    finite law bool IsPassing(u8[0 100] score) {
         return score >= 70;
     }
 
-    finite law i32[0 100] PerfectScore() {
+    finite law u8[0 100] PerfectScore() {
         return 100;
     }
 }
 
-export ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     if (!ScoreRules.IsPassing(ScoreRules.PerfectScore())) {
         return 1;
     }

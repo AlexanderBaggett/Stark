@@ -18,7 +18,7 @@ public sealed class BenchmarkRegressionScriptTests
             "current.csv",
             "benchmarks/micro/Calls,c,50,1000,0,0,0,10000,900,1000,1100,20.000000,2048",
             "benchmarks/micro/Calls,stark,50,1000,200,100,300,10000,700,800,900,25.000000,4096",
-            "benchmarks/micro/Calls,stark-experimental,50,1000,200,100,300,10000,1200,1250,1300,8.000000,4096",
+            "benchmarks/micro/Calls,zig,50,1000,200,100,300,10000,1200,1250,1300,8.000000,4096",
             "benchmarks/micro/Calls,rust,50,1000,0,0,0,10000,1100,1200,1300,16.666667,3072",
             "benchmarks/micro/NoC,stark,50,1000,200,100,300,10000,400,500,600,40.000000,4096");
 

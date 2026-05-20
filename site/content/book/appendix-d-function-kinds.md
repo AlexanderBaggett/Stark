@@ -1,6 +1,6 @@
 +++
 title = "Appendix D: Function Kinds and Guarantees"
-weight = 380
+weight = 400
 book_part = "Appendices"
 book_status = "draft"
 prev = "/book/appendix-c-integer-widths/"
@@ -56,9 +56,15 @@ shared state:
 
 ```stark
 fnptr<fn i32[min max](i32[min max])>
+fnptr<finite i32[min max](i32[min max])>
+fnptr<law bool(borrow Item)>
 fnptr<finite law bool(borrow Item)>
 ```
 
 A callable value must satisfy the kind expected by the function-pointer type.
+Stronger values can flow into weaker function-pointer slots, but a weaker
+callback cannot satisfy a stronger slot. This is why a `finite law` function can
+be stored in `fnptr<fn ...>`, while an ordinary `fn` cannot be stored in
+`fnptr<finite law ...>`.
 
 {{< stark-sample "assets/book/negative-samples/fnptr-kind-mismatch.stark" >}}

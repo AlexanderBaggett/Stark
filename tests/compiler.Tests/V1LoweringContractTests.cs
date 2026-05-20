@@ -11,7 +11,7 @@ public sealed class V1LoweringContractTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right) {
                 return left + right;
             }
             """);
@@ -30,15 +30,15 @@ public sealed class V1LoweringContractTests
             """
             module Demo
 
-            fn ascii Echo(ascii text) {
+            unsafe fn ascii Echo(ascii text) {
                 return text;
             }
 
-            fn unicode Wide(unicode text) {
+            unsafe fn unicode Wide(unicode text) {
                 return text;
             }
 
-            fn i32[-2147483648 2147483647] Read(i32[-2147483648 2147483647][] view, i32[-2147483648 2147483647] index) {
+            unsafe fn i32[min max] Read(i32[min max][] view, i32[min max] index) {
                 return view[index];
             }
             """);
@@ -60,9 +60,9 @@ public sealed class V1LoweringContractTests
             """
             module Demo
 
-            ffi fn i32[-2147483648 2147483647] puts(ascii text);
+            unsafe ffi fn i32[min max] puts(ascii text);
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export unsafe fn i32[min max] main() {
                 puts("Hello");
                 return 0;
             }
@@ -72,9 +72,47 @@ public sealed class V1LoweringContractTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("declare i32 @puts(ptr readonly)", llvm);
-        Assert.Contains("define i32 @main()", llvm);
+        Assert.Contains("i32 @main()", llvm);
         Assert.DoesNotContain("declare fastcc i32 @puts(", llvm);
         Assert.DoesNotContain("define fastcc i32 @main()", llvm);
+    }
+
+    [Fact]
+    public void SafeExportedMainDoesNotNeedUnsafeOrFfiAndUsesNativeCallingConvention()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            export fn i32[min max] main() {
+                return 0;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("define noundef i32 @main()", llvm);
+        Assert.DoesNotContain("define fastcc noundef i32 @main()", llvm);
+    }
+
+    [Fact]
+    public void ExportedStarkFunctionsUseNativeCallingConventionWithoutFfiUnsafe()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            export fn i32[min max] AddOne(i32[min max] value) {
+                return value + 1;
+            }
+            """);
+
+        Assert.True(result.Succeeded);
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("i32 @AddOne(i32 noundef %arg_value)", llvm);
+        Assert.DoesNotContain("define fastcc", llvm);
     }
 
     [Fact]
@@ -85,11 +123,11 @@ public sealed class V1LoweringContractTests
             module Demo
 
             struct Pair {
-                i8[-128 127] Tag;
-                i32[-2147483648 2147483647] Value;
+                i8[min max] Tag;
+                i32[min max] Value;
             }
 
-            fn void Inspect(borrow Pair pair) {
+            unsafe fn void Inspect(borrow Pair pair) {
                 return;
             }
             """);
@@ -109,11 +147,11 @@ public sealed class V1LoweringContractTests
             module Demo
 
             struct Pair {
-                i64[-9223372036854775808 9223372036854775807] Left;
-                i64[-9223372036854775808 9223372036854775807] Right;
+                i64[min max] Left;
+                i64[min max] Right;
             }
 
-            fn Pair Step(Pair value) {
+            unsafe fn Pair Step(Pair value) {
                 return value;
             }
             """);
@@ -135,12 +173,12 @@ public sealed class V1LoweringContractTests
             module Demo
 
             struct Big {
-                i64[-9223372036854775808 9223372036854775807] A;
-                i64[-9223372036854775808 9223372036854775807] B;
-                i64[-9223372036854775808 9223372036854775807] C;
+                i64[min max] A;
+                i64[min max] B;
+                i64[min max] C;
             }
 
-            fn Big Step(Big value) {
+            unsafe fn Big Step(Big value) {
                 return value;
             }
             """);
@@ -160,11 +198,11 @@ public sealed class V1LoweringContractTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Read4(i32[-2147483648 2147483647][4] values) {
+            unsafe fn i32[min max] Read4(i32[min max][4] values) {
                 return values[0];
             }
 
-            fn i32[-2147483648 2147483647] Read5(i32[-2147483648 2147483647][5] values) {
+            unsafe fn i32[min max] Read5(i32[min max][5] values) {
                 return values[0];
             }
             """);

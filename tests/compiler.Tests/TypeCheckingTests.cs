@@ -12,7 +12,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            finite law i32[-2147483648 2147483647] Run() {
+            finite law i32[min max] Run() {
                 return 2 ** 3;
             }
             """);
@@ -27,12 +27,12 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            fn i32[min max] Add(i32[min max] left, i32[min max] right) {
                 return left + right;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
-                stack fnptr<fn i32[-2147483648 2147483647](i32[-2147483648 2147483647], i32[-2147483648 2147483647])> op = Add;
+            fn i32[min max] Run() {
+                stack fnptr<fn i32[min max](i32[min max], i32[min max])> op = Add;
                 return op(40, 2);
             }
             """,
@@ -52,21 +52,196 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void FunctionPointerOverlapContractsAllowAliasingIndirectCalls()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[min max] Value;
+            }
+
+            fn void Touch(borrow mut Box left, borrow mut Box right) where overlap(left, right) {
+                return;
+            }
+
+            fn void Run(borrow mut Box box) {
+                stack fnptr<fn void(borrow mut Box, borrow mut Box) where overlap(arg0, arg1)> op = Touch;
+                op(box, box);
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        var promotion = Assert.Single(typeCheckModel.FunctionPointerPromotions);
+        Assert.Equal("Touch", promotion.Signature.Name);
+        var indirectCall = Assert.Single(typeCheckModel.IndirectCalls);
+        var overlapGroup = Assert.Single(indirectCall.FunctionPointerType.FunctionPointerOverlapParameterGroups ?? []);
+        Assert.Equal(["arg0", "arg1"], overlapGroup.ParameterNames);
+    }
+
+    [Fact]
+    public void FunctionPointerOverlapTargetRejectsDefaultDisjointFunctionItems()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[min max] Value;
+            }
+
+            fn void Touch(borrow mut Box left, borrow mut Box right) {
+                return;
+            }
+
+            fn void Run() {
+                stack fnptr<fn void(borrow mut Box, borrow mut Box) where overlap(arg0, arg1)> op = Touch;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("cannot be promoted", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("where overlap(arg0, arg1)", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void FunctionPointerSameTargetsAcceptOverlapFunctionsAndRequireSameArguments()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[min max] Value;
+            }
+
+            fn void Touch(borrow mut Box left, borrow mut Box right) where overlap(left, right) {
+                return;
+            }
+
+            fn void Run(borrow mut Box box) {
+                stack fnptr<fn void(borrow mut Box, borrow mut Box) where same(arg0, arg1)> op = Touch;
+                op(box, box);
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        var indirectCall = Assert.Single(typeCheckModel.IndirectCalls);
+        var sameGroup = Assert.Single(indirectCall.FunctionPointerType.FunctionPointerSameParameterGroups ?? []);
+        Assert.Equal(["arg0", "arg1"], sameGroup.ParameterNames);
+    }
+
+    [Fact]
+    public void ClosureTypesResolveInFunctionSignatures()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Ui {
+                i32[min max] Frame;
+            }
+
+            struct Packet {
+                i32[min max] Code;
+            }
+
+            fn void RegisterInline(inline closure<fn void(borrow mut Ui)> body);
+            fn void RegisterBorrow(borrow closure<fn void(borrow mut Ui)> body);
+            fn void RegisterMut(mut borrow closure<mut fn void(i32[min max])> sink);
+            fn void RegisterOnce(inline closure<once finite Packet()> producer);
+            fn void RegisterOverlap(borrow closure<fn void(borrow mut Ui, borrow mut Ui) where overlap(arg0, arg1)> body);
+            unsafe fn void RegisterBounded(borrow closure<finite void(rawptr<i32[min max]>[arg1], u8[1 10])> body);
+            fn heap closure<fn i32[min max](i32[min max])> Factory(heap closure<fn i32[min max](i32[min max])> seed);
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+
+        var inline = Assert.Single(typeCheckModel.Functions["RegisterInline"].Parameters);
+        Assert.Equal(StarkTypeKind.Closure, inline.Type.Kind);
+        Assert.Equal(StarkClosureStorageKind.Inline, inline.Type.ClosureStorageKind);
+        Assert.Equal(StarkClosureCallCapability.None, inline.Type.ClosureCallCapability);
+        Assert.Equal(StarkFunctionKind.Fn, inline.Type.ClosureFunctionKind);
+
+        var borrowed = Assert.Single(typeCheckModel.Functions["RegisterBorrow"].Parameters);
+        Assert.Equal(StarkTypeKind.Closure, borrowed.Type.Kind);
+        Assert.Equal(StarkBorrowKind.Borrow, borrowed.Type.BorrowKind);
+        Assert.Equal(StarkClosureStorageKind.Unspecified, borrowed.Type.ClosureStorageKind);
+
+        var mutableBorrow = Assert.Single(typeCheckModel.Functions["RegisterMut"].Parameters);
+        Assert.Equal(StarkBorrowKind.Borrow, mutableBorrow.Type.BorrowKind);
+        Assert.True(mutableBorrow.Type.IsMutableView);
+        Assert.Equal(StarkClosureCallCapability.Mut, mutableBorrow.Type.ClosureCallCapability);
+
+        var once = Assert.Single(typeCheckModel.Functions["RegisterOnce"].Parameters);
+        Assert.Equal(StarkClosureCallCapability.Once, once.Type.ClosureCallCapability);
+        Assert.Equal(StarkFunctionKind.Finite, once.Type.ClosureFunctionKind);
+
+        var overlap = Assert.Single(typeCheckModel.Functions["RegisterOverlap"].Parameters);
+        var overlapGroup = Assert.Single(overlap.Type.ClosureOverlapParameterGroups ?? []);
+        Assert.Equal(["arg0", "arg1"], overlapGroup.ParameterNames);
+
+        var bounded = Assert.Single(typeCheckModel.Functions["RegisterBounded"].Parameters);
+        Assert.Equal("arg1", StarkTypeSymbols.GetClosureParameterRawPointerElementCountExpression(bounded.Type, 0));
+
+        var factory = typeCheckModel.Functions["Factory"];
+        Assert.Equal(StarkTypeKind.Closure, factory.ReturnType.Kind);
+        Assert.Equal(StarkClosureStorageKind.Heap, factory.ReturnType.ClosureStorageKind);
+    }
+
+    [Fact]
+    public void LawClosureTypesRejectMutableOrOnceCapabilities()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void RegisterMutableLaw(inline closure<mut law void()> body);
+            fn void RegisterOnceLaw(heap closure<once finite law void()> body);
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Equal(
+            2,
+            result.Diagnostics.Count(diagnostic =>
+                diagnostic.Code == "STK3014"
+                && diagnostic.Message.Contains("Law and finite law closure signatures cannot use 'mut' or 'once'", StringComparison.Ordinal)));
+    }
+
+    [Fact]
     public void FunctionItemPromotionPreservesFunctionKindFacts()
     {
         var result = Compile(
             """
             module Demo
 
-            finite law i32[-2147483648 2147483647] Always() {
+            finite law i32[min max] Always() {
                 return 7;
             }
 
             fn void Run() {
-                stack fnptr<fn i32[-2147483648 2147483647]()> plain = Always;
-                stack fnptr<finite i32[-2147483648 2147483647]()> finiteOnly = Always;
-                stack fnptr<law i32[-2147483648 2147483647]()> lawOnly = Always;
-                stack fnptr<finite law i32[-2147483648 2147483647]()> strict = Always;
+                stack fnptr<fn i32[min max]()> plain = Always;
+                stack fnptr<finite i32[min max]()> finiteOnly = Always;
+                stack fnptr<law i32[min max]()> lawOnly = Always;
+                stack fnptr<finite law i32[min max]()> strict = Always;
                 return;
             }
             """,
@@ -89,27 +264,27 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Plain() {
+            fn i32[min max] Plain() {
                 return 1;
             }
 
-            finite i32[-2147483648 2147483647] FiniteOnly() {
+            finite i32[min max] FiniteOnly() {
                 return 2;
             }
 
-            law i32[-2147483648 2147483647] LawOnly() {
+            law i32[min max] LawOnly() {
                 return 3;
             }
 
-            finite law i32[-2147483648 2147483647] Strict() {
+            finite law i32[min max] Strict() {
                 return 4;
             }
 
             fn void Run() {
-                stack fnptr<fn i32[-2147483648 2147483647]()> plain = Plain;
-                stack fnptr<finite i32[-2147483648 2147483647]()> finiteOnly = FiniteOnly;
-                stack fnptr<law i32[-2147483648 2147483647]()> lawOnly = LawOnly;
-                stack fnptr<finite law i32[-2147483648 2147483647]()> strict = Strict;
+                stack fnptr<fn i32[min max]()> plain = Plain;
+                stack fnptr<finite i32[min max]()> finiteOnly = FiniteOnly;
+                stack fnptr<law i32[min max]()> lawOnly = LawOnly;
+                stack fnptr<finite law i32[min max]()> strict = Strict;
                 return;
             }
             """,
@@ -134,23 +309,23 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Plain() {
+            fn i32[min max] Plain() {
                 return 1;
             }
 
-            finite i32[-2147483648 2147483647] FiniteOnly() {
+            finite i32[min max] FiniteOnly() {
                 return 2;
             }
 
-            law i32[-2147483648 2147483647] LawOnly() {
+            law i32[min max] LawOnly() {
                 return 3;
             }
 
             fn void Run() {
-                stack fnptr<finite i32[-2147483648 2147483647]()> needsFinite = Plain;
-                stack fnptr<law i32[-2147483648 2147483647]()> needsLaw = Plain;
-                stack fnptr<finite law i32[-2147483648 2147483647]()> needsBothFromFinite = FiniteOnly;
-                stack fnptr<finite law i32[-2147483648 2147483647]()> needsBothFromLaw = LawOnly;
+                stack fnptr<finite i32[min max]()> needsFinite = Plain;
+                stack fnptr<law i32[min max]()> needsLaw = Plain;
+                stack fnptr<finite law i32[min max]()> needsBothFromFinite = FiniteOnly;
+                stack fnptr<finite law i32[min max]()> needsBothFromLaw = LawOnly;
                 return;
             }
             """,
@@ -189,19 +364,19 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Target() {
+            fn i32[min max] Target() {
                 return 41;
             }
 
-            fn fnptr<fn i32[-2147483648 2147483647]()> Factory() {
+            fn fnptr<fn i32[min max]()> Factory() {
                 return Target;
             }
 
-            fn i32[-2147483648 2147483647] Apply(fnptr<fn i32[-2147483648 2147483647]()> callback) {
+            fn i32[min max] Apply(fnptr<fn i32[min max]()> callback) {
                 return callback() + 1;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 return Apply(Target);
             }
             """,
@@ -226,17 +401,17 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Pick() {
+            fn i32[min max] Pick() {
                 return 1;
             }
 
-            fn i32[-2147483648 2147483647] Pick(i32[-2147483648 2147483647] value) {
+            fn i32[min max] Pick(i32[min max] value) {
                 return value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
-                stack fnptr<fn i32[-2147483648 2147483647]()> first = Pick;
-                stack fnptr<fn i32[-2147483648 2147483647](i32[-2147483648 2147483647])> second = Pick;
+            fn i32[min max] Run() {
+                stack fnptr<fn i32[min max]()> first = Pick;
+                stack fnptr<fn i32[min max](i32[min max])> second = Pick;
                 return first() + second(2);
             }
             """,
@@ -264,12 +439,12 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i64[-9223372036854775808 9223372036854775807] Wide(i64[-9223372036854775808 9223372036854775807] value) {
+            fn i64[min max] Wide(i64[min max] value) {
                 return value;
             }
 
             fn void Run() {
-                stack fnptr<fn i32[-2147483648 2147483647](i32[-2147483648 2147483647])> op = Wide;
+                stack fnptr<fn i32[min max](i32[min max])> op = Wide;
                 return;
             }
             """,
@@ -289,13 +464,13 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Apply(fnptr<fn i32[-2147483648 2147483647](i32[-2147483648 2147483647])> op) {
+            fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op) {
                 return op(41);
             }
 
-            fn i32[-2147483648 2147483647] Run() {
-                stack fnptr<fn i32[-2147483648 2147483647](i32[-2147483648 2147483647])> increment = (i32[-2147483648 2147483647] value) => value + 1;
-                return Apply((i32[-2147483648 2147483647] value) => value + 1);
+            fn i32[min max] Run() {
+                stack fnptr<fn i32[min max](i32[min max])> increment = (i32[min max] value) => value + 1;
+                return Apply((i32[min max] value) => value + 1);
             }
             """,
             new CompilerOptions(StopAfterPassId: "type-check"));
@@ -308,6 +483,224 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void LambdasTypeCheckAsExplicitClosureTargets()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] ApplyBorrow(borrow closure<fn i32[min max](i32[min max])> op) {
+                return 0;
+            }
+
+            fn void ApplyInline(inline closure<fn void(i32[min max])> op) {
+                return;
+            }
+
+            fn heap closure<fn i32[min max](i32[min max])> MakeHeap(i32[min max] offset) {
+                return heap capture(copy offset) (i32[min max] value) => value + offset;
+            }
+
+            fn i32[min max] Run() {
+                stack i32[min max] offset = 1;
+                ApplyInline((i32[min max] value) => {
+                    return;
+                });
+                return ApplyBorrow(capture(copy offset) (i32[min max] value) => value + offset);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.Empty(typeCheckModel.Lambdas);
+        Assert.Equal(3, typeCheckModel.ClosureLambdas.Count);
+        Assert.Contains(typeCheckModel.ClosureLambdas, static lambda => lambda.ClosureType.ClosureStorageKind == StarkClosureStorageKind.Inline);
+        Assert.Contains(typeCheckModel.ClosureLambdas, static lambda => lambda.ClosureType.BorrowKind == StarkBorrowKind.Borrow);
+        Assert.Contains(typeCheckModel.ClosureLambdas, static lambda => lambda.ClosureType.ClosureStorageKind == StarkClosureStorageKind.Heap);
+        Assert.Contains(typeCheckModel.LambdaCaptures, static capture => capture.Name == "offset" && capture.Mode == "copy");
+    }
+
+    [Fact]
+    public void FunctionItemsPromoteToExplicitClosureTargets()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] AddOne(i32[min max] value) {
+                return value + 1;
+            }
+
+            fn i32[min max] ApplyBorrow(borrow closure<fn i32[min max](i32[min max])> op, i32[min max] value) {
+                return op(value);
+            }
+
+            inline fn i32[min max] ApplyInline(inline closure<fn i32[min max](i32[min max])> op, i32[min max] value) {
+                return op(value);
+            }
+
+            fn heap closure<fn i32[min max](i32[min max])> Make() {
+                return AddOne;
+            }
+
+            fn i32[min max] Run() {
+                stack heap closure<fn i32[min max](i32[min max])> op = Make();
+                return ApplyBorrow(AddOne, 20) + ApplyInline(AddOne, 20) + op(0);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.Equal(3, typeCheckModel.ClosureFunctionPromotions.Count);
+        Assert.All(typeCheckModel.ClosureFunctionPromotions, static promotion => Assert.Equal("AddOne", promotion.Signature.Name));
+        Assert.Contains(typeCheckModel.ClosureFunctionPromotions, static promotion => promotion.ClosureType.BorrowKind == StarkBorrowKind.Borrow);
+        Assert.Contains(typeCheckModel.ClosureFunctionPromotions, static promotion => promotion.ClosureType.ClosureStorageKind == StarkClosureStorageKind.Inline);
+        Assert.Contains(typeCheckModel.ClosureFunctionPromotions, static promotion => promotion.ClosureType.ClosureStorageKind == StarkClosureStorageKind.Heap);
+    }
+
+    [Fact]
+    public void ClosureCallsTypeCheckAndRecordArgumentFacts()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] Apply(borrow closure<finite i32[min max](i32[min max])> op, i32[min max] value) {
+                return op(value);
+            }
+
+            fn void Push(mut borrow closure<mut fn void(i32[min max])> sink) {
+                sink(7);
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "validate-lowering-contract"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.Equal(2, typeCheckModel.ClosureCalls.Count);
+        Assert.All(typeCheckModel.ClosureCalls, static call => Assert.Single(call.Arguments));
+        Assert.Contains(typeCheckModel.ClosureCalls, static call => call.ClosureType.ClosureFunctionKind == StarkFunctionKind.Finite);
+        Assert.Contains(typeCheckModel.ClosureCalls, static call => call.ClosureType.ClosureCallCapability == StarkClosureCallCapability.Mut);
+    }
+
+    [Fact]
+    public void MutableClosureCallsRequireMutableClosureAccess()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run(borrow closure<mut fn void()> op) {
+                op();
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3008"
+                && diagnostic.Message.Contains("requires mutable access to the closure value", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void HeapClosureLambdasRequireHeapPrefixAndHeapSafeCaptures()
+    {
+        var missingPrefix = Compile(
+            """
+            module Demo
+
+            fn heap closure<fn i32[min max](i32[min max])> Bad(i32[min max] offset) {
+                return capture(copy offset) (i32[min max] value) => value + offset;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(missingPrefix.Succeeded);
+        Assert.Contains(
+            missingPrefix.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3008"
+                && diagnostic.Message.Contains("must use the explicit 'heap' lambda prefix", StringComparison.Ordinal));
+
+        var borrowedCapture = Compile(
+            """
+            module Demo
+
+            fn heap closure<fn i32[min max]()> Bad(i32[min max] value) {
+                return heap capture(read value) () => value;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(borrowedCapture.Succeeded);
+        Assert.Contains(
+            borrowedCapture.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3008"
+                && diagnostic.Message.Contains("Heap closure capture mode 'read'", StringComparison.Ordinal));
+
+        var nonEscapingBorrowCapture = Compile(
+            """
+            module Demo
+
+            fn heap closure<fn i32[min max]()> Bad(borrow closure<fn i32[min max]()> op) {
+                return heap capture(copy op) () => op();
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(nonEscapingBorrowCapture.Succeeded);
+        Assert.Contains(
+            nonEscapingBorrowCapture.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3008"
+                && diagnostic.Message.Contains("non-escaping type 'borrow closure", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void InlineClosureTypesAreOnlyValidAsParameters()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn inline closure<fn void()> BadReturn() {
+                return () => {
+                    return;
+                };
+            }
+
+            fn void BadLocal() {
+                stack inline closure<fn void()> local = () => {
+                    return;
+                };
+                return;
+            }
+
+            struct BadField {
+                inline closure<fn void()> Callback;
+            }
+
+            fn void BadNestedParameter(fnptr<fn void(inline closure<fn void()>)> callback) {
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.True(
+            result.Diagnostics.Count(static diagnostic => diagnostic.Code == "STK3008"
+                && diagnostic.Message.Contains("Inline closure type", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("only valid as a function parameter directly", StringComparison.Ordinal)) >= 3,
+            string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
     public void NonCapturingLambdasCannotUseOuterLocalsWithoutCaptureList()
     {
         var result = Compile(
@@ -315,8 +708,8 @@ public sealed class TypeCheckingTests
             module Demo
 
             fn void Run() {
-                stack i32[-2147483648 2147483647] offset = 1;
-                stack fnptr<fn i32[-2147483648 2147483647](i32[-2147483648 2147483647])> increment = (i32[-2147483648 2147483647] value) => value + offset;
+                stack i32[min max] offset = 1;
+                stack fnptr<fn i32[min max](i32[min max])> increment = (i32[min max] value) => value + offset;
                 return;
             }
             """,
@@ -337,8 +730,8 @@ public sealed class TypeCheckingTests
             module Demo
 
             fn void Run() {
-                stack i32[-2147483648 2147483647] offset = 1;
-                stack fnptr<fn i32[-2147483648 2147483647](i32[-2147483648 2147483647])> increment = capture(copy offset) (i32[-2147483648 2147483647] value) => value + offset;
+                stack i32[min max] offset = 1;
+                stack fnptr<fn i32[min max](i32[min max])> increment = capture(copy offset) (i32[min max] value) => value + offset;
                 return;
             }
             """,
@@ -347,8 +740,7 @@ public sealed class TypeCheckingTests
         Assert.False(result.Succeeded);
         Assert.Contains(
             result.Diagnostics,
-            static diagnostic => diagnostic.Code == "STK3008"
-                && diagnostic.Message.Contains("Capturing lambdas", StringComparison.Ordinal));
+            IsFunctionPointerCaptureDiagnostic);
     }
 
     [Fact]
@@ -359,9 +751,9 @@ public sealed class TypeCheckingTests
             module Demo
 
             fn void Run() {
-                stack i32[-2147483648 2147483647] offset = 1;
-                stack i32[-2147483648 2147483647] secret = 2;
-                stack fnptr<fn i32[-2147483648 2147483647](i32[-2147483648 2147483647])> increment = capture(copy offset) (i32[-2147483648 2147483647] value) => value + secret;
+                stack i32[min max] offset = 1;
+                stack i32[min max] secret = 2;
+                stack fnptr<fn i32[min max](i32[min max])> increment = capture(copy offset) (i32[min max] value) => value + secret;
                 return;
             }
             """,
@@ -382,8 +774,8 @@ public sealed class TypeCheckingTests
             module Demo
 
             fn void Run() {
-                stack i32[-2147483648 2147483647] value = 1;
-                stack fnptr<fn i32[-2147483648 2147483647]()> callback = capture(copy value, read value) () => value;
+                stack i32[min max] value = 1;
+                stack fnptr<fn i32[min max]()> callback = capture(copy value, read value) () => value;
                 return;
             }
             """,
@@ -397,6 +789,35 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void LambdaParametersCannotReuseCapturedNames()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] Apply(
+                borrow closure<fn i32[min max](i32[min max])> op,
+                i32[min max] value) {
+                return op(value);
+            }
+
+            fn i32[min max] Run() {
+                stack i32[min max] value = 1;
+                return Apply(
+                    capture(copy value) (i32[min max] value) => value + 1,
+                    41);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3006"
+                && diagnostic.Message.Contains("Lambda parameter 'value' reuses a captured name", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void ExplicitCaptureListsReportUnknownClauseNamesAndModes()
     {
         var result = Compile(
@@ -404,9 +825,9 @@ public sealed class TypeCheckingTests
             module Demo
 
             fn void Run() {
-                stack i32[-2147483648 2147483647] value = 1;
-                stack fnptr<fn i32[-2147483648 2147483647]()> wrongClause = captures(copy value) () => value;
-                stack fnptr<fn i32[-2147483648 2147483647]()> wrongMode = capture(clone value) () => value;
+                stack i32[min max] value = 1;
+                stack fnptr<fn i32[min max]()> wrongClause = captures(copy value) () => value;
+                stack fnptr<fn i32[min max]()> wrongMode = capture(clone value) () => value;
                 return;
             }
             """,
@@ -430,8 +851,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Run(i32[-2147483648 2147483647] token) {
-                stack fnptr<fn i32[-2147483648 2147483647]()> callback = capture(unsafe addr token) () => 1;
+            fn void Run(i32[min max] token) {
+                stack fnptr<fn i32[min max]()> callback = capture(unsafe addr token) () => 1;
                 return;
             }
             """,
@@ -447,9 +868,9 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Run(i32[-2147483648 2147483647] token, i32[-2147483648 2147483647] sharedState) {
+            fn void Run(i32[min max] token, i32[min max] sharedState) {
                 unsafe {
-                    stack fnptr<fn i32[-2147483648 2147483647]()> callback = capture(unsafe addr token, unsafe shared sharedState) () => 1;
+                    stack fnptr<fn i32[min max]()> callback = capture(unsafe addr token, unsafe shared sharedState) () => 1;
                 }
 
                 return;
@@ -463,8 +884,7 @@ public sealed class TypeCheckingTests
             static diagnostic => diagnostic.Code == "STK3024");
         Assert.Contains(
             good.Diagnostics,
-            static diagnostic => diagnostic.Code == "STK3008"
-                && diagnostic.Message.Contains("Capturing lambdas", StringComparison.Ordinal));
+            IsFunctionPointerCaptureDiagnostic);
     }
 
     [Fact]
@@ -475,13 +895,13 @@ public sealed class TypeCheckingTests
             module Demo
 
             fn void Run(
-                i32[-2147483648 2147483647] token,
-                i32[-2147483648 2147483647] sharedState,
-                i32[-2147483648 2147483647] copyValue) {
+                i32[min max] token,
+                i32[min max] sharedState,
+                i32[min max] copyValue) {
                 unsafe {
-                    stack fnptr<fn i32[-2147483648 2147483647]()> byAddress = capture(addr token) () => 1;
-                    stack fnptr<fn i32[-2147483648 2147483647]()> sharedCallback = capture(shared sharedState) () => 2;
-                    stack fnptr<fn i32[-2147483648 2147483647]()> copied = capture(unsafe copy copyValue) () => 3;
+                    stack fnptr<fn i32[min max]()> byAddress = capture(addr token) () => 1;
+                    stack fnptr<fn i32[min max]()> sharedCallback = capture(shared sharedState) () => 2;
+                    stack fnptr<fn i32[min max]()> copied = capture(unsafe copy copyValue) () => 3;
                 }
 
                 return;
@@ -512,13 +932,13 @@ public sealed class TypeCheckingTests
             module Demo
 
             fn void Run(
-                i32[-2147483648 2147483647] copyValue,
-                i32[-2147483648 2147483647] readValue,
-                i32[-2147483648 2147483647] moveValue,
-                i32[-2147483648 2147483647] addrValue,
-                i32[-2147483648 2147483647] sharedValue) {
+                i32[min max] copyValue,
+                i32[min max] readValue,
+                i32[min max] moveValue,
+                i32[min max] addrValue,
+                i32[min max] sharedValue) {
                 unsafe {
-                    stack fnptr<fn i32[-2147483648 2147483647]()> callback =
+                    stack fnptr<fn i32[min max]()> callback =
                         capture(copy copyValue, read readValue, move moveValue, unsafe addr addrValue, unsafe shared sharedValue) () => copyValue + readValue;
                 }
 
@@ -530,8 +950,7 @@ public sealed class TypeCheckingTests
         Assert.False(result.Succeeded);
         Assert.Contains(
             result.Diagnostics,
-            static diagnostic => diagnostic.Code == "STK3008"
-                && diagnostic.Message.Contains("Capturing lambdas", StringComparison.Ordinal));
+            IsFunctionPointerCaptureDiagnostic);
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
         Assert.NotNull(typeCheckModel);
         Assert.Equal(5, typeCheckModel.LambdaCaptures.Count);
@@ -552,12 +971,12 @@ public sealed class TypeCheckingTests
             module Demo
 
             struct Token {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             fn void Run() {
                 stack Token token = new Token() { Value = 1 };
-                stack fnptr<fn i32[-2147483648 2147483647]()> callback =
+                stack fnptr<fn i32[min max]()> callback =
                     capture(copy token) () => token.Value;
                 return;
             }
@@ -582,7 +1001,7 @@ public sealed class TypeCheckingTests
             fn void Run() {
                 stack ascii label = "Score: ";
                 stack unicode word = "Ready";
-                stack fnptr<fn i32[-2147483648 2147483647]()> callback =
+                stack fnptr<fn i32[min max]()> callback =
                     capture(copy label, copy word) () => 1;
                 return;
             }
@@ -596,8 +1015,7 @@ public sealed class TypeCheckingTests
                 && diagnostic.Message.Contains("Capture mode 'copy' cannot copy", StringComparison.Ordinal));
         Assert.Contains(
             result.Diagnostics,
-            static diagnostic => diagnostic.Code == "STK3008"
-                && diagnostic.Message.Contains("Capturing lambdas", StringComparison.Ordinal));
+            IsFunctionPointerCaptureDiagnostic);
     }
 
     [Fact]
@@ -608,8 +1026,8 @@ public sealed class TypeCheckingTests
             module Demo
 
             fn void Run() {
-                stack mut i32[-2147483648 2147483647] readValue = 1;
-                stack mut i32[-2147483648 2147483647] copyValue = 2;
+                stack mut i32[min max] readValue = 1;
+                stack mut i32[min max] copyValue = 2;
                 stack fnptr<fn void()> readCallback = capture(read readValue) () => {
                     readValue = 3;
                     return;
@@ -642,7 +1060,7 @@ public sealed class TypeCheckingTests
             module Demo
 
             fn void Run() {
-                stack mut i32[-2147483648 2147483647] value = 1;
+                stack mut i32[min max] value = 1;
                 stack fnptr<fn void()> callback = capture(mut value) () => {
                     value = 2;
                     return;
@@ -658,8 +1076,7 @@ public sealed class TypeCheckingTests
             static diagnostic => diagnostic.Code == "STK3007");
         Assert.Contains(
             result.Diagnostics,
-            static diagnostic => diagnostic.Code == "STK3008"
-                && diagnostic.Message.Contains("Capturing lambdas", StringComparison.Ordinal));
+            IsFunctionPointerCaptureDiagnostic);
     }
 
     [Fact]
@@ -670,14 +1087,14 @@ public sealed class TypeCheckingTests
             module Demo
 
             fn void Run() {
-                stack mut i32[-2147483648 2147483647] outValue = 1;
-                stack mut i32[-2147483648 2147483647] initValue = 2;
+                stack mut i32[min max] outValue = 1;
+                stack mut i32[min max] initValue = 2;
                 stack fnptr<fn void()> outCallback = capture(out outValue) () => {
-                    stack i32[-2147483648 2147483647] readOut = outValue;
+                    stack i32[min max] readOut = outValue;
                     return;
                 };
                 stack fnptr<fn void()> initCallback = capture(init initValue) () => {
-                    stack i32[-2147483648 2147483647] readInit = initValue;
+                    stack i32[min max] readInit = initValue;
                     return;
                 };
                 return;
@@ -706,8 +1123,8 @@ public sealed class TypeCheckingTests
             module Demo
 
             fn void Run() {
-                stack mut i32[-2147483648 2147483647] outValue = 1;
-                stack mut i32[-2147483648 2147483647] initValue = 2;
+                stack mut i32[min max] outValue = 1;
+                stack mut i32[min max] initValue = 2;
                 stack fnptr<fn void()> callback = capture(out outValue, init initValue) () => {
                     outValue = 3;
                     initValue = 4;
@@ -724,8 +1141,7 @@ public sealed class TypeCheckingTests
             static diagnostic => diagnostic.Code is "STK3002" or "STK3007");
         Assert.Contains(
             result.Diagnostics,
-            static diagnostic => diagnostic.Code == "STK3008"
-                && diagnostic.Message.Contains("Capturing lambdas", StringComparison.Ordinal));
+            IsFunctionPointerCaptureDiagnostic);
     }
 
     [Fact]
@@ -735,15 +1151,15 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Run(i32[-2147483648 2147483647] token) {
+            fn void Run(i32[min max] token) {
                 unsafe {
                     stack fnptr<fn void()> badRead = capture(unsafe addr token) () => {
-                        stack i32[-2147483648 2147483647] value = token;
+                        stack i32[min max] value = token;
                         return;
                     };
 
                     stack fnptr<fn void()> goodAddress = capture(unsafe addr token) () => {
-                        stack rawptr<frozen i32[-2147483648 2147483647]> address = token;
+                        stack rawptr<frozen i32[min max]> address = token;
                         return;
                     };
                 }
@@ -772,10 +1188,10 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Run(i32[-2147483648 2147483647] sharedValue) {
+            fn void Run(i32[min max] sharedValue) {
                 unsafe {
                     stack fnptr<fn void()> callback = capture(unsafe shared sharedValue) () => {
-                        stack shared i32[-2147483648 2147483647] value = sharedValue;
+                        stack shared i32[min max] value = sharedValue;
                         sharedValue = 3;
                         return;
                     };
@@ -805,10 +1221,10 @@ public sealed class TypeCheckingTests
             module Demo
 
             fn void Run(
-                i32[-2147483648 2147483647] mutValue,
-                i32[-2147483648 2147483647] outValue,
-                i32[-2147483648 2147483647] initValue) {
-                stack fnptr<fn i32[-2147483648 2147483647]()> callback =
+                i32[min max] mutValue,
+                i32[min max] outValue,
+                i32[min max] initValue) {
+                stack fnptr<fn i32[min max]()> callback =
                     capture(mut mutValue, out outValue, init initValue) () => 1;
                 return;
             }
@@ -834,10 +1250,10 @@ public sealed class TypeCheckingTests
             module Demo
 
             fn void Run() {
-                stack mut i32[-2147483648 2147483647] mutValue = 1;
-                stack mut i32[-2147483648 2147483647] outValue = 2;
-                stack mut i32[-2147483648 2147483647] initValue = 3;
-                stack fnptr<fn i32[-2147483648 2147483647]()> callback =
+                stack mut i32[min max] mutValue = 1;
+                stack mut i32[min max] outValue = 2;
+                stack mut i32[min max] initValue = 3;
+                stack fnptr<fn i32[min max]()> callback =
                     capture(mut mutValue, out outValue, init initValue) () => 1;
                 return;
             }
@@ -850,8 +1266,7 @@ public sealed class TypeCheckingTests
             static diagnostic => diagnostic.Code == "STK3002");
         Assert.Contains(
             good.Diagnostics,
-            static diagnostic => diagnostic.Code == "STK3008"
-                && diagnostic.Message.Contains("Capturing lambdas", StringComparison.Ordinal));
+            IsFunctionPointerCaptureDiagnostic);
     }
 
     [Fact]
@@ -896,18 +1311,107 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void RawPointerSignaturesRequireUnsafeFunctions()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Touch(rawptr<i32[min max]> pointer);
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3024"
+                && diagnostic.Message.Contains("uses raw pointer types and must be declared 'unsafe'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void RawPointerLocalOperationsRequireUnsafeContext()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void Run() {
+                stack mut i32[min max] value = 1;
+                stack rawmutptr<i32[min max]> pointer = &value;
+                *pointer = 2;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3024"
+                && diagnostic.Message.Contains("local raw pointer declarations", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3024"
+                && diagnostic.Message.Contains("Raw pointer address-of operator", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3024"
+                && diagnostic.Message.Contains("Raw pointer dereference operator", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void UnsafeBlocksPermitRawPointerLocalOperations()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] Run() {
+                stack mut i32[min max] value = 1;
+                unsafe {
+                    stack rawmutptr<i32[min max]> pointer = &value;
+                    *pointer = 2;
+                }
+
+                return value;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void FfiDeclarationsRequireUnsafeModifier()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            ffi fn void NativeCall();
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3024"
+                && diagnostic.Message.Contains("FFI and assembly function 'NativeCall' must be declared 'unsafe'", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void UnsafeFunctionItemsDoNotPromoteToOrdinaryFunctionPointers()
     {
         var outsideUnsafe = Compile(
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Touch() {
+            unsafe fn i32[min max] Touch() {
                 return 1;
             }
 
             fn void Run() {
-                stack fnptr<fn i32[-2147483648 2147483647]()> callback = Touch;
+                stack fnptr<fn i32[min max]()> callback = Touch;
                 return;
             }
             """,
@@ -926,13 +1430,13 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Touch() {
+            unsafe fn i32[min max] Touch() {
                 return 1;
             }
 
             fn void Run() {
                 unsafe {
-                    stack fnptr<fn i32[-2147483648 2147483647]()> callback = Touch;
+                    stack fnptr<fn i32[min max]()> callback = Touch;
                 }
 
                 return;
@@ -940,14 +1444,10 @@ public sealed class TypeCheckingTests
             """,
             new CompilerOptions(StopAfterPassId: "type-check"));
 
-        Assert.False(insideUnsafe.Succeeded);
-        Assert.Contains(
-            insideUnsafe.Diagnostics,
-            static diagnostic => diagnostic.Code == "STK3024"
-                && diagnostic.Message.Contains("does not carry an unsafe requirement", StringComparison.Ordinal));
+        Assert.True(insideUnsafe.Succeeded, string.Join(", ", insideUnsafe.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         Assert.True(insideUnsafe.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? insideUnsafeModel));
         Assert.NotNull(insideUnsafeModel);
-        Assert.Empty(insideUnsafeModel.AddressTakenFunctions);
+        Assert.Single(insideUnsafeModel.AddressTakenFunctions);
     }
 
     [Fact]
@@ -957,15 +1457,15 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            unsafe fn i32[-2147483648 2147483647] Touch() {
+            unsafe fn i32[min max] Touch() {
                 return 1;
             }
 
-            fn fnptr<fn i32[-2147483648 2147483647]()> Factory() {
+            fn fnptr<fn i32[min max]()> Factory() {
                 return Touch;
             }
 
-            fn void Register(fnptr<fn i32[-2147483648 2147483647]()> callback) {
+            fn void Register(fnptr<fn i32[min max]()> callback) {
                 return;
             }
 
@@ -1036,7 +1536,7 @@ public sealed class TypeCheckingTests
             import Lib.Foundation
             module Demo
 
-            fn i32[0 max] Use() {
+            fn u32[0 2147483647] Use() {
                 stack Box box = new() { Value = Identity(Answer) };
                 stack Status status = Status.Ok;
                 switch (status) {
@@ -1058,7 +1558,7 @@ public sealed class TypeCheckingTests
                         public const Answer = 41;
 
                         public struct Box {
-                            i32[0 max] Value;
+                            u32[0 2147483647] Value;
                         }
 
                         public enum Status {
@@ -1067,12 +1567,12 @@ public sealed class TypeCheckingTests
                         }
 
                         public struct Worker {
-                            static finite law i32[0 max] Value() {
+                            static finite law u32[0 2147483647] Value() {
                                 return 7;
                             }
                         }
 
-                        public fn i32[0 max] Identity(i32[0 max] value) {
+                        public fn u32[0 2147483647] Identity(u32[0 2147483647] value) {
                             return value;
                         }
                         """,
@@ -1090,18 +1590,18 @@ public sealed class TypeCheckingTests
             module Demo
 
             const BoardWidth = 80;
-            const i8 BoardWidthTyped = 80;
-            const i32 BoardWidthWide = 80;
+            const u8 BoardWidthTyped = 80;
+            const BoardWidthWide = 80;
             const Negative = -129;
-            const BigCount = 2**16;
-            const u32 UnsignedSmall = 80;
+            const BigCount = 2 ** 16;
+            const u8 UnsignedSmall = 80;
             const u32 UnsignedWide = 4294967295;
             const SmallFloat = 3.5;
             const FloatLiteral = 3.5f;
             const f32 ExplicitFloat = 3.5;
             const f64 ExplicitSmallFloat = 3.5f;
 
-            finite law i32[0 max] UseBoardWidth() {
+            finite law u8[0 max] UseBoardWidth() {
                 return BoardWidth;
             }
             """,
@@ -1111,11 +1611,11 @@ public sealed class TypeCheckingTests
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
         Assert.NotNull(typeCheckModel);
 
-        AssertIntegerRange(typeCheckModel.Globals["BoardWidth"].Type, 8, new BigInteger(80), new BigInteger(80));
-        AssertIntegerRange(typeCheckModel.Globals["BoardWidthTyped"].Type, 8, new BigInteger(80), new BigInteger(80));
-        AssertIntegerRange(typeCheckModel.Globals["BoardWidthWide"].Type, 8, new BigInteger(80), new BigInteger(80));
+        AssertIntegerRange(typeCheckModel.Globals["BoardWidth"].Type, 8, new BigInteger(80), new BigInteger(80), isUnsigned: true);
+        AssertIntegerRange(typeCheckModel.Globals["BoardWidthTyped"].Type, 8, new BigInteger(80), new BigInteger(80), isUnsigned: true);
+        AssertIntegerRange(typeCheckModel.Globals["BoardWidthWide"].Type, 8, new BigInteger(80), new BigInteger(80), isUnsigned: true);
         AssertIntegerRange(typeCheckModel.Globals["Negative"].Type, 16, new BigInteger(-129), new BigInteger(-129));
-        AssertIntegerRange(typeCheckModel.Globals["BigCount"].Type, 24, new BigInteger(65536), new BigInteger(65536));
+        AssertIntegerRange(typeCheckModel.Globals["BigCount"].Type, 24, new BigInteger(65536), new BigInteger(65536), isUnsigned: true);
         AssertIntegerRange(typeCheckModel.Globals["UnsignedSmall"].Type, 8, new BigInteger(80), new BigInteger(80), isUnsigned: true);
         AssertIntegerRange(typeCheckModel.Globals["UnsignedWide"].Type, 32, BigInteger.Parse("4294967295"), BigInteger.Parse("4294967295"), isUnsigned: true);
         Assert.Equal(StarkTypeKind.Float, typeCheckModel.Globals["SmallFloat"].Type.Kind);
@@ -1128,17 +1628,53 @@ public sealed class TypeCheckingTests
         Assert.Equal(32, typeCheckModel.Globals["ExplicitSmallFloat"].Type.BitWidth);
 
         Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Severity == DiagnosticSeverity.Warning
-            && diagnostic.Message.Contains("BoardWidthWide", StringComparison.Ordinal)
-            && diagnostic.Message.Contains("i8", StringComparison.Ordinal));
-        Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Severity == DiagnosticSeverity.Warning
-            && diagnostic.Message.Contains("UnsignedSmall", StringComparison.Ordinal)
-            && diagnostic.Message.Contains("u8", StringComparison.Ordinal));
-        Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Severity == DiagnosticSeverity.Warning
             && diagnostic.Message.Contains("ExplicitFloat", StringComparison.Ordinal)
             && diagnostic.Message.Contains("f32", StringComparison.Ordinal));
         Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Severity == DiagnosticSeverity.Warning
             && diagnostic.Message.Contains("ExplicitSmallFloat", StringComparison.Ordinal)
             && diagnostic.Message.Contains("f32", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void StrictIntegerRangesRejectExplicitScalarConstWrongWidthOrSign()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            const i32 PositiveSigned = 80;
+            const u32 PositiveWide = 80;
+            const i32 NegativeWide = -1;
+            const u8 CorrectUnsigned = 255;
+            const i8 CorrectSigned = -1;
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                EnforceIntegerRangeStorageRules: true));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3014"
+                && diagnostic.Message.Contains("PositiveSigned", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("i32", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("u8", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3014"
+                && diagnostic.Message.Contains("PositiveWide", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("u32", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("u8", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3014"
+                && diagnostic.Message.Contains("NegativeWide", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("i32", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("i8", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Message.Contains("CorrectUnsigned", StringComparison.Ordinal)
+                || diagnostic.Message.Contains("CorrectSigned", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1164,6 +1700,69 @@ public sealed class TypeCheckingTests
         Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Code == "STK3002"
             && diagnostic.Message.Contains("TooPrecise", StringComparison.Ordinal)
             && diagnostic.Message.Contains("without changing it", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void HugeCompileTimeIntegerConstCannotBecomeRuntimeStorage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            const Huge = 2 ** 1024;
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3013"
+                && diagnostic.Message.Contains("Type 'integer' is compile-time-only", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("a global constant type", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void HugeCompileTimeIntegerConversionReportsConcreteTargetOverflow()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe finite law i1024[min max] Run() {
+                return (i1024[min max])(2 ** 1024);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("Compile-time integer value", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("does not fit in 'i1024'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void CompileTimeUnaryIntegerConstantsReinferExactResultStorage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            const MinI32 = -(2 ** 31);
+            const MinusOne = ~0;
+
+            fn i32[min max] ReadMin() {
+                return MinI32;
+            }
+
+            fn i8[min max] ReadMinusOne() {
+                return MinusOne;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
 
     [Fact]
@@ -1339,19 +1938,19 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[10**2 10**10] DecimalPowers(i32[10**2 10**10] value) {
+            fn u48[10 ** 2 10 ** 10] DecimalPowers(u48[10 ** 2 10 ** 10] value) {
                 return value;
             }
 
-            fn i32[2**4 2**16] BinaryPowers(i32[2**4 2**16] value) {
+            fn u24[2 ** 4 2 ** 16] BinaryPowers(u24[2 ** 4 2 ** 16] value) {
                 return value;
             }
 
-            fn i64[1024 * 1024 1024 * 1024 * 1024] Sizes(i64[1024 * 1024 1024 * 1024 * 1024] value) {
+            fn u32[1024 * 1024 1024 * 1024 * 1024] Sizes(u32[1024 * 1024 1024 * 1024 * 1024] value) {
                 return value;
             }
 
-            fn i32[(1 + 2) * 3 20 / 2 + 1] MixedArithmetic(i32[(1 + 2) * 3 20 / 2 + 1] value) {
+            fn u8[(1 + 2) * 3 20 / 2 + 1] MixedArithmetic(u8[(1 + 2) * 3 20 / 2 + 1] value) {
                 return value;
             }
             """,
@@ -1362,20 +1961,50 @@ public sealed class TypeCheckingTests
         Assert.NotNull(typeCheckModel);
 
         var decimalPowers = typeCheckModel.Functions["DecimalPowers"];
-        AssertIntegerRange(decimalPowers.ReturnType, 32, new BigInteger(100), BigInteger.Parse("10000000000"));
-        AssertIntegerRange(decimalPowers.Parameters[0].Type, 32, new BigInteger(100), BigInteger.Parse("10000000000"));
+        AssertIntegerRange(decimalPowers.ReturnType, 48, new BigInteger(100), BigInteger.Parse("10000000000"), isUnsigned: true);
+        AssertIntegerRange(decimalPowers.Parameters[0].Type, 48, new BigInteger(100), BigInteger.Parse("10000000000"), isUnsigned: true);
 
         var binaryPowers = typeCheckModel.Functions["BinaryPowers"];
-        AssertIntegerRange(binaryPowers.ReturnType, 32, new BigInteger(16), new BigInteger(65536));
-        AssertIntegerRange(binaryPowers.Parameters[0].Type, 32, new BigInteger(16), new BigInteger(65536));
+        AssertIntegerRange(binaryPowers.ReturnType, 24, new BigInteger(16), new BigInteger(65536), isUnsigned: true);
+        AssertIntegerRange(binaryPowers.Parameters[0].Type, 24, new BigInteger(16), new BigInteger(65536), isUnsigned: true);
 
         var sizes = typeCheckModel.Functions["Sizes"];
-        AssertIntegerRange(sizes.ReturnType, 64, new BigInteger(1048576), new BigInteger(1073741824));
-        AssertIntegerRange(sizes.Parameters[0].Type, 64, new BigInteger(1048576), new BigInteger(1073741824));
+        AssertIntegerRange(sizes.ReturnType, 32, new BigInteger(1048576), new BigInteger(1073741824), isUnsigned: true);
+        AssertIntegerRange(sizes.Parameters[0].Type, 32, new BigInteger(1048576), new BigInteger(1073741824), isUnsigned: true);
 
         var mixedArithmetic = typeCheckModel.Functions["MixedArithmetic"];
-        AssertIntegerRange(mixedArithmetic.ReturnType, 32, new BigInteger(9), new BigInteger(11));
-        AssertIntegerRange(mixedArithmetic.Parameters[0].Type, 32, new BigInteger(9), new BigInteger(11));
+        AssertIntegerRange(mixedArithmetic.ReturnType, 8, new BigInteger(9), new BigInteger(11), isUnsigned: true);
+        AssertIntegerRange(mixedArithmetic.Parameters[0].Type, 8, new BigInteger(9), new BigInteger(11), isUnsigned: true);
+    }
+
+    [Fact]
+    public void StrictIntegerRangesRejectSignedEndpointsOutsideBaseType()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[10**2 10**10] TooWide(i8[-200 0] value) {
+                return 0;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                EnforceIntegerRangeStorageRules: true));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3014"
+                && diagnostic.Message.Contains("i32", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("between", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("u48[100 10000000000]", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3014"
+                && diagnostic.Message.Contains("i8", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("between", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("i16[-200 0]", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -1399,13 +2028,64 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void ManualFullWidthIntegerRangeEndpointsAreRejectedInFavorOfMinMax()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[-2147483648 2147483647] BadSigned() {
+                return 0;
+            }
+
+            fn u8[0 255] BadUnsignedMax(u8[0 255] value) {
+                return value;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3014"
+                && diagnostic.Message.Contains("minimum value for i32", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("use the `min` shorthand", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3014"
+                && diagnostic.Message.Contains("maximum value for i32", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("use the `max` shorthand", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3014"
+                && diagnostic.Message.Contains("maximum value for u8", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("use the `max` shorthand", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void UnsignedIntegerRangeLowerBoundMayUseZeroInsteadOfMin()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn u8[0 max] Good(u8[0 max] value) {
+                return value;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
     public void ConstantArithmeticIntegerRangeEndpointOverflowIsRejected()
     {
         var result = Compile(
             """
             module Demo
 
-            fn i32[0 2**2048] Bad() {
+            fn i32[0 2 ** 2048] Bad() {
                 return 0;
             }
             """,
@@ -1488,7 +2168,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[2**8 2**4] Bad() {
+            fn i32[2 ** 8 2 ** 4] Bad() {
                 return 0;
             }
             """,
@@ -1548,10 +2228,10 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
-                stack mut i32[-2147483648 2147483647] value = left;
+            finite law i32[min max] Run(i32[min max] left, i32[min max] right) {
+                stack mut i32[min max] value = left;
                 value +%= right;
-                stack i32[-2147483648 2147483647] product = left *| right;
+                stack i32[min max] product = left *| right;
                 return -%value +% product +| 3;
             }
             """,
@@ -1586,7 +2266,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            strictfp finite law f64 Run(f32 left, i32[-2147483648 2147483647] middle, f64 right, f32 divisor) {
+            strictfp finite law f64 Run(f32 left, i32[min max] middle, f64 right, f32 divisor) {
                 return left + middle * right / divisor - 1.0;
             }
             """,
@@ -1604,15 +2284,15 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            finite law i32[-2147483648 2147483647] Run(i64[-9223372036854775808 9223372036854775807] bits, ascii text) {
-                stack mut i32[-2147483648 2147483647] value = 7;
-                stack rawmutptr<i32[-2147483648 2147483647]> ptr = &value;
-                stack rawptr<i32[-2147483648 2147483647]> readonlyPtr = (rawptr<i32[-2147483648 2147483647]>)ptr;
-                *ptr = (i32[-2147483648 2147483647])bits;
-                stack i64[-9223372036854775808 9223372036854775807] address = (i64[-9223372036854775808 9223372036854775807])ptr;
-                stack rawmutptr<i32[-2147483648 2147483647]> roundTrip = (rawmutptr<i32[-2147483648 2147483647]>)address;
-                stack i32[-2147483648 2147483647][2] values = { 1, 2 };
-                stack i32[-2147483648 2147483647][] view = (i32[-2147483648 2147483647][])values;
+            unsafe finite law i32[min max] Run(i64[min max] bits, ascii text) {
+                stack mut i32[min max] value = 7;
+                stack rawmutptr<i32[min max]> ptr = &value;
+                stack rawptr<i32[min max]> readonlyPtr = (rawptr<i32[min max]>)ptr;
+                *ptr = (i32[min max])bits;
+                stack i64[min max] address = (i64[min max])ptr;
+                stack rawmutptr<i32[min max]> roundTrip = (rawmutptr<i32[min max]>)address;
+                stack i32[min max][2] values = { 1, 2 };
+                stack i32[min max][] view = (i32[min max][])values;
                 return *roundTrip + view[0];
             }
             """,
@@ -1661,7 +2341,7 @@ public sealed class TypeCheckingTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             struct Holder {
@@ -1670,11 +2350,11 @@ public sealed class TypeCheckingTests
 
             const Holder Current = new Holder() { Item = new Box() { Value = 7 } };
 
-            fn i32[-2147483648 2147483647] Read(frozen Box box) {
+            fn i32[min max] Read(frozen Box box) {
                 return 7;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 return Read(Current.Item);
             }
             """,
@@ -1758,10 +2438,10 @@ public sealed class TypeCheckingTests
             module System.Text
 
             public finite law ascii AsciiView(Ascii source);
-            public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
-            public fn bool TryFormatI32Ascii(rawmutptr<Ascii> destination, i32[-2147483648 2147483647] value);
+            public unsafe fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+            public unsafe fn bool TryFormatI32Ascii(rawmutptr<Ascii> destination, i32[min max] value);
 
-            fn Ascii Label(i32[-2147483648 2147483647] score) {
+            fn Ascii Label(i32[min max] score) {
                 stack Ascii label[64] = $"Score: {score}";
                 return label;
             }
@@ -1780,8 +2460,8 @@ public sealed class TypeCheckingTests
 
             public finite law ascii AsciiView(Ascii source);
             public finite law unicode UnicodeView(Unicode source);
-            public fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
-            public fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
+            public unsafe fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+            public unsafe fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
 
             fn Ascii JoinAscii(Ascii left, ascii right) {
                 stack Ascii combined[64] = left + right;
@@ -1827,7 +2507,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647][1 + 2] values) {
+            fn i32[min max] Run(i32[min max][1 + 2] values) {
                 return values[2];
             }
             """,
@@ -1845,8 +2525,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
-                stack i32[-2147483648 2147483647][3] values = { 1, 2 };
+            fn i32[min max] Run() {
+                stack i32[min max][3] values = { 1, 2 };
                 return values[0] + values[1] + values[2];
             }
             """,
@@ -1864,7 +2544,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            record Many(i32[-2147483648 2147483647] A, i32[-2147483648 2147483647] B, i32[-2147483648 2147483647] C, i32[-2147483648 2147483647] D, i32[-2147483648 2147483647] E) { }
+            record Many(i32[min max] A, i32[min max] B, i32[min max] C, i32[min max] D, i32[min max] E) { }
 
             fn bool Less(Many left, Many right) {
                 return left < right;
@@ -1886,7 +2566,7 @@ public sealed class TypeCheckingTests
 
             enum Token {
                 None,
-                Many(i32[-2147483648 2147483647], i32[-2147483648 2147483647], i32[-2147483648 2147483647], i32[-2147483648 2147483647], i32[-2147483648 2147483647]),
+                Many(i32[min max], i32[min max], i32[min max], i32[min max], i32[min max]),
             }
 
             fn bool Less(Token left, Token right) {
@@ -1926,17 +2606,17 @@ public sealed class TypeCheckingTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             struct PtrBox {
-                rawmutptr<i32[-2147483648 2147483647]> Ptr;
+                rawmutptr<i32[min max]> Ptr;
             }
 
-            finite law void Run(frozen Box box, frozen PtrBox ptrBox) {
-                stack rawptr<frozen i32[-2147483648 2147483647]> valuePtr = &box.Value;
-                stack rawptr<frozen i32[-2147483648 2147483647]> readonlyPtr = ptrBox.Ptr;
-                stack bool same = *valuePtr == *readonlyPtr;
+            unsafe finite law void Run(frozen Box box, frozen PtrBox ptrBox) {
+                stack rawptr<frozen i32[min max]> valuePtr = &box.Value;
+                stack rawptr<frozen i32[min max]> readonlyPtr = ptrBox.Ptr;
+                stack bool valuesEqual = *valuePtr == *readonlyPtr;
             }
             """,
             new CompilerOptions(StopAfterPassId: "type-check"));
@@ -1954,14 +2634,14 @@ public sealed class TypeCheckingTests
             module Demo
 
             struct PtrBox {
-                rawmutptr<i32[-2147483648 2147483647]> Ptr;
+                rawmutptr<i32[min max]> Ptr;
             }
 
-            fn void Inspect(const PtrBox box, const rawmutptr<i32[-2147483648 2147483647]> ptr) {
-                stack rawptr<frozen i32[-2147483648 2147483647]> fieldPtr = box.Ptr;
-                stack rawptr<frozen i32[-2147483648 2147483647]> directPtr = ptr;
-                stack i32[-2147483648 2147483647] value = *ptr;
-                stack bool same = *fieldPtr == *directPtr;
+            unsafe fn void Inspect(const PtrBox box, const rawmutptr<i32[min max]> ptr) {
+                stack rawptr<frozen i32[min max]> fieldPtr = box.Ptr;
+                stack rawptr<frozen i32[min max]> directPtr = ptr;
+                stack i32[min max] value = *ptr;
+                stack bool valuesEqual = *fieldPtr == *directPtr;
                 return;
             }
             """,
@@ -1980,7 +2660,7 @@ public sealed class TypeCheckingTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             fn void Inspect(const Box box) {
@@ -2004,14 +2684,35 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Inspect(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
+            unsafe fn void Inspect(const rawmutptr<i32[min max]> ptr) {
                 return;
             }
 
-            fn void Forward(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
-                stack rawptr<frozen i32[-2147483648 2147483647]> local = ptr;
+            unsafe fn void Forward(const rawmutptr<i32[min max]> ptr) {
+                stack rawptr<frozen i32[min max]> local = ptr;
                 Inspect(local);
                 return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void GenericConstRawPointerCallsInferFromConstProvenanceView()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn rawptr<frozen i32[min max]> Forward<T>(const rawmutptr<i32[min max]> ptr, T tag) {
+                return ptr;
+            }
+
+            unsafe fn rawptr<frozen i32[min max]> Run(const rawmutptr<i32[min max]> ptr) {
+                stack i32[min max] tag = 0;
+                return Forward(ptr, tag);
             }
             """,
             new CompilerOptions(StopAfterPassId: "type-check"));
@@ -2026,15 +2727,15 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Inspect(const i32[-2147483648 2147483647][] view) {
+            fn void Inspect(const i32[min max][] view) {
                 return;
             }
 
-            fn void Forward(
-                const rawmutptr<i32[-2147483648 2147483647]>[count] pointer,
+            unsafe fn void Forward(
+                const rawmutptr<i32[min max]>[count] pointer,
                 i32[1 10] count) {
                 unsafe {
-                    stack frozen i32[-2147483648 2147483647][] view = slice(pointer, count);
+                    stack frozen i32[min max][] view = slice(pointer, count);
                     Inspect(view);
                 }
 
@@ -2053,9 +2754,9 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
+            record Pair(i32[min max] Left, i32[min max] Right) { }
 
-            finite law i32[-2147483648 2147483647] Run(Pair value) {
+            finite law i32[min max] Run(Pair value) {
                 switch (value) {
                     case Pair(1, var right):
                         return right;
@@ -2078,9 +2779,9 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
+            record Pair(i32[min max] Left, i32[min max] Right) { }
 
-            finite law i32[-2147483648 2147483647] Run(Pair value) {
+            finite law i32[min max] Run(Pair value) {
                 switch (value) {
                     case var whole:
                         return whole.Left;
@@ -2101,10 +2802,10 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
-            record Outer(Pair Values, i32[-2147483648 2147483647] Tail) { }
+            record Pair(i32[min max] Left, i32[min max] Right) { }
+            record Outer(Pair Values, i32[min max] Tail) { }
 
-            finite law i32[-2147483648 2147483647] Run(Outer value) {
+            finite law i32[min max] Run(Outer value) {
                 switch (value) {
                     case Outer(Pair capture, var tail):
                         return capture.Right + tail;
@@ -2127,10 +2828,10 @@ public sealed class TypeCheckingTests
 
             enum Token {
                 Empty,
-                Pair(i32[-2147483648 2147483647], i32[-2147483648 2147483647]),
+                Pair(i32[min max], i32[min max]),
             }
 
-            finite law i32[-2147483648 2147483647] Run(Token value) {
+            finite law i32[min max] Run(Token value) {
                 switch (value) {
                     case Token.Pair capture:
                         switch (capture) {
@@ -2158,7 +2859,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            finite law i32[-2147483648 2147483647] Run(bool value, bool allow) {
+            finite law i32[min max] Run(bool value, bool allow) {
                 switch (value) {
                     case true when allow:
                         return 1;
@@ -2184,10 +2885,10 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
-            record Outer(Pair Values, i32[-2147483648 2147483647] Tail) { }
+            record Pair(i32[min max] Left, i32[min max] Right) { }
+            record Outer(Pair Values, i32[min max] Tail) { }
 
-            finite law i32[-2147483648 2147483647] Run(Outer value) {
+            finite law i32[min max] Run(Outer value) {
                 switch (value) {
                     case Outer(Pair(1, var right), var tail):
                         return right + tail;
@@ -2212,11 +2913,11 @@ public sealed class TypeCheckingTests
 
             enum Token {
                 End,
-                Integer(i32[-2147483648 2147483647]),
-                Move { X: i32[-2147483648 2147483647], Y: i32[-2147483648 2147483647] },
+                Integer(i32[min max]),
+                Move { X: i32[min max], Y: i32[min max] },
             }
 
-            finite law i32[-2147483648 2147483647] Run(Token token) {
+            finite law i32[min max] Run(Token token) {
                 switch (token) {
                     case Token.End:
                         return 0;
@@ -2248,11 +2949,11 @@ public sealed class TypeCheckingTests
                 Some(T),
             }
 
-            finite law bool HasValue(Option<i32[-2147483648 2147483647]> opt) {
+            finite law bool HasValue(Option<i32[min max]> opt) {
                 switch (opt) {
-                    case Option<i32[-2147483648 2147483647]>.None:
+                    case Option<i32[min max]>.None:
                         return false;
-                    case Option<i32[-2147483648 2147483647]>.Some(var value):
+                    case Option<i32[min max]>.Some(var value):
                         return value > 0;
                 }
             }
@@ -2279,7 +2980,7 @@ public sealed class TypeCheckingTests
 
             record Pair<A, B>(A First, B Second) { }
 
-            finite law i32[-2147483648 2147483647] Sum(Pair<i32[-2147483648 2147483647], i32[-2147483648 2147483647]> pair) {
+            finite law i32[min max] Sum(Pair<i32[min max], i32[min max]> pair) {
                 return pair.First + pair.Second;
             }
             """,
@@ -2304,8 +3005,8 @@ public sealed class TypeCheckingTests
 
             record Pair<A, B>(A First, B Second) { }
 
-            finite law i32[-2147483648 2147483647] Sum() {
-                stack Pair<i32[-2147483648 2147483647], i32[-2147483648 2147483647]> pair = new Pair<i32[-2147483648 2147483647], i32[-2147483648 2147483647]>(3, 4);
+            finite law i32[min max] Sum() {
+                stack Pair<i32[min max], i32[min max]> pair = new Pair<i32[min max], i32[min max]>(3, 4);
                 return pair.First + pair.Second;
             }
             """);
@@ -2322,7 +3023,7 @@ public sealed class TypeCheckingTests
 
             record Pair<A, B>(A First, B Second) { }
 
-            fn bool Accept(Pair<i32[-2147483648 2147483647], bool> pair) {
+            fn bool Accept(Pair<i32[min max], bool> pair) {
                 return pair.Second;
             }
             """,
@@ -2346,7 +3047,7 @@ public sealed class TypeCheckingTests
 
             record Pair<A, B>(A First, B Second) { }
 
-            fn i32[-2147483648 2147483647] Read(rawptr<Pair<i32[-2147483648 2147483647], bool>> ptr) {
+            unsafe fn i32[min max] Read(rawptr<Pair<i32[min max], bool>> ptr) {
                 if ((*ptr).Second) {
                     return (*ptr).First;
                 }
@@ -2424,8 +3125,8 @@ public sealed class TypeCheckingTests
                 return value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
-                stack i32[-2147483648 2147483647] value = 42;
+            fn i32[min max] Run() {
+                stack i32[min max] value = 42;
                 return Identity(value);
             }
             """,
@@ -2456,9 +3157,9 @@ public sealed class TypeCheckingTests
                 }
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 stack Box box = new Box();
-                stack i32[-2147483648 2147483647] value = 42;
+                stack i32[min max] value = 42;
                 return box.Echo(value);
             }
             """,
@@ -2493,9 +3194,9 @@ public sealed class TypeCheckingTests
                 }
             }
 
-            fn i32[-2147483648 2147483647] Run() {
-                stack Box<i32[-2147483648 2147483647]> box = new Box<i32[-2147483648 2147483647]>() { Value = 1 };
-                stack i32[-2147483648 2147483647] value = 42;
+            fn i32[min max] Run() {
+                stack Box<i32[min max]> box = new Box<i32[min max]>() { Value = 1 };
+                stack i32[min max] value = 42;
                 return box.Echo(value);
             }
             """,
@@ -2559,7 +3260,7 @@ public sealed class TypeCheckingTests
                 return value;
             }
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            fn i32[min max] Run(i32[min max] left, i32[min max] right) {
                 return Identity(left) + Identity(right);
             }
             """,
@@ -2583,7 +3284,7 @@ public sealed class TypeCheckingTests
 
             record Pair<T>(T Value) { }
 
-            fn i32[-2147483648 2147483647] Add(Pair<i32[-2147483648 2147483647]> left, Pair<i32[-2147483648 2147483647]> right) {
+            fn i32[min max] Add(Pair<i32[min max]> left, Pair<i32[min max]> right) {
                 return left.Value + right.Value;
             }
             """,
@@ -2605,7 +3306,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Parse(i32[-2147483648 2147483647] value) {
+            fn i32[min max] Parse(i32[min max] value) {
                 return value;
             }
 
@@ -2613,8 +3314,8 @@ public sealed class TypeCheckingTests
                 return value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
-                stack i32[-2147483648 2147483647] value = 42;
+            fn i32[min max] Run() {
+                stack i32[min max] value = 42;
                 return Parse(value);
             }
             """,
@@ -2633,7 +3334,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            alias Byte = i8[-128 127];
+            alias Byte = i8[min max];
 
             fn Byte Inc(Byte value) {
                 return value + 1;
@@ -2659,7 +3360,7 @@ public sealed class TypeCheckingTests
 
             alias Ptr<T> = rawptr<T>;
 
-            fn i32[-2147483648 2147483647] Read(Ptr<i32[-2147483648 2147483647]> value) {
+            unsafe fn i32[min max] Read(Ptr<i32[min max]> value) {
                 return *value;
             }
             """,
@@ -2676,6 +3377,32 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void GenericTypeAliasesSubstituteIntoClosureSignatures()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            alias Mapper<T> = heap closure<fn T(T)>;
+
+            fn Mapper<i32[min max]> Factory(Mapper<i32[min max]> mapper) {
+                return mapper;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static d => d.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        Assert.True(typeCheckModel.TypeAliases.ContainsKey("Mapper"));
+        var signature = typeCheckModel.Functions["Factory"];
+        Assert.Equal(StarkTypeKind.Closure, signature.ReturnType.Kind);
+        Assert.Equal("i32", signature.ReturnType.ClosureReturnType?.DisplayName);
+        var closureParameter = Assert.Single(signature.ReturnType.ClosureParameterTypes ?? []);
+        Assert.Equal("i32", closureParameter.DisplayName);
+    }
+
+    [Fact]
     public void GenericTypeWithWrongArgCountIsAnError()
     {
         var result = Compile(
@@ -2687,7 +3414,7 @@ public sealed class TypeCheckingTests
                 Some(T),
             }
 
-            finite law void Bad(Option<i32[-2147483648 2147483647], bool> opt) {
+            finite law void Bad(Option<i32[min max], bool> opt) {
                 return;
             }
             """,
@@ -2709,11 +3436,11 @@ public sealed class TypeCheckingTests
                 Err(E),
             }
 
-            finite law i32[-2147483648 2147483647] Unwrap(Result<i32[-2147483648 2147483647], bool> res) {
+            finite law i32[min max] Unwrap(Result<i32[min max], bool> res) {
                 switch (res) {
-                    case Result<i32[-2147483648 2147483647], bool>.Ok(var value):
+                    case Result<i32[min max], bool>.Ok(var value):
                         return value;
-                    case Result<i32[-2147483648 2147483647], bool>.Err(var err):
+                    case Result<i32[min max], bool>.Err(var err):
                         if (err) {
                             return -1;
                         }
@@ -2741,9 +3468,9 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            record Point(i32[-2147483648 2147483647] X, i32[-2147483648 2147483647] Y) { }
+            record Point(i32[min max] X, i32[min max] Y) { }
 
-            finite law void Bad(Point<i32[-2147483648 2147483647]> p) {
+            finite law void Bad(Point<i32[min max]> p) {
                 return;
             }
             """,
@@ -2760,7 +3487,7 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Parse(i32[-2147483648 2147483647] value) {
+            fn i32[min max] Parse(i32[min max] value) {
                 return value;
             }
 
@@ -2768,7 +3495,7 @@ public sealed class TypeCheckingTests
                 return value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 return Parse(42);
             }
 
@@ -2799,7 +3526,7 @@ public sealed class TypeCheckingTests
                 return true;
             }
 
-            fn i32[-2147483648 2147483647] PickFloat(f32 value) {
+            fn i32[min max] PickFloat(f32 value) {
                 return 1;
             }
 
@@ -2807,15 +3534,15 @@ public sealed class TypeCheckingTests
                 return true;
             }
 
-            fn i32[-2147483648 2147483647] PickInteger(i48[-140737488355328 140737488355327] value) {
+            fn i32[min max] PickInteger(i48[min max] value) {
                 return 2;
             }
 
-            fn i32[-2147483648 2147483647] PickInteger(i64[-9223372036854775808 9223372036854775807] value) {
+            fn i32[min max] PickInteger(i64[min max] value) {
                 return 3;
             }
 
-            fn i32[-2147483648 2147483647] PickInteger(f64 value) {
+            fn i32[min max] PickInteger(f64 value) {
                 return 4;
             }
 
@@ -2842,13 +3569,13 @@ public sealed class TypeCheckingTests
             module Demo
 
             struct Counter {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
-                fn i32[-2147483648 2147483647] Scale(borrow Counter self, i32[-2147483648 2147483647] factor) {
+                fn i32[min max] Scale(borrow Counter self, i32[min max] factor) {
                     return self.Value * factor;
                 }
 
-                fn i32[-2147483648 2147483647] Scale(borrow Counter self, bool doubleIt) {
+                fn i32[min max] Scale(borrow Counter self, bool doubleIt) {
                     if (doubleIt) {
                         return self.Value * 2;
                     }
@@ -2857,12 +3584,12 @@ public sealed class TypeCheckingTests
                 }
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 stack Counter counter = new Counter() { Value = 3 };
                 return counter.Scale(4);
             }
 
-            fn i32[-2147483648 2147483647] RunBool() {
+            fn i32[min max] RunBool() {
                 stack Counter counter = new Counter() { Value = 3 };
                 return counter.Scale(true);
             }
@@ -3154,6 +3881,138 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void DynamicStorageMoveAtRequiresMutableOwnerOneIntegerArgument()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void ImmutableOwner() {
+                stack dynamic i32[0 max] values = new(1);
+                values.MoveAt(0);
+            }
+
+            fn void MissingArgument() {
+                stack mut dynamic i32[0 max] values = new(1);
+                values.MoveAt();
+            }
+
+            fn void ExtraArgument() {
+                stack mut dynamic i32[0 max] values = new(1);
+                values.MoveAt(0, 1);
+            }
+
+            fn void NonIntegerIndex(bool flag) {
+                stack mut dynamic i32[0 max] values = new(1);
+                values.MoveAt(flag);
+            }
+
+            fn void NegativeIndex() {
+                stack mut dynamic i32[0 max] values = new(1);
+                values.MoveAt(-1);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3007"
+                && diagnostic.Message.Contains("Cannot assign to immutable local 'values'", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3009"
+                && diagnostic.Message.Contains("MoveAt expects one index argument but received 0", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3009"
+                && diagnostic.Message.Contains("MoveAt expects one index argument but received 2", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("MoveAt index must be an integer", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("bool", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("MoveAt index must be provably non-negative", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void DynamicStorageReserveOperationsRequireMutableOwnerAndOneIntegerArgument()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn void ReserveImmutableOwner() {
+                stack dynamic i32[0 max] values = new(1);
+                values.Reserve(1);
+            }
+
+            fn void ReserveMissingArgument() {
+                stack mut dynamic i32[0 max] values = new(1);
+                values.Reserve();
+            }
+
+            fn void TryReserveExtraArgument() {
+                stack mut dynamic i32[0 max] values = new(1);
+                values.TryReserve(1, 2);
+            }
+
+            fn void TryReserveCapacityNonInteger(bool flag) {
+                stack mut dynamic i32[0 max] values = new(1);
+                values.TryReserveCapacity(flag);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3007"
+                && diagnostic.Message.Contains("Cannot assign to immutable local 'values'", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3009"
+                && diagnostic.Message.Contains("Reserve expects one additional-capacity argument but received 0", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3009"
+                && diagnostic.Message.Contains("TryReserve expects one additional-capacity argument but received 2", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("TryReserveCapacity target capacity must be an integer", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("bool", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void DynamicStorageOperationsRequireAddressableOwner()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn dynamic i32[0 max] Make() {
+                return new(1);
+            }
+
+            fn void Run() {
+                Make().MoveLast();
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3007"
+                && diagnostic.Message.Contains("MoveLast requires a mutable addressable dynamic owner", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("call to 'Make'", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void DynamicStorageSpareRangeCanBindInitSliceView()
     {
         var result = Compile(
@@ -3246,6 +4105,13 @@ public sealed class TypeCheckingTests
         Assert.Equal(isUnsafe, capture.IsUnsafe);
         Assert.Equal(StarkTypeKind.Integer, capture.Type.Kind);
         Assert.Equal("Run", capture.EnclosingFunctionName);
+    }
+
+    private static bool IsFunctionPointerCaptureDiagnostic(CompilerDiagnostic diagnostic)
+    {
+        return diagnostic.Code == "STK3008"
+            && diagnostic.Message.Contains("lambda converted to 'fnptr<...>' cannot capture local state", StringComparison.Ordinal)
+            && diagnostic.Message.Contains("function pointers do not carry closure storage", StringComparison.Ordinal);
     }
 
     private static CompilationResult Compile(string source, CompilerOptions? options = null)

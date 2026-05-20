@@ -248,7 +248,7 @@ internal static class SyntaxModelFactory
         var function = declaration.Function!;
         var nameToken = context.Identifier().Symbol;
         var modifiers = context.functionModifier().Select(static modifier => modifier.GetText()).ToHashSet(StringComparer.Ordinal);
-        var hasUnsupportedModifier = modifiers.Any(static modifier => modifier is not "ffi");
+        var hasUnsupportedModifier = modifiers.Any(static modifier => modifier is not "ffi" and not "unsafe");
 
         if (function.Asm!.Architecture == StarkAsmArchitecture.Unknown)
         {
@@ -269,7 +269,7 @@ internal static class SyntaxModelFactory
         {
             diagnostics.Add(new SyntaxModelDiagnostic(
                 "STK2105",
-                $"Asm declaration '{declaration.Name}' must use the v1 surface 'ffi asm(arch) fn' with no generics or extra modifiers, and must use an asm template body.",
+                $"Asm declaration '{declaration.Name}' must use the v1 surface 'unsafe ffi asm(arch) fn' with no generics or extra modifiers except 'unsafe', and must use an asm template body.",
                 nameToken.Line,
                 nameToken.Column + 1));
             return false;
@@ -689,7 +689,8 @@ internal static class SyntaxModelFactory
         IReadOnlyList<ModuleAttributeModel> attributes,
         IReadOnlyList<StarkParser.AttributeContext> attributeContexts,
         string targetDescription,
-        List<SyntaxModelDiagnostic> diagnostics)
+        List<SyntaxModelDiagnostic> diagnostics,
+        bool allowTestingAttributes = false)
     {
         var backendOptimizationMode = ModuleBackendOptimizationMode.Default;
         var backendAttributeCount = 0;
@@ -698,11 +699,51 @@ internal static class SyntaxModelFactory
         {
             var attribute = attributes[index];
             var attributeContext = attributeContexts[index];
+            if (string.Equals(attribute.Name, "Platform", StringComparison.Ordinal))
+            {
+                if (attribute.Arguments.Count != 0)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2113",
+                        $"Attribute '[Platform]' on {targetDescription} does not take arguments.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                }
+
+                continue;
+            }
+
+            if (IsTestingAttribute(attribute.Name))
+            {
+                if (!allowTestingAttributes)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2110",
+                        $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. v1 attributes support '[Backend(Opaque)]' and '[Platform]' here.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                    continue;
+                }
+
+                if (attribute.Arguments.Count != 0)
+                {
+                    diagnostics.Add(new SyntaxModelDiagnostic(
+                        "STK2113",
+                        $"Attribute '[{attribute.Name}]' on {targetDescription} does not take arguments.",
+                        attributeContext.Start.Line,
+                        attributeContext.Start.Column + 1));
+                }
+
+                continue;
+            }
+
             if (!string.Equals(attribute.Name, "Backend", StringComparison.Ordinal))
             {
                 diagnostics.Add(new SyntaxModelDiagnostic(
                     "STK2110",
-                    $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. v1 attributes only support '[Backend(Opaque)]'.",
+                    allowTestingAttributes
+                        ? $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. v1 attributes support '[Backend(Opaque)]', '[Platform]', '[Fact]', and '[Theory]'."
+                        : $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. v1 attributes support '[Backend(Opaque)]' and '[Platform]'.",
                     attributeContext.Start.Line,
                     attributeContext.Start.Column + 1));
                 continue;
@@ -734,6 +775,12 @@ internal static class SyntaxModelFactory
         }
 
         return backendOptimizationMode;
+    }
+
+    private static bool IsTestingAttribute(string name)
+    {
+        return string.Equals(name, "Fact", StringComparison.Ordinal)
+            || string.Equals(name, "Theory", StringComparison.Ordinal);
     }
 
     private static void AddUnsupportedAttributeDiagnostics(
@@ -771,7 +818,8 @@ internal static class SyntaxModelFactory
                 declarationAttributes,
                 declarationAttributeContexts,
                 $"function '{function.Identifier().GetText()}'",
-                diagnostics);
+                diagnostics,
+                allowTestingAttributes: true);
             declarations.Add(new TopLevelDeclarationModel(
                 function.Identifier().GetText(),
                 DeclarationKind.Function,
@@ -833,7 +881,8 @@ internal static class SyntaxModelFactory
                     memberAttributes,
                     memberAttributeContexts,
                     $"method '{structDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
-                    diagnostics);
+                    diagnostics,
+                    allowTestingAttributes: true);
                 if (methodBackendOptimizationMode == ModuleBackendOptimizationMode.Default)
                 {
                     methodBackendOptimizationMode = backendOptimizationMode;
@@ -903,7 +952,8 @@ internal static class SyntaxModelFactory
                     memberAttributes,
                     memberAttributeContexts,
                     $"method '{recordDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
-                    diagnostics);
+                    diagnostics,
+                    allowTestingAttributes: true);
                 if (methodBackendOptimizationMode == ModuleBackendOptimizationMode.Default)
                 {
                     methodBackendOptimizationMode = backendOptimizationMode;
@@ -1220,7 +1270,9 @@ internal static class SyntaxModelFactory
             IsStatic: modifiers.Contains("static"),
             Attributes: attributes,
             BackendOptimizationMode: backendOptimizationMode,
-            DisjointParameterGroups: CreateDisjointParameterGroups(parameterList, memoryContractClauses));
+            DisjointParameterGroups: CreateDisjointParameterGroups(parameterList, memoryContractClauses),
+            OverlapParameterGroups: CreateOverlapParameterGroups(memoryContractClauses),
+            SameParameterGroups: CreateSameParameterGroups(memoryContractClauses));
     }
 
     private static ParameterModel CreateParameterModel(StarkParser.ParameterContext parameter)
@@ -1265,9 +1317,69 @@ internal static class SyntaxModelFactory
 
         foreach (var clause in memoryContractClauses)
         {
-            foreach (var contract in clause.disjointContract())
+            foreach (var contract in clause.parameterMemoryContract()
+                         .Select(static contract => contract.disjointContract())
+                         .Where(static contract => contract is not null)!)
             {
-                var names = contract.expressionList()
+                var regions = contract.expressionList()
+                    .expression()
+                    .Select(static expression => TryGetParameterMemoryRegion(expression.GetText()))
+                    .Where(static region => region is not null)
+                    .Select(static region => region!)
+                    .ToArray();
+                var names = regions
+                    .Select(static region => region.ParameterName)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                var hasSubregions = regions.Any(static region => !region.IsWholeParameter);
+                if (regions.Length > 1 && (hasSubregions || names.Length > 1))
+                {
+                    groups.Add(hasSubregions
+                        ? new ParameterDisjointGroup(names, regions)
+                        : new ParameterDisjointGroup(names));
+                }
+            }
+        }
+
+        return groups;
+    }
+
+    private static IReadOnlyList<ParameterOverlapGroup> CreateOverlapParameterGroups(
+        IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> memoryContractClauses)
+    {
+        return CreateParameterRelationGroups(
+                memoryContractClauses,
+                static contract => contract.overlapContract()?.expressionList())
+            .Select(static group => new ParameterOverlapGroup(group))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<ParameterSameGroup> CreateSameParameterGroups(
+        IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> memoryContractClauses)
+    {
+        return CreateParameterRelationGroups(
+                memoryContractClauses,
+                static contract => contract.sameContract()?.expressionList())
+            .Select(static group => new ParameterSameGroup(group))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<IReadOnlyList<string>> CreateParameterRelationGroups(
+        IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> memoryContractClauses,
+        Func<StarkParser.ParameterMemoryContractContext, StarkParser.ExpressionListContext?> selectExpressionList)
+    {
+        var groups = new List<IReadOnlyList<string>>();
+        foreach (var clause in memoryContractClauses)
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                var expressionList = selectExpressionList(contract);
+                if (expressionList is null)
+                {
+                    continue;
+                }
+
+                var names = expressionList
                     .expression()
                     .Select(static expression => TryGetDisjointContractParameterName(expression.GetText()))
                     .Where(static name => !string.IsNullOrWhiteSpace(name))
@@ -1276,7 +1388,7 @@ internal static class SyntaxModelFactory
                     .ToArray();
                 if (names.Length > 1)
                 {
-                    groups.Add(new ParameterDisjointGroup(names));
+                    groups.Add(names);
                 }
             }
         }
@@ -1286,15 +1398,38 @@ internal static class SyntaxModelFactory
 
     private static string? TryGetDisjointContractParameterName(string operandText)
     {
+        return TryGetParameterMemoryRegion(operandText)?.ParameterName;
+    }
+
+    private static ParameterMemoryRegion? TryGetParameterMemoryRegion(string operandText)
+    {
         operandText = TrimOuterParentheses(operandText);
         if (!TryReadIdentifier(operandText, 0, out var identifier, out var position))
         {
             return null;
         }
 
-        return position == operandText.Length || operandText[position] == '['
-            ? identifier
-            : null;
+        if (position == operandText.Length)
+        {
+            return new ParameterMemoryRegion(identifier);
+        }
+
+        if (operandText[position] != '[' || operandText[^1] != ']')
+        {
+            return null;
+        }
+
+        var regionText = operandText[(position + 1)..^1];
+        var separator = regionText.IndexOf(',', StringComparison.Ordinal);
+        if (separator <= 0 || separator >= regionText.Length - 1)
+        {
+            return null;
+        }
+
+        return new ParameterMemoryRegion(
+            identifier,
+            TrimOuterParentheses(regionText[..separator]),
+            TrimOuterParentheses(regionText[(separator + 1)..]));
     }
 
     private static string TrimOuterParentheses(string text)

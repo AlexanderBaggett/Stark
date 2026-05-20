@@ -36,15 +36,15 @@ public enum NetResult<T> {
 }
 
 public struct IPv4Address {
-    u8[0 255] A;
-    u8[0 255] B;
-    u8[0 255] C;
-    u8[0 255] D;
+    u8[0 max] A;
+    u8[0 max] B;
+    u8[0 max] C;
+    u8[0 max] D;
 }
 
 public struct IPv4Endpoint {
     IPv4Address Address;
-    u16[0 65535] Port;
+    u16[0 max] Port;
 }
 ```
 

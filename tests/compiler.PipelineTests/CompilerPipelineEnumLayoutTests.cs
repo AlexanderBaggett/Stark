@@ -28,7 +28,7 @@ public sealed class CompilerPipelineEnumLayoutTests
                     InvalidPath,
                     BrokenPipe,
                     DiskFull,
-                    Unknown(i32[-2147483648 2147483647]),
+                    Unknown(i32[min max]),
                 }
                 """),
             new CompilerOptions(StopAfterPassId: "enum-layout"));
@@ -80,8 +80,8 @@ public sealed class CompilerPipelineEnumLayoutTests
 
                 public enum WidePayload {
                     Empty,
-                    I24(i24[-8388608 8388607]),
-                    I48(i48[-140737488355328 140737488355327]),
+                    I24(i24[min max]),
+                    I48(i48[min max]),
                     I96(i96[min max]),
                     I192(i192[min max]),
                 }
@@ -124,13 +124,13 @@ public sealed class CompilerPipelineEnumLayoutTests
                 module Facade
 
                 public struct Padded {
-                    i8[-128 127] Small;
-                    i32[-2147483648 2147483647] Value;
+                    i8[min max] Small;
+                    i32[min max] Value;
                 }
 
                 public enum Token {
                     End,
-                    Move { X: i32[-2147483648 2147483647], Y: i32[-2147483648 2147483647] },
+                    Move { X: i32[min max], Y: i32[min max] },
                 }
                 """,
                 facadePath));
@@ -242,7 +242,7 @@ public sealed class CompilerPipelineEnumLayoutTests
                 public enum CommonError {
                     NotFound,
                     PermissionDenied,
-                    Unknown(i32[-2147483648 2147483647]),
+                    Unknown(i32[min max]),
                 }
 
                 public enum CommonStatus {
@@ -291,11 +291,11 @@ public sealed class CompilerPipelineEnumLayoutTests
                     import Facade
                     module Demo
 
-                    finite law i32[-2147483648 2147483647] Unwrap(Facade.CommonResult<i32[-2147483648 2147483647]> result) {
+                    finite law i32[min max] Unwrap(Facade.CommonResult<i32[min max]> result) {
                         switch (result) {
-                            case Facade.CommonResult<i32[-2147483648 2147483647]>.Ok(var value):
+                            case Facade.CommonResult<i32[min max]>.Ok(var value):
                                 return value;
-                            case Facade.CommonResult<i32[-2147483648 2147483647]>.Err(var error):
+                            case Facade.CommonResult<i32[min max]>.Err(var error):
                                 return 0;
                         }
                     }

@@ -28,5 +28,5 @@ Status: covered by `ExamplesCompileRunTests.FfiExampleCompilesAndRuns`.
 
 ## Related
 
-- [FFI, Raw Pointers, and Native Packages](/book/19-ffi-raw-pointers-native-packages/)
+- [FFI, Raw Pointers, and Native Packages](/book/20-ffi-raw-pointers-native-packages/)
 - [Language reference](/reference/language/LanguageReference/)

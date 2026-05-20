@@ -1,6 +1,6 @@
 +++
 title = "Appendix C: Integer Widths and Range Rules"
-weight = 370
+weight = 390
 book_part = "Appendices"
 book_status = "draft"
 prev = "/book/appendix-b-operators/"

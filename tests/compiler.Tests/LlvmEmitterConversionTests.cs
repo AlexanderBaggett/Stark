@@ -59,9 +59,75 @@ public sealed class LlvmEmitterConversionTests
         Assert.Contains("define", llvm);
         Assert.Contains("@Run()", llvm);
         Assert.DoesNotContain("getelementptr inbounds nuw i8, ptr null, i64 0", llvm);
+        Assert.DoesNotContain("select i1 true, ptr", llvm);
         Assert.DoesNotContain("ptrtoint", llvm);
         Assert.DoesNotContain("inttoptr", llvm);
         Assert.Contains("ret ptr", llvm);
+    }
+
+    [Fact]
+    public void SameWidthIntegerConversionIsEmittedAsAlias()
+    {
+        var integerType = StarkTypeSymbols.Integer(32);
+        var llvm = EmitSingleConversion(
+            integerType,
+            new SsaIntegerConstant(new BigInteger(7), integerType));
+
+        Assert.Contains("define", llvm);
+        Assert.DoesNotContain("add i32", llvm);
+        Assert.DoesNotContain("trunc", llvm);
+        Assert.DoesNotContain("zext", llvm);
+        Assert.DoesNotContain("sext", llvm);
+        Assert.Contains("ret i32 7", llvm);
+    }
+
+    [Fact]
+    public void SameWidthFloatConversionIsEmittedAsAlias()
+    {
+        var floatType = StarkTypeSymbols.Float(32);
+        var llvm = EmitSingleConversion(
+            floatType,
+            new SsaFloatConstant("3.5", floatType));
+
+        Assert.Contains("define", llvm);
+        Assert.DoesNotContain("fadd", llvm);
+        Assert.DoesNotContain("select i1 true, float", llvm);
+        Assert.DoesNotContain("fpext", llvm);
+        Assert.DoesNotContain("fptrunc", llvm);
+        Assert.Contains("ret float 3.5", llvm);
+    }
+
+    [Fact]
+    public void FloatUseRValueIsEmittedAsAlias()
+    {
+        var floatType = StarkTypeSymbols.Float(32);
+        var llvm = EmitSingleUse(new SsaFloatConstant("3.5", floatType));
+
+        Assert.Contains("define", llvm);
+        Assert.DoesNotContain("add float", llvm);
+        Assert.DoesNotContain("fadd", llvm);
+        Assert.Contains("ret float 3.5", llvm);
+    }
+
+    [Fact]
+    public void RawPointerUseRValueIsEmittedAsAlias()
+    {
+        var pointerType = StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(32), isMutable: false);
+        var llvm = EmitSingleUse(new SsaNullConstant(pointerType));
+
+        Assert.Contains("define", llvm);
+        Assert.DoesNotContain("add ptr", llvm);
+        Assert.Contains("ret ptr null", llvm);
+    }
+
+    [Fact]
+    public void AggregateUseRValueIsEmittedAsAlias()
+    {
+        var llvm = EmitSingleUse(new SsaStringConstant("hello", StarkTypeSymbols.Ascii));
+
+        Assert.Contains("define", llvm);
+        Assert.DoesNotContain("add %stark_ascii", llvm);
+        Assert.Contains("ret %stark_ascii { ptr getelementptr", llvm);
     }
 
     [Fact]
@@ -72,7 +138,6 @@ public sealed class LlvmEmitterConversionTests
             new SsaStringConstant("hello", StarkTypeSymbols.Ascii));
 
         Assert.DoesNotContain("define", llvm);
-        Assert.Contains("@Run()", llvm);
         Assert.Contains("LLVM body emission fallback for Run: Unsupported SSA conversion from 'ascii' to 'unicode'.", llvm);
         Assert.Contains("declare fastcc noundef %stark_unicode @Run()", llvm);
     }
@@ -90,9 +155,43 @@ public sealed class LlvmEmitterConversionTests
         Assert.Contains("declare fastcc noundef %stark_ascii @Run()", llvm);
     }
 
+    [Fact]
+    public void SourceBodyFallbackDeclarationCanBeStrictlyOmitted()
+    {
+        var llvm = EmitSingleConversion(
+            StarkTypeSymbols.Unicode,
+            new SsaStringConstant("hello", StarkTypeSymbols.Ascii),
+            emitFallbackDeclarationsForSourceBodies: false);
+
+        Assert.DoesNotContain("define", llvm);
+        Assert.Contains("LLVM body emission fallback for Run: Unsupported SSA conversion from 'ascii' to 'unicode'.", llvm);
+        Assert.Contains("declaration omitted for source body 'Run'", llvm);
+        Assert.DoesNotContain("declare fastcc noundef %stark_unicode @Run()", llvm);
+    }
+
     private static string EmitSingleConversion(
         StarkTypeSymbol targetType,
-        SsaValue operand)
+        SsaValue operand,
+        bool emitFallbackDeclarationsForSourceBodies = true)
+    {
+        return EmitSingleRValue(
+            targetType,
+            new SsaConvertRValue(
+                operand,
+                targetType,
+                "convert"),
+            emitFallbackDeclarationsForSourceBodies);
+    }
+
+    private static string EmitSingleUse(SsaValue value)
+    {
+        return EmitSingleRValue(value.Type, new SsaUseRValue(value));
+    }
+
+    private static string EmitSingleRValue(
+        StarkTypeSymbol targetType,
+        SsaRValue value,
+        bool emitFallbackDeclarationsForSourceBodies = true)
     {
         var effectModel = new FunctionEffectModel(
             "Demo",
@@ -158,10 +257,7 @@ public sealed class LlvmEmitterConversionTests
                             [
                                 new SsaValueInstruction(
                                     "v0",
-                                    new SsaConvertRValue(
-                                        operand,
-                                        targetType,
-                                        "convert"))
+                                    value)
                             ],
                             new SsaTerminator(
                                 SsaTerminatorKind.Return,
@@ -201,6 +297,7 @@ public sealed class LlvmEmitterConversionTests
             typeModel,
             EnumLayoutBuilder.Build(typeModel),
             abiModel,
-            ssa).Emit().Text;
+            ssa,
+            emitFallbackDeclarationsForSourceBodies: emitFallbackDeclarationsForSourceBodies).Emit().Text;
     }
 }

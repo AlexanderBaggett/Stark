@@ -52,7 +52,9 @@ internal static partial class PackageImageBuilder
             IsUnsafe: declarationFunction.Modifiers.IsUnsafe,
             IsVarargs: effects.IsVarargs,
             BackendOptimizationMode: RenderBackendOptimizationMode(declarationFunction.BackendOptimizationMode),
-            DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups));
+            DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups),
+            OverlapParameterGroups: BuildParameterOverlapGroupManifests(function.OverlapGroups),
+            SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups));
         return true;
     }
 
@@ -98,7 +100,9 @@ internal static partial class PackageImageBuilder
             IsUnsafe: manifest.IsUnsafe,
             IsVarargs: manifest.IsVarargs,
             BackendOptimizationMode: manifest.BackendOptimizationMode,
-            DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups));
+            DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups),
+            OverlapParameterGroups: BuildParameterOverlapGroupManifests(function.OverlapGroups),
+            SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups));
     }
 
     private static StarkPackageTypeManifest BuildTypeManifest(
@@ -406,7 +410,9 @@ internal static partial class PackageImageBuilder
                     IsVarargs: effects.IsVarargs,
                     Visibility: declaration.Visibility.ToString().ToLowerInvariant(),
                     BackendOptimizationMode: RenderBackendOptimizationMode(declaration.Function.BackendOptimizationMode),
-                    DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups));
+                    DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups),
+                    OverlapParameterGroups: BuildParameterOverlapGroupManifests(function.OverlapGroups),
+                    SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups));
             })
             .Where(static manifest => manifest is not null)
             .Cast<StarkPackageMethodManifest>()
@@ -472,7 +478,9 @@ internal static partial class PackageImageBuilder
                     IsUnsafe: declaration.Function.Modifiers.IsUnsafe,
                     IsVarargs: effects.IsVarargs,
                     BackendOptimizationMode: RenderBackendOptimizationMode(declaration.Function.BackendOptimizationMode),
-                    DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups));
+                    DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups),
+                    OverlapParameterGroups: BuildParameterOverlapGroupManifests(function.OverlapGroups),
+                    SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups));
             })
             .Where(static manifest => manifest is not null)
             .Cast<StarkPackageTypedMethodManifest>()
@@ -548,6 +556,40 @@ internal static partial class PackageImageBuilder
                 group.ParameterNames
                     .Where(static name => !string.IsNullOrWhiteSpace(name))
                     .Distinct(StringComparer.Ordinal)
+                    .ToArray(),
+                group.HasSubregions
+                    ? group.MemoryRegions
+                        .Select(static region => new StarkPackageParameterMemoryRegionManifest(
+                            region.ParameterName,
+                            region.StartExpression,
+                            region.CountExpression))
+                        .ToArray()
+                    : null))
+            .Where(static group => group.ParameterNames.Count >= 2 || group.Regions is { Count: >= 2 })
+            .ToArray();
+        return manifests.Length == 0 ? null : manifests;
+    }
+
+    private static IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? BuildParameterOverlapGroupManifests(
+        IReadOnlyList<ParameterOverlapGroup> groups)
+    {
+        return BuildParameterRelationGroupManifests(groups.Select(static group => group.ParameterNames));
+    }
+
+    private static IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? BuildParameterSameGroupManifests(
+        IReadOnlyList<ParameterSameGroup> groups)
+    {
+        return BuildParameterRelationGroupManifests(groups.Select(static group => group.ParameterNames));
+    }
+
+    private static IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? BuildParameterRelationGroupManifests(
+        IEnumerable<IReadOnlyList<string>> groups)
+    {
+        var manifests = groups
+            .Select(static group => new StarkPackageParameterDisjointGroupManifest(
+                group
+                    .Where(static name => !string.IsNullOrWhiteSpace(name))
+                    .Distinct(StringComparer.Ordinal)
                     .ToArray()))
             .Where(static group => group.ParameterNames.Count >= 2)
             .ToArray();
@@ -569,18 +611,82 @@ internal static partial class PackageImageBuilder
             groups.Add(new StarkPackageParameterDisjointGroupManifest(prefixedParameters));
         }
 
-        foreach (var contract in memoryContractClauses.SelectMany(static clause => clause.disjointContract()))
+        foreach (var contract in memoryContractClauses
+                     .SelectMany(static clause => clause.parameterMemoryContract())
+                     .Select(static contract => contract.disjointContract())
+                     .Where(static contract => contract is not null)!)
         {
-            var names = contract.expressionList()
+            var regions = contract.expressionList()
                 .expression()
-                .Select(static expression => TryGetDisjointContractParameterName(expression.GetText()))
-                .Where(static name => !string.IsNullOrWhiteSpace(name))
-                .Select(static name => name!)
+                .Select(static expression => TryGetParameterMemoryRegion(expression.GetText()))
+                .Where(static region => region is not null)
+                .Select(static region => region!)
+                .ToArray();
+            var names = regions
+                .Select(static region => region.ParameterName)
                 .Distinct(StringComparer.Ordinal)
                 .ToArray();
-            if (names.Length >= 2)
+            var hasSubregions = regions.Any(static region => !region.IsWholeParameter);
+            if (regions.Length >= 2 && (hasSubregions || names.Length >= 2))
             {
-                groups.Add(new StarkPackageParameterDisjointGroupManifest(names));
+                groups.Add(new StarkPackageParameterDisjointGroupManifest(
+                    names,
+                    hasSubregions
+                        ? regions
+                            .Select(static region => new StarkPackageParameterMemoryRegionManifest(
+                                region.ParameterName,
+                                region.StartExpression,
+                                region.CountExpression))
+                            .ToArray()
+                        : null));
+            }
+        }
+
+        return groups.Count == 0 ? null : groups;
+    }
+
+    private static IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? BuildParameterOverlapGroupManifests(
+        IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> memoryContractClauses)
+    {
+        return BuildParameterRelationGroupManifests(
+            memoryContractClauses,
+            static contract => contract.overlapContract()?.expressionList());
+    }
+
+    private static IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? BuildParameterSameGroupManifests(
+        IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> memoryContractClauses)
+    {
+        return BuildParameterRelationGroupManifests(
+            memoryContractClauses,
+            static contract => contract.sameContract()?.expressionList());
+    }
+
+    private static IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? BuildParameterRelationGroupManifests(
+        IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> memoryContractClauses,
+        Func<StarkParser.ParameterMemoryContractContext, StarkParser.ExpressionListContext?> selectExpressionList)
+    {
+        var groups = new List<StarkPackageParameterDisjointGroupManifest>();
+        foreach (var clause in memoryContractClauses)
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                var expressionList = selectExpressionList(contract);
+                if (expressionList is null)
+                {
+                    continue;
+                }
+
+                var names = expressionList
+                    .expression()
+                    .Select(static expression => TryGetDisjointContractParameterName(expression.GetText()))
+                    .Where(static name => !string.IsNullOrWhiteSpace(name))
+                    .Select(static name => name!)
+                    .Distinct(StringComparer.Ordinal)
+                    .ToArray();
+                if (names.Length >= 2)
+                {
+                    groups.Add(new StarkPackageParameterDisjointGroupManifest(names));
+                }
             }
         }
 
@@ -589,15 +695,38 @@ internal static partial class PackageImageBuilder
 
     private static string? TryGetDisjointContractParameterName(string operandText)
     {
+        return TryGetParameterMemoryRegion(operandText)?.ParameterName;
+    }
+
+    private static ParameterMemoryRegion? TryGetParameterMemoryRegion(string operandText)
+    {
         operandText = TrimOuterParentheses(operandText);
         if (!TryReadIdentifier(operandText, 0, out var identifier, out var position))
         {
             return null;
         }
 
-        return position == operandText.Length || operandText[position] == '['
-            ? identifier
-            : null;
+        if (position == operandText.Length)
+        {
+            return new ParameterMemoryRegion(identifier);
+        }
+
+        if (operandText[position] != '[' || operandText[^1] != ']')
+        {
+            return null;
+        }
+
+        var regionText = operandText[(position + 1)..^1];
+        var separator = regionText.IndexOf(',', StringComparison.Ordinal);
+        if (separator <= 0 || separator >= regionText.Length - 1)
+        {
+            return null;
+        }
+
+        return new ParameterMemoryRegion(
+            identifier,
+            TrimOuterParentheses(regionText[..separator]),
+            TrimOuterParentheses(regionText[(separator + 1)..]));
     }
 
     private static string TrimOuterParentheses(string text)

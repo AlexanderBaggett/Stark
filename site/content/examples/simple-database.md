@@ -26,5 +26,5 @@ Status: covered by `ExamplesCompileRunTests.SimpleDatabaseExampleCompilesAndRuns
 
 ## Related
 
-- [Enums and Pattern Matching](/book/12-enums-patterns/)
-- [Memory and Collections](/book/21-memory-collections/)
+- [Enums and Pattern Matching](/book/13-enums-patterns/)
+- [Memory and Collections](/book/22-memory-collections/)

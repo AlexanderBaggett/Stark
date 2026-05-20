@@ -33,11 +33,14 @@ internal sealed class LlvmIrEmitter
     private readonly bool _enableOptimizedRawPointerLoopIntrinsics;
     private readonly IReadOnlyDictionary<string, string> _globalSymbols;
     private readonly IReadOnlySet<string> _globalsEligibleForLocalUnnamedAddr;
+    private readonly IReadOnlyDictionary<string, ImportedGlobalDeclarationPlan> _importedCloneReferencedGlobals;
     private readonly IReadOnlyDictionary<StringConstantKey, EmittedStringConstant> _stringConstants;
     private readonly IReadOnlyDictionary<ObjectCreationKey, TypedConstructorShape?> _objectCreationConstructors;
     private readonly IReadOnlyDictionary<string, FunctionEffectProfile> _allFunctionEffects;
     private readonly IReadOnlyDictionary<string, TypedFunctionSignature> _allFunctionSignatures;
     private readonly IReadOnlyDictionary<string, AbiFunctionSignature> _allAbiFunctions;
+    private readonly IReadOnlySet<string>? _importedInlineCloneSeedFunctions;
+    private readonly IReadOnlySet<string>? _ownedFunctionDefinitionFilter;
     private readonly IReadOnlyDictionary<string, ConcreteTypeLayout> _publishedConcreteLayouts;
     private readonly IReadOnlyDictionary<string, ImportedFunctionSemanticSummary> _publishedFunctionSemantics;
     private readonly IReadOnlyDictionary<string, string> _specializationTemplateNames;
@@ -46,6 +49,7 @@ internal sealed class LlvmIrEmitter
     private readonly IReadOnlyDictionary<string, ImportedInlineBodyPlan> _closedWorldImportedInlineBodies;
     private readonly IReadOnlySet<string> _referencedImportedFunctions;
     private readonly bool _isOptimizedBuild;
+    private readonly bool _emitFallbackDeclarationsForSourceBodies;
     private readonly DebugMetadataEmitter _debugInfo;
     private readonly LlvmEmissionContext _emissionContext;
     private readonly LlvmFunctionAttributeBuilder _functionAttributeBuilder;
@@ -71,7 +75,9 @@ internal sealed class LlvmIrEmitter
         ClosedWorldOptimizationModel? closedWorldModel = null,
         SpecializationCodegenStrategyModel? specializationCodegenStrategy = null,
         CompilerLogBag? logs = null,
-        SsaValueFactModel? ssaValueFacts = null)
+        SsaValueFactModel? ssaValueFacts = null,
+        IReadOnlySet<string>? importedInlineCloneSeedFunctions = null,
+        bool emitFallbackDeclarationsForSourceBodies = true)
         : this(
             input,
             parseResult,
@@ -90,7 +96,9 @@ internal sealed class LlvmIrEmitter
             closedWorldModel,
             specializationCodegenStrategy,
             logs,
-            ssaValueFacts)
+            ssaValueFacts,
+            importedInlineCloneSeedFunctions,
+            emitFallbackDeclarationsForSourceBodies)
     {
     }
 
@@ -112,7 +120,9 @@ internal sealed class LlvmIrEmitter
         ClosedWorldOptimizationModel? closedWorldModel = null,
         SpecializationCodegenStrategyModel? specializationCodegenStrategy = null,
         CompilerLogBag? logs = null,
-        SsaValueFactModel? ssaValueFacts = null)
+        SsaValueFactModel? ssaValueFacts = null,
+        IReadOnlySet<string>? importedInlineCloneSeedFunctions = null,
+        bool emitFallbackDeclarationsForSourceBodies = true)
     {
         _input = input;
         _parseResult = parseResult;
@@ -132,25 +142,30 @@ internal sealed class LlvmIrEmitter
         _internalizeModulePrivate = internalizeModulePrivate;
         _enableOptimizedRawPointerLoopIntrinsics = enableOptimizedRawPointerLoopIntrinsics;
         _isOptimizedBuild = isOptimizedBuild;
+        _emitFallbackDeclarationsForSourceBodies = emitFallbackDeclarationsForSourceBodies;
         _stringConstants = CollectStringConstants(parseResult, ssa);
         _objectCreationConstructors = typeModel.ObjectCreations
             .GroupBy(static record => new ObjectCreationKey(record.ExpressionText, record.Location.Line, record.Location.Column))
             .ToDictionary(static group => group.Key, static group => group.Last().Constructor);
-        _globalSymbols = BuildGlobalSymbolMap();
-        _globalsEligibleForLocalUnnamedAddr = BuildGlobalsEligibleForLocalUnnamedAddr();
-        _allFunctionEffects = BuildAllFunctionEffects(effectModel, specializationCodegenStrategy);
+        _allFunctionEffects = BuildAllFunctionEffects(effectModel, typeModel, ssa, specializationCodegenStrategy);
         _allFunctionSignatures = BuildAllFunctionSignatures(typeModel, ssa, specializationCodegenStrategy);
         _allAbiFunctions = BuildAllAbiFunctions(_allFunctionSignatures, abiModel, _allFunctionEffects, typeModel.NamedTypes, enumLayoutModel.Layouts);
+        _importedInlineCloneSeedFunctions = importedInlineCloneSeedFunctions;
+        _ownedFunctionDefinitionFilter = BuildOwnedFunctionDefinitionFilter();
         _publishedConcreteLayouts = BuildPublishedConcreteLayouts(loadedModules);
         _publishedFunctionSemantics = BuildPublishedFunctionSemantics(loadedModules, specializationCodegenStrategy);
         _specializationTemplateNames = BuildSpecializationTemplateNames(specializationCodegenStrategy);
         _functionLocations = BuildFunctionLocationMap(loadedModules, input.FilePath);
         _closedWorldImportedLawClones = BuildClosedWorldImportedLawClones();
         _closedWorldImportedInlineBodies = BuildClosedWorldImportedInlineBodies();
+        _importedCloneReferencedGlobals = BuildImportedCloneReferencedGlobalDeclarations();
+        _globalSymbols = BuildGlobalSymbolMap();
+        _globalsEligibleForLocalUnnamedAddr = BuildGlobalsEligibleForLocalUnnamedAddr();
         _referencedImportedFunctions = CollectReferencedImportedFunctions(
             ssa,
             _closedWorldImportedLawClones.Values,
-            _closedWorldImportedInlineBodies.Values);
+            _closedWorldImportedInlineBodies.Values,
+            _ownedFunctionDefinitionFilter);
         _debugInfo = new DebugMetadataEmitter(
             input.FilePath ?? $"{syntaxModel.ModuleName}.stark",
             _isOptimizedBuild,
@@ -222,6 +237,7 @@ internal sealed class LlvmIrEmitter
         _moduleSurfaceEmitter = new LlvmModuleSurfaceEmitter(
             _emissionContext,
             _globalsEligibleForLocalUnnamedAddr,
+            _importedCloneReferencedGlobals,
             _globalInitializerPlanner);
     }
 
@@ -239,7 +255,7 @@ internal sealed class LlvmIrEmitter
         builder.AppendLine($"target triple = \"{EscapeFileName(_targetInfo?.Triple ?? "unknown-unknown-unknown")}\"");
         builder.AppendLine();
         builder.AppendLine("; LLVM IR for the currently supported Stark SSA subset.");
-        builder.AppendLine("; Unsupported constructs still fall back to declarations.");
+        builder.AppendLine("; Body emission fallback is reported by the compiler pipeline.");
         builder.AppendLine();
 
         LogSpecializationCodegenStrategies();
@@ -268,6 +284,31 @@ internal sealed class LlvmIrEmitter
 
             builder.AppendLine($"; visibility: {declaration.Visibility.ToString().ToLowerInvariant()}");
 
+            if (IsTraitContractFunction(signature))
+            {
+                builder.AppendLine($"; trait contract: {resolvedName}");
+                builder.AppendLine($"; declaration omitted for trait contract '{resolvedName}' because traits have no runtime callable surface.");
+                builder.AppendLine();
+                continue;
+            }
+
+            if (IsOpenGenericTemplate(signature))
+            {
+                builder.AppendLine($"; open generic template: {resolvedName}");
+                builder.AppendLine($"; declaration omitted for open generic template '{resolvedName}' because only concrete instantiations have a runtime ABI.");
+                builder.AppendLine();
+                continue;
+            }
+
+            if (_ownedFunctionDefinitionFilter is not null
+                && !_ownedFunctionDefinitionFilter.Contains(resolvedName))
+            {
+                builder.AppendLine($"; source dependency body pruned: {resolvedName}");
+                builder.AppendLine(BuildDeclarationSignature(false, signature, abiSignature, effects, memoryEffects, parameterEffects));
+                builder.AppendLine();
+                continue;
+            }
+
             var definitionInternalize = ShouldInternalize(declaration.Visibility);
             if (function.Asm is not null)
             {
@@ -294,6 +335,13 @@ internal sealed class LlvmIrEmitter
                     FunctionBodyLoweringKind.AsmBypass,
                     supportsDirectCodeGeneration: false,
                     operation: "EmitAsmFunctionDefinition");
+                if (!_emitFallbackDeclarationsForSourceBodies)
+                {
+                    builder.AppendLine($"; declaration omitted for source asm body '{resolvedName}' because LLVM body fallback is disabled for accepted source functions.");
+                    builder.AppendLine();
+                    continue;
+                }
+
                 builder.AppendLine(BuildDeclarationSignature(false, signature, abiSignature, effects, memoryEffects, parameterEffects));
                 builder.AppendLine();
                 continue;
@@ -344,6 +392,12 @@ internal sealed class LlvmIrEmitter
                         ssaFunction.BodyLoweringKind,
                         ssaFunction.SupportsDirectCodeGeneration,
                         operation: "EmitFunctionDefinition");
+                    if (!_emitFallbackDeclarationsForSourceBodies)
+                    {
+                        builder.AppendLine($"; declaration omitted for source body '{resolvedName}' because LLVM body fallback is disabled for accepted source functions.");
+                        builder.AppendLine();
+                        continue;
+                    }
                 }
             }
             else if (function.HasBody && !IsOpenGenericTemplate(signature))
@@ -356,6 +410,12 @@ internal sealed class LlvmIrEmitter
                     ssaFunction?.BodyLoweringKind ?? FunctionBodyLoweringKind.DeclarationOnly,
                     ssaFunction?.SupportsDirectCodeGeneration ?? false,
                     operation: "EmitFunctionDefinition");
+                if (!_emitFallbackDeclarationsForSourceBodies)
+                {
+                    builder.AppendLine($"; declaration omitted for source body '{resolvedName}' because LLVM body fallback is disabled for accepted source functions.");
+                    builder.AppendLine();
+                    continue;
+                }
             }
 
             builder.AppendLine(BuildDeclarationSignature(false, signature, abiSignature, effects, memoryEffects, parameterEffects));
@@ -366,6 +426,14 @@ internal sealed class LlvmIrEmitter
 
         var syntheticLambdaNames = _typeModel.Lambdas
             .Select(static lambda => lambda.FunctionName)
+            .Concat(_typeModel.ClosureLambdas.Select(static lambda => lambda.FunctionName))
+            .Concat(_typeModel.ClosureLambdas
+                .Where(static lambda => lambda.ClosureType.ClosureStorageKind == StarkClosureStorageKind.Heap && lambda.HasCaptures)
+                .Select(static lambda => CallableValueFacts.BuildClosureDropFunctionName(lambda.FunctionName)))
+            .Concat(_typeModel.ClosureLambdas.Any(static lambda => lambda.ClosureType.ClosureStorageKind == StarkClosureStorageKind.Heap && !lambda.HasCaptures)
+                ? [CallableValueFacts.EmptyClosureDropFunctionName]
+                : [])
+            .Concat(_typeModel.ClosureFunctionPromotions.Select(static promotion => promotion.AdapterFunctionName))
             .ToHashSet(StringComparer.Ordinal);
 
         foreach (var clone in _closedWorldImportedLawClones.Values.OrderBy(static clone => clone.FunctionName, StringComparer.Ordinal))
@@ -417,10 +485,35 @@ internal sealed class LlvmIrEmitter
                 continue;
             }
 
-            var parameterEffects = GetParameterEffects(abiFunction.Name, hasBody: false)
-                ?? GetBuiltinParameterEffects(moduleName: string.Empty, abiFunction.Name, signature);
-            var memoryEffects = GetFunctionMemoryEffects(abiFunction.Name, hasBody: false);
+            if (IsTraitContractFunction(signature))
+            {
+                continue;
+            }
+
+            if (IsOpenGenericTemplate(signature))
+            {
+                continue;
+            }
+
             var ssaFunction = _ssa.Functions.FirstOrDefault(function => string.Equals(function.Name, abiFunction.Name, StringComparison.Ordinal));
+            var hasBody = ssaFunction is { HasBody: true };
+            var parameterEffects = GetParameterEffects(abiFunction.Name, hasBody)
+                ?? GetBuiltinParameterEffects(moduleName: string.Empty, abiFunction.Name, signature);
+            var memoryEffects = GetFunctionMemoryEffects(abiFunction.Name, hasBody);
+            if (_ownedFunctionDefinitionFilter is not null
+                && hasBody
+                && IsOwnedModuleFunctionName(abiFunction.Name)
+                && !_ownedFunctionDefinitionFilter.Contains(abiFunction.Name))
+            {
+                continue;
+            }
+
+            if (syntheticLambdaNames.Contains(abiFunction.Name)
+                && ssaFunction is null)
+            {
+                continue;
+            }
+
             if (syntheticLambdaNames.Contains(abiFunction.Name)
                 && ssaFunction is { HasBody: true, SupportsDirectCodeGeneration: true })
             {
@@ -460,23 +553,96 @@ internal sealed class LlvmIrEmitter
             builder.AppendLine();
         }
 
+        EmitReferencedImportedFunctionDeclarations(builder, handledFunctionNames);
+
         _debugInfo.EmitModuleMetadata(builder);
 
         return new LlvmIrModule(_syntaxModel.ModuleName, builder.ToString().TrimEnd(), _ssa.AddressTakenFunctions);
     }
 
+    private void EmitReferencedImportedFunctionDeclarations(
+        StringBuilder builder,
+        ISet<string> handledFunctionNames)
+    {
+        foreach (var functionName in _referencedImportedFunctions.OrderBy(static name => name, StringComparer.Ordinal))
+        {
+            if (handledFunctionNames.Contains(functionName)
+                || _abiModel.Functions.ContainsKey(functionName)
+                || !_allAbiFunctions.TryGetValue(functionName, out var abiFunction)
+                || !_allFunctionSignatures.TryGetValue(functionName, out var signature)
+                || !_allFunctionEffects.TryGetValue(functionName, out var effects))
+            {
+                continue;
+            }
+
+            if (IsTraitContractFunction(signature)
+                || IsOpenGenericTemplate(signature))
+            {
+                continue;
+            }
+
+            var parameterEffects = GetParameterEffects(functionName, hasBody: false)
+                ?? GetBuiltinParameterEffects(moduleName: string.Empty, functionName, signature);
+            var memoryEffects = GetFunctionMemoryEffects(functionName, hasBody: false);
+            if (TryEmitBuiltinFunctionDefinition(
+                    builder,
+                    internalize: true,
+                    moduleName: string.Empty,
+                    signature,
+                    abiFunction,
+                    effects,
+                    memoryEffects,
+                    parameterEffects))
+            {
+                builder.AppendLine();
+                continue;
+            }
+
+            builder.AppendLine($"; referenced imported declaration: {functionName}");
+            builder.AppendLine(BuildDeclarationSignature(false, signature, abiFunction, effects, memoryEffects, parameterEffects));
+            builder.AppendLine();
+        }
+    }
+
     private static bool IsOpenGenericTemplate(TypedFunctionSignature signature) =>
         signature.IsGeneric && !signature.IsGenericInstantiation;
+
+    private static bool IsOwnedModuleFunctionName(string functionName) =>
+        !functionName.Contains('.', StringComparison.Ordinal);
+
+    private bool IsTraitContractFunction(TypedFunctionSignature signature)
+    {
+        var sourceName = signature.DisplaySourceName;
+        var separatorIndex = sourceName.LastIndexOf('.');
+        if (separatorIndex <= 0)
+        {
+            return false;
+        }
+
+        var containingTypeName = sourceName[..separatorIndex];
+        return (_typeModel.NamedTypes.TryGetValue(containingTypeName, out var namedType)
+                && namedType.Kind == DeclarationKind.Trait)
+            || _syntaxModel.Declarations.Any(declaration =>
+                declaration.Kind == DeclarationKind.Trait
+                && string.Equals(declaration.Name, containingTypeName, StringComparison.Ordinal));
+    }
 
     private static IReadOnlySet<string> CollectReferencedImportedFunctions(
         SsaIrModule ssa,
         IEnumerable<ImportedLawClonePlan> importedLawClones,
-        IEnumerable<ImportedInlineBodyPlan> importedInlineBodies)
+        IEnumerable<ImportedInlineBodyPlan> importedInlineBodies,
+        IReadOnlySet<string>? ownedFunctionDefinitionFilter)
     {
         var referencedFunctions = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var function in ssa.Functions)
         {
+            if (ownedFunctionDefinitionFilter is not null
+                && !ownedFunctionDefinitionFilter.Contains(function.Name))
+            {
+                continue;
+            }
+
             CollectReferencedFunctions(function, referencedFunctions);
         }
 
@@ -503,8 +669,94 @@ internal sealed class LlvmIrEmitter
                 {
                     referencedFunctions.Add(call.FunctionName);
                 }
+                else if (instruction is SsaCallInstruction statementCall)
+                {
+                    referencedFunctions.Add(statementCall.FunctionName);
+                }
             }
         }
+    }
+
+    private static void CollectReferencedGlobalUses(
+        SsaFunction function,
+        IDictionary<string, ReferencedGlobalUse> referencedGlobals)
+    {
+        foreach (var block in function.Blocks)
+        {
+            foreach (var phi in block.Phis)
+            {
+                foreach (var incoming in phi.Incomings)
+                {
+                    CollectReferencedGlobalUses(incoming.Value, referencedGlobals);
+                }
+            }
+
+            foreach (var instruction in block.Instructions)
+            {
+                CollectReferencedGlobalUses(instruction, referencedGlobals);
+            }
+
+            foreach (var value in EnumerateTerminatorOperands(block.Terminator))
+            {
+                CollectReferencedGlobalUses(value, referencedGlobals);
+            }
+        }
+    }
+
+    private static void CollectReferencedGlobalUses(
+        SsaInstruction instruction,
+        IDictionary<string, ReferencedGlobalUse> referencedGlobals)
+    {
+        switch (instruction)
+        {
+            case SsaValueInstruction valueInstruction:
+                CollectReferencedGlobalUses(valueInstruction.Value, referencedGlobals);
+                break;
+            case SsaStoreGlobalInstruction storeGlobal:
+                AddReferencedGlobalUse(storeGlobal.GlobalName, storeGlobal.GlobalType, referencedGlobals);
+                CollectReferencedGlobalUses(storeGlobal.Value, referencedGlobals);
+                break;
+            default:
+                foreach (var value in EnumerateInstructionOperands(instruction))
+                {
+                    CollectReferencedGlobalUses(value, referencedGlobals);
+                }
+
+                break;
+        }
+    }
+
+    private static void CollectReferencedGlobalUses(
+        SsaRValue value,
+        IDictionary<string, ReferencedGlobalUse> referencedGlobals)
+    {
+        if (value is SsaLoadGlobalRValue loadGlobal)
+        {
+            AddReferencedGlobalUse(loadGlobal.GlobalName, loadGlobal.Type, referencedGlobals);
+        }
+
+        foreach (var operand in EnumerateRValueOperands(value))
+        {
+            CollectReferencedGlobalUses(operand, referencedGlobals);
+        }
+    }
+
+    private static void CollectReferencedGlobalUses(
+        SsaValue value,
+        IDictionary<string, ReferencedGlobalUse> referencedGlobals)
+    {
+        if (value is SsaGlobalAddressValue globalAddress)
+        {
+            AddReferencedGlobalUse(globalAddress.GlobalName, globalAddress.PointeeType, referencedGlobals);
+        }
+    }
+
+    private static void AddReferencedGlobalUse(
+        string globalName,
+        StarkTypeSymbol type,
+        IDictionary<string, ReferencedGlobalUse> referencedGlobals)
+    {
+        referencedGlobals.TryAdd(globalName, new ReferencedGlobalUse(type));
     }
 
     private void LogLlvmFallback(
@@ -527,7 +779,7 @@ internal sealed class LlvmIrEmitter
             location: _functionLocations.TryGetValue(functionName, out var location)
                 ? location
                 : SourceLocation.Synthetic(_input.FilePath),
-            outcome: CompilerLogOutcome.Bypassed,
+            outcome: CompilerLogOutcome.Unsupported,
             data: CompilerLogData.Create(
                 ("module", _syntaxModel.ModuleName),
                 ("function", functionName),
@@ -543,12 +795,30 @@ internal sealed class LlvmIrEmitter
 
     private static IReadOnlyDictionary<string, FunctionEffectProfile> BuildAllFunctionEffects(
         FunctionEffectModel effectModel,
+        TypeCheckModel typeModel,
+        SsaIrModule ssa,
         SpecializationCodegenStrategyModel? specializationCodegenStrategy)
     {
         var functions = effectModel.Functions.ToDictionary(
             static pair => pair.Key,
             static pair => pair.Value,
             StringComparer.Ordinal);
+
+        foreach (var adapter in typeModel.ClosureFunctionPromotions)
+        {
+            functions.TryAdd(
+                adapter.AdapterFunctionName,
+                CallableValueFacts.BuildClosureFunctionAdapterEffectProfile(adapter));
+        }
+
+        foreach (var function in ssa.Functions)
+        {
+            if (string.Equals(function.Name, CallableValueFacts.EmptyClosureDropFunctionName, StringComparison.Ordinal)
+                || function.Name.EndsWith(".__drop", StringComparison.Ordinal))
+            {
+                functions.TryAdd(function.Name, CallableValueFacts.BuildClosureDropEffectProfile(function.Name));
+            }
+        }
 
         if (specializationCodegenStrategy is null)
         {
@@ -616,7 +886,9 @@ internal sealed class LlvmIrEmitter
                     function.Name,
                     function.ReturnType,
                     function.Parameters,
-                    SourceName: function.Name));
+                    SourceName: function.Name,
+                    DisjointParameterGroups: function.DisjointGroups,
+                    SameParameterGroups: function.SameGroups));
         }
 
         foreach (var strategy in specializationCodegenStrategy?.Functions ?? [])
@@ -702,7 +974,8 @@ internal sealed class LlvmIrEmitter
                     bodyLoweringKind,
                     supportsDirectCodeGeneration,
                     operation: "EmitFunctionDefinition"),
-            EscapeIdentifier);
+            EscapeIdentifier,
+            _emitFallbackDeclarationsForSourceBodies);
     }
 
     private IReadOnlyDictionary<string, ImportedLawClonePlan> BuildClosedWorldImportedLawClones()
@@ -729,8 +1002,207 @@ internal sealed class LlvmIrEmitter
             _typeModel,
             _enumLayoutModel,
             _allFunctionEffects,
-            _allFunctionSignatures);
+            _allFunctionSignatures,
+            _importedInlineCloneSeedFunctions,
+            _specializationTemplateNames);
     }
+
+    private IReadOnlySet<string>? BuildOwnedFunctionDefinitionFilter()
+    {
+        if (_importedInlineCloneSeedFunctions is null)
+        {
+            return null;
+        }
+
+        var localFunctionNames = _ssa.Functions
+            .Where(static function => function.HasBody)
+            .Select(static function => function.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var declaration in _syntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
+        {
+            localFunctionNames.Add(FunctionOverloadFacts.GetResolvedLocalName(_syntaxModel, declaration));
+        }
+
+        var callsByFunction = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
+        foreach (var function in _ssa.Functions)
+        {
+            var callees = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var block in function.Blocks)
+            {
+                foreach (var instruction in block.Instructions)
+                {
+                    if (instruction is SsaValueInstruction { Value: SsaCallRValue call })
+                    {
+                        AddLocalCallee(callees, localFunctionNames, NormalizeOwnedFunctionName(call.FunctionName));
+                    }
+                    else if (instruction is SsaCallInstruction statementCall)
+                    {
+                        AddLocalCallee(callees, localFunctionNames, NormalizeOwnedFunctionName(statementCall.FunctionName));
+                    }
+                }
+            }
+
+            callsByFunction[function.Name] = callees;
+        }
+
+        var reachable = new HashSet<string>(StringComparer.Ordinal);
+        var pending = new Queue<string>();
+        foreach (var seed in _importedInlineCloneSeedFunctions)
+        {
+            var localSeed = NormalizeOwnedFunctionName(seed);
+            if (localFunctionNames.Contains(localSeed))
+            {
+                pending.Enqueue(localSeed);
+            }
+        }
+
+        while (pending.Count != 0)
+        {
+            var functionName = pending.Dequeue();
+            if (!reachable.Add(functionName)
+                || !callsByFunction.TryGetValue(functionName, out var callees))
+            {
+                continue;
+            }
+
+            foreach (var callee in callees)
+            {
+                pending.Enqueue(callee);
+            }
+        }
+
+        return reachable;
+    }
+
+    private string NormalizeOwnedFunctionName(string functionName)
+    {
+        var modulePrefix = $"{_syntaxModel.ModuleName}.";
+        return functionName.StartsWith(modulePrefix, StringComparison.Ordinal)
+            ? functionName[modulePrefix.Length..]
+            : functionName;
+    }
+
+    private static void AddLocalCallee(
+        ISet<string> callees,
+        IReadOnlySet<string> localFunctionNames,
+        string functionName)
+    {
+        if (localFunctionNames.Contains(functionName))
+        {
+            callees.Add(functionName);
+        }
+    }
+
+    private IReadOnlyDictionary<string, ImportedGlobalDeclarationPlan> BuildImportedCloneReferencedGlobalDeclarations()
+    {
+        var referencedGlobals = new Dictionary<string, ReferencedGlobalUse>(StringComparer.Ordinal);
+        foreach (var function in _ssa.Functions)
+        {
+            CollectReferencedGlobalUses(function, referencedGlobals);
+        }
+
+        foreach (var clone in _closedWorldImportedLawClones.Values)
+        {
+            CollectReferencedGlobalUses(clone.SsaFunction, referencedGlobals);
+        }
+
+        foreach (var clone in _closedWorldImportedInlineBodies.Values)
+        {
+            CollectReferencedGlobalUses(clone.SsaFunction, referencedGlobals);
+        }
+
+        if (referencedGlobals.Count == 0)
+        {
+            return new Dictionary<string, ImportedGlobalDeclarationPlan>(StringComparer.Ordinal);
+        }
+
+        var importedSourceGlobals = BuildImportedGlobalSourceLookup();
+        var globals = new Dictionary<string, ImportedGlobalDeclarationPlan>(StringComparer.Ordinal);
+
+        foreach (var (qualifiedName, reference) in referencedGlobals.OrderBy(static pair => pair.Key, StringComparer.Ordinal))
+        {
+            if (_typeModel.Globals.ContainsKey(qualifiedName)
+                || !importedSourceGlobals.TryGetValue(qualifiedName, out var source))
+            {
+                continue;
+            }
+
+            var global = new TypedGlobalSymbol(
+                qualifiedName,
+                reference.Type,
+                source.BindingKind);
+            globals[qualifiedName] = new ImportedGlobalDeclarationPlan(
+                qualifiedName,
+                source.ModuleName,
+                source.SourceName,
+                source.Visibility,
+                global,
+                source.Initializer);
+        }
+
+        return globals;
+    }
+
+    private IReadOnlyDictionary<string, ImportedGlobalSourceInfo> BuildImportedGlobalSourceLookup()
+    {
+        var globals = new Dictionary<string, ImportedGlobalSourceInfo>(StringComparer.Ordinal);
+
+        foreach (var module in _loadedModules.ImportedModules)
+        {
+            foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
+            {
+                var visibility = ParseVisibility(declaration.visibilityModifier());
+
+                if (declaration.globalConstantDeclaration() is { } constantDeclaration)
+                {
+                    foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
+                    {
+                        var sourceName = declarator.Identifier().GetText();
+                        var qualifiedName = $"{module.SyntaxModel.ModuleName}.{sourceName}";
+                        globals[qualifiedName] = new ImportedGlobalSourceInfo(
+                            module.SyntaxModel.ModuleName,
+                            sourceName,
+                            visibility,
+                            GlobalBindingKind.Const,
+                            declarator.variableInitializer());
+                    }
+
+                    continue;
+                }
+
+                if (declaration.globalVariableDeclaration() is not { } variableDeclaration)
+                {
+                    continue;
+                }
+
+                var bindingKind = variableDeclaration.MUT() is not null
+                    ? GlobalBindingKind.Mutable
+                    : GlobalBindingKind.Immutable;
+                foreach (var declarator in variableDeclaration.variableDeclarators().variableDeclarator())
+                {
+                    var sourceName = declarator.Identifier().GetText();
+                    var qualifiedName = $"{module.SyntaxModel.ModuleName}.{sourceName}";
+                    globals[qualifiedName] = new ImportedGlobalSourceInfo(
+                        module.SyntaxModel.ModuleName,
+                        sourceName,
+                        visibility,
+                        bindingKind,
+                        declarator.variableInitializer());
+                }
+            }
+        }
+
+        return globals;
+    }
+
+    private sealed record ReferencedGlobalUse(StarkTypeSymbol Type);
+
+    private sealed record ImportedGlobalSourceInfo(
+        string ModuleName,
+        string SourceName,
+        StarkVisibility Visibility,
+        GlobalBindingKind BindingKind,
+        StarkParser.VariableInitializerContext? Initializer);
 
     private void LogSpecializationCodegenStrategies()
     {
@@ -760,7 +1232,10 @@ internal sealed class LlvmIrEmitter
 
     private IReadOnlySet<string> BuildGlobalsEligibleForLocalUnnamedAddr()
     {
-        var addressTakenGlobals = CollectExplicitGlobalAddressNames(_ssa);
+        var addressTakenGlobals = CollectExplicitGlobalAddressNames(
+            _ssa.Functions
+                .Concat(_closedWorldImportedLawClones.Values.Select(static clone => clone.SsaFunction))
+                .Concat(_closedWorldImportedInlineBodies.Values.Select(static clone => clone.SsaFunction)));
         var eligible = new HashSet<string>(StringComparer.Ordinal);
 
         void TryAddEligibleGlobal(
@@ -824,7 +1299,7 @@ internal sealed class LlvmIrEmitter
                     foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
                     {
                         var qualifiedName = $"{module.SyntaxModel.ModuleName}.{declarator.Identifier().GetText()}";
-                        if (!_typeModel.Globals.TryGetValue(qualifiedName, out var global))
+                        if (!TryGetGlobal(qualifiedName, out var global))
                         {
                             continue;
                         }
@@ -843,7 +1318,7 @@ internal sealed class LlvmIrEmitter
                 foreach (var declarator in variableDeclaration.variableDeclarators().variableDeclarator())
                 {
                     var qualifiedName = $"{module.SyntaxModel.ModuleName}.{declarator.Identifier().GetText()}";
-                    if (!_typeModel.Globals.TryGetValue(qualifiedName, out var global)
+                    if (!TryGetGlobal(qualifiedName, out var global)
                         || declarator.variableInitializer() is null)
                     {
                         continue;
@@ -857,11 +1332,11 @@ internal sealed class LlvmIrEmitter
         return eligible;
     }
 
-    private static IReadOnlySet<string> CollectExplicitGlobalAddressNames(SsaIrModule module)
+    private static IReadOnlySet<string> CollectExplicitGlobalAddressNames(IEnumerable<SsaFunction> functions)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
 
-        foreach (var function in module.Functions)
+        foreach (var function in functions)
         {
             foreach (var block in function.Blocks)
             {
@@ -904,6 +1379,12 @@ internal sealed class LlvmIrEmitter
         return instruction switch
         {
             SsaValueInstruction valueInstruction => EnumerateRValueOperands(valueInstruction.Value),
+            SsaCallInstruction call => call.IndirectArgumentAddresses is { Count: > 0 }
+                ? call.Arguments.Concat(call.IndirectArgumentAddresses.OfType<SsaValue>())
+                : call.Arguments,
+            SsaIndirectCallInstruction call => call.IndirectArgumentAddresses is { Count: > 0 }
+                ? call.Arguments.Prepend(call.Target).Concat(call.IndirectArgumentAddresses.OfType<SsaValue>())
+                : call.Arguments.Prepend(call.Target),
             SsaLifetimeStartInstruction => [],
             SsaLifetimeEndInstruction => [],
             SsaDeallocateLocalInstruction => [],
@@ -926,13 +1407,18 @@ internal sealed class LlvmIrEmitter
             SsaCallRValue call => call.IndirectArgumentAddresses is { Count: > 0 }
                 ? call.Arguments.Concat(call.IndirectArgumentAddresses.OfType<SsaValue>())
                 : call.Arguments,
+            SsaIndirectCallRValue indirectCall => indirectCall.IndirectArgumentAddresses is { Count: > 0 }
+                ? indirectCall.Arguments.Prepend(indirectCall.Target).Concat(indirectCall.IndirectArgumentAddresses.OfType<SsaValue>())
+                : indirectCall.Arguments.Prepend(indirectCall.Target),
             SsaConvertRValue convert => [convert.Operand],
             SsaExtractFieldRValue extractField => [extractField.Target],
             SsaInsertFieldRValue insertField => [insertField.Target, insertField.Value],
             SsaExtractIndexRValue extractIndex => [extractIndex.Target],
             SsaInsertIndexRValue insertIndex => [insertIndex.Target, insertIndex.Value],
+            SsaMakeSliceFromPointerRValue slice => [slice.Pointer, slice.Length],
             SsaDynamicStorageAllocationRValue allocation => [allocation.Capacity],
             SsaDynamicStorageFreeRValue free => [free.Storage],
+            SsaHeapStorageFreeRValue free => [free.Pointer],
             SsaDynamicStorageReserveRValue reserve => [reserve.StorageAddress, reserve.AdditionalCapacity],
             SsaDynamicStorageTryReserveRValue reserve => [reserve.StorageAddress, reserve.AdditionalCapacity],
             SsaDynamicStorageTryReserveCapacityRValue reserve => [reserve.StorageAddress, reserve.TargetCapacity],
@@ -1032,12 +1518,14 @@ internal sealed class LlvmIrEmitter
                     {
                         var sourceName = declarator.Identifier().GetText();
                         var qualifiedName = $"{module.SyntaxModel.ModuleName}.{sourceName}";
-                        if (!_typeModel.Globals.TryGetValue(qualifiedName, out var global))
+                        if (!TryGetGlobal(qualifiedName, out var global))
                         {
                             continue;
                         }
 
-                        symbols[qualifiedName] = ShouldEmitExternalConstPlaceholder(global, declarator.variableInitializer())
+                        var isImportedCloneConst = _importedCloneReferencedGlobals.ContainsKey(qualifiedName)
+                            && !_typeModel.Globals.ContainsKey(qualifiedName);
+                        symbols[qualifiedName] = !isImportedCloneConst && ShouldEmitExternalConstPlaceholder(global, declarator.variableInitializer())
                             ? sourceName
                             : GlobalSymbolNaming.ComputeSymbolName(
                                 module.SyntaxModel.ModuleName,
@@ -1067,16 +1555,28 @@ internal sealed class LlvmIrEmitter
             symbols.TryAdd(globalName, globalName);
         }
 
+        foreach (var global in _importedCloneReferencedGlobals.Values)
+        {
+            symbols.TryAdd(
+                global.QualifiedName,
+                GlobalSymbolNaming.ComputeSymbolName(
+                    global.ModuleName,
+                    global.SourceName,
+                    global.Visibility,
+                    qualifyModuleSymbols: false,
+                    isImported: true));
+        }
+
         return symbols;
     }
 
     private static bool ShouldEmitExternalConstPlaceholder(
         TypedGlobalSymbol global,
-        StarkParser.VariableInitializerContext initializer)
+        StarkParser.VariableInitializerContext? initializer)
     {
         return global.IsConst
             && global.Type.Kind == StarkTypeKind.RawPointer
-            && initializer.expression() is { } expression
+            && initializer?.expression() is { } expression
             && TryUnwrapSimplePrimaryExpression(expression, out var primaryExpression)
             && primaryExpression.literal()?.NULL() is not null;
     }
@@ -1088,7 +1588,7 @@ internal sealed class LlvmIrEmitter
         string sourceName)
     {
         var qualifiedName = $"{moduleName}.{sourceName}";
-        if (!_typeModel.Globals.ContainsKey(qualifiedName))
+        if (!TryGetGlobal(qualifiedName, out _))
         {
             return;
         }
@@ -1101,6 +1601,22 @@ internal sealed class LlvmIrEmitter
             isImported: true);
     }
 
+    private bool TryGetGlobal(string globalName, out TypedGlobalSymbol global)
+    {
+        if (_typeModel.Globals.TryGetValue(globalName, out global!))
+        {
+            return true;
+        }
+
+        if (_importedCloneReferencedGlobals.TryGetValue(globalName, out var importedGlobal))
+        {
+            global = importedGlobal.Global;
+            return true;
+        }
+
+        return false;
+    }
+
     private string ResolveGlobalSymbolName(string globalName)
     {
         return _globalSymbols.TryGetValue(globalName, out var symbolName)
@@ -1110,12 +1626,38 @@ internal sealed class LlvmIrEmitter
 
     private void EmitIntrinsicDeclarations(StringBuilder builder)
     {
-        _builtinAndHelperEmitter.EmitIntrinsicDeclarations(builder, _allFunctionSignatures.Values);
+        _builtinAndHelperEmitter.EmitIntrinsicDeclarations(builder, EnumerateBuiltinDefinitionSignatures());
     }
 
     private void EmitInternalHelperDefinitions(StringBuilder builder)
     {
-        _builtinAndHelperEmitter.EmitInternalHelperDefinitions(builder, _allFunctionSignatures.Values);
+        _builtinAndHelperEmitter.EmitInternalHelperDefinitions(builder, EnumerateBuiltinDefinitionSignatures());
+    }
+
+    private IEnumerable<TypedFunctionSignature> EnumerateBuiltinDefinitionSignatures()
+    {
+        foreach (var declaration in _syntaxModel.Declarations.Where(static declaration => declaration.Function is not null))
+        {
+            var function = declaration.Function!;
+            if (function.HasBody)
+            {
+                continue;
+            }
+
+            var resolvedName = FunctionOverloadFacts.GetResolvedLocalName(_syntaxModel, declaration);
+            if (_typeModel.Functions.TryGetValue(resolvedName, out var signature))
+            {
+                yield return signature;
+            }
+        }
+
+        foreach (var functionName in _referencedImportedFunctions)
+        {
+            if (_allFunctionSignatures.TryGetValue(functionName, out var signature))
+            {
+                yield return signature;
+            }
+        }
     }
 
     private bool UsesLifetimeMarkers()
@@ -1219,7 +1761,8 @@ internal sealed class LlvmIrEmitter
             .SelectMany(static function => function.Blocks)
             .SelectMany(static block => block.Instructions)
             .Any(static instruction => instruction is SsaAllocateLocalInstruction { StorageClass: "heap" }
-                or SsaDeallocateLocalInstruction { StorageClass: "heap" });
+                or SsaDeallocateLocalInstruction { StorageClass: "heap" }
+                || instruction is SsaValueInstruction { Value: SsaHeapStorageFreeRValue });
     }
 
     private bool UsesUnreachableTrapHelper()
@@ -1296,7 +1839,7 @@ internal sealed class LlvmIrEmitter
     {
         var functionBuilder = new StringBuilder();
         var effectiveEffects = AdjustDefinitionEffectsForBody(effects, ssaFunction);
-        var effectiveMemoryEffects = AdjustDefinitionMemoryEffectsForBodyAndAbiLowering(memoryEffects, ssaFunction, resolveCallAbi);
+        var effectiveMemoryEffects = AdjustDefinitionMemoryEffectsForBodyAndAbiLowering(memoryEffects, ssaFunction);
         var debugFunction = TryCreateDebugFunctionContext(function, abiFunction, ssaFunction);
         var valueFacts = TryGetSsaValueFacts(ssaFunction);
         functionBuilder.AppendLine(AppendFunctionDebugScope(
@@ -1324,6 +1867,8 @@ internal sealed class LlvmIrEmitter
             valueFacts,
             parameterEffects,
             effects.IsStrictFp,
+            GetParameterEffects,
+            GetFunctionMemoryEffects,
             _enableOptimizedRawPointerLoopIntrinsics);
         bodyEmitter.Emit();
         functionBuilder.AppendLine("}");
@@ -1404,7 +1949,7 @@ internal sealed class LlvmIrEmitter
 
     private bool IsImmutableGlobalName(string globalName)
     {
-        return _typeModel.Globals.TryGetValue(globalName, out var global)
+        return TryGetGlobal(globalName, out var global)
             && !global.IsMutable;
     }
 
@@ -1456,7 +2001,7 @@ internal sealed class LlvmIrEmitter
         FunctionEffectProfile effects,
         SsaFunction ssaFunction)
     {
-        return ContainsDynamicStorageAllocatorAccess(ssaFunction)
+        return ContainsAllocatorAccess(ssaFunction)
             ? effects with
             {
                 Kind = StarkFunctionKind.Fn,
@@ -1469,11 +2014,12 @@ internal sealed class LlvmIrEmitter
 
     private FunctionMemoryEffectSummary? AdjustDefinitionMemoryEffectsForBodyAndAbiLowering(
         FunctionMemoryEffectSummary? memoryEffects,
-        SsaFunction ssaFunction,
-        Func<string, string, AbiFunctionSignature?> resolveCallAbi)
+        SsaFunction ssaFunction)
     {
-        if (!RequiresSyntheticStackTemporaries(ssaFunction, resolveCallAbi)
-            && !ContainsDynamicStorageAllocatorAccess(ssaFunction))
+        // LLVM memory effects are about externally observable memory. Private
+        // alloca scratch introduced for sret/byval lowering can stay under the
+        // source memory contract; heap/dynamic runtime calls cannot.
+        if (!ContainsAllocatorAccess(ssaFunction))
         {
             return memoryEffects;
         }
@@ -1489,38 +2035,36 @@ internal sealed class LlvmIrEmitter
         };
     }
 
-    private static bool ContainsDynamicStorageAllocatorAccess(SsaFunction ssaFunction)
+    private static bool ContainsAllocatorAccess(SsaFunction ssaFunction)
     {
         return ssaFunction.Blocks
             .SelectMany(static block => block.Instructions)
-            .OfType<SsaValueInstruction>()
-            .Any(static instruction => instruction.Value is SsaDynamicStorageAllocationRValue or SsaDynamicStorageFreeRValue or SsaDynamicStorageReserveRValue or SsaDynamicStorageTryReserveRValue or SsaDynamicStorageTryReserveCapacityRValue or SsaDynamicStorageMoveLastRValue or SsaDynamicStorageMoveAtRValue);
+            .Any(static instruction => instruction switch
+            {
+                SsaAllocateLocalInstruction { StorageClass: "heap" }
+                    or SsaDeallocateLocalInstruction { StorageClass: "heap" } => true,
+                SsaValueInstruction { Value: SsaDynamicStorageAllocationRValue
+                    or SsaDynamicStorageFreeRValue
+                    or SsaHeapStorageFreeRValue
+                    or SsaIndirectCallRValue { MayFree: true }
+                    or SsaDynamicStorageReserveRValue
+                    or SsaDynamicStorageTryReserveRValue
+                    or SsaDynamicStorageTryReserveCapacityRValue
+                    or SsaDynamicStorageMoveLastRValue
+                    or SsaDynamicStorageMoveAtRValue } => true,
+                SsaValueInstruction { Value: SsaCallRValue { FunctionName: var functionName } }
+                    => IsClosureDropFunctionName(functionName),
+                SsaCallInstruction { FunctionName: var functionName }
+                    => IsClosureDropFunctionName(functionName),
+                SsaIndirectCallInstruction { MayFree: true } => true,
+                _ => false
+            });
     }
 
-    private static bool RequiresSyntheticStackTemporaries(
-        SsaFunction ssaFunction,
-        Func<string, string, AbiFunctionSignature?> resolveCallAbi)
+    private static bool IsClosureDropFunctionName(string functionName)
     {
-        foreach (var call in ssaFunction.Blocks
-                     .SelectMany(static block => block.Instructions)
-                     .OfType<SsaValueInstruction>()
-                     .Select(static instruction => instruction.Value)
-                     .OfType<SsaCallRValue>())
-        {
-            var calleeAbi = resolveCallAbi(ssaFunction.Name, call.FunctionName);
-            if (calleeAbi is null)
-            {
-                continue;
-            }
-
-            if (calleeAbi.ReturnsIndirect
-                || calleeAbi.UserParameters.Any(AbiLoweringHeuristics.IsByValueIndirectParameter))
-            {
-                return true;
-            }
-        }
-
-        return false;
+        return string.Equals(functionName, CallableValueFacts.EmptyClosureDropFunctionName, StringComparison.Ordinal)
+            || functionName.EndsWith(".__drop", StringComparison.Ordinal);
     }
 
     private bool TryEmitAsmFunctionDefinition(
@@ -1761,25 +2305,85 @@ internal sealed class LlvmIrEmitter
 
     private IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? GetParameterEffects(string functionName, bool hasBody)
     {
+        Dictionary<string, ParameterMemoryEffectSummary>? parameterEffects = null;
         if (hasBody
+            && HasSsaBody(functionName)
             && TryGetRootValidationSummary(functionName, out var validation)
             && validation.Parameters is not null)
         {
-            return validation.Parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+            parameterEffects = validation.Parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
         }
-
-        if (!_publishedFunctionSemantics.TryGetValue(functionName, out var imported)
-            || imported.Parameters is null)
+        else if (_publishedFunctionSemantics.TryGetValue(functionName, out var imported)
+                 && imported.Parameters is not null)
         {
-            return null;
+            parameterEffects = imported.Parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
         }
 
-        return imported.Parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        if (hasBody
+            && TryBuildClosureEnvironmentParameterEffects(
+                functionName,
+                parameterEffects is not null
+                    && parameterEffects.TryGetValue(CallableValueFacts.ClosureEnvironmentParameterName, out var existing)
+                        ? existing
+                        : null,
+                out var closureEnvironmentEffects))
+        {
+            parameterEffects ??= new Dictionary<string, ParameterMemoryEffectSummary>(StringComparer.Ordinal);
+            parameterEffects[CallableValueFacts.ClosureEnvironmentParameterName] = closureEnvironmentEffects;
+        }
+
+        return parameterEffects;
+    }
+
+    private bool TryBuildClosureEnvironmentParameterEffects(
+        string functionName,
+        ParameterMemoryEffectSummary? existing,
+        out ParameterMemoryEffectSummary effects)
+    {
+        effects = default!;
+        var lambda = _typeModel.ClosureLambdas.FirstOrDefault(candidate =>
+            candidate.HasCaptures
+            && string.Equals(candidate.FunctionName, functionName, StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(candidate.EnvironmentTypeName));
+        if (lambda is null)
+        {
+            return false;
+        }
+
+        var environmentType = new StarkTypeSymbol(
+            StarkTypeKind.Named,
+            lambda.EnvironmentTypeName!,
+            NamedType: lambda.EnvironmentTypeName);
+        if (ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(
+                environmentType,
+                _typeModel.NamedTypes,
+                _enumLayoutModel.Layouts,
+                _publishedConcreteLayouts) is not { } layout
+            || layout.SizeBytes <= 0)
+        {
+            return false;
+        }
+
+        effects = new ParameterMemoryEffectSummary(
+            CallableValueFacts.ClosureEnvironmentParameterName,
+            lambda.EnvironmentParameterType.DisplayName,
+            IsMemoryBacked: true,
+            GuaranteedNonNull: true,
+            GuaranteedReadOnly: existing?.GuaranteedReadOnly ?? !lambda.EnvironmentParameterType.IsMutablePointer,
+            GuaranteedWriteOnly: existing?.GuaranteedWriteOnly ?? false,
+            GuaranteedNoAlias: true,
+            DereferenceableBytes: layout.SizeBytes,
+            AlignmentBytes: layout.AlignmentBytes,
+            Reads: existing?.Reads ?? true,
+            Writes: existing?.Writes ?? false,
+            CaptureKind: ParameterCaptureKind.None);
+        return true;
     }
 
     private FunctionMemoryEffectSummary? GetFunctionMemoryEffects(string functionName, bool hasBody)
     {
         if (hasBody
+            && HasSsaBody(functionName)
             && TryGetRootValidationSummary(functionName, out var validation))
         {
             return validation.MemoryEffects;
@@ -1788,6 +2392,13 @@ internal sealed class LlvmIrEmitter
         return _publishedFunctionSemantics.TryGetValue(functionName, out var imported)
             ? imported.MemoryEffects
             : null;
+    }
+
+    private bool HasSsaBody(string functionName)
+    {
+        return _ssa.Functions.Any(function =>
+            string.Equals(function.Name, functionName, StringComparison.Ordinal)
+            && function.HasBody);
     }
 
     private bool TryGetRootValidationSummary(string functionName, out FunctionValidationSummary validation)
@@ -1834,6 +2445,9 @@ internal sealed class LlvmIrEmitter
             StarkTypeKind.Float when type.BitWidth == 128 => "fp128",
             StarkTypeKind.RawPointer => "ptr",
             StarkTypeKind.FunctionPointer => "ptr",
+            StarkTypeKind.Closure => type.ClosureStorageKind == StarkClosureStorageKind.Heap
+                ? "{ ptr, ptr, ptr }"
+                : "{ ptr, ptr }",
             StarkTypeKind.FixedArray when type.ElementType is not null && type.FixedLength is int fixedLength => $"[{fixedLength} x {MapType(type.ElementType)}]",
             StarkTypeKind.Slice => "{ ptr, i64 }",
             StarkTypeKind.Dynamic => "{ ptr, i64, i64 }",
@@ -1922,6 +2536,32 @@ internal sealed class LlvmIrEmitter
                     {
                         case SsaValueInstruction valueInstruction:
                             AddStringConstant(valueInstruction.Value, result, ref index);
+                            break;
+                        case SsaCallInstruction call:
+                            foreach (var argument in call.Arguments)
+                            {
+                                AddStringConstant(argument, result, ref index);
+                            }
+
+                            foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+                            {
+                                AddStringConstant(address, result, ref index);
+                            }
+
+                            AddAsciiToUnicodeLiteralMemcpyConstant(call, result, ref index);
+                            break;
+                        case SsaIndirectCallInstruction call:
+                            AddStringConstant(call.Target, result, ref index);
+                            foreach (var argument in call.Arguments)
+                            {
+                                AddStringConstant(argument, result, ref index);
+                            }
+
+                            foreach (var address in call.IndirectArgumentAddresses?.OfType<SsaValue>() ?? [])
+                            {
+                                AddStringConstant(address, result, ref index);
+                            }
+
                             break;
                         case SsaCopyMemoryInstruction copyMemory:
                             AddStringConstant(copyMemory.DestinationAddress, result, ref index);
@@ -2269,7 +2909,7 @@ internal sealed class LlvmIrEmitter
     }
 
     private static void AddAsciiToUnicodeLiteralMemcpyConstant(
-        SsaCallRValue call,
+        ISsaDirectCallOperation call,
         Dictionary<StringConstantKey, EmittedStringConstant> constants,
         ref int index)
     {

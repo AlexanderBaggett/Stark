@@ -1,6 +1,6 @@
 +++
 title = "Appendix G: Current Boundaries"
-weight = 410
+weight = 430
 book_part = "Appendices"
 book_status = "draft"
 prev = "/book/appendix-f-package-manifest/"
@@ -11,59 +11,77 @@ aliases = ["/book/appendix-g-unsupported/"]
 
 # Appendix G: Current Boundaries
 
-This appendix summarizes source patterns that examples should handle carefully
-until the matching language, CLI, or standard-library surface is fully settled.
+This appendix summarizes source patterns that tutorials handle deliberately.
+The goal is to keep book examples aligned with implemented Stark behavior
+instead of implying hidden runtime features.
 
 ## Testing
 
-`stark test`, test-project manifests, and `System.Testing` are v2.0 work.
-Current examples should use executable return codes.
+`stark test`, `kind = "test"` manifests, and `System.Testing` use explicit fact
+runners. Book examples use executable return codes unless the chapter is
+specifically teaching the test project model.
 
 {{< stark-sample "assets/book/samples/manual-test-executable.stark" >}}
 
 This pattern is intentionally plain: a checked executable returns `0` when its
 conditions pass and a non-zero code when one fails. Do not write examples that
-look like a Stark-native test framework until that module and CLI behavior
-exist.
+imply reflection, hidden discovery, or exception unwinding. Tests are ordinary
+Stark calls that report ordinary status.
 
 ## Command-Line Arguments
 
-The canonical hosted argument model is future work. Project chapters should
-write parse/processing logic as ordinary functions and keep `main` small until
-argument passing lands.
+Project chapters write parse/processing logic as ordinary functions and keep
+`main` small. That makes the tutorial useful without depending on a special
+hosted argument abstraction.
 
 {{< stark-sample "assets/book/samples/text-tool-core.stark" >}}
 
-The fixed input is a placeholder for the future hosted argument model. The
-parse-and-status shape is the part that is valid today.
+The parse-and-status shape is the important lesson: input becomes a text view,
+domain logic returns a status enum, and `main` converts that status to a
+process exit code.
+
+## Unsafe And Raw Pointers
+
+FFI declarations, exported ABI entrypoints, raw pointer signatures, `null`,
+raw pointer casts, dereference, pointer arithmetic, and raw slice construction
+must be written inside an explicit unsafe boundary. Examples should use
+`unsafe ffi fn`, `export unsafe fn`, `export unsafe ffi fn`, `unsafe fn`, or a
+small `unsafe { ... }` block as appropriate. Safe hosted entrypoints should use
+plain `export fn main`.
+
+Prefer safe examples built from borrows, slices, `dynamic`, owned handles, and
+standard-library wrappers. Use raw pointers only when the chapter is directly
+teaching FFI, platform ABI work, or a deliberately low-level standard-library
+boundary.
 
 ## Constrained Generics
 
-Generic functions and types exist. Full user-defined constrained generics are
-still roadmap work. Do not imply arbitrary operations are valid for every `T`.
+Generic functions and types exist. Do not imply arbitrary operations are valid
+for every `T`; teach generic code through operations that are actually
+available from the function body or static contract.
 
 ## Capturing Lambda Lowering
 
 Non-capturing lambdas work as function-pointer values. Capturing lambdas have
-an explicit source shape, but use them carefully until capture lowering is
-complete for the desired target.
+an explicit source shape, but tutorials should not present them as ordinary
+`fnptr` values.
 
 {{< stark-sample "assets/book/negative-samples/capturing-lambda-fnptr.stark" >}}
 
-The source shape is reserved and checked, but this should not be presented as a
-working `fnptr` pattern yet.
+The rejected sample is the useful teaching point: a capturing callable is not a
+thin function pointer.
 
 ## Concurrency And IO
 
-The current standard library has thread lifecycle APIs and blocking TCP. It
-does not yet provide async/await, thread pools, channels, mutexes, semaphores,
-non-blocking socket event loops, HTTP, TLS, or DNS helpers.
+The standard library has thread lifecycle APIs and blocking TCP. It does not
+provide async/await, thread pools, channels, mutexes, semaphores, non-blocking
+socket event loops, HTTP, TLS, or DNS helpers.
 
 ## Runtime Object Features
 
-Stark does not currently have OOP inheritance, runtime reflection, dynamic
+Stark does not have OOP inheritance, runtime reflection, dynamic
 trait/interface objects, general interior mutability, or standard smart-pointer
 families like `Rc`/`RefCell`.
 
-When in doubt, check the roadmap and prefer examples that use implemented
-source forms.
+When in doubt, prefer examples that use implemented source forms and make every
+cost or proof boundary visible.

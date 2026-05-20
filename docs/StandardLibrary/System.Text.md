@@ -2,6 +2,13 @@
 
 `System.Text` provides the shared encoding enum and the current owned-text helper functions.
 
+Owned text builders follow Stark's memory-contract rules. Builder methods keep
+the default non-overlap contract for disjoint append fast paths and spell
+intentional source/destination overlap with `where overlap(self, source)`.
+Conversions that append into caller-owned text storage must either preserve that
+explicit overlap contract or copy through a snapshot before mutating the
+destination.
+
 ## Surface
 
 ```stark
@@ -32,12 +39,27 @@ public struct OwnedUnicode {
     finite law i64 Length(borrow OwnedUnicode self);
 }
 
+public struct OwnedUtf16 {
+    finite law i64 Length(borrow OwnedUtf16 self);
+    finite i16[] AsSlice(borrow OwnedUtf16 self);
+}
+
 public finite law ascii AsciiView(Ascii source);
 public finite law unicode UnicodeView(Unicode source);
-public finite law rawptr<i8> AsciiData(ascii source);
 public finite law i64 AsciiLength(ascii source);
-public finite law rawptr<i32> UnicodeData(unicode source);
 public finite law i64 UnicodeLength(unicode source);
+public fn System.Memory.MemoryStatus FromAscii(out OwnedAscii destination, ascii source);
+public fn System.Memory.MemoryStatus FromConstAscii(out OwnedAscii destination, const ascii source);
+public fn System.Memory.MemoryStatus FromUnicode(out OwnedUnicode destination, unicode source);
+public fn System.Memory.MemoryStatus FromConstUnicode(out OwnedUnicode destination, const unicode source);
+public fn System.Memory.MemoryStatus FromAsciiToUnicode(out OwnedUnicode destination, ascii source);
+public fn System.Memory.MemoryStatus FromConstAsciiToUnicode(out OwnedUnicode destination, const ascii source);
+public fn System.Memory.MemoryStatus FromUnicodeToAscii(out OwnedAscii destination, unicode source);
+public fn System.Memory.MemoryStatus FromAsciiToUtf16(out OwnedUtf16 destination, ascii source);
+public fn System.Memory.MemoryStatus FromConstAsciiToUtf16(out OwnedUtf16 destination, const ascii source);
+public fn System.Memory.MemoryStatus FromUnicodeToUtf16(out OwnedUtf16 destination, unicode source);
+public fn System.Memory.MemoryStatus FromUtf16ToUnicode(out OwnedUnicode destination, borrow OwnedUtf16 source);
+public fn System.Memory.MemoryStatus FromUtf16ToAscii(out OwnedAscii destination, borrow OwnedUtf16 source);
 public finite TextResult<bool> ParseBoolAscii(ascii source);
 public finite TextResult<bool> ParseBoolUnicode(unicode source);
 public finite TextResult<Encoding> ParseEncodingAscii(ascii source);
@@ -100,12 +122,6 @@ public finite TextResult<u768> ParseU768Ascii(ascii source);
 public finite TextResult<u768> ParseU768Unicode(unicode source);
 public finite TextResult<u1024> ParseU1024Ascii(ascii source);
 public finite TextResult<u1024> ParseU1024Unicode(unicode source);
-public fn bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
-public fn bool TryConvertAsciiToUtf16(rawmutptr<i16> destination, i64 capacity, ascii source, rawmutptr<i64> writtenLength);
-public fn bool TryConvertUtf16ToUnicode(rawmutptr<Unicode> destination, rawptr<i16> source, i64 sourceLength);
-public fn bool TryConvertUnicodeToAscii(rawmutptr<Ascii> destination, unicode source);
-public fn bool TryConvertUnicodeToUtf16(rawmutptr<i16> destination, i64 capacity, unicode source, rawmutptr<i64> writtenLength);
-public fn bool TryConvertUtf16ToAscii(rawmutptr<Ascii> destination, rawptr<i16> source, i64 sourceLength);
 public finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
 public finite bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
 public finite bool TryFormatBoolAscii(rawmutptr<Ascii> destination, bool value);
@@ -248,17 +264,11 @@ public fn System.Memory.MemoryResult<OwnedUnicode> ToUnicode(TextError value);
 - `UnicodeView` projects an immutable `unicode` view from an owned `Unicode` buffer.
 - `OwnedAscii` and `OwnedUnicode` are allocation-backed owned text wrappers returned by convenience APIs. Dropping the wrapper releases the backing allocation.
 - `OwnedAscii.View`, `OwnedUnicode.View`, and their `Length` helpers expose read-only text without transferring ownership.
-- `AsciiData` and `AsciiLength` expose the exact pointer and length of an immutable `ascii` view without requiring it to be NUL-terminated.
-- `UnicodeData` and `UnicodeLength` do the same for immutable `unicode` views.
+- `AsciiLength` and `UnicodeLength` expose immutable view lengths without exposing raw data pointers to user code.
 - `ParseBoolAscii` and `ParseBoolUnicode` parse exact lowercase `true` or `false` and return `TextResult<bool>` instead of throwing.
 - `ParseEncodingAscii`, `ParseEncodingUnicode`, `ParseTextErrorAscii`, and `ParseTextErrorUnicode` parse exact enum case names for the `System.Text` enum types.
 - The implemented integer parse APIs for signed and unsigned widths from 8 bits through 1024 bits parse exact base-10 text from `ascii` or `unicode` and return `TextResult<T>` with `TextError.InvalidFormat` or `TextError.Overflow` on failure.
-- `TryConvertAsciiToUnicode` decodes UTF-8 text into caller-owned `Unicode` storage.
-- `TryConvertAsciiToUtf16` decodes UTF-8 text into caller-owned UTF-16 code-unit storage and writes the unit count through `writtenLength`.
-- `TryConvertUtf16ToUnicode` decodes caller-provided UTF-16 code units into owned `Unicode` storage.
-- `TryConvertUnicodeToAscii` encodes caller-owned `Unicode` text into UTF-8 `Ascii` storage.
-- `TryConvertUnicodeToUtf16` encodes caller-owned `Unicode` text into caller-owned UTF-16 code-unit storage and writes the unit count through `writtenLength`.
-- `TryConvertUtf16ToAscii` encodes caller-provided UTF-16 code units into UTF-8 `Ascii` storage.
+- `FromAscii`, `FromUnicode`, `FromAsciiToUnicode`, `FromUnicodeToAscii`, `FromAsciiToUtf16`, `FromUnicodeToUtf16`, `FromUtf16ToUnicode`, and `FromUtf16ToAscii` use owned/dynamic storage and return `MemoryStatus`.
 - `TryConcatAscii` and `TryConcatUnicode` write into caller-owned storage and return `false` instead of allocating when capacity is insufficient.
 - Source code can also use fixed-capacity stack text concatenation, such as `stack Ascii combined[4096] = left + right;`. That syntax lowers to the same `TryConcat*` copy loops, but traps if the selected capacity is too small. Call `TryConcat*` directly when failure must be handled as a value.
 - Source code can use fixed-capacity stack interpolation, such as `stack Ascii label[64] = $"Score: {score}";`. Runtime holes use the fixed-buffer `TryFormat*` APIs and then append through `TryConcat*`, so the destination capacity stays visible in source.
@@ -308,11 +318,11 @@ bits.
 ## Example
 
 ```stark
-import System
+import System.Text
 module App
 
-fn bool Build(rawmutptr<Unicode> destination) {
-    return System.Text.TryConvertAsciiToUnicode(destination, "caf\u00E9");
+fn System.Memory.MemoryStatus Build(out System.Text.OwnedUnicode destination) {
+    return System.Text.FromAsciiToUnicode(destination, "caf\u00E9");
 }
 ```
 
@@ -320,8 +330,8 @@ fn bool Build(rawmutptr<Unicode> destination) {
 
 - The shared encoding enum is implemented.
 - Zero-copy owned-text view projection is implemented.
-- Low-level pointer/length access for immutable text views is implemented.
-- Explicit caller-owned UTF-8, UTF-16LE, and UTF-32 conversion is implemented.
+- Internal low-level pointer/length access for immutable text views is implemented for standard-library and platform boundaries.
+- Owned UTF-8, UTF-16LE, and UTF-32 conversion is implemented.
 - Caller-provided concat helpers are implemented.
 - Compile-time text constant concatenation with `+` is implemented and folds to
   one ordinary text constant.
