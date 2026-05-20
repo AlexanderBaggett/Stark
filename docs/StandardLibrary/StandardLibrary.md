@@ -36,9 +36,12 @@ The standard library provides:
 - minimal thread management
 - minimal blocking TCP
 - public process id and exit helpers
+- explicit test-project assertion helpers
 - text encoding support
 - a small dynamic-memory contract for owned standard-library containers
-- a platform abstraction layer that talks directly to the OS without libc
+- a platform abstraction layer that avoids stdio and exposes direct backend
+  facts: Linux syscall shims, Windows Win32 calls, and macOS libSystem/POSIX
+  calls
 
 User code calls `System.Console` or `System.IO.*` and never touches platform syscalls or Win32 APIs directly. The platform boundary is an internal implementation detail hidden behind the library surface.
 
@@ -61,6 +64,7 @@ The current public module references live here:
 - [System.Net](./System.Net.md)
 - [System.Net.Tcp](./System.Net.Tcp.md)
 - [System.Process](./System.Process.md)
+- [System.Testing](./System.Testing.md)
 - [System.Threading](./System.Threading.md)
 - [System.Text](./System.Text.md)
 
@@ -84,12 +88,14 @@ Repository source layout:
 - `stdlib/src/System/Net.stark`
 - `stdlib/src/System/Net/Tcp.stark`
 - `stdlib/src/System/Process.stark`
+- `stdlib/src/System/Testing.stark`
 - `stdlib/src/System/Threading.stark`
 - `stdlib/src/System/Runtime.stark`
 - `stdlib/src/System/Runtime/Buffer.stark`
 - `stdlib/src/System/Runtime/ConsoleInput.stark`
 - `stdlib/src/System/Runtime/Platform.stark`
 - `stdlib/src/System/Runtime/Platform/Linux.stark`
+- `stdlib/src/System/Runtime/Platform/MacOS.stark`
 - `stdlib/src/System/Runtime/Platform/Windows.stark`
 - `stdlib/src/System/Syscall.stark`
 
@@ -107,6 +113,7 @@ Current public module surface:
 - `System.Net`
 - `System.Net.Tcp`
 - `System.Process`
+- `System.Testing`
 - `System.Text`
 - `System.Math`
 - `System.Threading`
@@ -117,6 +124,7 @@ Internal modules:
 - `System.Runtime.Buffer`
 - `System.Runtime.Platform`
 - `System.Runtime.Platform.Linux`
+- `System.Runtime.Platform.MacOS`
 - `System.Runtime.Platform.Windows`
 - `System.Syscall`
 
@@ -131,17 +139,19 @@ syscall support needed during package build:
 ```stark
 import System.Runtime
 import System.Syscall
+import System.Testing
 export import System.BitOperations
 export import System.Collections
 export import System.Console
 export import System.FileSystem
 export import System.IO
+export import System.IO.File
+export import System.IO.Path
 export import System.Math
 export import System.Memory
 export import System.Net
 export import System.Net.Tcp
 export import System.Process
-export import System.Text
 export import System.Threading
 module System
 ```
@@ -154,6 +164,10 @@ initial `System.Net.Tcp` owned lifecycle, `TcpClient.Connect`,
 `TcpListener.Listen`, `TcpListener.Accept`, and socket-close surface with Linux
 syscall and Windows Winsock backends. The versioned `v1.0` baseline remains the
 narrower module list in [StandardLibraryBaseline.md](./StandardLibraryBaseline.md).
+`System.Text` remains a public module, but callers import it explicitly because
+its current low-level text data and caller-buffer APIs are intentionally unsafe.
+`System.Testing` is also packaged but imported explicitly so test helpers stay
+out of the ordinary `System` root re-export set.
 
 ## Concrete APIs Before Streams
 
@@ -232,12 +246,27 @@ public struct OwnedUnicode {
     finite law i64 Length(borrow OwnedUnicode self);
 }
 
+public struct OwnedUtf16 {
+    finite law i64 Length(borrow OwnedUtf16 self);
+    finite i16[] AsSlice(borrow OwnedUtf16 self);
+}
+
 public finite law ascii AsciiView(Ascii source);
 public finite law unicode UnicodeView(Unicode source);
-public finite law rawptr<i8> AsciiData(ascii source);
 public finite law i64 AsciiLength(ascii source);
-public finite law rawptr<i32> UnicodeData(unicode source);
 public finite law i64 UnicodeLength(unicode source);
+public fn System.Memory.MemoryStatus FromAscii(out OwnedAscii destination, ascii source);
+public fn System.Memory.MemoryStatus FromConstAscii(out OwnedAscii destination, const ascii source);
+public fn System.Memory.MemoryStatus FromUnicode(out OwnedUnicode destination, unicode source);
+public fn System.Memory.MemoryStatus FromConstUnicode(out OwnedUnicode destination, const unicode source);
+public fn System.Memory.MemoryStatus FromAsciiToUnicode(out OwnedUnicode destination, ascii source);
+public fn System.Memory.MemoryStatus FromConstAsciiToUnicode(out OwnedUnicode destination, const ascii source);
+public fn System.Memory.MemoryStatus FromUnicodeToAscii(out OwnedAscii destination, unicode source);
+public fn System.Memory.MemoryStatus FromAsciiToUtf16(out OwnedUtf16 destination, ascii source);
+public fn System.Memory.MemoryStatus FromConstAsciiToUtf16(out OwnedUtf16 destination, const ascii source);
+public fn System.Memory.MemoryStatus FromUnicodeToUtf16(out OwnedUtf16 destination, unicode source);
+public fn System.Memory.MemoryStatus FromUtf16ToUnicode(out OwnedUnicode destination, borrow OwnedUtf16 source);
+public fn System.Memory.MemoryStatus FromUtf16ToAscii(out OwnedAscii destination, borrow OwnedUtf16 source);
 public finite TextResult<bool> ParseBoolAscii(ascii source);
 public finite TextResult<bool> ParseBoolUnicode(unicode source);
 public finite TextResult<i8> ParseI8Ascii(ascii source);
@@ -296,12 +325,6 @@ public finite TextResult<u768> ParseU768Ascii(ascii source);
 public finite TextResult<u768> ParseU768Unicode(unicode source);
 public finite TextResult<u1024> ParseU1024Ascii(ascii source);
 public finite TextResult<u1024> ParseU1024Unicode(unicode source);
-public fn bool TryConvertAsciiToUnicode(rawmutptr<Unicode> destination, ascii source);
-public fn bool TryConvertAsciiToUtf16(rawmutptr<i16> destination, i64 capacity, ascii source, rawmutptr<i64> writtenLength);
-public fn bool TryConvertUtf16ToUnicode(rawmutptr<Unicode> destination, rawptr<i16> source, i64 sourceLength);
-public fn bool TryConvertUnicodeToAscii(rawmutptr<Ascii> destination, unicode source);
-public fn bool TryConvertUnicodeToUtf16(rawmutptr<i16> destination, i64 capacity, unicode source, rawmutptr<i64> writtenLength);
-public fn bool TryConvertUtf16ToAscii(rawmutptr<Ascii> destination, rawptr<i16> source, i64 sourceLength);
 public finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
 public finite bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
 public finite bool TryFormatBoolAscii(rawmutptr<Ascii> destination, bool value);
@@ -459,7 +482,7 @@ more optimized.
 
 The semantics are:
 
-- `Binary` means the file handle does not request an alternate multibyte text encoding. Byte APIs always ignore encoding. `ascii` text writes are passthrough UTF-8 bytes, and `unicode` text writes use the same UTF-8 platform text path as the raw-handle helpers for compatibility with the current default owned-file surface.
+- `Binary` means the file handle does not request an alternate multibyte text encoding. Byte APIs always ignore encoding. `ascii` text writes are passthrough UTF-8 bytes, and `unicode` text writes use the same UTF-8 platform text path as the internal platform helper used by the owned-file surface.
 - `UTF8` means the file stream converts to and from UTF-8. Writing an `ascii` string is a passthrough. Writing a `unicode` string converts UTF-32 to UTF-8 before writing.
 - `UTF16` means the file stream converts to and from UTF-16LE. Both `ascii` and `unicode` strings are converted before writing.
 - `UTF32` means the file stream converts to and from UTF-32. Writing a `unicode` string is a passthrough. Writing an `ascii` string converts UTF-8 to UTF-32 before writing.
@@ -479,16 +502,16 @@ The semantics are:
 The currently implemented bridge APIs are:
 
 - `System.Text.AsciiView(Ascii)` and `System.Text.UnicodeView(Unicode)` for zero-copy immutable view projection
-- `System.Text.OwnedAscii` and `System.Text.OwnedUnicode` for allocation-backed owned text returned by convenience APIs with drop cleanup
-- `System.Text.AsciiData(ascii)`, `System.Text.AsciiLength(ascii)`, `System.Text.UnicodeData(unicode)`, and `System.Text.UnicodeLength(unicode)` for explicit pointer/length access when stdlib code needs exact view boundaries at low-level OS or FFI edges
+- `System.Text.OwnedAscii`, `System.Text.OwnedUnicode`, and `System.Text.OwnedUtf16` for allocation-backed owned text/code-unit buffers returned by convenience APIs with drop cleanup
+- `System.Text.AsciiLength(ascii)` and `System.Text.UnicodeLength(unicode)` for immutable view lengths; raw data extraction is internal to standard-library/platform boundaries
 - `System.Text.ParseBoolAscii(ascii)` and `System.Text.ParseBoolUnicode(unicode)` for exact lowercase bool parsing through `TextResult<bool>`
 - `System.Text.ParseI*Ascii`/`ParseI*Unicode` and `System.Text.ParseU*Ascii`/`ParseU*Unicode` through 1024-bit signed and unsigned widths for exact base-10 integer parsing through `TextResult<T>`
-- `System.Text.TryConvertAsciiToUnicode(rawmutptr<Unicode>, ascii)`, `System.Text.TryConvertUnicodeToAscii(rawmutptr<Ascii>, unicode)`, `System.Text.TryConvertAsciiToUtf16(rawmutptr<i16>, i64, ascii, rawmutptr<i64>)`, `System.Text.TryConvertUtf16ToUnicode(rawmutptr<Unicode>, rawptr<i16>, i64)`, `System.Text.TryConvertUnicodeToUtf16(rawmutptr<i16>, i64, unicode, rawmutptr<i64>)`, and `System.Text.TryConvertUtf16ToAscii(rawmutptr<Ascii>, rawptr<i16>, i64)` for explicit caller-owned UTF-8, UTF-16LE, and UTF-32 conversion
+- `System.Text.FromAsciiToUnicode`, `FromUnicodeToAscii`, `FromAsciiToUtf16`, `FromUnicodeToUtf16`, `FromUtf16ToUnicode`, and `FromUtf16ToAscii` for owned UTF-8, UTF-16LE, and UTF-32 conversion through `MemoryStatus`
 - `System.Text.TryConcatAscii(rawmutptr<Ascii>, ascii, ascii)` and `System.Text.TryConcatUnicode(rawmutptr<Unicode>, unicode, unicode)` for explicit concatenation into caller-provided storage
 - `System.Text.TryFormatBoolAscii`, fixed-width integer `Ascii` formatting helpers through 1024-bit widths, including Stark's non-power-of-two integer widths, the first fixed-six `f32`/`f64` formatting helpers, and the matching `Unicode` forms for explicit caller-owned value formatting
 - `System.Text.ToAscii` / `System.Text.ToUnicode` and method-style `value.ToAscii()` / `value.ToUnicode()` for allocation-visible owned text conversion of `bool`, all signed and unsigned integer widths from 8 bits through 1024 bits, `f32`, `f64`, `System.Text.Encoding`, and `System.Text.TextError` through `System.Memory.MemoryResult<T>`
 
-These APIs make allocation visible in user code: the caller owns the backing buffer, fills `Data` and `Capacity`, and conversion or concat returns `false` instead of allocating when the destination is too small.
+These APIs make allocation visible in user code: owned conversions return `MemoryStatus`, owned formatters return `MemoryResult<T>`, and the remaining unsafe `TryConcat*`/`TryFormat*` helpers are fixed-buffer compiler hooks for no-allocation text construction.
 
 For compile-time constants, `"left" + "right"` folds to one ordinary text
 constant with no runtime allocation.
@@ -541,38 +564,26 @@ module System.IO.File
 
 public struct File {
     finite law bool IsOpen(borrow File self);
-    fn i32 Close(mut borrow File self);
-    fn i32 Flush(mut borrow File self);
-    fn i32 SyncAll(mut borrow File self);
-    fn i64 ReadBytes(mut borrow File self, rawptr<i8> buffer, i64 size, i64 count);
-    fn i64 WriteBytes(mut borrow File self, rawptr<i8> buffer, i64 size, i64 count);
-    fn void WriteText(mut borrow File self, ascii text);
-    fn void WriteText(mut borrow File self, unicode text);
-    fn void WriteLine(mut borrow File self, ascii text);
-    fn void WriteLine(mut borrow File self, unicode text);
+    fn System.IO.IOStatus Close(mut borrow File self);
+    fn System.IO.IOStatus Flush(mut borrow File self);
+    fn System.IO.IOStatus SyncAll(mut borrow File self);
+    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Seek(mut borrow File self, i64[min max] offset, SeekOrigin origin);
+    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Read(mut borrow File self, mut borrow i8[min max][] destination);
+    fn System.IO.IOResult<u64[0 2 ** 63 - 1]> Write(mut borrow File self, borrow i8[min max][] source);
+    fn System.IO.IOStatus WriteText(mut borrow File self, ascii text);
+    fn System.IO.IOStatus WriteText(mut borrow File self, unicode text);
+    fn System.IO.IOStatus WriteLine(mut borrow File self, ascii text);
+    fn System.IO.IOStatus WriteLine(mut borrow File self, unicode text);
 }
 
-public fn File Open(ascii path, FileMode mode);
-public fn File Open(ascii path, FileMode mode, FileBuffering buffering);
-public fn File Open(ascii path, FileMode mode, System.Text.Encoding encoding);
-public fn File Open(ascii path, FileMode mode, System.Text.Encoding encoding, FileBuffering buffering);
+public fn System.IO.IOResult<File> Open(ascii path, FileMode mode);
+public fn System.IO.IOResult<File> Open(ascii path, FileMode mode, FileBuffering buffering);
+public fn System.IO.IOResult<File> Open(ascii path, FileMode mode, System.Text.Encoding encoding);
+public fn System.IO.IOResult<File> Open(ascii path, FileMode mode, System.Text.Encoding encoding, FileBuffering buffering);
 
-public fn rawptr<i8> OpenRead(ascii path);
-public fn rawptr<i8> OpenWrite(ascii path);
-public fn rawptr<i8> OpenAppend(ascii path);
-
-public fn i32 Close(rawptr<i8> handle);
-public fn i32 Flush(rawptr<i8> handle);
-public fn i32 SyncAll(rawptr<i8> handle);
-public fn i64 ReadBytes(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle);
-public fn i64 WriteBytes(rawptr<i8> buffer, i64 size, i64 count, rawptr<i8> handle);
-public fn void WriteText(rawptr<i8> handle, ascii text);
-public fn void WriteText(rawptr<i8> handle, unicode text);
-public fn void WriteLine(rawptr<i8> handle, ascii text);
-public fn void WriteLine(rawptr<i8> handle, unicode text);
-public fn i32 Delete(ascii path);
-public fn i32 Move(ascii oldPath, ascii newPath);
-public fn bool Exists(ascii path);
+public fn System.IO.IOStatus Delete(ascii path);
+public fn System.IO.IOStatus Move(ascii oldPath, ascii newPath);
+public fn System.IO.IOResult<bool> Exists(ascii path);
 ```
 
 Methods on a `public struct` inherit the struct's visibility unless explicitly
@@ -625,22 +636,23 @@ Because destructors cannot surface rich failure values, implicit destructor clea
 The `encoding` field and `System.Text.Encoding` enum are in place, but the current Milestone 7 slice is still narrower than the eventual text-IO design:
 
 - owned `File` text writes support both `ascii` and `unicode`
-- raw-handle helpers already support both `ascii` and `unicode`
+- internal platform handoff helpers support both `ascii` and `unicode`
 - on Linux, the current `unicode` write path converts UTF-32 to UTF-8 before issuing the write syscall
 - owned-file `UTF8`, `UTF16`, and `UTF32` writes now honor the selected encoding for both `ascii` and `unicode`
 - owned-file `UTF16` and `UTF32` writes flush any pending buffered ascii data before writing encoded bytes directly
 - byte-level file reads and writes are implemented; higher-level text-reading
   helpers for `File` remain future work
 
-`ReadBytes` and `WriteBytes` always ignore encoding and operate on raw bytes regardless.
+`Read` and `Write` always ignore encoding and operate on raw bytes regardless.
 
 ### File Operations
 
 Internal implementation:
 
-- On Linux, `Open` calls the internal platform open boundary backed by `openat(2)`. `Close` calls the internal close boundary backed by `close(2)`. `ReadBytes` calls the internal read boundary backed by `read(2)`. `WriteBytes` calls the internal write boundary backed by `write(2)`. `Flush` drains Stark userspace buffers. `Delete` calls the internal delete boundary backed by `unlinkat(2)`. `Move` calls the internal rename boundary backed by `renameat2(2)`. `Exists` uses `newfstatat(2)`.
-- On Windows, `Open` calls `CreateFileW`. `Close` calls `CloseHandle`. `ReadBytes` calls `ReadFile`. `WriteBytes` calls `WriteFile`. `Flush` drains Stark userspace buffers. `SyncAll` calls `FlushFileBuffers`. `Delete` calls `DeleteFileW`. `Move` calls `MoveFileExW`. `Exists` uses `GetFileAttributesW`.
-- Path strings are converted at the platform boundary. On Linux, `ascii` paths pass through as-is. On Windows, `ascii` paths are converted from UTF-8 to UTF-16LE before calling the `W` APIs, and `GetCurrentDirectoryW` results are converted back to UTF-8 for `System.IO.Path.CurrentDirectory`.
+- On Linux, `Open` calls the internal platform open boundary backed by `openat(2)`. `Close` calls the internal close boundary backed by `close(2)`. `Read` calls the internal read boundary backed by `read(2)`. `Write` calls the internal write boundary backed by `write(2)`. `Flush` drains Stark userspace buffers. `Delete` calls the internal delete boundary backed by `unlinkat(2)`. `Move` calls the internal rename boundary backed by `renameat2(2)`. `Exists` uses `newfstatat(2)`.
+- On Windows, `Open` calls `CreateFileW`. `Close` calls `CloseHandle`. `Read` calls `ReadFile`. `Write` calls `WriteFile`. `Flush` drains Stark userspace buffers. `SyncAll` calls `FlushFileBuffers`. `Delete` calls `DeleteFileW`. `Move` calls `MoveFileExW`. `Exists` uses `GetFileAttributesW`.
+- On macOS, `Open` calls `open`. `Close` calls `close`. `Read` calls `read`. `Write` calls `write`. `Flush` drains Stark userspace buffers. `SyncAll` calls `fsync`. `Delete` calls `unlink`. `Move` calls `rename`. `Exists` and file kind checks use `stat`.
+- Path strings are converted at the platform boundary. On Linux and macOS, `ascii` paths pass through as-is. On Windows, `ascii` paths are converted from UTF-8 to UTF-16LE before calling the `W` APIs, and `GetCurrentDirectoryW` results are converted back to UTF-8 for `System.IO.Path.CurrentDirectory`.
 
 ## Path API
 
@@ -653,7 +665,8 @@ module System.IO.Path
 public finite law ascii DirectorySeparator();
 public finite law ascii AlternateDirectorySeparator();
 public finite law ascii PathSeparator();
-public fn bool TryJoin(rawmutptr<Ascii> destination, ascii left, ascii right);
+public fn System.Memory.MemoryStatus TryJoin(mut borrow System.Text.OwnedAscii destination, ascii left, ascii right)
+    where overlap(destination, left), overlap(destination, right), overlap(left, right);
 public fn System.Memory.MemoryResult<System.Text.OwnedAscii> Join(ascii left, ascii right);
 public struct PathFacts;
 public finite law PathFacts GetFacts(ascii path);
@@ -661,20 +674,21 @@ public finite law ascii Extension(borrow ascii path);
 public finite law ascii BaseName(borrow ascii path);
 public finite law ascii DirectoryName(borrow ascii path);
 
-public fn bool CurrentDirectory(rawmutptr<Ascii> destination);
+public fn System.Memory.MemoryStatus CurrentDirectory(mut borrow System.Text.OwnedAscii destination);
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> CurrentDirectory();
 ```
 
-`DirectorySeparator` returns `"/"` on Linux and `"\\"` on Windows. `AlternateDirectorySeparator` returns `"/"` on Windows and `""` on Linux. `PathSeparator` returns `":"` on Linux and `";"` on Windows.
+`DirectorySeparator` returns `"/"` on Linux and macOS and `"\\"` on Windows. `AlternateDirectorySeparator` returns `"/"` on Windows and `""` on Linux and macOS. `PathSeparator` returns `":"` on Linux and macOS and `";"` on Windows.
 
 `Extension`, `BaseName`, and `DirectoryName` are `finite law` because they are pure, have no side effects, and always return.
 
 `GetFacts` computes the reusable component ranges for callers that need several pieces of the same path. `PathFacts` exposes view and length helpers for the full path, extension, base name, and directory name without rescanning.
 
-`TryJoin` uses a caller-provided `Ascii` destination rather than allocating hidden storage. It returns `false` if the destination buffer is too small.
+`TryJoin` uses caller-owned `System.Text.OwnedAscii` storage rather than allocating hidden storage. It explicitly permits overlap among the destination and input views, snapshots when necessary, and returns `MemoryStatus` so allocation and layout failures remain explicit.
 
 `Join` allocates an owned `System.Text.OwnedAscii` result through `System.Memory` and returns `System.Memory.MemoryResult<T>`, so allocation failure remains visible. It uses the same separator normalization rules as `TryJoin`.
 
-`CurrentDirectory` is `fn` because it issues an OS call. It uses a caller-provided `Ascii` buffer and returns `bool` success instead of a richer result type. On the current Linux-backed implementation, the destination buffer must have room for the path text plus one trailing zero byte reserved for the raw `getcwd` syscall.
+`CurrentDirectory` is `fn` because it issues an OS call. It appends into caller-owned `System.Text.OwnedAscii` storage or returns an owned-text `MemoryResult`; raw platform buffers stay internal.
 
 ## Platform Abstraction Layer
 
@@ -735,6 +749,48 @@ The current implementation status is:
 - packaged Linux stdlib builds are regression-tested to avoid libc/glibc symbol dependencies
 
 stdout and stderr are fd `1` and fd `2`. They exist at process start with no setup required.
+
+### macOS Implementation
+
+`System.Runtime.Platform.MacOS` calls libSystem/POSIX APIs directly for the OS
+backend. It does not route file, console, directory, or socket IO through C
+stdio. Native executable linking on macOS still needs Apple's SDK/Command Line
+Tools for platform libraries such as `libSystem`; standalone LLVM/Clang remains
+enough for LLVM IR and object emission.
+
+The current macOS backend uses:
+
+| Operation | macOS API |
+|---|---|
+| write | `write` |
+| read | `read` |
+| open | `open` |
+| close | `close` |
+| sync all | `fsync` |
+| seek | `lseek` |
+| delete | `unlink` |
+| rename | `rename` |
+| exists and file kind | `stat` |
+| directories | `opendir`, `readdir`, `closedir`, `mkdir`, `rmdir` |
+| current directory | `getcwd` |
+| terminal detect | `isatty` |
+| process id | `getpid` |
+| exit | `exit` |
+| threads | `pthread_create`, `pthread_join`, `pthread_detach`, `sched_yield`, `nanosleep` |
+| sockets | `socket`, `connect`, `bind`, `listen`, `accept`, `recv`, `send`, `readv`, `writev`, `shutdown`, `poll` |
+| synchronization wait/wake | `os_sync_wait_on_address`, `os_sync_wake_by_address_any`, `os_sync_wake_by_address_all` |
+| allocator OS backing | `malloc`, `realloc`, `free` under Stark's runtime allocator |
+
+Directory enumeration reads Darwin `dirent` entries directly from `readdir`,
+including the `d_type` byte when available. File existence and file/directory
+kind checks use Darwin `stat` mode bits. Thread joins preserve the `i32` returned
+by the Stark entry function through `pthread_join` without heap-allocating a
+return-code box.
+
+The public macOS metadata surface currently stops at existence, file/directory
+kind checks, and directory-entry kind during enumeration. Rich metadata such as
+timestamps, permissions, owners, symlink target reads, and a public monotonic
+clock API are not exposed yet; benchmark timing is currently host-harness driven.
 
 ### Windows Implementation
 
@@ -813,14 +869,14 @@ The encoding conversions needed by the stdlib are:
 
 These are pure computational functions with no platform dependency. They live in `System.Text` and are shared by both the IO layer and user-facing text APIs.
 
-These are implemented today through the six caller-owned `System.Text` helpers:
+These are implemented today through owned `System.Text` helpers:
 
-- `TryConvertAsciiToUnicode`
-- `TryConvertAsciiToUtf16`
-- `TryConvertUtf16ToUnicode`
-- `TryConvertUnicodeToAscii`
-- `TryConvertUnicodeToUtf16`
-- `TryConvertUtf16ToAscii`
+- `FromAsciiToUnicode`
+- `FromAsciiToUtf16`
+- `FromUtf16ToUnicode`
+- `FromUnicodeToAscii`
+- `FromUnicodeToUtf16`
+- `FromUtf16ToAscii`
 
 Direct UTF-32 to UTF-16 conversion is preferred over routing through UTF-8 when performance matters.
 
@@ -858,7 +914,9 @@ Current explicit runtime dependency caveats:
 
 - The `System.Memory` allocator and compiler-emitted heap-local helper now
   lower through Stark-owned runtime helpers instead of explicit
-  `malloc`, `realloc`, or `free` calls.
+  `malloc`, `realloc`, or `free` calls in standard-library source. The macOS
+  runtime allocator backend intentionally maps those helpers to libSystem
+  `malloc`, `realloc`, and `free`.
 - Small and medium allocator buckets may satisfy `Reallocate` in place when the
   new size and alignment still fit the bucket; otherwise the runtime uses the
   conservative allocate-copy-free fallback.
@@ -902,7 +960,7 @@ Example:
 import System
 module Hello
 
-export ffi fn i32 main() {
+export fn i32 main() {
     System.Console.WriteLine("Hello, world!");
     System.Console.WriteErrorLine("stderr works too");
     return 0;

@@ -208,10 +208,12 @@ public sealed class PackageImageCliToolingTests
             """
             module NativeDemo
 
-            ffi fn i32[-2147483648 2147483647] stark_native_value();
+            unsafe ffi fn i32[min max] stark_native_value();
 
-            public fn i32[-2147483648 2147483647] GetValue() {
-                return stark_native_value();
+            public fn i32[min max] GetValue() {
+                unsafe {
+                    return stark_native_value();
+                }
             }
             """);
         await File.WriteAllTextAsync(
@@ -227,7 +229,7 @@ public sealed class PackageImageCliToolingTests
             import NativeDemo
             module App
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export fn i32[min max] main() {
                 return GetValue();
             }
             """);
@@ -315,12 +317,14 @@ public sealed class PackageImageCliToolingTests
                 """
                 module NativePkgDemo
 
-                ffi fn i32[-2147483648 2147483647] stark_native_value();
+            unsafe ffi fn i32[min max] stark_native_value();
 
-                public fn i32[-2147483648 2147483647] GetValue() {
+            public fn i32[min max] GetValue() {
+                unsafe {
                     return stark_native_value();
                 }
-                """);
+            }
+            """);
             await File.WriteAllTextAsync(
                 nativeSourcePath,
                 """
@@ -339,7 +343,7 @@ public sealed class PackageImageCliToolingTests
                 import NativePkgDemo
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export fn i32[min max] main() {
                     return GetValue();
                 }
                 """);
@@ -534,7 +538,7 @@ public sealed class PackageImageCliToolingTests
         """
         module Demo
 
-        public fn i32[-2147483648 2147483647] Run() {
+        public fn i32[min max] Run() {
             return 7;
         }
         """;

@@ -6,19 +6,19 @@ module HttpGetExample
 const ReadBufferLength = 4096;
 
 struct ResponseBuffer {
-    i8[-128 127][4096] Storage;
+    i8[min max][4096] Storage;
 }
 
-internal ffi fn rawptr<i8[-128 127]> stark_https_client_connect(ascii host, i32[min max] port);
-internal ffi fn i64[min max] stark_https_client_write(rawptr<i8[-128 127]> client, ascii source);
-internal ffi fn i64[min max] stark_https_client_read(
-    rawptr<i8[-128 127]> client,
-    rawmutptr<i8[-128 127]> destination,
+internal unsafe ffi fn rawptr<i8[min max]> stark_https_client_connect(ascii host, i32[min max] port);
+internal unsafe ffi fn i64[min max] stark_https_client_write(rawptr<i8[min max]> client, ascii source);
+internal unsafe ffi fn i64[min max] stark_https_client_read(
+    rawptr<i8[min max]> client,
+    rawmutptr<i8[min max]> destination,
     i64[0 max] capacity);
-internal ffi fn void stark_https_client_close(rawptr<i8[-128 127]> client);
+internal unsafe ffi fn void stark_https_client_close(rawptr<i8[min max]> client);
 
-export ffi fn i32[min max] main() {
-    stack rawptr<i8[-128 127]> client = stark_https_client_connect("www.google.com", 443);
+export unsafe fn i32[min max] main() {
+    stack rawptr<i8[min max]> client = stark_https_client_connect("www.google.com", 443);
     if (client == null) {
         WriteErrorLine("failed to establish TLS connection to https://www.google.com/");
         return 1;

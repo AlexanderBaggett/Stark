@@ -3,40 +3,140 @@ using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using Antlr4.Runtime;
+using Stark.Compiler.LlvmIrEmission;
 using Stark.Parsing;
 
 namespace Stark.Compiler;
 
-internal sealed partial class MidLevelIrLowerer(
-    CompilerPassContext context,
-    LoadedModuleSet loadedModules,
-    ModuleGraph moduleGraph,
-    TypeCheckModel typeModel,
-    EnumLayoutModel enumLayoutModel)
+internal sealed partial class MidLevelIrLowerer
 {
     private static readonly int[] SupportedConstIntegerWidths = [8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024];
-    private readonly CompilerLogBag _logs = context.Logs;
-    private readonly TypeCheckModel _typeModel = typeModel;
-    private readonly EnumLayoutModel _enumLayoutModel = enumLayoutModel;
-    private readonly Dictionary<string, FunctionLoweringContext> _functionsByName = CollectFunctionsByQualifiedName(loadedModules, typeModel);
-    private readonly Dictionary<string, ConstructorLoweringContext> _constructorsByBodyKey = CollectConstructorsByBodyKey(loadedModules);
-    private readonly Dictionary<string, DestructorLoweringContext> _destructorsByTypeName = CollectDestructorsByTypeName(loadedModules);
-    private readonly StarkTypeResolver _typeResolver = new(context, "lower-mir", moduleGraph, typeModel.NamedTypes, typeModel.TypeAliases);
-    private readonly Dictionary<string, TypedFunctionSignature> _fallbackFunctions = CollectFallbackFunctionSignatures(context, moduleGraph, typeModel.NamedTypes, typeModel.TypeAliases, typeModel.Globals, loadedModules);
-    private readonly Dictionary<string, TypedGlobalSymbol> _fallbackGlobals = CollectFallbackGlobals(context, moduleGraph, typeModel.NamedTypes, typeModel.TypeAliases, typeModel.Globals, loadedModules);
-    private readonly Dictionary<LiteralKey, StarkTypeSymbol> _literalTypes = typeModel.Literals
-            .GroupBy(static literal => new LiteralKey(literal.LiteralText, literal.Location.Line, literal.Location.Column))
-            .ToDictionary(static group => group.Key, static group => group.Last().Type);
-    private readonly Dictionary<ObjectCreationKey, TypedConstructorShape?> _objectCreationConstructors = typeModel.ObjectCreations
-            .GroupBy(static record => new ObjectCreationKey(record.ExpressionText, record.Location.Line, record.Location.Column))
-            .ToDictionary(static group => group.Key, static group => group.Last().Constructor);
-    private readonly Dictionary<string, ImportedFunctionTemplateSummary> _importedFunctionTemplates = loadedModules.ImportedModules
-            .Where(static module => module.PackageImageFacts is { FunctionTemplates.Count: > 0 })
-            .SelectMany(static module => module.PackageImageFacts!.FunctionTemplates)
-            .ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal);
+    private readonly record struct BoundOperationKey(string? FunctionName, int Line, int Column);
+
+    private sealed record BoundOperationIndex(
+        IReadOnlyDictionary<BoundOperationKey, BoundDirectCallOperation> DirectCalls,
+        IReadOnlyDictionary<BoundOperationKey, BoundMemberCallOperation> MemberCalls,
+        IReadOnlyDictionary<BoundOperationKey, BoundFunctionPointerCallOperation> FunctionPointerCalls,
+        IReadOnlyDictionary<BoundOperationKey, BoundClosureCallOperation> ClosureCalls,
+        IReadOnlyDictionary<BoundOperationKey, BoundIndexAccessOperation> IndexAccesses,
+        IReadOnlyDictionary<BoundOperationKey, BoundObjectCreationOperation> ObjectCreations,
+        IReadOnlyDictionary<BoundOperationKey, BoundEnumConstructionOperation> EnumConstructions,
+        IReadOnlyDictionary<BoundOperationKey, BoundEnumCallOperation> EnumCalls,
+        IReadOnlyDictionary<BoundOperationKey, BoundEnumValueOperation> EnumValues,
+        IReadOnlyDictionary<BoundOperationKey, BoundDynamicStorageOperation> DynamicStorageOperations,
+        IReadOnlyDictionary<BoundOperationKey, BoundTextInterpolationOperation> TextInterpolations,
+        IReadOnlyDictionary<BoundOperationKey, BoundTextBuildOperation> TextBuilds,
+        IReadOnlyDictionary<BoundOperationKey, BoundLayoutQueryOperation> LayoutQueries,
+        IReadOnlyDictionary<BoundOperationKey, BoundSwitchDispatchOperation> SwitchDispatches);
+
+    private readonly CompilerLogBag _logs;
+    private readonly ModuleGraph _moduleGraph;
+    private readonly TypeCheckModel _typeModel;
+    private readonly EnumLayoutModel _enumLayoutModel;
+    private readonly IReadOnlyDictionary<string, NamedTypeSymbol> _loweringNamedTypes;
+    private readonly IReadOnlyDictionary<string, ConcreteTypeLayout> _publishedConcreteLayouts;
+    private readonly IReadOnlyDictionary<string, EnumLayoutSymbol> _publishedEnumLayouts;
+    private readonly Dictionary<string, FunctionLoweringContext> _functionsByName;
+    private readonly Dictionary<string, ConstructorLoweringContext> _constructorsByBodyKey;
+    private readonly Dictionary<string, DestructorLoweringContext> _destructorsByTypeName;
+    private readonly StarkTypeResolver _typeResolver;
+    private readonly Dictionary<string, TypedFunctionSignature> _fallbackFunctions;
+    private readonly Dictionary<string, TypedGlobalSymbol> _fallbackGlobals;
+    private readonly Dictionary<LiteralKey, StarkTypeSymbol> _literalTypes;
+    private readonly Dictionary<ObjectCreationKey, TypedConstructorShape?> _objectCreationConstructors;
+    private readonly BoundOperationIndex _boundOperations;
+    private readonly Dictionary<string, ImportedFunctionTemplateSummary> _importedFunctionTemplates;
+    private readonly OwnershipValidationModel? _ownershipModel;
     private static readonly IReadOnlyDictionary<string, StarkTypeSymbol> EmptyTypeSubstitution =
         new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
     private Dictionary<string, string> _materializedSpecializationSymbols = new(StringComparer.Ordinal);
+
+    public MidLevelIrLowerer(
+        CompilerPassContext context,
+        LoadedModuleSet loadedModules,
+        ModuleGraph moduleGraph,
+        TypeCheckModel typeModel,
+        EnumLayoutModel enumLayoutModel,
+        OwnershipValidationModel? ownershipModel = null)
+    {
+        _logs = context.Logs;
+        _moduleGraph = moduleGraph;
+        _typeModel = typeModel;
+        _enumLayoutModel = enumLayoutModel;
+        _ownershipModel = ownershipModel;
+        _loweringNamedTypes = CollectFallbackNamedTypes(context, moduleGraph, typeModel.NamedTypes, typeModel.TypeAliases, loadedModules);
+        _publishedConcreteLayouts = LlvmSpecializationEmissionPlanner.BuildPublishedConcreteLayouts(loadedModules);
+        _publishedEnumLayouts = BuildPublishedEnumLayouts(loadedModules);
+        _functionsByName = CollectFunctionsByQualifiedName(loadedModules, typeModel);
+        _constructorsByBodyKey = CollectConstructorsByBodyKey(loadedModules);
+        _destructorsByTypeName = CollectDestructorsByTypeName(loadedModules);
+        _typeResolver = new StarkTypeResolver(context, "lower-mir", moduleGraph, _loweringNamedTypes, typeModel.TypeAliases);
+        _fallbackFunctions = CollectFallbackFunctionSignatures(context, moduleGraph, _loweringNamedTypes, typeModel.TypeAliases, typeModel.Globals, loadedModules);
+        _fallbackGlobals = CollectFallbackGlobals(context, moduleGraph, _loweringNamedTypes, typeModel.TypeAliases, typeModel.Globals, loadedModules);
+        _literalTypes = typeModel.Literals
+            .GroupBy(static literal => new LiteralKey(literal.LiteralText, literal.Location.Line, literal.Location.Column))
+            .ToDictionary(static group => group.Key, static group => group.Last().Type);
+        _objectCreationConstructors = typeModel.ObjectCreations
+            .GroupBy(static record => new ObjectCreationKey(record.ExpressionText, record.Location.Line, record.Location.Column))
+            .ToDictionary(static group => group.Key, static group => group.Last().Constructor);
+        _boundOperations = BuildBoundOperationIndex(typeModel.BoundOperations);
+        _importedFunctionTemplates = loadedModules.ImportedModules
+            .Where(static module => module.PackageImageFacts is { FunctionTemplates.Count: > 0 })
+            .SelectMany(static module => module.PackageImageFacts!.FunctionTemplates)
+            .ToDictionary(static pair => pair.Key, static pair => pair.Value, StringComparer.Ordinal);
+    }
+
+    private static BoundOperationIndex BuildBoundOperationIndex(IEnumerable<BoundOperation> operations)
+    {
+        var materialized = operations.ToArray();
+        return new BoundOperationIndex(
+            BuildBoundOperationMap<BoundDirectCallOperation>(materialized),
+            BuildBoundOperationMap<BoundMemberCallOperation>(materialized),
+            BuildBoundOperationMap<BoundFunctionPointerCallOperation>(materialized),
+            BuildBoundOperationMap<BoundClosureCallOperation>(materialized),
+            BuildBoundOperationMap<BoundIndexAccessOperation>(materialized),
+            BuildBoundOperationMap<BoundObjectCreationOperation>(materialized),
+            BuildBoundOperationMap<BoundEnumConstructionOperation>(materialized),
+            BuildBoundOperationMap<BoundEnumCallOperation>(materialized),
+            BuildBoundOperationMap<BoundEnumValueOperation>(materialized),
+            BuildBoundOperationMap<BoundDynamicStorageOperation>(materialized),
+            BuildBoundOperationMap<BoundTextInterpolationOperation>(materialized),
+            BuildBoundOperationMap<BoundTextBuildOperation>(materialized),
+            BuildBoundOperationMap<BoundLayoutQueryOperation>(materialized),
+            BuildBoundOperationMap<BoundSwitchDispatchOperation>(materialized));
+    }
+
+    private static IReadOnlyDictionary<string, EnumLayoutSymbol> BuildPublishedEnumLayouts(LoadedModuleSet loadedModules)
+    {
+        var layouts = new Dictionary<string, EnumLayoutSymbol>(StringComparer.Ordinal);
+        foreach (var module in loadedModules.ImportedModules)
+        {
+            if (module.PackageImageFacts is not { EnumLayouts.Count: > 0 } packageImageFacts)
+            {
+                continue;
+            }
+
+            foreach (var (qualifiedName, layout) in packageImageFacts.EnumLayouts)
+            {
+                layouts.TryAdd(qualifiedName, layout);
+            }
+        }
+
+        return layouts;
+    }
+
+    private static IReadOnlyDictionary<BoundOperationKey, TOperation> BuildBoundOperationMap<TOperation>(
+        IEnumerable<BoundOperation> operations)
+        where TOperation : BoundOperation
+    {
+        return operations
+            .OfType<TOperation>()
+            .GroupBy(static operation => new BoundOperationKey(
+                operation.EnclosingFunctionName,
+                operation.Location.Line,
+                operation.Location.Column))
+            .ToDictionary(static group => group.Key, static group => group.Last());
+    }
 
     public MidLevelIrModule Lower(HighLevelIrModule hir)
     {
@@ -50,6 +150,22 @@ internal sealed partial class MidLevelIrLowerer(
 
     private MidLevelIrFunction LowerFunction(HighLevelIrFunction function)
     {
+        var ownershipSummary = ResolveOwnershipSummary(function);
+        if (string.Equals(function.Name, CallableValueFacts.EmptyClosureDropFunctionName, StringComparison.Ordinal))
+        {
+            return LowerEmptyClosureDropFunction(function);
+        }
+
+        if (TryGetClosureDropLambda(function.Name, out var closureDropLambda))
+        {
+            return LowerClosureDropFunction(function, closureDropLambda);
+        }
+
+        if (TryGetClosureFunctionAdapter(function.Name, out var closureFunctionAdapter))
+        {
+            return LowerClosureFunctionAdapter(function, closureFunctionAdapter);
+        }
+
         var loweringTemplateName = function.BodyTemplateName ?? function.Name;
         _importedFunctionTemplates.TryGetValue(loweringTemplateName, out var importedTemplateSummary);
         var keepOpenGenericTemplateDeclarationBodyless =
@@ -67,7 +183,10 @@ internal sealed partial class MidLevelIrLowerer(
                 EntryBlockId: 0,
                 Locals: [],
                 Blocks: [],
-                BodyLoweringKind: function.BodyLoweringKind);
+                BodyLoweringKind: function.BodyLoweringKind,
+                DisjointParameterGroups: function.Signature.DisjointGroups,
+                SameParameterGroups: function.Signature.SameGroups,
+                Ownership: ownershipSummary);
         }
 
         if (keepOpenGenericTemplateDeclarationBodyless)
@@ -82,7 +201,10 @@ internal sealed partial class MidLevelIrLowerer(
                 EntryBlockId: 0,
                 Locals: [],
                 Blocks: [],
-                BodyLoweringKind: function.BodyLoweringKind);
+                BodyLoweringKind: function.BodyLoweringKind,
+                DisjointParameterGroups: function.Signature.DisjointGroups,
+                SameParameterGroups: function.Signature.SameGroups,
+                Ownership: ownershipSummary);
         }
 
         if (!_functionsByName.TryGetValue(loweringTemplateName, out var loweringContext))
@@ -99,7 +221,7 @@ internal sealed partial class MidLevelIrLowerer(
                     symbolName: function.Name,
                     operation: "LowerFunction",
                     location: SourceLocation.Synthetic(),
-                    outcome: CompilerLogOutcome.Bypassed,
+                    outcome: CompilerLogOutcome.Unsupported,
                     data: CompilerLogData.Create(
                         ("module", _typeModel.ModuleName),
                         ("function", function.Name),
@@ -116,7 +238,10 @@ internal sealed partial class MidLevelIrLowerer(
                 EntryBlockId: 0,
                 Locals: [],
                 Blocks: [],
-                BodyLoweringKind: function.BodyLoweringKind);
+                BodyLoweringKind: function.BodyLoweringKind,
+                DisjointParameterGroups: function.Signature.DisjointGroups,
+                SameParameterGroups: function.Signature.SameGroups,
+                Ownership: ownershipSummary);
         }
 
         var body = loweringContext.ParsedBody;
@@ -128,7 +253,7 @@ internal sealed partial class MidLevelIrLowerer(
             loweringContext.ModuleName,
             _typeModel,
             _enumLayoutModel,
-            moduleGraph,
+            _moduleGraph,
             _typeResolver,
             _functionsByName,
             _constructorsByBodyKey,
@@ -136,10 +261,14 @@ internal sealed partial class MidLevelIrLowerer(
             _logs,
             loweringContext.FilePath,
             functionLocation,
+            _loweringNamedTypes,
             _fallbackFunctions,
             _fallbackGlobals,
             _literalTypes,
             _objectCreationConstructors,
+            _publishedConcreteLayouts,
+            _publishedEnumLayouts,
+            _boundOperations,
             importedTemplateSummary,
             _materializedSpecializationSymbols,
             function.GenericTypeSubstitution,
@@ -160,10 +289,20 @@ internal sealed partial class MidLevelIrLowerer(
             outcome: CompilerLogOutcome.Continued,
             verbosity: CompilerLogVerbosity.Verbose);
 
-        var loweredTypedTemplateBody = body is null
+        var hasImportedTypedTemplateBody = body is null
             && lambdaExpression is null
-            && importedTemplateSummary?.TypedBody is { } typedBody
-            && builder.TryLowerImportedTypedTemplateBody(typedBody);
+            && importedTemplateSummary?.TypedBody is { };
+        var loweredTypedTemplateBody = hasImportedTypedTemplateBody
+            && builder.TryLowerImportedTypedTemplateBody(importedTemplateSummary!.TypedBody!);
+        if (hasImportedTypedTemplateBody && !loweredTypedTemplateBody)
+        {
+            var locationText = functionLocation.FilePath is null
+                ? $"{functionLocation.Line}:{functionLocation.Column}"
+                : $"{functionLocation.FilePath}:{functionLocation.Line}:{functionLocation.Column}";
+            throw new InvalidOperationException(
+                $"MIR lowering invariant violated while lowering imported typed-template body for '{function.Name}' at {locationText}: typed package-image bodies must lower directly; declaration-only fallback is not permitted.");
+        }
+
         if (!loweredTypedTemplateBody)
         {
             if (body is null && lambdaExpression is null)
@@ -180,7 +319,7 @@ internal sealed partial class MidLevelIrLowerer(
                         symbolName: function.Name,
                         operation: "LowerFunction",
                         location: functionLocation,
-                        outcome: CompilerLogOutcome.Bypassed,
+                        outcome: CompilerLogOutcome.Unsupported,
                         data: CompilerLogData.Create(
                             ("module", loweringContext.ModuleName),
                             ("function", function.Name),
@@ -197,7 +336,10 @@ internal sealed partial class MidLevelIrLowerer(
                     EntryBlockId: 0,
                     Locals: [],
                     Blocks: [],
-                    BodyLoweringKind: function.BodyLoweringKind);
+                    BodyLoweringKind: function.BodyLoweringKind,
+                    DisjointParameterGroups: function.Signature.DisjointGroups,
+                    SameParameterGroups: function.Signature.SameGroups,
+                    Ownership: ownershipSummary);
             }
 
             if (lambdaExpression is not null)
@@ -239,7 +381,248 @@ internal sealed partial class MidLevelIrLowerer(
             builder.Locals,
             builder.Blocks,
             function.BodyLoweringKind,
-            functionLocation);
+            functionLocation,
+            function.Signature.DisjointGroups,
+            function.Signature.SameGroups,
+            ownershipSummary);
+    }
+
+    private FunctionOwnershipSummary? ResolveOwnershipSummary(HighLevelIrFunction function)
+    {
+        if (_ownershipModel is null)
+        {
+            return null;
+        }
+
+        if (_ownershipModel.Functions.TryGetValue(function.Name, out var direct))
+        {
+            return RetargetOwnershipSummary(direct, function.Name, function.GenericTypeSubstitution);
+        }
+
+        if (function.BodyTemplateName is { Length: > 0 } templateName
+            && _ownershipModel.Functions.TryGetValue(templateName, out var template))
+        {
+            return RetargetOwnershipSummary(template, function.Name, function.GenericTypeSubstitution);
+        }
+
+        if (function.BodyTemplateName is { Length: > 0 } importedTemplateName
+            && _importedFunctionTemplates.TryGetValue(importedTemplateName, out var importedTemplate)
+            && importedTemplate.Semantics?.Ownership is { } importedOwnership)
+        {
+            return RetargetOwnershipSummary(importedOwnership, function.Name, function.GenericTypeSubstitution);
+        }
+
+        return null;
+    }
+
+    private static FunctionOwnershipSummary RetargetOwnershipSummary(
+        FunctionOwnershipSummary summary,
+        string functionName,
+        IReadOnlyDictionary<string, StarkTypeSymbol>? substitution)
+    {
+        if (substitution is not { Count: > 0 })
+        {
+            return string.Equals(summary.Name, functionName, StringComparison.Ordinal)
+                ? summary
+                : summary with { Name = functionName };
+        }
+
+        return summary with
+        {
+            Name = functionName,
+            OwnershipEvents = summary.Events
+                .Select(ev => ev with
+                {
+                    Place = SubstituteOwnershipPlace(ev.Place, substitution)
+                })
+                .ToArray(),
+            OwnershipRoots = summary.Roots
+                .Select(root => root with
+                {
+                    Type = FunctionOverloadFacts.SubstituteType(root.Type, substitution)
+                })
+                .ToArray()
+        };
+    }
+
+    private static OwnershipPlaceSummary SubstituteOwnershipPlace(
+        OwnershipPlaceSummary place,
+        IReadOnlyDictionary<string, StarkTypeSymbol> substitution)
+    {
+        return place with
+        {
+            Type = FunctionOverloadFacts.SubstituteType(place.Type, substitution)
+        };
+    }
+
+    private bool TryGetClosureDropLambda(string functionName, out ClosureLambdaTypingRecord lambda)
+    {
+        lambda = _typeModel.ClosureLambdas.FirstOrDefault(candidate =>
+            candidate.ClosureType.ClosureStorageKind == StarkClosureStorageKind.Heap
+            && candidate.HasCaptures
+            && string.Equals(
+                CallableValueFacts.BuildClosureDropFunctionName(candidate.FunctionName),
+                functionName,
+                StringComparison.Ordinal))!;
+        return lambda is not null;
+    }
+
+    private bool TryGetClosureFunctionAdapter(string functionName, out ClosureFunctionPromotionTypingRecord adapter)
+    {
+        adapter = _typeModel.ClosureFunctionPromotions.FirstOrDefault(candidate =>
+            string.Equals(candidate.AdapterFunctionName, functionName, StringComparison.Ordinal))!;
+        return adapter is not null;
+    }
+
+    private MidLevelIrFunction LowerClosureFunctionAdapter(
+        HighLevelIrFunction function,
+        ClosureFunctionPromotionTypingRecord adapter)
+    {
+        var sourceArguments = function.Signature.Parameters
+            .Skip(1)
+            .Select(static parameter => (MidLevelIrOperand)new MidLevelIrParameterOperand(parameter.Name, parameter.Type))
+            .ToArray();
+        var callText = $"{adapter.Signature.DisplaySourceName}({string.Join(", ", sourceArguments.Select(static argument => argument.Text))})";
+        var statements = new List<MidLevelIrStatement>();
+        MidLevelIrOperand? returnValue = null;
+        IReadOnlyList<MidLevelIrLocal> locals = [];
+        if (function.Signature.ReturnType.Kind == StarkTypeKind.Void)
+        {
+            statements.Add(new MidLevelIrStatement(
+                MidLevelIrStatementKind.Evaluate,
+                callText,
+                Location: adapter.Location,
+                Call: new MidLevelIrDirectCallStatementOperation(
+                    adapter.Signature.Name,
+                    sourceArguments,
+                    adapter.Signature.ReturnType,
+                    callText)));
+        }
+        else
+        {
+            var call = new MidLevelIrCallRValue(
+                adapter.Signature.Name,
+                sourceArguments,
+                adapter.Signature.ReturnType,
+                callText);
+            const string resultName = "$closure_adapter_result";
+            statements.Add(new MidLevelIrStatement(
+                MidLevelIrStatementKind.Assign,
+                $"{resultName} = {call.Text}",
+                TargetName: resultName,
+                TargetType: function.Signature.ReturnType,
+                Value: call,
+                Location: adapter.Location));
+            returnValue = new MidLevelIrLocalOperand(resultName, function.Signature.ReturnType);
+            locals =
+            [
+                new MidLevelIrLocal(
+                    resultName,
+                    function.Signature.ReturnType,
+                    "register",
+                    IsMutable: false,
+                    IsConstant: false,
+                    Location: adapter.Location)
+            ];
+        }
+
+        var block = new MidLevelIrBasicBlock(
+            0,
+            "entry",
+            statements,
+            new MidLevelIrTerminator(
+                MidLevelIrTerminatorKind.Return,
+                [],
+                ValueText: returnValue?.Text,
+                Value: returnValue,
+                Location: adapter.Location));
+
+        return new MidLevelIrFunction(
+            function.Name,
+            BuildSignature(function.Signature),
+            function.Signature.ReturnType,
+            function.Signature.Parameters,
+            HasBody: true,
+            SupportsDirectCodeGeneration: true,
+            EntryBlockId: 0,
+            Locals: locals,
+            Blocks: [block],
+            BodyLoweringKind: function.BodyLoweringKind,
+            Location: adapter.Location,
+            DisjointParameterGroups: function.Signature.DisjointGroups,
+            SameParameterGroups: function.Signature.SameGroups,
+            Ownership: ResolveOwnershipSummary(function));
+    }
+
+    private MidLevelIrFunction LowerEmptyClosureDropFunction(HighLevelIrFunction function)
+    {
+        using var builder = CreateSyntheticFunctionBuilder(function, SourceLocation.Synthetic());
+        builder.LowerEmptyClosureDrop();
+        return BuildLoweredFunction(function, builder, SourceLocation.Synthetic(), ResolveOwnershipSummary(function));
+    }
+
+    private MidLevelIrFunction LowerClosureDropFunction(
+        HighLevelIrFunction function,
+        ClosureLambdaTypingRecord lambda)
+    {
+        var location = lambda.Location;
+        using var builder = CreateSyntheticFunctionBuilder(function, location);
+        builder.LowerClosureEnvironmentDrop(lambda);
+        return BuildLoweredFunction(function, builder, location, ResolveOwnershipSummary(function));
+    }
+
+    private FunctionMirBuilder CreateSyntheticFunctionBuilder(
+        HighLevelIrFunction function,
+        SourceLocation functionLocation)
+    {
+        return new FunctionMirBuilder(
+            function,
+            _typeModel.ModuleName,
+            _typeModel,
+            _enumLayoutModel,
+            _moduleGraph,
+            _typeResolver,
+            _functionsByName,
+            _constructorsByBodyKey,
+            _destructorsByTypeName,
+            _logs,
+            functionLocation.FilePath,
+            functionLocation,
+            _loweringNamedTypes,
+            _fallbackFunctions,
+            _fallbackGlobals,
+            _literalTypes,
+            _objectCreationConstructors,
+            _publishedConcreteLayouts,
+            _publishedEnumLayouts,
+            _boundOperations,
+            importedTemplateSummary: null,
+            _materializedSpecializationSymbols,
+            genericTypeSubstitution: null,
+            useImportedTemplateLocalDeclarationFacts: false);
+    }
+
+    private static MidLevelIrFunction BuildLoweredFunction(
+        HighLevelIrFunction function,
+        FunctionMirBuilder builder,
+        SourceLocation functionLocation,
+        FunctionOwnershipSummary? ownershipSummary)
+    {
+        return new MidLevelIrFunction(
+            function.Name,
+            BuildSignature(function.Signature),
+            function.Signature.ReturnType,
+            function.Signature.Parameters,
+            function.HasBody,
+            builder.SupportsDirectCodeGeneration,
+            builder.EntryBlockId,
+            builder.Locals,
+            builder.Blocks,
+            function.BodyLoweringKind,
+            functionLocation,
+            function.Signature.DisjointGroups,
+            function.Signature.SameGroups,
+            ownershipSummary);
     }
 
     private static bool ShouldKeepOpenGenericTemplateDeclarationBodyless(
@@ -411,6 +794,102 @@ internal sealed partial class MidLevelIrLowerer(
         }
     }
 
+    private static IReadOnlyDictionary<StarkParser.ArgumentListContext, int> CollectTemplateDirectCallOrdinals(
+        ParserRuleContext body,
+        IReadOnlyList<ImportedTemplateDirectCallSummary> directCalls)
+    {
+        var ordinals = new Dictionary<StarkParser.ArgumentListContext, int>();
+        var orderedCalls = directCalls.OrderBy(static call => call.Ordinal).ToArray();
+        var nextCallIndex = 0;
+        Collect(body);
+        return ordinals;
+
+        void Collect(Antlr4.Runtime.Tree.IParseTree current)
+        {
+            if (current is StarkParser.PostfixExpressionContext postfixExpression
+                && postfixExpression.postfixPart().Length > 0
+                && postfixExpression.postfixPart()[0].argumentList() is { } argumentList
+                && TryFindCompatibleImportedDirectCallOrdinal(
+                    postfixExpression,
+                    orderedCalls,
+                    ref nextCallIndex,
+                    out var ordinal))
+            {
+                ordinals[argumentList] = ordinal;
+            }
+
+            for (var index = 0; index < current.ChildCount; index++)
+            {
+                Collect(current.GetChild(index));
+            }
+        }
+    }
+
+    private static bool TryFindCompatibleImportedDirectCallOrdinal(
+        StarkParser.PostfixExpressionContext expression,
+        IReadOnlyList<ImportedTemplateDirectCallSummary> orderedCalls,
+        ref int nextCallIndex,
+        out int ordinal)
+    {
+        for (var index = nextCallIndex; index < orderedCalls.Count; index++)
+        {
+            var call = orderedCalls[index];
+            if (!IsPublishedDirectCallCompatible(expression, call.Signature))
+            {
+                continue;
+            }
+
+            nextCallIndex = index + 1;
+            ordinal = call.Ordinal;
+            return true;
+        }
+
+        ordinal = -1;
+        return false;
+    }
+
+    private static bool IsPublishedDirectCallCompatible(
+        StarkParser.PostfixExpressionContext expression,
+        TypedFunctionSignature signature)
+    {
+        var calleeText = expression.primaryExpression()?.GetText();
+        return string.IsNullOrWhiteSpace(calleeText)
+            || IsPublishedCallNameCompatible(calleeText!, signature.SourceName)
+            || IsPublishedCallNameCompatible(calleeText!, signature.TemplateName)
+            || IsPublishedCallNameCompatible(calleeText!, signature.Name);
+    }
+
+    private static bool IsPublishedCallNameCompatible(string callText, string? publishedName)
+    {
+        if (string.IsNullOrWhiteSpace(publishedName))
+        {
+            return false;
+        }
+
+        var normalizedCall = NormalizePublishedCallName(callText);
+        var normalizedPublished = NormalizePublishedCallName(publishedName);
+        return string.Equals(normalizedCall, normalizedPublished, StringComparison.Ordinal)
+            || normalizedPublished.EndsWith($".{normalizedCall}", StringComparison.Ordinal);
+    }
+
+    private static string NormalizePublishedCallName(string name)
+    {
+        var normalized = name.Trim();
+        var genericMarker = normalized.IndexOf("#(", StringComparison.Ordinal);
+        if (genericMarker >= 0)
+        {
+            normalized = normalized[..genericMarker];
+        }
+
+        var genericTypeMarker = normalized.IndexOf('<');
+        if (genericTypeMarker >= 0)
+        {
+            normalized = normalized[..genericTypeMarker];
+        }
+
+        return normalized;
+    }
+
     private static IReadOnlyDictionary<StarkParser.UnaryExpressionContext, int> CollectTemplateConversionOrdinals(
         ParserRuleContext body)
     {
@@ -562,6 +1041,22 @@ internal sealed partial class MidLevelIrLowerer(
                 LambdaExpression: lambdaExpression);
         }
 
+        foreach (var lambda in typeModel.ClosureLambdas)
+        {
+            if (!lambdaContexts.TryGetValue(lambda.FunctionName, out var lambdaExpression))
+            {
+                continue;
+            }
+
+            functions[lambda.FunctionName] = new FunctionLoweringContext(
+                loadedModules.RootModuleName,
+                lambda.Location.FilePath,
+                ParsedDeclaration: null,
+                Location: lambda.Location,
+                ParsedBody: null,
+                LambdaExpression: lambdaExpression);
+        }
+
         return functions;
     }
 
@@ -570,6 +1065,8 @@ internal sealed partial class MidLevelIrLowerer(
         TypeCheckModel typeModel)
     {
         var lambdasByLocation = typeModel.Lambdas
+            .Select(static lambda => (lambda.FunctionName, lambda.Location))
+            .Concat(typeModel.ClosureLambdas.Select(static lambda => (lambda.FunctionName, lambda.Location)))
             .GroupBy(static lambda => $"{lambda.Location.Line}:{lambda.Location.Column}")
             .ToDictionary(
                 static group => group.Key,
@@ -683,6 +1180,230 @@ internal sealed partial class MidLevelIrLowerer(
         return destructors;
     }
 
+    private static IReadOnlyDictionary<string, NamedTypeSymbol> CollectFallbackNamedTypes(
+        CompilerPassContext context,
+        ModuleGraph moduleGraph,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyDictionary<string, TypeAliasSymbol> typeAliases,
+        LoadedModuleSet loadedModules)
+    {
+        var allNamedTypes = new Dictionary<string, NamedTypeSymbol>(namedTypes, StringComparer.Ordinal);
+        foreach (var builtinNamedType in StarkTypeSymbols.BuiltinNamedTypes)
+        {
+            allNamedTypes.TryAdd(builtinNamedType.Name, builtinNamedType);
+        }
+
+        foreach (var module in loadedModules.Modules.Values)
+        {
+            if (!module.Reference.IsRoot
+                && module.PackageImageFacts is { NamedTypes.Count: > 0 } packageImageFacts)
+            {
+                foreach (var (name, namedType) in packageImageFacts.NamedTypes)
+                {
+                    allNamedTypes.TryAdd(name, namedType);
+                }
+            }
+
+            foreach (var declaration in module.SyntaxModel.Declarations)
+            {
+                if (declaration.Kind is DeclarationKind.Struct or DeclarationKind.Record or DeclarationKind.Enum or DeclarationKind.Trait or DeclarationKind.Doctrine)
+                {
+                    var qualifiedName = QualifyName(module, declaration.Name);
+                    allNamedTypes.TryAdd(
+                        qualifiedName,
+                        new NamedTypeSymbol(
+                            qualifiedName,
+                            declaration.Kind,
+                            new Dictionary<string, FieldSymbol>(StringComparer.Ordinal),
+                            []));
+                }
+            }
+        }
+
+        var resolver = new StarkTypeResolver(context, "lower-mir", moduleGraph, allNamedTypes, typeAliases);
+        foreach (var module in loadedModules.Modules.Values)
+        {
+            if (!module.Reference.IsRoot
+                && module.PackageImageFacts is { NamedTypes.Count: > 0 })
+            {
+                continue;
+            }
+
+            foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
+            {
+                if (declaration.structDeclaration() is { } structDeclaration)
+                {
+                    var typeName = QualifyName(module, structDeclaration.Identifier().GetText());
+                    var genericParameters = resolver.GetGenericParameterNames(structDeclaration.typeParameterList());
+                    allNamedTypes[typeName] = BuildStructLikeFallbackNamedType(
+                        typeName,
+                        DeclarationKind.Struct,
+                        structDeclaration.structBody().structMember()
+                            .Select(static member => member.fieldDeclaration())
+                            .Where(static field => field is not null)!,
+                        module.SyntaxModel.ModuleName,
+                        genericParameters,
+                        resolver);
+                    continue;
+                }
+
+                if (declaration.recordDeclaration() is { } recordDeclaration)
+                {
+                    var typeName = QualifyName(module, recordDeclaration.Identifier().GetText());
+                    var genericParameters = resolver.GetGenericParameterNames(recordDeclaration.typeParameterList());
+                    var fields = new Dictionary<string, FieldSymbol>(StringComparer.Ordinal);
+                    var orderedFields = new List<FieldSymbol>();
+                    if (recordDeclaration.primaryConstructorParameters() is { } primaryConstructor)
+                    {
+                        foreach (var parameter in primaryConstructor.parameterList().parameter())
+                        {
+                            AddFallbackField(
+                                fields,
+                                orderedFields,
+                                new FieldSymbol(
+                                    parameter.Identifier().GetText(),
+                                    resolver.ResolveType(parameter.type_(), genericParameters, module.SyntaxModel.ModuleName),
+                                    DeclaringModuleName: module.SyntaxModel.ModuleName));
+                        }
+                    }
+
+                    AddFallbackFields(
+                        fields,
+                        orderedFields,
+                        recordDeclaration.recordBody().recordMember()
+                            .Select(static member => member.fieldDeclaration())
+                            .Where(static field => field is not null)!,
+                        module.SyntaxModel.ModuleName,
+                        genericParameters,
+                        resolver);
+                    allNamedTypes[typeName] = new NamedTypeSymbol(
+                        typeName,
+                        DeclarationKind.Record,
+                        fields,
+                        orderedFields,
+                        GenericParameterNames: genericParameters?.ToList());
+                    continue;
+                }
+
+                if (declaration.enumDeclaration() is { } enumDeclaration)
+                {
+                    var typeName = QualifyName(module, enumDeclaration.Identifier().GetText());
+                    var genericParameters = resolver.GetGenericParameterNames(enumDeclaration.typeParameterList());
+                    var variants = enumDeclaration.enumBody().enumVariantDeclaration()
+                        .Select((variant, variantIndex) => BuildFallbackEnumVariant(variant, variantIndex, module.SyntaxModel.ModuleName, genericParameters, resolver))
+                        .ToArray();
+                    allNamedTypes[typeName] = new NamedTypeSymbol(
+                        typeName,
+                        DeclarationKind.Enum,
+                        new Dictionary<string, FieldSymbol>(StringComparer.Ordinal),
+                        [],
+                        EnumVariants: variants,
+                        GenericParameterNames: genericParameters?.ToList());
+                }
+            }
+        }
+
+        return allNamedTypes;
+    }
+
+    private static NamedTypeSymbol BuildStructLikeFallbackNamedType(
+        string typeName,
+        DeclarationKind kind,
+        IEnumerable<StarkParser.FieldDeclarationContext> fieldDeclarations,
+        string moduleName,
+        ISet<string>? genericParameters,
+        StarkTypeResolver resolver)
+    {
+        var fields = new Dictionary<string, FieldSymbol>(StringComparer.Ordinal);
+        var orderedFields = new List<FieldSymbol>();
+        AddFallbackFields(fields, orderedFields, fieldDeclarations, moduleName, genericParameters, resolver);
+        return new NamedTypeSymbol(
+            typeName,
+            kind,
+            fields,
+            orderedFields,
+            GenericParameterNames: genericParameters?.ToList());
+    }
+
+    private static void AddFallbackFields(
+        Dictionary<string, FieldSymbol> fields,
+        List<FieldSymbol> orderedFields,
+        IEnumerable<StarkParser.FieldDeclarationContext> fieldDeclarations,
+        string moduleName,
+        ISet<string>? genericParameters,
+        StarkTypeResolver resolver)
+    {
+        foreach (var fieldDeclaration in fieldDeclarations)
+        {
+            var fieldType = resolver.ResolveType(fieldDeclaration.type_(), genericParameters, moduleName);
+            foreach (var declarator in fieldDeclaration.variableDeclarators().variableDeclarator())
+            {
+                AddFallbackField(
+                    fields,
+                    orderedFields,
+                    new FieldSymbol(
+                        declarator.Identifier().GetText(),
+                        fieldType,
+                        DeclaringModuleName: moduleName));
+            }
+        }
+    }
+
+    private static void AddFallbackField(
+        Dictionary<string, FieldSymbol> fields,
+        List<FieldSymbol> orderedFields,
+        FieldSymbol field)
+    {
+        fields[field.Name] = field;
+        for (var index = 0; index < orderedFields.Count; index++)
+        {
+            if (string.Equals(orderedFields[index].Name, field.Name, StringComparison.Ordinal))
+            {
+                orderedFields[index] = field;
+                return;
+            }
+        }
+
+        orderedFields.Add(field);
+    }
+
+    private static EnumVariantSymbol BuildFallbackEnumVariant(
+        StarkParser.EnumVariantDeclarationContext variant,
+        int variantIndex,
+        string moduleName,
+        ISet<string>? genericParameters,
+        StarkTypeResolver resolver)
+    {
+        var payload = variant.enumVariantPayload();
+        if (payload is null)
+        {
+            return new EnumVariantSymbol(variant.Identifier().GetText(), UsesNamedFields: false, Fields: []);
+        }
+
+        if (payload.enumVariantFieldDeclaration().Length != 0)
+        {
+            return new EnumVariantSymbol(
+                variant.Identifier().GetText(),
+                UsesNamedFields: true,
+                payload.enumVariantFieldDeclaration()
+                    .Select((field, index) => new EnumVariantFieldSymbol(
+                        index,
+                        field.Identifier().GetText(),
+                        resolver.ResolveType(field.type_(), genericParameters, moduleName)))
+                    .ToArray());
+        }
+
+        return new EnumVariantSymbol(
+            variant.Identifier().GetText(),
+            UsesNamedFields: false,
+            payload.type_()
+                .Select((fieldType, index) => new EnumVariantFieldSymbol(
+                    index,
+                    Name: null,
+                    resolver.ResolveType(fieldType, genericParameters, moduleName)))
+                .ToArray());
+    }
+
     private static Dictionary<string, TypedFunctionSignature> CollectFallbackFunctionSignatures(
         CompilerPassContext context,
         ModuleGraph moduleGraph,
@@ -731,6 +1452,16 @@ internal sealed partial class MidLevelIrLowerer(
                         parameter.parameterContractPrefix().Any(static prefix => prefix.Start.Type == StarkParser.CONST),
                         rawPointerElementCountExpression))
                     .ToArray();
+                var isFfi = declaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "ffi", StringComparison.Ordinal));
+                var isAsm = declarationModel?.Function?.Asm is not null;
+                var overlapGroups = declarationModel?.Function?.OverlapGroups ?? [];
+                var sameGroups = declarationModel?.Function?.SameGroups ?? [];
+                var disjointGroups = ParameterMemoryContractFacts.BuildEffectiveDisjointGroups(
+                    parameters,
+                    declarationModel?.Function?.DisjointGroups ?? [],
+                    overlapGroups,
+                    sameGroups,
+                    applyDefaultNonOverlap: !isFfi && !isAsm);
                 functions[qualifiedName] = new TypedFunctionSignature(
                     qualifiedName,
                     resolver.ResolveReturnType(declaration.ReturnType, genericParameters, module.SyntaxModel.ModuleName),
@@ -738,8 +1469,11 @@ internal sealed partial class MidLevelIrLowerer(
                     SourceName: FunctionOverloadFacts.QualifySourceName(module, declaration.DisplaySourceName),
                     GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray(),
                     IsStatic: declaration.IsStatic,
+                    IsUnsafe: declaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "unsafe", StringComparison.Ordinal)),
                     IsVarargs: declaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "varargs", StringComparison.Ordinal)),
-                    DisjointParameterGroups: declarationModel?.Function?.DisjointGroups);
+                    DisjointParameterGroups: disjointGroups,
+                    OverlapParameterGroups: overlapGroups,
+                    SameParameterGroups: sameGroups);
             }
         }
 
@@ -821,17 +1555,12 @@ internal sealed partial class MidLevelIrLowerer(
 
     private static StarkTypeSymbol InferFallbackConstIntegerType(BigInteger value)
     {
-        foreach (var width in SupportedConstIntegerWidths)
+        if (IntegerRangeStorageFacts.TryGetSmallestTypeForRange(value, value, out var type))
         {
-            var min = -(BigInteger.One << (width - 1));
-            var max = (BigInteger.One << (width - 1)) - BigInteger.One;
-            if (value >= min && value <= max)
-            {
-                return StarkTypeSymbols.Integer(width, value, value);
-            }
+            return type;
         }
 
-        return StarkTypeSymbols.Integer(SupportedConstIntegerWidths[^1], value, value);
+        return StarkTypeSymbols.CompileTimeInteger;
     }
 
     private static StarkTypeSymbol ResolveFallbackConstIntegerType(IToken integerTypeToken)

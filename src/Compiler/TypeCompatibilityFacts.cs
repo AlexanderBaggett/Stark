@@ -4,6 +4,14 @@ namespace Stark.Compiler;
 
 internal static class TypeCompatibilityFacts
 {
+    private enum FunctionPointerParameterMemoryRelation
+    {
+        None,
+        Disjoint,
+        Overlap,
+        Same
+    }
+
     public static bool CanAssign(StarkTypeSymbol target, StarkTypeSymbol source)
     {
         if (target.Kind == StarkTypeKind.Error || source.Kind == StarkTypeKind.Error)
@@ -72,6 +80,11 @@ internal static class TypeCompatibilityFacts
             return AreFunctionPointerTypesAssignable(target, source);
         }
 
+        if (target.Kind == StarkTypeKind.Closure && source.Kind == StarkTypeKind.Closure)
+        {
+            return AreClosureTypesAssignable(target, source);
+        }
+
         if (target.Kind == StarkTypeKind.Slice && source.Kind == StarkTypeKind.FixedArray && target.ElementType is not null && source.ElementType is not null)
         {
             return CanAssign(target.ElementType, source.ElementType);
@@ -130,9 +143,133 @@ internal static class TypeCompatibilityFacts
             {
                 return false;
             }
+
+            if (!string.Equals(
+                    GetFunctionPointerParameterRawPointerElementCountExpression(source, index),
+                    GetFunctionPointerParameterRawPointerElementCountExpression(target, index),
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
         }
 
-        return true;
+        return AreFunctionPointerMemoryContractsAssignable(target, source, targetParameters);
+    }
+
+    public static bool AreClosureTypesAssignable(StarkTypeSymbol target, StarkTypeSymbol source)
+    {
+        if (target.ClosureFunctionKind is not { } targetKind
+            || source.ClosureFunctionKind is not { } sourceKind
+            || target.ClosureReturnType is not { } targetReturn
+            || source.ClosureReturnType is not { } sourceReturn
+            || target.ClosureParameterTypes is not { } targetParameters
+            || source.ClosureParameterTypes is not { } sourceParameters
+            || targetParameters.Count != sourceParameters.Count)
+        {
+            return false;
+        }
+
+        if (target.ClosureStorageKind != source.ClosureStorageKind
+            || target.ClosureCallCapability != source.ClosureCallCapability
+            || !FunctionKindSatisfies(sourceKind, targetKind)
+            || !Equals(targetReturn, sourceReturn))
+        {
+            return false;
+        }
+
+        for (var index = 0; index < targetParameters.Count; index++)
+        {
+            if (!Equals(sourceParameters[index], targetParameters[index]))
+            {
+                return false;
+            }
+
+            if (!string.Equals(
+                    StarkTypeSymbols.GetClosureParameterRawPointerElementCountExpression(source, index),
+                    StarkTypeSymbols.GetClosureParameterRawPointerElementCountExpression(target, index),
+                    StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        return AreClosureMemoryContractsAssignable(target, source, targetParameters);
+    }
+
+    public static StarkTypeSymbol FunctionPointerTypeForSignature(TypedFunctionSignature function)
+    {
+        var parameterNameMap = function.Parameters
+            .Select((parameter, index) => new
+            {
+                parameter.Name,
+                SyntheticName = $"arg{index}"
+            })
+            .ToDictionary(static pair => pair.Name, static pair => pair.SyntheticName, StringComparer.Ordinal);
+
+        return StarkTypeSymbols.FunctionPointer(
+            function.Kind,
+            function.ReturnType,
+            function.Parameters.Select(static parameter => parameter.Type).ToArray(),
+            MapDisjointGroups(function.DisjointGroups, parameterNameMap),
+            MapOverlapGroups(function.OverlapGroups, parameterNameMap),
+            MapSameGroups(function.SameGroups, parameterNameMap),
+            function.Parameters
+                .Select(parameter => MapRawPointerElementCountExpression(
+                    parameter.RawPointerElementCountExpression,
+                    parameterNameMap))
+                .ToArray());
+    }
+
+    public static StarkTypeSymbol ClosureTypeForSignature(
+        TypedFunctionSignature function,
+        StarkClosureStorageKind storageKind,
+        StarkClosureCallCapability callCapability)
+    {
+        var parameterNameMap = function.Parameters
+            .Select((parameter, index) => new
+            {
+                parameter.Name,
+                SyntheticName = $"arg{index}"
+            })
+            .ToDictionary(static pair => pair.Name, static pair => pair.SyntheticName, StringComparer.Ordinal);
+
+        return StarkTypeSymbols.Closure(
+            storageKind,
+            callCapability,
+            function.Kind,
+            function.ReturnType,
+            function.Parameters.Select(static parameter => parameter.Type).ToArray(),
+            MapDisjointGroups(function.DisjointGroups, parameterNameMap),
+            MapOverlapGroups(function.OverlapGroups, parameterNameMap),
+            MapSameGroups(function.SameGroups, parameterNameMap),
+            function.Parameters
+                .Select(parameter => MapRawPointerElementCountExpression(
+                    parameter.RawPointerElementCountExpression,
+                    parameterNameMap))
+                .ToArray());
+    }
+
+    private static string? GetFunctionPointerParameterRawPointerElementCountExpression(
+        StarkTypeSymbol functionPointerType,
+        int parameterIndex)
+    {
+        return StarkTypeSymbols.GetFunctionPointerParameterRawPointerElementCountExpression(
+            functionPointerType,
+            parameterIndex);
+    }
+
+    private static string? MapRawPointerElementCountExpression(
+        string? expression,
+        IReadOnlyDictionary<string, string> parameterNameMap)
+    {
+        if (string.IsNullOrWhiteSpace(expression))
+        {
+            return null;
+        }
+
+        return parameterNameMap.TryGetValue(expression, out var syntheticName)
+            ? syntheticName
+            : expression;
     }
 
     public static bool FunctionKindSatisfies(StarkFunctionKind source, StarkFunctionKind target)
@@ -164,6 +301,250 @@ internal static class TypeCompatibilityFacts
         }
 
         return true;
+    }
+
+    private static bool AreFunctionPointerMemoryContractsAssignable(
+        StarkTypeSymbol target,
+        StarkTypeSymbol source,
+        IReadOnlyList<StarkTypeSymbol> parameterTypes)
+    {
+        for (var leftIndex = 0; leftIndex < parameterTypes.Count; leftIndex++)
+        {
+            if (!ParameterMemoryContractFacts.IsMemoryBacked(parameterTypes[leftIndex]))
+            {
+                continue;
+            }
+
+            for (var rightIndex = leftIndex + 1; rightIndex < parameterTypes.Count; rightIndex++)
+            {
+                if (!ParameterMemoryContractFacts.IsMemoryBacked(parameterTypes[rightIndex]))
+                {
+                    continue;
+                }
+
+                var leftName = $"arg{leftIndex}";
+                var rightName = $"arg{rightIndex}";
+                var targetRelation = GetFunctionPointerParameterMemoryRelation(target, leftName, rightName);
+                var sourceRelation = GetFunctionPointerParameterMemoryRelation(source, leftName, rightName);
+                if (!SourceMemoryRelationSatisfiesTarget(sourceRelation, targetRelation))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private static bool AreClosureMemoryContractsAssignable(
+        StarkTypeSymbol target,
+        StarkTypeSymbol source,
+        IReadOnlyList<StarkTypeSymbol> parameterTypes)
+    {
+        for (var leftIndex = 0; leftIndex < parameterTypes.Count; leftIndex++)
+        {
+            if (!ParameterMemoryContractFacts.IsMemoryBacked(parameterTypes[leftIndex]))
+            {
+                continue;
+            }
+
+            for (var rightIndex = leftIndex + 1; rightIndex < parameterTypes.Count; rightIndex++)
+            {
+                if (!ParameterMemoryContractFacts.IsMemoryBacked(parameterTypes[rightIndex]))
+                {
+                    continue;
+                }
+
+                var leftName = $"arg{leftIndex}";
+                var rightName = $"arg{rightIndex}";
+                var targetRelation = GetClosureParameterMemoryRelation(target, leftName, rightName);
+                var sourceRelation = GetClosureParameterMemoryRelation(source, leftName, rightName);
+                if (!SourceMemoryRelationSatisfiesTarget(sourceRelation, targetRelation))
+                {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private static bool SourceMemoryRelationSatisfiesTarget(
+        FunctionPointerParameterMemoryRelation source,
+        FunctionPointerParameterMemoryRelation target)
+    {
+        return target switch
+        {
+            FunctionPointerParameterMemoryRelation.Same => source is FunctionPointerParameterMemoryRelation.Same
+                or FunctionPointerParameterMemoryRelation.Overlap,
+            FunctionPointerParameterMemoryRelation.Overlap or FunctionPointerParameterMemoryRelation.None => source == FunctionPointerParameterMemoryRelation.Overlap,
+            FunctionPointerParameterMemoryRelation.Disjoint => source is FunctionPointerParameterMemoryRelation.Disjoint
+                or FunctionPointerParameterMemoryRelation.Overlap,
+            _ => false
+        };
+    }
+
+    private static FunctionPointerParameterMemoryRelation GetFunctionPointerParameterMemoryRelation(
+        StarkTypeSymbol type,
+        string leftName,
+        string rightName)
+    {
+        if (ContainsParameterPair(type.FunctionPointerSameParameterGroups, leftName, rightName))
+        {
+            return FunctionPointerParameterMemoryRelation.Same;
+        }
+
+        if (ContainsParameterPair(type.FunctionPointerOverlapParameterGroups, leftName, rightName))
+        {
+            return FunctionPointerParameterMemoryRelation.Overlap;
+        }
+
+        if (ContainsParameterPair(type.FunctionPointerDisjointParameterGroups, leftName, rightName))
+        {
+            return FunctionPointerParameterMemoryRelation.Disjoint;
+        }
+
+        return FunctionPointerParameterMemoryRelation.None;
+    }
+
+    private static FunctionPointerParameterMemoryRelation GetClosureParameterMemoryRelation(
+        StarkTypeSymbol type,
+        string leftName,
+        string rightName)
+    {
+        if (ContainsParameterPair(type.ClosureSameParameterGroups, leftName, rightName))
+        {
+            return FunctionPointerParameterMemoryRelation.Same;
+        }
+
+        if (ContainsParameterPair(type.ClosureOverlapParameterGroups, leftName, rightName))
+        {
+            return FunctionPointerParameterMemoryRelation.Overlap;
+        }
+
+        if (ContainsParameterPair(type.ClosureDisjointParameterGroups, leftName, rightName))
+        {
+            return FunctionPointerParameterMemoryRelation.Disjoint;
+        }
+
+        return FunctionPointerParameterMemoryRelation.None;
+    }
+
+    private static bool ContainsParameterPair(
+        IEnumerable<ParameterDisjointGroup>? groups,
+        string leftName,
+        string rightName)
+    {
+        return groups?.Any(group => !group.HasSubregions && GroupContainsParameterPair(group.ParameterNames, leftName, rightName)) == true;
+    }
+
+    private static bool ContainsParameterPair(
+        IEnumerable<ParameterOverlapGroup>? groups,
+        string leftName,
+        string rightName)
+    {
+        return groups?.Any(group => GroupContainsParameterPair(group.ParameterNames, leftName, rightName)) == true;
+    }
+
+    private static bool ContainsParameterPair(
+        IEnumerable<ParameterSameGroup>? groups,
+        string leftName,
+        string rightName)
+    {
+        return groups?.Any(group => GroupContainsParameterPair(group.ParameterNames, leftName, rightName)) == true;
+    }
+
+    private static bool GroupContainsParameterPair(
+        IReadOnlyList<string> parameterNames,
+        string leftName,
+        string rightName)
+    {
+        var containsLeft = false;
+        var containsRight = false;
+        foreach (var parameterName in parameterNames)
+        {
+            containsLeft |= string.Equals(parameterName, leftName, StringComparison.Ordinal);
+            containsRight |= string.Equals(parameterName, rightName, StringComparison.Ordinal);
+            if (containsLeft && containsRight)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static IReadOnlyList<ParameterDisjointGroup> MapDisjointGroups(
+        IReadOnlyList<ParameterDisjointGroup> groups,
+        IReadOnlyDictionary<string, string> parameterNameMap)
+    {
+        return groups
+            .Select(group =>
+            {
+                if (group.HasSubregions)
+                {
+                    var regions = group.MemoryRegions
+                        .Select(region => parameterNameMap.TryGetValue(region.ParameterName, out var mappedName)
+                            ? region with { ParameterName = mappedName }
+                            : null)
+                        .Where(static region => region is not null)
+                        .Select(static region => region!)
+                        .ToArray();
+                    var names = regions
+                        .Select(static region => region.ParameterName)
+                        .Distinct(StringComparer.Ordinal)
+                        .ToArray();
+                    return regions.Length >= 2
+                        ? new ParameterDisjointGroup(names, regions)
+                        : null;
+                }
+
+                var mappedNames = MapGroup(group.ParameterNames, parameterNameMap);
+                return mappedNames.Count >= 2 ? new ParameterDisjointGroup(mappedNames) : null;
+            })
+            .Where(static group => group is not null)
+            .Cast<ParameterDisjointGroup>()
+            .ToArray();
+    }
+
+    private static IReadOnlyList<ParameterOverlapGroup> MapOverlapGroups(
+        IReadOnlyList<ParameterOverlapGroup> groups,
+        IReadOnlyDictionary<string, string> parameterNameMap)
+    {
+        return groups
+            .Select(group => MapGroup(group.ParameterNames, parameterNameMap))
+            .Where(static names => names.Count >= 2)
+            .Select(static names => new ParameterOverlapGroup(names))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<ParameterSameGroup> MapSameGroups(
+        IReadOnlyList<ParameterSameGroup> groups,
+        IReadOnlyDictionary<string, string> parameterNameMap)
+    {
+        return groups
+            .Select(group => MapGroup(group.ParameterNames, parameterNameMap))
+            .Where(static names => names.Count >= 2)
+            .Select(static names => new ParameterSameGroup(names))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<string> MapGroup(
+        IReadOnlyList<string> parameterNames,
+        IReadOnlyDictionary<string, string> parameterNameMap)
+    {
+        var names = new List<string>(parameterNames.Count);
+        foreach (var parameterName in parameterNames)
+        {
+            if (parameterNameMap.TryGetValue(parameterName, out var syntheticName))
+            {
+                names.Add(syntheticName);
+            }
+        }
+
+        return names
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
     }
 
     public static bool WouldEraseFrozenProvenance(StarkTypeSymbol target, StarkTypeSymbol source)
@@ -209,30 +590,7 @@ internal static class TypeCompatibilityFacts
 
     private static bool TryGetEffectiveIntegerRange(StarkTypeSymbol type, out BigInteger min, out BigInteger max)
     {
-        if (type.BitWidth is not int bitWidth || bitWidth <= 0)
-        {
-            min = default;
-            max = default;
-            return false;
-        }
-
-        if (type.RangeMin is not null && type.RangeMax is not null)
-        {
-            min = type.RangeMin.Value;
-            max = type.RangeMax.Value;
-            return true;
-        }
-
-        if (type.IsUnsigned)
-        {
-            min = BigInteger.Zero;
-            max = (BigInteger.One << bitWidth) - BigInteger.One;
-            return true;
-        }
-
-        min = -(BigInteger.One << (bitWidth - 1));
-        max = (BigInteger.One << (bitWidth - 1)) - BigInteger.One;
-        return true;
+        return StarkTypeSymbols.TryGetEffectiveIntegerBounds(type, out min, out max);
     }
 
     private static bool IsBorrowAssignable(StarkBorrowKind target, StarkBorrowKind source)

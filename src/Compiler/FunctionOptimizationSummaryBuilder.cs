@@ -66,6 +66,26 @@ internal static class FunctionOptimizationSummaryBuilder
             return;
         }
 
+        if (statement.unsafeStatement() is { } unsafeStatement)
+        {
+            if (unsafeStatement.block() is { } unsafeBlock)
+            {
+                CountBlock(unsafeBlock, accumulator);
+            }
+            else if (unsafeStatement.assumeStatement() is { } unsafeAssumeStatement)
+            {
+                CountAssumeStatement(unsafeAssumeStatement, accumulator);
+            }
+
+            return;
+        }
+
+        if (statement.assumeStatement() is { } assumeStatement)
+        {
+            CountAssumeStatement(assumeStatement, accumulator);
+            return;
+        }
+
         if (statement.localConstantDeclaration() is { } localConstant)
         {
             foreach (var declarator in localConstant.constantDeclarators().constantDeclarator())
@@ -175,6 +195,18 @@ internal static class FunctionOptimizationSummaryBuilder
         {
             CountExpression(expressionStatement, accumulator);
         }
+    }
+
+    private static void CountAssumeStatement(
+        StarkParser.AssumeStatementContext assumeStatement,
+        SummaryAccumulator accumulator)
+    {
+        foreach (var expression in assumeStatement.disjointRuntimeCondition().expressionList().expression())
+        {
+            CountExpression(expression, accumulator);
+        }
+
+        CountStatement(assumeStatement.statement(), accumulator);
     }
 
     private static void CountForInitializer(StarkParser.ForInitializerContext? initializer, SummaryAccumulator accumulator)
@@ -845,7 +877,8 @@ internal static class FunctionOptimizationSummaryBuilder
         }
 
         var currentName = primaryExpression.Identifier()?.GetText()
-            ?? primaryExpression.qualifiedName()?.GetText();
+            ?? primaryExpression.qualifiedName()?.GetText()
+            ?? primaryExpression.genericEnumCaseReference()?.GetText();
         if (currentName is null)
         {
             return false;

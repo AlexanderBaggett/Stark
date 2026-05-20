@@ -15,13 +15,19 @@ fn bool CreateDirectory(ascii path) {
 }
 
 fn bool WriteHead(ascii path) {
-    stack mut System.IO.File.File file = System.IO.File.Open(path, System.IO.File.FileMode.Write);
-    if (!file.IsOpen()) {
-        return false;
-    }
+    stack System.IO.IOResult<System.IO.File.File> opened = System.IO.File.Open(path, System.IO.File.FileMode.Write);
+    switch (opened) {
+        case System.IO.IOResult<System.IO.File.File>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+            stack mut System.IO.File.File file = value;
+            if (!file.IsOpen()) {
+                return false;
+            }
 
-    file.WriteLine("ref: refs/heads/main");
-    return file.Close() == 0;
+            file.WriteLine("ref: refs/heads/main");
+            return IsOk(file.Close());
+    }
 }
 
 fn bool InitRepository() {
@@ -33,7 +39,7 @@ fn bool InitRepository() {
         && WriteHead("starkgit-demo/.starkgit/HEAD");
 }
 
-export ffi fn i32[min max] main() {
+export unsafe fn i32[min max] main() {
     if (!InitRepository()) {
         return 1;
     }

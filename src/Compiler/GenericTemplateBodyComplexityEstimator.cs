@@ -36,6 +36,23 @@ internal static class GenericTemplateBodyComplexityEstimator
             return EstimateStatementList(block.statement());
         }
 
+        if (statement.unsafeStatement() is { } unsafeStatement)
+        {
+            if (unsafeStatement.block() is { } unsafeBlock)
+            {
+                return EstimateStatementList(unsafeBlock.statement());
+            }
+
+            return unsafeStatement.assumeStatement() is { } unsafeAssumeStatement
+                ? EstimateAssumeStatement(unsafeAssumeStatement)
+                : 1;
+        }
+
+        if (statement.assumeStatement() is { } assumeStatement)
+        {
+            return EstimateAssumeStatement(assumeStatement);
+        }
+
         if (statement.localConstantDeclaration() is { } localConstant)
         {
             return EstimateConstantDeclaration(localConstant);
@@ -101,6 +118,12 @@ internal static class GenericTemplateBodyComplexityEstimator
         }
 
         return 1;
+    }
+
+    private static int EstimateAssumeStatement(StarkParser.AssumeStatementContext assumeStatement)
+    {
+        var conditionCost = assumeStatement.disjointRuntimeCondition().expressionList().expression().Sum(EstimateExpression);
+        return 1 + conditionCost + EstimateStatement(assumeStatement.statement());
     }
 
     private static int EstimateSwitchSection(StarkParser.SwitchSectionContext switchSection)

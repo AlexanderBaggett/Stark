@@ -16,11 +16,11 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
                 import System.Process
                 module Demo
 
-                fn i32[-2147483648 2147483647] ReadCurrentProcess() {
+                fn i32[min max] ReadCurrentProcess() {
                     return System.Process.CurrentId();
                 }
 
-                fn void Stop(i32[-2147483648 2147483647] code) {
+                fn void Stop(i32[min max] code) {
                     System.Process.Exit(code);
                     return;
                 }
@@ -67,7 +67,7 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
                 import System.Process
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export fn i32[min max] main() {
                     if (System.Process.CurrentId() <= 0) {
                         return 3;
                     }
@@ -141,7 +141,7 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
                 import System
                 module App
 
-                fn i32[-2147483648 2147483647] Run() {
+                fn i32[min max] Run() {
                     if (System.Process.CurrentId() < 0) {
                         return 1;
                     }
@@ -182,3 +182,4 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
         }
     }
 }
+

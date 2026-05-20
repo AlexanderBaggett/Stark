@@ -1,0 +1,48 @@
+import System.Text
+module Benchmarks.Text.ConstantIntegerFormatting
+
+const Iterations = 50;
+
+unsafe fn i64[min max] AsciiChecksum(borrow Ascii text) {
+    return text.Length
+        + (i64[min max])(*text.Data)
+        + (i64[min max])(*(&text.Data[text.Length - 1]));
+}
+
+export unsafe ffi fn i32[min max] main() {
+    stack mut i8[min max][320] storage;
+    stack mut Ascii text = new Ascii() {
+        Data = &storage[0],
+        Length = 0,
+        Capacity = 320
+    };
+    stack mut i64[min max] checksum = 0;
+
+    for willexit (stack mut u8[0 50] i = 0; i < Iterations; i += 1) {
+        if (!System.Text.TryFormatI64Ascii(&text, (i64[min max])(-(2 ** 63)))) {
+            return 1;
+        }
+        checksum += AsciiChecksum(text);
+
+        if (!System.Text.TryFormatU64Ascii(&text, (u64[0 max])(2 ** 64 - 1))) {
+            return 2;
+        }
+        checksum += AsciiChecksum(text);
+
+        if (!System.Text.TryFormatI1024Ascii(&text, (i1024[min max])(-(2 ** 1023)))) {
+            return 3;
+        }
+        checksum += AsciiChecksum(text);
+
+        if (!System.Text.TryFormatU1024Ascii(&text, (u1024[0 max])(2 ** 1024 - 1))) {
+            return 4;
+        }
+        checksum += AsciiChecksum(text);
+    }
+
+    if (checksum != 53200) {
+        return 5;
+    }
+
+    return 0;
+}

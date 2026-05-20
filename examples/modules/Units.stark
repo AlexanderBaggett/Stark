@@ -1,6 +1,6 @@
 module Units
 
-public alias Length = i32[0 1000];
+public alias Length = u16[0 1000];
 
 internal finite law Length UnitLength() {
     return 6;

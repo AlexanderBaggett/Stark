@@ -16,7 +16,7 @@ That means Stark is not trying to be the most permissive language. It is trying
 to make ordinary safe code friendly to static proof, predictable layout,
 deterministic cleanup, and aggressive optimization.
 
-## Stark's Bet
+## Step 1: Start From Stark's Bet
 
 Stark's bet is that restrictions can be a feature:
 
@@ -37,7 +37,7 @@ This small program is a Stark-shaped example of that bet. The fixed array,
 explicit stack locals, ranged integer index, `finite law` helpers, and ordinary
 exit code all expose facts that another language might leave implicit.
 
-## What Stark Does Not Optimize For
+## Step 2: Notice What Stark Refuses To Hide
 
 Stark does not optimize for unrestricted convenience. It intentionally avoids
 some features that are common in other languages when those features would make
@@ -47,12 +47,18 @@ This is why the language treats concepts such as `borrow`, `retborrow`,
 `frozen`, `out`, `finite`, and `law` as important source-level tools rather
 than implementation details.
 
-## The Safe Subset Is The Fast Subset
+## Step 3: Treat The Safe Subset As The Fast Path
 
 In Stark, safe code is meant to be the maximally optimizable code. Low-level
 escape hatches exist, but they are explicit. When a program uses raw pointers,
 FFI, native package metadata, or future unsafe regions, it is crossing a visible
 boundary.
+
+The smallest executable shape keeps that same idea: the entrypoint returns an
+ordinary status value and does not hide startup behavior behind reflection or
+exception machinery.
+
+{{< stark-sample "assets/book/samples/hello-return-code.stark" >}}
 
 The rest of this book teaches Stark from that point of view: not "how do I
 write Rust in different syntax?" or "how do I write C# without a runtime?", but

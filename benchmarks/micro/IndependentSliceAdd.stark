@@ -1,18 +1,18 @@
 import System.Process
 module Benchmarks.Micro.IndependentSliceAdd
 
-fn void Add(
-    disjoint borrow i64[min max][] left,
-    disjoint borrow i64[min max][] right,
-    disjoint borrow mut i64[min max][] output) {
-    for willexit independent (stack mut i32[0 32] index = 0; index < 32; index += 1) {
+unsafe fn void Add(
+    borrow i64[min max][] left,
+    borrow i64[min max][] right,
+    borrow mut i64[min max][] output) {
+    for willexit independent (stack mut u8[0 32] index = 0; index < 32; index += 1) {
         output[index] = left[index] + right[index];
     }
 
     return;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack mut i64[min max][32] left = {
         1, 2, 3, 4, 5, 6, 7, 8,
         9, 10, 11, 12, 13, 14, 15, 16,
@@ -33,7 +33,7 @@ export ffi fn i32[min max] main() {
     };
     stack mut i64[min max] checksum = (i64[min max])System.Process.CurrentId();
 
-    for willexit (stack mut i32[0 200000] iteration = 0; iteration < 200000; iteration += 1) {
+    for willexit (stack mut u24[0 200000] iteration = 0; iteration < 200000; iteration += 1) {
         left[0] += 1;
         right[31] += 1;
         Add(left, right, output);

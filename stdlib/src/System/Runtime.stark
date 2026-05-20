@@ -3,14 +3,14 @@ import System.Runtime.Platform
 module System.Runtime
 
 internal struct ByteSliceParts {
-    rawptr<i8[-128 127]> Data;
-    i64[0 max] Length;
+    rawptr<i8[min max]> Data;
+    u64[0 2 ** 63 - 1] Length;
 }
 
 internal struct MutableByteSliceParts {
-    rawmutptr<i8[-128 127]> Data;
-    i64[0 max] Length;
+    rawmutptr<i8[min max]> Data;
+    u64[0 2 ** 63 - 1] Length;
 }
 
-internal finite law ByteSliceParts GetByteSliceParts(borrow i8[-128 127][] source);
-internal finite law MutableByteSliceParts GetMutableByteSliceParts(mut borrow i8[-128 127][] source);
+internal finite law ByteSliceParts GetByteSliceParts(borrow i8[min max][] source);
+internal finite law MutableByteSliceParts GetMutableByteSliceParts(mut borrow i8[min max][] source);

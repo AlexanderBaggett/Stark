@@ -25,7 +25,7 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn i32[-2147483648 2147483647] Run() {
+                fn i32[min max] Run() {
                     stack System.Net.IPv4Endpoint endpoint = new System.Net.IPv4Endpoint() {
                         Address = new System.Net.IPv4Address() {
                             A = 127,
@@ -64,19 +64,19 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
                         return 8;
                     }
 
-                    stack mut i8[-128 127][4] buffer = { 1, 2, 3, 4 };
-                    stack System.Net.NetResult<i64[0 max]> readResult = client.Read(buffer);
+                    stack mut i8[min max][4] buffer = { 1, 2, 3, 4 };
+                    stack System.Net.NetResult<u64[0 2 ** 63 - 1]> readResult = client.Read(buffer);
                     switch (readResult) {
-                        case System.Net.NetResult<i64[0 max]>.Ok(var count):
+                        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
                             return 10;
-                        case System.Net.NetResult<i64[0 max]>.Err(var error):
+                        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
                     }
 
-                    stack System.Net.NetResult<i64[0 max]> writeResult = client.Write(buffer);
+                    stack System.Net.NetResult<u64[0 2 ** 63 - 1]> writeResult = client.Write(buffer);
                     switch (writeResult) {
-                        case System.Net.NetResult<i64[0 max]>.Ok(var count):
+                        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
                             return 11;
-                        case System.Net.NetResult<i64[0 max]>.Err(var error):
+                        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
                     }
 
                     if (!StatusOk(client.Close())) {
@@ -166,7 +166,7 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn i32[-2147483648 2147483647] Run() {
+                fn i32[min max] Run() {
                     stack System.Net.IPv4Endpoint endpoint = new System.Net.IPv4Endpoint() {
                         Address = new System.Net.IPv4Address() {
                             A = 127,
@@ -205,19 +205,19 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
                         return 8;
                     }
 
-                    stack mut i8[-128 127][4] buffer = { 1, 2, 3, 4 };
-                    stack System.Net.NetResult<i64[0 max]> readResult = client.Read(buffer);
+                    stack mut i8[min max][4] buffer = { 1, 2, 3, 4 };
+                    stack System.Net.NetResult<u64[0 2 ** 63 - 1]> readResult = client.Read(buffer);
                     switch (readResult) {
-                        case System.Net.NetResult<i64[0 max]>.Ok(var count):
+                        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
                             return 10;
-                        case System.Net.NetResult<i64[0 max]>.Err(var error):
+                        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
                     }
 
-                    stack System.Net.NetResult<i64[0 max]> writeResult = client.Write(buffer);
+                    stack System.Net.NetResult<u64[0 2 ** 63 - 1]> writeResult = client.Write(buffer);
                     switch (writeResult) {
-                        case System.Net.NetResult<i64[0 max]>.Ok(var count):
+                        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
                             return 11;
-                        case System.Net.NetResult<i64[0 max]>.Err(var error):
+                        case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
                     }
 
                     if (!StatusOk(client.Close())) {
@@ -289,8 +289,8 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
 
-        Assert.Contains("@TcpClient_Read(", llvm, StringComparison.Ordinal);
-        Assert.Contains("@TcpClient_Write(", llvm, StringComparison.Ordinal);
+        Assert.Contains("@TcpClient_Read__", llvm, StringComparison.Ordinal);
+        Assert.Contains("@TcpClient_Write__", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef %System_Net_NetStatus @TcpClient_Shutdown(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef %System_Net_NetStatus @TcpClient_Close(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef %System_Net_NetStatus @TcpListener_Close(", llvm, StringComparison.Ordinal);
@@ -306,9 +306,20 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("GetByteSliceParts", llvm, StringComparison.Ordinal);
         Assert.Contains("call fastcc i32 @System_Runtime_Platform_ShutdownSocket(", llvm, StringComparison.Ordinal);
         Assert.Contains("call fastcc i32 @System_Runtime_Platform_CloseSocket(", llvm, StringComparison.Ordinal);
-        Assert.Contains("call fastcc %System_Net_NetStatus @StatusFromPlatformResult(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define fastcc noundef %System_Net_NetStatus @StatusFromPlatformResult(", llvm, StringComparison.Ordinal);
         Assert.Contains("@ByteCountFromPlatformResult(", llvm, StringComparison.Ordinal);
         Assert.Contains("call fastcc %System_Net_NetworkError @NetworkErrorFromPlatformResult(", llvm, StringComparison.Ordinal);
+
+        var clientCloseBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Net_NetStatus @TcpClient_Close(",
+            "Expected TcpClient.Close definition.");
+        var listenerCloseBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef %System_Net_NetStatus @TcpListener_Close(",
+            "Expected TcpListener.Close definition.");
+        AssertCloseBodyRoutesOpenHandleThroughPlatformClose(clientCloseBody);
+        AssertCloseBodyRoutesOpenHandleThroughPlatformClose(listenerCloseBody);
     }
 
     [Fact]
@@ -540,6 +551,17 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("call i32 @shutdown(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @closesocket(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@LinuxSyscall", llvm, StringComparison.Ordinal);
+    }
+
+    private static void AssertCloseBodyRoutesOpenHandleThroughPlatformClose(string body)
+    {
+        Assert.Contains("call fastcc i32 @System_Runtime_Platform_CloseSocket(", body, StringComparison.Ordinal);
+        Assert.True(
+            body.Contains("call fastcc %System_Net_NetStatus @StatusFromPlatformResult(", StringComparison.Ordinal)
+            || (body.Contains("icmp slt i32", StringComparison.Ordinal)
+                && body.Contains("call fastcc %System_Net_NetworkError @NetworkErrorFromPlatformResult(", StringComparison.Ordinal)
+                && body.Contains("insertvalue %System_Net_NetStatus", StringComparison.Ordinal)),
+            body);
     }
 
     private static void AssertCompactTag(EnumLayoutSymbol layout, int bitWidth, int maxTagValue)

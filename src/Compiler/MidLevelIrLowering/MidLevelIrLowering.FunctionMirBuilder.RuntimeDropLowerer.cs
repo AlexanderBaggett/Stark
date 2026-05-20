@@ -46,6 +46,11 @@ internal sealed partial class MidLevelIrLowerer
             _runtimeDropLowerer.EmitAssignment(assignment);
         }
 
+        private void EmitOnceClosureEnvironmentCleanup()
+        {
+            _runtimeDropLowerer.EmitOnceClosureEnvironmentCleanup();
+        }
+
         private void InitializeRuntimeDropStateCore(string name, StarkTypeSymbol type, bool isActive)
         {
             if (!RequiresRuntimeDropCore(type))
@@ -83,6 +88,28 @@ internal sealed partial class MidLevelIrLowerer
                 return;
             }
 
+            if (operand is MidLevelIrObjectConstructionOperand objectConstruction)
+            {
+                RecordMoveFromOperandCore(objectConstruction.Value, destinationType);
+                return;
+            }
+
+            if (operand is MidLevelIrEnumConstructionOperand enumConstruction)
+            {
+                RecordMoveFromOperandCore(enumConstruction.Value, destinationType);
+                return;
+            }
+
+            if (operand is MidLevelIrLocalOperand closureCaptureLoad
+                && _closureCaptureMoveSourcesByTempName.TryGetValue(closureCaptureLoad.Name, out var captureName))
+            {
+                var captureDropStateKey = BuildClosureCaptureDropStateKey(captureName);
+                if (_runtimeDropStates.ContainsKey(captureDropStateKey))
+                {
+                    _runtimeDropStates[captureDropStateKey] = false;
+                }
+            }
+
             switch (operand)
             {
                 case MidLevelIrLocalOperand localOperand when _runtimeDropStates.ContainsKey(localOperand.Name):
@@ -92,6 +119,75 @@ internal sealed partial class MidLevelIrLowerer
                     _runtimeDropStates[parameterOperand.Name] = false;
                     break;
             }
+        }
+
+        private void EmitOnceClosureEnvironmentCleanupCore()
+        {
+            if (!IsCurrentOnceHeapClosureInvoke()
+                || _currentClosureLambda is null
+                || _closureEnvironmentType is null
+                || !_parametersByName.TryGetValue(
+                    CallableValueFacts.ClosureEnvironmentParameterName,
+                    out var environmentParameterSymbol))
+            {
+                return;
+            }
+
+            var typedEnvironmentPointer = GetTypedClosureEnvironmentAddress();
+            if (typedEnvironmentPointer is null)
+            {
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Once heap closure invoke '{_function.Name}' could not resolve its environment pointer.");
+            }
+
+            for (var index = _currentClosureLambda.CaptureFields.Count - 1; index >= 0; index--)
+            {
+                var capture = _currentClosureLambda.CaptureFields[index];
+                var captureDropStateKey = BuildClosureCaptureDropStateKey(capture.Name);
+                if (!IsOwnedClosureCaptureFieldForDrop(capture)
+                    || !RequiresRuntimeDrop(capture.FieldType)
+                    || !_runtimeDropStates.TryGetValue(captureDropStateKey, out var isActive)
+                    || !isActive)
+                {
+                    continue;
+                }
+
+                if (!TryResolveField(_closureEnvironmentType, capture.FieldName, out _, out var fieldIndex))
+                {
+                    throw LoweringInvariantViolation(
+                        null,
+                        $"Once heap closure invoke '{_function.Name}' could not resolve environment field '{capture.FieldName}'.");
+                }
+
+                var fieldAddress = EmitRequiredTemporary(
+                    new MidLevelIrFieldAddressRValue(
+                        typedEnvironmentPointer,
+                        _closureEnvironmentType,
+                        capture.FieldName,
+                        fieldIndex,
+                        AddressType(capture.FieldType, isMutable: true),
+                        $"{typedEnvironmentPointer.Text}.{capture.FieldName}"),
+                    "closure_field");
+                var fieldValue = EmitRequiredTemporary(
+                    new MidLevelIrLoadIndirectRValue(
+                        fieldAddress,
+                        capture.FieldType,
+                        $"{fieldAddress.Text}:load"),
+                    "closure_field");
+                EmitRuntimeDropFromOperandCore(fieldValue, capture.FieldType);
+                _runtimeDropStates[captureDropStateKey] = false;
+            }
+
+            var environmentParameter = new MidLevelIrParameterOperand(
+                environmentParameterSymbol.Name,
+                environmentParameterSymbol.Type);
+            Emit(
+                MidLevelIrStatementKind.Evaluate,
+                $"free {environmentParameter.Text}",
+                value: new MidLevelIrHeapStorageFreeRValue(
+                    environmentParameter,
+                    $"free {environmentParameter.Text}"));
         }
 
         private bool RequiresRuntimeDropCore(StarkTypeSymbol type)
@@ -114,6 +210,12 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             if (type.Kind == StarkTypeKind.Dynamic)
+            {
+                return true;
+            }
+
+            if (type.Kind == StarkTypeKind.Closure
+                && type.ClosureStorageKind == StarkClosureStorageKind.Heap)
             {
                 return true;
             }
@@ -202,8 +304,14 @@ internal sealed partial class MidLevelIrLowerer
                 return true;
             }
 
+            if (_publishedEnumLayouts.TryGetValue(type.NamedType, out layout!))
+            {
+                return true;
+            }
+
             var key = StarkTypeSymbols.GetGenericBaseName(type.NamedType);
-            return _enumLayoutModel.Layouts.TryGetValue(key, out layout!);
+            return _enumLayoutModel.Layouts.TryGetValue(key, out layout!)
+                || _publishedEnumLayouts.TryGetValue(key, out layout!);
         }
 
         private StarkTypeSymbol ApplyRuntimeDropGenericSubstitution(StarkTypeSymbol type, StarkTypeSymbol ownerType)
@@ -278,8 +386,20 @@ internal sealed partial class MidLevelIrLowerer
                 return;
             }
 
-            var temporary = CreateTemporaryLocal(type, "drop");
-            EmitOperandAssignment(temporary, operand, operand.Text);
+            if (type.Kind == StarkTypeKind.Closure
+                && type.ClosureStorageKind == StarkClosureStorageKind.Heap)
+            {
+                EmitHeapClosureDropCore(operand, type);
+                return;
+            }
+
+            var temporary = operand is MidLevelIrLocalOperand localOperand && localOperand.Type == type
+                ? localOperand
+                : CreateTemporaryLocal(type, "drop");
+            if (!ReferenceEquals(temporary, operand))
+            {
+                EmitOperandAssignment(temporary, operand, operand.Text);
+            }
 
             if (type.Kind == StarkTypeKind.FixedArray
                 && type.ElementType is not null
@@ -302,6 +422,49 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             EmitStructFieldDropsCore(temporary, type, new HashSet<string>(StringComparer.Ordinal));
+        }
+
+        private void EmitHeapClosureDropCore(MidLevelIrOperand operand, StarkTypeSymbol type)
+        {
+            var environmentPointerType = CallableValueFacts.BuildClosureEnvironmentPointerType(type);
+            var dropEnvironmentPointerType = CallableValueFacts.BuildClosureDropEnvironmentPointerType();
+            var dropPointerType = CallableValueFacts.BuildClosureDropFunctionPointerType();
+
+            var environmentPointer = EmitRequiredTemporary(
+                new MidLevelIrExtractIndexRValue(
+                    operand,
+                    ElementIndex: 1,
+                    OperationFamily: IndexedElementOperationFamily.ClosureComponent,
+                    environmentPointerType,
+                    $"{operand.Text}.env"),
+                "closure_drop_env");
+            var mutableEnvironmentPointer = environmentPointer.Type == dropEnvironmentPointerType
+                ? environmentPointer
+                : EmitRequiredTemporary(
+                    new MidLevelIrConvertRValue(
+                        environmentPointer,
+                        dropEnvironmentPointerType,
+                        $"{environmentPointer.Text}:drop-env"),
+                    "closure_drop_env");
+            var dropPointer = EmitRequiredTemporary(
+                new MidLevelIrExtractIndexRValue(
+                    operand,
+                    ElementIndex: 2,
+                    OperationFamily: IndexedElementOperationFamily.ClosureComponent,
+                    dropPointerType,
+                    $"{operand.Text}.drop"),
+                "closure_drop_fn");
+
+            Emit(
+                MidLevelIrStatementKind.Evaluate,
+                $"drop {operand.Text}",
+                call: new MidLevelIrIndirectCallStatementOperation(
+                    dropPointer,
+                    [mutableEnvironmentPointer],
+                    StarkTypeSymbols.Void,
+                    $"drop {operand.Text}",
+                    SourceReturnType: StarkTypeSymbols.Void,
+                    MayFree: true));
         }
 
         private void EmitDynamicStorageElementDropsCore(
@@ -420,6 +583,7 @@ internal sealed partial class MidLevelIrLowerer
                     new MidLevelIrExtractIndexRValue(
                         aggregate,
                         index,
+                        IndexedElementOperationFamily.FixedArrayElement,
                         elementType,
                         $"{aggregate.Text}[{index}]"),
                     "index");
@@ -580,7 +744,8 @@ internal sealed partial class MidLevelIrLowerer
 
         private void EmitAssignmentCore(LoweredAssignment assignment)
         {
-            if (assignment.ReplacesWholeValue
+            if (assignment.WriteKind != MemoryWriteKind.Initialization
+                && assignment.ReplacesWholeValue
                 && assignment.TargetName is not null)
             {
                 EmitRuntimeDropIfActiveCore(assignment.TargetName, assignment.TargetType);
@@ -593,7 +758,8 @@ internal sealed partial class MidLevelIrLowerer
                     assignment.Text,
                     targetType: assignment.TargetType,
                     value: new MidLevelIrUseRValue(assignment.ResultValue),
-                    address: assignment.Address);
+                    address: assignment.Address,
+                    writeKind: assignment.WriteKind);
                 if (assignment.DynamicLengthUpdate is not null)
                 {
                     EmitDynamicStorageLengthUpdateCore(assignment.DynamicLengthUpdate, assignment.Text);
@@ -603,7 +769,13 @@ internal sealed partial class MidLevelIrLowerer
                 return;
             }
 
-            Emit(MidLevelIrStatementKind.Assign, assignment.Text, assignment.TargetName, assignment.TargetType, value: assignment.DirectValue);
+            Emit(
+                MidLevelIrStatementKind.Assign,
+                assignment.Text,
+                assignment.TargetName,
+                assignment.TargetType,
+                value: assignment.DirectValue,
+                writeKind: assignment.WriteKind);
             if (assignment.ReplacesWholeValue
                 && assignment.TargetName is not null)
             {
@@ -627,8 +799,9 @@ internal sealed partial class MidLevelIrLowerer
                 "addr");
             if (lengthAddress is null)
             {
-                MarkUnsupported(reason: "Dynamic storage initialization could not address the owner length.");
-                return;
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Dynamic storage initialization for '{text}' could not address the owner length.");
             }
 
             var index = CoerceOperand(update.InitializedIndex, lengthType) ?? update.InitializedIndex;
@@ -642,8 +815,9 @@ internal sealed partial class MidLevelIrLowerer
                 "dynamic_len");
             if (initializedLength is null)
             {
-                MarkUnsupported(reason: "Dynamic storage initialization could not compute the initialized length.");
-                return;
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Dynamic storage initialization for '{text}' could not compute the initialized length.");
             }
 
             EmitDynamicStorageLengthCommitCore(
@@ -668,8 +842,9 @@ internal sealed partial class MidLevelIrLowerer
                 "addr");
             if (lengthAddress is null)
             {
-                MarkUnsupported(reason: "Dynamic storage initialization could not address the owner length.");
-                return;
+                throw LoweringInvariantViolation(
+                    null,
+                    $"Dynamic storage length commit for '{text}' could not address the owner length.");
             }
 
             var initializedLength = CoerceOperand(commit.InitializedLength, lengthType) ?? commit.InitializedLength;
@@ -728,6 +903,11 @@ internal sealed partial class MidLevelIrLowerer
             public void EmitAssignment(LoweredAssignment assignment)
             {
                 _builder.EmitAssignmentCore(assignment);
+            }
+
+            public void EmitOnceClosureEnvironmentCleanup()
+            {
+                _builder.EmitOnceClosureEnvironmentCleanupCore();
             }
         }
     }

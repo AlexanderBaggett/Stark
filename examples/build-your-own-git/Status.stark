@@ -19,7 +19,7 @@ fn bool RepositoryMetadataExists() {
         && BoolValue(System.FileSystem.IsFile("starkgit-demo/.starkgit/refs/heads/main"));
 }
 
-export ffi fn i32[min max] main() {
+export unsafe fn i32[min max] main() {
     if (!RepositoryMetadataExists()) {
         if (System.Console.WriteLine("Repository metadata missing") != System.IO.IOStatus.Ok) {
             return 2;

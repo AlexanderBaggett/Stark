@@ -1,6 +1,6 @@
 +++
 title = "Appendix E: Storage Classes and Ownership Quick Reference"
-weight = 390
+weight = 410
 book_part = "Appendices"
 book_status = "draft"
 prev = "/book/appendix-d-function-kinds/"

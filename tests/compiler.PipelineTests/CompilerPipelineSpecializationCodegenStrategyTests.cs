@@ -19,7 +19,7 @@ public sealed class CompilerPipelineSpecializationCodegenStrategyTests
                     return value;
                 }
 
-                fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                fn i32[min max] Run(i32[min max] value) {
                     return Identity(value);
                 }
                 """),
@@ -63,7 +63,7 @@ public sealed class CompilerPipelineSpecializationCodegenStrategyTests
                     import Math
                     module Demo
 
-                    finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                    finite law i32[min max] Run(i32[min max] value) {
                         return Math.Numbers.Identity(value);
                     }
                     """,
@@ -97,7 +97,7 @@ public sealed class CompilerPipelineSpecializationCodegenStrategyTests
 
 
     [Fact]
-    public void ColdImportedLawGenericsAvoidCloneInCodegenStrategy()
+    public void ColdImportedLawGenericsUseAbiFallbackOnlyCodegenStrategy()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-cold-source-generic-codegen-strategy-pipeline-");
 
@@ -122,7 +122,7 @@ public sealed class CompilerPipelineSpecializationCodegenStrategyTests
                     import Math
                     module Demo
 
-                    finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                    finite law i32[min max] Run(i32[min max] value) {
                         return Math.Numbers.Identity(value);
                     }
                     """,
@@ -136,7 +136,7 @@ public sealed class CompilerPipelineSpecializationCodegenStrategyTests
             Assert.NotNull(strategy);
 
             var function = Assert.Single(strategy.Functions);
-            Assert.Equal(FunctionSpecializationCodegenStrategyKind.EmitOwnedConcreteBody, function.StrategyKind);
+            Assert.Equal(FunctionSpecializationCodegenStrategyKind.AbiFallbackOnly, function.StrategyKind);
             Assert.True(function.SupportsAbiFallback);
         }
         finally
@@ -183,7 +183,7 @@ public sealed class CompilerPipelineSpecializationCodegenStrategyTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                    fn i32[min max] Run(i32[min max] value) {
                         return Facade.Identity(value);
                     }
                     """,
@@ -269,7 +269,7 @@ public sealed class CompilerPipelineSpecializationCodegenStrategyTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                    fn i32[min max] Run(i32[min max] value) {
                         return Facade.Identity(value);
                     }
                     """,

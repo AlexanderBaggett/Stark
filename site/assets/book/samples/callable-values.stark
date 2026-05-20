@@ -8,7 +8,33 @@ fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] valu
     return op(value);
 }
 
-export ffi fn i32[min max] main() {
+inline fn i32[min max] ApplyInline(
+    i32[min max] value,
+    inline closure<fn i32[min max](i32[min max])> op) {
+    return op(value);
+}
+
+fn i32[min max] ApplyBorrow(
+    borrow closure<fn i32[min max](i32[min max])> op,
+    i32[min max] value) {
+    return op(value);
+}
+
+fn heap closure<fn i32[min max](i32[min max])> MakeAdder(i32[min max] offset) {
+    return heap capture(copy offset) (i32[min max] value) => value + offset;
+}
+
+finite law i32[min max] Double(i32[min max] value) {
+    return value * 2;
+}
+
+finite law i32[min max] ApplyPure(
+    fnptr<finite law i32[min max](i32[min max])> op,
+    i32[min max] value) {
+    return op(value);
+}
+
+export fn i32[min max] main() {
     stack fnptr<fn i32[min max](i32[min max], i32[min max])> add = Add;
     stack fnptr<fn i32[min max](i32[min max])> increment =
         (i32[min max] value) => value + 1;
@@ -19,6 +45,24 @@ export ffi fn i32[min max] main() {
 
     if (Apply(increment, 41) != 42) {
         return 2;
+    }
+
+    if (ApplyPure(Double, 21) != 42) {
+        return 3;
+    }
+
+    if (ApplyInline(41, (i32[min max] value) => value + 1) != 42) {
+        return 4;
+    }
+
+    stack i32[min max] offset = 1;
+    if (ApplyBorrow(capture(copy offset) (i32[min max] value) => value + offset, 41) != 42) {
+        return 5;
+    }
+
+    stack heap closure<fn i32[min max](i32[min max])> addTwo = MakeAdder(2);
+    if (addTwo(40) != 42) {
+        return 6;
     }
 
     return 0;

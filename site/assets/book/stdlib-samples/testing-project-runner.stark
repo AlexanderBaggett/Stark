@@ -1,0 +1,26 @@
+import System.Testing
+module Book.TestingProjectRunner
+
+[Fact]
+fn bool ArithmeticStillWorks() {
+    return System.Testing.Equal(42, 2 * 21);
+}
+
+[Fact]
+fn bool TextStillMatches() {
+    return System.Testing.Equal("Stark", "Stark");
+}
+
+export fn i32[min max] main() {
+    stack mut u8[0 1] failed = 0;
+
+    if (System.Testing.RunFact("ArithmeticStillWorks", ArithmeticStillWorks()) != 0) {
+        failed = 1;
+    }
+
+    if (System.Testing.RunFact("TextStillMatches", TextStillMatches()) != 0) {
+        failed = 1;
+    }
+
+    return System.Testing.ExitCode(failed);
+}

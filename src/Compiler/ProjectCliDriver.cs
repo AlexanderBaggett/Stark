@@ -49,7 +49,7 @@ internal static class ProjectCliDriver
             {
                 ProjectCommand.Build => await ExecuteBuildAsync(discovery!, options, userConfig, stdout, stderr),
                 ProjectCommand.Run => await ExecuteRunAsync(discovery!, options, userConfig, stdout, stderr),
-                ProjectCommand.Test => await ExecuteTestAsync(stderr),
+                ProjectCommand.Test => await ExecuteTestAsync(discovery!, options, userConfig, stdout, stderr),
                 _ => 1
             };
         }
@@ -172,10 +172,71 @@ internal static class ProjectCliDriver
         return process.ExitCode;
     }
 
-    private static async Task<int> ExecuteTestAsync(TextWriter stderr)
+    private static async Task<int> ExecuteTestAsync(
+        DiscoveredManifest discovery,
+        ProjectCommandOptions options,
+        UserConfig userConfig,
+        TextWriter stdout,
+        TextWriter stderr)
     {
-        await stderr.WriteLineAsync("`stark test` is not implemented yet.");
-        return 1;
+        ProjectManifest[] projects;
+        IReadOnlyDictionary<BuildProfile, ProfileManifest> defaultProfiles = EmptyProfiles;
+        if (discovery.Project is not null)
+        {
+            var project = LoadProjectManifest(discovery.Project);
+            if (project.Kind != ProjectKind.Test)
+            {
+                await stderr.WriteLineAsync($"Project '{project.Name}' is not a test project.");
+                return 1;
+            }
+
+            projects = [project];
+        }
+        else
+        {
+            var solution = LoadSolutionManifest(discovery.Solution!);
+            defaultProfiles = solution.Profiles;
+            var targets = ResolveTestTargets(solution, options.TargetName, new ManifestCache(), stderr);
+            if (targets is null)
+            {
+                return 1;
+            }
+
+            projects = targets;
+        }
+
+        var session = new BuildSession(
+            Profile: options.Profile,
+            BuildRootDirectory: discovery.RootDirectory,
+            UserConfig: userConfig,
+            DefaultProfiles: defaultProfiles,
+            Stdout: stdout,
+            Stderr: stderr);
+
+        var failed = false;
+        foreach (var project in projects)
+        {
+            if (project.Kind != ProjectKind.Test)
+            {
+                await stderr.WriteLineAsync($"Project '{project.Name}' is not a test project.");
+                failed = true;
+                continue;
+            }
+
+            var buildResult = await BuildProjectAsync(project, session);
+            if (!buildResult.Success)
+            {
+                return 1;
+            }
+
+            var exitCode = await RunTestExecutableAsync(buildResult, stdout, stderr);
+            if (exitCode != 0)
+            {
+                failed = true;
+            }
+        }
+
+        return failed ? 1 : 0;
     }
 
     private static async Task WriteHelpAsync(ProjectCommand command, TextWriter stdout)
@@ -198,9 +259,60 @@ internal static class ProjectCliDriver
             case ProjectCommand.Test:
                 await stdout.WriteLineAsync("Usage: stark test [target] [--dev|--release]");
                 await stdout.WriteLineAsync();
-                await stdout.WriteLineAsync("Run project or solution tests.");
+                await stdout.WriteLineAsync("Build and run Stark test projects.");
+                await stdout.WriteLineAsync("- In a test project directory, `stark test` runs that project.");
+                await stdout.WriteLineAsync("- In a solution directory, `stark test` runs the default test set or every test project.");
                 return;
         }
+    }
+
+    private static async Task<int> RunTestExecutableAsync(BuildResult buildResult, TextWriter stdout, TextWriter stderr)
+    {
+        await stdout.WriteLineAsync($"Running test project '{buildResult.Project.Name}'...");
+
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = buildResult.OutputPath,
+            WorkingDirectory = buildResult.Project.DirectoryPath,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        using var process = Process.Start(startInfo);
+        if (process is null)
+        {
+            await stderr.WriteLineAsync($"Could not start '{buildResult.OutputPath}'.");
+            return 1;
+        }
+
+        var testStdoutTask = process.StandardOutput.ReadToEndAsync();
+        var testStderrTask = process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+        var testStdout = await testStdoutTask;
+        var testStderr = await testStderrTask;
+
+        if (!string.IsNullOrEmpty(testStdout))
+        {
+            await stdout.WriteAsync(testStdout);
+        }
+
+        if (!string.IsNullOrEmpty(testStderr))
+        {
+            await stderr.WriteAsync(testStderr);
+        }
+
+        if (process.ExitCode == 0)
+        {
+            await stdout.WriteLineAsync($"Passed test project '{buildResult.Project.Name}'.");
+        }
+        else
+        {
+            await stderr.WriteLineAsync($"Failed test project '{buildResult.Project.Name}' with exit code {process.ExitCode}.");
+        }
+
+        return process.ExitCode;
     }
 
     private static async Task<BuildResult> BuildProjectAsync(ProjectManifest project, BuildSession session)
@@ -505,6 +617,57 @@ internal static class ProjectCliDriver
         return ResolveSolutionProject(solution, solution.DefaultRunTarget, manifestCache, stderr);
     }
 
+    private static ProjectManifest[]? ResolveTestTargets(
+        SolutionManifest solution,
+        string? targetName,
+        ManifestCache manifestCache,
+        TextWriter stderr)
+    {
+        if (!string.IsNullOrWhiteSpace(targetName))
+        {
+            var target = ResolveSolutionProject(solution, targetName, manifestCache, stderr);
+            return target is null ? null : [target];
+        }
+
+        var defaultTargets = solution.DefaultTestTargets;
+        if (defaultTargets.Count != 0)
+        {
+            var projects = new List<ProjectManifest>();
+            foreach (var target in defaultTargets)
+            {
+                var project = ResolveSolutionProject(solution, target, manifestCache, stderr);
+                if (project is null)
+                {
+                    return null;
+                }
+
+                projects.Add(project);
+            }
+
+            return projects.ToArray();
+        }
+
+        var testProjects = new List<ProjectManifest>();
+        foreach (var member in solution.Members)
+        {
+            var project = LoadProjectManifest(
+                Path.Combine(ResolveProjectPath(solution.DirectoryPath, member), ProjectManifestFileName),
+                manifestCache);
+            if (project.Kind == ProjectKind.Test)
+            {
+                testProjects.Add(project);
+            }
+        }
+
+        if (testProjects.Count == 0)
+        {
+            stderr.WriteLine("This solution does not contain any test projects. Pass a test target name to `stark test`.");
+            return null;
+        }
+
+        return testProjects.ToArray();
+    }
+
     private static ProjectManifest? ResolveSolutionProject(
         SolutionManifest solution,
         string targetName,
@@ -687,13 +850,20 @@ internal static class ProjectCliDriver
         {
             "library" => ProjectKind.Library,
             "executable" => ProjectKind.Executable,
+            "test" => ProjectKind.Test,
             _ => throw new InvalidOperationException(
                 $"Project manifest '{manifestPath}' has unsupported kind '{kindText}'.")
         };
 
         var targetTable = SimpleToml.GetRequiredTable(
             document,
-            [kind == ProjectKind.Library ? "library" : "executable"],
+            [kind switch
+            {
+                ProjectKind.Library => "library",
+                ProjectKind.Executable => "executable",
+                ProjectKind.Test => "test",
+                _ => "executable"
+            }],
             manifestPath);
         var rootFile = SimpleToml.GetRequiredString(targetTable, "root", manifestPath);
         var outputName = SimpleToml.GetOptionalString(targetTable, "output") ?? name;
@@ -765,10 +935,12 @@ internal static class ProjectCliDriver
 
         List<string> defaultBuildTargets = [];
         string? defaultRunTarget = null;
+        List<string> defaultTestTargets = [];
         if (SimpleToml.TryGetTable(document, ["defaults"], out var defaultsTable))
         {
             defaultBuildTargets = SimpleToml.GetOptionalStringArray(defaultsTable, "build");
             defaultRunTarget = SimpleToml.GetOptionalString(defaultsTable, "run");
+            defaultTestTargets = SimpleToml.GetOptionalStringArray(defaultsTable, "test");
         }
 
         var aliases = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -790,6 +962,7 @@ internal static class ProjectCliDriver
             Members: members,
             DefaultBuildTargets: defaultBuildTargets,
             DefaultRunTarget: defaultRunTarget,
+            DefaultTestTargets: defaultTestTargets,
             Aliases: aliases,
             Profiles: LoadProfiles(document));
     }
@@ -895,6 +1068,7 @@ internal static class ProjectCliDriver
         IReadOnlyList<string> Members,
         IReadOnlyList<string> DefaultBuildTargets,
         string? DefaultRunTarget,
+        IReadOnlyList<string> DefaultTestTargets,
         IReadOnlyDictionary<string, string> Aliases,
         IReadOnlyDictionary<BuildProfile, ProfileManifest> Profiles);
 
@@ -1010,7 +1184,8 @@ internal static class ProjectCliDriver
     private enum ProjectKind
     {
         Library,
-        Executable
+        Executable,
+        Test
     }
 
     private enum BuildProfile

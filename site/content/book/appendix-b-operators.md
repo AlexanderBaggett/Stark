@@ -1,6 +1,6 @@
 +++
 title = "Appendix B: Operators and Symbols"
-weight = 360
+weight = 380
 book_part = "Appendices"
 book_status = "draft"
 prev = "/book/appendix-a-keywords/"

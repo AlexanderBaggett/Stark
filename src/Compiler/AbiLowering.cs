@@ -9,6 +9,7 @@ internal sealed class AbiLowerer
     private readonly FunctionEffectModel _effectModel;
     private readonly HighLevelIrModule _hir;
     private readonly CompilerOptions _options;
+    private readonly IReadOnlyDictionary<string, FunctionIdentity> _functionIdentities;
 
     public AbiLowerer(
         SyntaxModel syntaxModel,
@@ -26,6 +27,7 @@ internal sealed class AbiLowerer
         _effectModel = effectModel;
         _hir = hir;
         _options = options;
+        _functionIdentities = BuildFunctionIdentityIndex(loadedModules);
     }
 
     public AbiModel Lower()
@@ -197,7 +199,25 @@ internal sealed class AbiLowerer
 
     private (string ModuleName, string SourceName, StarkVisibility Visibility) ResolveFunctionIdentity(string functionName)
     {
-        foreach (var module in _loadedModules.Modules.Values)
+        if (_functionIdentities.TryGetValue(functionName, out var identity))
+        {
+            return (identity.ModuleName, identity.SourceName, identity.Visibility);
+        }
+
+        var separator = functionName.LastIndexOf('.');
+        if (separator < 0)
+        {
+            return (_syntaxModel.ModuleName, functionName, StarkVisibility.Module);
+        }
+
+        return (functionName[..separator], functionName[(separator + 1)..], StarkVisibility.Module);
+    }
+
+    private static Dictionary<string, FunctionIdentity> BuildFunctionIdentityIndex(LoadedModuleSet loadedModules)
+    {
+        var identities = new Dictionary<string, FunctionIdentity>(StringComparer.Ordinal);
+
+        foreach (var module in loadedModules.Modules.Values)
         {
             foreach (var declaration in module.SyntaxModel.Declarations)
             {
@@ -209,23 +229,20 @@ internal sealed class AbiLowerer
                 var resolvedName = FunctionOverloadFacts.QualifyResolvedName(
                     module,
                     FunctionOverloadFacts.GetResolvedLocalName(module.SyntaxModel, declaration));
-                if (!string.Equals(resolvedName, functionName, StringComparison.Ordinal))
-                {
-                    continue;
-                }
 
-                return (module.SyntaxModel.ModuleName, declaration.Name, declaration.Visibility);
+                identities.TryAdd(
+                    resolvedName,
+                    new FunctionIdentity(module.SyntaxModel.ModuleName, declaration.Name, declaration.Visibility));
             }
         }
 
-        var separator = functionName.LastIndexOf('.');
-        if (separator < 0)
-        {
-            return (_syntaxModel.ModuleName, functionName, StarkVisibility.Module);
-        }
-
-        return (functionName[..separator], functionName[(separator + 1)..], StarkVisibility.Module);
+        return identities;
     }
+
+    private readonly record struct FunctionIdentity(
+        string ModuleName,
+        string SourceName,
+        StarkVisibility Visibility);
 
     private string ComputeSymbolName(
         string qualifiedName,
@@ -284,12 +301,5 @@ internal sealed class AbiLowerer
         }
 
         return sourceName;
-    }
-
-    private string QualifyName(LoadedModuleDocument module, string localName)
-    {
-        return module.Reference.IsRoot
-            ? localName
-            : $"{module.SyntaxModel.ModuleName}.{localName}";
     }
 }

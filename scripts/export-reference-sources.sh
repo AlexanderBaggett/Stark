@@ -172,6 +172,7 @@ for source in \
     "${REPOSITORY_ROOT}/docs/StandardLibrary/System.Net.md" \
     "${REPOSITORY_ROOT}/docs/StandardLibrary/System.Net.Tcp.md" \
     "${REPOSITORY_ROOT}/docs/StandardLibrary/System.Math.md" \
+    "${REPOSITORY_ROOT}/docs/StandardLibrary/System.Testing.md" \
     "${REPOSITORY_ROOT}/docs/StandardLibrary/System.Process.md"; do
     target="${CONTENT_DIR}/standard-library/$(basename "${source}")"
     write_doc_page "${source}" "${target}" "${weight}" "standard-library"

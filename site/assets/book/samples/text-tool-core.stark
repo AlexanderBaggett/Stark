@@ -22,6 +22,6 @@ finite law i32[min max] ExitCode(ToolStatus status) {
     }
 }
 
-export ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     return ExitCode(ClassifyCommand("run"));
 }

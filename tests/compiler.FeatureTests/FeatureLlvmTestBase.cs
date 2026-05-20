@@ -34,6 +34,37 @@ public abstract class FeatureLlvmTestBase
         return count;
     }
 
+    protected static string ExtractDefinitionHeader(string llvm, string symbolName)
+    {
+        var prefix = $"@{symbolName}(";
+
+        foreach (var line in llvm.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (line.StartsWith("define ", StringComparison.Ordinal)
+                && line.Contains(prefix, StringComparison.Ordinal))
+            {
+                return line;
+            }
+        }
+
+        throw new Xunit.Sdk.XunitException($"Expected a definition header for symbol '{symbolName}'.");
+    }
+
+    protected static string ExtractDefinitionBody(string llvm, string symbolName)
+    {
+        var header = ExtractDefinitionHeader(llvm, symbolName);
+        var start = llvm.IndexOf(header, StringComparison.Ordinal);
+        if (start < 0)
+        {
+            throw new Xunit.Sdk.XunitException($"Expected a definition body for symbol '{symbolName}'.");
+        }
+
+        var nextDefinition = llvm.IndexOf("\ndefine ", start + header.Length, StringComparison.Ordinal);
+        return nextDefinition < 0
+            ? llvm[start..]
+            : llvm[start..nextDefinition];
+    }
+
     private static string FormatDiagnostics(IReadOnlyList<CompilerDiagnostic> diagnostics)
     {
         if (diagnostics.Count == 0)

@@ -124,18 +124,6 @@ function Get-BenchmarkId {
     return $normalized.Trim("/")
 }
 
-function Get-ExperimentalBenchmarkId {
-    param([string]$BenchmarkId)
-
-    $directory = Split-Path $BenchmarkId -Parent
-    $stem = Split-Path $BenchmarkId -Leaf
-    if ($stem.StartsWith("Experimental", [StringComparison]::Ordinal)) {
-        return $BenchmarkId
-    }
-
-    return (Join-Path $directory ("Experimental" + $stem)).Replace("\", "/")
-}
-
 function Get-SourcePath {
     param(
         [string]$BenchmarkId,
@@ -431,23 +419,11 @@ $rows = New-Object System.Collections.Generic.List[object]
 foreach ($benchmark in $Benchmarks) {
     $benchmarkId = Get-BenchmarkId $benchmark
     $starkPath = Get-SourcePath $benchmarkId ".stark"
-    $experimentalBenchmarkId = Get-ExperimentalBenchmarkId $benchmarkId
-    $experimentalStarkPath = Get-SourcePath $experimentalBenchmarkId ".stark"
     $cPath = Get-SourcePath $benchmarkId ".c"
     $rustPath = Get-SourcePath $benchmarkId ".rs"
 
     if ($selectedLanguages.ContainsKey("stark") -and (Test-Path -LiteralPath $starkPath)) {
         $rows.Add((Analyze-Stark $benchmarkId "stark" $starkPath (ConvertTo-SafeName "$benchmarkId-stark")))
-    }
-
-    if ($selectedLanguages.ContainsKey("stark") -and
-        $experimentalBenchmarkId -ne $benchmarkId -and
-        (Test-Path -LiteralPath $experimentalStarkPath)) {
-        $rows.Add((Analyze-Stark $benchmarkId "stark-experimental" $experimentalStarkPath (ConvertTo-SafeName "$benchmarkId-stark-experimental")))
-    }
-
-    if ($selectedLanguages.ContainsKey("stark-experimental") -and (Test-Path -LiteralPath $experimentalStarkPath)) {
-        $rows.Add((Analyze-Stark $benchmarkId "stark-experimental" $experimentalStarkPath (ConvertTo-SafeName "$benchmarkId-stark-experimental")))
     }
 
     if ($selectedLanguages.ContainsKey("c") -and (Test-Path -LiteralPath $cPath)) {

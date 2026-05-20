@@ -8,7 +8,7 @@
 // </auto-generated>
 //------------------------------------------------------------------------------
 
-// Generated from /run/media/zadkey/LinuxTools/LinuxRepos/Stark/Stark.g4 by ANTLR 4.13.2
+// Generated from /mnt/LinuxTools/LinuxRepos/Stark/Stark.g4 by ANTLR 4.13.2
 
 // Unreachable code detected
 #pragma warning disable 0162
@@ -129,11 +129,29 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitParameterMemoryContractClause([NotNull] StarkParser.ParameterMemoryContractClauseContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.parameterMemoryContract"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitParameterMemoryContract([NotNull] StarkParser.ParameterMemoryContractContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.disjointContract"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
 	/// <return>The visitor result.</return>
 	Result VisitDisjointContract([NotNull] StarkParser.DisjointContractContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.overlapContract"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitOverlapContract([NotNull] StarkParser.OverlapContractContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.sameContract"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitSameContract([NotNull] StarkParser.SameContractContext context);
 	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.typeParameterList"/>.
 	/// </summary>
@@ -453,6 +471,30 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitFunctionPointerSignature([NotNull] StarkParser.FunctionPointerSignatureContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.closureType"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitClosureType([NotNull] StarkParser.ClosureTypeContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.closureStoragePrefix"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitClosureStoragePrefix([NotNull] StarkParser.ClosureStoragePrefixContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.closureSignature"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitClosureSignature([NotNull] StarkParser.ClosureSignatureContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.closureCallCapability"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitClosureCallCapability([NotNull] StarkParser.ClosureCallCapabilityContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.functionPointerParameterList"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
@@ -518,6 +560,12 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <param name="context">The parse tree.</param>
 	/// <return>The visitor result.</return>
 	Result VisitUnsafeStatement([NotNull] StarkParser.UnsafeStatementContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.assumeStatement"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitAssumeStatement([NotNull] StarkParser.AssumeStatementContext context);
 	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.localConstantDeclaration"/>.
 	/// </summary>
@@ -836,6 +884,12 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <param name="context">The parse tree.</param>
 	/// <return>The visitor result.</return>
 	Result VisitLambdaExpression([NotNull] StarkParser.LambdaExpressionContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.lambdaStoragePrefix"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitLambdaStoragePrefix([NotNull] StarkParser.LambdaStoragePrefixContext context);
 	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.captureClause"/>.
 	/// </summary>
