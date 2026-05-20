@@ -27,5 +27,5 @@ Status: covered by `ExamplesCompileRunTests.NeuralNetworkExampleCompilesAndRuns`
 
 ## Related
 
-- [Performance Model](/book/25-performance-model/)
-- [Memory Layout and ABI](/book/26-memory-layout-abi/)
+- [Performance Model](/book/26-performance-model/)
+- [Memory Layout and ABI](/book/27-memory-layout-abi/)

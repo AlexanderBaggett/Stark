@@ -4,7 +4,7 @@ module Benchmarks.Micro.StackNestedFieldForwarding
 record Inner(i64[min max] Value, i64[min max] Salt) { }
 record Outer(Inner Left, Inner Right) { }
 
-finite law i64[min max] Accumulate(i64[min max] seed, i64[min max] salt) {
+unsafe finite law i64[min max] Accumulate(i64[min max] seed, i64[min max] salt) {
     stack mut Outer outer = new Outer(new Inner(seed, salt), new Inner(salt, seed));
     outer.Left.Value = outer.Left.Value + outer.Right.Salt;
     stack i64[min max] first = outer.Left.Value;
@@ -12,10 +12,10 @@ finite law i64[min max] Accumulate(i64[min max] seed, i64[min max] salt) {
     return outer.Left.Value + outer.Right.Value + outer.Left.Salt;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack mut i64[min max] total = (i64[min max])System.Process.CurrentId();
 
-    for willexit (stack mut i32[0 200000] i = 0; i < 200000; i += 1) {
+    for willexit (stack mut u24[0 200000] i = 0; i < 200000; i += 1) {
         total += Accumulate(total % 1000000007, (i64[min max])i);
         total = total % 1000000007;
     }

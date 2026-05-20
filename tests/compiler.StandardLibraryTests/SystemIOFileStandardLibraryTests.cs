@@ -5,31 +5,28 @@ namespace compiler.StandardLibraryTests;
 public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
 {
     [Fact]
-    public void StdLibSourceRawFileHandlesSupportAsciiAndUnicodeWriteOverloads()
+    public void StdLibSourceRawFileHandleHelpersStayInternal()
     {
         var repositoryRoot = FindRepositoryRoot();
         var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
-        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibFileUnicodeSurface.stark");
+        var filePath = Path.Combine(sourceRoot, "System", "IO", "File.stark");
+        var source = File.ReadAllText(filePath);
+
+        Assert.Contains("internal unsafe fn rawptr<i8[min max]> OpenRead", source, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe fn rawptr<i8[min max]> OpenWrite", source, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe fn i64[min max] ReadBytes", source, StringComparison.Ordinal);
+        Assert.Contains("internal unsafe fn void WriteLine(rawptr<i8[min max]> handle", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("public unsafe fn rawptr<i8[min max]> OpenRead", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("public unsafe fn rawptr<i8[min max]> OpenWrite", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("public unsafe fn i64[min max] ReadBytes", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("public unsafe fn void WriteLine(rawptr<i8[min max]> handle", source, StringComparison.Ordinal);
+
         var result = DefaultCompilerPipeline.Create().Run(
             new CompilationInput(
-                """
-                import System
-                module Demo
-
-                fn void Use() {
-                    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenWrite("demo.txt");
-                    System.IO.File.WriteText(handle, "ascii");
-                    System.IO.File.WriteText(handle, (unicode)"ascii");
-                    System.IO.File.WriteLine(handle, "line");
-                    System.IO.File.WriteLine(handle, (unicode)"line");
-                    System.IO.File.Flush(handle);
-                    System.IO.File.SyncAll(handle);
-                    System.IO.File.Close(handle);
-                    return;
-                }
-                """,
-                appPath),
+                source,
+                filePath),
             new CompilerOptions(
+                EmitLlvmIr: true,
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
@@ -46,9 +43,34 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                 """
                 import System
                 module Demo
+                fn bool StatusOk(System.IO.IOStatus status) {
+                    switch (status) {
+                        case System.IO.IOStatus.Ok:
+                            return true;
+                        case System.IO.IOStatus.Err(var error):
+                            return false;
+                    }
+                }
 
-                fn void Use() {
-                    stack mut System.IO.File.File file = System.IO.File.Open("demo.txt", System.IO.File.FileMode.Write);
+                fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
+                    switch (result) {
+                        case System.IO.IOResult<bool>.Ok(var value):
+                            return value;
+                        case System.IO.IOResult<bool>.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
+                    switch (result) {
+                        case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+                            return value;
+                        case System.IO.IOResult<System.IO.File.File>.Err(var error):
+                            return new();
+                    }
+                }
+                unsafe fn void Use() {
+                    stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open("demo.txt", System.IO.File.FileMode.Write));
                     file.WriteText("ascii");
                     file.WriteText((unicode)"ascii");
                     file.WriteLine("line");
@@ -77,16 +99,37 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                 """
                 import System
                 module Demo
+                fn bool StatusOk(System.IO.IOStatus status) {
+                    switch (status) {
+                        case System.IO.IOStatus.Ok:
+                            return true;
+                        case System.IO.IOStatus.Err(var error):
+                            return false;
+                    }
+                }
 
-                fn void Use() {
-                    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenRead("demo.txt");
-                    System.IO.File.Seek(handle, 0, System.IO.File.SeekOrigin.Begin);
-                    System.IO.File.Seek(handle, 1, System.IO.File.SeekOrigin.Current);
-                    System.IO.File.Seek(handle, -1, System.IO.File.SeekOrigin.End);
-                    System.IO.File.Close(handle);
+                fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
+                    switch (result) {
+                        case System.IO.IOResult<bool>.Ok(var value):
+                            return value;
+                        case System.IO.IOResult<bool>.Err(var error):
+                            return false;
+                    }
+                }
 
-                    stack mut System.IO.File.File file = System.IO.File.Open("demo.txt", System.IO.File.FileMode.ReadWrite);
+                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
+                    switch (result) {
+                        case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+                            return value;
+                        case System.IO.IOResult<System.IO.File.File>.Err(var error):
+                            return new();
+                    }
+                }
+                unsafe fn void Use() {
+                    stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open("demo.txt", System.IO.File.FileMode.ReadWrite));
                     file.Seek(0, System.IO.File.SeekOrigin.Begin);
+                    file.Seek(1, System.IO.File.SeekOrigin.Current);
+                    file.Seek(-1, System.IO.File.SeekOrigin.End);
                     file.Close();
                     return;
                 }
@@ -117,13 +160,13 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
 
         foreach (var signaturePrefix in new[]
         {
-            "define fastcc noundef i32 @File_Close(",
-            "define fastcc noundef i32 @File_Flush(",
+            "define fastcc noundef %System_IO_IOStatus @File_Close(",
+            "define fastcc noundef %System_IO_IOStatus @File_Flush(",
             "define fastcc noundef i64 @File_ReadBytes(",
             "define fastcc noundef i64 @File_WriteBytes(",
             "define fastcc noundef i64 @File_ReadByteRegion(",
             "define fastcc noundef i64 @File_WriteByteRegion(",
-            "define fastcc noundef i64 @File_Seek(",
+            "define fastcc noundef i64 @File_SeekRaw(",
             "define fastcc noundef i32 @Flush("
         })
         {
@@ -133,30 +176,43 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
 
         foreach (var signaturePrefix in new[]
         {
-            "define fastcc noundef i32 @File_Close(",
-            "define fastcc noundef i32 @File_Flush(",
-            "define fastcc noundef i64 @File_ReadBytes(",
-            "define fastcc noundef i64 @File_WriteBytes(",
-            "define fastcc noundef i64 @File_ReadByteRegion(",
-            "define fastcc noundef i64 @File_WriteByteRegion(",
-            "define fastcc noundef i64 @File_Seek("
+            "define fastcc noundef i32 @File_CloseRaw(",
+            "define fastcc noundef i32 @File_FlushRaw("
         })
         {
             var body = ExtractDefinedFunctionText(llvm, signaturePrefix, $"Expected {signaturePrefix} definition in emitted LLVM.");
             Assert.Contains("@File_FlushBufferedWrite(", body, StringComparison.Ordinal);
         }
 
+        foreach (var signaturePrefix in new[]
+        {
+            "define fastcc noundef i64 @File_ReadBytes(",
+            "define fastcc noundef i64 @File_WriteBytes(",
+            "define fastcc noundef i64 @File_ReadByteRegion(",
+            "define fastcc noundef i64 @File_WriteByteRegion(",
+            "define fastcc noundef i64 @File_SeekRaw("
+        })
+        {
+            var body = ExtractDefinedFunctionText(llvm, signaturePrefix, $"Expected {signaturePrefix} definition in emitted LLVM.");
+            Assert.Contains("@File_FlushRaw(", body, StringComparison.Ordinal);
+        }
+
         var ownedSyncBody = ExtractDefinedFunctionText(
             llvm,
-            "define fastcc noundef i32 @File_SyncAll(",
+            "define fastcc noundef %System_IO_IOStatus @File_SyncAll(",
             "Expected File.SyncAll definition in emitted LLVM.");
+        var ownedRawSyncBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i32 @File_SyncAllRaw(",
+            "Expected File.SyncAllRaw definition in emitted LLVM.");
         var rawSyncBody = ExtractDefinedFunctionText(
             llvm,
             "define fastcc noundef i32 @SyncAll(",
             "Expected raw SyncAll definition in emitted LLVM.");
 
-        Assert.Contains("@File_FlushBufferedWrite(", ownedSyncBody, StringComparison.Ordinal);
-        Assert.Contains("@System_Runtime_Platform_FlushFile(", ownedSyncBody, StringComparison.Ordinal);
+        Assert.Contains("@File_SyncAllRaw(", ownedSyncBody, StringComparison.Ordinal);
+        Assert.Contains("@File_FlushBufferedWrite(", ownedRawSyncBody, StringComparison.Ordinal);
+        Assert.Contains("@System_Runtime_Platform_FlushFile(", ownedRawSyncBody, StringComparison.Ordinal);
         Assert.Contains("@System_Runtime_Platform_FlushFile(", rawSyncBody, StringComparison.Ordinal);
     }
 
@@ -234,60 +290,97 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                 """
                 import System
                 module App
+                fn bool StatusOk(System.IO.IOStatus status) {
+                    switch (status) {
+                        case System.IO.IOStatus.Ok:
+                            return true;
+                        case System.IO.IOStatus.Err(var error):
+                            return false;
+                    }
+                }
 
-                export ffi fn i32[-2147483648 2147483647] main() {
-                    stack mut i8[-128 127][1] buffer = { 0 };
-                    stack rawptr<i8[-128 127]> read = System.IO.File.OpenRead("seek.txt");
-                    if (read == null) {
+                fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
+                    switch (result) {
+                        case System.IO.IOResult<bool>.Ok(var value):
+                            return value;
+                        case System.IO.IOResult<bool>.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
+                    switch (result) {
+                        case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+                            return value;
+                        case System.IO.IOResult<System.IO.File.File>.Err(var error):
+                            return new();
+                    }
+                }
+
+                fn i64[min max] CountOrNegative(System.IO.IOResult<u64[0 2 ** 63 - 1]> result) {
+                    switch (result) {
+                        case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Ok(var value):
+                            return (i64[min max])value;
+                        case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                            return -1;
+                    }
+                }
+
+                export unsafe fn i32[min max] main() {
+                    stack mut i8[min max][1] buffer = { 0 };
+                    stack mut System.IO.File.File read = OpenOrEmpty(System.IO.File.Open("seek.txt", System.IO.File.FileMode.Read));
+                    if (!read.IsOpen()) {
                         return 1;
                     }
 
-                    stack rawptr<i8[-128 127]> result = System.IO.File.OpenWrite("seek-result.txt");
-                    if (result == null) {
+                    stack mut System.IO.File.File result = OpenOrEmpty(System.IO.File.Open("seek-result.txt", System.IO.File.FileMode.Write));
+                    if (!result.IsOpen()) {
                         return 2;
                     }
 
-                    if (System.IO.File.Seek(read, 2, System.IO.File.SeekOrigin.Begin) != 2) {
+                    stack mut i8[min max][] byte = slice(&buffer[0], 1);
+
+                    if (CountOrNegative(read.Seek(2, System.IO.File.SeekOrigin.Begin)) != 2) {
                         return 3;
                     }
 
-                    if (System.IO.File.ReadBytes(&buffer[0], 1, 1, read) != 1) {
+                    if (CountOrNegative(read.Read(byte)) != 1) {
                         return 4;
                     }
 
-                    if (System.IO.File.WriteBytes(&buffer[0], 1, 1, result) != 1) {
+                    if (CountOrNegative(result.Write(byte)) != 1) {
                         return 5;
                     }
 
-                    if (System.IO.File.Seek(read, -1, System.IO.File.SeekOrigin.Current) != 2) {
+                    if (CountOrNegative(read.Seek(-1, System.IO.File.SeekOrigin.Current)) != 2) {
                         return 6;
                     }
 
-                    if (System.IO.File.ReadBytes(&buffer[0], 1, 1, read) != 1) {
+                    if (CountOrNegative(read.Read(byte)) != 1) {
                         return 7;
                     }
 
-                    if (System.IO.File.WriteBytes(&buffer[0], 1, 1, result) != 1) {
+                    if (CountOrNegative(result.Write(byte)) != 1) {
                         return 8;
                     }
 
-                    if (System.IO.File.Seek(read, -1, System.IO.File.SeekOrigin.End) != 4) {
+                    if (CountOrNegative(read.Seek(-1, System.IO.File.SeekOrigin.End)) != 4) {
                         return 9;
                     }
 
-                    if (System.IO.File.ReadBytes(&buffer[0], 1, 1, read) != 1) {
+                    if (CountOrNegative(read.Read(byte)) != 1) {
                         return 10;
                     }
 
-                    if (System.IO.File.WriteBytes(&buffer[0], 1, 1, result) != 1) {
+                    if (CountOrNegative(result.Write(byte)) != 1) {
                         return 11;
                     }
 
-                    if (System.IO.File.Close(read) != 0) {
+                    if (!StatusOk(read.Close())) {
                         return 12;
                     }
 
-                    if (System.IO.File.Close(result) != 0) {
+                    if (!StatusOk(result.Close())) {
                         return 13;
                     }
 
@@ -384,28 +477,64 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                 """
                 import System
                 module App
+                fn bool StatusOk(System.IO.IOStatus status) {
+                    switch (status) {
+                        case System.IO.IOStatus.Ok:
+                            return true;
+                        case System.IO.IOStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
+                    switch (result) {
+                        case System.IO.IOResult<bool>.Ok(var value):
+                            return value;
+                        case System.IO.IOResult<bool>.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
+                    switch (result) {
+                        case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+                            return value;
+                        case System.IO.IOResult<System.IO.File.File>.Err(var error):
+                            return new();
+                    }
+                }
+
+                fn i64[min max] CountOrNegative(System.IO.IOResult<u64[0 2 ** 63 - 1]> result) {
+                    switch (result) {
+                        case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Ok(var value):
+                            return (i64[min max])value;
+                        case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                            return -1;
+                    }
+                }
 
                 fn void WriteOwned() {
-                    stack mut System.IO.File.File file = System.IO.File.Open("owned-test.txt", System.IO.File.FileMode.Write);
+                    stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open("owned-test.txt", System.IO.File.FileMode.Write));
                     file.WriteLine("Owned");
                     return;
                 }
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe fn i32[min max] main() {
                     WriteOwned();
 
-                    if (!System.IO.File.Exists("owned-test.txt")) {
+                    if (!BoolOrFalse(System.IO.File.Exists("owned-test.txt"))) {
                         return 2;
                     }
 
-                    if (System.IO.File.Exists("missing-test.txt")) {
+                    if (BoolOrFalse(System.IO.File.Exists("missing-test.txt"))) {
                         return 3;
                     }
 
-                    stack mut i8[-128 127][8] buffer = { 0, 0, 0, 0, 0, 0, 0, 0 };
-                    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenRead("owned-test.txt");
-                    stack i64[-9223372036854775808 9223372036854775807] count = System.IO.File.ReadBytes(&buffer[0], 1, 6, handle);
-                    System.IO.File.Close(handle);
+                    stack mut i8[min max][8] buffer = { 0, 0, 0, 0, 0, 0, 0, 0 };
+                    stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open("owned-test.txt", System.IO.File.FileMode.Read));
+                    stack mut i8[min max][] destination = slice(&buffer[0], 6);
+                    stack i64[min max] count = CountOrNegative(file.Read(destination));
+                    file.Close();
 
                     if (count != 6) {
                         return 4;
@@ -501,23 +630,63 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                 """
                 import System
                 module App
+                fn bool StatusOk(System.IO.IOStatus status) {
+                    switch (status) {
+                        case System.IO.IOStatus.Ok:
+                            return true;
+                        case System.IO.IOStatus.Err(var error):
+                            return false;
+                    }
+                }
 
-                fn i64[-9223372036854775808 9223372036854775807] ReadCount(ascii path, i64[-9223372036854775808 9223372036854775807] expected) {
-                    stack mut i8[-128 127][16] buffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-                    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenRead(path);
-                    stack i64[-9223372036854775808 9223372036854775807] count = System.IO.File.ReadBytes(&buffer[0], 1, expected, handle);
-                    System.IO.File.Close(handle);
+                fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
+                    switch (result) {
+                        case System.IO.IOResult<bool>.Ok(var value):
+                            return value;
+                        case System.IO.IOResult<bool>.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
+                    switch (result) {
+                        case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+                            return value;
+                        case System.IO.IOResult<System.IO.File.File>.Err(var error):
+                            return new();
+                    }
+                }
+
+                fn i64[min max] CountOrNegative(System.IO.IOResult<u64[0 2 ** 63 - 1]> result) {
+                    switch (result) {
+                        case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Ok(var value):
+                            return (i64[min max])value;
+                        case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                            return -1;
+                    }
+                }
+
+                unsafe fn i64[min max] ReadCount(ascii path, u64[0 2 ** 63 - 1] expected) {
+                    stack mut i8[min max][16] buffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                    stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open(path, System.IO.File.FileMode.Read));
+                    if (!file.IsOpen()) {
+                        return -1;
+                    }
+
+                    stack mut i8[min max][] destination = slice(&buffer[0], expected);
+                    stack i64[min max] count = CountOrNegative(file.Read(destination));
+                    file.Close();
                     return count;
                 }
 
-                export ffi fn i32[-2147483648 2147483647] main() {
-                    stack mut System.IO.File.File defaulted = System.IO.File.Open("default.txt", System.IO.File.FileMode.Write);
+                export unsafe fn i32[min max] main() {
+                    stack mut System.IO.File.File defaulted = OpenOrEmpty(System.IO.File.Open("default.txt", System.IO.File.FileMode.Write));
                     defaulted.WriteLine("Default");
                     if (ReadCount("default.txt", 8) != 0) {
                         return 1;
                     }
 
-                    if (defaulted.Close() != 0) {
+                    if (!StatusOk(defaulted.Close())) {
                         return 2;
                     }
 
@@ -525,13 +694,13 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                         return 3;
                     }
 
-                    stack mut System.IO.File.File full = System.IO.File.Open("full.txt", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.Full);
+                    stack mut System.IO.File.File full = OpenOrEmpty(System.IO.File.Open("full.txt", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.Full));
                     full.WriteLine("Full");
                     if (ReadCount("full.txt", 5) != 0) {
                         return 4;
                     }
 
-                    if (full.Flush() != 0) {
+                    if (!StatusOk(full.Flush())) {
                         return 5;
                     }
 
@@ -539,27 +708,27 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                         return 6;
                     }
 
-                    if (full.Close() != 0) {
+                    if (!StatusOk(full.Close())) {
                         return 7;
                     }
 
-                    stack mut System.IO.File.File line = System.IO.File.Open("line.txt", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.Line);
+                    stack mut System.IO.File.File line = OpenOrEmpty(System.IO.File.Open("line.txt", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.Line));
                     line.WriteLine("Line");
                     if (ReadCount("line.txt", 5) != 5) {
                         return 8;
                     }
 
-                    if (line.Close() != 0) {
+                    if (!StatusOk(line.Close())) {
                         return 9;
                     }
 
-                    stack mut System.IO.File.File none = System.IO.File.Open("none.txt", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.None);
+                    stack mut System.IO.File.File none = OpenOrEmpty(System.IO.File.Open("none.txt", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.None));
                     none.WriteText("None");
                     if (ReadCount("none.txt", 4) != 4) {
                         return 10;
                     }
 
-                    if (none.Close() != 0) {
+                    if (!StatusOk(none.Close())) {
                         return 11;
                     }
 
@@ -655,28 +824,54 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                 appPath,
                 """
                 import System
+                import System.Text
                 module App
+                fn bool StatusOk(System.IO.IOStatus status) {
+                    switch (status) {
+                        case System.IO.IOStatus.Ok:
+                            return true;
+                        case System.IO.IOStatus.Err(var error):
+                            return false;
+                    }
+                }
 
-                export ffi fn i32[-2147483648 2147483647] main() {
-                    stack mut i32[-2147483648 2147483647][1] gothicBuffer = { 66376 };
+                fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
+                    switch (result) {
+                        case System.IO.IOResult<bool>.Ok(var value):
+                            return value;
+                        case System.IO.IOResult<bool>.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
+                    switch (result) {
+                        case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+                            return value;
+                        case System.IO.IOResult<System.IO.File.File>.Err(var error):
+                            return new();
+                    }
+                }
+                export unsafe fn i32[min max] main() {
+                    stack mut i32[min max][1] gothicBuffer = { 66376 };
                     stack mut Unicode gothic = new Unicode() {
                         Data = &gothicBuffer[0],
                         Length = 1,
                         Capacity = 1
                     };
 
-                    stack mut System.IO.File.File utf8 = System.IO.File.Open("utf8.txt", System.IO.File.FileMode.Write, System.Text.Encoding.UTF8);
+                    stack mut System.IO.File.File utf8 = OpenOrEmpty(System.IO.File.Open("utf8.txt", System.IO.File.FileMode.Write, System.Text.Encoding.UTF8));
                     utf8.WriteText("Hi ");
-                    utf8.WriteLine((unicode)"α");
-                    if (utf8.Close() != 0) {
+                    utf8.WriteLine((unicode)"Î±");
+                    if (!StatusOk(utf8.Close())) {
                         return 1;
                     }
 
-                    stack mut System.IO.File.File utf16 = System.IO.File.Open("utf16.txt", System.IO.File.FileMode.Write, System.Text.Encoding.UTF16);
+                    stack mut System.IO.File.File utf16 = OpenOrEmpty(System.IO.File.Open("utf16.txt", System.IO.File.FileMode.Write, System.Text.Encoding.UTF16));
                     utf16.WriteText("A");
                     utf16.WriteText(System.Text.UnicodeView(gothic));
-                    utf16.WriteLine((unicode)"β");
-                    if (utf16.Close() != 0) {
+                    utf16.WriteLine((unicode)"Î²");
+                    if (!StatusOk(utf16.Close())) {
                         return 2;
                     }
 
@@ -686,11 +881,11 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                         Capacity = 1
                     };
 
-                    stack mut System.IO.File.File utf32 = System.IO.File.Open("utf32.txt", System.IO.File.FileMode.Write, System.Text.Encoding.UTF32);
+                    stack mut System.IO.File.File utf32 = OpenOrEmpty(System.IO.File.Open("utf32.txt", System.IO.File.FileMode.Write, System.Text.Encoding.UTF32));
                     utf32.WriteText("Z");
                     utf32.WriteText(System.Text.UnicodeView(gothic));
-                    utf32.WriteLine((unicode)"γ");
-                    if (utf32.Close() != 0) {
+                    utf32.WriteLine((unicode)"Î³");
+                    if (!StatusOk(utf32.Close())) {
                         return 3;
                     }
 
@@ -733,13 +928,13 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
 
             var gothic = char.ConvertFromUtf32(66376);
             Assert.Equal(
-                System.Text.Encoding.UTF8.GetBytes("Hi α\n"),
+                System.Text.Encoding.UTF8.GetBytes("Hi Î±\n"),
                 await File.ReadAllBytesAsync(Path.Combine(appDirectory, "utf8.txt")));
             Assert.Equal(
-                System.Text.Encoding.Unicode.GetBytes("A" + gothic + "β\n"),
+                System.Text.Encoding.Unicode.GetBytes("A" + gothic + "Î²\n"),
                 await File.ReadAllBytesAsync(Path.Combine(appDirectory, "utf16.txt")));
             Assert.Equal(
-                System.Text.Encoding.UTF32.GetBytes("Z" + gothic + "γ\n"),
+                System.Text.Encoding.UTF32.GetBytes("Z" + gothic + "Î³\n"),
                 await File.ReadAllBytesAsync(Path.Combine(appDirectory, "utf32.txt")));
         }
         finally
@@ -794,39 +989,67 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                 """
                 import System
                 module App
+                fn bool StatusOk(System.IO.IOStatus status) {
+                    switch (status) {
+                        case System.IO.IOStatus.Ok:
+                            return true;
+                        case System.IO.IOStatus.Err(var error):
+                            return false;
+                    }
+                }
 
-                export ffi fn i32[-2147483648 2147483647] main() {
-                    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenWrite("before.txt");
-                    if (handle == null) {
+                fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
+                    switch (result) {
+                        case System.IO.IOResult<bool>.Ok(var value):
+                            return value;
+                        case System.IO.IOResult<bool>.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
+                    switch (result) {
+                        case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+                            return value;
+                        case System.IO.IOResult<System.IO.File.File>.Err(var error):
+                            return new();
+                    }
+                }
+                export fn i32[min max] main() {
+                    stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open("before.txt", System.IO.File.FileMode.Write));
+                    if (!file.IsOpen()) {
                         return 1;
                     }
 
-                    System.IO.File.WriteLine(handle, "Move me");
-                    if (System.IO.File.Close(handle) != 0) {
+                    if (!StatusOk(file.WriteLine("Move me"))) {
                         return 2;
                     }
 
-                    if (!System.IO.File.Exists("before.txt")) {
+                    if (!StatusOk(file.Close())) {
+                        return 2;
+                    }
+
+                    if (!BoolOrFalse(System.IO.File.Exists("before.txt"))) {
                         return 3;
                     }
 
-                    if (System.IO.File.Move("before.txt", "after.txt") != 0) {
+                    if (!StatusOk(System.IO.File.Move("before.txt", "after.txt"))) {
                         return 4;
                     }
 
-                    if (System.IO.File.Exists("before.txt")) {
+                    if (BoolOrFalse(System.IO.File.Exists("before.txt"))) {
                         return 5;
                     }
 
-                    if (!System.IO.File.Exists("after.txt")) {
+                    if (!BoolOrFalse(System.IO.File.Exists("after.txt"))) {
                         return 6;
                     }
 
-                    if (System.IO.File.Delete("after.txt") != 0) {
+                    if (!StatusOk(System.IO.File.Delete("after.txt"))) {
                         return 7;
                     }
 
-                    if (System.IO.File.Exists("after.txt")) {
+                    if (BoolOrFalse(System.IO.File.Exists("after.txt"))) {
                         return 8;
                     }
 
@@ -920,16 +1143,45 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                 appPath,
                 """
                 import System
+                import System.Text
                 module App
+                fn bool StatusOk(System.IO.IOStatus status) {
+                    switch (status) {
+                        case System.IO.IOStatus.Ok:
+                            return true;
+                        case System.IO.IOStatus.Err(var error):
+                            return false;
+                    }
+                }
 
-                export ffi fn i32[-2147483648 2147483647] main() {
-                    stack rawptr<i8[-128 127]> handle = System.IO.File.OpenWrite("unicode.txt");
-                    if (handle == null) {
+                fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
+                    switch (result) {
+                        case System.IO.IOResult<bool>.Ok(var value):
+                            return value;
+                        case System.IO.IOResult<bool>.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
+                    switch (result) {
+                        case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+                            return value;
+                        case System.IO.IOResult<System.IO.File.File>.Err(var error):
+                            return new();
+                    }
+                }
+                export fn i32[min max] main() {
+                    stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open("unicode.txt", System.IO.File.FileMode.Write, System.Text.Encoding.UTF8));
+                    if (!file.IsOpen()) {
                         return 1;
                     }
 
-                    System.IO.File.WriteLine(handle, (unicode)"File \u03B1");
-                    if (System.IO.File.Close(handle) != 0) {
+                    if (!StatusOk(file.WriteLine((unicode)"File \u03B1"))) {
+                        return 2;
+                    }
+
+                    if (!StatusOk(file.Close())) {
                         return 2;
                     }
 

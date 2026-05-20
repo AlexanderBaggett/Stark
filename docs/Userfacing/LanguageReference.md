@@ -43,6 +43,32 @@ Rules:
 * `export import` is the only re export form
 * importing a module makes its visible top level declarations available by final name, so `import System.Collections` allows `List<T>` instead of `System.Collections.List<T>`
 
+### 2.1 Comments
+
+Comments are source trivia. They are ignored before parsing, type checking, and lowering, so commented-out Stark code has no semantic or generated-code effect.
+
+Supported forms:
+
+* line comments: `// comment text`
+* block comments: `/* comment text */`
+* C# style XML documentation line comments: `/// <summary>...</summary>`
+* C# style XML documentation block comments: `/** <summary>...</summary> */`
+
+Block comments do not nest.
+
+```stark
+module Demo
+
+/// <summary>Returns the fixed answer.</summary>
+finite law i32[0 max] Run() {
+    // stack i32[0 max] ignored = 99;
+    /*
+    return ignored;
+    */
+    return 42;
+}
+```
+
 ## 3. Top Level Declarations
 
 The top level declaration categories:
@@ -198,81 +224,38 @@ Default argument syntax such as `fn i32 Add(i32 left = 1)` is not part of Stark.
 Function parameters support memory-separation and deep-immutability contracts.
 These contracts are part of the function type and are checked at call sites.
 
-The parameter-prefix `disjoint` form declares that the memory region reachable through that parameter does not overlap the memory region reachable through any other `disjoint` parameter in the same parameter list:
+Memory-backed parameters are non-overlapping by default. For ordinary `fn`, `finite`, `law`, and `finite law` declarations, every pair of parameters that describes reachable caller storage must be passed non-overlapping regions unless the callee says otherwise. This includes `borrow`, `borrow mut`, `retborrow`, `storeborrow`, slices, text views, `out`, `init`, bounded raw pointer regions, `rawptr`, and `rawmutptr`. Scalar value parameters and ordinary by-value owned aggregates do not create a user-facing non-overlap obligation just because the ABI may lower them indirectly.
+
+The default makes this common shape a non-overlap contract without extra syntax:
 
 ```stark
 fn void Add(
-    disjoint borrow f32[] left,
-    disjoint borrow f32[] right,
-    disjoint borrow mut f32[] output) {
+    borrow f32[] left,
+    borrow f32[] right,
+    borrow mut f32[] output) {
     return;
 }
 ```
 
-The relational `where disjoint(...)` form declares exact disjointness relations between named parameters or bounded memory-region expressions:
+The relational `where overlap(...)` form opts out for an intentional may-overlap relation. It removes the default non-overlap obligation for only the listed pair or group and suppresses default `noalias` facts between those regions:
 
 ```stark
-fn void Copy(borrow u8[] source, borrow mut u8[] destination)
-    where disjoint(source, destination) {
+fn void MoveBytes(borrow u8[] source, borrow mut u8[] destination)
+    where overlap(source, destination) {
     return;
 }
 ```
 
-`disjoint(a, b, c)` means every listed memory region is pairwise non-overlapping for the duration of the call. This is the form for three parameters that are all separate from each other:
+The relational `where same(...)` form requires the listed parameters to identify the same memory region. A safe call must prove same-region identity:
 
 ```stark
-fn void Process(borrow u8[] a, borrow u8[] b, borrow mut u8[] c)
-    where disjoint(a, b, c) {
+fn void CompareViewWithBacking(borrow u8[] view, borrow u8[] backing)
+    where same(view, backing) {
     return;
 }
 ```
 
-Multiple `disjoint(...)` clauses in the same `where` clause are separated with commas. They describe separate disjoint groups and do not imply disjointness between groups:
-
-```stark
-fn void ProcessPairs(
-    borrow u8[] a,
-    borrow u8[] b,
-    borrow u8[] c,
-    borrow mut u8[] d)
-    where disjoint(a, b), disjoint(c, d) {
-    return;
-}
-```
-
-In `ProcessPairs`, `a` and `b` do not overlap, and `c` and `d` do not overlap. No other pair is promised to be separate. For example, `b` and `d` may still overlap.
-
-Disjointness is not transitive. `where disjoint(a, b), disjoint(b, c)` does not mean `a` and `c` are separate.
-
-To require all four parameters to be separate from each other, put all four names in the same group:
-
-```stark
-fn void ProcessAllSeparate(
-    borrow u8[] a,
-    borrow u8[] b,
-    borrow u8[] c,
-    borrow mut u8[] d)
-    where disjoint(a, b, c, d) {
-    return;
-}
-```
-
-A disjoint contract is about memory ranges, not only root values. Two slices that point into the same allocation satisfy `disjoint` when their element ranges do not overlap. The parameter named by `disjoint` must have a memory-backed type, such as a slice, text view, borrow, initialization view, bounded raw pointer region, or raw pointer; scalar value parameters cannot carry a disjoint memory-region contract.
-
-Raw pointer parameters may expose their bounded element region directly. The forms `rawptr<T>[count]` and `rawmutptr<T>[count]` are raw pointer parameters whose valid source region contains `count` contiguous elements of `T`:
-
-```stark
-fn void CopyBytes(
-    i64[0 max] length,
-    disjoint rawptr<i8[min max]>[length] source,
-    disjoint rawmutptr<i8[min max]>[length] destination) {
-    return;
-}
-```
-
-The pointer value is still a raw pointer, but the function contract includes the region bound. A nonzero count requires a non-null pointer that is valid for every element in `0 <= index < count`; a zero-length region may use `null`. The bound expression is an integer expression over the function parameters and compile-time constants, and cyclic bounds are rejected.
-
-Raw pointer region expressions use two-index slicing syntax inside memory contracts and disjoint checks. `pointer[start, count]` names the contiguous region beginning at `pointer + start` and containing `count` elements:
+The relational `where disjoint(...)` form remains available for exact disjointness relations the parameter default cannot express, especially bounded subregions and disjointness inside an otherwise overlap-capable API:
 
 ```stark
 fn void CopyWindow(
@@ -285,12 +268,44 @@ fn void CopyWindow(
 }
 ```
 
-The expression `pointer[start, count]` is a memory-region expression, not an owning value. It is valid in `where disjoint(...)`, `if disjoint(...)`, and places where the language expects a bounded raw pointer region fact.
-
-At a safe call site, the compiler must have a proof before it lets a call satisfy a `disjoint` contract. Passing the same memory region twice, passing a whole object together with one of its fields, passing two indexed regions whose indexes are not proven separate, passing a call result or other expression whose memory root is not visible, or passing two raw pointer or slice variables whose regions have not been proven separate violates the contract:
+Whole-parameter `disjoint` groups are redundant with the default for memory-backed Stark parameters and are rejected with a fix-it diagnostic. Remove parameter-prefix `disjoint` and whole-parameter `where disjoint(a, b)` clauses; keep `where disjoint(pointer[start, count], other[start, count])` for subregions the default cannot express. FFI and assembly declarations are the exception: they do not receive Stark's default non-overlap contract, so explicit whole-parameter `disjoint` remains the opt-in spelling for external ABI boundaries. `overlap(a, b, c)` and `same(a, b, c)` are pairwise within the listed group. Multiple clauses in the same `where` clause are separated with commas:
 
 ```stark
-fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
+fn void ProcessPairs(
+    borrow u8[] a,
+    borrow u8[] b,
+    borrow u8[] c,
+    borrow mut u8[] d)
+    where overlap(a, b), same(c, d) {
+    return;
+}
+```
+
+These relations are not transitive. `where same(a, b), same(b, c)` does not prove `same(a, c)` unless that relation is also stated or separately proven, and `where overlap(a, b)` does not permit overlap between `a` and any unlisted parameter.
+
+A memory contract is about memory ranges, not only root values. Two slices that point into the same allocation satisfy a non-overlap obligation when their element ranges do not overlap. Contract operands must be memory-backed parameters or raw pointer region expressions; scalar value parameters cannot carry a memory-region contract.
+
+Raw pointer parameters may expose their bounded element region directly. The forms `rawptr<T>[count]` and `rawmutptr<T>[count]` are raw pointer parameters whose valid source region contains `count` contiguous elements of `T`:
+
+```stark
+fn void CopyBytes(
+    i64[0 max] length,
+    rawptr<i8[min max]>[length] source,
+    rawmutptr<i8[min max]>[length] destination) {
+    return;
+}
+```
+
+The pointer value is still a raw pointer, but the function contract includes the region bound. A nonzero count requires a non-null pointer that is valid for every element in `0 <= index < count`; a zero-length region may use `null`. The bound expression is an integer expression over the function parameters and compile-time constants, and cyclic bounds are rejected.
+
+Raw pointer region expressions use two-index slicing syntax inside memory contracts and disjoint checks. `pointer[start, count]` names the contiguous region beginning at `pointer + start` and containing `count` elements.
+
+The expression `pointer[start, count]` is a memory-region expression, not an owning value. It is valid in `where disjoint(...)`, `if disjoint(...)`, and places where the language expects a bounded raw pointer region fact.
+
+At a safe call site, the compiler must prove each memory relation. Default parameter pairs require non-overlap. `where same(...)` pairs require same-region identity. `where overlap(...)` pairs impose no non-overlap obligation for that relation. Passing the same memory region twice to default parameters, passing a whole object together with one of its fields, passing two indexed regions whose indexes are not proven separate, passing a call result or other expression whose memory root is not visible, or passing two raw pointer or slice variables whose regions have not been proven separate violates the default contract:
+
+```stark
+fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
     return;
 }
 
@@ -303,7 +318,8 @@ fn void MaybeBad(i32[0 2] i, i32[0 2] j) {
     Touch(&values[i], &values[j]); // STK3030 unless the indexes are proven separate
 }
 
-fn void Unknown(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight) {
+fn void Unknown(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight)
+    where overlap(maybeLeft, maybeRight) {
     Touch(maybeLeft, maybeRight); // STK3030: different pointer names are not a proof
 }
 
@@ -311,14 +327,37 @@ fn rawmutptr<i32[min max]> Identity(rawmutptr<i32[min max]> ptr) {
     return ptr;
 }
 
-fn void HiddenRoot(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight) {
+fn void HiddenRoot(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight)
+    where overlap(maybeLeft, maybeRight) {
     Touch(Identity(maybeLeft), maybeRight); // STK3030: the left root is hidden behind a call
 }
 ```
 
-Inside an `unsafe` block, raw pointer separation may be a programmer-proven fact instead of a compiler-proven one. The compiler still rejects obvious self-overlap.
+An ordinary `unsafe` block does not bypass parameter non-overlap. Trusted external separation must be written as a scoped unsafe assertion:
 
-Distinct projections that the compiler can see do not overlap, non-overlapping index ranges, compiler-visible text slice ranges such as `text[0, 4]` and `text[4, 4]`, bounded raw pointer region expressions, exclusive mutable borrow roots, `out`/`init` destination roots, immutable slice/text views whose backing storage is compiler-visible, separately addressed local storage, declared parameter contracts, and true branches of `if disjoint(...)` may satisfy the contract. Readonly borrows do not prove disjointness by themselves because two readonly views may alias the same immutable region.
+```stark
+unsafe fn void ExternallySeparated(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+    where overlap(left, right) {
+    unsafe assume disjoint(left, right) {
+        Touch(left, right);
+    }
+}
+```
+
+`unsafe assume disjoint(...)` introduces a scoped non-overlap fact for the nested statement and lets the backend emit scoped `noalias` metadata without a runtime check. The assertion must name compiler-visible memory roots or representable subregions. It does not silence obvious same-root overlap, hidden call results, or integer-laundered pointers.
+
+Inside an `unsafe fn` or an existing `unsafe { ... }` block, the leading `unsafe` is optional:
+
+```stark
+unsafe fn void AlreadyUnsafe(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+    where overlap(left, right) {
+    assume disjoint(left, right) {
+        Touch(left, right);
+    }
+}
+```
+
+Distinct projections that the compiler can see do not overlap, non-overlapping index ranges, compiler-visible text slice ranges such as `text[0, 4]` and `text[4, 4]`, bounded raw pointer region expressions, exclusive mutable borrow roots, `out`/`init` destination roots, immutable slice/text views whose backing storage is compiler-visible, separately addressed local storage, declared parameter contracts, and true branches of `if disjoint(...)` may satisfy the contract. Local raw pointers, slice locals, text locals, and borrowed local views are not non-overlapping merely because they are separate declarations; local facts come from provenance. Pointer copies and simple casts preserve same-region identity.
 
 ```stark
 struct Pair {
@@ -326,7 +365,7 @@ struct Pair {
     i32[min max] Right;
 }
 
-fn void Fields(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
+fn void Fields(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
     return;
 }
 
@@ -334,8 +373,7 @@ fn void Good(borrow mut Pair pair) {
     Fields(&pair.Left, &pair.Right);
 }
 
-fn void Forward(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
-    where disjoint(left, right) {
+fn void Forward(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
     Fields(left, right);
 }
 ```
@@ -350,7 +388,7 @@ fn i32[0 max] Lookup(const Table table, i32[0 max] key) {
 
 Projections from a `const` parameter remain deeply readonly. Safe code may not derive a mutable borrow, mutable raw pointer, or mutation-capable alias from any reachable part of a const parameter graph.
 
-`const` does not imply `disjoint`. Two const parameters can refer to the same immutable object graph unless `disjoint` is also written or proven.
+`const` does not imply local non-overlap. Local const views can refer to the same immutable object graph. Memory-backed function parameters remain non-overlapping by default unless the callee declares `where overlap(...)` or `where same(...)`.
 
 ### 5.5 Function Items and Function Pointers
 
@@ -359,7 +397,7 @@ Stark's first class callable model starts with **function items**.
 A function item is the callable value represented by a named function. It is not a raw pointer by default, does not capture state, and can usually be specialized, inlined, or called directly.
 
 ```stark
-fn i32[-2147483648 2147483647] Worker() {
+fn i32[min max] Worker() {
     return 0;
 }
 
@@ -371,8 +409,8 @@ fn void Start() {
 Function items may be promoted to explicit function pointer values when a runtime pointer is required.
 
 ```stark
-stack fnptr<fn i32[-2147483648 2147483647]()> entry = Worker;
-stack i32[-2147483648 2147483647] result = entry();
+stack fnptr<fn i32[min max]()> entry = Worker;
+stack i32[min max] result = entry();
 ```
 
 Promotion to a function pointer is the point where the function becomes address taken. Ordinary function item use stays direct; indirect callable behavior is requested explicitly through a `fnptr` value.
@@ -380,10 +418,64 @@ Promotion to a function pointer is the point where the function becomes address 
 Function pointer types carry the function kind in their signature:
 
 ```stark
-fnptr<fn i32[0 max](i32[0 max])>
-fnptr<finite i32[0 max](i32[0 max])>
+fnptr<fn i32[min max](i32[min max])>
+fnptr<finite i32[min max](i32[min max])>
 fnptr<law bool(borrow Item)>
-fnptr<finite law i32[0 max](i32[0 max])>
+fnptr<finite law i32[min max](i32[min max])>
+```
+
+The kind is part of the callable contract. `fnptr<fn ...>` is the general
+form. `fnptr<finite ...>` may only hold callbacks that guarantee progress and
+return. `fnptr<law ...>` may only hold callbacks that are pure/read-only and
+have no visible side effects. `fnptr<finite law ...>` requires both sets of
+guarantees.
+
+Stronger function items can be used where a weaker function pointer is expected:
+
+```stark
+finite law i32[min max] Clamp(i32[min max] value) {
+    return value;
+}
+
+fn void Register() {
+    stack fnptr<fn i32[min max](i32[min max])> general = Clamp;
+    stack fnptr<finite i32[min max](i32[min max])> bounded = Clamp;
+    stack fnptr<law i32[min max](i32[min max])> pure = Clamp;
+    stack fnptr<finite law i32[min max](i32[min max])> strict = Clamp;
+    return;
+}
+```
+
+A weaker function item cannot be promoted to a stronger function pointer. This
+keeps higher-order APIs honest: a `law` function can call a
+`fnptr<law ...>` callback without losing its own law guarantee, and a `finite`
+function can call a `fnptr<finite ...>` callback without accepting a callback
+that may fail to make progress. The compiler preserves these facts for indirect
+calls so optimized builds can keep the same progress, termination, purity, and
+memory-effect guarantees that direct calls expose.
+
+`fnptr` values are non-null callable pointers. A function pointer must come from
+a compatible function item or non-capturing lambda; `null` is not assignable to a
+`fnptr`. Struct fields and fixed-array elements that contain function pointers
+must be explicitly initialized when an aggregate initializer would otherwise
+zero-fill them.
+
+Function pointer types also carry memory-separation contracts for memory-backed
+parameters. Because `fnptr` parameter lists do not name parameters, contract
+clauses use synthetic names `arg0`, `arg1`, and so on. Memory-backed `fnptr`
+parameters are non-overlapping by default; use `where overlap(arg0, arg1)` when
+the indirect callee permits overlap, or `where same(arg0, arg1)` when the call
+requires identical storage.
+Bounded raw pointer parameters inside a `fnptr` use the same synthetic names in
+their count expressions. For example, `rawptr<T>[arg1]` means the first callback
+argument is valid for the element count supplied as the second callback
+argument. The bound is part of the function-pointer contract and is preserved
+through package images and indirect-call lowering.
+
+```stark
+fnptr<fn void(borrow mut Buffer, borrow mut Buffer) where overlap(arg0, arg1)>
+fnptr<fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>) where same(arg0, arg1)>
+fnptr<fn void(rawptr<i32[min max]>[arg1], u8[1 10])>
 ```
 
 The current `fnptr` type is an ordinary safe callable pointer. Unsafe function items cannot be promoted to ordinary `fnptr` values because that would hide the unsafe requirement from later calls. Call unsafe functions directly inside an `unsafe` block, or expose a safe wrapper that checks the required conditions.
@@ -393,10 +485,10 @@ The current `fnptr` type is an ordinary safe callable pointer. Unsafe function i
 Lambda syntax follows the C# arrow form:
 
 ```stark
-stack fnptr<fn i32[0 max](i32[0 max])> square =
-    (i32[0 max] value) => value * value;
+stack fnptr<fn i32[min max](i32[min max])> square =
+    (i32[min max] value) => value * value;
 
-stack fnptr<fn i32[-2147483648 2147483647](rawmutptr<State>)> worker =
+stack fnptr<fn i32[min max](rawmutptr<State>)> worker =
     (rawmutptr<State> state) => {
         return Worker(state);
     };
@@ -405,6 +497,9 @@ stack fnptr<fn i32[-2147483648 2147483647](rawmutptr<State>)> worker =
 A lambda with no capture list is non capturing. It may be used where a matching function pointer is expected.
 
 Capturing lambdas use an explicit capture list. Capture is never implicit.
+Capture lists are checked, but a lambda converted to `fnptr<...>` cannot capture
+local state because a function pointer does not carry closure storage. Use a
+named function item or pass captured state explicitly.
 
 ```stark
 UseTransform(capture(copy scale, read table) (i32[0 max] index) => {
@@ -435,6 +530,72 @@ capture(unsafe shared x)
 
 These modes are explicit because they weaken Stark's ordinary closed and non shared memory assumptions.
 
+### 5.7 Closure Types
+
+Closures are the capturing callable values. A closure signature reuses the
+function pointer signature shape, but the storage form is visible in the type:
+
+```stark
+inline closure<fn void(mut borrow Ui)>
+borrow closure<fn i32[min max](i32[min max])>
+mut borrow closure<mut fn void(i32[min max])>
+heap closure<fn void()>
+heap closure<once fn Packet()>
+```
+
+`inline closure<...>` is a compile time specialization contract, not runtime
+storage. It may appear directly as a function parameter and the callee is
+specialized for the lambda body and capture facts. It cannot be stored in a
+local or field, returned, placed in an array, nested inside `fnptr` or another
+runtime callable type, or converted to `fnptr`.
+
+```stark
+inline fn i32[min max] ApplyInline(
+    i32[min max] value,
+    inline closure<fn i32[min max](i32[min max])> op) {
+    return op(value);
+}
+
+fn i32[min max] RunInline(i32[min max] offset) {
+    return ApplyInline(
+        41,
+        capture(copy offset) (i32[min max] value) => value + offset);
+}
+```
+
+`borrow closure<...>` is a non escaping runtime view. It lowers to an invoke
+pointer plus an environment pointer. Captured stack storage must outlive the
+borrowed closure view, and the view cannot be returned or stored unless the API
+uses an explicit stored borrow form.
+
+```stark
+fn i32[min max] ApplyBorrow(
+    borrow closure<fn i32[min max](i32[min max])> op,
+    i32[min max] value) {
+    return op(value);
+}
+```
+
+`heap closure<...>` owns a heap allocated environment. It is the form for
+stored, returned, or retained callbacks. Heap closures may capture copied values
+and moved owned values; they reject ordinary stack borrows unless the program
+uses an explicit safe stored-borrow or unsafe shared capability.
+
+```stark
+fn heap closure<fn i32[min max](i32[min max])> MakeAdder(i32[min max] offset) {
+    return heap capture(copy offset) (i32[min max] value) => value + offset;
+}
+```
+
+Closure call capability is part of the type:
+
+* no marker: the closure may be called repeatedly without mutating or consuming
+  its environment.
+* `mut`: calling the closure may mutate the environment and requires mutable
+  access to the closure value, except for inline closures where there is no
+  runtime closure value.
+* `once`: calling the closure consumes it. A second call is a use after move.
+
 ## 6. Types
 
 ### 6.1 Builtin Types
@@ -452,26 +613,28 @@ The builtin type families:
 
 Examples:
 
-* `i32[0 255]`
-* `u8[0 255]`
-* `i64[-9223372036854775808 9223372036854775807]`
-* `i128[0 340282366920938463463374607431768211455]`
+* `u8[0 max]`
+* `i32[min max]`
+* `i64[min max]`
+* `u128[0 max]`
 * `f16`, `f32`, `f64`, `f80`, `f128`
 
 Integer source types are always written as explicit ranged forms over one of the supported widths.
 
 ```stark
-i32[0 255]
+u8[0 max]
 i32[min max]
-i64[0 max]
+u64[0 max]
 u8[min 127]
-i32[10**2 10**10]
-i64[1024 * 1024 1024 * 1024 * 1024]
+u48[10 ** 2 10 ** 10]
+u32[1024 * 1024 1024 * 1024 * 1024]
 ```
 
-Within an integer range, `min` and `max` are type relative endpoint names. For signed `iN` ranges they mean the signed minimum and maximum for that width. For unsigned `uN` ranges they mean `0` and `2**N - 1`.
+Within an integer range, `min` and `max` are type relative endpoint names. For signed `iN` ranges they mean the signed minimum and maximum for that width. For unsigned `uN` ranges they mean `0` and `2 ** N - 1`.
 
-Unsigned integer widths are real integer types, not aliases for signed integers with non negative ranges. For `uN`, `min` is `0` and `max` is `2**N - 1`. Negative endpoints and endpoints outside that width are rejected.
+Unsigned integer widths are real integer types, not aliases for signed integers with non negative ranges. For `uN`, `min` is `0` and `max` is `2 ** N - 1`. Negative endpoints and endpoints outside that width are rejected.
+
+Stark rejects non negative signed ranges and unnecessarily wide integer range storage by default. For example, write `u8[0 max]` instead of `i32[0 255]`, and use a narrower supported width when the declared range fits. `ffi` signatures and declarations annotated with `[Platform]` may preserve signedness and width when they mirror an external platform ABI. When an endpoint is the full minimum or maximum for its base integer type, use the type relative shorthand: signed lower endpoints use `min`, all full-width upper endpoints use `max`, and unsigned lower endpoints may use either `0` or `min`. Stylistically we prefer `[min max]` over exponentiation for the same values. We prefer exponentiation for values > 1024 and values < -1024.
 
 Range endpoints support compile time integer arithmetic over literals and type relative endpoint names. Supported endpoint operators: `+`, `-`, `*`, `/`, `%`, `**`, unary `-`, and parentheses. Endpoint arithmetic is checked during compile time evaluation.
 
@@ -479,12 +642,14 @@ Bare width names such as `i32` are convenient family labels in prose, but they a
 
 Scalar integer constants are the exception: they should be declared without an explicit integer type. A `const` integer is compile time known and cannot change, so Stark derives both the exact single value range and the smallest supported storage width that can hold it. If a scalar integer const does name a type, it uses only the bare width form such as `i8` or `i32`; ranged forms such as `i32[min max]` are for runtime integer values, not scalar constants.
 
+An explicit scalar integer const width or sign must also be canonical. For example, `const u8 Count = 80;` is accepted, while `const i32 Count = 80;` is rejected with a suggestion to use `u8` or omit the explicit integer type.
+
 ```stark
-const PageSize = 2**12;      // i16 storage
-const BoardWidth = 80;      // i8 storage
-const BigCount = 2**16;     // i24 storage
+const PageSize = 2 ** 12;      // i16 storage
+const BoardWidth = 80;      // u8 storage
+const BigCount = 2 ** 16;     // u24 storage
 const i8 SmallCount = 80;   // accepted explicit width
-const i32 WideCount = 80;   // accepted, with a warning that storage is i8
+const i32 WideCount = 80;   // compile-time error; use u8 or omit the explicit type
 ```
 
 For floating point constants, an unsuffixed decimal such as `80.0` is `f64`. Use an `f` suffix for `f32`, as in `80.0f`.
@@ -646,7 +811,7 @@ fn void Copy(
     i64[0 max] length,
     rawptr<i8[min max]>[length] source,
     rawmutptr<i8[min max]>[length] destination)
-    where disjoint(source, destination) {
+    where disjoint(source[0, length], destination[0, length]) {
     unsafe {
         stack i8[min max][] sourceView = slice(source, length);
         stack mut i8[min max][] destinationView = slice(destination, length);
@@ -686,6 +851,8 @@ The main rules:
 * moves transfer ownership
 * moved values cannot be used again
 * owned values are dropped automatically at scope exit
+* assignment to an initialized owned place drops the previous value first
+* parameters owned by the callee are dropped at function exit unless moved out
 * safe borrows are non owning and non null
 * raw pointers are the only null capable pointer forms
 * safe code cannot use `forget` style escape hatches
@@ -707,8 +874,8 @@ The deep-const parameter form is:
 
 The memory-separation forms are:
 
-* `disjoint T name`: parameter-prefix disjointness for function parameters
-* `where disjoint(a, b)`: relational disjointness between named memory regions
+* `disjoint T name`: external-boundary opt-in disjointness for FFI/asm parameters
+* `where disjoint(a[start, count], b[start, count])`: relational disjointness between subregions or computed memory regions
 
 `disjoint` means the named memory regions do not overlap. `const` means the reachable memory cannot be mutated through safe Stark code. The two contracts are independent; immutable memory can still alias another immutable view.
 
@@ -737,7 +904,8 @@ For the full borrowing model and design rationale, see [BorrowerSystem.md](./Bor
 
 `struct` and `record` declarations may declare one destructor block.
 
-Readonly form:
+Readonly form. `PlatformClose` is a placeholder for a non-fallible platform
+cleanup helper supplied by the type implementation:
 
 ```stark
 drop {
@@ -921,14 +1089,14 @@ The storage classes:
 
 `register` is a local only value style storage class. A `register` local has no stable source visible address: safe code may not take `&local`, form a slice view from it, or otherwise require something with an address. It is not a promise that a hardware register will be allocated; it is a request to keep the value in registers when possible. Use `stack` when a stable address is required.
 
-Function local `static` storage is reserved until Stark defines how static duration locals are initialized, identified, and torn down. Use a top level `static` global for global lifetime storage.
+Function local `static` storage is not a valid local storage class. Use a top level `static` global for global lifetime storage.
 
 `dynamic T` is not a storage class. It is an owned dynamic storage type. A declaration such as `stack mut dynamic i32[0 max] values = new();` places the dynamic owner/header in the stack local, while the dynamic value manages its own capacity-bearing backing storage.
 
 The standardized allocation backed storage classes:
 
 * `heap`: uses the default global general purpose allocator. Safe Stark code does not manually free `heap` values; ownership and scope still govern destruction.
-* `arena`: reserved for a region allocator intended for fast bump style allocation with bulk reclamation when the lexical arena region ends. The current compiler rejects `arena` locals until arena support is implemented.
+* `arena`: reserved for future allocator-backed region storage. It is not a valid executable local storage class; use `stack` or `heap`.
 
 Mutability remains opt in:
 
@@ -1004,7 +1172,7 @@ fn i32[0 10] CountFour() {
 }
 ```
 
-Accepted `independent` loops preserve the contract through lowering and emit LLVM loop `mustprogress` metadata. Memory operations in the accepted canonical slice, fixed-array, and bounded raw pointer region subset also receive LLVM `!llvm.access.group`, and the loop latch receives `!llvm.loop.parallel_accesses`. Raw pointer accesses in this subset may use the normal raw pointer spelling `*(&root[index])` when `root` has a bounded raw pointer region. Unbounded pointer dereferences, address-of expressions that create new unbounded regions, member access that is not rooted at `root[index]`, non-induction indexes, memory-backed local declarations, nested loops, early exits, and calls with unproven memory effects produce `STK3027`.
+Accepted `willexit` loops preserve their progress contract through lowering and emit LLVM loop `mustprogress` metadata. Accepted `independent` loops additionally preserve the no-loop-carried-memory-dependence contract through lowering. Memory operations in the accepted canonical slice, fixed-array, and bounded raw pointer region subset receive LLVM `!llvm.access.group`, and the loop latch receives `!llvm.loop.parallel_accesses`. Raw pointer accesses in this subset may use the normal raw pointer spelling `*(&root[index])` when `root` has a bounded raw pointer region. Unbounded pointer dereferences, address-of expressions that create new unbounded regions, member access that is not rooted at `root[index]`, non-induction indexes, memory-backed local declarations, nested loops, early exits, and calls with unproven memory effects produce `STK3027`.
 
 ### 10.3 Disjoint Branch Conditions
 
@@ -1128,7 +1296,7 @@ This is the required surface for conversions Stark keeps explicit:
 * fixed array to slice view conversions
 * ascii and unicode text conversions for compile time text constants
 
-Runtime conversion between `ascii`, UTF-16 buffers, and `unicode` values uses the explicit `System.Text` helper APIs such as `TryConvertAsciiToUnicode`, `TryConvertAsciiToUtf16`, `TryConvertUtf16ToUnicode`, `TryConvertUnicodeToAscii`, `TryConvertUnicodeToUtf16`, and `TryConvertUtf16ToAscii`, all with caller owned destination storage.
+Runtime conversion between `ascii`, owned UTF-16 buffers, and `unicode` values uses the explicit `System.Text` helper APIs such as `FromAsciiToUnicode`, `FromAsciiToUtf16`, `FromUtf16ToUnicode`, `FromUnicodeToAscii`, `FromUnicodeToUtf16`, and `FromUtf16ToAscii`. These use owned/dynamic destination storage and report allocation failure with `System.Memory.MemoryStatus`.
 
 These conversions may not strengthen mutability. Safe code may not use explicit conversions to turn a readonly raw pointer into `rawmutptr<T>`, and may not strip the readonly or frozen origin off a raw pointer to regain mutation later.
 
@@ -1137,8 +1305,8 @@ These conversions may not strengthen mutability. Safe code may not use explicit 
 From highest to lowest:
 
 1. postfix: calls, indexing, member access
-2. unary: explicit conversions, unary `+`, unary `-`, `!`, `~`, raw `&`, raw `*`
-3. exponentiation: `**` with right associative parsing
+2. exponentiation: `**` with right associative parsing
+3. unary: explicit conversions, unary `+`, unary `-`, `!`, `~`, raw `&`, raw `*`
 4. multiplicative: `*`, `/`, `%`
 5. additive: `+`, `-`
 6. shifts: `<<`, `>>`
@@ -1194,7 +1362,7 @@ Each adjacent comparison must be individually legal under Stark's ordinary compa
 Exponentiation uses `**`.
 
 * `**` is legal for floating point operands
-* integer `**` is legal for integer operands and is folded in compile time constant contexts such as const numeric initializers and range endpoints
+* integer `**` is legal for integer operands and compile time constant exponent expressions are folded before runtime lowering
 * ordinary runtime integer exponentiation is supported for integer operands
 
 ### 11.5 Floating Point Contract
@@ -1265,7 +1433,7 @@ Each `{...}` hole is parsed and checked as an ordinary Stark expression. Compile
 Runtime holes need caller selected storage:
 
 ```stark
-fn Ascii ScoreLabel(i32[-2147483648 2147483647] score) {
+fn Ascii ScoreLabel(i32[min max] score) {
     stack Ascii label[64] = $"Score: {score}";
     return label;
 }
@@ -1330,7 +1498,7 @@ The first explicit owned conversion APIs live as ordinary `System.Text` function
 stack System.Memory.MemoryResult<System.Text.OwnedAscii> label =
     System.Text.ToAscii((i64)42);
 
-stack i64[-9223372036854775808 9223372036854775807] score = 42;
+stack i64[min max] score = 42;
 stack System.Memory.MemoryResult<System.Text.OwnedAscii> methodLabel =
     score.ToAscii();
 
@@ -1387,7 +1555,7 @@ Outside that boundary:
 Foreign C APIs that use variadic arguments may be declared with `ffi varargs`:
 
 ```stark
-public ffi varargs fn i32 printf(ascii format);
+public unsafe ffi varargs fn i32 printf(ascii format);
 ```
 
 `varargs` is only valid on `ffi` declarations that end with `;`. Stark functions do not define C style variadic bodies.
@@ -1402,9 +1570,9 @@ The fixed parameters are checked normally. Extra call arguments are allowed afte
 Stark does not hide C's default argument promotions. If a C variadic function expects a floating point value, pass `f64`; cast `f32` to `f64` yourself. If a value is smaller than 32 bits, cast it to an explicit `i32` or `u32` first.
 
 ```stark
-public ffi varargs fn i32 printf(ascii format);
+public unsafe ffi varargs fn i32 printf(ascii format);
 
-fn i32 PrintScore(i32[min max] score) {
+unsafe fn i32 PrintScore(i32[min max] score) {
     return printf("Score: %d\n", score);
 }
 ```
@@ -1417,7 +1585,7 @@ Unsafe code may perform only operations that are explicitly gated as unsafe. Own
 
 Dynamic sparse-slot proofs are one such unsafe operation. The proof asserts that a particular dynamic storage slot is initialized even though the compiler cannot derive that fact from the dense `0..Length` prefix. The compiler does not export that assertion into later safe code.
 
-The unsafe forms:
+Use `unsafe fn` for functions whose contract depends on caller-proven raw memory or ABI invariants. Use an `unsafe { ... }` block when a safe API has a small audited implementation boundary:
 
 ```stark
 unsafe fn rawmutptr<T> FromAddress<T>(i64[0 max] address);
@@ -1429,6 +1597,19 @@ fn void UseAddress(i64[0 max] address) {
 }
 ```
 
+The following require an unsafe context:
+
+* declaring a function with `rawptr` or `rawmutptr` in its signature
+* declaring FFI or assembly functions
+* declaring local raw pointer variables
+* using `&` to form a raw address
+* using `*` to dereference a raw pointer
+* converting to or from raw pointer types, including pointer/integer conversions
+* constructing raw slices with `slice(pointer, count)`
+* calling unsafe functions
+* erasing unsafe function items to ordinary `fnptr` values for callback ABI use
+* using unsafe capture modes such as `capture(unsafe addr value)`
+
 Unsafe operation markers may also appear at the operation that crosses the proof boundary:
 
 ```stark
@@ -1437,9 +1618,9 @@ RegisterCallback(capture(unsafe addr token) () => {
 });
 ```
 
-FFI imports that expose raw platform obligations should be declared as unsafe or wrapped behind a safe Stark API. The standard library should keep unsafe raw and FFI operations inside small implementation boundaries and expose ordinary result and status based safe APIs where possible.
+FFI imports and assembly declarations must be declared `unsafe`. Raw pointers should normally be avoided outside FFI, OS/platform, allocator/runtime, and tightly audited implementation code. Prefer borrows, slices, `dynamic` storage, owned handle types, or platform wrappers for ordinary APIs.
 
-Unsafe requirements are not erased by ordinary callable values. Until Stark has an explicit unsafe function pointer type, an `unsafe fn` may be called only directly from an unsafe context and may not be stored in an ordinary `fnptr`.
+Unsafe function items can be promoted to ordinary `fnptr` values only inside an unsafe context. This is intended for ABI callback registration where the platform API stores a plain function pointer. After erasure, the programmer owns the proof that the callback is invoked only under the unsafe function's documented invariants.
 
 ## 14. Runtime Surface
 
@@ -1450,7 +1631,9 @@ The runtime contract:
 * recoverable errors are represented as ordinary values
 * panic, assert, and failure paths are unrecoverable and do not unwind
 * unrecoverable failure terminates execution through a trap or abort style path
-* the canonical hosted entrypoint is `export ffi fn i32 main()`
+* the canonical safe hosted entrypoint is `export fn i32[min max] main()`
+* `main` only needs `unsafe` or `ffi` when its signature/body uses unsafe or
+  foreign boundary features, such as raw hosted `argc`/`argv`
 * normal process termination happens by returning from `main`
 * foreign unwinding into or through Stark code is unsupported
 

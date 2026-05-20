@@ -28,5 +28,5 @@ Status: covered by `ExamplesCompileRunTests.ModulesExampleCompilesAndRuns`.
 
 ## Related
 
-- [Modules, Visibility, and Packages](/book/14-modules-visibility-packages/)
+- [Modules, Visibility, and Packages](/book/15-modules-visibility-packages/)
 - [Modules and visibility](/reference/language/ModulesAndVisibility/)

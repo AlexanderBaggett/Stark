@@ -96,7 +96,7 @@ Winsock `accept`.
 `TcpClient.Read` and `TcpClient.Write` use caller-provided byte slices:
 
 ```stark
-stack mut i8[-128 127][4] buffer = { 0, 0, 0, 0 };
+stack mut i8[min max][4] buffer = { 0, 0, 0, 0 };
 stack System.Net.NetResult<i64[0 max]> read = client.Read(buffer);
 stack System.Net.NetResult<i64[0 max]> written = client.Write(buffer);
 ```

@@ -1,6 +1,6 @@
 +++
 title = "Appendix F: Package Manifest Reference"
-weight = 400
+weight = 420
 book_part = "Appendices"
 book_status = "draft"
 prev = "/book/appendix-e-storage-classes/"

@@ -26,5 +26,5 @@ Status: covered by `ExamplesCompileRunTests.DataModelExampleCompilesAndRuns`.
 
 ## Related
 
-- [Aggregates and Layout-Aware Design](/book/11-aggregates-layout/)
+- [Aggregates and Layout-Aware Design](/book/12-aggregates-layout/)
 - [Language reference](/reference/language/LanguageReference/)

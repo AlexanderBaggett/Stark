@@ -1,22 +1,23 @@
 import System
+import System.Text
 module Benchmarks.Text.AsciiToUnicodeConversionRuntime
 
-ffi fn i64[0 max] strlen(rawptr<i8[-128 127]> text);
+unsafe ffi fn u64[0 2 ** 63 - 1] strlen(rawptr<i8[min max]> text);
 
 const Iterations = 50000;
 const Capacity = 512;
 
-export ffi fn i32[min max] main(i32[min max] argc, rawmutptr<rawmutptr<i8[-128 127]>> argv) {
+export unsafe ffi fn i32[min max] main(i32[min max] argc, rawmutptr<rawmutptr<i8[min max]>> argv) {
     if (argc <= 0 || argv == null) {
         return 1;
     }
 
-    stack rawmutptr<i8[-128 127]> sourceData = *argv;
+    stack rawmutptr<i8[min max]> sourceData = *argv;
     if (sourceData == null) {
         return 1;
     }
 
-    stack i64[0 max] sourceLength = strlen(sourceData);
+    stack u64[0 2 ** 63 - 1] sourceLength = strlen(sourceData);
     if (sourceLength == 0 || sourceLength > Capacity) {
         return 1;
     }
@@ -27,7 +28,7 @@ export ffi fn i32[min max] main(i32[min max] argc, rawmutptr<rawmutptr<i8[-128 1
         Capacity = sourceLength
     };
     stack ascii source = System.Text.AsciiView(sourceOwner);
-    stack mut i32[-2147483648 2147483647][512] unicodeBuffer = { 0 };
+    stack mut i32[min max][512] unicodeBuffer = { 0 };
     stack mut Unicode unicodeText = new Unicode() {
         Data = &unicodeBuffer[0],
         Length = 0,
@@ -35,13 +36,13 @@ export ffi fn i32[min max] main(i32[min max] argc, rawmutptr<rawmutptr<i8[-128 1
     };
     stack mut i64[min max] checksum = 0;
 
-    for willexit (stack mut i32[0 50000] i = 0; i < Iterations; i += 1) {
+    for willexit (stack mut u16[0 50000] i = 0; i < Iterations; i += 1) {
         if (!System.Text.TryConvertAsciiToUnicode(&unicodeText, source)) {
             return 2;
         }
 
         checksum += unicodeText.Length;
-        for willexit (stack mut i64[0 512] index = 0; index < unicodeText.Length; index += 1) {
+        for willexit (stack mut u16[0 512] index = 0; index < unicodeText.Length; index += 1) {
             checksum += *(&unicodeText.Data[index]);
         }
     }

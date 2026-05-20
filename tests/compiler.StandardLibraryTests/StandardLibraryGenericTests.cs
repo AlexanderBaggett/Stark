@@ -8,6 +8,9 @@ public sealed class StandardLibraryGenericTests
     public void StdLibSourceGraphIncludesMilestone7ModuleLayout() => _suite.StdLibSourceGraphIncludesMilestone7ModuleLayout();
 
     [Fact]
+    public void StdLibSourceTreeHasNoExperimentalModules() => _suite.StdLibSourceTreeHasNoExperimentalModules();
+
+    [Fact]
     public void StdLibSourceCommonErrorResultModelUsesCompactEnumLayouts() => _suite.StdLibSourceCommonErrorResultModelUsesCompactEnumLayouts();
 
     [Fact]

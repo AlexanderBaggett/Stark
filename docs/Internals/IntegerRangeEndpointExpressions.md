@@ -7,9 +7,9 @@ The goal is to allow richer expressions inside integer range bounds such as:
 ```stark
 i32[min max]
 i64[0 max]
-i32[10**2 10**10]
-i32[2**4 2**16]
-i32[someInteger**someInteger x**y]
+i32[10 ** 2 10 ** 10]
+i32[2 ** 4 2 ** 16]
+i32[someInteger ** someInteger x ** y]
 i32[0 length - 1]
 i64[0 sizeof(Buffer) - 1]
 ```
@@ -26,13 +26,13 @@ i64[0 sizeof(Buffer) - 1]
 - [x] Add constant arithmetic in range endpoints.
   - [x] Support ordinary integer arithmetic in endpoint expressions.
   - [x] Support exponentiation with `**`.
-  - [x] Support examples such as `i32[10**2 10**10]`, `i32[2**4 2**16]`, and `i64[1024 * 1024 1024 * 1024 * 1024]`.
+  - [x] Support examples such as `i32[10 ** 2 10 ** 10]`, `i32[2 ** 4 2 ** 16]`, and `i64[1024 * 1024 1024 * 1024 * 1024]`.
   - [x] Diagnose constant endpoint overflow during compile-time evaluation.
   - [x] Preserve the current requirement that the lower endpoint must not exceed the upper endpoint when both are compile-time-known.
 
 - [ ] Add named constants in range endpoints.
   - [ ] Allow constants declared with `const` to appear in endpoint expressions.
-  - [ ] Support expressions such as `PageSize - 1` after `const PageSize = 2**12;`.
+  - [ ] Support expressions such as `PageSize - 1` after `const PageSize = 2 ** 12;`.
   - [ ] Resolve constants using the same module/import visibility rules as other Stark names.
   - [ ] Reject non-constant locals in compile-time-only endpoint contexts.
 
@@ -48,7 +48,7 @@ i64[0 sizeof(Buffer) - 1]
 ### Runtime Scope
 - [ ] Add runtime-dependent endpoint expressions.
   - [ ] Support endpoint expressions that reference values in scope, such as `fn i32[0 length - 1] LastIndex(i32[1 max] length)`.
-  - [ ] Support runtime exponent expressions such as `i32[someInteger**someInteger x**y]`.
+  - [ ] Support runtime exponent expressions such as `i32[someInteger ** someInteger x ** y]`.
   - [ ] Define when runtime endpoint expressions are allowed in signatures, locals, returns, and generic/package-image metadata.
   - [ ] Define what runtime checks are required when a value enters a dependent range.
   - [ ] Define what proof facts can eliminate runtime checks.

@@ -32,5 +32,5 @@ Status: checked by `ExamplesCompileRunTests.RaylibStarkModulesCheckWithoutNative
 
 ## Related
 
-- [FFI, Raw Pointers, and Native Packages](/book/19-ffi-raw-pointers-native-packages/)
-- [Native Package Project](/book/33-project-native-package/)
+- [FFI, Raw Pointers, and Native Packages](/book/20-ffi-raw-pointers-native-packages/)
+- [Native Package Project](/book/36-project-native-package/)

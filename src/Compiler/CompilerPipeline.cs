@@ -21,7 +21,9 @@ public sealed record CompilerOptions(
     LlvmTargetInfo? TargetInfo = null,
     bool QualifyModuleSymbols = false,
     CompilerOptimizationLevel OptimizationLevel = CompilerOptimizationLevel.O3,
-    bool InternalizeModulePrivate = false);
+    bool InternalizeModulePrivate = false,
+    bool EnforceIntegerRangeStorageRules = true,
+    IReadOnlySet<string>? ImportedInlineCloneSeedFunctions = null);
 
 public readonly record struct ArtifactKey<T>(string Name);
 

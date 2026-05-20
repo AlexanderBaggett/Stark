@@ -16,7 +16,7 @@ public sealed class BorrowLivenessValidationTests
             StorageLive("box", BoxType),
             StorageLive("alias", BorrowBoxType),
             Assign("alias", BorrowBoxType, new MidLevelIrUseRValue(new MidLevelIrLocalOperand("box", BoxType)), "alias = box"),
-            Evaluate(new MidLevelIrCallRValue("Consume", [new MidLevelIrLocalOperand("box", BoxType)], StarkTypeSymbols.Void, "Consume(box)"), "Consume(box)"),
+            Evaluate(CallStatement("Consume", [new MidLevelIrLocalOperand("box", BoxType)], "Consume(box)"), "Consume(box)"),
             Evaluate(new MidLevelIrUseRValue(new MidLevelIrLocalOperand("alias", BorrowBoxType)), "alias"),
             ReturnZero()
         ]));
@@ -36,7 +36,7 @@ public sealed class BorrowLivenessValidationTests
             StorageLive("alias", BorrowBoxType),
             Assign("alias", BorrowBoxType, new MidLevelIrUseRValue(new MidLevelIrLocalOperand("box", BoxType)), "alias = box"),
             Evaluate(new MidLevelIrUseRValue(new MidLevelIrLocalOperand("alias", BorrowBoxType)), "alias"),
-            Evaluate(new MidLevelIrCallRValue("Consume", [new MidLevelIrLocalOperand("box", BoxType)], StarkTypeSymbols.Void, "Consume(box)"), "Consume(box)"),
+            Evaluate(CallStatement("Consume", [new MidLevelIrLocalOperand("box", BoxType)], "Consume(box)"), "Consume(box)"),
             ReturnZero()
         ]));
 
@@ -155,7 +155,7 @@ public sealed class BorrowLivenessValidationTests
         };
         var mergeStatements = new List<MidLevelIrStatement>
         {
-            Evaluate(new MidLevelIrCallRValue("Consume", [new MidLevelIrLocalOperand("box", BoxType)], StarkTypeSymbols.Void, "Consume(box)"), "Consume(box)")
+            Evaluate(CallStatement("Consume", [new MidLevelIrLocalOperand("box", BoxType)], "Consume(box)"), "Consume(box)")
         };
 
         if (useAliasAfterMerge)
@@ -220,6 +220,23 @@ public sealed class BorrowLivenessValidationTests
     private static MidLevelIrStatement Evaluate(MidLevelIrRValue value, string text)
     {
         return new MidLevelIrStatement(MidLevelIrStatementKind.Evaluate, text, Value: value);
+    }
+
+    private static MidLevelIrStatement Evaluate(MidLevelIrCallStatementOperation call, string text)
+    {
+        return new MidLevelIrStatement(MidLevelIrStatementKind.Evaluate, text, Call: call);
+    }
+
+    private static MidLevelIrDirectCallStatementOperation CallStatement(
+        string functionName,
+        IReadOnlyList<MidLevelIrOperand> arguments,
+        string text)
+    {
+        return new MidLevelIrDirectCallStatementOperation(
+            functionName,
+            arguments,
+            StarkTypeSymbols.Void,
+            text);
     }
 
     private static MidLevelIrStatement ReturnZero()

@@ -11,8 +11,8 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(bool flag) {
-                stack mut i32[-2147483648 2147483647] value = 0;
+            unsafe fn i32[min max] Run(bool flag) {
+                stack mut i32[min max] value = 0;
                 if (flag) {
                     value = 1;
                 } else {
@@ -39,9 +39,9 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
-                stack i32[-2147483648 2147483647] first = left + right;
-                stack i32[-2147483648 2147483647] second = right + left;
+            unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right) {
+                stack i32[min max] first = left + right;
+                stack i32[min max] second = right + left;
                 return first + second;
             }
             """);
@@ -63,8 +63,8 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(bool flag) {
-                stack mut i32[-2147483648 2147483647] value = 7;
+            unsafe fn i32[min max] Run(bool flag) {
+                stack mut i32[min max] value = 7;
                 if (flag) {
                     value = 7;
                 } else {
@@ -134,14 +134,73 @@ public sealed class SsaLoweringTests
     }
 
     [Fact]
+    public void VoidCallStatementsLowerToStatementOnlySsaInstructions()
+    {
+        var functionPointerType = StarkTypeSymbols.FunctionPointer(
+            StarkFunctionKind.Fn,
+            StarkTypeSymbols.Void,
+            [StarkTypeSymbols.Integer(32)]);
+        var mir = new MidLevelIrModule(
+            "Demo",
+            [
+                new MidLevelIrFunction(
+                    "Run",
+                    "Run() -> void",
+                    StarkTypeSymbols.Void,
+                    [],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Locals: [],
+                    Blocks:
+                    [
+                        new MidLevelIrBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [
+                                new MidLevelIrStatement(
+                                    MidLevelIrStatementKind.Evaluate,
+                                    "Drop(1)",
+                                    Call: new MidLevelIrDirectCallStatementOperation(
+                                        "Drop",
+                                        [new MidLevelIrIntegerConstantOperand(1, StarkTypeSymbols.Integer(32))],
+                                        StarkTypeSymbols.Void,
+                                        "Drop(1)")),
+                                new MidLevelIrStatement(
+                                    MidLevelIrStatementKind.Evaluate,
+                                    "op(2)",
+                                    Call: new MidLevelIrIndirectCallStatementOperation(
+                                        new MidLevelIrFunctionAddressOperand("Drop", functionPointerType),
+                                        [new MidLevelIrIntegerConstantOperand(2, StarkTypeSymbols.Integer(32))],
+                                        StarkTypeSymbols.Void,
+                                        "op(2)"))
+                            ],
+                            new MidLevelIrTerminator(MidLevelIrTerminatorKind.Return, []))
+                    ])
+            ]);
+
+        var lowered = new SsaLowerer().Lower(mir);
+        var instructions = Assert.Single(lowered.Functions).Blocks.SelectMany(static block => block.Instructions).ToArray();
+
+        Assert.Contains(instructions, static instruction => instruction is SsaCallInstruction { FunctionName: "Drop", Type.Kind: StarkTypeKind.Void });
+        Assert.Contains(instructions, static instruction => instruction is SsaIndirectCallInstruction { Type.Kind: StarkTypeKind.Void });
+        Assert.DoesNotContain(
+            instructions,
+            static instruction => instruction is SsaValueInstruction
+            {
+                Value: SsaCallRValue { Type.Kind: StarkTypeKind.Void } or SsaIndirectCallRValue { Type.Kind: StarkTypeKind.Void }
+            });
+    }
+
+    [Fact]
     public void LoopHeaderProducesPhiForBackedgeValue()
     {
         var result = Compile(
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
-                stack mut i32[-2147483648 2147483647] i = 0;
+            unsafe fn i32[min max] Run() {
+                stack mut i32[min max] i = 0;
                 while willexit (i < 4) {
                     i = i + 1;
                 }
@@ -167,10 +226,10 @@ public sealed class SsaLoweringTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run(bool flag) {
+            unsafe fn i32[min max] Run(bool flag) {
                 stack mut Box box = new Box() { Value = 0 };
                 if (flag) {
                     box = new Box() { Value = 1 };
@@ -199,7 +258,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 if (true) {
                     return 1;
                 } else {
@@ -223,10 +282,10 @@ public sealed class SsaLoweringTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack mut Box box = new Box() { Value = 1 };
                 box.Value = 2;
                 return box.Value;
@@ -249,10 +308,10 @@ public sealed class SsaLoweringTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 register Box box = new Box() { Value = 7 };
                 return box.Value;
             }
@@ -275,8 +334,8 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
-                register mut i32[-2147483648 2147483647] value = 7;
+            unsafe fn i32[min max] Run() {
+                register mut i32[min max] value = 7;
                 value = value + 1;
                 return value;
             }
@@ -301,10 +360,10 @@ public sealed class SsaLoweringTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 heap Box box = new Box() { Value = 7 };
                 return box.Value;
             }
@@ -329,11 +388,11 @@ public sealed class SsaLoweringTests
             module Demo
 
             struct Pair {
-                i32[-2147483648 2147483647] Left;
-                i32[-2147483648 2147483647] Right;
+                i32[min max] Left;
+                i32[min max] Right;
             }
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right) {
                 heap mut Pair pair;
                 pair.Left = left;
                 pair.Right = right;
@@ -361,8 +420,8 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
-                heap mut i32[-2147483648 2147483647][2] values;
+            unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right) {
+                heap mut i32[min max][2] values;
                 values[0] = left;
                 values[1] = right;
                 return values[0] + values[1];
@@ -389,11 +448,11 @@ public sealed class SsaLoweringTests
             module Demo
 
             struct Pair {
-                i32[-2147483648 2147483647] Left;
-                i32[-2147483648 2147483647] Right;
+                i32[min max] Left;
+                i32[min max] Right;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack Pair source = new Pair() { Left = 1, Right = 2 };
                 stack mut Pair dest = new Pair() { Left = 0, Right = 0 };
                 stack rawptr<Pair> sourcePtr = &source;
@@ -431,14 +490,14 @@ public sealed class SsaLoweringTests
             module Demo
 
             struct Pair {
-                i32[-2147483648 2147483647] Left;
-                i32[-2147483648 2147483647] Right;
+                i32[min max] Left;
+                i32[min max] Right;
             }
 
-            fn void Touch(Pair value) {
+            unsafe fn void Touch(Pair value) {
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack mut Pair source = new Pair() { Left = 1, Right = 2 };
                 stack rawptr<Pair> sourcePtr = &source;
                 Touch(source);
@@ -451,7 +510,7 @@ public sealed class SsaLoweringTests
         var function = Assert.Single(GetSsa(result).Functions, static function => function.Name == "Run");
         var instructions = function.Blocks.SelectMany(static block => block.Instructions).ToArray();
 
-        Assert.Contains(instructions, static instruction => instruction is SsaValueInstruction { Value: SsaCallRValue { FunctionName: "Touch" } });
+        Assert.Contains(instructions, static instruction => instruction is SsaCallInstruction { FunctionName: "Touch" });
         Assert.Contains(
             instructions,
             static instruction => instruction is SsaStoreLocalInstruction
@@ -469,11 +528,11 @@ public sealed class SsaLoweringTests
             module Demo
 
             struct Pair {
-                i32[-2147483648 2147483647] Left;
-                i32[-2147483648 2147483647] Right;
+                i32[min max] Left;
+                i32[min max] Right;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack Pair value = new Pair() { Left = 1, Right = 2 };
                 stack rawptr<Pair> ptr = &value;
                 return value.Right;
@@ -504,11 +563,11 @@ public sealed class SsaLoweringTests
             module Demo
 
             struct Pair {
-                i32[-2147483648 2147483647] Left;
-                i32[-2147483648 2147483647] Right;
+                i32[min max] Left;
+                i32[min max] Right;
             }
 
-            fn i32[-2147483648 2147483647] Run(bool flag) {
+            unsafe fn i32[min max] Run(bool flag) {
                 stack Pair value = flag ? new Pair() { Left = 1, Right = 2 } : new Pair() { Left = 3, Right = 4 };
                 stack rawptr<Pair> ptr = &value;
                 return value.Right;
@@ -532,14 +591,52 @@ public sealed class SsaLoweringTests
     }
 
     [Fact]
+    public void NonAddressableFixedArrayDynamicIndexAllocatesCompilerGeneratedScratchLocalInSsa()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn i32[min max][3] Make(i32[min max] left, i32[min max] middle, i32[min max] right) {
+                stack i32[min max][3] values = { left, middle, right };
+                return values;
+            }
+
+            unsafe fn i32[min max] Run(i32[min max] index, i32[min max] seed) {
+                return Make(seed, seed + 1, seed + 2)[index];
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetSsa(result).Functions, static function => function.Name == "Run");
+        var instructions = function.Blocks.SelectMany(static block => block.Instructions).ToArray();
+
+        Assert.Contains(
+            instructions,
+            instruction => instruction is SsaAllocateLocalInstruction
+            {
+                StorageClass: "stack",
+                LocalType.Kind: StarkTypeKind.FixedArray
+            } allocate && allocate.LocalName.StartsWith("$tmp", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            instructions,
+            instruction => instruction is SsaLifetimeStartInstruction lifetimeStart
+                && lifetimeStart.LocalName.StartsWith("$tmp", StringComparison.Ordinal));
+        Assert.DoesNotContain(
+            instructions,
+            instruction => instruction is SsaLifetimeEndInstruction lifetimeEnd
+                && lifetimeEnd.LocalName.StartsWith("$tmp", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void FixedArrayIndexOperationsLowerToSsaExtractAndInsert()
     {
         var result = Compile(
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
-                stack mut i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
+            unsafe fn i32[min max] Run() {
+                stack mut i32[min max][3] values = { 1, 2, 3 };
                 values[1] = 9;
                 return values[1];
             }
@@ -564,9 +661,9 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
-                stack i32[-2147483648 2147483647][3] values = { 4, 7, 9 };
-                stack i32[-2147483648 2147483647][] view = values;
+            unsafe fn i32[min max] Run(i32[min max] index) {
+                stack i32[min max][3] values = { 4, 7, 9 };
+                stack i32[min max][] view = values;
                 return view[index];
             }
             """);
@@ -591,7 +688,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn unicode Run(unicode text, i32[-2147483648 2147483647] start, i32[-2147483648 2147483647] length) {
+            unsafe fn unicode Run(unicode text, i32[min max] start, i32[min max] length) {
                 return text[start, length];
             }
             """);
@@ -622,7 +719,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn unicode Run() {
+            unsafe fn unicode Run() {
                 return (unicode)"Hello";
             }
             """);
@@ -652,8 +749,8 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] index) {
-                stack mut i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
+            unsafe fn i32[min max] Run(i32[min max] index) {
+                stack mut i32[min max][3] values = { 1, 2, 3 };
                 values[index] = 9;
                 return values[index];
             }
@@ -679,7 +776,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(mut i32[-2147483648 2147483647][] view, i32[-2147483648 2147483647] index) {
+            unsafe fn i32[min max] Run(mut i32[min max][] view, i32[min max] index) {
                 view[index] = 9;
                 return view[index];
             }
@@ -701,11 +798,11 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i64[-9223372036854775808 9223372036854775807] bits) {
-                stack mut i32[-2147483648 2147483647] value = 1;
-                stack rawmutptr<i32[-2147483648 2147483647]> ptr = &value;
-                stack rawptr<i32[-2147483648 2147483647]> readonlyPtr = (rawptr<i32[-2147483648 2147483647]>)ptr;
-                *ptr = (i32[-2147483648 2147483647])bits;
+            unsafe fn i32[min max] Run(i64[min max] bits) {
+                stack mut i32[min max] value = 1;
+                stack rawmutptr<i32[min max]> ptr = &value;
+                stack rawptr<i32[min max]> readonlyPtr = (rawptr<i32[min max]>)ptr;
+                *ptr = (i32[min max])bits;
                 return *readonlyPtr;
             }
             """);
@@ -740,12 +837,12 @@ public sealed class SsaLoweringTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] input) {
+            unsafe fn i32[min max] Run(i32[min max] input) {
                 stack mut Box box = new Box() { Value = 1 };
                 *(&(box.Value)) = input;
                 Counter = *(&(box.Value));
@@ -779,13 +876,13 @@ public sealed class SsaLoweringTests
             module Demo
 
             struct Buffer {
-                i8[-128 127][16] Storage;
-                i64[-9223372036854775808 9223372036854775807] WritePos;
+                i8[min max][16] Storage;
+                i64[min max] WritePos;
             }
 
-            fn i32[-2147483648 2147483647] Touch(rawmutptr<Buffer> buffer, i64[-9223372036854775808 9223372036854775807] index, i8[-128 127] value) {
+            unsafe fn i32[min max] Touch(rawmutptr<Buffer> buffer, i64[min max] index, i8[min max] value) {
                 *(&(*buffer).Storage[index]) = value;
-                return (i32[-2147483648 2147483647])*(&(*buffer).Storage[index]);
+                return (i32[min max])*(&(*buffer).Storage[index]);
             }
             """);
 
@@ -807,17 +904,17 @@ public sealed class SsaLoweringTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            static i32[-2147483648 2147483647] Counter = 0;
+            static i32[min max] Counter = 0;
             static Box Current = new Box() { Value = 5 };
 
-            fn rawptr<i32[-2147483648 2147483647]> CounterPtr() {
+            unsafe fn rawptr<i32[min max]> CounterPtr() {
                 return &Counter;
             }
 
-            fn rawptr<i32[-2147483648 2147483647]> FieldPtr() {
+            unsafe fn rawptr<i32[min max]> FieldPtr() {
                 return &(Current.Value);
             }
             """);
@@ -860,7 +957,7 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn rawptr<frozen i32[-2147483648 2147483647]> FirstPtr(frozen i32[-2147483648 2147483647][] view) {
+            unsafe fn rawptr<frozen i32[min max]> FirstPtr(frozen i32[min max][] view) {
                 return &(view[0]);
             }
             """);
@@ -886,9 +983,9 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(
-                rawmutptr<i32[-2147483648 2147483647]> left,
-                rawmutptr<i32[-2147483648 2147483647]> right) {
+            unsafe fn i32[min max] Run(
+                rawmutptr<i32[min max]> left,
+                rawmutptr<i32[min max]> right) {
                 if disjoint(left, right) {
                     *left = 7;
                     return *right;
@@ -932,9 +1029,9 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn i32[0 10] Run() {
-                stack mut i32[0 10] sum = 0;
-                for willexit independent (stack mut i32[0 10] index = 0; index < 4; index += 1) {
+            unsafe fn u8[0 10] Run() {
+                stack mut u8[0 10] sum = 0;
+                for willexit independent (stack mut u8[0 10] index = 0; index < 4; index += 1) {
                     sum += index;
                 }
 
@@ -948,7 +1045,39 @@ public sealed class SsaLoweringTests
         Assert.Contains(
             function.Blocks.Select(static block => block.Terminator),
             static terminator => terminator.LoopContracts is { Count: > 0 }
+                && terminator.LoopBehavior == "willexit"
                 && terminator.LoopContracts.Contains("independent", StringComparer.Ordinal));
+    }
+
+    [Fact]
+    public void WillexitWhileLoopsPreserveLoopBehaviorOnBackedgesInSsa()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn u8[0 10] Run(u8[0 10] limit) {
+                stack mut u8[0 10] value = 0;
+                while willexit (value < limit) {
+                    value += 1;
+                    if (value == 2) {
+                        continue;
+                    }
+                }
+
+                return value;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetSsa(result).Functions);
+        var loopBackedges = function.Blocks
+            .Select(static block => block.Terminator)
+            .Where(static terminator => terminator.LoopBehavior == "willexit")
+            .ToArray();
+
+        Assert.True(loopBackedges.Length >= 2);
+        Assert.All(loopBackedges, static terminator => Assert.Null(terminator.LoopContracts));
     }
 
     [Fact]
@@ -958,12 +1087,12 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            fn void Add(
-                disjoint borrow i32[-2147483648 2147483647][] left,
-                disjoint borrow i32[-2147483648 2147483647][] right,
-                disjoint borrow mut i32[-2147483648 2147483647][] output,
-                i32[0 10] count) {
-                for willexit independent (stack mut i32[0 10] index = 0; index < count; index += 1) {
+            unsafe fn void Add(
+                borrow i32[min max][] left,
+                borrow i32[min max][] right,
+                borrow mut i32[min max][] output,
+                u8[0 10] count) {
+                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
                     output[index] = left[index] + right[index];
                 }
 
@@ -984,6 +1113,71 @@ public sealed class SsaLoweringTests
         Assert.Contains(
             function.Blocks.Select(static block => block.Terminator),
             static terminator => terminator.LoopAccessGroups is { Count: > 0 });
+    }
+
+    [Fact]
+    public void InitAndOutAssignmentsCarryInitializationWriteKindInSsa()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Fill(init u32[0 max][] destination) {
+                init destination[0] = 7;
+                return;
+            }
+
+            fn void Write(out u32[0 max] value) {
+                value = 9;
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var functions = GetSsa(result).Functions.ToDictionary(static function => function.Name, StringComparer.Ordinal);
+
+        var fill = functions["Fill"];
+        Assert.Contains(
+            fill.Blocks.SelectMany(static block => block.Instructions),
+            static instruction => instruction is SsaStoreIndirectInstruction
+            {
+                WriteKind: MemoryWriteKind.Initialization,
+                ValueType.Kind: StarkTypeKind.Integer
+            });
+
+        var write = functions["Write"];
+        Assert.Contains(
+            write.Blocks.SelectMany(static block => block.Instructions),
+            static instruction => instruction is SsaStoreIndirectInstruction
+            {
+                WriteKind: MemoryWriteKind.Initialization,
+                ValueType.Kind: StarkTypeKind.Integer
+            });
+    }
+
+    [Fact]
+    public void OrdinaryMutableSliceAssignmentKeepsReplacementWriteKindInSsa()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Replace(borrow mut u32[0 max][] destination) {
+                destination[0] = 7;
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetSsa(result).Functions);
+
+        Assert.Contains(
+            function.Blocks.SelectMany(static block => block.Instructions),
+            static instruction => instruction is SsaStoreIndirectInstruction
+            {
+                WriteKind: MemoryWriteKind.Replacement,
+                ValueType.Kind: StarkTypeKind.Integer
+            });
     }
 
     private static CompilationResult Compile(string source)

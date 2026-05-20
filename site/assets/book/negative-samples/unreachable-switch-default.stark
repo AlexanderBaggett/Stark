@@ -16,6 +16,6 @@ finite law i32[min max] Score(Token token) {
     }
 }
 
-export ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     return Score(Token.End);
 }

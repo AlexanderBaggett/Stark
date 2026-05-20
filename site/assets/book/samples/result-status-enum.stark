@@ -22,7 +22,7 @@ finite law bool IsExpectedQuotient(DivideResult result, i32[min max] expected) {
     }
 }
 
-export ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     if (!IsExpectedQuotient(Divide(24, 3), 8)) {
         return 1;
     }

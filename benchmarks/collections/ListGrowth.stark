@@ -1,7 +1,8 @@
-import System
+import System.Collections
+import System.Memory
 module Benchmarks.Collections.ListGrowth
 
-finite law bool Ok(MemoryStatus status) {
+unsafe finite law bool Ok(MemoryStatus status) {
     switch (status) {
         case MemoryStatus.Ok:
             return true;
@@ -10,11 +11,11 @@ finite law bool Ok(MemoryStatus status) {
     }
 }
 
-export ffi fn i32[min max] main() {
-    stack mut List<i32[0 max]> values = new();
+export unsafe ffi fn i32[min max] main() {
+    stack mut System.Collections.List<u32[0 max]> values = new();
     stack mut i64[min max] checksum = 0;
 
-    for willexit (stack mut i32[0 4096] i = 0; i < 4096; i += 1) {
+    for willexit (stack mut u16[0 4096] i = 0; i < 4096; i += 1) {
         if (!Ok(values.Push(i))) {
             return 1;
         }
@@ -24,7 +25,7 @@ export ffi fn i32[min max] main() {
         return 2;
     }
 
-    stack mut i32[0 max] popped = 0;
+    stack mut u32[0 max] popped = 0;
     while willexit (values.Count() > 0) {
         if (!values.TryPop(popped)) {
             return 3;

@@ -125,7 +125,9 @@ internal static partial class PackageImageBuilder
                 : null,
             DisjointParameterGroups = BuildParameterDisjointGroupManifests(
                 functionDeclaration.parameterList(),
-                functionDeclaration.parameterMemoryContractClause())
+                functionDeclaration.parameterMemoryContractClause()),
+            OverlapParameterGroups = BuildParameterOverlapGroupManifests(functionDeclaration.parameterMemoryContractClause()),
+            SameParameterGroups = BuildParameterSameGroupManifests(functionDeclaration.parameterMemoryContractClause())
         };
     }
 
@@ -323,7 +325,9 @@ internal static partial class PackageImageBuilder
                     : null,
                 DisjointParameterGroups = BuildParameterDisjointGroupManifests(
                     method.parameterList(),
-                    method.parameterMemoryContractClause())
+                    method.parameterMemoryContractClause()),
+                OverlapParameterGroups = BuildParameterOverlapGroupManifests(method.parameterMemoryContractClause()),
+                SameParameterGroups = BuildParameterSameGroupManifests(method.parameterMemoryContractClause())
             });
         }
 
@@ -376,7 +380,9 @@ internal static partial class PackageImageBuilder
                     : null,
                 DisjointParameterGroups = BuildParameterDisjointGroupManifests(
                     method.parameterList(),
-                    method.parameterMemoryContractClause())
+                    method.parameterMemoryContractClause()),
+                OverlapParameterGroups = BuildParameterOverlapGroupManifests(method.parameterMemoryContractClause()),
+                SameParameterGroups = BuildParameterSameGroupManifests(method.parameterMemoryContractClause())
             });
         }
 
@@ -429,7 +435,9 @@ internal static partial class PackageImageBuilder
                     : null,
                 DisjointParameterGroups = BuildParameterDisjointGroupManifests(
                     method.parameterList(),
-                    method.parameterMemoryContractClause())
+                    method.parameterMemoryContractClause()),
+                OverlapParameterGroups = BuildParameterOverlapGroupManifests(method.parameterMemoryContractClause()),
+                SameParameterGroups = BuildParameterSameGroupManifests(method.parameterMemoryContractClause())
             });
         }
 

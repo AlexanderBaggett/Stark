@@ -24,7 +24,7 @@ public sealed class MultiFileIntegrationTests
                 """
                 module Math
 
-                public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                     return left + right;
                 }
                 """);
@@ -35,7 +35,7 @@ public sealed class MultiFileIntegrationTests
                 import Math
                 module App
 
-                fn i32[-2147483648 2147483647] Run() {
+                fn i32[min max] Run() {
                     return Math.Add(3, 4);
                 }
                 """);
@@ -79,7 +79,7 @@ public sealed class MultiFileIntegrationTests
                 """
                 module Math
 
-                public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                     return left + right;
                 }
                 """);
@@ -90,7 +90,7 @@ public sealed class MultiFileIntegrationTests
                 export import Math
                 module Facade
 
-                public fn i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
+                public fn i32[min max] Double(i32[min max] value) {
                     return Math.Add(value, value);
                 }
                 """);
@@ -101,7 +101,7 @@ public sealed class MultiFileIntegrationTests
                 import Facade
                 module App
 
-                fn i32[-2147483648 2147483647] Run() {
+                fn i32[min max] Run() {
                     return Math.Add(Facade.Double(2), 3);
                 }
                 """);
@@ -168,7 +168,7 @@ public sealed class MultiFileIntegrationTests
                 import System
                 module App
 
-                fn i32[-2147483648 2147483647] Run() {
+                fn i32[min max] Run() {
                     stack System.Text.Encoding encoding = System.Text.Encoding.UTF8;
                     return 0;
                 }
@@ -213,11 +213,11 @@ public sealed class MultiFileIntegrationTests
                 """
                 module Math
 
-                fn i32[-2147483648 2147483647] HiddenAdd(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                fn i32[min max] HiddenAdd(i32[min max] left, i32[min max] right) {
                     return left + right;
                 }
 
-                public fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                public fn i32[min max] Add(i32[min max] left, i32[min max] right) {
                     return HiddenAdd(left, right);
                 }
                 """);
@@ -228,7 +228,7 @@ public sealed class MultiFileIntegrationTests
                 export import Math
                 module Facade
 
-                public fn i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
+                public fn i32[min max] Double(i32[min max] value) {
                     return Math.Add(value, value);
                 }
                 """);
@@ -239,7 +239,7 @@ public sealed class MultiFileIntegrationTests
                 import Facade
                 module App
 
-                fn i32[-2147483648 2147483647] Run() {
+                fn i32[min max] Run() {
                     return Math.HiddenAdd(Facade.Double(2), 3);
                 }
                 """);
@@ -290,7 +290,7 @@ public sealed class MultiFileIntegrationTests
                 """
                 module Math
 
-                public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                     return left + right;
                 }
                 """);
@@ -301,7 +301,7 @@ public sealed class MultiFileIntegrationTests
                 export import Math
                 module Facade
 
-                public finite law i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
+                public finite law i32[min max] Double(i32[min max] value) {
                     return Math.Add(value, value);
                 }
                 """);
@@ -349,7 +349,7 @@ public sealed class MultiFileIntegrationTests
                 import Facade
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export fn i32[min max] main() {
                     return Math.Add(3, 4);
                 }
                 """);
@@ -445,7 +445,7 @@ public sealed class MultiFileIntegrationTests
                 import Globals
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export fn i32[min max] main() {
                     return Globals.Answer;
                 }
                 """);
@@ -511,77 +511,37 @@ public sealed class MultiFileIntegrationTests
                 sourceText
                 + """
 
-                export ffi fn i32[-2147483648 2147483647] main() {
-                    stack mut i32[-2147483648 2147483647][8] unicodeBuffer = { 0, 0, 0, 0, 0, 0, 0, 0 };
-                    stack mut Unicode unicodeText = new Unicode() {
-                        Data = &unicodeBuffer[0],
-                        Length = 0,
-                        Capacity = 8
-                    };
+                fn bool StatusOk(System.Memory.MemoryStatus status) {
+                    switch (status) {
+                        case System.Memory.MemoryStatus.Ok:
+                            return true;
+                        case System.Memory.MemoryStatus.Err(var error):
+                            return false;
+                    }
+                }
 
-                    if (!TryConvertAsciiToUnicode(&unicodeText, "caf\u00E9")) {
+                export fn i32[min max] main() {
+                    stack mut OwnedUnicode unicodeText = new();
+                    if (!StatusOk(FromAsciiToUnicode(unicodeText, "caf\u00E9"))) {
                         return 1;
                     }
 
-                    if (unicodeText.Length != 4) {
+                    if (unicodeText.Length() != 4) {
                         return 2;
                     }
 
-                    if (unicodeText.Data == null || *unicodeText.Data != 99) {
-                        return 3;
-                    }
-
-                    if (*(&unicodeText.Data[1]) != 97 || *(&unicodeText.Data[2]) != 102 || *(&unicodeText.Data[3]) != 233) {
+                    stack i32[min max][] unicodeUnits = unicodeText.AsSlice();
+                    if (unicodeUnits[3] != 233) {
                         return 4;
                     }
 
-                    stack mut i8[-128 127][16] asciiBuffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-                    stack mut Ascii asciiText = new Ascii() {
-                        Data = &asciiBuffer[0],
-                        Length = 0,
-                        Capacity = 16
-                    };
-
-                    if (!TryConvertUnicodeToAscii(&asciiText, (unicode)"\u03B1!")) {
+                    stack mut OwnedAscii asciiText = new();
+                    if (!StatusOk(FromUnicodeToAscii(asciiText, (unicode)"\u03B1!"))) {
                         return 5;
                     }
 
-                    if (asciiText.Length != 3) {
+                    if (asciiText.Length() != 3) {
                         return 6;
-                    }
-
-                    stack mut i32[-2147483648 2147483647][8] roundTripBuffer = { 0, 0, 0, 0, 0, 0, 0, 0 };
-                    stack mut Unicode roundTrip = new Unicode() {
-                        Data = &roundTripBuffer[0],
-                        Length = 0,
-                        Capacity = 8
-                    };
-
-                    if (!TryConvertAsciiToUnicode(&roundTrip, AsciiView(asciiText))) {
-                        return 7;
-                    }
-
-                    if (roundTrip.Length != 2) {
-                        return 8;
-                    }
-
-                    if (roundTrip.Data == null || *roundTrip.Data != 945 || *(&roundTrip.Data[1]) != 33) {
-                        return 9;
-                    }
-
-                    stack mut i8[-128 127][2] smallAsciiBuffer = { 0, 0 };
-                    stack mut Ascii tooSmall = new Ascii() {
-                        Data = &smallAsciiBuffer[0],
-                        Length = 0,
-                        Capacity = 2
-                    };
-
-                    if (TryConvertUnicodeToAscii(&tooSmall, (unicode)"\u03B1!")) {
-                        return 10;
-                    }
-
-                    if (tooSmall.Length != 0) {
-                        return 11;
                     }
 
                     return 0;
@@ -649,94 +609,56 @@ public sealed class MultiFileIntegrationTests
                 sourceText
                 + """
 
-                export ffi fn i32[-2147483648 2147483647] main() {
-                    stack mut i16[-32768 32767][8] utf16Buffer;
-                    stack mut i64[-9223372036854775808 9223372036854775807] utf16Length = 0;
-                    if (!TryConvertAsciiToUtf16(&utf16Buffer[0], 8, "A𐍈", &utf16Length)) {
+                fn bool StatusOk(System.Memory.MemoryStatus status) {
+                    switch (status) {
+                        case System.Memory.MemoryStatus.Ok:
+                            return true;
+                        case System.Memory.MemoryStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                export fn i32[min max] main() {
+                    stack mut OwnedUtf16 utf16Text = new();
+                    if (!StatusOk(FromAsciiToUtf16(utf16Text, "AZ"))) {
                         return 1;
                     }
 
-                    if (utf16Length != 3) {
+                    if (utf16Text.Length() != 2) {
                         return 2;
                     }
 
-                    stack mut i32[-2147483648 2147483647][4] unicodeBuffer = { 0, 0, 0, 0 };
-                    stack mut Unicode unicodeText = new Unicode() {
-                        Data = &unicodeBuffer[0],
-                        Length = 0,
-                        Capacity = 4
-                    };
-
-                    if (!TryConvertUtf16ToUnicode(&unicodeText, &utf16Buffer[0], utf16Length)) {
-                        return 3;
-                    }
-
-                    if (unicodeText.Length != 2) {
+                    stack mut OwnedUnicode unicodeText = new();
+                    if (!StatusOk(FromUtf16ToUnicode(unicodeText, utf16Text))) {
                         return 4;
                     }
 
-                    if (unicodeText.Data == null || *unicodeText.Data != 65 || *(&unicodeText.Data[1]) != 66376) {
+                    if (unicodeText.Length() != 2) {
                         return 5;
                     }
 
-                    stack mut i16[-32768 32767][8] secondUtf16Buffer;
-                    stack mut i64[-9223372036854775808 9223372036854775807] secondUtf16Length = 0;
-                    if (!TryConvertUnicodeToUtf16(&secondUtf16Buffer[0], 8, UnicodeView(unicodeText), &secondUtf16Length)) {
-                        return 6;
+                    stack mut OwnedUnicode gothicText = new();
+                    if (!StatusOk(gothicText.AppendCodePoint(65))
+                        || !StatusOk(gothicText.AppendCodePoint(66376))) {
+                        return 17;
                     }
 
-                    if (secondUtf16Length != 3) {
+                    stack mut OwnedUtf16 secondUtf16Text = new();
+                    if (!StatusOk(FromUnicodeToUtf16(secondUtf16Text, gothicText.View()))) {
                         return 7;
                     }
 
-                    stack mut i8[-128 127][8] asciiBuffer = { 0, 0, 0, 0, 0, 0, 0, 0 };
-                    stack mut Ascii asciiText = new Ascii() {
-                        Data = &asciiBuffer[0],
-                        Length = 0,
-                        Capacity = 8
-                    };
-
-                    if (!TryConvertUtf16ToAscii(&asciiText, &secondUtf16Buffer[0], secondUtf16Length)) {
+                    if (secondUtf16Text.Length() != 3) {
                         return 8;
                     }
 
-                    if (asciiText.Length != 5) {
+                    stack mut OwnedAscii asciiText = new();
+                    if (!StatusOk(FromUtf16ToAscii(asciiText, utf16Text))) {
                         return 9;
                     }
 
-                    stack mut i32[-2147483648 2147483647][4] roundTripBuffer = { 0, 0, 0, 0 };
-                    stack mut Unicode roundTrip = new Unicode() {
-                        Data = &roundTripBuffer[0],
-                        Length = 0,
-                        Capacity = 4
-                    };
-
-                    if (!TryConvertAsciiToUnicode(&roundTrip, AsciiView(asciiText))) {
+                    if (asciiText.Length() != 2) {
                         return 10;
-                    }
-
-                    if (roundTrip.Length != 2) {
-                        return 11;
-                    }
-
-                    if (roundTrip.Data == null || *roundTrip.Data != 65 || *(&roundTrip.Data[1]) != 66376) {
-                        return 12;
-                    }
-
-                    stack mut i32[-2147483648 2147483647][1] gothicBuffer = { 66376 };
-                    stack mut Unicode gothic = new Unicode() {
-                        Data = &gothicBuffer[0],
-                        Length = 1,
-                        Capacity = 1
-                    };
-                    stack mut i16[-32768 32767][1] tooSmallUtf16;
-                    stack mut i64[-9223372036854775808 9223372036854775807] tooSmallLength = 17;
-                    if (TryConvertUnicodeToUtf16(&tooSmallUtf16[0], 1, UnicodeView(gothic), &tooSmallLength)) {
-                        return 13;
-                    }
-
-                    if (tooSmallLength != 0) {
-                        return 14;
                     }
 
                     return 0;

@@ -12,14 +12,14 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right) {
                 return left + right;
             }
 
-            fn void Touch(borrow mut Box box) {
+            unsafe fn void Touch(borrow mut Box box) {
                 box.Value = 1;
                 return;
             }
@@ -47,8 +47,8 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Count() {
-                stack mut i32[-2147483648 2147483647] value = 0;
+            unsafe fn i32[min max] Count() {
+                stack mut i32[min max] value = 0;
 
                 while willexit (value < 3) {
                     value += 1;
@@ -75,7 +75,7 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            law i32[-2147483648 2147483647] Bad(fnptr<fn i32[-2147483648 2147483647]()> op) {
+            unsafe law i32[min max] Bad(fnptr<fn i32[min max]()> op) {
                 return op();
             }
             """);
@@ -88,24 +88,74 @@ public sealed class FunctionSemanticsTests
     }
 
     [Fact]
+    public void LawFunctionsRejectPlainClosureCalls()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe law i32[min max] Bad(borrow closure<fn i32[min max]()> op) {
+                return op();
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK4106"
+                && diagnostic.Message.Contains("law-compatible closures", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void FunctionKindObligationsAllowMatchingFunctionPointerCalls()
     {
         var result = Compile(
             """
             module Demo
 
-            finite i32[-2147483648 2147483647] UseFinite(fnptr<finite i32[-2147483648 2147483647]()> op) {
+            unsafe finite i32[min max] UseFinite(fnptr<finite i32[min max]()> op) {
                 return op();
             }
 
-            law i32[-2147483648 2147483647] UseLaw(fnptr<law i32[-2147483648 2147483647]()> op) {
+            unsafe law i32[min max] UseLaw(fnptr<law i32[min max]()> op) {
                 return op();
             }
 
-            finite law i32[-2147483648 2147483647] UseStrict(fnptr<finite law i32[-2147483648 2147483647]()> op) {
+            unsafe finite law i32[min max] UseStrict(fnptr<finite law i32[min max]()> op) {
                 return op();
             }
             """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? validation));
+        Assert.NotNull(validation);
+
+        Assert.Equal(StarkFunctionKind.Finite, validation.Functions["UseFinite"].DeclaredKind);
+        Assert.Equal(StarkFunctionKind.Law, validation.Functions["UseLaw"].DeclaredKind);
+        Assert.Equal(StarkFunctionKind.FiniteLaw, validation.Functions["UseStrict"].DeclaredKind);
+    }
+
+    [Fact]
+    public void FunctionKindObligationsAllowMatchingClosureCalls()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe finite i32[min max] UseFinite(borrow closure<finite i32[min max]()> op) {
+                return op();
+            }
+
+            unsafe law i32[min max] UseLaw(borrow closure<law i32[min max]()> op) {
+                return op();
+            }
+
+            unsafe finite law i32[min max] UseStrict(borrow closure<finite law i32[min max]()> op) {
+                return op();
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
 
         Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? validation));
@@ -123,12 +173,12 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Pure() {
+            unsafe fn i32[min max] Pure() {
                 return 1;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
-                stack fnptr<law i32[-2147483648 2147483647]()> op = () => Pure();
+            unsafe fn i32[min max] Run() {
+                stack fnptr<law i32[min max]()> op = () => Pure();
                 return op();
             }
             """);
@@ -149,14 +199,14 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            static i32[-2147483648 2147483647] Counter = 1;
+            static i32[min max] Counter = 1;
 
-            fn i32[-2147483648 2147483647] Impure() {
+            unsafe fn i32[min max] Impure() {
                 return Counter;
             }
 
-            fn void Run() {
-                stack fnptr<law i32[-2147483648 2147483647]()> op = () => Impure();
+            unsafe fn void Run() {
+                stack fnptr<law i32[min max]()> op = () => Impure();
                 return;
             }
             """);
@@ -177,10 +227,10 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            fn retborrow Box Echo(retborrow Box value) {
+            unsafe fn retborrow Box Echo(retborrow Box value) {
                 return value;
             }
             """);
@@ -210,11 +260,11 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             struct Pair {
-                i8[-128 127] Tag;
-                i32[-2147483648 2147483647] Value;
+                i8[min max] Tag;
+                i32[min max] Value;
             }
 
-            fn void Inspect(borrow Pair pair) {
+            unsafe fn void Inspect(borrow Pair pair) {
                 return;
             }
             """);
@@ -231,23 +281,23 @@ public sealed class FunctionSemanticsTests
     }
 
     [Fact]
-    public void DisjointParameterContractsFlowIntoSemanticNoAliasFacts()
+    public void DefaultNonOverlapParameterContractsFlowIntoSemanticNoAliasFacts()
     {
         var result = Compile(
             """
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            fn void TouchPrefix(disjoint borrow mut Box left, disjoint borrow mut Box right) {
+            unsafe fn void TouchDefault(borrow mut Box left, borrow mut Box right) {
                 left.Value = 1;
                 right.Value = 2;
                 return;
             }
 
-            fn void TouchWhere(borrow mut Box left, borrow mut Box right) where disjoint(left, right) {
+            unsafe fn void TouchSecondDefault(borrow mut Box left, borrow mut Box right) {
                 left.Value = 1;
                 right.Value = 2;
                 return;
@@ -258,13 +308,60 @@ public sealed class FunctionSemanticsTests
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? validation));
         Assert.NotNull(validation);
 
-        var prefixParameters = validation.Functions["TouchPrefix"].Parameters!.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        var prefixParameters = validation.Functions["TouchDefault"].Parameters!.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
         Assert.True(prefixParameters["left"].GuaranteedNoAlias);
         Assert.True(prefixParameters["right"].GuaranteedNoAlias);
 
-        var whereParameters = validation.Functions["TouchWhere"].Parameters!.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        var whereParameters = validation.Functions["TouchSecondDefault"].Parameters!.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
         Assert.True(whereParameters["left"].GuaranteedNoAlias);
         Assert.True(whereParameters["right"].GuaranteedNoAlias);
+    }
+
+    [Fact]
+    public void DefaultNonOverlapAndOverlapContractsFlowIntoSemanticNoAliasFacts()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[min max] Value;
+            }
+
+            unsafe fn void TouchDefault(borrow mut Box left, borrow mut Box right) {
+                left.Value = 1;
+                right.Value = 2;
+                return;
+            }
+
+            unsafe fn void TouchOverlap(borrow mut Box left, borrow mut Box right) where overlap(left, right) {
+                left.Value = 1;
+                right.Value = 2;
+                return;
+            }
+
+            unsafe fn void TouchSame(borrow mut Box left, borrow mut Box right) where same(left, right) {
+                left.Value = 1;
+                right.Value = 2;
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? validation));
+        Assert.NotNull(validation);
+
+        var defaultParameters = validation.Functions["TouchDefault"].Parameters!.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        Assert.True(defaultParameters["left"].GuaranteedNoAlias);
+        Assert.True(defaultParameters["right"].GuaranteedNoAlias);
+
+        var overlapParameters = validation.Functions["TouchOverlap"].Parameters!.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        Assert.False(overlapParameters["left"].GuaranteedNoAlias);
+        Assert.False(overlapParameters["right"].GuaranteedNoAlias);
+
+        var sameParameters = validation.Functions["TouchSame"].Parameters!.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        Assert.False(sameParameters["left"].GuaranteedNoAlias);
+        Assert.False(sameParameters["right"].GuaranteedNoAlias);
     }
 
     [Fact]
@@ -274,7 +371,7 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            fn void Inspect(const rawmutptr<i32[-2147483648 2147483647]> ptr) {
+            unsafe fn void Inspect(const rawmutptr<i32[min max]> ptr) {
                 return;
             }
             """);
@@ -296,15 +393,15 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            fn void Touch(borrow mut Box box) {
+            unsafe fn void Touch(borrow mut Box box) {
                 box.Value = 1;
                 return;
             }
 
-            fn void Outer(borrow mut Box box) {
+            unsafe fn void Outer(borrow mut Box box) {
                 Touch(box);
                 return;
             }
@@ -336,16 +433,16 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            fn i32[-2147483648 2147483647] ReadGlobal() {
+            unsafe fn i32[min max] ReadGlobal() {
                 return Counter;
             }
 
-            fn void TouchArg(borrow mut Box box) {
+            unsafe fn void TouchArg(borrow mut Box box) {
                 box.Value = 1;
                 return;
             }
@@ -380,15 +477,15 @@ public sealed class FunctionSemanticsTests
             }
 
             internal struct Allocation {
-                rawmutptr<i8[-128 127]> Pointer;
-                i64[0 max] ByteLength;
-                i64[1 max] Alignment;
+                rawmutptr<i8[min max]> Pointer;
+                u64[0 2 ** 63 - 1] ByteLength;
+                u64[1 2 ** 63 - 1] Alignment;
                 Allocator Allocator;
             }
 
-            internal fn Allocation Allocate(Allocator allocator, i64[0 max] byteLength, i64[1 max] alignment);
-            internal fn Allocation Reallocate(Allocation allocation, i64[0 max] byteLength, i64[1 max] alignment);
-            internal fn void Free(Allocation allocation);
+            internal unsafe fn Allocation Allocate(Allocator allocator, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
+            internal unsafe fn Allocation Reallocate(Allocation allocation, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
+            internal unsafe fn void Free(Allocation allocation);
             """);
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
@@ -411,11 +508,11 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            fn bool Reserve(mut borrow dynamic i32[0 max] values) {
+            unsafe fn bool Reserve(mut borrow dynamic u32[0 2 ** 31 - 1] values) {
                 return values.TryReserve(8);
             }
 
-            fn bool Append(mut borrow dynamic i32[0 max] values) {
+            unsafe fn bool Append(mut borrow dynamic u32[0 2 ** 31 - 1] values) {
                 if (!values.TryReserve(1)) {
                     return false;
                 }
@@ -449,11 +546,11 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right) {
                 return left + right;
             }
 
-            law i32[-2147483648 2147483647] Use() {
+            unsafe law i32[min max] Use() {
                 return Add(1, 2);
             }
             """);
@@ -468,11 +565,11 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Step(i32[-2147483648 2147483647] value) {
+            unsafe fn i32[min max] Step(i32[min max] value) {
                 return value + 1;
             }
 
-            finite i32[-2147483648 2147483647] Use(i32[-2147483648 2147483647] value) {
+            unsafe finite i32[min max] Use(i32[min max] value) {
                 return Step(value);
             }
             """);
@@ -489,7 +586,7 @@ public sealed class FunctionSemanticsTests
             import System.Text
             module Demo
 
-            finite law System.Memory.MemoryResult<System.Text.OwnedAscii> Bad(System.Memory.MemoryResult<System.Text.OwnedAscii> result) {
+            unsafe finite law System.Memory.MemoryResult<System.Text.OwnedAscii> Bad(System.Memory.MemoryResult<System.Text.OwnedAscii> result) {
                 return "Score: " + result;
             }
             """,
@@ -522,7 +619,7 @@ public sealed class FunctionSemanticsTests
                             ascii Text;
                         }
 
-                        public fn System.Memory.MemoryResult<OwnedAscii> ConcatAscii(ascii left, i64[0 max] leftLength, System.Memory.MemoryResult<OwnedAscii> right);
+                        public unsafe fn System.Memory.MemoryResult<OwnedAscii> ConcatAscii(ascii left, u64[0 2 ** 63 - 1] leftLength, System.Memory.MemoryResult<OwnedAscii> right);
                         """,
                         "/virtual/System.Text.stark"
                     )
@@ -540,12 +637,12 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            law void Touch(mut i32[-2147483648 2147483647][] view) {
+            unsafe law void Touch(mut i32[min max][] view) {
                 view[0] = 1;
                 return;
             }
 
-            law void Outer(mut i32[-2147483648 2147483647][] view) {
+            unsafe law void Outer(mut i32[min max][] view) {
                 Touch(view);
                 return;
             }
@@ -564,16 +661,16 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             struct Allocator {
-                static finite law Allocator Default() {
+                static unsafe finite law Allocator Default() {
                     return new();
                 }
 
-                finite law bool IsDefault(borrow Allocator self) {
+                unsafe finite law bool IsDefault(borrow Allocator self) {
                     return true;
                 }
             }
 
-            fn Allocator UseDefault() {
+            unsafe fn Allocator UseDefault() {
                 return Allocator.Default();
             }
             """);
@@ -600,12 +697,12 @@ public sealed class FunctionSemanticsTests
             struct Box {
                 i32[min max] Value;
 
-                finite law i32[min max] Read(borrow Box self) {
+                unsafe finite law i32[min max] Read(borrow Box self) {
                     return self.Value;
                 }
             }
 
-            fn i32[min max] Read(Box box) {
+            unsafe fn i32[min max] Read(Box box) {
                 return Box.Read(box);
             }
             """);
@@ -622,12 +719,12 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             struct Utility {
-                static finite law i32[min max] Value() {
+                static unsafe finite law i32[min max] Value() {
                     return 1;
                 }
             }
 
-            fn i32[min max] Read(Utility utility) {
+            unsafe fn i32[min max] Read(Utility utility) {
                 return utility.Value();
             }
             """);
@@ -643,7 +740,7 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            static fn void Bad() {
+            static unsafe fn void Bad() {
                 return;
             }
             """);
@@ -661,16 +758,16 @@ public sealed class FunctionSemanticsTests
 
             static mut i32[min max] Counter = 0;
 
-            law i32[min max] ReadGlobal() {
+            unsafe law i32[min max] ReadGlobal() {
                 return Counter;
             }
 
-            law void Allocate() {
+            unsafe law void Allocate() {
                 heap i32[min max] value = 0;
                 return;
             }
 
-            law void WriteGlobal() {
+            unsafe law void WriteGlobal() {
                 Counter = 1;
                 return;
             }
@@ -683,6 +780,93 @@ public sealed class FunctionSemanticsTests
     }
 
     [Fact]
+    public void LawBodiesRejectExternallyVisibleImplicitDropEffects()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            static mut i32[min max] Counter = 0;
+
+            struct Resource {
+                drop {
+                    Counter = Counter + 1;
+                }
+            }
+
+            unsafe law void Bad() {
+                stack Resource resource = new Resource();
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "STK4104"
+                && diagnostic.Message.Contains("Bad", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("dropping 'Resource'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void LawBodiesRejectExternallyVisibleImplicitDropEffectsThroughDestructorCalls()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            static mut i32[min max] Counter = 0;
+
+            unsafe fn void Bump() {
+                Counter = Counter + 1;
+                return;
+            }
+
+            struct Resource {
+                drop {
+                    Bump();
+                }
+            }
+
+            unsafe law void Bad() {
+                stack Resource resource = new Resource();
+                return;
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            diagnostic => diagnostic.Code == "STK4104"
+                && diagnostic.Message.Contains("Bad", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("dropping 'Resource'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void LawBodiesAllowImplicitDropThatOnlyMutatesDroppedValue()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Resource {
+                i32[min max] Value;
+
+                mut drop {
+                    self.Value = 0;
+                }
+            }
+
+            unsafe law void Good() {
+                stack Resource resource = new Resource() { Value = 1 };
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
     public void MemberFunctionVisibilityInheritsNarrowsAndAvoidsAccidentalExport()
     {
         var result = Compile(
@@ -690,15 +874,15 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             export struct Api {
-                fn void SourceVisible() {
+                unsafe fn void SourceVisible() {
                     return;
                 }
 
-                internal fn void RuntimeOnly() {
+                internal unsafe fn void RuntimeOnly() {
                     return;
                 }
 
-                export fn void AbiVisible() {
+                export unsafe fn void AbiVisible() {
                     return;
                 }
             }
@@ -721,7 +905,7 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             internal struct Hidden {
-                public fn void Leak() {
+                public unsafe fn void Leak() {
                     return;
                 }
             }
@@ -739,7 +923,7 @@ public sealed class FunctionSemanticsTests
             module Demo
 
             public struct Api {
-                export fn void AbiVisible() {
+                export unsafe fn void AbiVisible() {
                     return;
                 }
             }

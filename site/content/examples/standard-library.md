@@ -31,5 +31,5 @@ Status: covered by `ExamplesCompileRunTests.StandardLibraryExampleCompilesAndRun
 
 ## Related
 
-- [The Standard Library](/book/20-console-process-platform/)
+- [The Standard Library](/book/21-console-process-platform/)
 - [Standard library reference](/reference/standard-library/StandardLibrary/)

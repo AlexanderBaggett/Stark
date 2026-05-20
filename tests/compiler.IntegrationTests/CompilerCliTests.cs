@@ -18,7 +18,7 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run() {
+                fn i32[min max] Run() {
                     return 1;
                 }
                 """),
@@ -50,6 +50,7 @@ public sealed class CompilerCliTests
         Assert.Contains("--code-model <tiny|small|kernel|medium|large>", text);
         Assert.Contains("-O0|-Og|-O1|-O2|-O3", text);
         Assert.Contains("--optimize <0|g|1|2|3>", text);
+        Assert.Contains("--strict-integer-ranges", text);
         Assert.Contains("--link-arg <arg>", text);
         Assert.Contains("--native-source <path>", text);
         Assert.Contains("--native-library <name>", text);
@@ -62,14 +63,223 @@ public sealed class CompilerCliTests
         Assert.Contains("--log-category <name>", text);
         Assert.Contains("--log-stage <pass-id>", text);
         Assert.Contains("--log-kind <pipeline|symbol|decision|gap>", text);
-        Assert.Contains("(default)      Run the full compilation pipeline and print a pass summary", text);
-        Assert.Contains("With no workflow flag, the compiler runs the full pipeline and prints a success summary.", text);
+        Assert.Contains("(default)      Build an executable when the root source exports main; otherwise build a library", text);
+        Assert.Contains("With no workflow flag, the compiler infers executable vs library from the root source.", text);
         Assert.Contains("Examples:", text);
+        Assert.Contains("compiler app.stark", text);
         Assert.Contains("compiler app.stark --emit-llvm -o app.ll", text);
         Assert.Contains("compiler app.stark --diagnostic-format json", text);
         Assert.Contains("--compile-only", text);
         Assert.Contains("--link-only", text);
         Assert.Equal(string.Empty, stderr.ToString());
+    }
+
+    [Fact]
+    public void DefaultExecutableOutputPathMatchesInputNameAndAddsExeForWindowsTargets()
+    {
+        var appPath = Path.Combine(Path.GetTempPath(), "hello.stark");
+
+        var linuxOutput = CompilerCli.DeriveExecutableOutputPath(
+            inputPath: appPath,
+            moduleName: null,
+            targetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null));
+        var windowsOutput = CompilerCli.DeriveExecutableOutputPath(
+            inputPath: appPath,
+            moduleName: null,
+            targetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null));
+
+        Assert.Equal(Path.Combine(Path.GetTempPath(), "hello"), linuxOutput);
+        Assert.Equal(Path.Combine(Path.GetTempPath(), "hello.exe"), windowsOutput);
+    }
+
+    [Fact]
+    public void DefaultExecutableOutputPathUsesModuleNameForStandardInput()
+    {
+        var output = CompilerCli.DeriveExecutableOutputPath(
+            inputPath: null,
+            moduleName: "Demo.App",
+            targetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null));
+
+        Assert.Equal(Path.GetFullPath("Demo.App.exe"), output);
+    }
+
+    [Fact]
+    public async Task DefaultModeInfersExecutableFromExportedMain()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-default-exe-");
+        var rootPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "App.exe" : "App");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                module App
+
+                export fn i32[min max] main() {
+                    return 7;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [rootPath],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            using var process = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = outputPath,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+
+            Assert.NotNull(process);
+            process!.WaitForExit();
+            Assert.Equal(7, process.ExitCode);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task DefaultModeInfersLibraryWhenRootHasNoExportedMain()
+    {
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
+        {
+            return;
+        }
+
+        var archiverPath = FindFirstAvailableTool("llvm-ar", "ar");
+        if (archiverPath is null)
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-default-lib-");
+        var rootPath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var extension = OperatingSystem.IsWindows() ? ".lib" : ".a";
+        var outputPath = Path.Combine(tempDirectory.FullName, $"libFacade{extension}");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+
+        try
+        {
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                module Facade
+
+                public finite law i32[min max] Double(i32[min max] value) {
+                    return value + value;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+
+            var exitCode = await CompilerCli.RunAsync(
+                [rootPath, "--archiver", archiverPath],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted static library:", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Contains("Emitted package image:", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+            Assert.True(File.Exists(manifestPath));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public async Task CheckModeRejectsPositiveSignedRangesByDefault()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = await CompilerCli.RunAsync(
+            ["--check"],
+            new StringReader(
+                """
+                module Demo
+
+                fn i32[0 10] Run() {
+                    return 0;
+                }
+                """),
+            stdout,
+            stderr);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(string.Empty, stdout.ToString());
+        var text = stderr.ToString();
+        Assert.Contains("error STK3014 [semantic-validate]", text, StringComparison.Ordinal);
+        Assert.Contains("u8[0 10]", text, StringComparison.Ordinal);
+        Assert.Contains("Use `u8[0 10]`", text, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task StrictIntegerRangeFlagRejectsPositiveSignedRanges()
+    {
+        var stdout = new StringWriter();
+        var stderr = new StringWriter();
+
+        var exitCode = await CompilerCli.RunAsync(
+            ["--check", "--strict-integer-ranges"],
+            new StringReader(
+                """
+                module Demo
+
+                fn i32[0 10] Run() {
+                    return 0;
+                }
+                """),
+            stdout,
+            stderr);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(string.Empty, stdout.ToString());
+        var text = stderr.ToString();
+        Assert.Contains("error STK3014 [semantic-validate]", text, StringComparison.Ordinal);
+        Assert.Contains("u8[0 10]", text, StringComparison.Ordinal);
+        Assert.Contains("Use `u8[0 10]`", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -175,7 +385,7 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn ascii Run(ascii text, i32[-2147483648 2147483647] first, i32[-2147483648 2147483647] second, i32[-2147483648 2147483647] third) {
+                fn ascii Run(ascii text, i32[min max] first, i32[min max] second, i32[min max] third) {
                     return text[
                         first,
                         second,
@@ -211,7 +421,7 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(bool value) {
+                fn i32[min max] Run(bool value) {
                     switch (value) {
                         case true:
                             return 1;
@@ -246,7 +456,7 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(bool flag) {
+                fn i32[min max] Run(bool flag) {
                     return flag ? 1 : 2;
                 }
                 """),
@@ -273,7 +483,7 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run(bool left, bool right) {
+                fn i32[min max] Run(bool left, bool right) {
                     return left && right ? 1 : 2;
                 }
                 """),
@@ -300,7 +510,7 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run() {
+                fn i32[min max] Run() {
                     return 7;
                 }
                 """),
@@ -324,7 +534,7 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run() {
+                fn i32[min max] Run() {
                     return 7;
                 }
                 """),
@@ -351,7 +561,7 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32[-2147483648 2147483647] Run() {
+                fn i32[min max] Run() {
                     return 7;
                 }
                 """),
@@ -376,7 +586,7 @@ public sealed class CompilerCliTests
                 module Demo
 
                 struct Buffer {
-                    i32[-2147483648 2147483647] Value;
+                    i32[min max] Value;
 
                     mut drop {
                         ;
@@ -406,14 +616,14 @@ public sealed class CompilerCliTests
                 module Demo
 
                 struct Box {
-                    i32[-2147483648 2147483647] Value;
+                    i32[min max] Value;
                 }
 
                 fn void Consume(Box value) {
                     return;
                 }
 
-                fn i32[-2147483648 2147483647] Run() {
+                fn i32[min max] Run() {
                     stack Box box = new Box() { Value = 1 };
                     Consume(box);
                     return box.Value;
@@ -445,14 +655,14 @@ public sealed class CompilerCliTests
                 module Demo
 
                 struct Box {
-                    i32[-2147483648 2147483647] Value;
+                    i32[min max] Value;
                 }
 
                 fn void Consume(Box value) {
                     return;
                 }
 
-                fn i32[-2147483648 2147483647] Run() {
+                fn i32[min max] Run() {
                     stack Box box = new Box() { Value = 1 };
                     Consume(box);
                     return box.Value;
@@ -557,7 +767,7 @@ public sealed class CompilerCliTests
                     """
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
+                    fn i32[min max] Run() {
                         return 7;
                     }
                     """),
@@ -601,7 +811,7 @@ public sealed class CompilerCliTests
                     """
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
+                    fn i32[min max] Run() {
                         return 7;
                     }
                     """),
@@ -645,7 +855,7 @@ public sealed class CompilerCliTests
                     """
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
+                    fn i32[min max] Run() {
                         return 7;
                     }
                     """),
@@ -701,7 +911,7 @@ public sealed class CompilerCliTests
                     """
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
+                    fn i32[min max] Run() {
                         return 7;
                     }
                     """),
@@ -769,7 +979,7 @@ public sealed class CompilerCliTests
                     """
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
+                    fn i32[min max] Run() {
                         return 7;
                     }
                     """),
@@ -831,8 +1041,8 @@ public sealed class CompilerCliTests
                     """
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(bool flag) {
-                        stack mut i32[-2147483648 2147483647] value = 0;
+                    fn i32[min max] Run(bool flag) {
+                        stack mut i32[min max] value = 0;
                         if (flag) {
                             value = 1;
                         } else {
@@ -900,8 +1110,8 @@ public sealed class CompilerCliTests
                     """
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(bool flag) {
-                        stack mut i32[-2147483648 2147483647] value = 0;
+                    fn i32[min max] Run(bool flag) {
+                        stack mut i32[min max] value = 0;
                         if (flag) {
                             value = 1;
                         } else {
@@ -963,12 +1173,26 @@ public sealed class CompilerCliTests
                 """
                 module Lib
 
-                public inline finite i32[0 102] SelectOrAdd(i32[0 100] value, bool add) {
+                public inline finite u8[0 120] SelectOrAdd(u8[0 100] value, bool add) {
+                    stack u8[0 101] v1 = value + 1;
+                    stack u8[0 102] v2 = v1 + 1;
+                    stack u8[0 103] v3 = v2 + 1;
+                    stack u8[0 104] v4 = v3 + 1;
+                    stack u8[0 105] v5 = v4 + 1;
+                    stack u8[0 106] v6 = v5 + 1;
+                    stack u8[0 107] v7 = v6 + 1;
+                    stack u8[0 108] v8 = v7 + 1;
+                    stack u8[0 109] v9 = v8 + 1;
+                    stack u8[0 110] v10 = v9 + 1;
+                    stack u8[0 111] v11 = v10 + 1;
+                    stack u8[0 112] v12 = v11 + 1;
+                    stack u8[0 113] v13 = v12 + 1;
+
                     if (add) {
-                        return value + 1;
+                        return v13;
                     }
 
-                    return value + 2;
+                    return v13 + 1;
                 }
                 """);
             await File.WriteAllTextAsync(
@@ -977,7 +1201,7 @@ public sealed class CompilerCliTests
                 import Lib
                 module App
 
-                fn i32[0 102] Run(i32[0 100] value, bool add) {
+                fn u8[0 120] Run(u8[0 100] value, bool add) {
                     return Lib.SelectOrAdd(value, add);
                 }
                 """);
@@ -1039,7 +1263,7 @@ public sealed class CompilerCliTests
                 """
                 module Math
 
-                public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                     return left + right;
                 }
                 """);
@@ -1050,7 +1274,7 @@ public sealed class CompilerCliTests
                 import Math
                 module App
 
-                fn i32[-2147483648 2147483647] Run() {
+                fn i32[min max] Run() {
                     return Math.Add(3, 4);
                 }
                 """);
@@ -1103,7 +1327,7 @@ public sealed class CompilerCliTests
                 """
                 module Math
 
-                public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                     return left + right;
                 }
                 """);
@@ -1114,7 +1338,7 @@ public sealed class CompilerCliTests
                 export import Math
                 module Facade
 
-                public finite law i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
+                public finite law i32[min max] Double(i32[min max] value) {
                     return Math.Add(value, value);
                 }
                 """);
@@ -1193,7 +1417,7 @@ public sealed class CompilerCliTests
                 """
                 module Math
 
-                public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                     return left + right;
                 }
                 """);
@@ -1204,7 +1428,7 @@ public sealed class CompilerCliTests
                 export import Math
                 module Facade
 
-                public finite law i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
+                public finite law i32[min max] Double(i32[min max] value) {
                     return Math.Add(value, value);
                 }
                 """);
@@ -1226,7 +1450,7 @@ public sealed class CompilerCliTests
                 """
                 module Facade
 
-                public finite law i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
+                public finite law i32[min max] Double(i32[min max] value) {
                     return value + value;
                 }
                 """);
@@ -1302,11 +1526,11 @@ public sealed class CompilerCliTests
                 """
                 module Facade
 
-                public finite law i32[-2147483648 2147483647] Used() {
+                public finite law i32[min max] Used() {
                     return 1;
                 }
 
-                public finite law i32[-2147483648 2147483647] Unused() {
+                public finite law i32[min max] Unused() {
                     return 2;
                 }
                 """);
@@ -1344,6 +1568,63 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
+    public async Task EmitLibraryModeSuppressesRanlibEmptyObjectWarningsFromSuccessfulArchive()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-lib-ranlib-warning-");
+        var rootPath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, "libFacade.a");
+        var clangLogPath = Path.Combine(tempDirectory.FullName, "clang.log");
+        _ = await CreateUnixCaptureClangAsync(tempDirectory.FullName, clangLogPath);
+        var archiverPath = await CreateUnixRanlibWarningArchiverAsync(tempDirectory.FullName);
+        var originalPath = Environment.GetEnvironmentVariable("PATH");
+
+        try
+        {
+            Environment.SetEnvironmentVariable("PATH", $"{tempDirectory.FullName}{Path.PathSeparator}{originalPath}");
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                module Facade
+
+                public finite law i32[min max] Used() {
+                    return 1;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [rootPath, "--emit-lib", "-o", outputPath, "--archiver", archiverPath],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted static library:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", originalPath);
+
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public async Task EmitExecutableModeBuildsImportedAggregateDependencies()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out _))
@@ -1364,14 +1645,14 @@ public sealed class CompilerCliTests
                 module Geometry
 
                 public struct Box {
-                    i32[-2147483648 2147483647] Value;
+                    i32[min max] Value;
                 }
 
                 public fn Box Make() {
                     return new Box() { Value = 7 };
                 }
 
-                public fn i32[-2147483648 2147483647] Read(Box box) {
+                public fn i32[min max] Read(Box box) {
                     return box.Value;
                 }
                 """);
@@ -1382,7 +1663,7 @@ public sealed class CompilerCliTests
                 import Geometry
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export fn i32[min max] main() {
                     return Geometry.Read(Geometry.Make());
                 }
                 """);
@@ -1453,7 +1734,7 @@ public sealed class CompilerCliTests
                 """
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export fn i32[min max] main() {
                     return 0;
                 }
                 """);
@@ -1498,6 +1779,77 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
+    public async Task EmitExecutableModeForwardsMacOSSdkRootToClangForDarwinTargets()
+    {
+        if (!OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-exe-macos-sdk-");
+        var rootPath = Path.Combine(tempDirectory.FullName, "App.stark");
+        var outputPath = Path.Combine(tempDirectory.FullName, "app");
+        var clangLogPath = Path.Combine(tempDirectory.FullName, "clang.log");
+        var sdkRoot = Path.Combine(tempDirectory.FullName, "MacOSX.sdk");
+        Directory.CreateDirectory(sdkRoot);
+        _ = await CreateUnixCaptureClangAsync(tempDirectory.FullName, clangLogPath);
+        var originalPath = Environment.GetEnvironmentVariable("PATH");
+        var originalSdkRoot = Environment.GetEnvironmentVariable("SDKROOT");
+
+        try
+        {
+            Environment.SetEnvironmentVariable("PATH", $"{tempDirectory.FullName}{Path.PathSeparator}{originalPath}");
+            Environment.SetEnvironmentVariable("SDKROOT", sdkRoot);
+            await File.WriteAllTextAsync(
+                rootPath,
+                """
+                module App
+
+                export fn i32[min max] main() {
+                    return 0;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [
+                    rootPath,
+                    "--emit-exe",
+                    "-O0",
+                    "-o", outputPath,
+                    "--target", "arm64-apple-darwin"
+                ],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.Equal(0, exitCode);
+            Assert.Contains("Emitted executable:", stdout.ToString());
+            Assert.Equal(string.Empty, stderr.ToString());
+            Assert.True(File.Exists(outputPath));
+
+            var clangLog = await File.ReadAllTextAsync(clangLogPath);
+            Assert.Contains("-isysroot", clangLog, StringComparison.Ordinal);
+            Assert.Contains(sdkRoot, clangLog, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("PATH", originalPath);
+            Environment.SetEnvironmentVariable("SDKROOT", originalSdkRoot);
+
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public async Task EmitExecutableModeAllowsSystemMemoryDependencyThinLto()
     {
         if (OperatingSystem.IsWindows())
@@ -1525,9 +1877,10 @@ public sealed class CompilerCliTests
                 rootPath,
                 """
                 import System
+                import System.Text
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export fn i32[min max] main() {
                     stack System.Memory.MemoryResult<System.Text.OwnedAscii> text = 0.ToAscii();
                     return 0;
                 }
@@ -1623,10 +1976,10 @@ public sealed class CompilerCliTests
                 import System.Collections
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
-                    stack mut List<i32[0 max]> values = new();
+                export fn i32[min max] main() {
+                    stack mut List<u32[0 2 ** 31 - 1]> values = new();
                     values.Push(1);
-                    return (i32[-2147483648 2147483647])values.Count();
+                    return (i32[min max])values.Count();
                 }
                 """);
 
@@ -1662,11 +2015,9 @@ public sealed class CompilerCliTests
                 static line => line.Contains("System_Collections.ll", StringComparison.Ordinal)
                     && line.Contains("-flto=thin", StringComparison.Ordinal)
                     && !line.Contains("-disable-llvm-passes", StringComparison.Ordinal));
-            Assert.Contains(
+            Assert.DoesNotContain(
                 clangLogLines,
-                static line => line.Contains("System_Memory.ll", StringComparison.Ordinal)
-                    && line.Contains("-flto=thin", StringComparison.Ordinal)
-                    && !line.Contains("-disable-llvm-passes", StringComparison.Ordinal));
+                static line => line.Contains("System_Memory.ll", StringComparison.Ordinal));
         }
         finally
         {
@@ -1712,7 +2063,7 @@ public sealed class CompilerCliTests
                 [Backend(Opaque)]
                 module Opaque
 
-                public fn i32[-2147483648 2147483647] Value() {
+                public fn i32[min max] Value() {
                     return 1;
                 }
                 """);
@@ -1721,7 +2072,7 @@ public sealed class CompilerCliTests
                 """
                 module Inlineable
 
-                public finite law i32[-2147483648 2147483647] Value() {
+                public finite law i32[min max] Value() {
                     return 2;
                 }
                 """);
@@ -1732,7 +2083,7 @@ public sealed class CompilerCliTests
                 import Inlineable
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export fn i32[min max] main() {
                     return Opaque.Value() + Inlineable.Value();
                 }
                 """);
@@ -1821,7 +2172,7 @@ public sealed class CompilerCliTests
                 """
                 module Math
 
-                public finite law i32[-2147483648 2147483647] Add(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
                     return left + right;
                 }
                 """);
@@ -1832,7 +2183,7 @@ public sealed class CompilerCliTests
                 export import Math
                 module Facade
 
-                public finite law i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
+                public finite law i32[min max] Double(i32[min max] value) {
                     return Math.Add(value, value);
                 }
                 """);
@@ -1863,7 +2214,7 @@ public sealed class CompilerCliTests
                 import Facade
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export fn i32[min max] main() {
                     return Math.Add(3, 4);
                 }
                 """);
@@ -1953,11 +2304,11 @@ public sealed class CompilerCliTests
                     Write,
                 }
 
-                public finite law i32[-2147483648 2147483647] Open(ascii path, FileMode mode) {
+                public finite law i32[min max] Open(ascii path, FileMode mode) {
                     return 4;
                 }
 
-                public finite law i32[-2147483648 2147483647] Open(ascii path, FileMode mode, Text.Encoding encoding) {
+                public finite law i32[min max] Open(ascii path, FileMode mode, Text.Encoding encoding) {
                     return 11;
                 }
                 """);
@@ -1969,7 +2320,7 @@ public sealed class CompilerCliTests
                 export import Math
                 module Facade
 
-                public finite law i32[-2147483648 2147483647] Run() {
+                public finite law i32[min max] Run() {
                     return Math.Open("demo.txt", Math.FileMode.Write)
                         + Math.Open("demo.txt", Math.FileMode.Write, Text.Encoding.UTF8);
                 }
@@ -1996,7 +2347,7 @@ public sealed class CompilerCliTests
                 import Facade
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export fn i32[min max] main() {
                     return Math.Open("demo.txt", Math.FileMode.Write)
                         + Math.Open("demo.txt", Math.FileMode.Write, Text.Encoding.UTF8);
                 }
@@ -2071,7 +2422,7 @@ public sealed class CompilerCliTests
                 """
                 module Syscall
 
-                public ffi asm(x86_64) fn i64[-9223372036854775808 9223372036854775807] Syscall0(i64[-9223372036854775808 9223372036854775807] number)
+                public unsafe ffi asm(x86_64) fn i64[min max] Syscall0(i64[min max] number)
                     in("rax") number,
                     out("rax") return,
                     clobber("rcx", "r11")
@@ -2117,7 +2468,7 @@ public sealed class CompilerCliTests
                 import Syscall
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe fn i32[min max] main() {
                     if (Syscall.Syscall0(39) <= 0) {
                         return 1;
                     }
@@ -2197,7 +2548,7 @@ public sealed class CompilerCliTests
                 """
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export fn i32[min max] main() {
                     return 7;
                 }
                 """);
@@ -2272,7 +2623,7 @@ public sealed class CompilerCliTests
                 """
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export fn i32[min max] main() {
                     return 0;
                 }
                 """);
@@ -2333,7 +2684,7 @@ public sealed class CompilerCliTests
                 """
                 module App
 
-                fn i32[-2147483648 2147483647] Run() {
+                fn i32[min max] Run() {
                     return 7;
                 }
                 """);
@@ -2402,7 +2753,7 @@ public sealed class CompilerCliTests
                 """
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export fn i32[min max] main() {
                     return 7;
                 }
                 """);
@@ -2470,7 +2821,7 @@ public sealed class CompilerCliTests
                 """
                 module Facade
 
-                public finite law i32[-2147483648 2147483647] Double(i32[-2147483648 2147483647] value) {
+                public finite law i32[min max] Double(i32[min max] value) {
                     return value + value;
                 }
                 """);
@@ -2607,6 +2958,22 @@ public sealed class CompilerCliTests
             set -euo pipefail
             printf '%s\n' "$@" > "{{logPath}}"
             out="${2:-}"
+            : > "$out"
+            """);
+        System.Diagnostics.Process.Start("chmod", $"+x {path}")!.WaitForExit();
+        return path;
+    }
+
+    private static async Task<string> CreateUnixRanlibWarningArchiverAsync(string directory)
+    {
+        var path = Path.Combine(directory, "ranlib-warning-archiver.sh");
+        await File.WriteAllTextAsync(
+            path,
+            """
+            #!/usr/bin/env bash
+            set -euo pipefail
+            out="${2:-}"
+            printf "ranlib: warning: '%s(Facade.o)' has no symbols\n" "$out" >&2
             : > "$out"
             """);
         System.Diagnostics.Process.Start("chmod", $"+x {path}")!.WaitForExit();

@@ -11,19 +11,19 @@ public sealed class FixedArrayOrderedComparisonEmissionTests
             """
             module Demo
 
-            fn bool Less(i32[-2147483648 2147483647][3] left, i32[-2147483648 2147483647][3] right) {
+            fn bool Less(i32[min max][3] left, i32[min max][3] right) {
                 return left < right;
             }
 
-            fn bool LessOrEqual(i32[-2147483648 2147483647][3] left, i32[-2147483648 2147483647][3] right) {
+            fn bool LessOrEqual(i32[min max][3] left, i32[min max][3] right) {
                 return left <= right;
             }
 
-            fn bool Greater(i32[-2147483648 2147483647][3] left, i32[-2147483648 2147483647][3] right) {
+            fn bool Greater(i32[min max][3] left, i32[min max][3] right) {
                 return left > right;
             }
 
-            fn bool GreaterOrEqual(i32[-2147483648 2147483647][3] left, i32[-2147483648 2147483647][3] right) {
+            fn bool GreaterOrEqual(i32[min max][3] left, i32[min max][3] right) {
                 return left >= right;
             }
             """);

@@ -9,12 +9,12 @@ finite law i32[min max] Add(
     return left + right;
 }
 
-finite law i32[min max] SumPrefix(i32[0 10] count) {
-    stack mut i32[min max] index = 0;
+finite law i32[min max] SumPrefix(u8[0 10] count) {
+    stack mut u8[0 10] index = 0;
     stack mut i32[min max] total = 0;
 
     while willexit (index < count) {
-        total += index;
+        total += (i32[min max])index;
         index += 1;
     }
 
@@ -30,7 +30,7 @@ finite law bool IsExpectedAnswer(i32[min max] value) {
     }
 }
 
-export ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     stack i32[min max] answer = Add(20, 22);
     if (answer != ExpectedAnswer || !IsExpectedAnswer(answer)) {
         return 1;

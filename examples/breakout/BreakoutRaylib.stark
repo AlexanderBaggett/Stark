@@ -61,7 +61,7 @@ struct BreakoutRaylibGame {
         self.BallVelocityY = -260.0f;
     }
 
-    fn void Update(borrow mut BreakoutRaylibGame self, f32 dt) {
+    unsafe fn void Update(borrow mut BreakoutRaylibGame self, f32 dt) {
         if (IsKeyPressed(KEY_R) || IsKeyPressed(KEY_SPACE) || IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
             self.Reset();
             return;
@@ -75,7 +75,7 @@ struct BreakoutRaylibGame {
         self.UpdateBall(dt);
     }
 
-    fn void UpdatePaddle(borrow mut BreakoutRaylibGame self, f32 dt) {
+    unsafe fn void UpdatePaddle(borrow mut BreakoutRaylibGame self, f32 dt) {
         stack mut f32 nextX = self.PaddleX;
 
         if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
@@ -241,7 +241,7 @@ fn void DrawGame(borrow BreakoutRaylibGame game) {
     }
 }
 
-export ffi fn i32[min max] main() {
+export unsafe fn i32[min max] main() {
     InitWindow(ScreenWidth, ScreenHeight, "Stark Raylib Breakout");
     SetTargetFPS(60);
 

@@ -8,7 +8,7 @@ fn T Forward<T>(T value) {
     return Identity(value);
 }
 
-export ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     stack i32[min max] answer = Forward(42);
     stack bool flag = Forward(true);
 

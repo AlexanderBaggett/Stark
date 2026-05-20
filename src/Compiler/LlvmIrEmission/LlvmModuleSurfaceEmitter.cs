@@ -3,19 +3,30 @@ using Stark.Parsing;
 
 namespace Stark.Compiler.LlvmIrEmission;
 
+internal sealed record ImportedGlobalDeclarationPlan(
+    string QualifiedName,
+    string ModuleName,
+    string SourceName,
+    StarkVisibility Visibility,
+    TypedGlobalSymbol Global,
+    StarkParser.VariableInitializerContext? Initializer);
+
 internal sealed class LlvmModuleSurfaceEmitter
 {
     private readonly IReadOnlySet<string> _globalsEligibleForLocalUnnamedAddr;
+    private readonly IReadOnlyDictionary<string, ImportedGlobalDeclarationPlan> _importedCloneReferencedGlobals;
     private readonly LlvmEmissionContext _context;
     private readonly LlvmGlobalInitializerPlanner _globalInitializerPlanner;
 
     public LlvmModuleSurfaceEmitter(
         LlvmEmissionContext context,
         IReadOnlySet<string> globalsEligibleForLocalUnnamedAddr,
+        IReadOnlyDictionary<string, ImportedGlobalDeclarationPlan> importedCloneReferencedGlobals,
         LlvmGlobalInitializerPlanner globalInitializerPlanner)
     {
         _context = context;
         _globalsEligibleForLocalUnnamedAddr = globalsEligibleForLocalUnnamedAddr;
+        _importedCloneReferencedGlobals = importedCloneReferencedGlobals;
         _globalInitializerPlanner = globalInitializerPlanner;
     }
 
@@ -172,6 +183,8 @@ internal sealed class LlvmModuleSurfaceEmitter
 
     private void EmitImportedGlobalDeclarations(StringBuilder builder)
     {
+        var emitted = new HashSet<string>(StringComparer.Ordinal);
+
         foreach (var module in _context.LoadedModules.ImportedModules.OrderBy(static module => module.SyntaxModel.ModuleName, StringComparer.Ordinal))
         {
             foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
@@ -182,7 +195,7 @@ internal sealed class LlvmModuleSurfaceEmitter
                 {
                     foreach (var declarator in constantDeclaration.constantDeclarators().constantDeclarator())
                     {
-                        EmitImportedGlobalDeclaration(builder, module, visibility, declarator.Identifier().GetText());
+                        EmitImportedGlobalDeclaration(builder, module, visibility, declarator.Identifier().GetText(), emitted);
                     }
 
                     continue;
@@ -195,9 +208,19 @@ internal sealed class LlvmModuleSurfaceEmitter
 
                 foreach (var declarator in variableDeclaration.variableDeclarators().variableDeclarator())
                 {
-                    EmitImportedGlobalDeclaration(builder, module, visibility, declarator.Identifier().GetText());
+                    EmitImportedGlobalDeclaration(builder, module, visibility, declarator.Identifier().GetText(), emitted);
                 }
             }
+        }
+
+        foreach (var global in _importedCloneReferencedGlobals.Values.OrderBy(static global => global.QualifiedName, StringComparer.Ordinal))
+        {
+            if (emitted.Contains(global.QualifiedName))
+            {
+                continue;
+            }
+
+            EmitImportedGlobalDeclaration(builder, global, emitted);
         }
     }
 
@@ -205,11 +228,63 @@ internal sealed class LlvmModuleSurfaceEmitter
         StringBuilder builder,
         LoadedModuleDocument module,
         StarkVisibility visibility,
-        string sourceName)
+        string sourceName,
+        ISet<string> emitted)
     {
         var qualifiedName = $"{module.SyntaxModel.ModuleName}.{sourceName}";
         if (!_context.TypeModel.Globals.TryGetValue(qualifiedName, out var global))
         {
+            if (!_importedCloneReferencedGlobals.TryGetValue(qualifiedName, out var importedGlobal))
+            {
+                return;
+            }
+
+            EmitImportedGlobalDeclaration(builder, importedGlobal, emitted);
+            return;
+        }
+
+        EmitImportedGlobalDeclaration(
+            builder,
+            new ImportedGlobalDeclarationPlan(
+                qualifiedName,
+                module.SyntaxModel.ModuleName,
+                sourceName,
+                visibility,
+                global,
+                null),
+            emitted);
+    }
+
+    private void EmitImportedGlobalDeclaration(
+        StringBuilder builder,
+        ImportedGlobalDeclarationPlan importedGlobal,
+        ISet<string> emitted)
+    {
+        var qualifiedName = importedGlobal.QualifiedName;
+        var global = importedGlobal.Global;
+        if (!emitted.Add(qualifiedName))
+        {
+            return;
+        }
+
+        if (!_context.TypeModel.Globals.ContainsKey(qualifiedName)
+            && global.IsConst
+            && importedGlobal.Initializer is not null
+            && _globalInitializerPlanner.TryPlanVariableInitializer(
+                importedGlobal.Initializer,
+                global.Type,
+                true,
+                out var initializerPlan))
+        {
+            EmitGlobalInitializerPrelude(builder, initializerPlan.PreludeDefinitions);
+            builder.AppendLine($"; imported inline const definition: {qualifiedName}");
+            builder.AppendLine($"; visibility: {importedGlobal.Visibility.ToString().ToLowerInvariant()}");
+            builder.AppendLine(BuildImportedInlineConstDefinition(
+                qualifiedName,
+                ResolveGlobalSymbolName(qualifiedName),
+                global,
+                initializerPlan.Rendered));
+            builder.AppendLine();
             return;
         }
 
@@ -217,7 +292,7 @@ internal sealed class LlvmModuleSurfaceEmitter
         var storage = global.IsMutable ? "global" : "constant";
         var addressAttribute = GetImportedGlobalAddressAttribute(qualifiedName, global);
         builder.AppendLine($"; imported declaration: {qualifiedName}");
-        builder.AppendLine($"; visibility: {visibility.ToString().ToLowerInvariant()}");
+        builder.AppendLine($"; visibility: {importedGlobal.Visibility.ToString().ToLowerInvariant()}");
         var segments = new List<string> { $"@{EscapeIdentifier(symbolName)}", "=", "external" };
         if (addressAttribute is not null)
         {
@@ -234,6 +309,31 @@ internal sealed class LlvmModuleSurfaceEmitter
 
         builder.AppendLine(declaration);
         builder.AppendLine();
+    }
+
+    private string BuildImportedInlineConstDefinition(
+        string qualifiedName,
+        string symbolName,
+        TypedGlobalSymbol global,
+        string initializer)
+    {
+        var segments = new List<string> { $"@{EscapeIdentifier(symbolName)}", "=", "internal" };
+        if (!global.IsMutable
+            && _globalsEligibleForLocalUnnamedAddr.Contains(qualifiedName))
+        {
+            segments.Add("unnamed_addr");
+        }
+
+        segments.Add("constant");
+        segments.Add(_context.MapType(global.Type));
+        segments.Add(initializer);
+        var definition = string.Join(" ", segments);
+        if (GetStarkOwnedGlobalAlignmentBytes(global) is { } alignmentBytes)
+        {
+            definition += $", align {alignmentBytes}";
+        }
+
+        return definition;
     }
 
     private string BuildGlobalDefinition(

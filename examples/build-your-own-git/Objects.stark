@@ -1,12 +1,14 @@
 import System
+import System.Text
 module BuildYourOwnGitObjects
 
-finite law bool NameIsDemoCommit(Ascii name) {
-    if (name.Length != 11 || name.Data == null) {
+fn bool NameIsDemoCommit(System.Text.OwnedAscii name) {
+    stack mut System.Text.OwnedAscii ownedName = name;
+    if (ownedName.Length() != 11) {
         return false;
     }
 
-    stack ascii view = System.Text.AsciiView(name);
+    stack ascii view = ownedName.View();
     return view[0] == 'd'
         && view[1] == 'e'
         && view[2] == 'm'
@@ -20,7 +22,7 @@ finite law bool NameIsDemoCommit(Ascii name) {
         && view[10] == 't';
 }
 
-finite law bool EntryIsDemoCommit(System.FileSystem.FileSystemEntry entry) {
+fn bool EntryIsDemoCommit(System.FileSystem.FileSystemEntry entry) {
     return entry.Kind == System.FileSystem.FileSystemEntryKind.File && NameIsDemoCommit(entry.Name);
 }
 
@@ -53,7 +55,7 @@ fn bool ObjectStoreContainsDemoCommit() {
     }
 }
 
-export ffi fn i32[min max] main() {
+export unsafe fn i32[min max] main() {
     if (!ObjectStoreContainsDemoCommit()) {
         return 1;
     }

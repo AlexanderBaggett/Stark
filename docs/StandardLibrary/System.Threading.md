@@ -11,7 +11,7 @@ detach it, and let owned cleanup happen predictably.
 ```stark
 module System.Threading
 
-public alias ThreadEntry = fnptr<fn i32[-2147483648 2147483647]()>;
+public alias ThreadEntry = fnptr<fn i32[min max]()>;
 
 public enum ThreadError {
     StartFailed,
@@ -27,7 +27,7 @@ public enum ThreadStatus {
 }
 
 public enum ThreadJoinResult {
-    Ok(i32[-2147483648 2147483647]),
+    Ok(i32[min max]),
     Err(ThreadError),
 }
 

@@ -16,9 +16,9 @@ public sealed class MidLevelIrDynamicFixedArrayIndexingRuntimeTests
             """
             module Demo
 
-            export ffi fn i32[-2147483648 2147483647] main() {
-                stack i32[-2147483648 2147483647] index = 2;
-                return (new i32[-2147483648 2147483647][3])[index];
+            export fn i32[min max] main() {
+                stack i32[min max] index = 2;
+                return (new i32[min max][3])[index];
             }
             """);
 

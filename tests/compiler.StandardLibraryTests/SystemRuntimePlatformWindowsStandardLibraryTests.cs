@@ -246,7 +246,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                 import System
                 module App
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export fn i32[min max] main() {
                     stack System.Memory.Allocator allocator = System.Memory.Allocator.Default();
                     if (!allocator.IsDefault()) {
                         return 1;
@@ -311,7 +311,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                 appPath,
                 """
                 import System
-                import System.Experimental.Console
+                import System.Console
                 module App
 
                 fn bool IsOk(System.IO.IOStatus status) {
@@ -323,7 +323,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                     }
                 }
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export fn i32[min max] main() {
                     if (!IsOk(System.Console.Write((unicode)"Console"))) {
                         return 1;
                     }
@@ -336,11 +336,11 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                         return 3;
                     }
 
-                    if (!IsOk(System.Experimental.Console.WriteLine((unicode)"Experimental"))) {
+                    if (!IsOk(System.Console.WriteLine((unicode)"Promoted"))) {
                         return 4;
                     }
 
-                    if (!IsOk(System.Experimental.Console.WriteErrorLine("experimental stderr"))) {
+                    if (!IsOk(System.Console.WriteErrorLine("promoted stderr"))) {
                         return 5;
                     }
 
@@ -361,8 +361,8 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
 
             var execution = await RunProcessAsync(outputPath, tempDirectory.FullName);
             Assert.Equal(0, execution.ExitCode);
-            Assert.Equal("Console Status\nExperimental\n", NormalizeNewlines(execution.Stdout));
-            Assert.Equal("stderr works\nexperimental stderr\n", NormalizeNewlines(execution.Stderr));
+            Assert.Equal("Console Status\nPromoted\n", NormalizeNewlines(execution.Stdout));
+            Assert.Equal("stderr works\npromoted stderr\n", NormalizeNewlines(execution.Stderr));
         }
         finally
         {
@@ -397,8 +397,8 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
             await File.WriteAllTextAsync(
                 appPath,
                 """
-                import System.Experimental.FileSystem
-                import System.Experimental.Text
+                import System.FileSystem
+                import System.Text
                 import System.IO
                 module WindowsDirectoryDecodeProbe
 
@@ -411,31 +411,31 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                     }
                 }
 
-                fn bool IsWideName(mut borrow System.Experimental.FileSystem.FileSystemEntry entry) {
+                fn bool IsWideName(mut borrow System.FileSystem.FileSystemEntry entry) {
                     if (entry.Name.Length() != 11) {
                         return false;
                     }
 
-                    stack i8[-128 127][] view = entry.Name.AsSlice();
+                    stack i8[min max][] view = entry.Name.AsSlice();
                     return view[0] == 119
                         && view[1] == 105
                         && view[2] == 100
                         && view[3] == 101
                         && view[4] == 45
-                        && view[5] == (i8[-128 127])-61
-                        && view[6] == (i8[-128 127])-87
+                        && view[5] == (i8[min max])-61
+                        && view[6] == (i8[min max])-87
                         && view[7] == 46
                         && view[8] == 116
                         && view[9] == 120
                         && view[10] == 116;
                 }
 
-                fn bool IsLongName(mut borrow System.Experimental.FileSystem.FileSystemEntry entry) {
+                fn bool IsLongName(mut borrow System.FileSystem.FileSystemEntry entry) {
                     if (entry.Name.Length() != 184) {
                         return false;
                     }
 
-                    stack i8[-128 127][] view = entry.Name.AsSlice();
+                    stack i8[min max][] view = entry.Name.AsSlice();
                     return view[0] == 97
                         && view[179] == 97
                         && view[180] == 46
@@ -444,23 +444,23 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                         && view[183] == 116;
                 }
 
-                export ffi fn i32[min max] main() {
-                    stack System.IO.IOResult<System.Experimental.FileSystem.Directory> opened =
-                        System.Experimental.FileSystem.OpenDirectory("scan-root");
+                export unsafe fn i32[min max] main() {
+                    stack System.IO.IOResult<System.FileSystem.Directory> opened =
+                        System.FileSystem.OpenDirectory("scan-root");
                     switch (opened) {
-                        case System.IO.IOResult<System.Experimental.FileSystem.Directory>.Err(var openError):
+                        case System.IO.IOResult<System.FileSystem.Directory>.Err(var openError):
                             return 1;
-                        case System.IO.IOResult<System.Experimental.FileSystem.Directory>.Ok(var directoryValue):
-                            stack mut System.Experimental.FileSystem.Directory directory = directoryValue;
+                        case System.IO.IOResult<System.FileSystem.Directory>.Ok(var directoryValue):
+                            stack mut System.FileSystem.Directory directory = directoryValue;
                             stack mut bool foundWide = false;
                             stack mut bool foundLong = false;
 
-                            for willexit (stack mut i32[0 8] index = 0; index < 8; index += 1) {
+                            for willexit (stack mut u8[0 8] index = 0; index < 8; index += 1) {
                                 switch (directory.ReadNext()) {
-                                    case System.Experimental.FileSystem.DirectoryReadResult.Err(var readError):
+                                    case System.FileSystem.DirectoryReadResult.Err(var readError):
                                         directory.Close();
                                         return 2;
-                                    case System.Experimental.FileSystem.DirectoryReadResult.End:
+                                    case System.FileSystem.DirectoryReadResult.End:
                                         if (!IOOk(directory.Close())) {
                                             return 3;
                                         }
@@ -474,8 +474,8 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                                         }
 
                                         return 0;
-                                    case System.Experimental.FileSystem.DirectoryReadResult.Entry(var entry):
-                                        stack mut System.Experimental.FileSystem.FileSystemEntry mutableEntry = entry;
+                                    case System.FileSystem.DirectoryReadResult.Entry(var entry):
+                                        stack mut System.FileSystem.FileSystemEntry mutableEntry = entry;
                                         if (IsWideName(mutableEntry)) {
                                             foundWide = true;
                                         }
@@ -504,8 +504,8 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
             Assert.True(File.Exists(llvmPath));
 
             var llvm = await File.ReadAllTextAsync(llvmPath);
-            Assert.Contains("System_Experimental_FileSystem_Directory_ReadNext", llvm, StringComparison.Ordinal);
-            Assert.Contains("System_Experimental_FileSystem_OpenDirectory", llvm, StringComparison.Ordinal);
+            Assert.Contains("System_FileSystem_Directory_ReadNext", llvm, StringComparison.Ordinal);
+            Assert.Contains("System_FileSystem_OpenDirectory", llvm, StringComparison.Ordinal);
             Assert.Contains("TryCopyWideAscii", llvm, StringComparison.Ordinal);
             Assert.Contains("TryCopyWideUtf8", llvm, StringComparison.Ordinal);
         }
@@ -523,7 +523,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
     }
 
     [Fact]
-    public async Task SourceWindowsExperimentalDirectoryEnumerationExecutablePreservesCachedFirstEntry()
+    public async Task SourceWindowsPromotedDirectoryEnumerationExecutablePreservesCachedFirstEntry()
     {
         if (!OperatingSystem.IsWindows()
             || !NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))
@@ -550,7 +550,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
             await File.WriteAllTextAsync(
                 appPath,
                 """
-                import System.Experimental.FileSystem
+                import System.FileSystem
                 import System.IO
                 module WindowsDirectoryRuntimeProbe
 
@@ -563,36 +563,36 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                     }
                 }
 
-                fn bool IsEnd(System.Experimental.FileSystem.DirectoryReadInfoResult result) {
+                fn bool IsEnd(System.FileSystem.DirectoryReadInfoResult result) {
                     switch (result) {
-                        case System.Experimental.FileSystem.DirectoryReadInfoResult.Entry(var entry):
+                        case System.FileSystem.DirectoryReadInfoResult.Entry(var entry):
                             return false;
-                        case System.Experimental.FileSystem.DirectoryReadInfoResult.End:
+                        case System.FileSystem.DirectoryReadInfoResult.End:
                             return true;
-                        case System.Experimental.FileSystem.DirectoryReadInfoResult.Err(var error):
+                        case System.FileSystem.DirectoryReadInfoResult.Err(var error):
                             return false;
                     }
                 }
 
-                fn bool IsErr(System.Experimental.FileSystem.DirectoryReadInfoResult result) {
+                fn bool IsErr(System.FileSystem.DirectoryReadInfoResult result) {
                     switch (result) {
-                        case System.Experimental.FileSystem.DirectoryReadInfoResult.Entry(var entry):
+                        case System.FileSystem.DirectoryReadInfoResult.Entry(var entry):
                             return false;
-                        case System.Experimental.FileSystem.DirectoryReadInfoResult.End:
+                        case System.FileSystem.DirectoryReadInfoResult.End:
                             return false;
-                        case System.Experimental.FileSystem.DirectoryReadInfoResult.Err(var error):
+                        case System.FileSystem.DirectoryReadInfoResult.Err(var error):
                             return true;
                     }
                 }
 
                 fn i32[min max] CheckEmptyDirectory() {
-                    stack System.IO.IOResult<System.Experimental.FileSystem.Directory> opened =
-                        System.Experimental.FileSystem.OpenDirectory("empty-root");
+                    stack System.IO.IOResult<System.FileSystem.Directory> opened =
+                        System.FileSystem.OpenDirectory("empty-root");
                     switch (opened) {
-                        case System.IO.IOResult<System.Experimental.FileSystem.Directory>.Err(var openError):
+                        case System.IO.IOResult<System.FileSystem.Directory>.Err(var openError):
                             return 1;
-                        case System.IO.IOResult<System.Experimental.FileSystem.Directory>.Ok(var directoryValue):
-                            stack mut System.Experimental.FileSystem.Directory directory = directoryValue;
+                        case System.IO.IOResult<System.FileSystem.Directory>.Ok(var directoryValue):
+                            stack mut System.FileSystem.Directory directory = directoryValue;
                             if (!IsEnd(directory.ReadNextInfo())) {
                                 directory.Close();
                                 return 2;
@@ -607,13 +607,13 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                 }
 
                 fn i32[min max] CheckEarlyClose() {
-                    stack System.IO.IOResult<System.Experimental.FileSystem.Directory> opened =
-                        System.Experimental.FileSystem.OpenDirectory("scan-root");
+                    stack System.IO.IOResult<System.FileSystem.Directory> opened =
+                        System.FileSystem.OpenDirectory("scan-root");
                     switch (opened) {
-                        case System.IO.IOResult<System.Experimental.FileSystem.Directory>.Err(var openError):
+                        case System.IO.IOResult<System.FileSystem.Directory>.Err(var openError):
                             return 1;
-                        case System.IO.IOResult<System.Experimental.FileSystem.Directory>.Ok(var directoryValue):
-                            stack mut System.Experimental.FileSystem.Directory directory = directoryValue;
+                        case System.IO.IOResult<System.FileSystem.Directory>.Ok(var directoryValue):
+                            stack mut System.FileSystem.Directory directory = directoryValue;
                             if (!IOOk(directory.Close())) {
                                 return 2;
                             }
@@ -631,25 +631,25 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                 }
 
                 fn i32[min max] ScanOnce() {
-                    stack System.IO.IOResult<System.Experimental.FileSystem.Directory> opened =
-                        System.Experimental.FileSystem.OpenDirectory("scan-root");
+                    stack System.IO.IOResult<System.FileSystem.Directory> opened =
+                        System.FileSystem.OpenDirectory("scan-root");
                     switch (opened) {
-                        case System.IO.IOResult<System.Experimental.FileSystem.Directory>.Err(var openError):
+                        case System.IO.IOResult<System.FileSystem.Directory>.Err(var openError):
                             return 1;
-                        case System.IO.IOResult<System.Experimental.FileSystem.Directory>.Ok(var directoryValue):
-                            stack mut System.Experimental.FileSystem.Directory directory = directoryValue;
+                        case System.IO.IOResult<System.FileSystem.Directory>.Ok(var directoryValue):
+                            stack mut System.FileSystem.Directory directory = directoryValue;
                             stack mut bool foundFirst = false;
                             stack mut bool foundWide = false;
                             stack mut bool foundLong = false;
-                            stack mut i32[0 3] count = 0;
-                            stack mut i64[0 210] checksum = 0;
+                            stack mut u8[0 3] count = 0;
+                            stack mut u8[0 210] checksum = 0;
 
                             while willexit (true) {
                                 switch (directory.ReadNextInfo()) {
-                                    case System.Experimental.FileSystem.DirectoryReadInfoResult.Err(var readError):
+                                    case System.FileSystem.DirectoryReadInfoResult.Err(var readError):
                                         directory.Close();
                                         return 2;
-                                    case System.Experimental.FileSystem.DirectoryReadInfoResult.End:
+                                    case System.FileSystem.DirectoryReadInfoResult.End:
                                         if (!IOOk(directory.Close())) {
                                             return 3;
                                         }
@@ -663,8 +663,8 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                                         }
 
                                         return 0;
-                                    case System.Experimental.FileSystem.DirectoryReadInfoResult.Entry(var entry):
-                                        stack i64[0 210] length = (i64[0 210])entry.NameLength;
+                                    case System.FileSystem.DirectoryReadInfoResult.Entry(var entry):
+                                        stack u8[0 210] length = (u8[0 210])entry.NameLength;
                                         if (length == 15) {
                                             foundFirst = true;
                                         }
@@ -684,7 +684,7 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                     }
                 }
 
-                export ffi fn i32[min max] main() {
+                export fn i32[min max] main() {
                     stack i32[min max] emptyStatus = CheckEmptyDirectory();
                     if (emptyStatus != 0) {
                         return 10 + emptyStatus;
@@ -844,3 +844,4 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
         return text.Replace("\r\n", "\n", StringComparison.Ordinal);
     }
 }
+

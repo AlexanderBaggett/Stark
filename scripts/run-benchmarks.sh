@@ -6,7 +6,7 @@ repo_root="$(cd "${script_dir}/.." && pwd)"
 bench_root="${repo_root}/benchmarks"
 stdlib_root="${repo_root}/stdlib/src"
 
-runs="${STARK_BENCH_RUNS:-20}"
+runs="${STARK_BENCH_RUNS:-100}"
 filter="${STARK_BENCH_FILTER:-}"
 target="${STARK_TARGET:-}"
 extra_args="${STARK_COMPILER_ARGS:-}"
@@ -79,12 +79,26 @@ if language_enabled rust && ! command -v "${rust_compiler}" >/dev/null 2>&1; the
 fi
 
 mkdir -p "${output_dir}"
+portable_mktemp_file() {
+  local template="$1"
+  local suffix="${2:-}"
+  local path
+
+  path="$(mktemp "${template}")"
+  if [[ -n "${suffix}" ]]; then
+    mv "${path}" "${path}${suffix}"
+    path="${path}${suffix}"
+  fi
+
+  printf '%s\n' "${path}"
+}
+
 if [[ -z "${results_file}" ]]; then
-  results_file="$(mktemp "${output_dir}/results-${timestamp}.XXXXXX.csv")"
+  results_file="$(portable_mktemp_file "${output_dir}/results-${timestamp}.XXXXXX" ".csv")"
 fi
 
 if [[ -z "${machine_file}" ]]; then
-  machine_file="$(mktemp "${output_dir}/machine-${timestamp}.XXXXXX.txt")"
+  machine_file="$(portable_mktemp_file "${output_dir}/machine-${timestamp}.XXXXXX" ".txt")"
 fi
 
 mkdir -p "$(dirname "${results_file}")" "$(dirname "${machine_file}")"
@@ -161,6 +175,7 @@ write_machine_metadata() {
     printf 'benchmark_ratio_column=c_avg_ratio avg_us divided by same-benchmark C avg_us\n'
     printf 'stark_target=%s\n' "${target:-host-default}"
     printf 'stark_flags=--emit-exe -O3\n'
+    printf 'stark_compiler_configuration=Release\n'
     printf 'stark_compiler_args=%s\n' "${extra_args:-<none>}"
     printf 'c_compiler=%s\n' "${c_compiler}"
     printf 'c_flags=%s\n' "${c_flags[*]}"
@@ -179,97 +194,12 @@ benchmark_label_fields() {
   local benchmark_id="$1"
   local language="$2"
 
-  local remainder="${benchmark_id#benchmarks/}"
-  local category="${remainder%%/*}"
-  local stem="${benchmark_id##*/}"
-  local prefix=""
-  if [[ "${stem}" == Experimental* ]]; then
-    prefix="Experimental"
-    stem="${stem#Experimental}"
-  fi
-
-  if [[ "${benchmark_id}" != benchmarks/collections/* ]]; then
-    local subsystem=""
-    case "${category}" in
-      allocator)
-        subsystem="Memory"
-        ;;
-      console)
-        subsystem="Console"
-        ;;
-      io)
-        subsystem="IO"
-        ;;
-      network)
-        subsystem="Network"
-        ;;
-      runtime)
-        subsystem="Runtime"
-        ;;
-      text)
-        subsystem="Text"
-        ;;
-    esac
-
-    if [[ -z "${subsystem}" ]]; then
-      printf '%s,%s\n' "${benchmark_id}" "${language}"
-      return
-    fi
-
-    local language_label="${language}"
-    if [[ "${language}" == "stark" ]]; then
-      if [[ "${prefix}" == "Experimental" ]]; then
-        language_label="stark-experimental"
-      fi
-    fi
-
-    printf 'benchmarks/%s/%s,%s\n' "${category}" "${stem}" "${language_label}"
-    return
-  fi
-
-  local collection=""
-  local scenario="${stem}"
-  if [[ "${stem}" == LinkedList* ]]; then
-    collection="LinkedList"
-    scenario="${stem#LinkedList}"
-  elif [[ "${stem}" == Dictionary* ]]; then
-    collection="Dictionary"
-    scenario="${stem#Dictionary}"
-  elif [[ "${stem}" == Queue* ]]; then
-    collection="Queue"
-    scenario="${stem#Queue}"
-  elif [[ "${stem}" == Stack* ]]; then
-    collection="Stack"
-    scenario="${stem#Stack}"
-  elif [[ "${stem}" == List* ]]; then
-    collection="List"
-    scenario="${stem#List}"
-  fi
-
-  if [[ -z "${collection}" ]]; then
-    printf '%s,%s\n' "${benchmark_id}" "${language}"
-    return
-  fi
-
-  if [[ -z "${scenario}" ]]; then
-    scenario="Default"
-  fi
-
-  local language_label="${language}"
-  if [[ "${language}" == "stark" ]]; then
-    if [[ "${prefix}" == "Experimental" ]]; then
-      language_label="stark-experimental"
-    fi
-  fi
-
-  printf 'benchmarks/collections/%s%s,%s\n' "${collection}" "${scenario}" "${language_label}"
+  printf '%s,%s\n' "${benchmark_id}" "${language}"
 }
 
 benchmark_group_for_id() {
   local benchmark_id="$1"
-  local label_fields
-  label_fields="$(benchmark_label_fields "${benchmark_id}" "stark")"
-  printf '%s\n' "${label_fields%%,*}"
+  printf '%s\n' "${benchmark_id}"
 }
 
 ns_to_us() {
@@ -342,7 +272,36 @@ read_metric_value() {
   awk -F= -v key="${key}" '$1 == key { print $2; found = 1; exit } END { if (!found) print 0 }' "${path}"
 }
 
+timed_native_benchmarks=()
+
+timed_native_benchmark_seen() {
+  local key="$1"
+  local timed_native_benchmark
+
+  for timed_native_benchmark in "${timed_native_benchmarks[@]+"${timed_native_benchmarks[@]}"}"; do
+    if [[ "${timed_native_benchmark}" == "${key}" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+mark_timed_native_benchmark() {
+  local key="$1"
+  timed_native_benchmarks+=("${key}")
+}
+
 last_run_peak_rss_kib=0
+
+emit_captured_benchmark_stderr() {
+  local stderr_path="$1"
+
+  if [[ -s "${stderr_path}" ]]; then
+    echo "Captured benchmark stderr:" >&2
+    sed 's/^/  /' "${stderr_path}" >&2
+  fi
+}
 
 run_benchmark_executable() {
   local benchmark_id="$1"
@@ -350,12 +309,15 @@ run_benchmark_executable() {
   local phase="$3"
   local output_path="$4"
   local status
+  local stderr_path
 
   last_run_peak_rss_kib=0
+  stderr_path="$(mktemp "${tmp_dir}/benchmark-stderr.XXXXXX")"
 
   if [[ "${capture_rss}" != "1" ]]; then
     if [[ "${run_timeout_seconds}" -gt 0 ]] && command -v timeout >/dev/null 2>&1; then
-      if timeout "${run_timeout_seconds}" "${output_path}" >/dev/null; then
+      if timeout "${run_timeout_seconds}" "${output_path}" >/dev/null 2>"${stderr_path}"; then
+        rm -f "${stderr_path}"
         return 0
       else
         status="$?"
@@ -367,15 +329,24 @@ run_benchmark_executable() {
         echo "Benchmark ${benchmark_id}/${language} exited with status ${status} during ${phase}." >&2
       fi
 
+      emit_captured_benchmark_stderr "${stderr_path}"
+      rm -f "${stderr_path}"
       exit "${status}"
     fi
 
-    if "${output_path}" >/dev/null; then
+    set +e
+    "${output_path}" >/dev/null 2>"${stderr_path}"
+    status="$?"
+    set -e
+
+    if [[ "${status}" -eq 0 ]]; then
+      rm -f "${stderr_path}"
       return 0
     fi
 
-    status="$?"
     echo "Benchmark ${benchmark_id}/${language} exited with status ${status} during ${phase}." >&2
+    emit_captured_benchmark_stderr "${stderr_path}"
+    rm -f "${stderr_path}"
     exit "${status}"
   fi
 
@@ -389,7 +360,7 @@ run_benchmark_executable() {
   rm -f "${timeout_path}"
   printf '0\n' > "${peak_path}"
 
-  "${output_path}" >/dev/null &
+  "${output_path}" >/dev/null 2>"${stderr_path}" &
   local child_pid="$!"
 
   poll_process_peak_rss_kib "${child_pid}" "${peak_path}" &
@@ -428,17 +399,22 @@ run_benchmark_executable() {
 
   if [[ "${status}" -eq 0 ]]; then
     rm -f "${timeout_path}"
+    rm -f "${stderr_path}"
     return 0
   fi
 
   if [[ -f "${timeout_path}" ]]; then
     rm -f "${timeout_path}"
     echo "Benchmark ${benchmark_id}/${language} timed out during ${phase} after ${run_timeout_seconds}s." >&2
+    emit_captured_benchmark_stderr "${stderr_path}"
+    rm -f "${stderr_path}"
     exit 124
   fi
 
   rm -f "${timeout_path}"
   echo "Benchmark ${benchmark_id}/${language} exited with status ${status} during ${phase}." >&2
+  emit_captured_benchmark_stderr "${stderr_path}"
+  rm -f "${stderr_path}"
   exit "${status}"
 }
 
@@ -509,14 +485,20 @@ compile_and_time_stark() {
   local compile_us
   local metrics_path="${output_path}.metrics"
   compile_start="$(date +%s%N)"
-  dotnet run --project "${repo_root}/src" -- \
+  local compiler_command=(
+    dotnet run -c Release --project "${repo_root}/src" -- \
     "${source_path}" \
     --emit-exe \
     -O3 \
     -I "${stdlib_root}" \
     -o "${output_path}" \
-    --toolchain-metrics "${metrics_path}" \
-    "${compiler_args[@]}" >/dev/null
+    --toolchain-metrics "${metrics_path}"
+  )
+  if [[ "${#compiler_args[@]}" -gt 0 ]]; then
+    compiler_command+=("${compiler_args[@]}")
+  fi
+
+  "${compiler_command[@]}" >/dev/null
   compile_end="$(date +%s%N)"
   compile_us="$(ns_to_us "$((compile_end - compile_start))")"
   time_executable \
@@ -571,7 +553,10 @@ write_machine_metadata "${machine_file}"
 echo "Benchmark results: ${results_file}" >&2
 echo "Machine metadata: ${machine_file}" >&2
 
-mapfile -t benchmarks < <(find "${bench_root}" -type f -name '*.stark' | sort)
+benchmarks=()
+while IFS= read -r benchmark; do
+  benchmarks+=("${benchmark}")
+done < <(find "${bench_root}" -type f -name '*.stark' | sort)
 if [[ -n "${filter}" ]]; then
   normalized_filter="${filter//\\//}"
   filtered=()
@@ -586,7 +571,10 @@ if [[ -n "${filter}" ]]; then
       filtered+=("${benchmark}")
     fi
   done
-  benchmarks=("${filtered[@]}")
+  benchmarks=()
+  for benchmark in "${filtered[@]+"${filtered[@]}"}"; do
+    benchmarks+=("${benchmark}")
+  done
 fi
 
 if [[ "${#benchmarks[@]}" -eq 0 ]]; then
@@ -606,7 +594,6 @@ fi
 
 emit_row 'benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib'
 
-declare -A timed_native_benchmarks=()
 for source_path in "${benchmarks[@]}"; do
   rel_path="${source_path#"${repo_root}/"}"
   if grep -q '^// stark-bench: compile-only' "${source_path}"; then
@@ -633,8 +620,8 @@ for source_path in "${benchmarks[@]}"; do
   fi
 
   c_benchmark_key="c|${benchmark_group}"
-  if language_enabled c && [[ -z "${timed_native_benchmarks[${c_benchmark_key}]+x}" ]]; then
-    timed_native_benchmarks["${c_benchmark_key}"]=1
+  if language_enabled c && ! timed_native_benchmark_seen "${c_benchmark_key}"; then
+    mark_timed_native_benchmark "${c_benchmark_key}"
     c_source_path="${repo_root}/${benchmark_group}.c"
     if [[ ! -f "${c_source_path}" ]]; then
       echo "Missing C benchmark counterpart for group ${benchmark_group}: ${c_source_path#${repo_root}/}" >&2
@@ -644,8 +631,8 @@ for source_path in "${benchmarks[@]}"; do
   fi
 
   rust_benchmark_key="rust|${benchmark_group}"
-  if language_enabled rust && [[ -z "${timed_native_benchmarks[${rust_benchmark_key}]+x}" ]]; then
-    timed_native_benchmarks["${rust_benchmark_key}"]=1
+  if language_enabled rust && ! timed_native_benchmark_seen "${rust_benchmark_key}"; then
+    mark_timed_native_benchmark "${rust_benchmark_key}"
     rust_source_path="${repo_root}/${benchmark_group}.rs"
     if [[ ! -f "${rust_source_path}" ]]; then
       echo "Missing Rust benchmark counterpart for group ${benchmark_group}: ${rust_source_path#${repo_root}/}" >&2
@@ -656,7 +643,7 @@ for source_path in "${benchmarks[@]}"; do
     shopt -s nullglob
     rust_variant_paths=("${repo_root}/${benchmark_group}".rust-*.rs)
     shopt -u nullglob
-    for rust_variant_path in "${rust_variant_paths[@]}"; do
+    for rust_variant_path in "${rust_variant_paths[@]+"${rust_variant_paths[@]}"}"; do
       rust_variant_name="$(basename "${rust_variant_path}")"
       rust_variant_name="${rust_variant_name#"$(basename "${benchmark_group}").rust-"}"
       rust_variant_name="${rust_variant_name%.rs}"

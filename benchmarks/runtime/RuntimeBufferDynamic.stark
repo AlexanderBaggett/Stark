@@ -1,0 +1,59 @@
+import System.Runtime.Buffer
+import System.Memory
+module Benchmarks.Runtime.RuntimeBufferDynamic
+
+const Iterations = 1000;
+const Chunks = 32;
+
+unsafe fn bool Ok(System.Memory.MemoryStatus status) {
+    switch (status) {
+        case System.Memory.MemoryStatus.Err(var error):
+            return false;
+        case System.Memory.MemoryStatus.Ok:
+            return true;
+    }
+}
+
+unsafe fn i64[min max] SumBytes(borrow i8[min max][] values, u64[0 2 ** 63 - 1] count) {
+    stack mut i64[min max] checksum = count;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
+        checksum += (i64[min max])values[index];
+    }
+
+    return checksum;
+}
+
+export unsafe ffi fn i32[min max] main() {
+    stack mut i64[min max] checksum = 0;
+    stack mut i8[min max][16] source = {
+        1, 2, 3, 4,
+        5, 6, 7, 8,
+        9, 10, 11, 12,
+        13, 14, 15, 16
+    };
+
+    for willexit (stack mut u16[0 1000] iteration = 0; iteration < Iterations; iteration += 1) {
+        stack mut System.Runtime.Buffer.DynamicByteBuffer buffer = new();
+
+        for willexit (stack mut u8[0 32] chunk = 0; chunk < Chunks; chunk += 1) {
+            if (!Ok(buffer.WriteSlice(source, 16))) {
+                return 1;
+            }
+        }
+
+        buffer.AdvanceRead(128);
+        buffer.Compact();
+
+        if (!Ok(buffer.WriteFill(5, 64))) {
+            return 2;
+        }
+
+        checksum += SumBytes(buffer.ReadSlice(), buffer.Readable());
+    }
+
+    if (checksum != 4032000) {
+        return 3;
+    }
+
+    return 0;
+}

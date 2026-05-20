@@ -3,7 +3,7 @@ module Benchmarks.Micro.StackFieldBranchForwarding
 
 record Pair(i64[min max] Left, i64[min max] Right) { }
 
-finite law i64[min max] Accumulate(i64[min max] seed, i64[min max] salt, bool chooseLeft) {
+unsafe finite law i64[min max] Accumulate(i64[min max] seed, i64[min max] salt, bool chooseLeft) {
     stack mut Pair pair = new Pair(seed, salt);
     pair.Left = pair.Left + pair.Right;
     if (chooseLeft) {
@@ -13,10 +13,10 @@ finite law i64[min max] Accumulate(i64[min max] seed, i64[min max] salt, bool ch
     return pair.Left - pair.Right;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack mut i64[min max] total = (i64[min max])System.Process.CurrentId();
 
-    for willexit (stack mut i32[0 200000] i = 0; i < 200000; i += 1) {
+    for willexit (stack mut u24[0 200000] i = 0; i < 200000; i += 1) {
         total += Accumulate(total % 1000000007, (i64[min max])i, i % 2 == 0);
         total = total % 1000000007;
     }

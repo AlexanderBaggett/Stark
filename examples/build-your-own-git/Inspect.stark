@@ -1,4 +1,5 @@
 import System
+import System.Text
 module BuildYourOwnGitInspect
 
 finite law bool BoolValue(System.IO.IOResult<bool> result) {
@@ -10,13 +11,14 @@ finite law bool BoolValue(System.IO.IOResult<bool> result) {
     }
 }
 
-finite law i32[min max] MetadataNameCode(System.FileSystem.FileSystemEntryKind kind, Ascii name) {
-    if (name.Data == null) {
+fn i32[min max] MetadataNameCode(System.FileSystem.FileSystemEntryKind kind, System.Text.OwnedAscii name) {
+    stack mut System.Text.OwnedAscii ownedName = name;
+    if (ownedName.IsEmpty()) {
         return 0;
     }
 
-    stack i64[min max] length = name.Length;
-    stack ascii view = System.Text.AsciiView(name);
+    stack u64[0 2 ** 63 - 1] length = ownedName.Length();
+    stack ascii view = ownedName.View();
     if (kind == System.FileSystem.FileSystemEntryKind.File && length == 4) {
         if (view[0] == 'H'
             && view[1] == 'E'
@@ -50,7 +52,7 @@ finite law i32[min max] MetadataNameCode(System.FileSystem.FileSystemEntryKind k
     return 0;
 }
 
-finite law i32[min max] MetadataEntryCode(System.FileSystem.FileSystemEntry entry) {
+fn i32[min max] MetadataEntryCode(System.FileSystem.FileSystemEntry entry) {
     stack System.FileSystem.FileSystemEntryKind kind = entry.Kind;
     return MetadataNameCode(kind, entry.Name);
 }
@@ -101,7 +103,7 @@ fn bool RepositoryMetadataLooksInitialized() {
     }
 }
 
-export ffi fn i32[min max] main() {
+export unsafe fn i32[min max] main() {
     if (!RepositoryMetadataLooksInitialized()) {
         return 1;
     }

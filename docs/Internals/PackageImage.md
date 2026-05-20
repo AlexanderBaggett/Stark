@@ -152,28 +152,36 @@ Synthetic-source reconstruction is temporary bridge behavior.
 
 ## Generic Template Publication Rules
 
-The `generic-templates` section is part of Stark's published package API
-surface, not a dump of every generic body in a package.
+The `generic-templates` section is package-boundary specialization material,
+not a dump of every generic body in a package.
 
-A generic function or method template body is published only when all of the
-following are true:
+Publication starts from generic function or method template bodies where all of
+the following are true:
 
 - the declaration is published at package boundary visibility (`public` or `export`)
 - the declaration has a real body
 - the typed function signature is generic, including methods that are generic by
   virtue of their enclosing generic type
 
+The compiler then publishes the package-private generic helper closure required
+by those API-visible templates. This lets downstream packages specialize a
+public generic body that calls internal generic helpers without exposing every
+unrelated internal generic body.
+
 That means:
 
-- `module` and `internal` generic functions stay package-private
+- unrelated `module` and `internal` generic functions stay package-private
+- internal generic helpers referenced by published generic templates may receive
+  template entries as specialization material
 - methods on `module` or `internal` types stay package-private with their
   containing type
 - non-generic functions and methods do not get generic template entries
 - declarations without bodies do not advertise a published generic template body
 
-The typed-interface `HasGenericTemplateBody` flag follows the same rule.
-It means a body is actually published in the package image, not merely that the
-original source declaration happened to contain a body.
+The typed-interface `HasGenericTemplateBody` flag remains an API-surface marker.
+It means the declaration itself publishes a package-boundary generic body, not
+merely that the helper closure carries a package-private template entry for
+downstream specialization.
 
 ## Optimization-Ready Template Representation
 

@@ -5,13 +5,154 @@ namespace compiler.Tests;
 public sealed class SemanticValidationTests
 {
     [Fact]
+    public void StrictIntegerRangesRejectNonCanonicalStorageOutsideFfiBoundaries()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            alias SmallAlias = i32[0 255];
+
+            struct Box {
+                i32[0 255] Value;
+                i32[0 127][4] Fixed;
+            }
+
+            struct Holder<T> {
+                T Value;
+            }
+
+            fn i64[0 max] Run(i32[1 10] parameter, Holder<i32[0 63]> holder) {
+                stack dynamic i32[0 7] values = new();
+                stack i32[0 128] local = parameter;
+                stack i32[0 9] converted = (i32[0 9])local;
+                return local;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "semantic-validate",
+                EnforceIntegerRangeStorageRules: true));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, static diagnostic => IsStrictRangeDiagnostic(diagnostic, "i32[0 255]", "u8"));
+        Assert.Contains(result.Diagnostics, static diagnostic => IsStrictRangeDiagnostic(diagnostic, "i32[0 127]", "u8[0 127]"));
+        Assert.Contains(result.Diagnostics, static diagnostic => IsStrictRangeDiagnostic(diagnostic, "i64[0 9223372036854775807]", "u64[0 9223372036854775807]"));
+        Assert.Contains(result.Diagnostics, static diagnostic => IsStrictRangeDiagnostic(diagnostic, "i32[1 10]", "u8[1 10]"));
+        Assert.Contains(result.Diagnostics, static diagnostic => IsStrictRangeDiagnostic(diagnostic, "i32[0 63]", "u8[0 63]"));
+        Assert.Contains(result.Diagnostics, static diagnostic => IsStrictRangeDiagnostic(diagnostic, "i32[0 7]", "u8[0 7]"));
+        Assert.Contains(result.Diagnostics, static diagnostic => IsStrictRangeDiagnostic(diagnostic, "i32[0 128]", "u8[0 128]"));
+        Assert.Contains(result.Diagnostics, static diagnostic => IsStrictRangeDiagnostic(diagnostic, "i32[0 9]", "u8[0 9]"));
+    }
+
+    [Fact]
+    public void StrictIntegerRangesAllowFfiAbiSignatureStorage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            public unsafe ffi fn i32[0 255] Read(i32[0 255] value);
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "semantic-validate",
+                EnforceIntegerRangeStorageRules: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void StrictIntegerRangesAllowPlatformAnnotatedAbiSignatureStorage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [Platform]
+            unsafe fn i32[0 255] ReadPlatformStatus(i32[0 255] status) {
+                return status;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "semantic-validate",
+                EnforceIntegerRangeStorageRules: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void StrictIntegerRangesAllowPlatformAnnotatedAggregateFieldStorage()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [Platform]
+            struct HostStatus {
+                i32[0 255] Code;
+            }
+
+            fn i32[min max] Read(HostStatus status) {
+                return (i32[min max])status.Code;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "semantic-validate",
+                EnforceIntegerRangeStorageRules: true));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void StrictIntegerRangesStillRejectNonCanonicalLocalsInsidePlatformAnnotatedFunctions()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [Platform]
+            unsafe fn i32[min max] Run() {
+                stack i32[0 255] status = 0;
+                return status;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "semantic-validate",
+                EnforceIntegerRangeStorageRules: true));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, static diagnostic => IsStrictRangeDiagnostic(diagnostic, "i32[0 255]", "u8"));
+    }
+
+    [Fact]
+    public void StrictIntegerRangesRejectUnnecessarilyWideUnsignedAndSignedRanges()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn u32[0 255] Run(u16[0 15] tag) {
+                stack i32[-1 1] delta = -1;
+                return tag;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "semantic-validate",
+                EnforceIntegerRangeStorageRules: true));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, static diagnostic => IsStrictRangeDiagnostic(diagnostic, "u32[0 255]", "u8"));
+        Assert.Contains(result.Diagnostics, static diagnostic => IsStrictRangeDiagnostic(diagnostic, "u16[0 15]", "u8[0 15]"));
+        Assert.Contains(result.Diagnostics, static diagnostic => IsStrictRangeDiagnostic(diagnostic, "i32[-1 1]", "i8[-1 1]"));
+    }
+
+    [Fact]
     public void BorrowReturnTypesAreRejected()
     {
         var result = Compile(
             """
             module Demo
 
-            fn borrow i32[-2147483648 2147483647] Echo(borrow i32[-2147483648 2147483647] value) {
+            fn borrow i32[min max] Echo(borrow i32[min max] value) {
                 return value;
             }
             """);
@@ -28,7 +169,7 @@ public sealed class SemanticValidationTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             fn storeborrow Box Source();
@@ -40,13 +181,65 @@ public sealed class SemanticValidationTests
     }
 
     [Fact]
+    public void AggregateFieldsRejectNonEscapingBorrowClasses()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct BorrowField {
+                borrow i32[min max] Value;
+            }
+
+            struct RetBorrowField {
+                retborrow i32[min max] Value;
+            }
+
+            struct BorrowClosureField {
+                borrow closure<fn i32[min max]()> Callback;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK4005"
+                && diagnostic.Message.Contains("Field declarations may not store 'borrow i32'", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK4005"
+                && diagnostic.Message.Contains("Field declarations may not store 'retborrow i32'", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK4005"
+                && diagnostic.Message.Contains("borrow closure", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AggregateFieldsAllowExplicitStoredClosureBorrows()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Holder {
+                storeborrow closure<fn void()> Callback;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
     public void TopLevelRegisterStorageIsRejected()
     {
         var result = Compile(
             """
             module Demo
 
-            register i32[-2147483648 2147483647] Value = 1;
+            register i32[min max] Value = 1;
             """,
             new CompilerOptions(StopAfterPassId: "semantic-validate"));
 
@@ -65,9 +258,9 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Run() {
-                register mut i32[-2147483648 2147483647] value = 1;
-                stack rawmutptr<i32[-2147483648 2147483647]> pointer = &value;
+            unsafe fn void Run() {
+                register mut i32[min max] value = 1;
+                stack rawmutptr<i32[min max]> pointer = &value;
                 return;
             }
             """,
@@ -89,14 +282,14 @@ public sealed class SemanticValidationTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            fn i32[-2147483648 2147483647] Read(borrow Box box) {
+            fn i32[min max] Read(borrow Box box) {
                 return box.Value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            fn i32[min max] Run() {
                 register Box box = new Box() { Value = 1 };
                 return Read(box);
             }
@@ -119,8 +312,8 @@ public sealed class SemanticValidationTests
             module Demo
 
             fn void Run() {
-                register i32[-2147483648 2147483647][2] values = { 1, 2 };
-                stack i32[-2147483648 2147483647][] view = values;
+                register i32[min max][2] values = { 1, 2 };
+                stack i32[min max][] view = values;
                 return;
             }
             """,
@@ -141,8 +334,8 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
-                arena i32[-2147483648 2147483647] value = 1;
+            fn i32[min max] Run() {
+                arena i32[min max] value = 1;
                 return value;
             }
             """,
@@ -153,7 +346,7 @@ public sealed class SemanticValidationTests
             result.Diagnostics,
             static diagnostic => diagnostic.Code == "STK4017"
                 && diagnostic.Message.Contains("Local 'arena' storage", StringComparison.Ordinal)
-                && diagnostic.Message.Contains("arena lowering is not implemented yet", StringComparison.Ordinal));
+                && diagnostic.Message.Contains("not a valid executable local storage class", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -163,8 +356,8 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
-                static mut i32[-2147483648 2147483647] value = 1;
+            fn i32[min max] Run() {
+                static mut i32[min max] value = 1;
                 value = value + 1;
                 return value;
             }
@@ -176,7 +369,7 @@ public sealed class SemanticValidationTests
             result.Diagnostics,
             static diagnostic => diagnostic.Code == "STK4017"
                 && diagnostic.Message.Contains("Function-local 'static' storage", StringComparison.Ordinal)
-                && diagnostic.Message.Contains("not implemented yet", StringComparison.Ordinal));
+                && diagnostic.Message.Contains("not a valid local storage class", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -186,7 +379,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Use(rawptr<rawptr<i8[-128 127]>> value);
+            unsafe fn void Use(rawptr<rawptr<i8[min max]>> value);
             """);
 
         Assert.False(result.Succeeded);
@@ -200,10 +393,26 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            ffi fn void Use(rawptr<rawptr<i8[-128 127]>> value);
+            unsafe ffi fn void Use(rawptr<rawptr<i8[min max]>> value);
             """);
 
         Assert.True(result.Succeeded);
+    }
+
+    [Fact]
+    public void NestedRawPointersAreAllowedInPlatformAggregateFields()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [Platform]
+            struct NativeList {
+                rawmutptr<rawptr<i8[min max]>> Items;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
     }
 
     [Fact]
@@ -213,7 +422,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            public fn rawmutptr<i8[-128 127]> AllocateBytes(i64[0 9223372036854775807] byteCount);
+            public unsafe fn rawmutptr<i8[min max]> AllocateBytes(u64[0 9223372036854775807] byteCount);
             """);
 
         Assert.False(result.Succeeded);
@@ -227,7 +436,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            public fn void FreeBytes(rawmutptr<i8[-128 127]> pointer);
+            public unsafe fn void FreeBytes(rawmutptr<i8[min max]> pointer);
             """);
 
         Assert.False(result.Succeeded);
@@ -241,7 +450,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            internal fn rawmutptr<i8[-128 127]> AllocateBytes(i64[0 9223372036854775807] byteCount);
+            internal unsafe fn rawmutptr<i8[min max]> AllocateBytes(u64[0 9223372036854775807] byteCount);
             """);
 
         Assert.True(result.Succeeded);
@@ -254,7 +463,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            public ffi fn rawmutptr<i8[-128 127]> AllocateBytes(i64[0 9223372036854775807] byteCount);
+            public unsafe ffi fn rawmutptr<i8[min max]> AllocateBytes(i64[0 max] byteCount);
             """);
 
         Assert.True(result.Succeeded);
@@ -267,7 +476,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            public finite law rawptr<i8[-128 127]> Data(ascii source);
+            public unsafe finite law rawptr<i8[min max]> Data(ascii source);
             """);
 
         Assert.True(result.Succeeded);
@@ -281,7 +490,7 @@ public sealed class SemanticValidationTests
             module Demo
 
             struct Holder {
-                rawptr<i8[-128 127]> Ptr;
+                rawptr<i8[min max]> Ptr;
             }
 
             const Holder Current = new Holder() { Ptr = null };
@@ -298,9 +507,9 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647][] Source();
+            fn i32[min max][] Source();
 
-            const i32[-2147483648 2147483647][] View = Source();
+            const i32[min max][] View = Source();
             """);
 
         Assert.False(result.Succeeded);
@@ -314,7 +523,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            const i32 Answer = 1 + 2;
+            const u8 Answer = 1 + 2;
             """);
 
         Assert.True(result.Succeeded);
@@ -327,7 +536,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Read();
+            fn i32[min max] Read();
 
             const i32 Answer = Read();
             """);
@@ -343,9 +552,9 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            const i32 Answer = 42;
+            const Answer = 42;
 
-            law i32[-2147483648 2147483647] Read() {
+            law u8[0 max] Read() {
                 return Answer;
             }
             """);
@@ -361,7 +570,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
             law void Touch() {
                 Counter = 1;
@@ -463,7 +672,7 @@ public sealed class SemanticValidationTests
             module Demo
 
             struct Token {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 drop {
                     ;
@@ -486,13 +695,13 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            static i32[-2147483648 2147483647] Counter = 1;
+            static i32[min max] Counter = 1;
 
-            fn i32[-2147483648 2147483647] Impure() {
+            fn i32[min max] Impure() {
                 return Counter;
             }
 
-            law i32[-2147483648 2147483647] PureWrapper() {
+            law i32[min max] PureWrapper() {
                 return Impure();
             }
             """);
@@ -508,11 +717,11 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] PureAdd(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            fn i32[min max] PureAdd(i32[min max] left, i32[min max] right) {
                 return left + right;
             }
 
-            law i32[-2147483648 2147483647] Use() {
+            law i32[min max] Use() {
                 return PureAdd(1, 2);
             }
             """);
@@ -528,10 +737,10 @@ public sealed class SemanticValidationTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            law i32[-2147483648 2147483647] Bump() {
+            law i32[min max] Bump() {
                 stack mut Box box = new Box() { Value = 1 };
                 box.Value = 2;
                 return box.Value;
@@ -549,9 +758,9 @@ public sealed class SemanticValidationTests
             module Demo
 
             struct Box {
-                i32[0 max] Value;
+                u32[0 2147483647] Value;
 
-                law retborrow i32[0 max] Get(borrow Box self) {
+                law retborrow u32[0 2147483647] Get(borrow Box self) {
                     return self.Value;
                 }
             }
@@ -559,7 +768,7 @@ public sealed class SemanticValidationTests
             struct Holder {
                 Box Inner;
 
-                law retborrow i32[0 max] Get(borrow Holder self) {
+                law retborrow u32[0 2147483647] Get(borrow Holder self) {
                     return self.Inner.Get();
                 }
             }
@@ -577,7 +786,7 @@ public sealed class SemanticValidationTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
             law void Touch(mut borrow Box box) {
@@ -745,7 +954,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Run(i32[-2147483648 2147483647] value) {
+            fn void Run(i32[min max] value) {
                 switch (value) {
                     default:
                         continue;
@@ -765,7 +974,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Run(i32[-2147483648 2147483647] value) {
+            fn void Run(i32[min max] value) {
                 switch (value) {
                     case 0:
                         break;
@@ -788,7 +997,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Run(i32[-2147483648 2147483647] value) {
+            fn void Run(i32[min max] value) {
                 while willexit (true) {
                     switch (value) {
                         default:
@@ -810,7 +1019,7 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Run(i32[-2147483648 2147483647] value) {
+            fn void Run(i32[min max] value) {
                 while infinite (true) {
                     switch (value) {
                         default:
@@ -888,11 +1097,11 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Step(i32[-2147483648 2147483647] value) {
+            fn i32[min max] Step(i32[min max] value) {
                 return value + 1;
             }
 
-            finite i32[-2147483648 2147483647] Outer(i32[-2147483648 2147483647] value) {
+            finite i32[min max] Outer(i32[min max] value) {
                 return Step(value);
             }
             """);
@@ -924,9 +1133,9 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn retborrow i32[-2147483648 2147483647] Bounce(retborrow i32[-2147483648 2147483647] value);
+            fn retborrow i32[min max] Bounce(retborrow i32[min max] value);
 
-            fn retborrow i32[-2147483648 2147483647] Forward(retborrow i32[-2147483648 2147483647] value) {
+            fn retborrow i32[min max] Forward(retborrow i32[min max] value) {
                 return Bounce(value);
             }
             """);
@@ -942,9 +1151,9 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            ffi fn void Accept(borrow i32[-2147483648 2147483647] value);
+            unsafe ffi fn void Accept(borrow i32[min max] value);
 
-            fn void Use(borrow i32[-2147483648 2147483647] value) {
+            unsafe fn void Use(borrow i32[min max] value) {
                 Accept(value);
                 return;
             }
@@ -961,11 +1170,11 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Inspect(borrow i32[-2147483648 2147483647] value) {
+            fn void Inspect(borrow i32[min max] value) {
                 return;
             }
 
-            fn retborrow i32[-2147483648 2147483647] Echo(retborrow i32[-2147483648 2147483647] value) {
+            fn retborrow i32[min max] Echo(retborrow i32[min max] value) {
                 Inspect(value);
                 return value;
             }
@@ -985,10 +1194,10 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            const i32 Answer = 42;
+            const Answer = 42;
 
             doctrine Numbers {
-                law i32[-2147483648 2147483647] Read() {
+                law u8[0 max] Read() {
                     return Answer;
                 }
             }
@@ -1006,7 +1215,7 @@ public sealed class SemanticValidationTests
             module Demo
 
             struct Buffer {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 drop {
                     self.Value = 0;
@@ -1027,7 +1236,7 @@ public sealed class SemanticValidationTests
             module Demo
 
             struct Buffer {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 mut drop {
                     ;
@@ -1050,7 +1259,7 @@ public sealed class SemanticValidationTests
             module Demo
 
             struct Buffer {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 fn void Reset(mut borrow Buffer self) {
                     self.Value = 0;
@@ -1096,5 +1305,12 @@ public sealed class SemanticValidationTests
     private static void AssertDiagnostic(CompilationResult result, string code)
     {
         Assert.Contains(result.Diagnostics, diagnostic => diagnostic.Code == code);
+    }
+
+    private static bool IsStrictRangeDiagnostic(CompilerDiagnostic diagnostic, string sourceType, string suggestedType)
+    {
+        return diagnostic.Code == "STK3014"
+            && diagnostic.Message.Contains(sourceType, StringComparison.Ordinal)
+            && diagnostic.Message.Contains(suggestedType, StringComparison.Ordinal);
     }
 }

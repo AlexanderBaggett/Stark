@@ -3,18 +3,18 @@ module Benchmarks.Micro.GlobalScalarLoadForwarding
 
 static mut i64[min max] Counter = 1;
 
-finite i64[min max] Accumulate(i64[min max] salt) {
+unsafe finite i64[min max] Accumulate(i64[min max] salt) {
     Counter = Counter + salt;
     stack i64[min max] first = Counter;
     stack i64[min max] second = Counter;
     return first + second;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     Counter = (i64[min max])(System.Process.CurrentId() % 31) + 1;
     stack mut i64[min max] checksum = 0;
 
-    for willexit (stack mut i32[0 200000] i = 0; i < 200000; i += 1) {
+    for willexit (stack mut u24[0 200000] i = 0; i < 200000; i += 1) {
         checksum += Accumulate((i64[min max])(i % 97));
         checksum = checksum % 1000000007;
         Counter = Counter % 1000000007;

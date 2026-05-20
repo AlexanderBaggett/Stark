@@ -1,0 +1,94 @@
+import System.Console
+import System.Process
+module System.Testing
+
+public enum TestStatus {
+    Passed,
+    Failed,
+}
+
+public fn bool True(bool condition) {
+    return condition;
+}
+
+public fn bool False(bool condition) {
+    return !condition;
+}
+
+public fn bool Fail(ascii message) {
+    System.Console.WriteError("FAIL ");
+    System.Console.WriteErrorLine(message);
+    return false;
+}
+
+public fn bool Equal(bool expected, bool actual) {
+    return expected == actual;
+}
+
+public fn bool Equal(i32[min max] expected, i32[min max] actual) {
+    return expected == actual;
+}
+
+public fn bool Equal(i64[min max] expected, i64[min max] actual) {
+    return expected == actual;
+}
+
+public fn bool Equal(u32[0 max] expected, u32[0 max] actual) {
+    return expected == actual;
+}
+
+public fn bool Equal(u64[0 max] expected, u64[0 max] actual) {
+    return expected == actual;
+}
+
+public fn bool Equal(ascii expected, ascii actual) {
+    return expected == actual;
+}
+
+public fn bool Equal(unicode expected, unicode actual) {
+    return expected == actual;
+}
+
+public fn TestStatus Status(bool assertion) {
+    if (assertion) {
+        return TestStatus.Passed;
+    }
+
+    return TestStatus.Failed;
+}
+
+public fn u8[0 1] RunFact(ascii name, bool assertion) {
+    if (assertion) {
+        System.Console.Write("ok ");
+        System.Console.WriteLine(name);
+        return 0;
+    }
+
+    System.Console.WriteError("FAILED ");
+    System.Console.WriteErrorLine(name);
+    return 1;
+}
+
+public fn u8[0 1] RunFact(unicode name, bool assertion) {
+    if (assertion) {
+        System.Console.Write((unicode)"ok ");
+        System.Console.WriteLine(name);
+        return 0;
+    }
+
+    System.Console.WriteError((unicode)"FAILED ");
+    System.Console.WriteErrorLine(name);
+    return 1;
+}
+
+public fn i32[min max] ExitCode(u32[0 2 ** 31 - 1] failureCount) {
+    if (failureCount == 0) {
+        return 0;
+    }
+
+    return 1;
+}
+
+public fn void Exit(u32[0 2 ** 31 - 1] failureCount) {
+    System.Process.Exit(ExitCode(failureCount));
+}
