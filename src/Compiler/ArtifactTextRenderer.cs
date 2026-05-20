@@ -38,7 +38,8 @@ internal static class ArtifactTextRenderer
                         flags.Add("const");
                     }
 
-                    if (local.HasConstProvenance)
+                    if (local.HasConstProvenance
+                        || ConstProvenanceFacts.HasPermanentConstProvenance(local.ConstProvenance))
                     {
                         flags.Add("const-provenance");
                     }
@@ -186,6 +187,7 @@ internal static class ArtifactTextRenderer
             SsaIndirectCallInstruction call => $"call {call.Text}",
             SsaAllocateLocalInstruction allocateLocal =>
                 allocateLocal.HasConstProvenance
+                || ConstProvenanceFacts.HasPermanentConstProvenance(allocateLocal.ConstProvenance)
                     ? $"alloca[{allocateLocal.StorageClass}, const-provenance] {allocateLocal.LocalName}: {allocateLocal.LocalType.DisplayName}"
                     : $"alloca[{allocateLocal.StorageClass}] {allocateLocal.LocalName}: {allocateLocal.LocalType.DisplayName}",
             SsaLifetimeStartInstruction lifetimeStart => $"lifetime.start {lifetimeStart.LocalName}",

@@ -334,7 +334,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
             }
         }
 
-        if (binary.Operator == SsaBinaryOperator.Exponent)
+        if (binary.Operator is SsaBinaryOperator.Exponent or SsaBinaryOperator.WrappingExponent)
         {
             if (binary.Type.Kind == StarkTypeKind.Float)
             {
@@ -1516,6 +1516,11 @@ internal sealed partial class LlvmFunctionBodyEmitter
             return false;
         }
 
+        if (sourceType.IsUnsigned != targetType.IsUnsigned)
+        {
+            return false;
+        }
+
         if (sourceBitWidth <= targetBitWidth)
         {
             return true;
@@ -1900,9 +1905,47 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var bitWidth = binary.Type.BitWidth ?? throw new UnsupportedBodyEmissionException(
             $"Integer exponent operator '{binary.Type.DisplayName}' is missing a bit width.");
         var llvmType = MapType(binary.Type);
+        if (binary.Right is SsaIntegerConstant exponent
+            && exponent.Value >= BigInteger.Zero
+            && exponent.Value <= new BigInteger(8))
+        {
+            EmitSmallConstantIntegerExponent(result, binary, llvmType, (int)exponent.Value);
+            return;
+        }
+
         var helperName = GetIntegerExponentHelperName(bitWidth);
         AppendLine(
             $"  {result} = call {llvmType} @{EscapeIdentifier(helperName)}({llvmType} {FormatValue(binary.Left)}, {llvmType} {FormatValue(binary.Right)})");
+    }
+
+    private void EmitSmallConstantIntegerExponent(
+        string result,
+        SsaBinaryRValue binary,
+        string llvmType,
+        int exponent)
+    {
+        if (exponent == 0)
+        {
+            AppendLine($"  {result} = add {llvmType} 0, 1");
+            return;
+        }
+
+        var baseValue = FormatValue(binary.Left);
+        if (exponent == 1)
+        {
+            AppendLine($"  {result} = add {llvmType} 0, {baseValue}");
+            return;
+        }
+
+        var accumulator = baseValue;
+        for (var factorIndex = 2; factorIndex <= exponent; factorIndex++)
+        {
+            var target = factorIndex == exponent
+                ? result
+                : $"%{EscapeIdentifier(CreateAbiTempName("int_pow"))}";
+            AppendLine($"  {target} = mul {llvmType} {accumulator}, {baseValue}");
+            accumulator = target;
+        }
     }
 
     private static void GetSignedIntegerBounds(int bitWidth, out BigInteger minValue, out BigInteger maxValue)

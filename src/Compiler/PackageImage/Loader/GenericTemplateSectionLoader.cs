@@ -81,6 +81,11 @@ internal static partial class PackageImageLoader
                 return false;
             }
 
+            if (!ConstProvenanceFacts.TryParseManifestText(manifest.ConstProvenance, out var constProvenance))
+            {
+                return false;
+            }
+
             summary = new ImportedTemplateTypedBodyStatementSummary(
                 ImportedTemplateTypedBodyStatementKind.LocalVariableDeclaration,
                 Expression: expression!,
@@ -89,7 +94,8 @@ internal static partial class PackageImageLoader
                 IsMutable: manifest.IsMutable,
                 IsConstant: manifest.IsConstant,
                 Type: BuildTypeSymbol(manifest.Type),
-                StorageCapacity: manifest.StorageCapacity);
+                StorageCapacity: manifest.StorageCapacity,
+                ConstProvenance: constProvenance);
             return true;
         }
 

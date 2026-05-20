@@ -101,8 +101,8 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("@TryJoinPointerRanges", tryJoinBody, StringComparison.Ordinal);
         Assert.Contains("@TryJoinPointerRanges", tryJoinConstBody, StringComparison.Ordinal);
         Assert.True(
-            CountOccurrences(tryJoinPointerRangesBody, "@__stark_inline_clone_System_Memory_InitializeBytesFromPointerDisjoint") >= 2,
-            "Expected TryJoin pointer core to copy left and right path ranges through explicit tail-region pointer initialization helpers.");
+            CountOccurrences(tryJoinPointerRangesBody, "@llvm.memcpy.p0.p0.i64") >= 2,
+            "Expected TryJoin pointer core to copy left and right path ranges through direct tail-region memcpy operations.");
         Assert.DoesNotContain("@System_Text_OwnedAscii_AppendAscii", tryJoinConstBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@System_Text_OwnedAscii_AppendAscii", tryNormalizeConstBody, StringComparison.Ordinal);
         Assert.Contains("@AppendNormalizedSeparatorsCore", tryNormalizeBody, StringComparison.Ordinal);

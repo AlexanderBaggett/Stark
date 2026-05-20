@@ -687,6 +687,136 @@ public sealed class CompilerPipelineEmitLlvmTests
 
 
     [Fact]
+    public void ManifestBackedImportedGenericSpecializationsPreserveRegionFactsWithoutSourceBodies()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-generic-region-facts-llvm-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public unsafe fn i32[min max] CopyFirst<T>(
+                    rawmutptr<i32[min max]> left,
+                    rawmutptr<i32[min max]> right,
+                    T tag) {
+                    *left = 7;
+                    return *right;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            Assert.NotNull(facadeModule.EffectiveTypedInterface);
+            Assert.NotNull(facadeModule.EffectiveCompilerFacts);
+            Assert.NotNull(facadeModule.EffectiveGenericTemplates);
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? WithEffectiveLegacyCompilerSectionCopies(module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.EffectiveTypedInterface,
+                            CompilerFacts = facadeModule.EffectiveCompilerFacts,
+                            GenericTemplates = facadeModule.EffectiveGenericTemplates,
+                            CompilerSections = new StarkPackageCompilerSectionsManifest(
+                                TypedInterface: facadeModule.EffectiveTypedInterface,
+                                CompilerFacts: facadeModule.EffectiveCompilerFacts,
+                                GenericTemplates: facadeModule.EffectiveGenericTemplates),
+                            SourceSurface = new StarkPackageSourceSurfaceSection(
+                                Imports: facadeModule.EffectiveSourceSurface.Imports,
+                                ReExports: facadeModule.EffectiveSourceSurface.ReExports,
+                                Functions: [],
+                                Types: [],
+                                Globals: [],
+                                TypeAliases: [])
+                        })
+                        : module)
+                    .ToArray()
+            };
+
+            var typedOnlyFacadeModule = WithEffectiveLegacyCompilerSectionCopies(
+                Assert.Single(typedOnlyManifest.Modules, static module => module.ModuleName == "Facade"));
+            Assert.True(
+                PackageImageLoader.TryBuildModuleSource(
+                    new ResolvedPackageModule(
+                        manifestPath,
+                        Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"),
+                        typedOnlyManifest,
+                        typedOnlyFacadeModule),
+                    out var sourceText));
+            Assert.Contains("public unsafe fn i32[min max] CopyFirst<T>", sourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("*left = 7;", sourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("return *right;", sourceText, StringComparison.Ordinal);
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    unsafe fn i32[min max] Run() {
+                        stack mut i32[min max] left = 0;
+                        stack mut i32[min max] right = 5;
+                        return Facade.CopyFirst(&left, &right, 0);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "emit-llvm",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MonomorphizationPlan, out MonomorphizationPlanModel? plan));
+            Assert.NotNull(plan);
+            var function = Assert.Single(plan.Functions, static function => function.TemplateName == "Facade.CopyFirst");
+
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+            Assert.NotNull(llvmModule);
+            var definition = System.Text.RegularExpressions.Regex.Match(
+                llvmModule.Text,
+                $@"define internal[^\r\n]*@{System.Text.RegularExpressions.Regex.Escape(function.SymbolName)}\([^\r\n]*\)[\s\S]*?^}}",
+                System.Text.RegularExpressions.RegexOptions.Multiline | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+            Assert.True(definition.Success, $"Expected an internal LLVM body for imported specialization '{function.SymbolName}'.");
+            Assert.Contains("ptr noundef noalias nocapture %arg_left", definition.Value, StringComparison.Ordinal);
+            Assert.Contains("ptr noundef noalias nocapture %arg_right", definition.Value, StringComparison.Ordinal);
+            Assert.Contains($"stark.noalias.{function.SymbolName}.param.left", llvmModule.Text, StringComparison.Ordinal);
+            Assert.Contains($"stark.noalias.{function.SymbolName}.param.right", llvmModule.Text, StringComparison.Ordinal);
+            Assert.Matches(@"store i32 .* !alias\.scope !\d+, !noalias !\d+", definition.Value);
+            Assert.Matches(@"load i32, ptr .* !alias\.scope !\d+, !noalias !\d+", definition.Value);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+
+    [Fact]
     public void ManifestBackedImportedPlainFnGenericsThatStrengthenToLawInlineWhenTemplateSemanticsSurviveWithoutFunctionSemantics()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-plain-fn-generic-template-semantics-llvm-pipeline-");

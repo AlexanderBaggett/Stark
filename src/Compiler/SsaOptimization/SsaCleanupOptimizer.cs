@@ -3630,13 +3630,15 @@ internal sealed class SsaCleanupOptimizer
                 RewriteValue(moveLast.StorageAddress, replacements),
                 moveLast.StorageType,
                 moveLast.Type,
-                moveLast.Text),
+                moveLast.Text,
+                moveLast.IsKnownNonEmpty),
             SsaDynamicStorageMoveAtRValue moveAt => new SsaDynamicStorageMoveAtRValue(
                 RewriteValue(moveAt.StorageAddress, replacements),
                 moveAt.StorageType,
                 RewriteValue(moveAt.Index, replacements),
                 moveAt.Type,
-                moveAt.Text),
+                moveAt.Text,
+                moveAt.IsKnownInBounds),
             SsaLoadSliceElementRValue loadSlice => new SsaLoadSliceElementRValue(
                 RewriteValue(loadSlice.Slice, replacements),
                 RewriteValue(loadSlice.Index, replacements),

@@ -2841,6 +2841,155 @@ public sealed class CompilerPipelineLowerMirTests
 
 
     [Fact]
+    public void ManifestBackedGenericOwnershipFactsAreSubstitutedForImportedTypedTemplateBodies()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-ownership-generic-body-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public fn T Identity<T>(T value) {
+                    stack T copy = value;
+                    return copy;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var genericType = new StarkPackageTypeReference("named", Name: "T");
+            var template = Assert.Single(facadeModule.GenericTemplates!.Functions, static candidate => candidate.QualifiedResolvedName == "Facade.Identity");
+            Assert.NotNull(template.Semantics);
+            var templateWithOwnership = template with
+            {
+                BodyText = """
+                    {
+                        stack Missing copy = value;
+                        return copy;
+                    }
+                    """,
+                Semantics = template.Semantics! with
+                {
+                    Ownership = new StarkPackageFunctionOwnershipManifest(
+                        OwnershipValid: true,
+                        ImplicitDrops: ["copy"],
+                        Moves: ["copy"],
+                        Events:
+                        [
+                            new StarkPackageOwnershipEventManifest(
+                                "move",
+                                new StarkPackageOwnershipPlaceManifest("copy", genericType))
+                        ],
+                        Roots:
+                        [
+                            new StarkPackageOwnershipRootManifest(
+                                "copy",
+                                genericType,
+                                "local",
+                                IsMutable: false,
+                                IsConstant: false,
+                                IsAddressTaken: false,
+                                HasRawPointerEscape: false,
+                                HasMove: true,
+                                HasPartialMove: false,
+                                HasImplicitDrop: true,
+                                HasAssignmentDrop: false,
+                                HasReinitialization: false,
+                                RequiresDrop: true,
+                                FinalAvailability: "initialized")
+                        ])
+                }
+            };
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts,
+                            GenericTemplates = new StarkPackageGenericTemplateSection(
+                                module.EffectiveGenericTemplates!.Functions
+                                    .Select(candidate => candidate.QualifiedResolvedName == templateWithOwnership.QualifiedResolvedName
+                                        ? templateWithOwnership
+                                        : candidate)
+                                    .ToArray()),
+                            CompilerSections = new StarkPackageCompilerSectionsManifest(
+                                TypedInterface: facadeModule.TypedInterface,
+                                CompilerFacts: facadeModule.CompilerFacts,
+                                GenericTemplates: new StarkPackageGenericTemplateSection(
+                                    module.EffectiveGenericTemplates!.Functions
+                                        .Select(candidate => candidate.QualifiedResolvedName == templateWithOwnership.QualifiedResolvedName
+                                            ? templateWithOwnership
+                                            : candidate)
+                                        .ToArray()))
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32[min max] Run(i32[min max] value) {
+                        return Facade.Identity(value);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "lower-mir",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+            Assert.NotNull(mir);
+
+            var specialized = Assert.Single(mir.Functions, static function => function.Name == "__stark_mono_fn_Demo__Facade_Identity__i32");
+            Assert.NotNull(specialized.Ownership);
+            var root = Assert.Single(specialized.Ownership!.Roots, static candidate => candidate.Name == "copy");
+            Assert.Equal("i32", root.Type.DisplayName);
+            Assert.Contains(
+                specialized.Ownership.Events,
+                static ev => ev.Kind == OwnershipEventKind.Move
+                             && ev.Place.RootName == "copy"
+                             && ev.Place.Type.DisplayName == "i32");
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+
+    [Fact]
     public void ManifestBackedGenericBodiesPreferTypedTemplateBodiesWhenBridgeSourceIsCorrupted()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-typed-body-generic-body-pipeline-");
@@ -3065,6 +3214,116 @@ public sealed class CompilerPipelineLowerMirTests
                 static local => local.Name == "copy"
                     && local.Type.DisplayName == "i32"
                     && local.IsConstant);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ManifestBackedGenericBodiesPreserveConstProvenanceLocalsWhenBridgeSourceIsCorrupted()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-typed-const-provenance-local-generic-body-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct Box {
+                    i32[min max] Value;
+                }
+
+                public fn i32[min max] Forward<T>(const Box box, T tag) {
+                    stack frozen Box local = box;
+                    return local.Value;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var template = Assert.Single(facadeModule.GenericTemplates!.Functions, static template => template.QualifiedResolvedName == "Facade.Forward");
+            var localStatement = Assert.Single(template.TypedBody!.Statements, static statement => statement.Name == "local");
+            Assert.Equal("permanent-const", localStatement.ConstProvenance);
+
+            var corruptedTemplate = template with
+            {
+                BodyText = """
+                    {
+                        return Missing(ptr);
+                    }
+                    """
+            };
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts,
+                            GenericTemplates = new StarkPackageGenericTemplateSection(
+                                facadeModule.GenericTemplates.Functions
+                                    .Select(candidate => candidate.QualifiedResolvedName == corruptedTemplate.QualifiedResolvedName
+                                        ? corruptedTemplate
+                                        : candidate)
+                                    .ToArray())
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32[min max] Run(const Facade.Box box) {
+                        stack i32[min max] tag = 0;
+                        return Facade.Forward(box, tag);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    StopAfterPassId: "lower-mir",
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+            Assert.NotNull(mir);
+
+            var forward = Assert.Single(
+                mir.Functions,
+                static function => function.Name.StartsWith("__stark_mono_fn_Demo__Facade_Forward__", StringComparison.Ordinal));
+            var local = Assert.Single(forward.Locals, static local => local.Name == "local");
+            Assert.True(local.HasConstProvenance);
+            Assert.Equal(ConstProvenanceKind.PermanentConst, local.ConstProvenance);
         }
         finally
         {

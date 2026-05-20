@@ -282,7 +282,14 @@ internal static class FunctionOverloadFacts
             : signature.IsGenericInstantiation && signature.TypeArguments is { Count: > 0 }
                 ? $"<{string.Join(", ", signature.TypeArguments.Select(static argument => argument.DisplayName))}>"
                 : string.Empty;
-        return $"{signature.DisplaySourceName}{genericSuffix}({string.Join(", ", signature.Parameters.Select(static parameter => parameter.Type.DisplayName))})";
+        return $"{signature.DisplaySourceName}{genericSuffix}({string.Join(", ", signature.Parameters.Select(FormatParameter))})";
+    }
+
+    private static string FormatParameter(TypedParameterSymbol parameter)
+    {
+        return parameter.IsConst
+            ? $"const {parameter.Type.DisplayName}"
+            : parameter.Type.DisplayName;
     }
 
     public static string BuildTypeArgumentKey(IReadOnlyList<StarkTypeSymbol> typeArguments)
@@ -455,7 +462,7 @@ internal static class FunctionOverloadFacts
 
         if (receiverType is not null)
         {
-            var receiverParameterType = resolvedCandidate.Parameters[0].Type;
+            var receiverParameterType = GetOverloadArgumentParameterType(resolvedCandidate.Parameters[0]);
             if (!CanBindReceiver(receiverParameterType, receiverType, canAssign))
             {
                 return false;
@@ -470,7 +477,7 @@ internal static class FunctionOverloadFacts
 
         for (var index = 0; index < explicitParameterCount; index++)
         {
-            var parameterType = resolvedCandidate.Parameters[index + receiverOffset].Type;
+            var parameterType = GetOverloadArgumentParameterType(resolvedCandidate.Parameters[index + receiverOffset]);
             var argumentType = argumentTypes[index];
             if (!CanBindParameter(parameterType, argumentType, canAssign))
             {
@@ -553,16 +560,20 @@ internal static class FunctionOverloadFacts
         var genericParameters = candidate.GenericParams.ToHashSet(StringComparer.Ordinal);
         var receiverOffset = receiverType is null ? 0 : 1;
 
-        if (receiverType is not null
-            && ContainsGenericParameter(SubstituteType(candidate.Parameters[0].Type, substitution), genericParameters)
-            && !TryInferTypeArguments(candidate.Parameters[0].Type, receiverType, genericParameters, substitution))
+        if (receiverType is not null)
         {
-            return false;
+            var receiverParameterType = SubstituteType(GetOverloadArgumentParameterType(candidate.Parameters[0]), substitution);
+            if (ContainsGenericParameter(receiverParameterType, genericParameters)
+                && !TryInferTypeArguments(receiverParameterType, receiverType, genericParameters, substitution))
+            {
+                return false;
+            }
         }
 
         for (var index = 0; index < argumentTypes.Count; index++)
         {
-            var parameterType = SubstituteType(candidate.Parameters[index + receiverOffset].Type, substitution);
+            var parameter = candidate.Parameters[index + receiverOffset];
+            var parameterType = SubstituteType(GetOverloadArgumentParameterType(parameter), substitution);
             if (ContainsGenericParameter(parameterType, genericParameters)
                 && !TryInferTypeArguments(
                     parameterType,
@@ -607,6 +618,12 @@ internal static class FunctionOverloadFacts
             return true;
         }
 
+        if (parameterType.AccessKind == StarkAccessKind.Frozen
+            && canAssign(parameterType, StarkTypeSymbols.FreezeReachableView(argumentType)))
+        {
+            return true;
+        }
+
         if (parameterType.BorrowKind != StarkBorrowKind.None)
         {
             var strippedParameterType = StripQualifiers(parameterType);
@@ -629,6 +646,13 @@ internal static class FunctionOverloadFacts
             ? argumentType
             : StarkTypeSymbols.WithQualifiers(argumentType, initializationKind: StarkInitializationKind.None);
         return canAssign(parameterStorageType, argumentStorageType);
+    }
+
+    private static StarkTypeSymbol GetOverloadArgumentParameterType(TypedParameterSymbol parameter)
+    {
+        return parameter.IsConst
+            ? StarkTypeSymbols.FreezeReachableView(parameter.Type)
+            : parameter.Type;
     }
 
     private static bool TryInferTypeArguments(
@@ -873,14 +897,14 @@ internal static class FunctionOverloadFacts
         StarkTypeSymbol type,
         IReadOnlyDictionary<string, StarkTypeSymbol> substitution)
     {
-        var coreType = StripQualifiers(type);
+        var coreType = StripTopLevelQualifiers(type);
         StarkTypeSymbol substitutedCore;
 
         if (coreType.Kind == StarkTypeKind.Named && coreType.NamedType is { } name)
         {
             if (substitution.TryGetValue(name, out var substituted))
             {
-                substitutedCore = StripQualifiers(substituted);
+                substitutedCore = StripTopLevelQualifiers(substituted);
             }
             else if (StarkTypeSymbols.IsGenericInstantiation(coreType) && coreType.TypeArguments is not null)
             {
@@ -949,6 +973,16 @@ internal static class FunctionOverloadFacts
             accessKind: type.AccessKind,
             initializationKind: type.InitializationKind,
             isMutableView: type.IsMutableView);
+    }
+
+    private static StarkTypeSymbol StripTopLevelQualifiers(StarkTypeSymbol type)
+    {
+        return StarkTypeSymbols.WithQualifiers(
+            type,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
     }
 
     private static StarkTypeSymbol StripQualifiers(StarkTypeSymbol type)

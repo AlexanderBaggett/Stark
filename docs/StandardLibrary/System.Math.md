@@ -1,6 +1,7 @@
 # `System.Math`
 
-`System.Math` provides the first scalar floating-point math slice for Stark's standard library.
+`System.Math` provides scalar floating-point math and small deterministic
+pseudo-random helpers for Stark's standard library.
 
 ## Surface
 
@@ -12,6 +13,15 @@ public struct SinCosF32 {
 public struct SinCosF64 {
     f64 Sin;
     f64 Cos;
+}
+public struct XorShift32 {
+    XorShift32();
+    static inline fn XorShift32 Seeded(u32[0 max] seed);
+    inline fn void Reseed(mut borrow XorShift32 self, u32[0 max] seed);
+    inline finite law u32[0 max] CurrentState(borrow XorShift32 self);
+    inline fn u32[0 max] NextU32(mut borrow XorShift32 self);
+    inline fn i32[min max] NextI32(mut borrow XorShift32 self);
+    inline fn f32 NextF32(mut borrow XorShift32 self);
 }
 public finite law f32 Sin(f32 value);
 public finite law f64 Sin(f64 value);
@@ -69,7 +79,15 @@ public finite law f32 ReciprocalSqrtEstimate(f32 value);
 
 ## Behavior
 
-- The current implementation is a compiler-provided builtin surface, not a handwritten Stark body.
+- The floating-point implementation is a compiler-provided builtin surface, not a handwritten Stark body.
+- `XorShift32` is a fast deterministic pseudo-random generator implemented in
+  Stark. It is not true random, not cryptographically secure, and should be
+  seeded explicitly when reproducibility matters.
+- A zero `XorShift32` seed is normalized to the default seed `2463534242` so the
+  generator does not enter xorshift32's all-zero absorbing state.
+- `NextU32` advances the state with the xorshift32 `(13, 17, 5)` transition.
+  `NextI32` returns the next 32 bits as a signed integer, and `NextF32` uses the
+  high 24 bits scaled by `1 / 2 ** 24`, producing values in `[0.0, 1.0)`.
 - `Sin`, `Cos`, `Tan`, `Exp`, `Exp2`, `Log`, `Log2`, `Log10`, `Asin`, `Acos`, `Atan`, `Atan2`, `Pow`, `Sinh`, `Cosh`, `Tanh`, and `SinCos` lower to the corresponding LLVM math intrinsics.
 - `Min` and `Max` lower to `@llvm.minnum.*` and `@llvm.maxnum.*` so the backend can preserve the intended floating-point semantics while still selecting the best target instructions.
 - `Sqrt`, `FusedMultiplyAdd`, `ReciprocalEstimate`, `ReciprocalSqrtEstimate`, `Ceiling`, `Floor`, `Truncate`, and `Round` lower to single-instruction inline asm on x86/x64 and AArch64.
@@ -99,9 +117,23 @@ export fn i32 main() {
 }
 ```
 
+```stark
+import System
+module App
+
+export fn i32 main() {
+    stack mut System.Math.XorShift32 rng = System.Math.XorShift32.Seeded(1);
+    stack u32[0 max] bits = rng.NextU32();
+    stack f32 unit = rng.NextF32();
+    return bits != 0 && unit >= 0.0 && unit < 1.0 ? 0 : 1;
+}
+```
+
 ## Current Status
 
 - The LLVM-intrinsic mappings listed in Milestone 7.5 are implemented.
+- `XorShift32` is implemented as a deterministic, handwritten Stark
+  pseudo-random generator.
 - The current hardware/compiler-intrinsic batch is implemented for `Sqrt`, `FusedMultiplyAdd`, `ReciprocalEstimate`, `ReciprocalSqrtEstimate`, `Ceiling`, `Floor`, `Truncate`, `Round`, `Min`, and `Max`.
 - The transcendental math slice can inherit a libm dependency from LLVM/native
   toolchain lowering on non-Windows targets.

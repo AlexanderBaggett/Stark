@@ -970,7 +970,8 @@ public sealed record ImportedTemplateTypedBodyStatementSummary(
     IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? ThenStatements = null,
     IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? ElseStatements = null,
     ImportedTemplateTypedBodyExpressionSummary? TargetExpression = null,
-    IReadOnlyList<string>? LoopContracts = null)
+    IReadOnlyList<string>? LoopContracts = null,
+    ConstProvenanceKind ConstProvenance = ConstProvenanceKind.None)
 {
     public IReadOnlyList<ImportedTemplateTypedBodyStatementSummary> Initializer =>
         InitializerStatements ?? [];
@@ -2061,14 +2062,44 @@ public enum GlobalBindingKind
     Mutable
 }
 
+public enum TypedConstantInitializerKind
+{
+    Integer,
+    Float,
+    Bool,
+    Text,
+    Null,
+    FixedArray
+}
+
+public sealed record TypedConstantInitializer(
+    TypedConstantInitializerKind Kind,
+    StarkTypeSymbol Type,
+    BigInteger? IntegerValue = null,
+    string? FloatLiteralText = null,
+    bool? BoolValue = null,
+    string? TextLiteralText = null,
+    IReadOnlyList<TypedConstantInitializer>? Elements = null)
+{
+    public IReadOnlyList<TypedConstantInitializer> ElementValues => Elements ?? [];
+}
+
 public sealed record TypedGlobalSymbol(
     string Name,
     StarkTypeSymbol Type,
-    GlobalBindingKind BindingKind)
+    GlobalBindingKind BindingKind,
+    TypedConstantInitializer? ConstantInitializer = null)
 {
     public bool IsMutable => BindingKind == GlobalBindingKind.Mutable;
 
     public bool IsConst => BindingKind == GlobalBindingKind.Const;
+
+    public ConstProvenanceKind ConstProvenance => BindingKind switch
+    {
+        GlobalBindingKind.Const => ConstProvenanceKind.PermanentConst,
+        GlobalBindingKind.Immutable => ConstProvenanceKind.StaticImmutableBinding,
+        _ => ConstProvenanceKind.None
+    };
 }
 
 public sealed record LiteralTypingRecord(
@@ -2086,7 +2117,15 @@ public sealed record LocalDeclarationTypingRecord(
     string Kind,
     StarkTypeSymbol Type,
     SourceLocation Location,
-    string? EnclosingFunctionName = null);
+    string? EnclosingFunctionName = null,
+    IReadOnlyDictionary<string, ConstProvenanceKind>? DeclaratorConstProvenance = null)
+{
+    public IReadOnlyDictionary<string, ConstProvenanceKind> ConstProvenanceByDeclarator =>
+        DeclaratorConstProvenance ?? EmptyConstProvenanceByDeclarator;
+
+    private static readonly IReadOnlyDictionary<string, ConstProvenanceKind> EmptyConstProvenanceByDeclarator =
+        new Dictionary<string, ConstProvenanceKind>(StringComparer.Ordinal);
+}
 
 public sealed record LocalStorageCapacityTypingRecord(
     string Kind,
@@ -2992,6 +3031,13 @@ internal static class ConcreteTypeLayoutHelper
             IsMutableView = false
         };
 
+        if (concreteType.Kind == StarkTypeKind.Named
+            && concreteType.NamedType is not null
+            && concreteType.TypeArguments is { Count: > 0 })
+        {
+            concreteType = concreteType with { TypeArguments = null };
+        }
+
         return concreteType.Kind switch
         {
             StarkTypeKind.Bool => new ConcreteTypeLayout(1, 1),
@@ -3324,22 +3370,94 @@ public sealed record ImportedFunctionSemanticSummary(
     FunctionMemoryEffectSummary? MemoryEffects = null,
     IReadOnlyList<ParameterMemoryEffectSummary>? Parameters = null,
     IReadOnlyList<CallMemoryEffectSummary>? CallSummaries = null,
-    FunctionOptimizationSummary? OptimizationSummary = null)
+    FunctionOptimizationSummary? OptimizationSummary = null,
+    FunctionOwnershipSummary? OwnershipSummary = null)
 {
     public IReadOnlyList<CallMemoryEffectSummary> Calls => CallSummaries ?? [];
 
     public bool CanStrengthenKind => FunctionKindFacts.Rank(EffectiveKind) > FunctionKindFacts.Rank(DeclaredKind);
+
+    public FunctionOwnershipSummary? Ownership => OwnershipSummary;
 }
 
 public sealed record SemanticValidationModel(
     string ModuleName,
     IReadOnlyDictionary<string, FunctionValidationSummary> Functions);
 
+public enum OwnershipStorageRootKind
+{
+    Local,
+    Parameter,
+    Global
+}
+
+public enum OwnershipRootAvailabilityKind
+{
+    Unknown,
+    Initialized,
+    Uninitialized,
+    PartiallyInitialized,
+    Moved,
+    ControlFlow
+}
+
+public enum OwnershipEventKind
+{
+    Move,
+    FieldMove,
+    ImplicitDrop,
+    AssignmentDrop,
+    Reinitialize,
+    AddressTaken
+}
+
+public sealed record OwnershipPlaceSummary(
+    string RootName,
+    StarkTypeSymbol Type,
+    IReadOnlyList<string>? ProjectionPath = null,
+    bool HasIndexProjection = false)
+{
+    public IReadOnlyList<string> Projections => ProjectionPath ?? [];
+
+    public string DisplayName =>
+        Projections.Count == 0
+            ? RootName
+            : $"{RootName}.{string.Join(".", Projections)}";
+}
+
+public sealed record OwnershipEventSummary(
+    OwnershipEventKind Kind,
+    OwnershipPlaceSummary Place,
+    SourceLocation? Location = null);
+
+public sealed record OwnershipRootSummary(
+    string Name,
+    StarkTypeSymbol Type,
+    OwnershipStorageRootKind RootKind,
+    bool IsMutable,
+    bool IsConstant,
+    bool IsAddressTaken,
+    bool HasRawPointerEscape,
+    bool HasMove,
+    bool HasPartialMove,
+    bool HasImplicitDrop,
+    bool HasAssignmentDrop,
+    bool HasReinitialization,
+    bool RequiresDrop,
+    OwnershipRootAvailabilityKind FinalAvailability);
+
 public sealed record FunctionOwnershipSummary(
     string Name,
     bool OwnershipValid,
     IReadOnlyList<string> ImplicitDrops,
-    IReadOnlyList<string> Moves);
+    IReadOnlyList<string> Moves,
+    IReadOnlyList<OwnershipEventSummary>? OwnershipEvents = null,
+    IReadOnlyList<OwnershipRootSummary>? OwnershipRoots = null)
+{
+    public IReadOnlyList<OwnershipEventSummary> Events => OwnershipEvents ?? [];
+
+    public IReadOnlyList<OwnershipRootSummary> Roots => OwnershipRoots ?? [];
+}
 
 public sealed record OwnershipValidationModel(
     string ModuleName,
@@ -3443,7 +3561,8 @@ public sealed record MidLevelIrLocal(
     bool IsConstant,
     bool IsAddressable = false,
     SourceLocation? Location = null,
-    bool HasConstProvenance = false);
+    bool HasConstProvenance = false,
+    ConstProvenanceKind ConstProvenance = ConstProvenanceKind.None);
 
 public abstract record MidLevelIrOperand(StarkTypeSymbol Type, string Text);
 
@@ -4164,7 +4283,8 @@ public sealed record MidLevelIrFunction(
     FunctionBodyLoweringKind BodyLoweringKind = FunctionBodyLoweringKind.DeclarationOnly,
     SourceLocation? Location = null,
     IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null,
-    IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null)
+    IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null,
+    FunctionOwnershipSummary? Ownership = null)
 {
     public IReadOnlyList<ParameterDisjointGroup> DisjointGroups => DisjointParameterGroups ?? [];
     public IReadOnlyList<ParameterSameGroup> SameGroups => SameParameterGroups ?? [];
@@ -4244,6 +4364,7 @@ public enum SsaBinaryOperator
     BitwiseXor,
     BitwiseOr,
     Exponent,
+    WrappingExponent,
     ShiftLeft,
     ShiftRight,
     Equal,
@@ -4614,7 +4735,8 @@ public sealed record SsaDynamicStorageMoveLastRValue(
     SsaValue StorageAddress,
     StarkTypeSymbol StorageType,
     StarkTypeSymbol Type,
-    string Text)
+    string Text,
+    bool IsKnownNonEmpty = false)
     : SsaRValue(Type, Text);
 
 public sealed record SsaDynamicStorageMoveAtRValue(
@@ -4622,7 +4744,8 @@ public sealed record SsaDynamicStorageMoveAtRValue(
     StarkTypeSymbol StorageType,
     SsaValue Index,
     StarkTypeSymbol Type,
-    string Text)
+    string Text,
+    bool IsKnownInBounds = false)
     : SsaRValue(Type, Text);
 
 public sealed record SsaLoadSliceElementRValue(
@@ -4754,7 +4877,8 @@ public sealed record SsaAllocateLocalInstruction(
     string StorageClass = "stack",
     SourceLocation? Location = null,
     bool IsImmutable = false,
-    bool HasConstProvenance = false)
+    bool HasConstProvenance = false,
+    ConstProvenanceKind ConstProvenance = ConstProvenanceKind.None)
     : SsaInstruction;
 
 public sealed record SsaLifetimeStartInstruction(
@@ -4858,7 +4982,8 @@ public sealed record SsaFunction(
     FunctionBodyLoweringKind BodyLoweringKind = FunctionBodyLoweringKind.DeclarationOnly,
     SourceLocation? Location = null,
     IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null,
-    IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null)
+    IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null,
+    FunctionOwnershipSummary? Ownership = null)
 {
     public IReadOnlyList<ParameterDisjointGroup> DisjointGroups => DisjointParameterGroups ?? [];
     public IReadOnlyList<ParameterSameGroup> SameGroups => SameParameterGroups ?? [];
@@ -4905,6 +5030,31 @@ public sealed record SsaBoundedRawPointerRegionFact(
     SsaIntegerRangeFact? ElementCountRange = null,
     int? ElementAlignmentBytes = null);
 
+public enum SsaDynamicStorageBackingAllocationKind
+{
+    Unknown,
+    None,
+    RuntimeAllocation
+}
+
+public enum SsaDynamicStorageAllocatorProvenanceKind
+{
+    Unknown,
+    RuntimeDefault
+}
+
+public sealed record SsaDynamicStorageRegionFact(
+    string? OwnerRootName,
+    SsaDynamicStorageBackingAllocationKind BackingAllocationKind,
+    string? BackingAllocationId,
+    StarkTypeSymbol ElementType,
+    SsaIntegerRangeFact? CapacityRange,
+    SsaIntegerRangeFact? InitializedLengthRange,
+    SsaIntegerRangeFact? InitializedPrefixRange,
+    SsaIntegerRangeFact? SpareCapacityRange,
+    int? ElementAlignmentBytes,
+    SsaDynamicStorageAllocatorProvenanceKind AllocatorProvenance);
+
 public sealed record SsaValueFacts(
     string ValueName,
     StarkTypeSymbol Type,
@@ -4926,7 +5076,9 @@ public sealed record SsaValueFacts(
     SsaFactLatticeKind TextLiteralPayloadKind = SsaFactLatticeKind.Unknown,
     SsaTextLiteralPayloadFact? TextLiteralPayload = null,
     SsaFactLatticeKind BoundedRawPointerRegionKind = SsaFactLatticeKind.Unknown,
-    SsaBoundedRawPointerRegionFact? BoundedRawPointerRegion = null);
+    SsaBoundedRawPointerRegionFact? BoundedRawPointerRegion = null,
+    SsaFactLatticeKind DynamicStorageRegionKind = SsaFactLatticeKind.Unknown,
+    SsaDynamicStorageRegionFact? DynamicStorageRegion = null);
 
 public sealed record SsaFunctionFactModel(
     string FunctionName,

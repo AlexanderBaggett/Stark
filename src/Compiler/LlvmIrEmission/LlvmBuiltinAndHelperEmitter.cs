@@ -1,3 +1,4 @@
+using System.Numerics;
 using System.Text;
 using Stark.Parsing;
 
@@ -1822,11 +1823,21 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private IReadOnlyList<int> CollectIntegerExponentBitWidths()
     {
         return _enumerateBinaryOperations()
-            .Where(static binary => binary.Operator == SsaBinaryOperator.Exponent && binary.Type.Kind == StarkTypeKind.Integer && binary.Type.BitWidth is int)
+            .Where(static binary => binary.Operator is SsaBinaryOperator.Exponent or SsaBinaryOperator.WrappingExponent
+                                    && binary.Type.Kind == StarkTypeKind.Integer
+                                    && binary.Type.BitWidth is int
+                                    && !IsSmallConstantIntegerExponent(binary))
             .Select(static binary => binary.Type.BitWidth!.Value)
             .Distinct()
             .OrderBy(static bitWidth => bitWidth)
             .ToArray();
+    }
+
+    private static bool IsSmallConstantIntegerExponent(SsaBinaryRValue binary)
+    {
+        return binary.Right is SsaIntegerConstant exponent
+               && exponent.Value >= BigInteger.Zero
+               && exponent.Value <= new BigInteger(8);
     }
 
     private IReadOnlyList<StarkTypeSymbol> CollectFixedArrayOrderedComparisonTypes()
@@ -2486,13 +2497,18 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine();
         builder.AppendLine("loop_header:");
         builder.AppendLine($"  %pow_result = phi {llvmType} [ 1, %entry ], [ %pow_next, %loop_body ]");
+        builder.AppendLine($"  %pow_base = phi {llvmType} [ %base, %entry ], [ %pow_base_next, %loop_body ]");
         builder.AppendLine($"  %pow_exp = phi {llvmType} [ %exponent, %entry ], [ %pow_exp_next, %loop_body ]");
         builder.AppendLine($"  %pow_done = icmp eq {llvmType} %pow_exp, 0");
         builder.AppendLine("  br i1 %pow_done, label %return_result, label %loop_body");
         builder.AppendLine();
         builder.AppendLine("loop_body:");
-        builder.AppendLine($"  %pow_next = mul {llvmType} %pow_result, %base");
-        builder.AppendLine($"  %pow_exp_next = sub {llvmType} %pow_exp, 1");
+        builder.AppendLine($"  %pow_odd_bits = and {llvmType} %pow_exp, 1");
+        builder.AppendLine($"  %pow_is_odd = icmp ne {llvmType} %pow_odd_bits, 0");
+        builder.AppendLine($"  %pow_multiplied = mul {llvmType} %pow_result, %pow_base");
+        builder.AppendLine($"  %pow_next = select i1 %pow_is_odd, {llvmType} %pow_multiplied, {llvmType} %pow_result");
+        builder.AppendLine($"  %pow_base_next = mul {llvmType} %pow_base, %pow_base");
+        builder.AppendLine($"  %pow_exp_next = lshr {llvmType} %pow_exp, 1");
         builder.AppendLine("  br label %loop_header");
         builder.AppendLine();
         builder.AppendLine("return_zero:");

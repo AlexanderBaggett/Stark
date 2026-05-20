@@ -3410,7 +3410,9 @@ internal sealed partial class MidLevelIrLowerer
                     $"Conditional expression branches '{trueValue.Type.DisplayName}' and '{falseValue.Type.DisplayName}' have no common result type.");
             }
 
-            var result = CreateTemporaryLocal(resultType, "cond");
+            var resultHasConstProvenance = OperandHasConstProvenance(trueValue)
+                && OperandHasConstProvenance(falseValue);
+            var result = CreateTemporaryLocal(resultType, "cond", resultHasConstProvenance);
 
             CurrentBlock = trueBlock;
             var coercedTrue = CoerceOperand(trueValue, resultType);
@@ -3837,7 +3839,7 @@ internal sealed partial class MidLevelIrLowerer
                         return callResult;
                     }
 
-                    var valueType = StarkTypeSymbols.BorrowReturnValueType(sourceReturnType);
+                    var valueType = GetPointerBackedBorrowLoadType(sourceReturnType);
                     var loaded = EmitTemporary(
                         new MidLevelIrLoadIndirectRValue(
                             callResult,
@@ -3873,7 +3875,7 @@ internal sealed partial class MidLevelIrLowerer
                         return callResult;
                     }
 
-                    var valueType = StarkTypeSymbols.BorrowReturnValueType(sourceReturnType);
+                    var valueType = GetPointerBackedBorrowLoadType(sourceReturnType);
                     var loaded = EmitTemporary(
                         new MidLevelIrLoadIndirectRValue(
                             callResult,
@@ -3909,7 +3911,7 @@ internal sealed partial class MidLevelIrLowerer
                         return callResult;
                     }
 
-                    var valueType = StarkTypeSymbols.BorrowReturnValueType(sourceReturnType);
+                    var valueType = GetPointerBackedBorrowLoadType(sourceReturnType);
                     var loaded = EmitTemporary(
                         new MidLevelIrLoadIndirectRValue(
                             callResult,
@@ -9636,18 +9638,9 @@ internal sealed partial class MidLevelIrLowerer
                     "textcast");
             }
 
-            if (operand.Type.Kind == StarkTypeKind.FixedArray
-                && targetType.Kind == StarkTypeKind.Slice
-                && operand is MidLevelIrLocalOperand localOperand)
+            if (TryCoerceFixedArrayToSlice(operand, targetType, out var fixedArraySlice))
             {
-                EnsureAddressableLocal(localOperand.Name);
-                return EmitTemporary(
-                    new MidLevelIrMakeSliceFromLocalRValue(
-                        localOperand.Name,
-                        operand.Type,
-                        targetType,
-                        $"{localOperand.Name}:slice"),
-                    "slice");
+                return fixedArraySlice;
             }
 
             if (HasSameStorageType(operand.Type, targetType))
@@ -9668,6 +9661,86 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             return operand;
+        }
+
+        private bool TryCoerceFixedArrayToSlice(
+            MidLevelIrOperand operand,
+            StarkTypeSymbol targetType,
+            out MidLevelIrOperand slice)
+        {
+            slice = default!;
+
+            if (operand.Type.Kind != StarkTypeKind.FixedArray
+                || targetType.Kind != StarkTypeKind.Slice
+                || operand.Type.ElementType is null
+                || operand.Type.FixedLength is not int fixedLength
+                || targetType.ElementType is null)
+            {
+                return false;
+            }
+
+            if (operand is MidLevelIrLocalOperand localOperand)
+            {
+                EnsureAddressableLocal(localOperand.Name);
+                slice = EmitTemporary(
+                    new MidLevelIrMakeSliceFromLocalRValue(
+                        localOperand.Name,
+                        operand.Type,
+                        targetType,
+                        $"{localOperand.Name}:slice"),
+                    "slice")!;
+                return slice is not null;
+            }
+
+            var arrayAddress = TryCreateFixedArrayAddress(operand);
+            if (arrayAddress is null)
+            {
+                return false;
+            }
+
+            var elementAddress = EmitTemporary(
+                new MidLevelIrElementAddressRValue(
+                    arrayAddress,
+                    operand.Type,
+                    Index: null,
+                    ConstantIndex: 0,
+                    AddressType(targetType.ElementType, arrayAddress.Type.IsMutablePointer && targetType.IsMutableView),
+                    $"{operand.Text}:slice.data"),
+                "addr");
+            if (elementAddress is null)
+            {
+                return false;
+            }
+
+            slice = EmitTemporary(
+                new MidLevelIrMakeSliceFromPointerRValue(
+                    elementAddress,
+                    new MidLevelIrIntegerConstantOperand(fixedLength, I64Type),
+                    targetType,
+                    $"{operand.Text}:slice"),
+                "slice")!;
+            return slice is not null;
+        }
+
+        private MidLevelIrOperand? TryCreateFixedArrayAddress(MidLevelIrOperand operand)
+        {
+            return operand switch
+            {
+                MidLevelIrLocalOperand local => CreateAddressOfLocal(local.Name, operand.Type),
+                MidLevelIrParameterOperand parameter => CreateAddressOfParameter(parameter.Name, operand.Type),
+                MidLevelIrGlobalOperand global => CreateAddressOfGlobal(global.Name, operand.Type),
+                MidLevelIrGlobalAddressOperand globalAddress when globalAddress.PointeeType.Kind == StarkTypeKind.FixedArray
+                    => globalAddress,
+                _ => null
+            };
+        }
+
+        private static StarkTypeSymbol GetPointerBackedBorrowLoadType(StarkTypeSymbol sourceReturnType)
+        {
+            var valueType = StarkTypeSymbols.BorrowReturnValueType(sourceReturnType);
+            return valueType.AccessKind == StarkAccessKind.Frozen
+                ? StarkTypeSymbols.FreezeReachableView(valueType)
+                : valueType;
         }
 
         private MidLevelIrOperand? LowerShortCircuitBooleanChain<TOperandContext>(
@@ -10155,10 +10228,20 @@ internal sealed partial class MidLevelIrLowerer
             return EmitTemporary(value, hint)!;
         }
 
-        private MidLevelIrLocalOperand CreateTemporaryLocal(StarkTypeSymbol type, string hint)
+        private MidLevelIrLocalOperand CreateTemporaryLocal(
+            StarkTypeSymbol type,
+            string hint,
+            bool hasConstProvenance = false)
         {
             var name = AllocateTemporaryName(hint);
-            RegisterLocal(name, type, storageClass: "temp", isMutable: false, isConstant: false);
+            RegisterLocal(
+                name,
+                type,
+                storageClass: "temp",
+                isMutable: false,
+                isConstant: false,
+                hasConstProvenance: hasConstProvenance,
+                constProvenance: ConstProvenanceFacts.FromPermanentConst(hasConstProvenance));
             return new MidLevelIrLocalOperand(name, type);
         }
 
@@ -10895,13 +10978,15 @@ internal sealed partial class MidLevelIrLowerer
             string storageClass,
             bool isMutable,
             bool isConstant,
-            bool hasConstProvenance = false)
+            bool hasConstProvenance = false,
+            ConstProvenanceKind constProvenance = ConstProvenanceKind.None)
         {
             if (_localsByName.ContainsKey(name))
             {
                 return;
             }
 
+            constProvenance = ConstProvenanceFacts.Normalize(hasConstProvenance, constProvenance);
             var local = new MidLevelIrLocal(
                 name,
                 type,
@@ -10910,7 +10995,8 @@ internal sealed partial class MidLevelIrLowerer
                 isConstant,
                 IsAddressable: ShouldAddressLocal(type, storageClass),
                 Location: _currentStatementLocation ?? _functionLocation,
-                HasConstProvenance: hasConstProvenance);
+                HasConstProvenance: ConstProvenanceFacts.HasPermanentConstProvenance(constProvenance),
+                ConstProvenance: constProvenance);
             _locals.Add(local);
             _localsByName[name] = local;
         }
@@ -10922,7 +11008,11 @@ internal sealed partial class MidLevelIrLowerer
                 return;
             }
 
-            var updated = local with { HasConstProvenance = true };
+            var updated = local with
+            {
+                HasConstProvenance = true,
+                ConstProvenance = ConstProvenanceKind.PermanentConst
+            };
             _localsByName[name] = updated;
             for (var index = 0; index < _locals.Count; index++)
             {

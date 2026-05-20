@@ -2287,7 +2287,7 @@ Completion rules:
 - [ ] benchmarks/micro/ExplicitArithmeticRangePruning — rust 0.990526, stark 1.014211
 - [ ] benchmarks/micro/FunctionPointerDevirtualization — rust 1.007611, stark 1.01945
 - [ ] benchmarks/network/TcpScatterGatherLoopback — rust 0.970315, stark 1.196042
-- [x] benchmarks/text/IntegerFormatting — rust 1.106406, stark 627.29316
+- [x] benchmarks/text/ConstantIntegerFormatting — rust 1.106406, stark 627.29316
 - [ ] benchmarks/text/PathJoin — rust 1.075163, stark 1.094771
 - [ ] benchmarks/text/PathRepeatedSmallOps — rust 1.029443, stark 1.07571
 - [ ] benchmarks/text/TextParsing — rust 1.092818, stark 1.319337
@@ -2328,7 +2328,7 @@ Completion rules:
 - [ ] benchmarks/text/AsciiToUnicodeConversion — stark 1.0301
 - [ ] benchmarks/text/AsciiToUnicodeConversionRuntime — stark 1.082843
 - [ ] benchmarks/text/AsciiToUnicodeWideningKernel — stark 1.018182
-- [ ] benchmarks/text/IntegerFormatting — stark 627.29316
+- [ ] benchmarks/text/ConstantIntegerFormatting — stark 627.29316
 - [ ] benchmarks/text/OwnedPathAllocation — stark 1.009137
 - [ ] benchmarks/text/PathJoin — stark 1.094771
 - [ ] benchmarks/text/PathNormalize — stark 1.095768
@@ -2403,7 +2403,7 @@ Completion rules:
     `stdlib/dist/libSystem.starkpkg.json`. Focused 100-run benchmark results
     from `results-20260514T050133Z.7CjUf9.csv`:
     `AsciiToUnicodeConversion` Stark/C `1.001949`, Rust/C `1.056530`;
-    `AsciiToUnicodeConversionLargeLiteral` Stark/C `0.960735`, Rust/C
+    `AsciiToUnicodeLargeLiteralSpecialization` Stark/C `0.960735`, Rust/C
     `1.865104`; `AsciiToUnicodeConversionRuntime` Stark/C `1.053077`, Rust/C
     `1.061154`; `AsciiToUnicodeConversionTinyLiteral` Stark/C `0.965931`,
     Rust/C `1.032177`.
@@ -2650,7 +2650,7 @@ Completion rules:
     `0.996845`, Rust/C `1.239748`; from
     `results-20260514T053747Z.Oeowwa.csv`, `AsciiToUnicodeConversion` Stark/C
     `0.978682`, Rust/C `1.048450`,
-    `AsciiToUnicodeConversionLargeLiteral` Stark/C `0.964217`, Rust/C
+    `AsciiToUnicodeLargeLiteralSpecialization` Stark/C `0.964217`, Rust/C
     `1.838339`, `AsciiToUnicodeConversionRuntime` Stark/C `1.042650`,
     Rust/C `1.044174`, and `AsciiToUnicodeConversionTinyLiteral` Stark/C
     `1.005188`, Rust/C `1.126459`.

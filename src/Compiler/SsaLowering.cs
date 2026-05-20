@@ -55,7 +55,8 @@ internal sealed class SsaLowerer
                 function.BodyLoweringKind,
                 function.Location,
                 function.DisjointParameterGroups,
-                function.SameParameterGroups);
+                function.SameParameterGroups,
+                function.Ownership);
         }
 
         var builder = new FunctionSsaBuilder(function, _signatures, _globals);
@@ -172,7 +173,8 @@ internal sealed class SsaLowerer
                 _function.BodyLoweringKind,
                 _function.Location,
                 _function.DisjointParameterGroups,
-                _function.SameParameterGroups);
+                _function.SameParameterGroups,
+                _function.Ownership);
         }
 
         private void LowerBlock(int blockId)
@@ -226,7 +228,8 @@ internal sealed class SsaLowerer
                             storageClass,
                             statement.Location ?? _function.Location,
                             IsOnceInitializedReadonlyLocal(statement.TargetName, storageClass),
-                            LocalHasConstProvenance(statement.TargetName)));
+                            LocalHasConstProvenance(statement.TargetName),
+                            LocalConstProvenance(statement.TargetName)));
                         if (UsesStackLifetime(storageClass))
                         {
                             block.Instructions.Add(new SsaLifetimeStartInstruction(statement.TargetName, statement.TargetType, statement.Location ?? _function.Location));
@@ -987,7 +990,8 @@ internal sealed class SsaLowerer
                     storageClass,
                     local.Location ?? _function.Location,
                     IsOnceInitializedReadonlyLocal(local.Name, storageClass),
-                    LocalHasConstProvenance(local.Name)));
+                    LocalHasConstProvenance(local.Name),
+                    LocalConstProvenance(local.Name)));
             }
         }
 
@@ -1025,6 +1029,13 @@ internal sealed class SsaLowerer
         {
             return _localsByName.TryGetValue(localName, out var local)
                 && local.HasConstProvenance;
+        }
+
+        private ConstProvenanceKind LocalConstProvenance(string localName)
+        {
+            return _localsByName.TryGetValue(localName, out var local)
+                ? ConstProvenanceFacts.Normalize(local.HasConstProvenance, local.ConstProvenance)
+                : ConstProvenanceKind.None;
         }
 
         private static bool UsesStackLifetime(string storageClass) => storageClass is "stack" or "match";
@@ -1754,13 +1765,15 @@ internal sealed class SsaLowerer
                     RewriteValue(moveLast.StorageAddress, replacements),
                     moveLast.StorageType,
                     moveLast.Type,
-                    moveLast.Text),
+                    moveLast.Text,
+                    moveLast.IsKnownNonEmpty),
                 SsaDynamicStorageMoveAtRValue moveAt => new SsaDynamicStorageMoveAtRValue(
                     RewriteValue(moveAt.StorageAddress, replacements),
                     moveAt.StorageType,
                     RewriteValue(moveAt.Index, replacements),
                     moveAt.Type,
-                    moveAt.Text),
+                    moveAt.Text,
+                    moveAt.IsKnownInBounds),
                 SsaLoadSliceElementRValue loadSlice => new SsaLoadSliceElementRValue(
                     RewriteValue(loadSlice.Slice, replacements),
                     RewriteValue(loadSlice.Index, replacements),

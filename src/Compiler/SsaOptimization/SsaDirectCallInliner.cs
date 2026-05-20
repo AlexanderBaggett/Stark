@@ -772,6 +772,7 @@ internal sealed class SsaDirectCallInliner
                          && TryCreateTemporaryArgumentAddressReplacement(
                              argument,
                              parameter.Type,
+                             parameter.IsConst,
                              $"arg_{parameter.Name}_slot_inl{inlineSiteIndex}",
                              $"arg_{parameter.Name}_addr_inl{inlineSiteIndex}",
                              usedValueNames,
@@ -784,6 +785,7 @@ internal sealed class SsaDirectCallInliner
                 else if (TryCreateTemporaryArgumentAddressReplacement(
                              argument,
                              parameter.Type,
+                             parameter.IsConst,
                              $"arg_{parameter.Name}_slot_inl{inlineSiteIndex}",
                              $"arg_{parameter.Name}_addr_inl{inlineSiteIndex}",
                              usedValueNames,
@@ -992,6 +994,7 @@ internal sealed class SsaDirectCallInliner
     private static bool TryCreateTemporaryArgumentAddressReplacement(
         SsaValue argument,
         StarkTypeSymbol parameterType,
+        bool hasConstProvenance,
         string localBaseName,
         string addressBaseName,
         ISet<string> usedValueNames,
@@ -1016,7 +1019,10 @@ internal sealed class SsaDirectCallInliner
             localName,
             localType,
             StorageClass: "stack",
-            Location: callLocation));
+            Location: callLocation,
+            IsImmutable: hasConstProvenance,
+            HasConstProvenance: hasConstProvenance,
+            ConstProvenance: ConstProvenanceFacts.FromPermanentConst(hasConstProvenance)));
         prologueInstructions.Add(new SsaLifetimeStartInstruction(
             localName,
             localType,
@@ -1995,11 +2001,33 @@ internal sealed class SsaDirectCallInliner
             SsaExtractIndexRValue extractIndex => IsInlineSafeValue(extractIndex.Target),
             SsaInsertIndexRValue insertIndex => IsInlineSafeValue(insertIndex.Target)
                                                 && IsInlineSafeValue(insertIndex.Value),
+            SsaMakeSliceFromPointerRValue makeSlice => IsInlineSafeValue(makeSlice.Pointer)
+                                                       && IsInlineSafeValue(makeSlice.Length),
+            SsaDynamicStorageAllocationRValue allocation => IsInlineSafeValue(allocation.Capacity),
+            SsaDynamicStorageFreeRValue free => IsInlineSafeValue(free.Storage),
+            SsaHeapStorageFreeRValue free => IsInlineSafeValue(free.Pointer),
+            SsaDynamicStorageReserveRValue reserve => IsInlineSafeValue(reserve.StorageAddress)
+                                                      && IsInlineSafeValue(reserve.AdditionalCapacity),
+            SsaDynamicStorageTryReserveRValue reserve => IsInlineSafeValue(reserve.StorageAddress)
+                                                         && IsInlineSafeValue(reserve.AdditionalCapacity),
+            SsaDynamicStorageTryReserveCapacityRValue reserve => IsInlineSafeValue(reserve.StorageAddress)
+                                                                 && IsInlineSafeValue(reserve.TargetCapacity),
+            SsaDynamicStorageMoveLastRValue moveLast => IsInlineSafeValue(moveLast.StorageAddress),
+            SsaDynamicStorageMoveAtRValue moveAt => IsInlineSafeValue(moveAt.StorageAddress)
+                                                    && IsInlineSafeValue(moveAt.Index),
+            SsaLoadSliceElementRValue loadSlice => IsInlineSafeValue(loadSlice.Slice)
+                                                   && IsInlineSafeValue(loadSlice.Index),
+            SsaTextSliceRValue textSlice => IsInlineSafeValue(textSlice.TextValue)
+                                            && IsInlineSafeValue(textSlice.Start)
+                                            && IsInlineSafeValue(textSlice.Length),
             SsaFieldAddressRValue fieldAddress => IsInlineSafeValue(fieldAddress.Address),
             SsaElementAddressRValue elementAddress => IsInlineSafeValue(elementAddress.Address)
                                                       && (elementAddress.Index is null || IsInlineSafeValue(elementAddress.Index)),
+            SsaSliceElementAddressRValue sliceElementAddress => IsInlineSafeValue(sliceElementAddress.Slice)
+                                                                && IsInlineSafeValue(sliceElementAddress.Index),
             SsaLoadIndirectRValue loadIndirect => IsInlineSafeValue(loadIndirect.Address),
             SsaAddressOfParameterRValue => true,
+            SsaLoadGlobalRValue => true,
             SsaLoadLocalRValue => true,
             _ => false
         };
@@ -2147,6 +2175,7 @@ internal sealed class SsaDirectCallInliner
             or StarkTypeKind.Float
             or StarkTypeKind.RawPointer
             or StarkTypeKind.Slice
+            or StarkTypeKind.Dynamic
             or StarkTypeKind.FunctionPointer
             or StarkTypeKind.Closure
             or StarkTypeKind.Named

@@ -2520,9 +2520,9 @@ debuggability unless a task explicitly says otherwise.
     - [x] medium literal benchmark
       - [x] focused 3-run smoke on April 28, 2026: Stark `AsciiToUnicodeConversion` averaged 1649 us versus C at 1613 us, for a same-run C ratio of 1.022
       - [x] focused 20-run smoke on April 29, 2026 after the SSA scalar-literal rewrite and benchmark stability column: Stark `AsciiToUnicodeConversion` averaged 1664 us versus C at 1734 us, for a same-run C ratio of 0.960; runtime spread was 17.49% for Stark and 37.02% for C, so keep treating single-run ratios as smoke signals
-    - [x] large literal benchmark that exercises the `llvm.memcpy` path
-      - [x] focused 3-run smoke on April 28, 2026: Stark `AsciiToUnicodeConversionLargeLiteral` averaged 1692 us versus C at 1628 us, for a same-run C ratio of 1.039
-      - [x] refreshed 3-run smoke on April 28, 2026: Stark `AsciiToUnicodeConversionLargeLiteral` averaged 1696 us versus C at 1613 us, for a same-run C ratio of 1.051
+    - [x] large literal specialization benchmark that exercises the `llvm.memcpy` path
+      - [x] focused 3-run smoke on April 28, 2026: Stark `AsciiToUnicodeLargeLiteralSpecialization` averaged 1692 us versus C at 1628 us, for a same-run C ratio of 1.039
+      - [x] refreshed 3-run smoke on April 28, 2026: Stark `AsciiToUnicodeLargeLiteralSpecialization` averaged 1696 us versus C at 1613 us, for a same-run C ratio of 1.051
       - [x] focused 20-run validation on April 29, 2026 after SSA large-literal copy lowering: Stark averaged 1638 us versus C at 1633 us, for a same-run C ratio of 1.003; runtime spread was 15.26% for Stark and 14.88% for C
     - [x] compare the public API literal path against a raw widening-kernel ceiling benchmark
       - [x] add `benchmarks/text/AsciiToUnicodeWideningKernel` to measure direct byte-to-UTF-32 widening without public `Unicode` wrapper checks

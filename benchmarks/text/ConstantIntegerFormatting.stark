@@ -1,5 +1,5 @@
 import System.Text
-module Benchmarks.Text.IntegerFormatting
+module Benchmarks.Text.ConstantIntegerFormatting
 
 const Iterations = 50;
 

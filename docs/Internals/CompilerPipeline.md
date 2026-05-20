@@ -167,10 +167,13 @@ The current default compilation pipeline is dependency-ordered rather than hard-
 32. `shape-branches`
    Runs final branch shaping over optimized SSA.
    This pass enables select predication for simple return diamonds after the heavier SSA optimization passes have run, then refreshes value facts. At `O0` and `Og`, it republishes the existing optimized SSA unchanged.
-33. `lower-abi`
+33. `arithmetic-fold-ssa`
+   Folds repeated integer arithmetic before ABI and LLVM lowering.
+   This pass recognizes conservative linear add/subtract chains and product chains in SSA after inlining, scalar replacement, and branch shaping have exposed them. It rewrites repeated identical integer values to multiply or exponent forms when the wrapping/range contract proves the replacement valid, leaves saturating arithmetic and unsafe reassociation source-shaped, then reruns SSA cleanup, constant propagation, and value-fact analysis. At `O0` and `Og`, it republishes the existing optimized SSA unchanged.
+34. `lower-abi`
    Produces a compiler-owned ABI model from typed Stark signatures and function effects.
    This is where internal aggregate parameters and returns are lowered to stable calling-convention rules, while `ffi` signatures keep their foreign-facing shape and imported Stark calls are assigned their dependency-facing symbol/ABI form.
-34. `validate-ssa`
+35. `validate-ssa`
    Validates optimized SSA against the ABI and LLVM-emission contract.
    This pass catches malformed SSA before code generation: missing value
    definitions, malformed terminators, unsupported SSA node kinds, invalid call
@@ -178,7 +181,7 @@ The current default compilation pipeline is dependency-ordered rather than hard-
    memory-copy shapes, malformed text/global/function address values,
    compile-time-only or out-of-range integer constants, invalid address forms,
    and operator shapes that LLVM emission cannot represent.
-35. `emit-llvm`
+36. `emit-llvm`
    Produces LLVM IR from the optimized SSA form plus semantic, type, and ABI metadata.
    The emitter generates real function bodies for accepted source bodies and
    materialized specializations, emits concrete aggregate/array/slice/string

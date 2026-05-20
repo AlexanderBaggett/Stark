@@ -516,13 +516,19 @@ internal static class LlvmAggregateEmissionSupport
 
     private static StarkTypeSymbol NormalizeTypeForLayout(StarkTypeSymbol type)
     {
-        return type with
+        var normalized = type with
         {
             BorrowKind = StarkBorrowKind.None,
             AccessKind = StarkAccessKind.None,
             InitializationKind = StarkInitializationKind.None,
             IsMutableView = false
         };
+
+        return normalized.Kind == StarkTypeKind.Named
+               && normalized.NamedType is not null
+               && normalized.TypeArguments is { Count: > 0 }
+            ? normalized with { TypeArguments = null }
+            : normalized;
     }
 
     private static int BitsToBytes(int bitCount)

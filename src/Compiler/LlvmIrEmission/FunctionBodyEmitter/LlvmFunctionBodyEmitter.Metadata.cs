@@ -1622,12 +1622,14 @@ internal sealed partial class LlvmFunctionBodyEmitter
         return definition switch
         {
             SsaUseRValue use => IsImmutableMemoryReference(use.Value, visitedValueNames),
-            SsaAddressOfLocalRValue addressOfLocal => _constProvenanceLocalNames.Contains(addressOfLocal.LocalName),
+            SsaAddressOfLocalRValue addressOfLocal => _constProvenanceLocalNames.Contains(addressOfLocal.LocalName)
+                || _invariantLocalNames.Contains(addressOfLocal.LocalName),
             SsaAddressOfParameterRValue addressOfParameter => IsConstParameter(addressOfParameter.ParameterName),
             SsaFieldAddressRValue fieldAddress => IsImmutableMemoryReference(fieldAddress.Address, visitedValueNames),
             SsaElementAddressRValue elementAddress => IsImmutableMemoryReference(elementAddress.Address, visitedValueNames),
             SsaSliceElementAddressRValue sliceElementAddress => IsImmutableMemoryReference(sliceElementAddress.Slice, visitedValueNames),
-            SsaMakeSliceFromLocalRValue makeSlice => _constProvenanceLocalNames.Contains(makeSlice.LocalName),
+            SsaMakeSliceFromLocalRValue makeSlice => _constProvenanceLocalNames.Contains(makeSlice.LocalName)
+                || _invariantLocalNames.Contains(makeSlice.LocalName),
             SsaMakeSliceFromPointerRValue makeSlice => IsImmutableMemoryReference(makeSlice.Pointer, visitedValueNames),
             SsaLoadLocalRValue loadLocal when TryResolveSingleStoreLocalValue(loadLocal.LocalName, out var storedValue)
                 => IsImmutableMemoryReference(storedValue, visitedValueNames),
@@ -1643,7 +1645,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
     {
         return value switch
         {
-            SsaGlobalAddressValue globalAddress => IsImmutableGlobalName(globalAddress.GlobalName),
+            SsaGlobalAddressValue globalAddress => IsPermanentConstGlobalName(globalAddress.GlobalName),
             SsaValueReference reference => HasConstMemoryProvenance(reference, visitedValueNames),
             _ => false
         };
@@ -1673,16 +1675,16 @@ internal sealed partial class LlvmFunctionBodyEmitter
                                         && convert.TargetType.Kind == StarkTypeKind.RawPointer
                 => HasConstMemoryProvenance(convert.Operand, visitedValueNames),
             SsaAddressOfParameterRValue addressOfParameter => IsConstParameter(addressOfParameter.ParameterName),
-            SsaAddressOfLocalRValue addressOfLocal => _invariantLocalNames.Contains(addressOfLocal.LocalName),
+            SsaAddressOfLocalRValue addressOfLocal => _constProvenanceLocalNames.Contains(addressOfLocal.LocalName),
             SsaFieldAddressRValue fieldAddress => HasConstMemoryProvenance(fieldAddress.Address, visitedValueNames),
             SsaElementAddressRValue elementAddress => HasConstMemoryProvenance(elementAddress.Address, visitedValueNames),
             SsaSliceElementAddressRValue sliceElementAddress => HasConstMemoryProvenance(sliceElementAddress.Slice, visitedValueNames),
             SsaMakeSliceFromPointerRValue makeSlice => HasConstMemoryProvenance(makeSlice.Pointer, visitedValueNames),
-            SsaMakeSliceFromLocalRValue makeSlice => _invariantLocalNames.Contains(makeSlice.LocalName),
+            SsaMakeSliceFromLocalRValue makeSlice => _constProvenanceLocalNames.Contains(makeSlice.LocalName),
             SsaTextSliceRValue textSlice => HasConstMemoryProvenance(textSlice.TextValue, visitedValueNames),
             SsaExtractFieldRValue extractField => HasConstMemoryProvenance(extractField.Target, visitedValueNames),
             SsaExtractIndexRValue extractIndex => HasConstMemoryProvenance(extractIndex.Target, visitedValueNames),
-            SsaLoadGlobalRValue loadGlobal => IsImmutableGlobalName(loadGlobal.GlobalName),
+            SsaLoadGlobalRValue loadGlobal => IsPermanentConstGlobalName(loadGlobal.GlobalName),
             SsaLoadLocalRValue loadLocal => _constProvenanceLocalNames.Contains(loadLocal.LocalName)
                 || (TryResolveSingleStoreLocalValue(loadLocal.LocalName, out var storedValue)
                     && HasConstMemoryProvenance(storedValue, visitedValueNames)),

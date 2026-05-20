@@ -358,6 +358,7 @@ public class StandardLibraryTestSuite
             var mathFunctions = mathModule.EffectiveSourceSurface.Functions?.Select(static item => item.Name).ToArray() ?? [];
             Assert.Contains("SinCosF32", mathTypes);
             Assert.Contains("SinCosF64", mathTypes);
+            Assert.Contains("XorShift32", mathTypes);
             Assert.Contains("Sin", mathFunctions);
             Assert.Contains("Cos", mathFunctions);
             Assert.Contains("Atan2", mathFunctions);
@@ -1458,6 +1459,24 @@ public class StandardLibraryTestSuite
 
                     if (System.BitOperations.PopCount(threeI64) != twoI64) {
                         return 35;
+                    }
+
+                    stack mut System.Math.XorShift32 rng = System.Math.XorShift32.Seeded(1);
+                    if (rng.NextU32() != 270369) {
+                        return 36;
+                    }
+
+                    if (rng.NextU32() != 67634689) {
+                        return 37;
+                    }
+
+                    if (rng.NextI32() != -1647531835) {
+                        return 38;
+                    }
+
+                    stack f32 randomUnit = rng.NextF32();
+                    if (randomUnit <= 0.0 || randomUnit >= 1.0) {
+                        return 39;
                     }
 
                     return 0;

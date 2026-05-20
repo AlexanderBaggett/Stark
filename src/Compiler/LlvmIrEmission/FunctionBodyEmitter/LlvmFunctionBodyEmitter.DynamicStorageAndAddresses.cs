@@ -531,32 +531,42 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var current = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_current"))}";
         var pointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_ptr"))}";
         var length = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_length"))}";
-        var isEmpty = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_is_empty"))}";
+        var isEmpty = moveLast.IsKnownNonEmpty
+            ? string.Empty
+            : $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_is_empty"))}";
         var newLength = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_new_length"))}";
         var elementPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_element_ptr"))}";
         var movedValue = useAddressBackedResult
             ? string.Empty
-            : $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_value"))}";
+            : moveLast.IsKnownNonEmpty
+                ? result
+                : $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_value"))}";
         var updated = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_updated"))}";
-        var trapLabel = EscapeIdentifier(CreateAbiTempName("dynamic_move_empty"));
-        var moveLabel = EscapeIdentifier(CreateAbiTempName("dynamic_move_do"));
-        var doneLabel = EscapeIdentifier(CreateAbiTempName("dynamic_move_done"));
-        var emptyProfile = _context.GetMetadataTupleRef([
-            "!\"branch_weights\"",
-            $"i32 {TrapEdgeUnlikelyWeight}",
-            $"i32 {NormalEdgeLikelyWeight}"
-        ]);
+        var trapLabel = moveLast.IsKnownNonEmpty ? string.Empty : EscapeIdentifier(CreateAbiTempName("dynamic_move_empty"));
+        var moveLabel = moveLast.IsKnownNonEmpty ? string.Empty : EscapeIdentifier(CreateAbiTempName("dynamic_move_do"));
+        var doneLabel = moveLast.IsKnownNonEmpty ? string.Empty : EscapeIdentifier(CreateAbiTempName("dynamic_move_done"));
+        var emptyProfile = moveLast.IsKnownNonEmpty
+            ? string.Empty
+            : _context.GetMetadataTupleRef([
+                "!\"branch_weights\"",
+                $"i32 {TrapEdgeUnlikelyWeight}",
+                $"i32 {NormalEdgeLikelyWeight}"
+            ]);
 
         AppendLine($"  {current} = load {storageType}, ptr {storageAddress}");
         AppendLine($"  {length} = extractvalue {storageType} {current}, 1");
-        AppendLine($"  {isEmpty} = icmp eq i64 {length}, 0");
-        AppendLine($"  br i1 {isEmpty}, label %{trapLabel}, label %{moveLabel}, !prof {emptyProfile}");
-        AppendLine(string.Empty);
-        AppendLine($"{trapLabel}:");
-        AppendLine("  call void @llvm.trap()");
-        AppendLine("  unreachable");
-        AppendLine(string.Empty);
-        AppendLine($"{moveLabel}:");
+        if (!moveLast.IsKnownNonEmpty)
+        {
+            AppendLine($"  {isEmpty} = icmp eq i64 {length}, 0");
+            AppendLine($"  br i1 {isEmpty}, label %{trapLabel}, label %{moveLabel}, !prof {emptyProfile}");
+            AppendLine(string.Empty);
+            AppendLine($"{trapLabel}:");
+            AppendLine("  call void @llvm.trap()");
+            AppendLine("  unreachable");
+            AppendLine(string.Empty);
+            AppendLine($"{moveLabel}:");
+        }
+
         AppendLine($"  {newLength} = sub i64 {length}, 1");
         AppendLine($"  {pointer} = extractvalue {storageType} {current}, 0");
         AppendLine($"  {elementPointer} = getelementptr{GetProvenInObjectGepFlags()} {elementLlvmType}, ptr {pointer}, i64 {newLength}");
@@ -576,15 +586,18 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
         AppendLine($"  {updated} = insertvalue {storageType} {current}, i64 {newLength}, 1");
         AppendLine($"  store {storageType} {updated}, ptr {storageAddress}");
-        AppendLine($"  br label %{doneLabel}");
-        AppendLine(string.Empty);
-        AppendLine($"{doneLabel}:");
-        if (!useAddressBackedResult)
+        if (!moveLast.IsKnownNonEmpty)
         {
-            AppendLine($"  {result} = phi {elementLlvmType} [ {movedValue}, %{moveLabel} ]");
-        }
+            AppendLine($"  br label %{doneLabel}");
+            AppendLine(string.Empty);
+            AppendLine($"{doneLabel}:");
+            if (!useAddressBackedResult)
+            {
+                AppendLine($"  {result} = phi {elementLlvmType} [ {movedValue}, %{moveLabel} ]");
+            }
 
-        RecordCurrentBlockExitLabel(doneLabel);
+            RecordCurrentBlockExitLabel(doneLabel);
+        }
     }
 
     private void EmitDynamicStorageMoveAt(string resultName, string result, SsaDynamicStorageMoveAtRValue moveAt)
@@ -643,7 +656,9 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var current = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_current"))}";
         var pointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_ptr"))}";
         var length = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_length"))}";
-        var inBounds = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_in_bounds"))}";
+        var inBounds = moveAt.IsKnownInBounds
+            ? string.Empty
+            : $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_in_bounds"))}";
         var newLength = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_new_length"))}";
         var elementPointer = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_element_ptr"))}";
         var movedValue = useAddressBackedResult
@@ -655,27 +670,33 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var tailCount = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_tail_count"))}";
         var tailBytes = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_tail_bytes"))}";
         var updated = $"%{EscapeIdentifier(CreateAbiTempName("dynamic_move_at_updated"))}";
-        var trapLabel = EscapeIdentifier(CreateAbiTempName("dynamic_move_at_bad_index"));
-        var moveLabel = EscapeIdentifier(CreateAbiTempName("dynamic_move_at_do"));
+        var trapLabel = moveAt.IsKnownInBounds ? string.Empty : EscapeIdentifier(CreateAbiTempName("dynamic_move_at_bad_index"));
+        var moveLabel = moveAt.IsKnownInBounds ? string.Empty : EscapeIdentifier(CreateAbiTempName("dynamic_move_at_do"));
         var shiftLabel = EscapeIdentifier(CreateAbiTempName("dynamic_move_at_shift"));
         var updateLabel = EscapeIdentifier(CreateAbiTempName("dynamic_move_at_update"));
         var doneLabel = EscapeIdentifier(CreateAbiTempName("dynamic_move_at_done"));
-        var boundsProfile = _context.GetMetadataTupleRef([
-            "!\"branch_weights\"",
-            $"i32 {NormalEdgeLikelyWeight}",
-            $"i32 {TrapEdgeUnlikelyWeight}"
-        ]);
+        var boundsProfile = moveAt.IsKnownInBounds
+            ? string.Empty
+            : _context.GetMetadataTupleRef([
+                "!\"branch_weights\"",
+                $"i32 {NormalEdgeLikelyWeight}",
+                $"i32 {TrapEdgeUnlikelyWeight}"
+            ]);
 
         AppendLine($"  {current} = load {storageType}, ptr {storageAddress}");
         AppendLine($"  {length} = extractvalue {storageType} {current}, 1");
-        AppendLine($"  {inBounds} = icmp ult i64 {indexI64}, {length}");
-        AppendLine($"  br i1 {inBounds}, label %{moveLabel}, label %{trapLabel}, !prof {boundsProfile}");
-        AppendLine(string.Empty);
-        AppendLine($"{trapLabel}:");
-        AppendLine("  call void @llvm.trap()");
-        AppendLine("  unreachable");
-        AppendLine(string.Empty);
-        AppendLine($"{moveLabel}:");
+        if (!moveAt.IsKnownInBounds)
+        {
+            AppendLine($"  {inBounds} = icmp ult i64 {indexI64}, {length}");
+            AppendLine($"  br i1 {inBounds}, label %{moveLabel}, label %{trapLabel}, !prof {boundsProfile}");
+            AppendLine(string.Empty);
+            AppendLine($"{trapLabel}:");
+            AppendLine("  call void @llvm.trap()");
+            AppendLine("  unreachable");
+            AppendLine(string.Empty);
+            AppendLine($"{moveLabel}:");
+        }
+
         AppendLine($"  {newLength} = sub i64 {length}, 1");
         AppendLine($"  {pointer} = extractvalue {storageType} {current}, 0");
         AppendLine($"  {elementPointer} = getelementptr{GetProvenInObjectGepFlags()} {elementLlvmType}, ptr {pointer}, i64 {indexI64}");

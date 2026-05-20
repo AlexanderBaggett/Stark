@@ -306,13 +306,12 @@ public sealed class SystemPromotedRuntimeBufferStandardLibraryTests : StandardLi
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
         var dynamicWriteSliceBody = ExtractLlvmFunctionBody(llvm, "@DynamicByteBuffer_WriteSlice(");
         var dynamicWriteFillBody = ExtractLlvmFunctionBody(llvm, "@DynamicByteBuffer_WriteFill(");
-        var fillBytesCloneBody = ExtractLlvmFunctionBody(
-            llvm,
-            "define internal dso_local fastcc noundef %System_Memory_MemoryStatus @__stark_inline_clone_System_Memory_FillBytes(");
 
-        Assert.Contains("@__stark_inline_clone_System_Memory_InitializeBytesDisjoint", dynamicWriteSliceBody, StringComparison.Ordinal);
-        Assert.Contains("@__stark_inline_clone_System_Memory_FillBytes", dynamicWriteFillBody, StringComparison.Ordinal);
-        Assert.Contains("@llvm.memset.p0.i64", fillBytesCloneBody, StringComparison.Ordinal);
+        Assert.True(
+            dynamicWriteSliceBody.Contains("@__stark_inline_clone_System_Memory_InitializeBytesDisjoint", StringComparison.Ordinal)
+            || dynamicWriteSliceBody.Contains("@llvm.memcpy.p0.p0.i64", StringComparison.Ordinal),
+            "Expected DynamicByteBuffer.WriteSlice to use a tail-region copy helper or a direct memcpy.");
+        Assert.Contains("@llvm.memset.p0.i64", dynamicWriteFillBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@DynamicByteBuffer_WriteByte", dynamicWriteFillBody, StringComparison.Ordinal);
     }
 
@@ -438,4 +437,3 @@ public sealed class SystemPromotedRuntimeBufferStandardLibraryTests : StandardLi
         return llvm[start..next];
     }
 }
-

@@ -186,7 +186,8 @@ internal sealed class TypeChecker
                 static pair => new TypedGlobalSymbol(
                     pair.Value.Name,
                     pair.Value.Type,
-                    pair.Value.BindingKind ?? (pair.Value.IsMutable ? GlobalBindingKind.Mutable : GlobalBindingKind.Immutable)),
+                    pair.Value.BindingKind ?? (pair.Value.IsMutable ? GlobalBindingKind.Mutable : GlobalBindingKind.Immutable),
+                    pair.Value.ConstantInitializer),
                 StringComparer.Ordinal),
             _literals,
             _objectCreations,
@@ -1524,92 +1525,6 @@ internal sealed class TypeChecker
         };
     }
 
-    private static IReadOnlyList<ParameterDisjointGroup> BuildEffectiveParameterDisjointGroups(
-        IReadOnlyList<TypedParameterSymbol> parameters,
-        IReadOnlyList<ParameterDisjointGroup> explicitDisjointGroups,
-        IReadOnlyList<ParameterOverlapGroup> overlapGroups,
-        IReadOnlyList<ParameterSameGroup> sameGroups,
-        bool applyDefaultNonOverlap)
-    {
-        var groups = new List<ParameterDisjointGroup>();
-        var suppressedPairs = overlapGroups
-            .SelectMany(static group => EnumerateNamePairs(group.ParameterNames))
-            .Concat(sameGroups.SelectMany(static group => EnumerateNamePairs(group.ParameterNames)))
-            .ToHashSet(StringComparer.Ordinal);
-
-        foreach (var group in explicitDisjointGroups)
-        {
-            if (group.HasSubregions)
-            {
-                if (group.MemoryRegions.Count >= 2)
-                {
-                    groups.Add(group);
-                }
-
-                continue;
-            }
-
-            var names = group.ParameterNames
-                .Distinct(StringComparer.Ordinal)
-                .ToArray();
-            if (names.Length < 2)
-            {
-                continue;
-            }
-
-            var pairNames = EnumerateNamePairs(names).ToArray();
-            if (pairNames.Any(suppressedPairs.Contains))
-            {
-                continue;
-            }
-
-            groups.Add(new ParameterDisjointGroup(names));
-        }
-
-        if (!applyDefaultNonOverlap)
-        {
-            return groups
-                .GroupBy(static group => string.Join("|", group.ParameterNames.Order(StringComparer.Ordinal)), StringComparer.Ordinal)
-                .Select(static group => group.First())
-                .ToArray();
-        }
-
-        var defaultMemoryParameters = parameters
-            .Where(static parameter => CanRuntimeDisjointTest(parameter.Type))
-            .Select(static parameter => parameter.Name)
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
-        for (var leftIndex = 0; leftIndex < defaultMemoryParameters.Length; leftIndex++)
-        {
-            for (var rightIndex = leftIndex + 1; rightIndex < defaultMemoryParameters.Length; rightIndex++)
-            {
-                var left = defaultMemoryParameters[leftIndex];
-                var right = defaultMemoryParameters[rightIndex];
-                if (!suppressedPairs.Contains(BuildNamePairKey(left, right)))
-                {
-                    groups.Add(new ParameterDisjointGroup([left, right]));
-                }
-            }
-        }
-
-        return groups
-            .GroupBy(GetDisjointGroupKey, StringComparer.Ordinal)
-            .Select(static group => group.First())
-            .ToArray();
-    }
-
-    private static string GetDisjointGroupKey(ParameterDisjointGroup group)
-    {
-        if (group.HasSubregions)
-        {
-            return string.Join(
-                "|",
-                group.MemoryRegions.Select(static region => region.DisplayText).Order(StringComparer.Ordinal));
-        }
-
-        return string.Join("|", group.ParameterNames.Order(StringComparer.Ordinal));
-    }
-
     private static IEnumerable<string> EnumerateNamePairs(IReadOnlyList<string> names)
     {
         var distinctNames = names
@@ -1945,6 +1860,13 @@ internal sealed class TypeChecker
                             declaredType,
                             out var constantValue)
                             ? constantValue
+                            : null,
+                        ConstantInitializer: TryBuildTypedConstantInitializer(
+                            declarator.variableInitializer(),
+                            declaredType,
+                            Scope.CreateRoot(_globals),
+                            out var constantInitializer)
+                            ? constantInitializer
                             : null);
                 }
 
@@ -2019,7 +1941,8 @@ internal sealed class TypeChecker
                         global.Type,
                         global.IsMutable,
                         global.IsConst,
-                        global.BindingKind);
+                        global.BindingKind,
+                        ConstantInitializer: global.ConstantInitializer);
                 }
 
                 continue;
@@ -2053,7 +1976,14 @@ internal sealed class TypeChecker
                             declaredType,
                             IsMutable: false,
                             IsConstant: true,
-                            BindingKind: GlobalBindingKind.Const);
+                            BindingKind: GlobalBindingKind.Const,
+                            ConstantInitializer: TryBuildTypedConstantInitializer(
+                                declarator.variableInitializer(),
+                                declaredType,
+                                Scope.CreateRoot(_globals),
+                                out var constantInitializer)
+                                ? constantInitializer
+                                : null);
                     }
 
                     continue;
@@ -2336,8 +2266,10 @@ internal sealed class TypeChecker
         if (statement.localConstantDeclaration() is { } localConstant)
         {
             StarkTypeSymbol? recordedDeclarationType = null;
+            var constProvenanceByDeclarator = new Dictionary<string, ConstProvenanceKind>(StringComparer.Ordinal);
             foreach (var declarator in localConstant.constantDeclarators().constantDeclarator())
             {
+                var declaratorName = declarator.Identifier().GetText();
                 var declaredType = ResolveConstantDeclarationType(
                     localConstant.type_(),
                     localConstant.INTEGER_TYPE()?.Symbol,
@@ -2349,7 +2281,6 @@ internal sealed class TypeChecker
                 if (recordedDeclarationType is null)
                 {
                     RequireUnsafeForRawPointerType(declaredType, "local raw pointer declarations", localConstant.type_() ?? (ParserRuleContext)declarator);
-                    RecordLocalDeclarationType(TemplateLocalDeclarationFacts.ConstantKind, declaredType, localConstant);
                     recordedDeclarationType = declaredType;
                 }
                 else if (localConstant.type_() is null && recordedDeclarationType != declaredType)
@@ -2360,8 +2291,9 @@ internal sealed class TypeChecker
                         declarator);
                 }
 
+                constProvenanceByDeclarator[declaratorName] = ConstProvenanceKind.ImmutableBinding;
                 scope.Declare(new VariableSymbol(
-                    declarator.Identifier().GetText(),
+                    declaratorName,
                     declaredType,
                     IsMutable: false,
                     IsConstant: true,
@@ -2372,6 +2304,15 @@ internal sealed class TypeChecker
                         out var constantValue)
                         ? constantValue
                         : null));
+            }
+
+            if (recordedDeclarationType is not null)
+            {
+                RecordLocalDeclarationType(
+                    TemplateLocalDeclarationFacts.ConstantKind,
+                    recordedDeclarationType,
+                    localConstant,
+                    constProvenanceByDeclarator);
             }
 
             return;
@@ -5671,11 +5612,12 @@ internal sealed class TypeChecker
             typeContext,
             "a local variable type");
         RequireUnsafeForRawPointerType(declaredType, "local raw pointer declarations", typeContext);
-        RecordLocalDeclarationType(declarationKind, declaredType, declarationContext);
         var storageClass = GetLocalDeclarationStorageClass(declarationContext);
+        var constProvenanceByDeclarator = new Dictionary<string, ConstProvenanceKind>(StringComparer.Ordinal);
 
         foreach (var declarator in declarators)
         {
+            var declaratorName = declarator.Identifier().GetText();
             var hasFixedTextStorage = TryValidateFixedTextStorageCapacity(
                 declarator,
                 declaredType,
@@ -5697,7 +5639,10 @@ internal sealed class TypeChecker
                         declarator);
                 }
 
-                scope.Declare(new VariableSymbol(declarator.Identifier().GetText(), declaredType, IsMutable: isMutable, IsConstant: false));
+                constProvenanceByDeclarator[declaratorName] = isMutable
+                    ? ConstProvenanceKind.None
+                    : ConstProvenanceKind.ImmutableBinding;
+                scope.Declare(new VariableSymbol(declaratorName, declaredType, IsMutable: isMutable, IsConstant: false));
                 continue;
             }
 
@@ -5713,11 +5658,11 @@ internal sealed class TypeChecker
             var initializer = declarator.variableInitializer()!;
             var initializerBinding = CheckVariableInitializer(initializer, declaredType, scope);
             var provenance = TryCreateLocalDeclarationMemoryProvenance(declaredType, initializerBinding, scope);
-            var hasConstProvenance = !isMutable
-                && initializerBinding is not null
-                && HasConstProvenance(initializerBinding);
+            var constProvenance = GetLocalDeclarationConstProvenance(isMutable, initializerBinding);
+            constProvenanceByDeclarator[declaratorName] = constProvenance;
+            var hasConstProvenance = ConstProvenanceFacts.HasPermanentConstProvenance(constProvenance);
             scope.Declare(new VariableSymbol(
-                declarator.Identifier().GetText(),
+                declaratorName,
                 declaredType,
                 IsMutable: isMutable,
                 IsConstant: false,
@@ -5726,6 +5671,8 @@ internal sealed class TypeChecker
                 MemoryRootIsIndependentStorage: provenance?.IsIndependentStorage == true,
                 RawPointerElementCountExpression: provenance?.RawPointerElementCountExpression));
         }
+
+        RecordLocalDeclarationType(declarationKind, declaredType, declarationContext, constProvenanceByDeclarator);
     }
 
     private static string GetLocalDeclarationStorageClass(ParserRuleContext declarationContext)
@@ -6131,6 +6078,85 @@ internal sealed class TypeChecker
         return true;
     }
 
+    private bool TryBuildTypedConstantInitializer(
+        StarkParser.VariableInitializerContext initializer,
+        StarkTypeSymbol targetType,
+        Scope scope,
+        out TypedConstantInitializer typedInitializer)
+    {
+        typedInitializer = default!;
+
+        if (initializer.expression() is not null
+            && TryEvaluateCompileTimeConstant(initializer, scope, targetType, out var constant)
+            && TryBuildTypedConstantInitializer(constant, targetType, out typedInitializer))
+        {
+            return true;
+        }
+
+        if (initializer.arrayInitializer() is not { } arrayInitializer
+            || targetType.Kind != StarkTypeKind.FixedArray
+            || targetType.ElementType is not { } elementType
+            || targetType.FixedLength is not int fixedLength
+            || arrayInitializer.variableInitializer().Length != fixedLength)
+        {
+            return false;
+        }
+
+        var elements = new TypedConstantInitializer[fixedLength];
+        for (var index = 0; index < fixedLength; index++)
+        {
+            if (!TryBuildTypedConstantInitializer(
+                    arrayInitializer.variableInitializer(index),
+                    elementType,
+                    scope,
+                    out var elementInitializer))
+            {
+                typedInitializer = default!;
+                return false;
+            }
+
+            elements[index] = elementInitializer;
+        }
+
+        typedInitializer = new TypedConstantInitializer(
+            TypedConstantInitializerKind.FixedArray,
+            targetType,
+            Elements: elements);
+        return true;
+    }
+
+    private static bool TryBuildTypedConstantInitializer(
+        CompileTimeConstant constant,
+        StarkTypeSymbol targetType,
+        out TypedConstantInitializer typedInitializer)
+    {
+        typedInitializer = constant.Kind switch
+        {
+            CompileTimeConstantKind.Integer => new TypedConstantInitializer(
+                TypedConstantInitializerKind.Integer,
+                targetType,
+                IntegerValue: constant.IntegerValue),
+            CompileTimeConstantKind.Float => new TypedConstantInitializer(
+                TypedConstantInitializerKind.Float,
+                targetType,
+                FloatLiteralText: constant.FloatValue.ToString("R", CultureInfo.InvariantCulture)),
+            CompileTimeConstantKind.Bool => new TypedConstantInitializer(
+                TypedConstantInitializerKind.Bool,
+                targetType,
+                BoolValue: constant.BoolValue),
+            CompileTimeConstantKind.Text when constant.TextLiteral is not null => new TypedConstantInitializer(
+                TypedConstantInitializerKind.Text,
+                targetType,
+                TextLiteralText: constant.TextLiteral),
+            CompileTimeConstantKind.Null => new TypedConstantInitializer(
+                TypedConstantInitializerKind.Null,
+                targetType),
+            _ => default!
+        };
+
+        return typedInitializer is not null;
+    }
+
     private CompileTimeEvaluationServices CreateCompileTimeEvaluationServices(Scope scope)
     {
         return new CompileTimeEvaluationServices(
@@ -6391,13 +6417,15 @@ internal sealed class TypeChecker
     private void RecordLocalDeclarationType(
         string declarationKind,
         StarkTypeSymbol type,
-        ParserRuleContext declarationContext)
+        ParserRuleContext declarationContext,
+        IReadOnlyDictionary<string, ConstProvenanceKind>? constProvenanceByDeclarator = null)
     {
         _localDeclarations.Add(new LocalDeclarationTypingRecord(
             declarationKind,
             type,
             Location(declarationContext),
-            _currentFunctionName));
+            _currentFunctionName,
+            constProvenanceByDeclarator));
     }
 
     private void RecordLocalStorageCapacity(
@@ -7748,7 +7776,9 @@ internal sealed class TypeChecker
                 expression);
         }
 
-        return new ExpressionBinding(resultType);
+        return new ExpressionBinding(
+            resultType,
+            HasConstProvenance: HasConstProvenance(whenTrue) && HasConstProvenance(whenFalse));
     }
 
     private ExpressionBinding EvaluateLogicalOrExpression(
@@ -9534,7 +9564,7 @@ internal sealed class TypeChecker
             out var resultMemoryRootIsIndependentStorage);
         if (returnType.BorrowKind != StarkBorrowKind.None)
         {
-            var valueType = StarkTypeSymbols.BorrowReturnValueType(returnType);
+            var valueType = GetBorrowReturnExpressionValueType(returnType);
             var isPointerBacked = StarkTypeSymbols.IsPointerBackedBorrowReturn(returnType);
             return new ExpressionBinding(
                 valueType,
@@ -11281,7 +11311,7 @@ internal sealed class TypeChecker
 
         if (returnType.BorrowKind != StarkBorrowKind.None)
         {
-            var valueType = StarkTypeSymbols.BorrowReturnValueType(returnType);
+            var valueType = GetBorrowReturnExpressionValueType(returnType);
             var isPointerBacked = StarkTypeSymbols.IsPointerBackedBorrowReturn(returnType);
             return new ExpressionBinding(
                 valueType,
@@ -11382,7 +11412,7 @@ internal sealed class TypeChecker
 
         if (returnType.BorrowKind != StarkBorrowKind.None)
         {
-            var valueType = StarkTypeSymbols.BorrowReturnValueType(returnType);
+            var valueType = GetBorrowReturnExpressionValueType(returnType);
             var isPointerBacked = StarkTypeSymbols.IsPointerBackedBorrowReturn(returnType);
             return new ExpressionBinding(
                 valueType,
@@ -11394,6 +11424,15 @@ internal sealed class TypeChecker
         }
 
         return new ExpressionBinding(returnType, NamedType: ResolveNamedTypeSymbol(returnType), DiagnosticName: $"closure call through {DescribeExpressionTarget(target)}");
+    }
+
+    private static StarkTypeSymbol GetBorrowReturnExpressionValueType(StarkTypeSymbol returnType)
+    {
+        var valueType = StarkTypeSymbols.BorrowReturnValueType(returnType);
+        return StarkTypeSymbols.IsPointerBackedBorrowReturn(returnType)
+               && valueType.AccessKind == StarkAccessKind.Frozen
+            ? StarkTypeSymbols.FreezeReachableView(valueType)
+            : valueType;
     }
 
     private ExpressionBinding InvokeEnumConstructor(ExpressionBinding target, StarkParser.ArgumentListContext arguments, Scope scope)
@@ -14700,6 +14739,48 @@ internal sealed class TypeChecker
             || binding.RootGlobalBindingKind == GlobalBindingKind.Const;
     }
 
+    private static ConstProvenanceKind GetLocalDeclarationConstProvenance(
+        bool isMutable,
+        ExpressionBinding? initializer)
+    {
+        if (isMutable)
+        {
+            return ConstProvenanceKind.None;
+        }
+
+        if (initializer is null)
+        {
+            return ConstProvenanceKind.ImmutableBinding;
+        }
+
+        if (HasConstProvenance(initializer))
+        {
+            return ConstProvenanceKind.PermanentConst;
+        }
+
+        if (initializer.UsesFrozenProjectionSemantics
+            || initializer.Type.AccessKind == StarkAccessKind.Frozen)
+        {
+            return ConstProvenanceKind.FrozenBorrow;
+        }
+
+        if (initializer.Type.Kind == StarkTypeKind.RawPointer
+            && !initializer.Type.IsMutablePointer)
+        {
+            return ConstProvenanceKind.ReadonlyRawPointer;
+        }
+
+        if ((initializer.Type.Kind == StarkTypeKind.Slice
+                || initializer.Type.Kind == StarkTypeKind.Ascii
+                || initializer.Type.Kind == StarkTypeKind.Unicode)
+            && !initializer.Type.IsMutableView)
+        {
+            return ConstProvenanceKind.TemporaryReadonlyView;
+        }
+
+        return ConstProvenanceKind.ImmutableBinding;
+    }
+
     private static StarkTypeSymbol GetConstProvenanceViewType(StarkTypeSymbol type)
     {
         return StarkTypeSymbols.FreezeReachableView(type);
@@ -16246,7 +16327,8 @@ internal sealed class TypeChecker
         bool HasConstProvenance = false,
         string? MemoryRootKey = null,
         bool MemoryRootIsIndependentStorage = false,
-        string? RawPointerElementCountExpression = null);
+        string? RawPointerElementCountExpression = null,
+        TypedConstantInitializer? ConstantInitializer = null);
 
     private sealed record LambdaCaptureBinding(
         VariableSymbol Symbol,

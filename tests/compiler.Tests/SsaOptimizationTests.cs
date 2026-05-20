@@ -3090,6 +3090,12 @@ public sealed class SsaOptimizationTests
         var functionFacts = Assert.Single(facts.Functions.Values);
 
         AssertDynamicRange(functionFacts.Values["storage"], lengthMin: 0, lengthMax: 0, capacityMin: 4, capacityMax: 4);
+        var storageRegion = AssertDynamicRegion(functionFacts.Values["storage"], elementType, lengthMin: 0, lengthMax: 0, capacityMin: 4, capacityMax: 4, spareMin: 4, spareMax: 4);
+        Assert.Null(storageRegion.OwnerRootName);
+        Assert.Equal(SsaDynamicStorageBackingAllocationKind.RuntimeAllocation, storageRegion.BackingAllocationKind);
+        Assert.Equal("storage", storageRegion.BackingAllocationId);
+        Assert.Equal(SsaDynamicStorageAllocatorProvenanceKind.RuntimeDefault, storageRegion.AllocatorProvenance);
+        Assert.Equal(4, storageRegion.ElementAlignmentBytes);
         AssertIntegerRange(functionFacts.Values["length"], 0, 0);
         AssertIntegerRange(functionFacts.Values["capacity"], 4, 4);
         Assert.Equal(SsaNullabilityFactKind.NonNull, functionFacts.Values["data"].Nullability);
@@ -3200,8 +3206,17 @@ public sealed class SsaOptimizationTests
         var functionFacts = Assert.Single(facts.Functions.Values);
 
         AssertDynamicRange(functionFacts.Values["success_storage"], lengthMin: 0, lengthMax: 0, capacityMin: 8, capacityMax: (BigInteger.One << 63) - BigInteger.One);
+        var successRegion = AssertDynamicRegion(functionFacts.Values["success_storage"], elementType, lengthMin: 0, lengthMax: 0, capacityMin: 8, capacityMax: (BigInteger.One << 63) - BigInteger.One, spareMin: 8, spareMax: (BigInteger.One << 63) - BigInteger.One);
+        Assert.Equal("items", successRegion.OwnerRootName);
+        Assert.Equal(SsaDynamicStorageBackingAllocationKind.RuntimeAllocation, successRegion.BackingAllocationKind);
+        Assert.Null(successRegion.BackingAllocationId);
+        Assert.Equal(SsaDynamicStorageAllocatorProvenanceKind.RuntimeDefault, successRegion.AllocatorProvenance);
         AssertIntegerRange(functionFacts.Values["success_capacity"], 8, (BigInteger.One << 63) - BigInteger.One);
         AssertDynamicRange(functionFacts.Values["failure_storage"], lengthMin: 0, lengthMax: 0, capacityMin: 4, capacityMax: 4);
+        var failureRegion = AssertDynamicRegion(functionFacts.Values["failure_storage"], elementType, lengthMin: 0, lengthMax: 0, capacityMin: 4, capacityMax: 4, spareMin: 4, spareMax: 4);
+        Assert.Equal("items", failureRegion.OwnerRootName);
+        Assert.Equal(SsaDynamicStorageBackingAllocationKind.RuntimeAllocation, failureRegion.BackingAllocationKind);
+        Assert.Equal("allocated", failureRegion.BackingAllocationId);
         AssertIntegerRange(functionFacts.Values["failure_capacity"], 4, 4);
     }
 
@@ -3287,7 +3302,417 @@ public sealed class SsaOptimizationTests
 
         AssertDynamicRange(functionFacts.Values["initialized"], lengthMin: 2, lengthMax: 2, capacityMin: 4, capacityMax: 4);
         AssertDynamicRange(functionFacts.Values["after_move"], lengthMin: 1, lengthMax: 1, capacityMin: 4, capacityMax: 4);
+        var afterMoveRegion = AssertDynamicRegion(functionFacts.Values["after_move"], elementType, lengthMin: 1, lengthMax: 1, capacityMin: 4, capacityMax: 4, spareMin: 3, spareMax: 3);
+        Assert.Equal("items", afterMoveRegion.OwnerRootName);
+        Assert.Equal(SsaDynamicStorageBackingAllocationKind.RuntimeAllocation, afterMoveRegion.BackingAllocationKind);
+        Assert.Equal("allocated", afterMoveRegion.BackingAllocationId);
         AssertIntegerRange(functionFacts.Values["after_length"], 1, 1);
+    }
+
+    [Fact]
+    public void ValueFactsTrackDynamicStorageLengthFieldStoreAsPrefixCommit()
+    {
+        var elementType = StarkTypeSymbols.Integer(32);
+        var countType = StarkTypeSymbols.Integer(64, BigInteger.Zero, (BigInteger.One << 63) - BigInteger.One, isUnsigned: true);
+        var storageType = StarkTypeSymbols.Dynamic(elementType);
+        var storagePointerType = StarkTypeSymbols.RawPointer(storageType, isMutable: true);
+        var lengthPointerType = StarkTypeSymbols.RawPointer(countType, isMutable: true);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    countType,
+                    [],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaAllocateLocalInstruction("items", storageType),
+                                new SsaValueInstruction(
+                                    "allocated",
+                                    new SsaDynamicStorageAllocationRValue(
+                                        new SsaIntegerConstant(4, countType),
+                                        storageType,
+                                        "new(4)")),
+                                new SsaStoreLocalInstruction(
+                                    "items",
+                                    storageType,
+                                    new SsaValueReference("allocated", storageType)),
+                                new SsaValueInstruction(
+                                    "items_address",
+                                    new SsaAddressOfLocalRValue(
+                                        "items",
+                                        storageType,
+                                        storagePointerType,
+                                        "&items")),
+                                new SsaValueInstruction(
+                                    "length_address",
+                                    new SsaFieldAddressRValue(
+                                        new SsaValueReference("items_address", storagePointerType),
+                                        storageType,
+                                        "Length",
+                                        1,
+                                        lengthPointerType,
+                                        "&items.Length")),
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("length_address", lengthPointerType),
+                                    countType,
+                                    new SsaIntegerConstant(2, countType)),
+                                new SsaValueInstruction(
+                                    "after_commit",
+                                    new SsaLoadLocalRValue("items", storageType)),
+                                new SsaValueInstruction(
+                                    "after_length",
+                                    new SsaExtractFieldRValue(
+                                        new SsaValueReference("after_commit", storageType),
+                                        "Length",
+                                        1,
+                                        countType,
+                                        "items.Length"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("after_length", countType)))
+                    ])
+            ]);
+
+        var facts = new SsaValueFactAnalyzer().Analyze(module);
+        var functionFacts = Assert.Single(facts.Functions.Values);
+
+        AssertDynamicRange(functionFacts.Values["after_commit"], lengthMin: 2, lengthMax: 2, capacityMin: 4, capacityMax: 4);
+        var afterCommitRegion = AssertDynamicRegion(functionFacts.Values["after_commit"], elementType, lengthMin: 2, lengthMax: 2, capacityMin: 4, capacityMax: 4, spareMin: 2, spareMax: 2);
+        Assert.Equal("items", afterCommitRegion.OwnerRootName);
+        Assert.Equal(SsaDynamicStorageBackingAllocationKind.RuntimeAllocation, afterCommitRegion.BackingAllocationKind);
+        Assert.Equal("allocated", afterCommitRegion.BackingAllocationId);
+        Assert.Equal(SsaDynamicStorageAllocatorProvenanceKind.RuntimeDefault, afterCommitRegion.AllocatorProvenance);
+        AssertIntegerRange(functionFacts.Values["after_length"], 2, 2);
+    }
+
+    [Fact]
+    public void ValueFactsTrackDynamicLengthReadDerivedCommitThroughOwnerAddress()
+    {
+        var elementType = StarkTypeSymbols.Integer(32);
+        var countType = StarkTypeSymbols.Integer(64, BigInteger.Zero, (BigInteger.One << 63) - BigInteger.One, isUnsigned: true);
+        var storageType = StarkTypeSymbols.Dynamic(elementType);
+        var storagePointerType = StarkTypeSymbols.RawPointer(storageType, isMutable: true);
+        var lengthPointerType = StarkTypeSymbols.RawPointer(countType, isMutable: true);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    countType,
+                    [],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaAllocateLocalInstruction("items", storageType),
+                                new SsaValueInstruction(
+                                    "allocated",
+                                    new SsaDynamicStorageAllocationRValue(
+                                        new SsaIntegerConstant(4, countType),
+                                        storageType,
+                                        "new(4)")),
+                                new SsaStoreLocalInstruction(
+                                    "items",
+                                    storageType,
+                                    new SsaValueReference("allocated", storageType)),
+                                new SsaValueInstruction(
+                                    "items_address",
+                                    new SsaAddressOfLocalRValue(
+                                        "items",
+                                        storageType,
+                                        storagePointerType,
+                                        "&items")),
+                                new SsaValueInstruction(
+                                    "loaded_items",
+                                    new SsaLoadIndirectRValue(
+                                        new SsaValueReference("items_address", storagePointerType),
+                                        storageType,
+                                        "items:load")),
+                                new SsaValueInstruction(
+                                    "old_length",
+                                    new SsaExtractFieldRValue(
+                                        new SsaValueReference("loaded_items", storageType),
+                                        "Length",
+                                        1,
+                                        countType,
+                                        "items.Length")),
+                                new SsaValueInstruction(
+                                    "next_length",
+                                    new SsaBinaryRValue(
+                                        SsaBinaryOperator.Add,
+                                        new SsaValueReference("old_length", countType),
+                                        new SsaIntegerConstant(1, countType),
+                                        countType,
+                                        "items.Length + 1")),
+                                new SsaValueInstruction(
+                                    "length_address",
+                                    new SsaFieldAddressRValue(
+                                        new SsaValueReference("items_address", storagePointerType),
+                                        storageType,
+                                        "Length",
+                                        1,
+                                        lengthPointerType,
+                                        "&items.Length")),
+                                new SsaStoreIndirectInstruction(
+                                    new SsaValueReference("length_address", lengthPointerType),
+                                    countType,
+                                    new SsaValueReference("next_length", countType)),
+                                new SsaValueInstruction(
+                                    "after_commit",
+                                    new SsaLoadLocalRValue("items", storageType)),
+                                new SsaValueInstruction(
+                                    "after_length",
+                                    new SsaExtractFieldRValue(
+                                        new SsaValueReference("after_commit", storageType),
+                                        "Length",
+                                        1,
+                                        countType,
+                                        "items.Length"))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("after_length", countType)))
+                    ])
+            ]);
+
+        var facts = new SsaValueFactAnalyzer().Analyze(module);
+        var functionFacts = Assert.Single(facts.Functions.Values);
+
+        AssertIntegerRange(functionFacts.Values["old_length"], 0, 0);
+        AssertIntegerRange(functionFacts.Values["next_length"], 1, 1);
+        AssertDynamicRange(functionFacts.Values["after_commit"], lengthMin: 1, lengthMax: 1, capacityMin: 4, capacityMax: 4);
+        AssertIntegerRange(functionFacts.Values["after_length"], 1, 1);
+    }
+
+    [Fact]
+    public void ValueFactsDemoteDynamicStorageAfterEscapedDataPointerCall()
+    {
+        var module = CreateDynamicStorageDataPointerEscapeModule();
+
+        var facts = new SsaValueFactAnalyzer().Analyze(module);
+        var functionFacts = Assert.Single(facts.Functions.Values);
+
+        Assert.Equal(SsaFactLatticeKind.Unknown, functionFacts.Values["after_escape"].CapacityKind);
+        Assert.Equal(SsaFactLatticeKind.Unknown, functionFacts.Values["after_escape"].InitializedPrefixKind);
+        Assert.Equal(SsaFactLatticeKind.Known, functionFacts.Values["after_capacity"].IntegerRangeKind);
+        Assert.NotEqual(
+            new SsaIntegerRangeFact(new BigInteger(4), new BigInteger(4)),
+            functionFacts.Values["after_capacity"].IntegerRange);
+    }
+
+    [Fact]
+    public void DynamicStorageOptimizerKeepsReserveAfterEscapedDataPointerCall()
+    {
+        var module = CreateDynamicStorageDataPointerEscapeModule();
+        var facts = new SsaValueFactAnalyzer().Analyze(module);
+
+        var optimized = new SsaDynamicStorageOptimizer().Optimize(module, facts);
+        var function = Assert.Single(optimized.Functions);
+
+        Assert.Contains(
+            function.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaDynamicStorageReserveRValue);
+    }
+
+    [Fact]
+    public void DynamicStorageOptimizerKeepsReserveAfterEscapedDataSliceCall()
+    {
+        var module = CreateDynamicStorageDataPointerEscapeModule(escapeSlice: true);
+        var facts = new SsaValueFactAnalyzer().Analyze(module);
+
+        var optimized = new SsaDynamicStorageOptimizer().Optimize(module, facts);
+        var function = Assert.Single(optimized.Functions);
+
+        Assert.Contains(
+            function.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaDynamicStorageReserveRValue);
+    }
+
+    [Fact]
+    public void ValueFactsTrackDynamicStorageZeroInitializerAsNoBackingAllocation()
+    {
+        var elementType = StarkTypeSymbols.Integer(32);
+        var storageType = StarkTypeSymbols.Dynamic(elementType);
+        var module = new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    storageType,
+                    [],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            [
+                                new SsaValueInstruction(
+                                    "storage",
+                                    new SsaUseRValue(new SsaZeroInitializerValue(storageType)))
+                            ],
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("storage", storageType)))
+                    ])
+            ]);
+
+        var facts = new SsaValueFactAnalyzer().Analyze(module);
+        var storageFacts = Assert.Single(facts.Functions.Values).Values["storage"];
+
+        AssertDynamicRange(storageFacts, lengthMin: 0, lengthMax: 0, capacityMin: 0, capacityMax: 0);
+        var region = AssertDynamicRegion(storageFacts, elementType, lengthMin: 0, lengthMax: 0, capacityMin: 0, capacityMax: 0, spareMin: 0, spareMax: 0);
+        Assert.Equal(SsaDynamicStorageBackingAllocationKind.None, region.BackingAllocationKind);
+        Assert.Null(region.BackingAllocationId);
+        Assert.Equal(SsaDynamicStorageAllocatorProvenanceKind.RuntimeDefault, region.AllocatorProvenance);
+    }
+
+    private static SsaIrModule CreateDynamicStorageDataPointerEscapeModule(bool escapeSlice = false)
+    {
+        var elementType = StarkTypeSymbols.Integer(32);
+        var countType = StarkTypeSymbols.Integer(64, BigInteger.Zero, (BigInteger.One << 63) - BigInteger.One, isUnsigned: true);
+        var storageType = StarkTypeSymbols.Dynamic(elementType);
+        var storagePointerType = StarkTypeSymbols.RawPointer(storageType, isMutable: true);
+        var dataPointerType = StarkTypeSymbols.RawPointer(elementType, isMutable: true);
+        var sliceType = StarkTypeSymbols.ApplyQualifiers(StarkTypeSymbols.Slice(elementType), isMutableView: true);
+        var instructions = new List<SsaInstruction>
+        {
+            new SsaAllocateLocalInstruction("items", storageType),
+            new SsaValueInstruction(
+                "allocated",
+                new SsaDynamicStorageAllocationRValue(
+                    new SsaIntegerConstant(4, countType),
+                    storageType,
+                    "new(4)")),
+            new SsaStoreLocalInstruction(
+                "items",
+                storageType,
+                new SsaValueReference("allocated", storageType)),
+            new SsaValueInstruction(
+                "loaded",
+                new SsaLoadLocalRValue("items", storageType)),
+            new SsaValueInstruction(
+                "data",
+                new SsaExtractFieldRValue(
+                    new SsaValueReference("loaded", storageType),
+                    "Data",
+                    0,
+                    dataPointerType,
+                    "items.Data"))
+        };
+
+        if (escapeSlice)
+        {
+            instructions.Add(
+                new SsaValueInstruction(
+                    "slice",
+                    new SsaMakeSliceFromPointerRValue(
+                        new SsaValueReference("data", dataPointerType),
+                        new SsaIntegerConstant(4, countType),
+                        sliceType,
+                        "items.Data[0..4]")));
+            instructions.Add(
+                new SsaCallInstruction(
+                    "ObserveSlice",
+                    [new SsaValueReference("slice", sliceType)],
+                    StarkTypeSymbols.Void,
+                    "ObserveSlice(slice)"));
+        }
+        else
+        {
+            instructions.Add(
+                new SsaCallInstruction(
+                    "ObserveRaw",
+                    [new SsaValueReference("data", dataPointerType)],
+                    StarkTypeSymbols.Void,
+                    "ObserveRaw(data)"));
+        }
+
+        instructions.AddRange(
+            [
+                new SsaValueInstruction(
+                    "after_escape",
+                    new SsaLoadLocalRValue("items", storageType)),
+                new SsaValueInstruction(
+                    "after_capacity",
+                    new SsaExtractFieldRValue(
+                        new SsaValueReference("after_escape", storageType),
+                        "Capacity",
+                        2,
+                        countType,
+                        "items.Capacity")),
+                new SsaValueInstruction(
+                    "items_address",
+                    new SsaAddressOfLocalRValue(
+                        "items",
+                        storageType,
+                        storagePointerType,
+                        "&items")),
+                new SsaValueInstruction(
+                    "reserve",
+                    new SsaDynamicStorageReserveRValue(
+                        new SsaValueReference("items_address", storagePointerType),
+                        storageType,
+                        new SsaIntegerConstant(4, countType),
+                        "items.Reserve(4)")),
+                new SsaValueInstruction(
+                    "after_reserve",
+                    new SsaLoadLocalRValue("items", storageType)),
+                new SsaValueInstruction(
+                    "capacity",
+                    new SsaExtractFieldRValue(
+                        new SsaValueReference("after_reserve", storageType),
+                        "Capacity",
+                        2,
+                        countType,
+                        "items.Capacity"))
+            ]);
+
+        return new SsaIrModule(
+            "Demo",
+            [
+                new SsaFunction(
+                    "Run",
+                    countType,
+                    [],
+                    HasBody: true,
+                    SupportsDirectCodeGeneration: true,
+                    EntryBlockId: 0,
+                    Blocks:
+                    [
+                        new SsaBasicBlock(
+                            0,
+                            "bb0_entry",
+                            [],
+                            instructions,
+                            new SsaTerminator(
+                                SsaTerminatorKind.Return,
+                                [],
+                                Value: new SsaValueReference("capacity", countType)))
+                    ])
+            ]);
     }
 
     private static void AssertBoundedRegion(
@@ -3328,6 +3753,35 @@ public sealed class SsaOptimizationTests
         Assert.NotNull(facts.CapacityRange);
         Assert.Equal(capacityMin, facts.CapacityRange!.Min);
         Assert.Equal(capacityMax, facts.CapacityRange.Max);
+    }
+
+    private static SsaDynamicStorageRegionFact AssertDynamicRegion(
+        SsaValueFacts facts,
+        StarkTypeSymbol elementType,
+        BigInteger lengthMin,
+        BigInteger lengthMax,
+        BigInteger capacityMin,
+        BigInteger capacityMax,
+        BigInteger spareMin,
+        BigInteger spareMax)
+    {
+        Assert.Equal(SsaFactLatticeKind.Known, facts.DynamicStorageRegionKind);
+        Assert.NotNull(facts.DynamicStorageRegion);
+        var region = facts.DynamicStorageRegion!;
+        Assert.Equal(elementType, region.ElementType);
+        Assert.NotNull(region.InitializedLengthRange);
+        Assert.Equal(lengthMin, region.InitializedLengthRange!.Min);
+        Assert.Equal(lengthMax, region.InitializedLengthRange.Max);
+        Assert.NotNull(region.InitializedPrefixRange);
+        Assert.Equal(lengthMin, region.InitializedPrefixRange!.Min);
+        Assert.Equal(lengthMax, region.InitializedPrefixRange.Max);
+        Assert.NotNull(region.CapacityRange);
+        Assert.Equal(capacityMin, region.CapacityRange!.Min);
+        Assert.Equal(capacityMax, region.CapacityRange.Max);
+        Assert.NotNull(region.SpareCapacityRange);
+        Assert.Equal(spareMin, region.SpareCapacityRange!.Min);
+        Assert.Equal(spareMax, region.SpareCapacityRange.Max);
+        return region;
     }
 
     private static void AssertIntegerRange(SsaValueFacts facts, BigInteger min, BigInteger max)

@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Stark.Compiler;
 
 internal static partial class PackageImageBuilder
@@ -14,6 +16,7 @@ internal static partial class PackageImageBuilder
         var abiModel = result.Artifacts.GetRequired(CompilerArtifactKeys.AbiModel);
         var effectModel = result.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
         result.Artifacts.TryGet(CompilerArtifactKeys.SemanticValidation, out SemanticValidationModel? validationModel);
+        result.Artifacts.TryGet(CompilerArtifactKeys.OwnershipValidation, out OwnershipValidationModel? ownershipModel);
 
         var modules = new List<StarkPackageModuleManifest>();
         var packagedModuleNames = loadedModules.Modules.Values
@@ -135,14 +138,16 @@ internal static partial class PackageImageBuilder
                                 visibility,
                                 declaration.Kind.ToString().ToLowerInvariant(),
                                 RenderManifestTypeText(globalType.Type, module.SyntaxModel.ModuleName),
-                                globalType.IsMutable));
+                                globalType.IsMutable,
+                                BuildConstantInitializerManifest(globalType.ConstantInitializer, module.SyntaxModel.ModuleName)));
                             typedGlobals.Add(new StarkPackageTypedGlobalManifest(
                                 declaration.Name,
                                 qualifiedName,
                                 visibility,
                                 declaration.Kind.ToString().ToLowerInvariant(),
                                 BuildTypeReference(globalType.Type, module.SyntaxModel.ModuleName),
-                                globalType.IsMutable));
+                                globalType.IsMutable,
+                                BuildConstantInitializerManifest(globalType.ConstantInitializer, module.SyntaxModel.ModuleName)));
                         }
 
                         break;
@@ -182,7 +187,7 @@ internal static partial class PackageImageBuilder
 
                 if (declaration.Function is not null
                     && validationModel is not null
-                    && TryBuildFunctionSemanticManifest(module, declaration, validationModel, out var functionSemanticManifest))
+                    && TryBuildFunctionSemanticManifest(module, declaration, validationModel, ownershipModel, out var functionSemanticManifest))
                 {
                     functionSemantics.Add(functionSemanticManifest);
                 }
@@ -193,6 +198,7 @@ internal static partial class PackageImageBuilder
                 abiModel,
                 effectModel,
                 validationModel,
+                ownershipModel,
                 functionEffects,
                 abiFunctions,
                 functionSemantics);
@@ -204,7 +210,7 @@ internal static partial class PackageImageBuilder
                 effectModel,
                 compilerFactNamedTypes);
 
-            foreach (var genericTemplate in BuildGenericFunctionTemplates(module, typeModel, validationModel))
+            foreach (var genericTemplate in BuildGenericFunctionTemplates(module, typeModel, validationModel, ownershipModel))
             {
                 genericTemplates.Add(genericTemplate);
             }
@@ -268,6 +274,25 @@ internal static partial class PackageImageBuilder
             NormalizeNativeDependencies(nativeDependencies));
     }
 
+    private static StarkPackageTypedConstantInitializerManifest? BuildConstantInitializerManifest(
+        TypedConstantInitializer? initializer,
+        string moduleName)
+    {
+        if (initializer is null)
+        {
+            return null;
+        }
+
+        return new StarkPackageTypedConstantInitializerManifest(
+            initializer.Kind.ToString().ToLowerInvariant(),
+            BuildTypeReference(initializer.Type, moduleName),
+            IntegerValue: initializer.IntegerValue?.ToString(CultureInfo.InvariantCulture),
+            FloatLiteralText: initializer.FloatLiteralText,
+            BoolValue: initializer.BoolValue,
+            TextLiteralText: initializer.TextLiteralText,
+            Elements: initializer.Elements?.Select(element => BuildConstantInitializerManifest(element, moduleName)!).ToArray());
+    }
+
     private static void AddModuleConcreteLayoutFacts(
         LoadedModuleDocument module,
         TypeCheckModel typeModel,
@@ -304,6 +329,7 @@ internal static partial class PackageImageBuilder
         AbiModel abiModel,
         FunctionEffectModel effectModel,
         SemanticValidationModel? validationModel,
+        OwnershipValidationModel? ownershipModel,
         List<StarkPackageFunctionEffectManifest> functionEffects,
         List<StarkPackageAbiFunctionManifest> abiFunctions,
         List<StarkPackageFunctionSemanticManifest> functionSemantics)
@@ -341,7 +367,7 @@ internal static partial class PackageImageBuilder
 
             if (validationModel is not null
                 && !publishedSemantics.Contains(qualifiedResolvedName)
-                && TryBuildFunctionSemanticManifest(module, declaration, validationModel, out var functionSemanticManifest))
+                && TryBuildFunctionSemanticManifest(module, declaration, validationModel, ownershipModel, out var functionSemanticManifest))
             {
                 functionSemantics.Add(functionSemanticManifest);
                 publishedSemantics.Add(qualifiedResolvedName);

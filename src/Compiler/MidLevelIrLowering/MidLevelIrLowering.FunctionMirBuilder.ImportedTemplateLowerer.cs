@@ -50,7 +50,13 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             var name = statement.Name;
-            RegisterLocal(name, declaredType, statement.StorageClass, statement.IsMutable, statement.IsConstant);
+            RegisterLocal(
+                name,
+                declaredType,
+                statement.StorageClass,
+                statement.IsMutable,
+                statement.IsConstant,
+                constProvenance: statement.ConstProvenance);
             TrackDeclaredLocal(name, declaredType);
             Emit(MidLevelIrStatementKind.StorageLive, name, name, declaredType);
             InitializeRuntimeDropState(name, declaredType, isActive: false);
@@ -67,6 +73,13 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             EmitOperandAssignment(new MidLevelIrLocalOperand(name, declaredType), initializer, initializer.Text);
+            if (!statement.IsMutable
+                && (ConstProvenanceFacts.HasPermanentConstProvenance(statement.ConstProvenance)
+                    || OperandHasConstProvenance(initializer)))
+            {
+                MarkLocalHasConstProvenance(name);
+            }
+
             RecordMoveFromOperand(initializer, declaredType);
             SetRuntimeDropState(name, isActive: true);
             return true;
@@ -87,7 +100,13 @@ internal sealed partial class MidLevelIrLowerer
             Emit(MidLevelIrStatementKind.StorageLive, storageName, storageName, storageType);
             InitializeRuntimeDropState(storageName, storageType, isActive: false);
 
-            RegisterLocal(name, declaredType, statement.StorageClass!, statement.IsMutable, statement.IsConstant);
+            RegisterLocal(
+                name,
+                declaredType,
+                statement.StorageClass!,
+                statement.IsMutable,
+                statement.IsConstant,
+                constProvenance: statement.ConstProvenance);
             TrackDeclaredLocal(name, declaredType);
             Emit(MidLevelIrStatementKind.StorageLive, name, name, declaredType);
             InitializeRuntimeDropState(name, declaredType, isActive: false);
@@ -770,6 +789,10 @@ internal sealed partial class MidLevelIrLowerer
             if (isInitializationAssignment)
             {
                 assignment = assignment with { WriteKind = MemoryWriteKind.Initialization };
+                if (TryBuildDynamicStorageLengthUpdate(target, out var dynamicLengthUpdate))
+                {
+                    assignment = assignment with { DynamicLengthUpdate = dynamicLengthUpdate };
+                }
             }
 
             return true;
@@ -2911,7 +2934,9 @@ internal sealed partial class MidLevelIrLowerer
                     $"Imported conditional expression reached MIR without a common result type for '{trueValue.Type.DisplayName}' and '{falseValue.Type.DisplayName}'.");
             }
 
-            var result = CreateTemporaryLocal(resultType, "typed_cond");
+            var resultHasConstProvenance = OperandHasConstProvenance(trueValue)
+                && OperandHasConstProvenance(falseValue);
+            var result = CreateTemporaryLocal(resultType, "typed_cond", resultHasConstProvenance);
 
             CurrentBlock = trueBlock;
             var coercedTrue = CoerceOperand(trueValue, resultType);

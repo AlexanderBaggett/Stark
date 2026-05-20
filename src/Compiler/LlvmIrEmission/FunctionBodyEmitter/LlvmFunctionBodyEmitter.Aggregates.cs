@@ -998,7 +998,29 @@ internal sealed partial class LlvmFunctionBodyEmitter
                     valueInstruction.ResultName,
                     valueInstruction.Value.Type,
                     visitingValueNames);
+            case SsaInsertFieldRValue insertField when IsNamedReference(insertField.Value, valueName):
+                if (GetAggregateElementType(insertField.Type, insertField.FieldIndex) is not { } fieldType
+                    || !CanForwardAggregateValueToAddress(fieldType, valueType))
+                {
+                    return true;
+                }
+
+                return RequiresAggregateValueMaterialization(
+                    valueInstruction.ResultName,
+                    valueInstruction.Value.Type,
+                    visitingValueNames);
             case SsaInsertIndexRValue insertIndex when IsNamedReference(insertIndex.Target, valueName):
+                return RequiresAggregateValueMaterialization(
+                    valueInstruction.ResultName,
+                    valueInstruction.Value.Type,
+                    visitingValueNames);
+            case SsaInsertIndexRValue insertIndex when IsNamedReference(insertIndex.Value, valueName):
+                if (GetAggregateElementType(insertIndex.Type, insertIndex.ElementIndex) is not { } elementType
+                    || !CanForwardAggregateValueToAddress(elementType, valueType))
+                {
+                    return true;
+                }
+
                 return RequiresAggregateValueMaterialization(
                     valueInstruction.ResultName,
                     valueInstruction.Value.Type,
@@ -1460,13 +1482,19 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private static StarkTypeSymbol NormalizeAggregateType(StarkTypeSymbol type)
     {
-        return type with
+        var normalized = type with
         {
             BorrowKind = StarkBorrowKind.None,
             AccessKind = StarkAccessKind.None,
             InitializationKind = StarkInitializationKind.None,
             IsMutableView = false
         };
+
+        return normalized.Kind == StarkTypeKind.Named
+               && normalized.NamedType is not null
+               && normalized.TypeArguments is { Count: > 0 }
+            ? normalized with { TypeArguments = null }
+            : normalized;
     }
 
     private static int AlignTo(int value, int alignment)

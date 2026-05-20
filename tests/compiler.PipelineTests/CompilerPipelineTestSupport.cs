@@ -53,6 +53,11 @@ internal static class CompilerPipelineTestSupport
         };
     }
 
+    internal static string StandardLibrarySourceRoot()
+    {
+        return Path.Combine(FindRepositoryRoot(), "stdlib", "src");
+    }
+
     internal static string StrictIntegerSource(string text)
     {
         return Regex.Replace(
@@ -84,6 +89,23 @@ internal static class CompilerPipelineTestSupport
     private static string SignedIntegerRangeMax(int bitWidth)
     {
         return ((BigInteger.One << (bitWidth - 1)) - BigInteger.One).ToString();
+    }
+
+    private static string FindRepositoryRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (directory is not null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "Stark.slnx")))
+            {
+                return directory.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new InvalidOperationException("Unable to locate the Stark repository root for compiler pipeline tests.");
     }
 }
 

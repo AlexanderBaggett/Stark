@@ -35,6 +35,107 @@ public sealed class OwnershipRoadmapRegressionTests
     }
 
     [Fact]
+    public void OwnershipSummaryExposesTypedRootEventsForOptimization()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Box {
+                i32[min max] Value;
+            }
+
+            fn void Consume(Box value) {
+                return;
+            }
+
+            unsafe fn i32[min max] Run() {
+                stack mut Box box = new Box() { Value = 1 };
+                stack rawptr<Box> pointer = &box;
+                box = new Box() { Value = 2 };
+                Consume(box);
+                box = new Box() { Value = 3 };
+                return box.Value;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var run = GetOwnership(result).Functions["Run"];
+        Assert.Contains(
+            run.Events,
+            static ev => ev.Kind == OwnershipEventKind.AddressTaken
+                         && ev.Place.DisplayName == "box"
+                         && ev.Place.Type.NamedType == "Box");
+        Assert.Contains(run.Events, static ev => ev.Kind == OwnershipEventKind.AssignmentDrop && ev.Place.DisplayName == "box");
+        Assert.Contains(run.Events, static ev => ev.Kind == OwnershipEventKind.Move && ev.Place.DisplayName == "box");
+        Assert.Contains(run.Events, static ev => ev.Kind == OwnershipEventKind.Reinitialize && ev.Place.DisplayName == "box");
+
+        var box = Assert.Single(run.Roots, static root => root.Name == "box");
+        Assert.Equal(OwnershipStorageRootKind.Local, box.RootKind);
+        Assert.True(box.IsMutable);
+        Assert.True(box.RequiresDrop);
+        Assert.True(box.IsAddressTaken);
+        Assert.True(box.HasRawPointerEscape);
+        Assert.True(box.HasAssignmentDrop);
+        Assert.True(box.HasMove);
+        Assert.True(box.HasReinitialization);
+        Assert.Equal(OwnershipRootAvailabilityKind.Initialized, box.FinalAvailability);
+
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+        Assert.NotNull(mir);
+        var mirRun = Assert.Single(mir.Functions, static function => function.Name == "Run");
+        Assert.NotNull(mirRun.Ownership);
+        Assert.Contains(mirRun.Ownership.Events, static ev => ev.Kind == OwnershipEventKind.AddressTaken && ev.Place.DisplayName == "box");
+
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+        var ssaRun = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.NotNull(ssaRun.Ownership);
+        Assert.Contains(ssaRun.Ownership.Roots, static root => root.Name == "box" && root.HasRawPointerEscape);
+    }
+
+    [Fact]
+    public void OwnershipSummaryExposesPartialFieldMovesForOptimization()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Name {
+                i32[min max] Value;
+            }
+
+            struct Container {
+                Name Name;
+                Name Label;
+            }
+
+            finite law Name Run() {
+                stack Container value = new Container() {
+                    Name = new Name() { Value = 1 },
+                    Label = new Name() { Value = 2 }
+                };
+                return value.Name;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var run = GetOwnership(result).Functions["Run"];
+        Assert.Contains(
+            run.Events,
+            static ev => ev.Kind == OwnershipEventKind.FieldMove
+                         && ev.Place.RootName == "value"
+                         && ev.Place.Projections.SequenceEqual(["Name"])
+                         && ev.Place.Type.NamedType == "Name");
+
+        var value = Assert.Single(run.Roots, static root => root.Name == "value");
+        Assert.True(value.HasMove);
+        Assert.True(value.HasPartialMove);
+        Assert.True(value.HasImplicitDrop);
+        Assert.Equal(OwnershipRootAvailabilityKind.PartiallyInitialized, value.FinalAvailability);
+    }
+
+    [Fact]
     public void BranchReinitializationKeepsOwnedLocalAvailable()
     {
         var result = Compile(

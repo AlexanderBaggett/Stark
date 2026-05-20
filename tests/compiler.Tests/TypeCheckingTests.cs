@@ -2700,6 +2700,27 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void GenericConstRawPointerCallsInferFromConstProvenanceView()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn rawptr<frozen i32[min max]> Forward<T>(const rawmutptr<i32[min max]> ptr, T tag) {
+                return ptr;
+            }
+
+            unsafe fn rawptr<frozen i32[min max]> Run(const rawmutptr<i32[min max]> ptr) {
+                stack i32[min max] tag = 0;
+                return Forward(ptr, tag);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
     public void ConstRawSliceProvenanceFlowsThroughImmutableLocal()
     {
         var result = Compile(

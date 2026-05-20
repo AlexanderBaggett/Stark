@@ -282,7 +282,9 @@ internal static partial class PackageImageLoader
                 builder.Append(RenderConstGlobalType(global.Type));
                 builder.Append(' ');
                 builder.Append(global.Name);
-                builder.AppendLine(" = 0;");
+                builder.Append(" = ");
+                builder.Append(RenderConstantInitializer(global.ConstantInitializer));
+                builder.AppendLine(";");
             }
             else
             {
@@ -2283,7 +2285,29 @@ internal static partial class PackageImageLoader
             global.Visibility,
             global.Kind,
             RenderTypeReference(global.Type),
-            global.IsMutable);
+            global.IsMutable,
+            global.ConstantInitializer);
+    }
+
+    private static string RenderConstantInitializer(StarkPackageTypedConstantInitializerManifest? initializer)
+    {
+        if (initializer is null)
+        {
+            return "0";
+        }
+
+        return initializer.Kind switch
+        {
+            "integer" => initializer.IntegerValue ?? "0",
+            "float" => initializer.FloatLiteralText ?? "0.0",
+            "bool" => initializer.BoolValue == true ? "true" : "false",
+            "text" => initializer.TextLiteralText ?? "\"\"",
+            "null" => "null",
+            "fixedarray" when initializer.Elements is { Count: > 0 } =>
+                $"{{ {string.Join(", ", initializer.Elements.Select(RenderConstantInitializer))} }}",
+            "fixedarray" => "{ }",
+            _ => "0"
+        };
     }
 
     private static StarkPackageTypeAliasManifest ConvertTypeAliasManifest(StarkPackageTypedTypeAliasManifest typeAlias)

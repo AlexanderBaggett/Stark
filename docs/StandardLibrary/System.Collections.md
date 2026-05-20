@@ -23,6 +23,7 @@ Initial public declarations:
 - `System.Collections.Equatable<T>`
 - `System.Collections.Hashable<T>`
 - `System.Collections.DictionaryKey<T>`
+- `System.Collections.Lookup<T>`
 
 The implementation may split these into source files such as
 `System/Collections/List.stark`, but the public package should make the common
@@ -33,6 +34,21 @@ types available from `System.Collections`.
 `bool` and Stark integer key types. Struct, record, text, pointer, and other key
 types remain rejected until Stark has full user-defined hash/equality
 constraint solving.
+
+## Const Lookup Tables
+
+`Lookup<T>` reads from a const slice and returns a readonly borrow of the
+selected element:
+
+```stark
+public inline finite law retborrow frozen T Lookup<T>(
+    const T[] table,
+    u64[0 2 ** 63 - 1] index);
+```
+
+Const fixed-array globals can be passed directly as `const T[]` views. When the
+table payload and index are compile-time constants, the SSA const lookup-table
+pass folds scalar reads to constants from typed initializer/package facts.
 
 ## Allocation Pattern
 

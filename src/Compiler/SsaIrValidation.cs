@@ -2284,6 +2284,16 @@ internal sealed class SsaIrValidator
                 ValidateValueShape(function, binary.Type, binary.Left.Type, "exponent left operand", location);
                 ValidateValueShape(function, binary.Type, binary.Right.Type, "exponent right operand", location);
                 break;
+            case SsaBinaryOperator.WrappingExponent:
+                if (!IsConcreteIntegerType(binary.Type))
+                {
+                    Report(function, location, $"wrapping exponent operator result type '{binary.Type.DisplayName}' requires a concrete integer bit width.");
+                    break;
+                }
+
+                ValidateValueShape(function, binary.Type, binary.Left.Type, "wrapping exponent left operand", location);
+                ValidateValueShape(function, binary.Type, binary.Right.Type, "wrapping exponent right operand", location);
+                break;
             case SsaBinaryOperator.Equal:
             case SsaBinaryOperator.NotEqual:
             case SsaBinaryOperator.LessThan:

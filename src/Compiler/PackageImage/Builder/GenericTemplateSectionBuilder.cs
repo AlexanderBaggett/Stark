@@ -37,7 +37,8 @@ internal static partial class PackageImageBuilder
     private static IReadOnlyList<StarkPackageFunctionTemplateManifest> BuildGenericFunctionTemplates(
         LoadedModuleDocument module,
         TypeCheckModel typeModel,
-        SemanticValidationModel? validationModel)
+        SemanticValidationModel? validationModel,
+        OwnershipValidationModel? ownershipModel)
     {
         var literalsByLocation = typeModel.Literals
             .Where(record => string.Equals(record.Location.FilePath, module.Reference.FilePath, StringComparison.Ordinal))
@@ -242,6 +243,7 @@ internal static partial class PackageImageBuilder
                             lookupName,
                             qualifiedResolvedName,
                             validationModel,
+                            ownershipModel,
                             out var semanticManifest)
                             ? semanticManifest
                             : null,
@@ -751,6 +753,8 @@ internal static partial class PackageImageBuilder
                 localVariable.variableDeclarators().variableDeclarator().Length);
             foreach (var declarator in localVariable.variableDeclarators().variableDeclarator())
             {
+                var declaratorName = declarator.Identifier().GetText();
+                var constProvenance = GetPublishedDeclaratorConstProvenance(localDeclaration, declaratorName);
                 var storageCapacity = TryGetPublishedStorageCapacity(
                         declarator,
                         localStorageCapacitiesByLocation,
@@ -785,19 +789,21 @@ internal static partial class PackageImageBuilder
                     initializer is null
                         ? new StarkPackageTypedTemplateStatementManifest(
                             Kind: "local-variable",
-                            Name: declarator.Identifier().GetText(),
+                            Name: declaratorName,
                             StorageClass: localVariable.storageClass().GetText(),
                             IsMutable: localVariable.MUT() is not null,
                             Type: BuildPublishedAbiTypeReference(localDeclaration.Type, module),
-                            StorageCapacity: storageCapacity)
+                            StorageCapacity: storageCapacity,
+                            ConstProvenance: constProvenance)
                         : new StarkPackageTypedTemplateStatementManifest(
                             Kind: "local-variable",
                             Expression: initializer,
-                            Name: declarator.Identifier().GetText(),
+                            Name: declaratorName,
                             StorageClass: localVariable.storageClass().GetText(),
                             IsMutable: localVariable.MUT() is not null,
                             Type: BuildPublishedAbiTypeReference(localDeclaration.Type, module),
-                            StorageCapacity: storageCapacity));
+                            StorageCapacity: storageCapacity,
+                            ConstProvenance: constProvenance));
             }
 
             publishedStatements = builtStatements;
@@ -851,7 +857,8 @@ internal static partial class PackageImageBuilder
                     StorageClass: "local",
                     IsMutable: false,
                     IsConstant: true,
-                    Type: BuildPublishedAbiTypeReference(localDeclaration.Type, module)));
+                    Type: BuildPublishedAbiTypeReference(localDeclaration.Type, module),
+                    ConstProvenance: GetPublishedDeclaratorConstProvenance(localDeclaration, declarator.Identifier().GetText())));
             }
 
             publishedStatements = builtStatements;
@@ -2005,6 +2012,8 @@ internal static partial class PackageImageBuilder
                 localForVariableDeclaration.variableDeclarators().variableDeclarator().Length);
             foreach (var declarator in localForVariableDeclaration.variableDeclarators().variableDeclarator())
             {
+                var declaratorName = declarator.Identifier().GetText();
+                var constProvenance = GetPublishedDeclaratorConstProvenance(localDeclaration, declaratorName);
                 var storageCapacity = TryGetPublishedStorageCapacity(
                         declarator,
                         localStorageCapacitiesByLocation,
@@ -2039,19 +2048,21 @@ internal static partial class PackageImageBuilder
                     initializerValue is null
                         ? new StarkPackageTypedTemplateStatementManifest(
                             Kind: "local-variable",
-                            Name: declarator.Identifier().GetText(),
+                            Name: declaratorName,
                             StorageClass: localForVariableDeclaration.storageClass().GetText(),
                             IsMutable: localForVariableDeclaration.MUT() is not null,
                             Type: BuildPublishedAbiTypeReference(localDeclaration.Type, module),
-                            StorageCapacity: storageCapacity)
+                            StorageCapacity: storageCapacity,
+                            ConstProvenance: constProvenance)
                         : new StarkPackageTypedTemplateStatementManifest(
                             Kind: "local-variable",
                             Expression: initializerValue,
-                            Name: declarator.Identifier().GetText(),
+                            Name: declaratorName,
                             StorageClass: localForVariableDeclaration.storageClass().GetText(),
                             IsMutable: localForVariableDeclaration.MUT() is not null,
                             Type: BuildPublishedAbiTypeReference(localDeclaration.Type, module),
-                            StorageCapacity: storageCapacity));
+                            StorageCapacity: storageCapacity,
+                            ConstProvenance: constProvenance));
             }
 
             initializerStatements = builtStatements;
@@ -4493,6 +4504,15 @@ internal static partial class PackageImageBuilder
                 record.Location.Column,
                 BuildPublishedAbiTypeReference(record.Type, module)))
             .ToArray();
+    }
+
+    private static string? GetPublishedDeclaratorConstProvenance(
+        LocalDeclarationTypingRecord localDeclaration,
+        string declaratorName)
+    {
+        return localDeclaration.ConstProvenanceByDeclarator.TryGetValue(declaratorName, out var constProvenance)
+            ? ConstProvenanceFacts.ToManifestText(constProvenance)
+            : null;
     }
 
     private static IReadOnlyList<StarkPackageTemplateConversionManifest>? BuildPublishedTemplateConversions(

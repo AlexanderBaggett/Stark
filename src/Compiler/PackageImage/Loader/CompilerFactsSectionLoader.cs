@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Numerics;
+
 namespace Stark.Compiler;
 
 internal static partial class PackageImageLoader
@@ -122,7 +125,8 @@ internal static partial class PackageImageLoader
             loadedGlobals[global.QualifiedName] = new TypedGlobalSymbol(
                 global.QualifiedName,
                 BuildTypeSymbol(global.Type, module.Module.ModuleName, localNamedTypes),
-                bindingKind);
+                bindingKind,
+                BuildTypedConstantInitializer(global.ConstantInitializer, module.Module.ModuleName, localNamedTypes));
         }
 
         foreach (var type in module.Module.EffectiveTypedInterface?.Types ?? [])
@@ -520,6 +524,81 @@ internal static partial class PackageImageLoader
             loadedLinkage,
             backendOptimizationMode);
         return true;
+    }
+
+    private static TypedConstantInitializer? BuildTypedConstantInitializer(
+        StarkPackageTypedConstantInitializerManifest? manifest,
+        string moduleName,
+        ISet<string>? localNamedTypes)
+    {
+        if (manifest is null)
+        {
+            return null;
+        }
+
+        var type = BuildTypeSymbol(manifest.Type, moduleName, localNamedTypes);
+        return manifest.Kind switch
+        {
+            "integer" when manifest.IntegerValue is { } integerText
+                           && BigInteger.TryParse(
+                               integerText,
+                               NumberStyles.Integer,
+                               CultureInfo.InvariantCulture,
+                               out var integerValue)
+                => new TypedConstantInitializer(
+                    TypedConstantInitializerKind.Integer,
+                    type,
+                    IntegerValue: integerValue),
+            "float" when manifest.FloatLiteralText is not null
+                => new TypedConstantInitializer(
+                    TypedConstantInitializerKind.Float,
+                    type,
+                    FloatLiteralText: manifest.FloatLiteralText),
+            "bool" when manifest.BoolValue is { } boolValue
+                => new TypedConstantInitializer(
+                    TypedConstantInitializerKind.Bool,
+                    type,
+                    BoolValue: boolValue),
+            "text" when manifest.TextLiteralText is not null
+                => new TypedConstantInitializer(
+                    TypedConstantInitializerKind.Text,
+                    type,
+                    TextLiteralText: manifest.TextLiteralText),
+            "null" => new TypedConstantInitializer(
+                TypedConstantInitializerKind.Null,
+                type),
+            "fixedarray" when manifest.Elements is not null
+                => BuildTypedConstantArrayInitializer(manifest, type, moduleName, localNamedTypes),
+            _ => null
+        };
+    }
+
+    private static TypedConstantInitializer? BuildTypedConstantArrayInitializer(
+        StarkPackageTypedConstantInitializerManifest manifest,
+        StarkTypeSymbol type,
+        string moduleName,
+        ISet<string>? localNamedTypes)
+    {
+        if (manifest.Elements is null)
+        {
+            return null;
+        }
+
+        var elements = new TypedConstantInitializer[manifest.Elements.Count];
+        for (var index = 0; index < manifest.Elements.Count; index++)
+        {
+            if (BuildTypedConstantInitializer(manifest.Elements[index], moduleName, localNamedTypes) is not { } element)
+            {
+                return null;
+            }
+
+            elements[index] = element;
+        }
+
+        return new TypedConstantInitializer(
+            TypedConstantInitializerKind.FixedArray,
+            type,
+            Elements: elements);
     }
 
     private static bool TryParseBackendOptimizationMode(
@@ -1212,6 +1291,11 @@ internal static partial class PackageImageLoader
                 functionSemantic.Optimization.IsSimpleLocalUpdateWrapper,
                 functionSemantic.Optimization.IsTerminalSelectionWrapper);
 
+        if (!TryBuildFunctionOwnershipSummary(functionSemantic, out var ownershipSummary))
+        {
+            return false;
+        }
+
         summary = new ImportedFunctionSemanticSummary(
             functionSemantic.QualifiedResolvedName,
             declaredKind,
@@ -1220,7 +1304,121 @@ internal static partial class PackageImageLoader
             memoryEffects,
             parameters,
             calls,
-            optimizationSummary);
+            optimizationSummary,
+            ownershipSummary);
         return true;
+    }
+
+    private static bool TryBuildFunctionOwnershipSummary(
+        StarkPackageFunctionSemanticManifest functionSemantic,
+        out FunctionOwnershipSummary? summary)
+    {
+        summary = null;
+        if (functionSemantic.Ownership is not { } ownership)
+        {
+            return true;
+        }
+
+        var events = new List<OwnershipEventSummary>();
+        foreach (var ev in ownership.Events ?? [])
+        {
+            if (!TryParseOwnershipEventKind(ev.Kind, out var eventKind))
+            {
+                return false;
+            }
+
+            events.Add(new OwnershipEventSummary(
+                eventKind,
+                BuildOwnershipPlaceSummary(ev.Place),
+                ev.Location is null
+                    ? null
+                    : new SourceLocation(ev.Location.FilePath, ev.Location.Line, ev.Location.Column)));
+        }
+
+        var roots = new List<OwnershipRootSummary>();
+        foreach (var root in ownership.Roots ?? [])
+        {
+            if (!TryParseOwnershipRootKind(root.RootKind, out var rootKind)
+                || !TryParseOwnershipAvailability(root.FinalAvailability, out var availability))
+            {
+                return false;
+            }
+
+            roots.Add(new OwnershipRootSummary(
+                root.Name,
+                BuildTypeSymbol(root.Type),
+                rootKind,
+                root.IsMutable,
+                root.IsConstant,
+                root.IsAddressTaken,
+                root.HasRawPointerEscape,
+                root.HasMove,
+                root.HasPartialMove,
+                root.HasImplicitDrop,
+                root.HasAssignmentDrop,
+                root.HasReinitialization,
+                root.RequiresDrop,
+                availability));
+        }
+
+        summary = new FunctionOwnershipSummary(
+            functionSemantic.QualifiedResolvedName,
+            ownership.OwnershipValid,
+            ownership.ImplicitDrops.ToArray(),
+            ownership.Moves.ToArray(),
+            events,
+            roots);
+        return true;
+    }
+
+    private static OwnershipPlaceSummary BuildOwnershipPlaceSummary(StarkPackageOwnershipPlaceManifest place)
+    {
+        return new OwnershipPlaceSummary(
+            place.RootName,
+            BuildTypeSymbol(place.Type),
+            place.ProjectionPath?.ToArray(),
+            place.HasIndexProjection);
+    }
+
+    private static bool TryParseOwnershipEventKind(string kind, out OwnershipEventKind parsed)
+    {
+        parsed = kind switch
+        {
+            "move" => OwnershipEventKind.Move,
+            "field-move" => OwnershipEventKind.FieldMove,
+            "implicit-drop" => OwnershipEventKind.ImplicitDrop,
+            "assignment-drop" => OwnershipEventKind.AssignmentDrop,
+            "reinitialize" => OwnershipEventKind.Reinitialize,
+            "address-taken" => OwnershipEventKind.AddressTaken,
+            _ => default
+        };
+        return kind is "move" or "field-move" or "implicit-drop" or "assignment-drop" or "reinitialize" or "address-taken";
+    }
+
+    private static bool TryParseOwnershipRootKind(string kind, out OwnershipStorageRootKind parsed)
+    {
+        parsed = kind switch
+        {
+            "local" => OwnershipStorageRootKind.Local,
+            "parameter" => OwnershipStorageRootKind.Parameter,
+            "global" => OwnershipStorageRootKind.Global,
+            _ => default
+        };
+        return kind is "local" or "parameter" or "global";
+    }
+
+    private static bool TryParseOwnershipAvailability(string availability, out OwnershipRootAvailabilityKind parsed)
+    {
+        parsed = availability switch
+        {
+            "initialized" => OwnershipRootAvailabilityKind.Initialized,
+            "uninitialized" => OwnershipRootAvailabilityKind.Uninitialized,
+            "partially-initialized" => OwnershipRootAvailabilityKind.PartiallyInitialized,
+            "moved" => OwnershipRootAvailabilityKind.Moved,
+            "control-flow" => OwnershipRootAvailabilityKind.ControlFlow,
+            "unknown" => OwnershipRootAvailabilityKind.Unknown,
+            _ => default
+        };
+        return availability is "initialized" or "uninitialized" or "partially-initialized" or "moved" or "control-flow" or "unknown";
     }
 }

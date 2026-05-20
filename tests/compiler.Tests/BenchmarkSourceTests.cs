@@ -321,7 +321,7 @@ public sealed class BenchmarkSourceTests
     public void TextFormattingBenchmarksSpecializeConstantIntegerFormatting()
     {
         var repositoryRoot = FindRepositoryRoot();
-        var integerMain = CompileBenchmarkMainLlvm(repositoryRoot, "text/IntegerFormatting.stark");
+        var integerMain = CompileBenchmarkMainLlvm(repositoryRoot, "text/ConstantIntegerFormatting.stark");
         var unicodeMain = CompileBenchmarkMainLlvm(repositoryRoot, "text/UnicodeFormatting.stark");
 
         Assert.DoesNotContain("TryFormatI64Ascii", integerMain, StringComparison.Ordinal);

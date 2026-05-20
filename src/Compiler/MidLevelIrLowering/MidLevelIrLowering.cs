@@ -46,6 +46,7 @@ internal sealed partial class MidLevelIrLowerer
     private readonly Dictionary<ObjectCreationKey, TypedConstructorShape?> _objectCreationConstructors;
     private readonly BoundOperationIndex _boundOperations;
     private readonly Dictionary<string, ImportedFunctionTemplateSummary> _importedFunctionTemplates;
+    private readonly OwnershipValidationModel? _ownershipModel;
     private static readonly IReadOnlyDictionary<string, StarkTypeSymbol> EmptyTypeSubstitution =
         new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
     private Dictionary<string, string> _materializedSpecializationSymbols = new(StringComparer.Ordinal);
@@ -55,12 +56,14 @@ internal sealed partial class MidLevelIrLowerer
         LoadedModuleSet loadedModules,
         ModuleGraph moduleGraph,
         TypeCheckModel typeModel,
-        EnumLayoutModel enumLayoutModel)
+        EnumLayoutModel enumLayoutModel,
+        OwnershipValidationModel? ownershipModel = null)
     {
         _logs = context.Logs;
         _moduleGraph = moduleGraph;
         _typeModel = typeModel;
         _enumLayoutModel = enumLayoutModel;
+        _ownershipModel = ownershipModel;
         _loweringNamedTypes = CollectFallbackNamedTypes(context, moduleGraph, typeModel.NamedTypes, typeModel.TypeAliases, loadedModules);
         _publishedConcreteLayouts = LlvmSpecializationEmissionPlanner.BuildPublishedConcreteLayouts(loadedModules);
         _publishedEnumLayouts = BuildPublishedEnumLayouts(loadedModules);
@@ -147,6 +150,7 @@ internal sealed partial class MidLevelIrLowerer
 
     private MidLevelIrFunction LowerFunction(HighLevelIrFunction function)
     {
+        var ownershipSummary = ResolveOwnershipSummary(function);
         if (string.Equals(function.Name, CallableValueFacts.EmptyClosureDropFunctionName, StringComparison.Ordinal))
         {
             return LowerEmptyClosureDropFunction(function);
@@ -181,7 +185,8 @@ internal sealed partial class MidLevelIrLowerer
                 Blocks: [],
                 BodyLoweringKind: function.BodyLoweringKind,
                 DisjointParameterGroups: function.Signature.DisjointGroups,
-                SameParameterGroups: function.Signature.SameGroups);
+                SameParameterGroups: function.Signature.SameGroups,
+                Ownership: ownershipSummary);
         }
 
         if (keepOpenGenericTemplateDeclarationBodyless)
@@ -198,7 +203,8 @@ internal sealed partial class MidLevelIrLowerer
                 Blocks: [],
                 BodyLoweringKind: function.BodyLoweringKind,
                 DisjointParameterGroups: function.Signature.DisjointGroups,
-                SameParameterGroups: function.Signature.SameGroups);
+                SameParameterGroups: function.Signature.SameGroups,
+                Ownership: ownershipSummary);
         }
 
         if (!_functionsByName.TryGetValue(loweringTemplateName, out var loweringContext))
@@ -234,7 +240,8 @@ internal sealed partial class MidLevelIrLowerer
                 Blocks: [],
                 BodyLoweringKind: function.BodyLoweringKind,
                 DisjointParameterGroups: function.Signature.DisjointGroups,
-                SameParameterGroups: function.Signature.SameGroups);
+                SameParameterGroups: function.Signature.SameGroups,
+                Ownership: ownershipSummary);
         }
 
         var body = loweringContext.ParsedBody;
@@ -331,7 +338,8 @@ internal sealed partial class MidLevelIrLowerer
                     Blocks: [],
                     BodyLoweringKind: function.BodyLoweringKind,
                     DisjointParameterGroups: function.Signature.DisjointGroups,
-                    SameParameterGroups: function.Signature.SameGroups);
+                    SameParameterGroups: function.Signature.SameGroups,
+                    Ownership: ownershipSummary);
             }
 
             if (lambdaExpression is not null)
@@ -375,7 +383,76 @@ internal sealed partial class MidLevelIrLowerer
             function.BodyLoweringKind,
             functionLocation,
             function.Signature.DisjointGroups,
-            function.Signature.SameGroups);
+            function.Signature.SameGroups,
+            ownershipSummary);
+    }
+
+    private FunctionOwnershipSummary? ResolveOwnershipSummary(HighLevelIrFunction function)
+    {
+        if (_ownershipModel is null)
+        {
+            return null;
+        }
+
+        if (_ownershipModel.Functions.TryGetValue(function.Name, out var direct))
+        {
+            return RetargetOwnershipSummary(direct, function.Name, function.GenericTypeSubstitution);
+        }
+
+        if (function.BodyTemplateName is { Length: > 0 } templateName
+            && _ownershipModel.Functions.TryGetValue(templateName, out var template))
+        {
+            return RetargetOwnershipSummary(template, function.Name, function.GenericTypeSubstitution);
+        }
+
+        if (function.BodyTemplateName is { Length: > 0 } importedTemplateName
+            && _importedFunctionTemplates.TryGetValue(importedTemplateName, out var importedTemplate)
+            && importedTemplate.Semantics?.Ownership is { } importedOwnership)
+        {
+            return RetargetOwnershipSummary(importedOwnership, function.Name, function.GenericTypeSubstitution);
+        }
+
+        return null;
+    }
+
+    private static FunctionOwnershipSummary RetargetOwnershipSummary(
+        FunctionOwnershipSummary summary,
+        string functionName,
+        IReadOnlyDictionary<string, StarkTypeSymbol>? substitution)
+    {
+        if (substitution is not { Count: > 0 })
+        {
+            return string.Equals(summary.Name, functionName, StringComparison.Ordinal)
+                ? summary
+                : summary with { Name = functionName };
+        }
+
+        return summary with
+        {
+            Name = functionName,
+            OwnershipEvents = summary.Events
+                .Select(ev => ev with
+                {
+                    Place = SubstituteOwnershipPlace(ev.Place, substitution)
+                })
+                .ToArray(),
+            OwnershipRoots = summary.Roots
+                .Select(root => root with
+                {
+                    Type = FunctionOverloadFacts.SubstituteType(root.Type, substitution)
+                })
+                .ToArray()
+        };
+    }
+
+    private static OwnershipPlaceSummary SubstituteOwnershipPlace(
+        OwnershipPlaceSummary place,
+        IReadOnlyDictionary<string, StarkTypeSymbol> substitution)
+    {
+        return place with
+        {
+            Type = FunctionOverloadFacts.SubstituteType(place.Type, substitution)
+        };
     }
 
     private bool TryGetClosureDropLambda(string functionName, out ClosureLambdaTypingRecord lambda)
@@ -473,14 +550,15 @@ internal sealed partial class MidLevelIrLowerer
             BodyLoweringKind: function.BodyLoweringKind,
             Location: adapter.Location,
             DisjointParameterGroups: function.Signature.DisjointGroups,
-            SameParameterGroups: function.Signature.SameGroups);
+            SameParameterGroups: function.Signature.SameGroups,
+            Ownership: ResolveOwnershipSummary(function));
     }
 
     private MidLevelIrFunction LowerEmptyClosureDropFunction(HighLevelIrFunction function)
     {
         using var builder = CreateSyntheticFunctionBuilder(function, SourceLocation.Synthetic());
         builder.LowerEmptyClosureDrop();
-        return BuildLoweredFunction(function, builder, SourceLocation.Synthetic());
+        return BuildLoweredFunction(function, builder, SourceLocation.Synthetic(), ResolveOwnershipSummary(function));
     }
 
     private MidLevelIrFunction LowerClosureDropFunction(
@@ -490,7 +568,7 @@ internal sealed partial class MidLevelIrLowerer
         var location = lambda.Location;
         using var builder = CreateSyntheticFunctionBuilder(function, location);
         builder.LowerClosureEnvironmentDrop(lambda);
-        return BuildLoweredFunction(function, builder, location);
+        return BuildLoweredFunction(function, builder, location, ResolveOwnershipSummary(function));
     }
 
     private FunctionMirBuilder CreateSyntheticFunctionBuilder(
@@ -527,7 +605,8 @@ internal sealed partial class MidLevelIrLowerer
     private static MidLevelIrFunction BuildLoweredFunction(
         HighLevelIrFunction function,
         FunctionMirBuilder builder,
-        SourceLocation functionLocation)
+        SourceLocation functionLocation,
+        FunctionOwnershipSummary? ownershipSummary)
     {
         return new MidLevelIrFunction(
             function.Name,
@@ -542,7 +621,8 @@ internal sealed partial class MidLevelIrLowerer
             function.BodyLoweringKind,
             functionLocation,
             function.Signature.DisjointGroups,
-            function.Signature.SameGroups);
+            function.Signature.SameGroups,
+            ownershipSummary);
     }
 
     private static bool ShouldKeepOpenGenericTemplateDeclarationBodyless(

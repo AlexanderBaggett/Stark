@@ -7,6 +7,15 @@ namespace Stark.Compiler;
 
 internal sealed class SsaValueFactAnalyzer
 {
+    private readonly IReadOnlyDictionary<string, IReadOnlyList<ParameterMemoryEffectSummary>> _directCallParameterEffects;
+
+    public SsaValueFactAnalyzer(
+        IReadOnlyDictionary<string, IReadOnlyList<ParameterMemoryEffectSummary>>? directCallParameterEffects = null)
+    {
+        _directCallParameterEffects = directCallParameterEffects
+                                      ?? new Dictionary<string, IReadOnlyList<ParameterMemoryEffectSummary>>(StringComparer.Ordinal);
+    }
+
     public SsaValueFactModel Analyze(SsaIrModule module)
     {
         var functions = module.Functions
@@ -17,7 +26,7 @@ internal sealed class SsaValueFactAnalyzer
         return new SsaValueFactModel(module.ModuleName, functions);
     }
 
-    private static SsaFunctionFactModel AnalyzeFunction(string moduleName, SsaFunction function)
+    private SsaFunctionFactModel AnalyzeFunction(string moduleName, SsaFunction function)
     {
         var values = new Dictionary<string, SsaValueFacts>(StringComparer.Ordinal);
         var reachableBlockIds = FindReachableBlockIds(function);
@@ -47,7 +56,7 @@ internal sealed class SsaValueFactAnalyzer
             }
         }
 
-        RefineFacts(moduleName, function, values, reachableBlockIds);
+        RefineFacts(moduleName, function, values, reachableBlockIds, _directCallParameterEffects);
         var blockEntryFacts = AnalyzeBlockEntryFacts(function, values, reachableBlockIds);
         var blockExitFacts = AnalyzeBlockExitFacts(function, values, blockEntryFacts, reachableBlockIds);
         return new SsaFunctionFactModel(function.Name, values, blockEntryFacts, blockExitFacts);
@@ -193,7 +202,8 @@ internal sealed class SsaValueFactAnalyzer
             || facts.CapacityKind != SsaFactLatticeKind.Unknown
             || facts.InitializedPrefixKind != SsaFactLatticeKind.Unknown
             || facts.TextLiteralPayloadKind != SsaFactLatticeKind.Unknown
-            || facts.BoundedRawPointerRegionKind != SsaFactLatticeKind.Unknown;
+            || facts.BoundedRawPointerRegionKind != SsaFactLatticeKind.Unknown
+            || facts.DynamicStorageRegionKind != SsaFactLatticeKind.Unknown;
     }
 
     private static Dictionary<string, SsaRValue> CollectValueDefinitions(SsaFunction function)
@@ -752,7 +762,8 @@ internal sealed class SsaValueFactAnalyzer
         string moduleName,
         SsaFunction function,
         Dictionary<string, SsaValueFacts> values,
-        ISet<int> reachableBlockIds)
+        ISet<int> reachableBlockIds,
+        IReadOnlyDictionary<string, IReadOnlyList<ParameterMemoryEffectSummary>> directCallParameterEffects)
     {
         for (var round = 0; round < 8; round++)
         {
@@ -797,7 +808,7 @@ internal sealed class SsaValueFactAnalyzer
                 }
             }
 
-            if (RefineDynamicStorageLocalFacts(function, values, reachableBlockIds))
+            if (RefineDynamicStorageLocalFacts(function, values, reachableBlockIds, directCallParameterEffects))
             {
                 changed = true;
             }
@@ -859,6 +870,8 @@ internal sealed class SsaValueFactAnalyzer
             SsaStringConstant text => CreateTextConstantFacts(valueName, text.Type, text.LiteralText),
             SsaGlobalAddressValue globalAddress => CreateAddressFacts(valueName, globalAddress.Type, globalAddress.PointeeType),
             SsaFunctionAddressValue functionAddress => CreateNonNullFacts(valueName, functionAddress.Type),
+            SsaZeroInitializerValue { Type.Kind: StarkTypeKind.Dynamic } dynamicZero
+                => CreateEmptyDynamicStorageFacts(valueName, dynamicZero.Type),
             _ => CreateTypeFacts(valueName, value.Type)
         };
     }
@@ -1350,7 +1363,8 @@ internal sealed class SsaValueFactAnalyzer
             && operand.IntegerRange is { } range
             && TryGetIntegerTypeRange(convert.TargetType, out var targetRange))
         {
-            var facts = CreateIntegerRangeFacts(valueName, convert.TargetType, ClampRange(range, targetRange));
+            var convertedRange = TranslateIntegerConvertRange(convert.Operand.Type, convert.TargetType, range, targetRange);
+            var facts = CreateIntegerRangeFacts(valueName, convert.TargetType, convertedRange);
             return TryTranslateIntegerConvertKnownBits(convert.Operand.Type, convert.TargetType, operand, out var knownBits)
                 ? ApplyKnownBits(facts, knownBits)
                 : facts;
@@ -1394,6 +1408,64 @@ internal sealed class SsaValueFactAnalyzer
         }
 
         return CreateTypeFacts(valueName, convert.TargetType);
+    }
+
+    private static SsaIntegerRangeFact TranslateIntegerConvertRange(
+        StarkTypeSymbol sourceType,
+        StarkTypeSymbol targetType,
+        SsaIntegerRangeFact sourceRange,
+        SsaIntegerRangeFact targetRange)
+    {
+        if (sourceType.Kind == StarkTypeKind.Integer
+            && targetType.Kind == StarkTypeKind.Integer
+            && sourceType.BitWidth == targetType.BitWidth
+            && sourceType.IsUnsigned != targetType.IsUnsigned
+            && targetType.BitWidth is int bitWidth
+            && bitWidth > 0)
+        {
+            return TranslateSameWidthIntegerReinterpretRange(targetType, sourceRange, targetRange, bitWidth);
+        }
+
+        return ClampRange(sourceRange, targetRange);
+    }
+
+    private static SsaIntegerRangeFact TranslateSameWidthIntegerReinterpretRange(
+        StarkTypeSymbol targetType,
+        SsaIntegerRangeFact sourceRange,
+        SsaIntegerRangeFact targetRange,
+        int bitWidth)
+    {
+        var domainSize = BigInteger.One << bitWidth;
+        var valueCount = sourceRange.Max - sourceRange.Min + BigInteger.One;
+        if (valueCount >= domainSize)
+        {
+            return targetRange;
+        }
+
+        var normalizedMin = NormalizeIntegerBits(sourceRange.Min, domainSize);
+        var normalizedMax = NormalizeIntegerBits(sourceRange.Max, domainSize);
+        if (normalizedMin > normalizedMax)
+        {
+            return targetRange;
+        }
+
+        if (targetType.IsUnsigned)
+        {
+            return new SsaIntegerRangeFact(normalizedMin, normalizedMax);
+        }
+
+        var signBit = BigInteger.One << (bitWidth - 1);
+        if (normalizedMax < signBit)
+        {
+            return new SsaIntegerRangeFact(normalizedMin, normalizedMax);
+        }
+
+        if (normalizedMin >= signBit)
+        {
+            return new SsaIntegerRangeFact(normalizedMin - domainSize, normalizedMax - domainSize);
+        }
+
+        return targetRange;
     }
 
     private static SsaValueFacts AnalyzeDerivedPointerAddress(
@@ -1680,7 +1752,10 @@ internal sealed class SsaValueFactAnalyzer
             };
         }
 
-        return NormalizeDynamicStorageFacts(facts);
+        return WithDynamicStorageAllocationIdentity(
+            NormalizeDynamicStorageFacts(facts),
+            valueName,
+            SsaDynamicStorageAllocatorProvenanceKind.RuntimeDefault);
     }
 
     private sealed record DynamicStorageLocalMutation(
@@ -1695,7 +1770,8 @@ internal sealed class SsaValueFactAnalyzer
     private static bool RefineDynamicStorageLocalFacts(
         SsaFunction function,
         Dictionary<string, SsaValueFacts> values,
-        ISet<int> reachableBlockIds)
+        ISet<int> reachableBlockIds,
+        IReadOnlyDictionary<string, IReadOnlyList<ParameterMemoryEffectSummary>> directCallParameterEffects)
     {
         var definitions = CollectValueDefinitions(function);
         var reachableBlocks = function.Blocks
@@ -1730,6 +1806,7 @@ internal sealed class SsaValueFactAnalyzer
                     entryState,
                     definitions,
                     values,
+                    directCallParameterEffects,
                     ref changedFacts);
                 foreach (var target in EnumerateTerminatorTargets(block.Terminator))
                 {
@@ -1738,12 +1815,18 @@ internal sealed class SsaValueFactAnalyzer
                         continue;
                     }
 
-                    var edgeState = ApplyDynamicStorageEdgeTransfer(
+                    if (!TryApplyDynamicStorageEdgeTransfer(
                         block.Terminator,
                         target,
                         transfer.ExitState,
                         transfer.ConditionalMutations,
-                        definitions);
+                        definitions,
+                        values,
+                        out var edgeState))
+                    {
+                        continue;
+                    }
+
                     if (MergeDynamicStorageEntryState(target, edgeState, entryStates, initializedEntries))
                     {
                         changedStates = true;
@@ -1760,13 +1843,26 @@ internal sealed class SsaValueFactAnalyzer
         IReadOnlyDictionary<string, SsaValueFacts> entryState,
         IReadOnlyDictionary<string, SsaRValue> definitions,
         Dictionary<string, SsaValueFacts> values,
+        IReadOnlyDictionary<string, IReadOnlyList<ParameterMemoryEffectSummary>> directCallParameterEffects,
         ref bool changedFacts)
     {
         var state = CloneDynamicStorageState(entryState);
         var conditionalMutations = new Dictionary<string, DynamicStorageLocalMutation>(StringComparer.Ordinal);
+        var dynamicIntegerRanges = new Dictionary<string, SsaIntegerRangeFact>(StringComparer.Ordinal);
 
         foreach (var instruction in block.Instructions)
         {
+            if (instruction is SsaValueInstruction valueForRange)
+            {
+                RecordDynamicIntegerRange(
+                    valueForRange,
+                    state,
+                    definitions,
+                    values,
+                    dynamicIntegerRanges,
+                    ref changedFacts);
+            }
+
             switch (instruction)
             {
                 case SsaStoreLocalInstruction storeLocal when storeLocal.LocalType.Kind == StarkTypeKind.Dynamic:
@@ -1774,7 +1870,9 @@ internal sealed class SsaValueFactAnalyzer
                     var storedFacts = AnalyzeValue(storeLocal.LocalName, storeLocal.Value, values);
                     if (HasDynamicStorageFactPayload(storedFacts))
                     {
-                        state[storeLocal.LocalName] = RenameFacts(storeLocal.LocalName, storedFacts, storeLocal.LocalType);
+                        state[storeLocal.LocalName] = WithDynamicStorageOwnerRoot(
+                            RenameFacts(storeLocal.LocalName, storedFacts, storeLocal.LocalType),
+                            storeLocal.LocalName);
                     }
                     else
                     {
@@ -1783,11 +1881,34 @@ internal sealed class SsaValueFactAnalyzer
 
                     break;
                 }
+                case SsaStoreLocalInstruction storeLocal:
+                    InvalidateEscapedRawPointer(state, storeLocal.Value, definitions, values);
+                    break;
+                case SsaStoreGlobalInstruction storeGlobal:
+                    InvalidateEscapedRawPointer(state, storeGlobal.Value, definitions, values);
+                    break;
                 case SsaStoreIndirectInstruction storeIndirect:
+                    if (TryApplyDynamicStorageLengthStore(
+                            storeIndirect,
+                            state,
+                            definitions,
+                            values,
+                            dynamicIntegerRanges))
+                    {
+                        break;
+                    }
+
                     InvalidateDynamicStorageLocalAddress(state, storeIndirect.Address, definitions);
+                    InvalidateEscapedRawPointer(state, storeIndirect.Value, definitions, values);
                     break;
                 case SsaCopyMemoryInstruction copyMemory:
                     InvalidateDynamicStorageLocalAddress(state, copyMemory.DestinationAddress, definitions);
+                    break;
+                case SsaCallInstruction call:
+                    InvalidateDirectCallDynamicStorageFacts(state, call, definitions, values, directCallParameterEffects);
+                    break;
+                case SsaIndirectCallInstruction call:
+                    InvalidateIndirectCallDynamicStorageFacts(state, call, definitions, values);
                     break;
                 case SsaValueInstruction valueInstruction:
                     AnalyzeDynamicStorageValueTransfer(
@@ -1796,6 +1917,7 @@ internal sealed class SsaValueFactAnalyzer
                         conditionalMutations,
                         definitions,
                         values,
+                        directCallParameterEffects,
                         ref changedFacts);
                     break;
             }
@@ -1810,6 +1932,7 @@ internal sealed class SsaValueFactAnalyzer
         Dictionary<string, DynamicStorageLocalMutation> conditionalMutations,
         IReadOnlyDictionary<string, SsaRValue> definitions,
         Dictionary<string, SsaValueFacts> values,
+        IReadOnlyDictionary<string, IReadOnlyList<ParameterMemoryEffectSummary>> directCallParameterEffects,
         ref bool changedFacts)
     {
         switch (valueInstruction.Value)
@@ -1870,7 +1993,243 @@ internal sealed class SsaValueFactAnalyzer
                     moveAt.StorageType,
                     ApplyDynamicStorageMoveOneFacts);
                 return;
+            case SsaDynamicStorageFreeRValue free:
+                InvalidateFreedDynamicStorageOwner(state, free.Storage, values);
+                return;
+            case SsaCallRValue call:
+                InvalidateDirectCallDynamicStorageFacts(state, call, definitions, values, directCallParameterEffects);
+                return;
+            case SsaIndirectCallRValue call:
+                InvalidateIndirectCallDynamicStorageFacts(state, call, definitions, values);
+                return;
         }
+    }
+
+    private static void RecordDynamicIntegerRange(
+        SsaValueInstruction instruction,
+        IReadOnlyDictionary<string, SsaValueFacts> state,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        Dictionary<string, SsaValueFacts> values,
+        Dictionary<string, SsaIntegerRangeFact> dynamicIntegerRanges,
+        ref bool changedFacts)
+    {
+        if (!TryEvaluateDynamicStorageIntegerRange(
+                instruction.Value,
+                state,
+                definitions,
+                values,
+                dynamicIntegerRanges,
+                out var range))
+        {
+            dynamicIntegerRanges.Remove(instruction.ResultName);
+            return;
+        }
+
+        var clamped = ClampToTypeRange(range, instruction.Value.Type);
+        dynamicIntegerRanges[instruction.ResultName] = clamped;
+        var updated = CreateIntegerRangeFacts(instruction.ResultName, instruction.Value.Type, clamped);
+        if (!EqualityComparer<SsaValueFacts>.Default.Equals(values[instruction.ResultName], updated))
+        {
+            values[instruction.ResultName] = updated;
+            changedFacts = true;
+        }
+    }
+
+    private static bool TryEvaluateDynamicStorageIntegerRange(
+        SsaRValue value,
+        IReadOnlyDictionary<string, SsaValueFacts> state,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        IReadOnlyDictionary<string, SsaValueFacts> values,
+        IReadOnlyDictionary<string, SsaIntegerRangeFact> dynamicIntegerRanges,
+        out SsaIntegerRangeFact range)
+    {
+        if (TryResolveDynamicStorageLengthReadRoot(value, definitions, out var localName)
+            && state.TryGetValue(localName, out var current)
+            && current.LengthKind == SsaFactLatticeKind.Known
+            && current.LengthRange is { } lengthRange)
+        {
+            range = ClampDynamicStorageCountRange(lengthRange);
+            return true;
+        }
+
+        switch (value)
+        {
+            case SsaUseRValue use:
+                return TryGetDynamicAwareIntegerRange(use.Value, values, dynamicIntegerRanges, out range);
+            case SsaConvertRValue convert
+                when convert.TargetType.Kind == StarkTypeKind.Integer
+                     && convert.Operand.Type == convert.TargetType:
+                return TryGetDynamicAwareIntegerRange(convert.Operand, values, dynamicIntegerRanges, out range);
+            case SsaBinaryRValue binary
+                when binary.Type.Kind == StarkTypeKind.Integer
+                     && TryGetDynamicAwareIntegerRange(binary.Left, values, dynamicIntegerRanges, out var left)
+                     && TryGetDynamicAwareIntegerRange(binary.Right, values, dynamicIntegerRanges, out var right):
+                return TryEvaluateDynamicIntegerBinaryRange(binary.Operator, left, right, out range);
+            default:
+                range = default!;
+                return false;
+        }
+    }
+
+    private static bool TryEvaluateDynamicIntegerBinaryRange(
+        SsaBinaryOperator operation,
+        SsaIntegerRangeFact left,
+        SsaIntegerRangeFact right,
+        out SsaIntegerRangeFact range)
+    {
+        switch (operation)
+        {
+            case SsaBinaryOperator.Add:
+                range = new SsaIntegerRangeFact(left.Min + right.Min, left.Max + right.Max);
+                return true;
+            case SsaBinaryOperator.Subtract:
+                range = new SsaIntegerRangeFact(left.Min - right.Max, left.Max - right.Min);
+                return true;
+            default:
+                range = default!;
+                return false;
+        }
+    }
+
+    private static bool TryGetDynamicAwareIntegerRange(
+        SsaValue value,
+        IReadOnlyDictionary<string, SsaValueFacts> values,
+        IReadOnlyDictionary<string, SsaIntegerRangeFact> dynamicIntegerRanges,
+        out SsaIntegerRangeFact range)
+    {
+        if (value is SsaValueReference reference
+            && dynamicIntegerRanges.TryGetValue(reference.Name, out range!))
+        {
+            return true;
+        }
+
+        var facts = AnalyzeValue("dynamic.integer", value, values);
+        if (facts.IntegerRangeKind == SsaFactLatticeKind.Known
+            && facts.IntegerRange is { } knownRange)
+        {
+            range = knownRange;
+            return true;
+        }
+
+        range = default!;
+        return false;
+    }
+
+    private static bool TryResolveDynamicStorageLengthReadRoot(
+        SsaRValue value,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        out string localName)
+    {
+        switch (value)
+        {
+            case SsaExtractFieldRValue extractField
+                when IsDynamicLengthField(extractField)
+                     && TryResolveDynamicStorageValueRoot(extractField.Target, definitions, out localName):
+                return true;
+            case SsaLoadIndirectRValue loadIndirect
+                when TryResolveDynamicStorageFieldAddress(
+                         loadIndirect.Address,
+                         definitions,
+                         out localName,
+                         out _,
+                         out var fieldName,
+                         out var fieldIndex)
+                     && IsDynamicLengthField(fieldName, fieldIndex):
+                return true;
+            default:
+                localName = string.Empty;
+                return false;
+        }
+    }
+
+    private static bool TryResolveDynamicStorageValueRoot(
+        SsaValue value,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        out string localName)
+    {
+        return TryResolveDynamicStorageValueRoot(
+            value,
+            definitions,
+            new HashSet<string>(StringComparer.Ordinal),
+            out localName);
+    }
+
+    private static bool TryResolveDynamicStorageValueRoot(
+        SsaValue value,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> visitedReferences,
+        out string localName)
+    {
+        if (value is not SsaValueReference reference
+            || !visitedReferences.Add(reference.Name)
+            || !definitions.TryGetValue(reference.Name, out var definition))
+        {
+            localName = string.Empty;
+            return false;
+        }
+
+        return definition switch
+        {
+            SsaUseRValue use => TryResolveDynamicStorageValueRoot(
+                use.Value,
+                definitions,
+                visitedReferences,
+                out localName),
+            SsaLoadLocalRValue { Type.Kind: StarkTypeKind.Dynamic } loadLocal =>
+                ReturnLocalName(loadLocal.LocalName, out localName),
+            SsaLoadIndirectRValue { Type.Kind: StarkTypeKind.Dynamic } loadIndirect =>
+                TryResolveLocalAddressRoot(loadIndirect.Address, definitions, visitedReferences, out localName),
+            SsaConvertRValue convert when convert.TargetType.Kind == StarkTypeKind.Dynamic =>
+                TryResolveDynamicStorageValueRoot(
+                    convert.Operand,
+                    definitions,
+                    visitedReferences,
+                    out localName),
+            _ => ReturnNoLocalName(out localName)
+        };
+    }
+
+    private static bool TryApplyDynamicStorageLengthStore(
+        SsaStoreIndirectInstruction store,
+        Dictionary<string, SsaValueFacts> state,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        IReadOnlyDictionary<string, SsaValueFacts> values,
+        IReadOnlyDictionary<string, SsaIntegerRangeFact> dynamicIntegerRanges)
+    {
+        if (!TryResolveDynamicStorageFieldAddress(
+                store.Address,
+                definitions,
+                out var localName,
+                out var storageType,
+                out var fieldName,
+                out var fieldIndex)
+            || fieldIndex != 1
+            || !string.Equals(fieldName, "Length", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (!TryGetDynamicAwareIntegerRange(
+                store.Value,
+                values,
+                dynamicIntegerRanges,
+                out var lengthRange))
+        {
+            return false;
+        }
+
+        var before = state.TryGetValue(localName, out var current)
+            ? current
+            : new SsaValueFacts(localName, storageType);
+        var updated = NormalizeDynamicStorageFacts(WithDynamicStorageOwnerRoot(RenameFacts(localName, before, storageType), localName) with
+        {
+            LengthKind = SsaFactLatticeKind.Known,
+            LengthRange = ClampDynamicStorageCountRange(lengthRange),
+            InitializedPrefixKind = SsaFactLatticeKind.Known,
+            InitializedPrefixRange = ClampDynamicStorageCountRange(lengthRange)
+        });
+        state[localName] = updated;
+        return true;
     }
 
     private static void ApplyUnconditionalDynamicStorageMutation(
@@ -1882,10 +2241,11 @@ internal sealed class SsaValueFactAnalyzer
         var before = state.TryGetValue(localName, out var known)
             ? known
             : CreateTypeFacts(localName, storageType);
-        var after = mutate(RenameFacts(localName, before, storageType));
+        before = WithDynamicStorageOwnerRoot(RenameFacts(localName, before, storageType), localName);
+        var after = mutate(before);
         if (HasDynamicStorageFactPayload(after))
         {
-            state[localName] = RenameFacts(localName, after, storageType);
+            state[localName] = WithDynamicStorageOwnerRoot(RenameFacts(localName, after, storageType), localName);
         }
         else
         {
@@ -1904,8 +2264,8 @@ internal sealed class SsaValueFactAnalyzer
         var before = state.TryGetValue(localName, out var known)
             ? known
             : CreateTypeFacts(localName, storageType);
-        before = RenameFacts(localName, before, storageType);
-        var onSuccess = RenameFacts(localName, mutate(before), storageType);
+        before = WithDynamicStorageOwnerRoot(RenameFacts(localName, before, storageType), localName);
+        var onSuccess = WithDynamicStorageOwnerRoot(RenameFacts(localName, mutate(before), storageType), localName);
         conditionalMutations[resultName] = new DynamicStorageLocalMutation(localName, before, onSuccess);
 
         var joined = JoinFacts(localName, storageType, [before, onSuccess]);
@@ -1919,30 +2279,267 @@ internal sealed class SsaValueFactAnalyzer
         }
     }
 
-    private static IReadOnlyDictionary<string, SsaValueFacts> ApplyDynamicStorageEdgeTransfer(
+    private static bool TryApplyDynamicStorageEdgeTransfer(
         SsaTerminator terminator,
         int target,
         IReadOnlyDictionary<string, SsaValueFacts> exitState,
         IReadOnlyDictionary<string, DynamicStorageLocalMutation> conditionalMutations,
-        IReadOnlyDictionary<string, SsaRValue> definitions)
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        IReadOnlyDictionary<string, SsaValueFacts> values,
+        out IReadOnlyDictionary<string, SsaValueFacts> transferredState)
     {
-        if (conditionalMutations.Count == 0
-            || !TryResolveBranchConditionValue(
+        transferredState = exitState;
+        Dictionary<string, SsaValueFacts>? edgeState = null;
+        var currentState = exitState;
+
+        if (conditionalMutations.Count != 0
+            && TryResolveBranchConditionValue(
+                    terminator,
+                    target,
+                    definitions,
+                    out var conditionName,
+                    out var branchWhenConditionTrue)
+            && conditionalMutations.TryGetValue(conditionName, out var mutation))
+        {
+            edgeState = CloneDynamicStorageState(exitState);
+            edgeState[mutation.LocalName] = branchWhenConditionTrue
+                ? mutation.OnSuccess
+                : mutation.Before;
+            currentState = edgeState;
+        }
+
+        if (TryInferDynamicStorageLengthEdgeFacts(
                 terminator,
                 target,
                 definitions,
-                out var conditionName,
-                out var branchWhenConditionTrue)
-            || !conditionalMutations.TryGetValue(conditionName, out var mutation))
+                values,
+                currentState,
+                out var localName,
+                out var refinedFacts,
+                out var edgeIsReachable))
         {
-            return exitState;
+            if (!edgeIsReachable)
+            {
+                return false;
+            }
+
+            edgeState ??= CloneDynamicStorageState(exitState);
+            edgeState[localName] = refinedFacts;
         }
 
-        var edgeState = CloneDynamicStorageState(exitState);
-        edgeState[mutation.LocalName] = branchWhenConditionTrue
-            ? mutation.OnSuccess
-            : mutation.Before;
-        return edgeState;
+        transferredState = edgeState ?? exitState;
+        return true;
+    }
+
+    private static bool TryInferDynamicStorageLengthEdgeFacts(
+        SsaTerminator terminator,
+        int target,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        IReadOnlyDictionary<string, SsaValueFacts> values,
+        IReadOnlyDictionary<string, SsaValueFacts> state,
+        out string localName,
+        out SsaValueFacts refinedFacts,
+        out bool edgeIsReachable)
+    {
+        localName = string.Empty;
+        refinedFacts = default!;
+        edgeIsReachable = true;
+        if (terminator.Kind != SsaTerminatorKind.Branch
+            || terminator.Targets.Count != 2
+            || terminator.Condition is null
+            || terminator.Targets[0] == terminator.Targets[1])
+        {
+            return false;
+        }
+
+        bool branchWhenTrue;
+        if (target == terminator.Targets[0])
+        {
+            branchWhenTrue = true;
+        }
+        else if (target == terminator.Targets[1])
+        {
+            branchWhenTrue = false;
+        }
+        else
+        {
+            return false;
+        }
+
+        if (!TryResolveBranchComparison(
+                terminator,
+                target,
+                definitions,
+                out var comparison,
+                out branchWhenTrue))
+        {
+            return false;
+        }
+
+        return TryInferDynamicStorageLengthComparisonFacts(
+                   comparison.Left,
+                   comparison.Operator,
+                   comparison.Right,
+                   branchWhenTrue,
+                   definitions,
+                   values,
+                   state,
+                   out localName,
+                   out refinedFacts,
+                   out edgeIsReachable)
+               || TryMirrorComparisonOperator(comparison.Operator, out var mirroredOperator)
+               && TryInferDynamicStorageLengthComparisonFacts(
+                   comparison.Right,
+                   mirroredOperator,
+                   comparison.Left,
+                   branchWhenTrue,
+                   definitions,
+                   values,
+                   state,
+                   out localName,
+                   out refinedFacts,
+                   out edgeIsReachable);
+    }
+
+    private static bool TryResolveBranchComparison(
+        SsaTerminator terminator,
+        int target,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        out SsaBinaryRValue comparison,
+        out bool branchWhenComparisonTrue)
+    {
+        comparison = default!;
+        branchWhenComparisonTrue = false;
+        if (terminator.Kind != SsaTerminatorKind.Branch
+            || terminator.Targets.Count != 2
+            || terminator.Condition is null
+            || terminator.Targets[0] == terminator.Targets[1])
+        {
+            return false;
+        }
+
+        bool branchTakesCondition;
+        if (target == terminator.Targets[0])
+        {
+            branchTakesCondition = true;
+        }
+        else if (target == terminator.Targets[1])
+        {
+            branchTakesCondition = false;
+        }
+        else
+        {
+            return false;
+        }
+
+        if (!TryResolveBooleanSource(
+                terminator.Condition,
+                branchTakesCondition,
+                definitions,
+                new HashSet<string>(StringComparer.Ordinal),
+                out var conditionName,
+                out branchWhenComparisonTrue)
+            || !definitions.TryGetValue(conditionName, out var definition)
+            || definition is not SsaBinaryRValue { Type.Kind: StarkTypeKind.Bool } resolvedComparison)
+        {
+            return false;
+        }
+
+        comparison = resolvedComparison;
+        return true;
+    }
+
+    private static bool TryInferDynamicStorageLengthComparisonFacts(
+        SsaValue lengthValue,
+        SsaBinaryOperator comparisonOperator,
+        SsaValue constant,
+        bool branchWhenTrue,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        IReadOnlyDictionary<string, SsaValueFacts> values,
+        IReadOnlyDictionary<string, SsaValueFacts> state,
+        out string localName,
+        out SsaValueFacts refinedFacts,
+        out bool edgeIsReachable)
+    {
+        localName = string.Empty;
+        refinedFacts = default!;
+        edgeIsReachable = true;
+        if (!TryResolveDynamicStorageLengthValueRoot(lengthValue, definitions, out localName)
+            || !TryGetIntegerSingleton(constant, values, out var constantValue)
+            || !TryBuildComparisonRangeConstraint(
+                comparisonOperator,
+                constantValue,
+                branchWhenTrue,
+                out var min,
+                out var max)
+            || !state.TryGetValue(localName, out var current)
+            || current.LengthKind != SsaFactLatticeKind.Known
+            || current.LengthRange is not { } currentLength)
+        {
+            return false;
+        }
+
+        var refinedLength = new SsaIntegerRangeFact(
+            min is { } lowerBound ? Max(currentLength.Min, lowerBound) : currentLength.Min,
+            max is { } upperBound ? Min(currentLength.Max, upperBound) : currentLength.Max);
+        if (refinedLength.Min > refinedLength.Max)
+        {
+            edgeIsReachable = false;
+            return true;
+        }
+
+        refinedLength = ClampDynamicStorageCountRange(refinedLength);
+        if (refinedLength.Min > refinedLength.Max)
+        {
+            edgeIsReachable = false;
+            return true;
+        }
+
+        refinedFacts = NormalizeDynamicStorageFacts(current with
+        {
+            LengthKind = SsaFactLatticeKind.Known,
+            LengthRange = refinedLength,
+            InitializedPrefixKind = SsaFactLatticeKind.Known,
+            InitializedPrefixRange = refinedLength
+        });
+        return true;
+    }
+
+    private static bool TryResolveDynamicStorageLengthValueRoot(
+        SsaValue value,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        out string localName)
+    {
+        localName = string.Empty;
+        if (value is not SsaValueReference reference)
+        {
+            return false;
+        }
+
+        var visitedReferences = new HashSet<string>(StringComparer.Ordinal);
+        var current = reference;
+        while (visitedReferences.Add(current.Name)
+               && definitions.TryGetValue(current.Name, out var definition))
+        {
+            if (TryResolveDynamicStorageLengthReadRoot(definition, definitions, out localName))
+            {
+                return true;
+            }
+
+            switch (definition)
+            {
+                case SsaUseRValue { Value: SsaValueReference next }:
+                    current = next;
+                    continue;
+                case SsaConvertRValue { Operand: SsaValueReference next }:
+                    current = next;
+                    continue;
+                default:
+                    return false;
+            }
+        }
+
+        return false;
     }
 
     private static bool TryResolveBranchConditionValue(
@@ -2090,8 +2687,236 @@ internal sealed class SsaValueFactAnalyzer
     {
         if (TryResolveLocalAddressRoot(address, definitions, out var localName))
         {
-            state.Remove(localName);
+            RemoveOverlappingDynamicStorageFacts(state, localName);
         }
+    }
+
+    private static void InvalidateDirectCallDynamicStorageFacts(
+        Dictionary<string, SsaValueFacts> state,
+        ISsaDirectCallOperation call,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        IReadOnlyDictionary<string, SsaValueFacts> values,
+        IReadOnlyDictionary<string, IReadOnlyList<ParameterMemoryEffectSummary>> directCallParameterEffects)
+    {
+        for (var index = 0; index < call.Arguments.Count; index++)
+        {
+            if (SsaDynamicStorageCallFactPolicy.ShouldPreserveDirectCallArgumentDynamicFacts(
+                    call,
+                    index,
+                    directCallParameterEffects))
+            {
+                continue;
+            }
+
+            var argument = call.Arguments[index];
+            InvalidateEscapedRawPointer(state, argument, definitions, values);
+            InvalidateDynamicStorageLocalAddress(state, argument, definitions);
+        }
+
+        for (var index = 0; index < (call.IndirectArgumentAddresses?.Count ?? 0); index++)
+        {
+            if (SsaDynamicStorageCallFactPolicy.ShouldPreserveDirectCallArgumentDynamicFacts(
+                    call,
+                    index,
+                    directCallParameterEffects))
+            {
+                continue;
+            }
+
+            var address = call.IndirectArgumentAddresses![index];
+            if (address is null)
+            {
+                continue;
+            }
+
+            InvalidateEscapedRawPointer(state, address, definitions, values);
+            InvalidateDynamicStorageLocalAddress(state, address, definitions);
+        }
+    }
+
+    private static void InvalidateIndirectCallDynamicStorageFacts(
+        Dictionary<string, SsaValueFacts> state,
+        ISsaIndirectCallOperation call,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        IReadOnlyDictionary<string, SsaValueFacts> values)
+    {
+        foreach (var argument in call.Arguments)
+        {
+            InvalidateEscapedRawPointer(state, argument, definitions, values);
+            InvalidateDynamicStorageLocalAddress(state, argument, definitions);
+        }
+
+        foreach (var address in call.IndirectArgumentAddresses ?? [])
+        {
+            if (address is null)
+            {
+                continue;
+            }
+
+            InvalidateEscapedRawPointer(state, address, definitions, values);
+            InvalidateDynamicStorageLocalAddress(state, address, definitions);
+        }
+    }
+
+    private static void InvalidateEscapedRawPointer(
+        Dictionary<string, SsaValueFacts> state,
+        SsaValue value,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        IReadOnlyDictionary<string, SsaValueFacts> values)
+    {
+        if (value.Type.Kind == StarkTypeKind.RawPointer
+            && TryResolveLocalAddressRoot(value, definitions, out var localName))
+        {
+            RemoveOverlappingDynamicStorageFacts(state, localName);
+        }
+
+        if (TryResolveDynamicStorageViewOwnerRoot(
+                value,
+                definitions,
+                values,
+                new HashSet<string>(StringComparer.Ordinal),
+                out var ownerRootName))
+        {
+            RemoveOverlappingDynamicStorageFacts(state, ownerRootName);
+        }
+    }
+
+    private static bool TryResolveDynamicStorageViewOwnerRoot(
+        SsaValue value,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        IReadOnlyDictionary<string, SsaValueFacts> values,
+        ISet<string> visitedReferences,
+        out string ownerRootName)
+    {
+        ownerRootName = string.Empty;
+
+        switch (value)
+        {
+            case SsaValueReference reference:
+                if (values.TryGetValue(reference.Name, out var facts)
+                    && facts.DynamicStorageRegionKind == SsaFactLatticeKind.Known
+                    && facts.DynamicStorageRegion?.OwnerRootName is { Length: > 0 } directOwnerRoot)
+                {
+                    ownerRootName = directOwnerRoot;
+                    return true;
+                }
+
+                if (!visitedReferences.Add(reference.Name)
+                    || !definitions.TryGetValue(reference.Name, out var definition))
+                {
+                    return false;
+                }
+
+                return TryResolveDynamicStorageViewOwnerRoot(
+                    definition,
+                    definitions,
+                    values,
+                    visitedReferences,
+                    out ownerRootName);
+            default:
+                return false;
+        }
+    }
+
+    private static bool TryResolveDynamicStorageViewOwnerRoot(
+        SsaRValue value,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        IReadOnlyDictionary<string, SsaValueFacts> values,
+        ISet<string> visitedReferences,
+        out string ownerRootName)
+    {
+        switch (value)
+        {
+            case SsaUseRValue use:
+                return TryResolveDynamicStorageViewOwnerRoot(
+                    use.Value,
+                    definitions,
+                    values,
+                    visitedReferences,
+                    out ownerRootName);
+            case SsaConvertRValue convert when convert.TargetType.Kind == StarkTypeKind.RawPointer:
+                return TryResolveDynamicStorageViewOwnerRoot(
+                    convert.Operand,
+                    definitions,
+                    values,
+                    visitedReferences,
+                    out ownerRootName);
+            case SsaExtractFieldRValue extractField
+                when extractField.Target.Type.Kind == StarkTypeKind.Dynamic
+                     && extractField.Type.Kind == StarkTypeKind.RawPointer
+                     && IsDynamicDataField(extractField):
+                return TryResolveDynamicStorageOwnerRoot(
+                    extractField.Target,
+                    definitions,
+                    values,
+                    visitedReferences,
+                    out ownerRootName);
+            case SsaElementAddressRValue elementAddress:
+                return TryResolveDynamicStorageViewOwnerRoot(
+                    elementAddress.Address,
+                    definitions,
+                    values,
+                    visitedReferences,
+                    out ownerRootName);
+            case SsaSliceElementAddressRValue sliceElementAddress:
+                return TryResolveDynamicStorageViewOwnerRoot(
+                    sliceElementAddress.Slice,
+                    definitions,
+                    values,
+                    visitedReferences,
+                    out ownerRootName);
+            case SsaMakeSliceFromPointerRValue makeSlice:
+                return TryResolveDynamicStorageViewOwnerRoot(
+                    makeSlice.Pointer,
+                    definitions,
+                    values,
+                    visitedReferences,
+                    out ownerRootName);
+            default:
+                ownerRootName = string.Empty;
+                return false;
+        }
+    }
+
+    private static bool TryResolveDynamicStorageOwnerRoot(
+        SsaValue value,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        IReadOnlyDictionary<string, SsaValueFacts> values,
+        ISet<string> visitedReferences,
+        out string ownerRootName)
+    {
+        ownerRootName = string.Empty;
+        if (value is SsaValueReference reference)
+        {
+            if (values.TryGetValue(reference.Name, out var facts)
+                && facts.DynamicStorageRegionKind == SsaFactLatticeKind.Known
+                && facts.DynamicStorageRegion?.OwnerRootName is { Length: > 0 } ownerRoot)
+            {
+                ownerRootName = ownerRoot;
+                return true;
+            }
+
+            if (visitedReferences.Add(reference.Name)
+                && definitions.TryGetValue(reference.Name, out var definition))
+            {
+                return definition switch
+                {
+                    SsaUseRValue use => TryResolveDynamicStorageOwnerRoot(
+                        use.Value,
+                        definitions,
+                        values,
+                        visitedReferences,
+                        out ownerRootName),
+                    SsaLoadLocalRValue { Type.Kind: StarkTypeKind.Dynamic } loadLocal =>
+                        ReturnLocalName(loadLocal.LocalName, out ownerRootName),
+                    SsaLoadIndirectRValue { Type.Kind: StarkTypeKind.Dynamic } loadIndirect =>
+                        TryResolveLocalAddressRoot(loadIndirect.Address, definitions, visitedReferences, out ownerRootName),
+                    _ => false
+                };
+            }
+        }
+
+        return false;
     }
 
     private static bool TryResolveLocalAddressRoot(
@@ -2121,15 +2946,93 @@ internal sealed class SsaValueFactAnalyzer
                 return definition switch
                 {
                     SsaAddressOfLocalRValue addressOfLocal => ReturnLocalName(addressOfLocal.LocalName, out localName),
+                    SsaAddressOfParameterRValue addressOfParameter => ReturnLocalName(addressOfParameter.ParameterName, out localName),
                     SsaUseRValue use => TryResolveLocalAddressRoot(use.Value, definitions, visitedReferences, out localName),
                     SsaConvertRValue convert when convert.TargetType.Kind == StarkTypeKind.RawPointer
                         => TryResolveLocalAddressRoot(convert.Operand, definitions, visitedReferences, out localName),
-                    SsaFieldAddressRValue fieldAddress => TryResolveLocalAddressRoot(fieldAddress.Address, definitions, visitedReferences, out localName),
-                    SsaElementAddressRValue elementAddress => TryResolveLocalAddressRoot(elementAddress.Address, definitions, visitedReferences, out localName),
+                    SsaLoadIndirectRValue { Type.Kind: StarkTypeKind.Dynamic } loadIndirect
+                        => TryResolveLocalAddressRoot(loadIndirect.Address, definitions, visitedReferences, out localName),
+                    SsaFieldAddressRValue fieldAddress
+                        when TryResolveLocalAddressRoot(fieldAddress.Address, definitions, visitedReferences, out var parentRoot) =>
+                        ReturnLocalName($"{parentRoot}.{fieldAddress.FieldName}", out localName),
+                    SsaElementAddressRValue elementAddress
+                        when TryResolveLocalAddressRoot(elementAddress.Address, definitions, visitedReferences, out var parentRoot) =>
+                        ReturnLocalName($"{parentRoot}[*]", out localName),
                     _ => ReturnNoLocalName(out localName)
                 };
             default:
                 localName = string.Empty;
+                return false;
+        }
+    }
+
+    private static bool TryResolveDynamicStorageFieldAddress(
+        SsaValue value,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        out string localName,
+        out StarkTypeSymbol storageType,
+        out string fieldName,
+        out int fieldIndex)
+    {
+        return TryResolveDynamicStorageFieldAddress(
+            value,
+            definitions,
+            new HashSet<string>(StringComparer.Ordinal),
+            out localName,
+            out storageType,
+            out fieldName,
+            out fieldIndex);
+    }
+
+    private static bool TryResolveDynamicStorageFieldAddress(
+        SsaValue value,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> visitedReferences,
+        out string localName,
+        out StarkTypeSymbol storageType,
+        out string fieldName,
+        out int fieldIndex)
+    {
+        localName = string.Empty;
+        storageType = StarkTypeSymbols.Error;
+        fieldName = string.Empty;
+        fieldIndex = -1;
+
+        if (value is not SsaValueReference reference
+            || !visitedReferences.Add(reference.Name)
+            || !definitions.TryGetValue(reference.Name, out var definition))
+        {
+            return false;
+        }
+
+        switch (definition)
+        {
+            case SsaUseRValue use:
+                return TryResolveDynamicStorageFieldAddress(
+                    use.Value,
+                    definitions,
+                    visitedReferences,
+                    out localName,
+                    out storageType,
+                    out fieldName,
+                    out fieldIndex);
+            case SsaConvertRValue convert when convert.TargetType.Kind == StarkTypeKind.RawPointer:
+                return TryResolveDynamicStorageFieldAddress(
+                    convert.Operand,
+                    definitions,
+                    visitedReferences,
+                    out localName,
+                    out storageType,
+                    out fieldName,
+                    out fieldIndex);
+            case SsaFieldAddressRValue fieldAddress
+                when fieldAddress.AggregateType.Kind == StarkTypeKind.Dynamic
+                     && TryResolveLocalAddressRoot(fieldAddress.Address, definitions, out localName):
+                storageType = fieldAddress.AggregateType;
+                fieldName = fieldAddress.FieldName;
+                fieldIndex = fieldAddress.FieldIndex;
+                return true;
+            default:
                 return false;
         }
     }
@@ -2146,12 +3049,34 @@ internal sealed class SsaValueFactAnalyzer
         return false;
     }
 
+    private static void RemoveOverlappingDynamicStorageFacts(
+        Dictionary<string, SsaValueFacts> state,
+        string escapedRoot)
+    {
+        foreach (var ownerRoot in state.Keys
+                     .Where(ownerRoot => DynamicStorageOwnerRootsMayOverlap(ownerRoot, escapedRoot))
+                     .ToArray())
+        {
+            state.Remove(ownerRoot);
+        }
+    }
+
+    private static bool DynamicStorageOwnerRootsMayOverlap(string ownerRoot, string escapedRoot)
+    {
+        return string.Equals(ownerRoot, escapedRoot, StringComparison.Ordinal)
+               || ownerRoot.StartsWith($"{escapedRoot}.", StringComparison.Ordinal)
+               || escapedRoot.StartsWith($"{ownerRoot}.", StringComparison.Ordinal)
+               || ownerRoot.StartsWith($"{escapedRoot}[*]", StringComparison.Ordinal)
+               || escapedRoot.StartsWith($"{ownerRoot}[*]", StringComparison.Ordinal);
+    }
+
     private static bool HasDynamicStorageFactPayload(SsaValueFacts facts)
     {
         return facts.Type.Kind == StarkTypeKind.Dynamic
                && (facts.LengthKind == SsaFactLatticeKind.Known
                    || facts.CapacityKind == SsaFactLatticeKind.Known
-                   || facts.InitializedPrefixKind == SsaFactLatticeKind.Known);
+                   || facts.InitializedPrefixKind == SsaFactLatticeKind.Known
+                   || facts.DynamicStorageRegionKind == SsaFactLatticeKind.Known);
     }
 
     private static SsaValueFacts ApplyDynamicStorageReserveAdditionalFacts(
@@ -2163,9 +3088,15 @@ internal sealed class SsaValueFactAnalyzer
         if (additionalFacts.IntegerRangeKind != SsaFactLatticeKind.Known
             || additionalFacts.IntegerRange is not { } additionalRange)
         {
-            return current;
+            return WithDynamicStorageBackingIdentityUnknown(current);
         }
 
+        var provenNoop = current.LengthKind == SsaFactLatticeKind.Known
+                         && current.LengthRange is { } currentLengthRange
+                         && current.CapacityKind == SsaFactLatticeKind.Known
+                         && current.CapacityRange is { } currentCapacityRange
+                         && currentCapacityRange.Min >= Max(BigInteger.Zero, currentLengthRange.Max)
+                            + Max(BigInteger.Zero, additionalRange.Max);
         BigInteger? requiredLowerBound = null;
         if (current.LengthKind == SsaFactLatticeKind.Known
             && current.LengthRange is { } lengthRange)
@@ -2173,7 +3104,10 @@ internal sealed class SsaValueFactAnalyzer
             requiredLowerBound = Max(BigInteger.Zero, lengthRange.Min) + Max(BigInteger.Zero, additionalRange.Min);
         }
 
-        return NormalizeDynamicStorageFacts(RaiseDynamicStorageCapacityLowerBound(current, requiredLowerBound));
+        var updated = NormalizeDynamicStorageFacts(RaiseDynamicStorageCapacityLowerBound(current, requiredLowerBound));
+        return provenNoop
+            ? updated
+            : WithDynamicStorageBackingIdentityUnknown(updated);
     }
 
     private static SsaValueFacts ApplyDynamicStorageReserveCapacityFacts(
@@ -2185,10 +3119,16 @@ internal sealed class SsaValueFactAnalyzer
         if (targetFacts.IntegerRangeKind != SsaFactLatticeKind.Known
             || targetFacts.IntegerRange is not { } targetRange)
         {
-            return current;
+            return WithDynamicStorageBackingIdentityUnknown(current);
         }
 
-        return NormalizeDynamicStorageFacts(RaiseDynamicStorageCapacityLowerBound(current, Max(BigInteger.Zero, targetRange.Min)));
+        var provenNoop = current.CapacityKind == SsaFactLatticeKind.Known
+                         && current.CapacityRange is { } capacityRange
+                         && capacityRange.Min >= Max(BigInteger.Zero, targetRange.Max);
+        var updated = NormalizeDynamicStorageFacts(RaiseDynamicStorageCapacityLowerBound(current, Max(BigInteger.Zero, targetRange.Min)));
+        return provenNoop
+            ? updated
+            : WithDynamicStorageBackingIdentityUnknown(updated);
     }
 
     private static SsaValueFacts RaiseDynamicStorageCapacityLowerBound(
@@ -2281,7 +3221,294 @@ internal sealed class SsaValueFactAnalyzer
             };
         }
 
-        return normalized;
+        return WithDynamicStorageRegionFromCurrentFacts(normalized);
+    }
+
+    private static SsaValueFacts WithDynamicStorageRegionFromCurrentFacts(SsaValueFacts facts)
+    {
+        if (facts.Type.Kind != StarkTypeKind.Dynamic
+            || facts.Type.ElementType is not { } elementType)
+        {
+            return facts with
+            {
+                DynamicStorageRegionKind = SsaFactLatticeKind.Unknown,
+                DynamicStorageRegion = null
+            };
+        }
+
+        var existingRegion = facts.DynamicStorageRegionKind == SsaFactLatticeKind.Known
+            ? facts.DynamicStorageRegion
+            : null;
+        var lengthRange = facts.LengthKind == SsaFactLatticeKind.Known
+            ? facts.LengthRange
+            : existingRegion?.InitializedLengthRange;
+        var capacityRange = facts.CapacityKind == SsaFactLatticeKind.Known
+            ? facts.CapacityRange
+            : existingRegion?.CapacityRange;
+        var initializedPrefixRange = facts.InitializedPrefixKind == SsaFactLatticeKind.Known
+            ? facts.InitializedPrefixRange
+            : existingRegion?.InitializedPrefixRange;
+
+        if (existingRegion is null
+            && lengthRange is null
+            && capacityRange is null
+            && initializedPrefixRange is null)
+        {
+            return facts;
+        }
+
+        var elementAlignmentBytes = TryGetTypeAlignmentBytes(elementType, out var alignmentBytes)
+            ? alignmentBytes
+            : existingRegion?.ElementAlignmentBytes;
+        var backingKind = InferDynamicStorageBackingAllocationKind(
+            existingRegion?.BackingAllocationKind ?? SsaDynamicStorageBackingAllocationKind.Unknown,
+            capacityRange);
+        var backingAllocationId = backingKind == SsaDynamicStorageBackingAllocationKind.RuntimeAllocation
+            ? existingRegion?.BackingAllocationId
+            : null;
+
+        return facts with
+        {
+            DynamicStorageRegionKind = SsaFactLatticeKind.Known,
+            DynamicStorageRegion = new SsaDynamicStorageRegionFact(
+                existingRegion?.OwnerRootName,
+                backingKind,
+                backingAllocationId,
+                elementType,
+                capacityRange,
+                lengthRange,
+                initializedPrefixRange,
+                TryCreateDynamicStorageSpareCapacityRange(lengthRange, capacityRange),
+                elementAlignmentBytes,
+                existingRegion?.AllocatorProvenance ?? SsaDynamicStorageAllocatorProvenanceKind.Unknown)
+        };
+    }
+
+    private static SsaValueFacts WithDynamicStorageOwnerRoot(SsaValueFacts facts, string ownerRootName)
+    {
+        var normalized = NormalizeDynamicStorageFacts(facts);
+        if (normalized.Type.Kind != StarkTypeKind.Dynamic
+            || normalized.Type.ElementType is not { } elementType)
+        {
+            return normalized;
+        }
+
+        var region = normalized.DynamicStorageRegionKind == SsaFactLatticeKind.Known
+            ? normalized.DynamicStorageRegion
+            : null;
+        region ??= new SsaDynamicStorageRegionFact(
+            ownerRootName,
+            SsaDynamicStorageBackingAllocationKind.Unknown,
+            null,
+            elementType,
+            null,
+            null,
+            null,
+            null,
+            TryGetTypeAlignmentBytes(elementType, out var alignmentBytes) ? alignmentBytes : null,
+            SsaDynamicStorageAllocatorProvenanceKind.Unknown);
+
+        return normalized with
+        {
+            DynamicStorageRegionKind = SsaFactLatticeKind.Known,
+            DynamicStorageRegion = region with { OwnerRootName = ownerRootName }
+        };
+    }
+
+    private static SsaValueFacts WithDynamicStorageAllocationIdentity(
+        SsaValueFacts facts,
+        string allocationId,
+        SsaDynamicStorageAllocatorProvenanceKind allocatorProvenance)
+    {
+        var normalized = NormalizeDynamicStorageFacts(facts);
+        if (normalized.Type.Kind != StarkTypeKind.Dynamic
+            || normalized.Type.ElementType is not { } elementType)
+        {
+            return normalized;
+        }
+
+        var region = normalized.DynamicStorageRegionKind == SsaFactLatticeKind.Known
+            ? normalized.DynamicStorageRegion
+            : null;
+        var backingKind = InferDynamicStorageBackingAllocationKind(
+            region?.BackingAllocationKind ?? SsaDynamicStorageBackingAllocationKind.Unknown,
+            normalized.CapacityKind == SsaFactLatticeKind.Known ? normalized.CapacityRange : region?.CapacityRange);
+        var backingId = backingKind == SsaDynamicStorageBackingAllocationKind.RuntimeAllocation
+            ? allocationId
+            : null;
+
+        region ??= new SsaDynamicStorageRegionFact(
+            null,
+            backingKind,
+            backingId,
+            elementType,
+            normalized.CapacityRange,
+            normalized.LengthRange,
+            normalized.InitializedPrefixRange,
+            TryCreateDynamicStorageSpareCapacityRange(normalized.LengthRange, normalized.CapacityRange),
+            TryGetTypeAlignmentBytes(elementType, out var alignmentBytes) ? alignmentBytes : null,
+            allocatorProvenance);
+
+        return normalized with
+        {
+            DynamicStorageRegionKind = SsaFactLatticeKind.Known,
+            DynamicStorageRegion = region with
+            {
+                BackingAllocationKind = backingKind,
+                BackingAllocationId = backingId,
+                AllocatorProvenance = allocatorProvenance
+            }
+        };
+    }
+
+    private static SsaValueFacts WithDynamicStorageBackingIdentityUnknown(SsaValueFacts facts)
+    {
+        var normalized = NormalizeDynamicStorageFacts(facts);
+        if (normalized.DynamicStorageRegionKind != SsaFactLatticeKind.Known
+            || normalized.DynamicStorageRegion is not { } region)
+        {
+            return normalized;
+        }
+
+        var backingKind = InferDynamicStorageBackingAllocationKind(
+            SsaDynamicStorageBackingAllocationKind.Unknown,
+            region.CapacityRange);
+        return normalized with
+        {
+            DynamicStorageRegion = region with
+            {
+                BackingAllocationKind = backingKind,
+                BackingAllocationId = null
+            }
+        };
+    }
+
+    private static SsaValueFacts JoinDynamicStorageRegionFacts(
+        string valueName,
+        StarkTypeSymbol type,
+        SsaValueFacts joined,
+        IReadOnlyList<SsaValueFacts> inputs)
+    {
+        if (type.ElementType is not { } elementType)
+        {
+            return joined;
+        }
+
+        var regions = inputs
+            .Where(static fact => fact.DynamicStorageRegionKind == SsaFactLatticeKind.Known
+                                  && fact.DynamicStorageRegion is not null)
+            .Select(static fact => fact.DynamicStorageRegion!)
+            .ToArray();
+        if (regions.Length != inputs.Count)
+        {
+            return NormalizeDynamicStorageFacts(joined);
+        }
+
+        var ownerRootNames = regions
+            .Select(static region => region.OwnerRootName)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var allocatorProvenances = regions
+            .Select(static region => region.AllocatorProvenance)
+            .Distinct()
+            .ToArray();
+        var backingIds = regions
+            .Select(static region => region.BackingAllocationId)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        var sameBackingIdentity = backingIds.Length == 1
+                                  && regions.Select(static region => region.BackingAllocationKind).Distinct().Count() == 1;
+        var normalized = NormalizeDynamicStorageFacts(joined);
+        var currentRegion = normalized.DynamicStorageRegion;
+        var backingKind = sameBackingIdentity
+            ? regions[0].BackingAllocationKind
+            : InferDynamicStorageBackingAllocationKind(
+                SsaDynamicStorageBackingAllocationKind.Unknown,
+                normalized.CapacityKind == SsaFactLatticeKind.Known ? normalized.CapacityRange : null);
+
+        return normalized with
+        {
+            ValueName = valueName,
+            DynamicStorageRegionKind = SsaFactLatticeKind.Known,
+            DynamicStorageRegion = new SsaDynamicStorageRegionFact(
+                ownerRootNames.Length == 1 ? ownerRootNames[0] : null,
+                backingKind,
+                sameBackingIdentity && backingKind == SsaDynamicStorageBackingAllocationKind.RuntimeAllocation
+                    ? backingIds[0]
+                    : null,
+                elementType,
+                currentRegion?.CapacityRange,
+                currentRegion?.InitializedLengthRange,
+                currentRegion?.InitializedPrefixRange,
+                currentRegion?.SpareCapacityRange,
+                TryGetTypeAlignmentBytes(elementType, out var alignmentBytes)
+                    ? alignmentBytes
+                    : currentRegion?.ElementAlignmentBytes,
+                allocatorProvenances.Length == 1
+                    ? allocatorProvenances[0]
+                    : SsaDynamicStorageAllocatorProvenanceKind.Unknown)
+        };
+    }
+
+    private static SsaValueFacts CreateEmptyDynamicStorageFacts(string valueName, StarkTypeSymbol type)
+    {
+        var zero = new SsaIntegerRangeFact(BigInteger.Zero, BigInteger.Zero);
+        return NormalizeDynamicStorageFacts(new SsaValueFacts(
+            valueName,
+            type,
+            LengthKind: SsaFactLatticeKind.Known,
+            LengthRange: zero,
+            CapacityKind: SsaFactLatticeKind.Known,
+            CapacityRange: zero,
+            InitializedPrefixKind: SsaFactLatticeKind.Known,
+            InitializedPrefixRange: zero,
+            DynamicStorageRegionKind: SsaFactLatticeKind.Known,
+            DynamicStorageRegion: type.ElementType is { } elementType
+                ? new SsaDynamicStorageRegionFact(
+                    null,
+                    SsaDynamicStorageBackingAllocationKind.None,
+                    null,
+                    elementType,
+                    zero,
+                    zero,
+                    zero,
+                    zero,
+                    TryGetTypeAlignmentBytes(elementType, out var alignmentBytes) ? alignmentBytes : null,
+                    SsaDynamicStorageAllocatorProvenanceKind.RuntimeDefault)
+                : null));
+    }
+
+    private static SsaDynamicStorageBackingAllocationKind InferDynamicStorageBackingAllocationKind(
+        SsaDynamicStorageBackingAllocationKind existingKind,
+        SsaIntegerRangeFact? capacityRange)
+    {
+        if (capacityRange is null)
+        {
+            return existingKind;
+        }
+
+        if (capacityRange.Max <= BigInteger.Zero)
+        {
+            return SsaDynamicStorageBackingAllocationKind.None;
+        }
+
+        return capacityRange.Min > BigInteger.Zero
+            ? SsaDynamicStorageBackingAllocationKind.RuntimeAllocation
+            : SsaDynamicStorageBackingAllocationKind.Unknown;
+    }
+
+    private static SsaIntegerRangeFact? TryCreateDynamicStorageSpareCapacityRange(
+        SsaIntegerRangeFact? lengthRange,
+        SsaIntegerRangeFact? capacityRange)
+    {
+        if (lengthRange is null || capacityRange is null)
+        {
+            return null;
+        }
+
+        var min = Max(BigInteger.Zero, capacityRange.Min - lengthRange.Max);
+        var max = Max(BigInteger.Zero, capacityRange.Max - lengthRange.Min);
+        return new SsaIntegerRangeFact(min, Max(min, max));
     }
 
     private static SsaValueFacts ApplyDynamicStorageMoveOneFacts(SsaValueFacts current)
@@ -2303,6 +3530,21 @@ internal sealed class SsaValueFactAnalyzer
             InitializedPrefixKind = SsaFactLatticeKind.Known,
             InitializedPrefixRange = ClampDynamicStorageCountRange(newLength)
         });
+    }
+
+    private static void InvalidateFreedDynamicStorageOwner(
+        Dictionary<string, SsaValueFacts> state,
+        SsaValue storage,
+        IReadOnlyDictionary<string, SsaValueFacts> values)
+    {
+        var facts = AnalyzeValue("dynamic.free.storage", storage, values);
+        if (facts.DynamicStorageRegionKind != SsaFactLatticeKind.Known
+            || facts.DynamicStorageRegion?.OwnerRootName is not { Length: > 0 } ownerRootName)
+        {
+            return;
+        }
+
+        RemoveOverlappingDynamicStorageFacts(state, ownerRootName);
     }
 
     private static bool IsLocalAddressTaken(
@@ -2729,16 +3971,18 @@ internal sealed class SsaValueFactAnalyzer
             joined = WithBoundedRawPointerRegion(joined, boundedRegions[0]);
         }
 
-        return joined;
+        return type.Kind == StarkTypeKind.Dynamic
+            ? JoinDynamicStorageRegionFacts(valueName, type, joined, facts)
+            : joined;
     }
 
     private static SsaValueFacts RenameFacts(string valueName, SsaValueFacts facts, StarkTypeSymbol type)
     {
-        return facts with
+        return NormalizeDynamicStorageFacts(facts with
         {
             ValueName = valueName,
             Type = type
-        };
+        });
     }
 
     private static SsaValueFacts CreateParameterFacts(
@@ -2747,6 +3991,11 @@ internal sealed class SsaValueFactAnalyzer
         IReadOnlyList<TypedParameterSymbol> parameters)
     {
         var facts = CreateTypeFacts(valueName, parameter.Type);
+        if (parameter.Type.Kind == StarkTypeKind.Dynamic)
+        {
+            facts = WithDynamicStorageOwnerRoot(facts, parameter.Name);
+        }
+
         if (!TryCreateBoundedRawPointerParameterRegionFact(parameter, parameters, out var boundedRegion))
         {
             return facts;

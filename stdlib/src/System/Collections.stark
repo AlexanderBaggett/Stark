@@ -17,6 +17,12 @@ public doctrine DictionaryKey<T> {
     finite law u64[0 max] Hash(borrow T value);
 }
 
+public inline finite law retborrow frozen T Lookup<T>(
+    const T[] table,
+    u64[0 2 ** 63 - 1] index) {
+    return table[index];
+}
+
 internal fn System.Memory.MemoryStatus ComputeContiguousGrowthCapacity(
     u64[0 2 ** 63 - 1] length,
     u64[0 2 ** 63 - 1] currentCapacity,
@@ -721,7 +727,7 @@ public struct Dictionary<K, V> {
     }
 
     internal unsafe inline finite void InitializeStates(
-        mut borrow Dictionary<K, V> self,
+        borrow Dictionary<K, V> self,
         u64[0 2 ** 63 - 1] capacity,
         rawmutptr<u8[0 2]> states) {
         for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < capacity; index += 1) {

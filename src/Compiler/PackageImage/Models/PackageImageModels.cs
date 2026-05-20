@@ -203,7 +203,8 @@ internal sealed record StarkPackageGlobalManifest(
     string Visibility,
     string Kind,
     string Type,
-    bool IsMutable);
+    bool IsMutable,
+    StarkPackageTypedConstantInitializerManifest? ConstantInitializer = null);
 
 internal sealed record StarkPackageTypeAliasManifest(
     string Name,
@@ -338,7 +339,17 @@ internal sealed record StarkPackageTypedGlobalManifest(
     string Visibility,
     string Kind,
     StarkPackageTypeReference Type,
-    bool IsMutable);
+    bool IsMutable,
+    StarkPackageTypedConstantInitializerManifest? ConstantInitializer = null);
+
+internal sealed record StarkPackageTypedConstantInitializerManifest(
+    string Kind,
+    StarkPackageTypeReference Type,
+    string? IntegerValue = null,
+    string? FloatLiteralText = null,
+    bool? BoolValue = null,
+    string? TextLiteralText = null,
+    IReadOnlyList<StarkPackageTypedConstantInitializerManifest>? Elements = null);
 
 internal sealed record StarkPackageTypedTypeAliasManifest(
     string Name,
@@ -454,7 +465,8 @@ internal sealed record StarkPackageTypedTemplateStatementManifest(
     IReadOnlyList<StarkPackageTypedTemplateStatementManifest>? ThenStatements = null,
     IReadOnlyList<StarkPackageTypedTemplateStatementManifest>? ElseStatements = null,
     StarkPackageTypedTemplateExpressionManifest? TargetExpression = null,
-    IReadOnlyList<string>? LoopContracts = null);
+    IReadOnlyList<string>? LoopContracts = null,
+    string? ConstProvenance = null);
 
 internal sealed record StarkPackageTypedTemplateBodyManifest(
     IReadOnlyList<StarkPackageTypedTemplateStatementManifest> Statements);
@@ -700,7 +712,47 @@ internal sealed record StarkPackageFunctionSemanticManifest(
     StarkPackageFunctionMemoryEffectsManifest? MemoryEffects = null,
     IReadOnlyList<StarkPackageParameterMemoryEffectsManifest>? Parameters = null,
     IReadOnlyList<StarkPackageFunctionCallManifest>? Calls = null,
-    StarkPackageFunctionOptimizationManifest? Optimization = null);
+    StarkPackageFunctionOptimizationManifest? Optimization = null,
+    StarkPackageFunctionOwnershipManifest? Ownership = null);
+
+internal sealed record StarkPackageFunctionOwnershipManifest(
+    bool OwnershipValid,
+    IReadOnlyList<string> ImplicitDrops,
+    IReadOnlyList<string> Moves,
+    IReadOnlyList<StarkPackageOwnershipEventManifest>? Events = null,
+    IReadOnlyList<StarkPackageOwnershipRootManifest>? Roots = null);
+
+internal sealed record StarkPackageOwnershipPlaceManifest(
+    string RootName,
+    StarkPackageTypeReference Type,
+    IReadOnlyList<string>? ProjectionPath = null,
+    bool HasIndexProjection = false);
+
+internal sealed record StarkPackageOwnershipEventManifest(
+    string Kind,
+    StarkPackageOwnershipPlaceManifest Place,
+    StarkPackageSourceLocation? Location = null);
+
+internal sealed record StarkPackageSourceLocation(
+    string? FilePath,
+    int Line,
+    int Column);
+
+internal sealed record StarkPackageOwnershipRootManifest(
+    string Name,
+    StarkPackageTypeReference Type,
+    string RootKind,
+    bool IsMutable,
+    bool IsConstant,
+    bool IsAddressTaken,
+    bool HasRawPointerEscape,
+    bool HasMove,
+    bool HasPartialMove,
+    bool HasImplicitDrop,
+    bool HasAssignmentDrop,
+    bool HasReinitialization,
+    bool RequiresDrop,
+    string FinalAvailability);
 
 internal sealed record StarkPackageFunctionOptimizationManifest(
     int DirectCallCount,

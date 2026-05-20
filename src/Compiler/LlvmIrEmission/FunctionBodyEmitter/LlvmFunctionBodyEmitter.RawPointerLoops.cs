@@ -670,6 +670,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var definitions = CollectValueDefinitions(function);
         var nonEntryValueNames = CollectNonEntrySsaValueNames(function);
         var blocksById = function.Blocks.ToDictionary(static block => block.Id);
+        var availableValueNamesByBlock = BuildAvailableValueNamesByBlock(function, blocksById);
         var predecessorCounts = CountPredecessors(function);
         if (TryMatchEmbeddedOptimizedRawPointerMemmoveFromPreheader(
                 function,
@@ -678,6 +679,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 blocksById,
                 definitions,
                 nonEntryValueNames,
+                availableValueNamesByBlock,
                 predecessorCounts,
                 out plan))
         {
@@ -690,9 +692,14 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 blocksById,
                 definitions,
                 nonEntryValueNames,
+                availableValueNamesByBlock,
                 out var loop,
-                out var exit)
-            || !CanReplaceEmbeddedRawPointerLoop(function, loop, exit, predecessorCounts))
+                out var exit))
+        {
+            return false;
+        }
+
+        if (!CanReplaceEmbeddedRawPointerLoop(function, loop, exit, predecessorCounts))
         {
             return false;
         }
@@ -719,6 +726,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         IReadOnlyDictionary<int, SsaBasicBlock> blocksById,
         IReadOnlyDictionary<string, SsaRValue> definitions,
         ISet<string> nonEntryValueNames,
+        IReadOnlyDictionary<int, ISet<string>> availableValueNamesByBlock,
         IReadOnlyDictionary<int, int> predecessorCounts,
         out RawPointerLoopIntrinsicPlan plan)
     {
@@ -735,6 +743,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 blocksById,
                 definitions,
                 nonEntryValueNames,
+                availableValueNamesByBlock,
                 out var sourceToTemporaryLoop,
                 out var middle)
             || middle.Phis.Count != 0
@@ -745,6 +754,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 blocksById,
                 definitions,
                 nonEntryValueNames,
+                availableValueNamesByBlock,
                 out var temporaryToDestinationLoop,
                 out var exit)
             || !TryMatchEmbeddedOverlapSafeTemporaryExit(exit, temporaryLocalName, temporaryType, definitions)
@@ -1036,6 +1046,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var definitions = CollectValueDefinitions(function);
         var nonEntryValueNames = CollectNonEntrySsaValueNames(function);
         var blocksById = function.Blocks.ToDictionary(static block => block.Id);
+        var availableValueNamesByBlock = BuildAvailableValueNamesByBlock(function, blocksById);
         if (!blocksById.TryGetValue(function.EntryBlockId, out var entry)
             || !TryMatchOptionalZeroCountGuard(
                 entry,
@@ -1085,6 +1096,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                     blocksById,
                     definitions,
                     nonEntryValueNames,
+                    availableValueNamesByBlock,
                     out var forwardLoop,
                     out var forwardExit)
                 || !TryMatchBackwardRawPointerLoopFromPreheader(
@@ -1093,6 +1105,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                     blocksById,
                     definitions,
                     nonEntryValueNames,
+                    availableValueNamesByBlock,
                     out var backwardLoop,
                     out var backwardExit)
                 || !IsPlainVoidReturnBlock(forwardExit)
@@ -1240,6 +1253,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         IReadOnlyDictionary<int, SsaBasicBlock> blocksById,
         IReadOnlyDictionary<string, SsaRValue> definitions,
         ISet<string> nonEntryValueNames,
+        IReadOnlyDictionary<int, ISet<string>> availableValueNamesByBlock,
         out CanonicalRawPointerLoop loop,
         out SsaBasicBlock exit)
     {
@@ -1297,7 +1311,10 @@ internal sealed partial class LlvmFunctionBodyEmitter
             updateReference.Name,
             count,
             definitions,
-            nonEntryValueNames);
+            nonEntryValueNames,
+            availableValueNamesByBlock.TryGetValue(preheader.Id, out var availableValueNames)
+                ? availableValueNames
+                : CollectBlockValueNames(preheader));
         return true;
     }
 
@@ -1328,6 +1345,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 loop.InductionValueName,
                 loop.ValueDefinitions,
                 loop.NonEntryValueNames,
+                loop.AvailableValueNames,
                 requireMutablePointer: true,
                 out var destinationBase,
                 out var destinationElementType,
@@ -1339,6 +1357,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 loop.InductionValueName,
                 loop.ValueDefinitions,
                 loop.NonEntryValueNames,
+                loop.AvailableValueNames,
                 out var sourceBase,
                 out var sourceElementType,
                 out var sourceAddressName,
@@ -1527,6 +1546,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var definitions = CollectValueDefinitions(function);
         var nonEntryValueNames = CollectNonEntrySsaValueNames(function);
         var blocksById = function.Blocks.ToDictionary(static block => block.Id);
+        var availableValueNamesByBlock = BuildAvailableValueNamesByBlock(function, blocksById);
         if (!blocksById.TryGetValue(function.EntryBlockId, out var entry)
             || !TryMatchOverlapSafeTemporaryEntry(
                 entry,
@@ -1540,6 +1560,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 blocksById,
                 definitions,
                 nonEntryValueNames,
+                availableValueNamesByBlock,
                 out var sourceToTemporaryLoop,
                 out var middle)
             || middle.Phis.Count != 0
@@ -1550,6 +1571,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 blocksById,
                 definitions,
                 nonEntryValueNames,
+                availableValueNamesByBlock,
                 out var temporaryToDestinationLoop,
                 out var exit)
             || !TryMatchOverlapSafeTemporaryExit(exit, temporaryLocalName, temporaryType)
@@ -1881,6 +1903,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         IReadOnlyDictionary<int, SsaBasicBlock> blocksById,
         IReadOnlyDictionary<string, SsaRValue> definitions,
         ISet<string> nonEntryValueNames,
+        IReadOnlyDictionary<int, ISet<string>> availableValueNamesByBlock,
         out CanonicalRawPointerLoop loop,
         out SsaBasicBlock exit)
     {
@@ -1921,10 +1944,13 @@ internal sealed partial class LlvmFunctionBodyEmitter
             return false;
         }
 
+        var loopLocalValueNames = CollectBlockValueNames(condition)
+            .Concat(CollectBlockValueNames(body))
+            .ToHashSet(StringComparer.Ordinal);
         if (!TryResolveComparisonCondition(condition.Terminator.Condition, definitions, out var comparison)
             || comparison.Operator != SsaBinaryOperator.LessThan
             || !IsInductionValue(comparison.Left, induction.ResultName, definitions, new HashSet<string>(StringComparer.Ordinal))
-            || !TryResolveEntryAvailableValue(comparison.Right, definitions, nonEntryValueNames, out var count)
+            || !TryResolvePreheaderAvailableValue(comparison.Right, definitions, loopLocalValueNames, out var count)
             || !CanRepresentRawPointerLoopByteLength(count, elementLayout: null, definitions))
         {
             return false;
@@ -1940,7 +1966,10 @@ internal sealed partial class LlvmFunctionBodyEmitter
             updateReference.Name,
             count,
             definitions,
-            nonEntryValueNames);
+            nonEntryValueNames,
+            availableValueNamesByBlock.TryGetValue(preheader.Id, out var availableValueNames)
+                ? availableValueNames
+                : CollectBlockValueNames(preheader));
         return true;
     }
 
@@ -1972,6 +2001,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 loop.InductionValueName,
                 loop.ValueDefinitions,
                 loop.NonEntryValueNames,
+                loop.AvailableValueNames,
                 out sourceBase,
                 out sourceElementType,
                 out var sourceAddressName,
@@ -2035,6 +2065,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 loop.InductionValueName,
                 loop.ValueDefinitions,
                 loop.NonEntryValueNames,
+                loop.AvailableValueNames,
                 requireMutablePointer: true,
                 out destinationBase,
                 out destinationElementType,
@@ -2218,7 +2249,8 @@ internal sealed partial class LlvmFunctionBodyEmitter
             updateReference.Name,
             count,
             definitions,
-            nonEntryValueNames);
+            nonEntryValueNames,
+            CollectBlockValueNames(entry));
         return true;
     }
 
@@ -2237,6 +2269,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 loop.InductionValueName,
                 loop.ValueDefinitions,
                 loop.NonEntryValueNames,
+                loop.AvailableValueNames,
                 requireMutablePointer: true,
                 out var destinationBase,
                 out var destinationElementType,
@@ -2248,6 +2281,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 loop.InductionValueName,
                 loop.ValueDefinitions,
                 loop.NonEntryValueNames,
+                loop.AvailableValueNames,
                 out var sourceBase,
                 out var sourceElementType,
                 out var sourceAddressName,
@@ -2317,6 +2351,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 loop.InductionValueName,
                 loop.ValueDefinitions,
                 loop.NonEntryValueNames,
+                loop.AvailableValueNames,
                 requireMutablePointer: true,
                 out var destinationBase,
                 out var destinationElementType,
@@ -2598,6 +2633,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         string inductionValueName,
         IReadOnlyDictionary<string, SsaRValue> definitions,
         ISet<string> nonEntryValueNames,
+        ISet<string> availableValueNames,
         bool requireMutablePointer,
         out SsaValue basePointer,
         out StarkTypeSymbol elementType,
@@ -2617,7 +2653,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
             || elementAddress.Index is null
             || elementAddress.ConstantIndex is not null
             || !IsInductionValue(elementAddress.Index, inductionValueName, definitions, new HashSet<string>(StringComparer.Ordinal))
-            || !TryResolveEntryAvailableValue(elementAddress.Address, definitions, nonEntryValueNames, out var resolvedBasePointer))
+            || !TryResolveLoopAvailableBaseValue(elementAddress.Address, definitions, nonEntryValueNames, availableValueNames, out var resolvedBasePointer))
         {
             return false;
         }
@@ -2633,6 +2669,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         string inductionValueName,
         IReadOnlyDictionary<string, SsaRValue> definitions,
         ISet<string> nonEntryValueNames,
+        ISet<string> availableValueNames,
         bool requireMutablePointer,
         out SsaValue baseValue,
         out StarkTypeSymbol elementType,
@@ -2645,6 +2682,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 inductionValueName,
                 definitions,
                 nonEntryValueNames,
+                availableValueNames,
                 requireMutablePointer,
                 out baseValue,
                 out elementType,
@@ -2672,6 +2710,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         string inductionValueName,
         IReadOnlyDictionary<string, SsaRValue> definitions,
         ISet<string> nonEntryValueNames,
+        ISet<string> availableValueNames,
         out SsaValue sourceBase,
         out StarkTypeSymbol sourceElementType,
         out string sourceAddressName,
@@ -2686,6 +2725,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                     inductionValueName,
                     definitions,
                     nonEntryValueNames,
+                    availableValueNames,
                     requireMutablePointer: false,
                     out sourceBase,
                     out sourceElementType,
@@ -2883,6 +2923,106 @@ internal sealed partial class LlvmFunctionBodyEmitter
         return true;
     }
 
+    private static IReadOnlyDictionary<int, ISet<string>> BuildAvailableValueNamesByBlock(
+        SsaFunction function,
+        IReadOnlyDictionary<int, SsaBasicBlock> blocksById)
+    {
+        var blockIds = function.Blocks.Select(static block => block.Id).ToArray();
+        var allBlockIds = blockIds.ToHashSet();
+        var predecessors = BuildPredecessorSets(function);
+        var dominators = new Dictionary<int, HashSet<int>>();
+        foreach (var blockId in blockIds)
+        {
+            dominators[blockId] = blockId == function.EntryBlockId
+                ? [blockId]
+                : new HashSet<int>(allBlockIds);
+        }
+
+        var changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach (var blockId in blockIds)
+            {
+                if (blockId == function.EntryBlockId)
+                {
+                    continue;
+                }
+
+                var blockPredecessors = predecessors.TryGetValue(blockId, out var values)
+                    ? values
+                    : [];
+                HashSet<int> next;
+                if (blockPredecessors.Count == 0)
+                {
+                    next = [blockId];
+                }
+                else
+                {
+                    next = new HashSet<int>(allBlockIds);
+                    foreach (var predecessor in blockPredecessors)
+                    {
+                        if (dominators.TryGetValue(predecessor, out var predecessorDominators))
+                        {
+                            next.IntersectWith(predecessorDominators);
+                        }
+                    }
+
+                    next.Add(blockId);
+                }
+
+                if (!dominators[blockId].SetEquals(next))
+                {
+                    dominators[blockId] = next;
+                    changed = true;
+                }
+            }
+        }
+
+        var availableByBlock = new Dictionary<int, ISet<string>>();
+        foreach (var block in function.Blocks)
+        {
+            var available = new HashSet<string>(StringComparer.Ordinal);
+            if (dominators.TryGetValue(block.Id, out var blockDominators))
+            {
+                foreach (var dominatingBlock in function.Blocks)
+                {
+                    if (blockDominators.Contains(dominatingBlock.Id))
+                    {
+                        available.UnionWith(CollectBlockValueNames(dominatingBlock));
+                    }
+                }
+            }
+            else if (blocksById.TryGetValue(block.Id, out var knownBlock))
+            {
+                available.UnionWith(CollectBlockValueNames(knownBlock));
+            }
+
+            availableByBlock[block.Id] = available;
+        }
+
+        return availableByBlock;
+    }
+
+    private static IReadOnlyDictionary<int, HashSet<int>> BuildPredecessorSets(SsaFunction function)
+    {
+        var predecessors = function.Blocks.ToDictionary(
+            static block => block.Id,
+            static _ => new HashSet<int>());
+        foreach (var block in function.Blocks)
+        {
+            foreach (var target in block.Terminator.Targets)
+            {
+                if (predecessors.TryGetValue(target, out var targetPredecessors))
+                {
+                    targetPredecessors.Add(block.Id);
+                }
+            }
+        }
+
+        return predecessors;
+    }
+
     private static bool TryGetPhiIncoming(SsaPhi phi, int predecessorBlockId, out SsaValue value)
     {
         foreach (var incoming in phi.Incomings)
@@ -3070,6 +3210,108 @@ internal sealed partial class LlvmFunctionBodyEmitter
             && Equals(resolvedLeft, resolvedRight);
     }
 
+    private static bool TryResolvePreheaderAvailableValue(
+        SsaValue value,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> loopLocalValueNames,
+        out SsaValue resolved)
+    {
+        return TryResolvePreheaderAvailableValue(
+            value,
+            definitions,
+            loopLocalValueNames,
+            new HashSet<string>(StringComparer.Ordinal),
+            out resolved);
+    }
+
+    private static bool TryResolvePreheaderAvailableValue(
+        SsaValue value,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> loopLocalValueNames,
+        ISet<string> visitedValueNames,
+        out SsaValue resolved)
+    {
+        switch (value)
+        {
+            case SsaIntegerConstant
+                or SsaFloatConstant
+                or SsaStringConstant
+                or SsaBoolConstant
+                or SsaNullConstant
+                or SsaGlobalAddressValue
+                or SsaFunctionAddressValue:
+                resolved = value;
+                return true;
+            case SsaValueReference reference:
+                if (!visitedValueNames.Add(reference.Name)
+                    || loopLocalValueNames.Contains(reference.Name))
+                {
+                    resolved = null!;
+                    return false;
+                }
+
+                if (definitions.TryGetValue(reference.Name, out var definition))
+                {
+                    if (definition is SsaUseRValue use)
+                    {
+                        return TryResolvePreheaderAvailableValue(
+                            use.Value,
+                            definitions,
+                            loopLocalValueNames,
+                            visitedValueNames,
+                            out resolved);
+                    }
+
+                    if (definition is SsaConvertRValue convert
+                        && CanPreserveIntegerRangeThroughConversion(convert)
+                        && TryResolvePreheaderAvailableValue(
+                            convert.Operand,
+                            definitions,
+                            loopLocalValueNames,
+                            visitedValueNames,
+                            out _))
+                    {
+                        resolved = value;
+                        return true;
+                    }
+
+                    if (definition is SsaBinaryRValue binary && IsAddZero(binary, definitions))
+                    {
+                        return TryResolvePreheaderAvailableValue(
+                            IsZeroIntegerValue(binary.Left, definitions, new HashSet<string>(StringComparer.Ordinal))
+                                ? binary.Right
+                                : binary.Left,
+                            definitions,
+                            loopLocalValueNames,
+                            visitedValueNames,
+                            out resolved);
+                    }
+                }
+
+                resolved = value;
+                return true;
+            default:
+                resolved = null!;
+                return false;
+        }
+    }
+
+    private static bool TryResolveLoopAvailableBaseValue(
+        SsaValue value,
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> nonEntryValueNames,
+        ISet<string> availableValueNames,
+        out SsaValue resolved)
+    {
+        if (value is SsaValueReference reference && availableValueNames.Contains(reference.Name))
+        {
+            resolved = value;
+            return true;
+        }
+
+        return TryResolveEntryAvailableValue(value, definitions, nonEntryValueNames, out resolved);
+    }
+
     private static bool IsAddZero(
         SsaBinaryRValue binary,
         IReadOnlyDictionary<string, SsaRValue> definitions)
@@ -3190,6 +3432,9 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 return TryResolveParameterNameFromAddress(function, load.Address, definitions, out parameterName);
             case SsaMakeSliceFromPointerRValue makeSlice:
                 return TryResolveParameterName(function, makeSlice.Pointer, definitions, out parameterName);
+            case SsaCallRValue { Arguments.Count: 1 } call
+                when IsTextDataPointerFunctionName(call.FunctionName):
+                return TryResolveParameterName(function, call.Arguments[0], definitions, out parameterName);
             case SsaElementAddressRValue elementAddress:
                 return TryResolveParameterName(function, elementAddress.Address, definitions, out parameterName);
             case SsaSliceElementAddressRValue sliceElementAddress:
@@ -3200,6 +3445,20 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 parameterName = string.Empty;
                 return false;
         }
+    }
+
+    private static bool IsTextDataPointerFunctionName(string functionName)
+    {
+        return string.Equals(functionName, "AsciiData", StringComparison.Ordinal)
+            || string.Equals(functionName, "UnicodeData", StringComparison.Ordinal)
+            || string.Equals(functionName, "System.Text.AsciiData", StringComparison.Ordinal)
+            || string.Equals(functionName, "System.Text.UnicodeData", StringComparison.Ordinal)
+            || string.Equals(functionName, "System_Text_AsciiData", StringComparison.Ordinal)
+            || string.Equals(functionName, "System_Text_UnicodeData", StringComparison.Ordinal)
+            || functionName.EndsWith(".AsciiData", StringComparison.Ordinal)
+            || functionName.EndsWith(".UnicodeData", StringComparison.Ordinal)
+            || functionName.EndsWith("_AsciiData", StringComparison.Ordinal)
+            || functionName.EndsWith("_UnicodeData", StringComparison.Ordinal);
     }
 
     private static bool TryResolveParameterNameFromAddress(
@@ -3357,6 +3616,22 @@ internal sealed partial class LlvmFunctionBodyEmitter
         return names;
     }
 
+    private static ISet<string> CollectBlockValueNames(SsaBasicBlock block)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var phi in block.Phis)
+        {
+            names.Add(phi.ResultName);
+        }
+
+        foreach (var instruction in block.Instructions.OfType<SsaValueInstruction>())
+        {
+            names.Add(instruction.ResultName);
+        }
+
+        return names;
+    }
+
     private enum RawPointerLoopIntrinsicKind
     {
         Memcpy,
@@ -3403,5 +3678,6 @@ internal sealed partial class LlvmFunctionBodyEmitter
         string UpdateValueName,
         SsaValue Count,
         IReadOnlyDictionary<string, SsaRValue> ValueDefinitions,
-        ISet<string> NonEntryValueNames);
+        ISet<string> NonEntryValueNames,
+        ISet<string> AvailableValueNames);
 }

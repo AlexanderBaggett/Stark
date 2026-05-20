@@ -1,6 +1,6 @@
 import System
 import System.Text
-module Benchmarks.Text.AsciiToUnicodeConversionLargeLiteral
+module Benchmarks.Text.AsciiToUnicodeLargeLiteralSpecialization
 
 export unsafe ffi fn i32[min max] main() {
     stack mut i32[min max][80] unicodeBuffer = {

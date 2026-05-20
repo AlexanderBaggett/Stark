@@ -1618,7 +1618,9 @@ internal sealed class SemanticValidator
 
         var whenTrue = EvaluateExpression(expression.expression(0), scope, function, effects, summary, allowFunctionReference: false, observation);
         var whenFalse = EvaluateExpression(expression.expression(1), scope, function, effects, summary, allowFunctionReference: false, observation);
-        return new ValidationValue(FindCommonType(whenTrue.Type, whenFalse.Type));
+        return new ValidationValue(
+            FindCommonType(whenTrue.Type, whenFalse.Type),
+            HasConstProvenance: HasConstProvenance(whenTrue) && HasConstProvenance(whenFalse));
     }
 
     private ValidationValue EvaluateLogicalOrExpression(

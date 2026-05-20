@@ -47,13 +47,21 @@ public static class DefaultCompilerPipeline
             .Add(new PropagateSsaConstantsPass())
             .Add(new DevirtualizeSsaIrPass())
             .Add(new InlineSsaIrPass())
+            .Add(new CseConstGraphCallsSsaPass())
+            .Add(new OptimizeConstLookupTablesSsaPass())
             .Add(new SsaValueFactsPass())
+            .Add(new OptimizeSsaDynamicStoragePass())
+            .Add(new OptimizeSsaDynamicAppendLoopsPass())
+            .Add(new SpecializeConstStdlibHelpersSsaPass())
             .Add(new SpecializeAsciiToUnicodeLiteralsSsaPass())
             .Add(new SpecializeConstantTextFormattingSsaPass())
             .Add(new PruneSsaBranchesPass())
             .Add(new OptimizeSsaMemoryPass())
+            .Add(new OptimizeSsaAggregateConstructionPass())
+            .Add(new OptimizeSsaOwnershipTrafficPass())
             .Add(new ScalarReplaceSsaAggregatesPass())
             .Add(new ShapeSsaBranchesPass())
+            .Add(new FoldIntegerArithmeticSsaPass())
             .Add(new LowerToAbiPass())
             .Add(new ValidateSsaIrPass())
             .Add(new EmitLlvmIrPass())
@@ -3979,7 +3987,7 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["load-modules", "module-graph", "type-check", "enum-layout", "lower-hir"];
+        public IReadOnlyList<string> Dependencies => ["load-modules", "module-graph", "type-check", "enum-layout", "lower-hir", "ownership-validate"];
 
         public void Execute(CompilerPassContext context)
         {
@@ -3988,7 +3996,8 @@ public static class DefaultCompilerPipeline
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
             var enumLayoutModel = context.Artifacts.GetRequired(CompilerArtifactKeys.EnumLayoutModel);
             var hir = context.Artifacts.GetRequired(CompilerArtifactKeys.HighLevelIr);
-            var mir = new MidLevelIrLowerer(context, loadedModules, moduleGraph, typeModel, enumLayoutModel).Lower(hir);
+            var ownership = context.Artifacts.GetRequired(CompilerArtifactKeys.OwnershipValidation);
+            var mir = new MidLevelIrLowerer(context, loadedModules, moduleGraph, typeModel, enumLayoutModel, ownership).Lower(hir);
             context.Artifacts.Set(CompilerArtifactKeys.MidLevelIr, mir);
             EmitFallbackLogDiagnostics(context, "STK5000", LoweringFallbackEventIds);
         }
@@ -4012,6 +4021,28 @@ public static class DefaultCompilerPipeline
 
             var refinedOwnership = new NonLexicalBorrowLifetimeValidator(context, mir, typeModel, ownershipModel).Validate();
             context.Artifacts.Set(CompilerArtifactKeys.OwnershipValidation, refinedOwnership);
+            context.Artifacts.Set(CompilerArtifactKeys.MidLevelIr, AttachOwnershipSummaries(mir, refinedOwnership));
+        }
+
+        private static MidLevelIrModule AttachOwnershipSummaries(
+            MidLevelIrModule mir,
+            OwnershipValidationModel ownership)
+        {
+            var changed = false;
+            var functions = mir.Functions
+                .Select(function =>
+                {
+                    var next = ownership.Functions.TryGetValue(function.Name, out var summary)
+                        ? function with { Ownership = summary }
+                        : function;
+                    changed |= !ReferenceEquals(next, function);
+                    return next;
+                })
+                .ToArray();
+
+            return changed
+                ? mir with { Functions = functions }
+                : mir;
         }
     }
 
@@ -4084,7 +4115,7 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["type-check", "lower-mir"];
+        public IReadOnlyList<string> Dependencies => ["type-check", "lower-mir", "borrow-liveness"];
 
         public void Execute(CompilerPassContext context)
         {
@@ -4575,6 +4606,43 @@ public static class DefaultCompilerPipeline
         }
     }
 
+    private sealed class CseConstGraphCallsSsaPass : ICompilerPass
+    {
+        public string Id => "cse-const-graph-calls-ssa";
+
+        public CompilerPhase Phase => CompilerPhase.Lowering;
+
+        public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
+
+        public IReadOnlyList<string> Dependencies => ["inline-ssa", "refine-function-effects", "semantic-validate", "type-check"];
+
+        public void Execute(CompilerPassContext context)
+        {
+            var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
+            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
+            {
+                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
+                return;
+            }
+
+            var effectModel = context.Artifacts.GetRequired(CompilerArtifactKeys.FunctionEffects);
+            var semanticValidation = context.Artifacts.GetRequired(CompilerArtifactKeys.SemanticValidation);
+            var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
+            var optimized = new SsaConstGraphCallCseOptimizer(
+                effectModel,
+                semanticValidation,
+                typeModel).Optimize(ssa);
+            if (ReferenceEquals(optimized, ssa))
+            {
+                return;
+            }
+
+            var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(optimized);
+            var propagated = new SsaConstantPropagator().Optimize(cleaned);
+            context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, propagated);
+        }
+    }
+
     private sealed class SsaValueFactsPass : ICompilerPass
     {
         public string Id => "value-facts";
@@ -4583,12 +4651,20 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["inline-ssa"];
+        public IReadOnlyList<string> Dependencies =>
+            ["const-lookup-tables-ssa", "semantic-validate", "load-modules", "specialization-codegen-strategy"];
 
         public void Execute(CompilerPassContext context)
         {
             var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
-            var facts = new SsaValueFactAnalyzer().Analyze(ssa);
+            var semanticValidation = context.Artifacts.GetRequired(CompilerArtifactKeys.SemanticValidation);
+            var loadedModules = context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules);
+            var specializationCodegenStrategy = context.Artifacts.GetRequired(CompilerArtifactKeys.SpecializationCodegenStrategy);
+            var directCallParameterEffects = SsaDynamicStorageCallFactPolicy.BuildDirectCallParameterEffects(
+                semanticValidation,
+                loadedModules,
+                specializationCodegenStrategy);
+            var facts = new SsaValueFactAnalyzer(directCallParameterEffects).Analyze(ssa);
             context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, facts);
             context.Logs.Info(
                 category: "optimization",
@@ -4615,6 +4691,7 @@ public static class DefaultCompilerPipeline
             var initializedPrefixCount = 0;
             var textLiteralPayloadCount = 0;
             var boundedRawPointerRegionCount = 0;
+            var dynamicStorageRegionCount = 0;
             var blockEntryBlockCount = 0;
             var blockEntryFactCount = 0;
             var blockExitBlockCount = 0;
@@ -4674,6 +4751,11 @@ public static class DefaultCompilerPipeline
                     {
                         boundedRawPointerRegionCount++;
                     }
+
+                    if (valueFacts.DynamicStorageRegionKind != SsaFactLatticeKind.Unknown)
+                    {
+                        dynamicStorageRegionCount++;
+                    }
                 }
 
                 if (function.BlockEntryValueFacts is { } blockEntryFacts)
@@ -4703,10 +4785,43 @@ public static class DefaultCompilerPipeline
                 ("initializedPrefixes", initializedPrefixCount.ToString(CultureInfo.InvariantCulture)),
                 ("textLiteralPayloads", textLiteralPayloadCount.ToString(CultureInfo.InvariantCulture)),
                 ("boundedRawPointerRegions", boundedRawPointerRegionCount.ToString(CultureInfo.InvariantCulture)),
+                ("dynamicStorageRegions", dynamicStorageRegionCount.ToString(CultureInfo.InvariantCulture)),
                 ("blockEntryBlocks", blockEntryBlockCount.ToString(CultureInfo.InvariantCulture)),
                 ("blockEntryFacts", blockEntryFactCount.ToString(CultureInfo.InvariantCulture)),
                 ("blockExitBlocks", blockExitBlockCount.ToString(CultureInfo.InvariantCulture)),
                 ("blockExitFacts", blockExitFactCount.ToString(CultureInfo.InvariantCulture)));
+        }
+    }
+
+    private sealed class OptimizeConstLookupTablesSsaPass : ICompilerPass
+    {
+        public string Id => "const-lookup-tables-ssa";
+
+        public CompilerPhase Phase => CompilerPhase.Lowering;
+
+        public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
+
+        public IReadOnlyList<string> Dependencies => ["cse-const-graph-calls-ssa", "type-check"];
+
+        public void Execute(CompilerPassContext context)
+        {
+            var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
+            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
+            {
+                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
+                return;
+            }
+
+            var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
+            var optimized = new SsaConstLookupTableOptimizer(typeModel).Optimize(ssa);
+            if (ReferenceEquals(optimized, ssa))
+            {
+                return;
+            }
+
+            var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(optimized);
+            var propagated = new SsaConstantPropagator().Optimize(cleaned);
+            context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, propagated);
         }
     }
 
@@ -4718,7 +4833,7 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["value-facts"];
+        public IReadOnlyList<string> Dependencies => ["specialize-const-stdlib-helpers-ssa"];
 
         public void Execute(CompilerPassContext context)
         {
@@ -4738,6 +4853,123 @@ public static class DefaultCompilerPipeline
 
             context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, specialized);
             context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer().Analyze(specialized));
+        }
+    }
+
+    private sealed class SpecializeConstStdlibHelpersSsaPass : ICompilerPass
+    {
+        public string Id => "specialize-const-stdlib-helpers-ssa";
+
+        public CompilerPhase Phase => CompilerPhase.Lowering;
+
+        public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
+
+        public IReadOnlyList<string> Dependencies => ["dynamic-storage-ssa", "type-check"];
+
+        public void Execute(CompilerPassContext context)
+        {
+            var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
+            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
+            {
+                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
+                return;
+            }
+
+            var facts = context.Artifacts.GetRequired(CompilerArtifactKeys.SsaValueFacts);
+            var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
+            var specialized = new SsaConstStdlibHelperSpecializer(
+                typeModel,
+                context.Options.TargetInfo).Optimize(ssa, facts);
+            if (ReferenceEquals(specialized, ssa))
+            {
+                return;
+            }
+
+            var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(specialized);
+            var propagated = new SsaConstantPropagator().Optimize(cleaned);
+            context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, propagated);
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer().Analyze(propagated));
+        }
+    }
+
+    private sealed class OptimizeSsaDynamicStoragePass : ICompilerPass
+    {
+        public string Id => "dynamic-storage-ssa";
+
+        public CompilerPhase Phase => CompilerPhase.Lowering;
+
+        public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
+
+        public IReadOnlyList<string> Dependencies =>
+            ["value-facts", "semantic-validate", "load-modules", "specialization-codegen-strategy"];
+
+        public void Execute(CompilerPassContext context)
+        {
+            var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
+            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
+            {
+                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
+                return;
+            }
+
+            var facts = context.Artifacts.GetRequired(CompilerArtifactKeys.SsaValueFacts);
+            var semanticValidation = context.Artifacts.GetRequired(CompilerArtifactKeys.SemanticValidation);
+            var loadedModules = context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules);
+            var specializationCodegenStrategy = context.Artifacts.GetRequired(CompilerArtifactKeys.SpecializationCodegenStrategy);
+            var directCallParameterEffects = SsaDynamicStorageCallFactPolicy.BuildDirectCallParameterEffects(
+                semanticValidation,
+                loadedModules,
+                specializationCodegenStrategy);
+            var optimized = new SsaDynamicStorageOptimizer(directCallParameterEffects).Optimize(ssa, facts);
+            if (ReferenceEquals(optimized, ssa))
+            {
+                return;
+            }
+
+            var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(optimized);
+            var propagated = new SsaConstantPropagator().Optimize(cleaned);
+            context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, propagated);
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer(directCallParameterEffects).Analyze(propagated));
+        }
+    }
+
+    private sealed class OptimizeSsaDynamicAppendLoopsPass : ICompilerPass
+    {
+        public string Id => "dynamic-append-loop-ssa";
+
+        public CompilerPhase Phase => CompilerPhase.Lowering;
+
+        public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
+
+        public IReadOnlyList<string> Dependencies =>
+            ["dynamic-storage-ssa", "semantic-validate", "load-modules", "specialization-codegen-strategy"];
+
+        public void Execute(CompilerPassContext context)
+        {
+            var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
+            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
+            {
+                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
+                return;
+            }
+
+            var optimized = new SsaDynamicAppendLoopOptimizer().Optimize(ssa);
+            if (ReferenceEquals(optimized, ssa))
+            {
+                return;
+            }
+
+            var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(optimized);
+            var propagated = new SsaConstantPropagator().Optimize(cleaned);
+            var semanticValidation = context.Artifacts.GetRequired(CompilerArtifactKeys.SemanticValidation);
+            var loadedModules = context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules);
+            var specializationCodegenStrategy = context.Artifacts.GetRequired(CompilerArtifactKeys.SpecializationCodegenStrategy);
+            var directCallParameterEffects = SsaDynamicStorageCallFactPolicy.BuildDirectCallParameterEffects(
+                semanticValidation,
+                loadedModules,
+                specializationCodegenStrategy);
+            context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, propagated);
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer(directCallParameterEffects).Analyze(propagated));
         }
     }
 
@@ -4845,7 +5077,7 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["memory-opt-ssa"];
+        public IReadOnlyList<string> Dependencies => ["ownership-traffic-ssa"];
 
         public void Execute(CompilerPassContext context)
         {
@@ -4858,6 +5090,71 @@ public static class DefaultCompilerPipeline
             }
 
             var optimized = new SsaScalarReplacementOptimizer(effectModel).Optimize(ssa);
+            if (ReferenceEquals(optimized, ssa))
+            {
+                return;
+            }
+
+            var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(optimized);
+            var propagated = new SsaConstantPropagator().Optimize(cleaned);
+            context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, propagated);
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer().Analyze(propagated));
+        }
+    }
+
+    private sealed class OptimizeSsaOwnershipTrafficPass : ICompilerPass
+    {
+        public string Id => "ownership-traffic-ssa";
+
+        public CompilerPhase Phase => CompilerPhase.Lowering;
+
+        public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
+
+        public IReadOnlyList<string> Dependencies => ["aggregate-construction-ssa"];
+
+        public void Execute(CompilerPassContext context)
+        {
+            var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
+            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
+            {
+                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
+                return;
+            }
+
+            var optimized = new SsaOwnershipTrafficOptimizer().Optimize(ssa);
+            if (ReferenceEquals(optimized, ssa))
+            {
+                return;
+            }
+
+            var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(optimized);
+            var propagated = new SsaConstantPropagator().Optimize(cleaned);
+            context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, propagated);
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer().Analyze(propagated));
+        }
+    }
+
+    private sealed class OptimizeSsaAggregateConstructionPass : ICompilerPass
+    {
+        public string Id => "aggregate-construction-ssa";
+
+        public CompilerPhase Phase => CompilerPhase.Lowering;
+
+        public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
+
+        public IReadOnlyList<string> Dependencies => ["memory-opt-ssa", "type-check"];
+
+        public void Execute(CompilerPassContext context)
+        {
+            var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
+            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
+            {
+                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
+                return;
+            }
+
+            var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
+            var optimized = new SsaAggregateConstructionStoreOptimizer(typeModel.NamedTypes).Optimize(ssa);
             if (ReferenceEquals(optimized, ssa))
             {
                 return;
@@ -4895,6 +5192,46 @@ public static class DefaultCompilerPipeline
         }
     }
 
+    private sealed class FoldIntegerArithmeticSsaPass : ICompilerPass
+    {
+        public string Id => "arithmetic-fold-ssa";
+
+        public CompilerPhase Phase => CompilerPhase.Lowering;
+
+        public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
+
+        public IReadOnlyList<string> Dependencies =>
+            ["shape-branches", "semantic-validate", "load-modules", "specialization-codegen-strategy"];
+
+        public void Execute(CompilerPassContext context)
+        {
+            var ssa = context.Artifacts.GetRequired(CompilerArtifactKeys.OptimizedSsaIr);
+            if (context.Options.OptimizationLevel is CompilerOptimizationLevel.O0 or CompilerOptimizationLevel.Og)
+            {
+                context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, ssa);
+                return;
+            }
+
+            var folded = new SsaIntegerArithmeticFolder().Optimize(ssa);
+            if (ReferenceEquals(folded, ssa))
+            {
+                return;
+            }
+
+            var cleaned = new SsaCleanupOptimizer(enableSelectPredication: false).Optimize(folded);
+            var propagated = new SsaConstantPropagator().Optimize(cleaned);
+            var semanticValidation = context.Artifacts.GetRequired(CompilerArtifactKeys.SemanticValidation);
+            var loadedModules = context.Artifacts.GetRequired(CompilerArtifactKeys.LoadedModules);
+            var specializationCodegenStrategy = context.Artifacts.GetRequired(CompilerArtifactKeys.SpecializationCodegenStrategy);
+            var directCallParameterEffects = SsaDynamicStorageCallFactPolicy.BuildDirectCallParameterEffects(
+                semanticValidation,
+                loadedModules,
+                specializationCodegenStrategy);
+            context.Artifacts.Set(CompilerArtifactKeys.OptimizedSsaIr, propagated);
+            context.Artifacts.Set(CompilerArtifactKeys.SsaValueFacts, new SsaValueFactAnalyzer(directCallParameterEffects).Analyze(propagated));
+        }
+    }
+
     private sealed class LowerToAbiPass : ICompilerPass
     {
         public string Id => "lower-abi";
@@ -4903,7 +5240,7 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["syntax-model", "type-check", "enum-layout", "refine-function-effects", "lower-hir", "shape-branches"];
+        public IReadOnlyList<string> Dependencies => ["syntax-model", "type-check", "enum-layout", "refine-function-effects", "lower-hir", "arithmetic-fold-ssa"];
 
         public void Execute(CompilerPassContext context)
         {
@@ -4926,7 +5263,7 @@ public static class DefaultCompilerPipeline
 
         public PassExecutionMode ExecutionMode => PassExecutionMode.SkipOnErrors;
 
-        public IReadOnlyList<string> Dependencies => ["type-check", "load-modules", "enum-layout", "shape-branches", "lower-abi", "specialization-codegen-strategy"];
+        public IReadOnlyList<string> Dependencies => ["type-check", "load-modules", "enum-layout", "arithmetic-fold-ssa", "lower-abi", "specialization-codegen-strategy"];
 
         public void Execute(CompilerPassContext context)
         {

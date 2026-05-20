@@ -452,6 +452,592 @@ public sealed class CompilerPipelineOptimizeSsaTests
     }
 
     [Fact]
+    public void ArithmeticFoldSsaFoldsRepeatedUnknownAddsToMultiply()
+    {
+        var run = CompileRunAfterArithmeticFold(
+            """
+            module Demo
+
+            fn i32[min max] Run(i32[min max] value) {
+                return value + value + value;
+            }
+            """);
+
+        var binaries = GetBinaryRValues(run);
+        Assert.Contains(
+            binaries,
+            static binary => binary.Operator == SsaBinaryOperator.Multiply
+                             && binary.Right is SsaIntegerConstant { Value: var value }
+                             && value == new System.Numerics.BigInteger(3));
+        Assert.DoesNotContain(binaries, static binary => binary.Operator == SsaBinaryOperator.Add);
+    }
+
+    [Fact]
+    public void ArithmeticFoldSsaFoldsLongRepeatedAddRunToSingleMultiply()
+    {
+        var run = CompileRunAfterArithmeticFold(
+            """
+            module Demo
+
+            fn i32[min max] Run(i32[min max] value) {
+                return value + value + value + value + value + value;
+            }
+            """);
+
+        var multiply = Assert.Single(GetBinaryRValues(run), static binary => binary.Operator == SsaBinaryOperator.Multiply);
+        var coefficient = Assert.IsType<SsaIntegerConstant>(multiply.Right);
+        Assert.Equal(new System.Numerics.BigInteger(6), coefficient.Value);
+    }
+
+    [Fact]
+    public void ArithmeticFoldSsaPreservesTrailingConstantsAfterRepeatedAddRun()
+    {
+        var run = CompileRunAfterArithmeticFold(
+            """
+            module Demo
+
+            fn i32[min max] Run(i32[min max] value) {
+                return value + value + value + 5;
+            }
+            """);
+
+        var binaries = GetBinaryRValues(run);
+        Assert.Contains(
+            binaries,
+            static binary => binary.Operator == SsaBinaryOperator.Multiply
+                             && binary.Right is SsaIntegerConstant { Value: var value }
+                             && value == new System.Numerics.BigInteger(3));
+        Assert.Contains(
+            binaries,
+            static binary => binary.Operator == SsaBinaryOperator.Add
+                             && binary.Right is SsaIntegerConstant { Value: var value }
+                             && value == new System.Numerics.BigInteger(5));
+    }
+
+    [Fact]
+    public void ArithmeticFoldSsaFoldsMultipleContiguousRepeatedTerms()
+    {
+        var run = CompileRunAfterArithmeticFold(
+            """
+            module Demo
+
+            fn i32[min max] Run(i32[min max] x, i32[min max] y) {
+                return x + x + y + y + y + 4;
+            }
+            """);
+
+        var coefficients = GetBinaryRValues(run)
+            .Where(static binary => binary.Operator == SsaBinaryOperator.Multiply)
+            .Select(static binary => Assert.IsType<SsaIntegerConstant>(binary.Right).Value)
+            .Order()
+            .ToArray();
+
+        Assert.Equal([new System.Numerics.BigInteger(2), new System.Numerics.BigInteger(3)], coefficients);
+    }
+
+    [Fact]
+    public void ArithmeticFoldSsaCombinesSafeConstantCoefficientTerms()
+    {
+        var run = CompileRunAfterArithmeticFold(
+            """
+            module Demo
+
+            fn i16[min max] Run(i16[-1000 1000] x) {
+                return (x * 2) + (x * 3) - x;
+            }
+            """);
+
+        var multiply = Assert.Single(GetBinaryRValues(run), static binary => binary.Operator == SsaBinaryOperator.Multiply);
+        var coefficient = Assert.IsType<SsaIntegerConstant>(multiply.Right);
+        Assert.Equal(new System.Numerics.BigInteger(4), coefficient.Value);
+    }
+
+    [Fact]
+    public void ArithmeticFoldSsaDoesNotCombineUnsafeConstantCoefficientTerms()
+    {
+        var run = CompileRunAfterArithmeticFold(
+            """
+            module Demo
+
+            fn i32[min max] Run(i32[min max] x) {
+                return (x * 2) + (x * 3) - x;
+            }
+            """);
+
+        Assert.DoesNotContain(
+            GetBinaryRValues(run),
+            static binary => binary.Operator == SsaBinaryOperator.Multiply
+                             && binary.Right is SsaIntegerConstant { Value: var value }
+                             && value == new System.Numerics.BigInteger(4));
+    }
+
+    [Fact]
+    public void ArithmeticFoldSsaRecognizesSafeLeftShiftCoefficients()
+    {
+        var run = CompileRunAfterArithmeticFold(
+            """
+            module Demo
+
+            fn u16[min max] Run(u16[0 1000] x) {
+                return (x << 1) + x + x;
+            }
+            """);
+
+        var multiply = Assert.Single(GetBinaryRValues(run), static binary => binary.Operator == SsaBinaryOperator.Multiply);
+        var coefficient = Assert.IsType<SsaIntegerConstant>(multiply.Right);
+        Assert.Equal(new System.Numerics.BigInteger(4), coefficient.Value);
+    }
+
+    [Fact]
+    public void ArithmeticFoldSsaDoesNotTreatUnsafeLeftShiftAsCoefficient()
+    {
+        var run = CompileRunAfterArithmeticFold(
+            """
+            module Demo
+
+            fn i32[min max] Run(i32[min max] x) {
+                return (x << 1) + x + x;
+            }
+            """);
+
+        var binaries = GetBinaryRValues(run);
+        Assert.Contains(binaries, static binary => binary.Operator == SsaBinaryOperator.ShiftLeft);
+        Assert.DoesNotContain(
+            binaries,
+            static binary => binary.Operator == SsaBinaryOperator.Multiply
+                             && binary.Right is SsaIntegerConstant { Value: var value }
+                             && value == new System.Numerics.BigInteger(4));
+    }
+
+    [Fact]
+    public void ArithmeticFoldSsaFoldsRepeatedUnaryNegatedTerms()
+    {
+        var run = CompileRunAfterArithmeticFold(
+            """
+            module Demo
+
+            fn i16[min max] Run(i16[-1000 1000] x) {
+                return -x + -x;
+            }
+            """);
+
+        var binaries = GetBinaryRValues(run);
+        Assert.Contains(
+            binaries,
+            static binary => binary.Operator == SsaBinaryOperator.Multiply
+                             && binary.Right is SsaIntegerConstant { Value: var value }
+                             && value == new System.Numerics.BigInteger(2));
+        Assert.Contains(binaries, static binary => binary.Operator == SsaBinaryOperator.Subtract);
+    }
+
+    [Fact]
+    public void ArithmeticFoldSsaCombinesSameSignConstantTail()
+    {
+        var run = CompileRunAfterArithmeticFold(
+            """
+            module Demo
+
+            fn i32[min max] Run(i32[min max] value) {
+                return value + 5 + 6;
+            }
+            """);
+
+        var add = Assert.Single(GetBinaryRValues(run), static binary => binary.Operator == SsaBinaryOperator.Add);
+        var constant = Assert.IsType<SsaIntegerConstant>(add.Right);
+        Assert.Equal(new System.Numerics.BigInteger(11), constant.Value);
+    }
+
+    [Fact]
+    public void ArithmeticFoldSsaDropsAdjacentZeroCoefficientTerms()
+    {
+        var run = CompileRunAfterArithmeticFold(
+            """
+            module Demo
+
+            fn i32[min max] Run(i32[min max] value) {
+                return value - value;
+            }
+            """);
+
+        var block = Assert.Single(run.Blocks);
+        var resultValue = Assert.IsType<SsaIntegerConstant>(block.Terminator.Value);
+        Assert.Equal(new System.Numerics.BigInteger(0), resultValue.Value);
+        Assert.Empty(GetBinaryRValues(run));
+    }
+
+    [Fact]
+    public void ArithmeticFoldSsaFoldsSafeRepeatedSubtractionRuns()
+    {
+        var run = CompileRunAfterArithmeticFold(
+            """
+            module Demo
+
+            fn i16[min max] Run(i16[-8000 8000] x, i16[-3000 3000] y) {
+                return x + x + x - y - y + 4;
+            }
+            """);
+
+        var binaries = GetBinaryRValues(run);
+        Assert.Contains(
+            binaries,
+            static binary => binary.Operator == SsaBinaryOperator.Multiply
+                             && binary.Right is SsaIntegerConstant { Value: var value }
+                             && value == new System.Numerics.BigInteger(3));
+        Assert.Contains(
+            binaries,
+            static binary => binary.Operator == SsaBinaryOperator.Multiply
+                             && binary.Right is SsaIntegerConstant { Value: var value }
+                             && value == new System.Numerics.BigInteger(2));
+        Assert.Contains(binaries, static binary => binary.Operator == SsaBinaryOperator.Subtract);
+    }
+
+    [Fact]
+    public void ArithmeticFoldSsaDoesNotFoldUnsafeRepeatedSubtractionRuns()
+    {
+        var run = CompileRunAfterArithmeticFold(
+            """
+            module Demo
+
+            fn i32[min max] Run(i32[min max] x, i32[min max] y) {
+                return x - y - y;
+            }
+            """);
+
+        Assert.DoesNotContain(
+            GetBinaryRValues(run),
+            static binary => binary.Operator == SsaBinaryOperator.Multiply);
+    }
+
+    [Fact]
+    public void ArithmeticFoldSsaDoesNotReassociateSeparatedOrdinaryTerms()
+    {
+        var run = CompileRunAfterArithmeticFold(
+            """
+            module Demo
+
+            fn i32[min max] Run(i32[min max] x, i32[min max] y) {
+                return x + y + x;
+            }
+            """);
+
+        var binaries = GetBinaryRValues(run);
+        Assert.Contains(binaries, static binary => binary.Operator == SsaBinaryOperator.Add);
+        Assert.DoesNotContain(binaries, static binary => binary.Operator == SsaBinaryOperator.Multiply);
+    }
+
+    [Fact]
+    public void ArithmeticFoldSsaFoldsWrappingAddRunsWithWrappingMultiply()
+    {
+        var run = CompileRunAfterArithmeticFold(
+            """
+            module Demo
+
+            fn i8[min max] Run(i8[min max] value) {
+                return value +% value +% value;
+            }
+            """);
+
+        var multiply = Assert.Single(GetBinaryRValues(run), static binary => binary.Operator == SsaBinaryOperator.WrappingMultiply);
+        var coefficient = Assert.IsType<SsaIntegerConstant>(multiply.Right);
+        Assert.Equal(new System.Numerics.BigInteger(3), coefficient.Value);
+    }
+
+    [Fact]
+    public void ArithmeticFoldSsaFoldsWrappingSubtractRunsWithWrappingMultiply()
+    {
+        var run = CompileRunAfterArithmeticFold(
+            """
+            module Demo
+
+            fn i8[min max] Run(i8[min max] x, i8[min max] y) {
+                return x +% x -% y -% y;
+            }
+            """);
+
+        var binaries = GetBinaryRValues(run);
+        Assert.Contains(
+            binaries,
+            static binary => binary.Operator == SsaBinaryOperator.WrappingMultiply
+                             && binary.Right is SsaIntegerConstant { Value: var value }
+                             && value == new System.Numerics.BigInteger(2));
+        Assert.Contains(binaries, static binary => binary.Operator == SsaBinaryOperator.WrappingSubtract);
+    }
+
+    [Fact]
+    public void ArithmeticFoldSsaDoesNotRewriteSaturatingAddChains()
+    {
+        var run = CompileRunAfterArithmeticFold(
+            """
+            module Demo
+
+            fn i32[min max] Run(i32[min max] value) {
+                return value +| value +| value;
+            }
+            """);
+
+        var binaries = GetBinaryRValues(run);
+        Assert.Contains(binaries, static binary => binary.Operator == SsaBinaryOperator.SaturatingAdd);
+        Assert.DoesNotContain(binaries, static binary => binary.Operator == SsaBinaryOperator.Multiply);
+    }
+
+    [Fact]
+    public void ArithmeticFoldSsaDoesNotRewriteSaturatingSubtractChains()
+    {
+        var run = CompileRunAfterArithmeticFold(
+            """
+            module Demo
+
+            fn i32[min max] Run(i32[min max] x, i32[min max] y) {
+                return x -| y -| y;
+            }
+            """);
+
+        var binaries = GetBinaryRValues(run);
+        Assert.Contains(binaries, static binary => binary.Operator == SsaBinaryOperator.SaturatingSubtract);
+        Assert.DoesNotContain(binaries, static binary => binary.Operator == SsaBinaryOperator.Multiply);
+    }
+
+    [Fact]
+    public void ArithmeticFoldSsaLeavesDebugOptimizedBuildsSourceShaped()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                fn i32[min max] Run(i32[min max] value) {
+                    return value + value + value;
+                }
+                """),
+            new CompilerOptions(
+                OptimizationLevel: CompilerOptimizationLevel.Og,
+                StopAfterPassId: "arithmetic-fold-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        var binaries = GetBinaryRValues(run);
+
+        Assert.Contains(binaries, static binary => binary.Operator == SsaBinaryOperator.Add);
+        Assert.DoesNotContain(binaries, static binary => binary.Operator == SsaBinaryOperator.Multiply);
+    }
+
+    [Fact]
+    public void ArithmeticFoldSsaOptimizesImportedGenericTypedTemplateAfterSourceBodyRemoval()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-arithmetic-fold-ssa-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public fn i32[min max] Scale<T>(T tag, i32[min max] value) {
+                    return value + value + value;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts,
+                            GenericTemplates = facadeModule.GenericTemplates,
+                            CompilerSections = new StarkPackageCompilerSectionsManifest(
+                                TypedInterface: facadeModule.TypedInterface,
+                                CompilerFacts: facadeModule.CompilerFacts,
+                                GenericTemplates: facadeModule.GenericTemplates),
+                            SourceSurface = new StarkPackageSourceSurfaceSection(
+                                Imports: facadeModule.EffectiveSourceSurface.Imports,
+                                ReExports: facadeModule.EffectiveSourceSurface.ReExports,
+                                Functions: [],
+                                Types: [],
+                                Globals: [],
+                                TypeAliases: [])
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32[min max] Run(i32[min max] value) {
+                        return Facade.Scale(true, value);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "arithmetic-fold-ssa"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+            Assert.NotNull(ssa);
+
+            var scale = Assert.Single(ssa.Functions, static function => function.Name.Contains("Facade_Scale", StringComparison.Ordinal));
+            Assert.Contains(
+                GetBinaryRValues(scale),
+                static binary => binary.Operator == SsaBinaryOperator.Multiply
+                                 && binary.Right is SsaIntegerConstant { Value: var value }
+                                 && value == new System.Numerics.BigInteger(3));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ArithmeticFoldSsaFoldsRepeatedMultiplicationRunToExponent()
+    {
+        var run = CompileRunAfterArithmeticFold(
+            """
+            module Demo
+
+            fn i32[min max] Run(i32[min max] value) {
+                return value * value * value * value;
+            }
+            """);
+
+        var exponent = Assert.Single(GetBinaryRValues(run), static binary => binary.Operator == SsaBinaryOperator.Exponent);
+        var exponentValue = Assert.IsType<SsaIntegerConstant>(exponent.Right);
+        Assert.Equal(new System.Numerics.BigInteger(4), exponentValue.Value);
+        Assert.DoesNotContain(GetBinaryRValues(run), static binary => binary.Operator == SsaBinaryOperator.Multiply);
+    }
+
+    [Fact]
+    public void ArithmeticFoldSsaGroupsIndependentRepeatedProductFactors()
+    {
+        var run = CompileRunAfterArithmeticFold(
+            """
+            module Demo
+
+            fn i32[min max] Run(i32[min max] x, i32[min max] y) {
+                return x * x * y * y * y;
+            }
+            """);
+
+        var exponents = GetBinaryRValues(run)
+            .Where(static binary => binary.Operator == SsaBinaryOperator.Exponent)
+            .Select(static binary => Assert.IsType<SsaIntegerConstant>(binary.Right).Value)
+            .Order()
+            .ToArray();
+
+        Assert.Equal([new System.Numerics.BigInteger(2), new System.Numerics.BigInteger(3)], exponents);
+        Assert.Contains(GetBinaryRValues(run), static binary => binary.Operator == SsaBinaryOperator.Multiply);
+    }
+
+    [Fact]
+    public void ArithmeticFoldSsaKeepsSeparatedProductFactorsSourceShaped()
+    {
+        var run = CompileRunAfterArithmeticFold(
+            """
+            module Demo
+
+            fn i32[min max] Run(i32[min max] x, i32[min max] y) {
+                return x * y * x;
+            }
+            """);
+
+        Assert.DoesNotContain(GetBinaryRValues(run), static binary => binary.Operator == SsaBinaryOperator.Exponent);
+    }
+
+    [Fact]
+    public void ArithmeticFoldSsaFoldsWrappingProductRunsToExponent()
+    {
+        var run = CompileRunAfterArithmeticFold(
+            """
+            module Demo
+
+            fn i8[min max] Run(i8[min max] value) {
+                return value *% value *% value;
+            }
+            """);
+
+        var exponent = Assert.Single(GetBinaryRValues(run), static binary => binary.Operator == SsaBinaryOperator.WrappingExponent);
+        var exponentValue = Assert.IsType<SsaIntegerConstant>(exponent.Right);
+        Assert.Equal(new System.Numerics.BigInteger(3), exponentValue.Value);
+    }
+
+    [Fact]
+    public void ArithmeticFoldSsaDoesNotRewriteSaturatingProductChains()
+    {
+        var run = CompileRunAfterArithmeticFold(
+            """
+            module Demo
+
+            fn i32[min max] Run(i32[min max] value) {
+                return value *| value *| value;
+            }
+            """);
+
+        var binaries = GetBinaryRValues(run);
+        Assert.Contains(binaries, static binary => binary.Operator == SsaBinaryOperator.SaturatingMultiply);
+        Assert.DoesNotContain(binaries, static binary => binary.Operator == SsaBinaryOperator.Exponent);
+    }
+
+    [Fact]
+    public void ArithmeticFoldSsaRenderShowsFoldedLinearAndProductShapes()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                fn i32[min max] Scale(i32[min max] value) {
+                    return value + value + value;
+                }
+
+                fn i32[min max] Power(i32[min max] value) {
+                    return value * value * value;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "arithmetic-fold-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var rendered = ArtifactTextRenderer.Render(ssa);
+        Assert.Contains("* 3", rendered, StringComparison.Ordinal);
+        Assert.Contains("** 3", rendered, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CleanupSsaForwardsAggregateFieldThroughMatchingBranchPhi()
     {
         var pipeline = DefaultCompilerPipeline.Create();
@@ -657,6 +1243,1021 @@ public sealed class CompilerPipelineOptimizeSsaTests
         var block = Assert.Single(run.Blocks);
         var resultValue = Assert.IsType<SsaIntegerConstant>(block.Terminator.Value);
         Assert.Equal(new System.Numerics.BigInteger(42), resultValue.Value);
+    }
+
+    [Fact]
+    public void AggregateConstructionSsaStoresFullConstructorsDirectlyIntoNonEscapedLocalFields()
+    {
+        const string source = """
+            module Demo
+
+            struct Pair {
+                i32[min max] Left;
+                i32[min max] Right;
+            }
+
+            fn i32[min max] Run() {
+                heap mut Pair value = new Pair() { Left = 1, Right = 2 };
+                return value.Left;
+            }
+            """;
+
+        var pipeline = DefaultCompilerPipeline.Create();
+        var before = pipeline.Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "memory-opt-ssa"));
+        Assert.True(before.Succeeded, string.Join(", ", before.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(before.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? beforeSsa));
+        Assert.NotNull(beforeSsa);
+        var beforeRun = Assert.Single(beforeSsa.Functions, static function => function.Name == "Run");
+        Assert.Contains(
+            beforeRun.Blocks.SelectMany(static block => block.Instructions).OfType<SsaStoreLocalInstruction>(),
+            static store => store.LocalName == "value" && store.LocalType.NamedType == "Pair");
+
+        var after = pipeline.Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "aggregate-construction-ssa"));
+        Assert.True(after.Succeeded, string.Join(", ", after.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(after.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? afterSsa));
+        Assert.NotNull(afterSsa);
+        var afterRun = Assert.Single(afterSsa.Functions, static function => function.Name == "Run");
+        Assert.DoesNotContain(
+            afterRun.Blocks.SelectMany(static block => block.Instructions).OfType<SsaStoreLocalInstruction>(),
+            static store => store.LocalName == "value" && store.LocalType.NamedType == "Pair");
+        Assert.True(
+            afterRun.Blocks
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaStoreIndirectInstruction>()
+                .Count(static store => store.ValueType.Kind == StarkTypeKind.Integer) >= 2);
+
+        var full = pipeline.Run(new CompilationInput(source));
+        Assert.True(full.Succeeded, string.Join(", ", full.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void AggregateConstructionSsaKeepsWholeStoreForRawEscapedLocal()
+    {
+        const string source = """
+            module Demo
+
+            struct Pair {
+                i32[min max] Left;
+                i32[min max] Right;
+            }
+
+            unsafe ffi fn void Observe(rawptr<Pair> pointer);
+
+            unsafe fn i32[min max] Run() {
+                heap mut Pair value = new Pair() { Left = 1, Right = 2 };
+                stack rawptr<Pair> pointer = &value;
+                Observe(pointer);
+                return value.Left;
+            }
+            """;
+
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "aggregate-construction-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.Contains(
+            run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaStoreLocalInstruction>(),
+            static store => store.LocalName == "value" && store.LocalType.NamedType == "Pair");
+    }
+
+    [Fact]
+    public void OwnershipTrafficSsaElidesDeadAggregateMoveTrafficForNonEscapedRoots()
+    {
+        const string source = """
+            module Demo
+
+            struct Pair {
+                i32[min max] Left;
+                i32[min max] Right;
+            }
+
+            fn void Run() {
+                heap mut Pair source = new Pair() { Left = 1, Right = 2 };
+                heap mut Pair destination = new Pair() { Left = 3, Right = 4 };
+                destination = source;
+                return;
+            }
+            """;
+
+        var pipeline = DefaultCompilerPipeline.Create();
+        var before = pipeline.Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "memory-opt-ssa"));
+        Assert.True(before.Succeeded, string.Join(", ", before.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(before.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? beforeSsa));
+        Assert.NotNull(beforeSsa);
+        var beforeRun = Assert.Single(beforeSsa.Functions, static function => function.Name == "Run");
+        Assert.Contains(
+            beforeRun.Blocks.SelectMany(static block => block.Instructions).OfType<SsaCopyMemoryInstruction>(),
+            static copy => copy.TransferKind == SsaMemoryTransferKind.Move);
+        Assert.Contains(
+            beforeRun.Blocks.SelectMany(static block => block.Instructions).OfType<SsaStoreLocalInstruction>(),
+            static store => store.LocalName == "source" && store.Value is SsaUndefValue);
+
+        var after = pipeline.Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "ownership-traffic-ssa"));
+        Assert.True(after.Succeeded, string.Join(", ", after.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(after.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? afterSsa));
+        Assert.NotNull(afterSsa);
+        var afterRun = Assert.Single(afterSsa.Functions, static function => function.Name == "Run");
+        Assert.DoesNotContain(
+            afterRun.Blocks.SelectMany(static block => block.Instructions).OfType<SsaCopyMemoryInstruction>(),
+            static copy => copy.TransferKind == SsaMemoryTransferKind.Move);
+        Assert.DoesNotContain(
+            afterRun.Blocks.SelectMany(static block => block.Instructions).OfType<SsaStoreLocalInstruction>(),
+            static store => store.LocalName == "source" && store.Value is SsaUndefValue);
+    }
+
+    [Fact]
+    public void OwnershipTrafficSsaKeepsMoveInvalidationForRawEscapedRoots()
+    {
+        const string source = """
+            module Demo
+
+            struct Pair {
+                i32[min max] Left;
+                i32[min max] Right;
+            }
+
+            unsafe ffi fn void Observe(rawptr<Pair> pointer);
+
+            fn void Consume(Pair value) {
+                return;
+            }
+
+            unsafe fn void Run() {
+                heap mut Pair source = new Pair() { Left = 1, Right = 2 };
+                stack rawptr<Pair> pointer = &source;
+                Consume(source);
+                Observe(pointer);
+                return;
+            }
+            """;
+
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "ownership-traffic-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.Contains(
+            run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaStoreLocalInstruction>(),
+            static store => store.LocalName == "source" && store.Value is SsaUndefValue);
+    }
+
+    [Fact]
+    public void InlineSsaPreservesOwnershipSummariesOnRewrittenFunctions()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                struct Box {
+                    i32[min max] Value;
+                }
+
+                inline finite law i32[min max] AddOne(i32[min max] value) {
+                    return value + 1;
+                }
+
+                fn void Consume(Box value) {
+                    return;
+                }
+
+                unsafe fn i32[min max] Run() {
+                    stack mut Box box = new Box() { Value = AddOne(0) };
+                    stack rawptr<Box> pointer = &box;
+                    Consume(box);
+                    box = new Box() { Value = AddOne(1) };
+                    return box.Value;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "inline-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.DoesNotContain(
+            run.Blocks
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaValueInstruction>()
+                .Select(static instruction => instruction.Value)
+                .OfType<SsaCallRValue>(),
+            static call => call.FunctionName == "AddOne");
+
+        Assert.NotNull(run.Ownership);
+        Assert.Contains(run.Ownership!.Events, static ev => ev.Kind == OwnershipEventKind.AddressTaken && ev.Place.RootName == "box");
+        Assert.Contains(run.Ownership.Events, static ev => ev.Kind == OwnershipEventKind.Move && ev.Place.RootName == "box");
+        Assert.Contains(run.Ownership.Events, static ev => ev.Kind == OwnershipEventKind.Reinitialize && ev.Place.RootName == "box");
+        Assert.Contains(run.Ownership.Roots, static root => root.Name == "box" && root.HasRawPointerEscape && root.HasMove);
+    }
+
+    [Fact]
+    public void DynamicStorageSsaElidesReserveWhenCapacityFactsProveNoop()
+    {
+        const string source = """
+            module Demo
+
+            unsafe fn u64[0 2 ** 63 - 1] Run() {
+                stack mut dynamic u32[0 2 ** 31 - 1] values = new(8);
+                values.Reserve(4);
+                return values.Capacity;
+            }
+            """;
+
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "dynamic-storage-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.DoesNotContain(
+            run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaDynamicStorageReserveRValue);
+    }
+
+    [Fact]
+    public void DynamicStorageSsaFoldsTryReserveWhenCapacityFactsProveSuccess()
+    {
+        const string source = """
+            module Demo
+
+            unsafe fn u64[0 2 ** 63 - 1] Run() {
+                stack mut dynamic u32[0 2 ** 31 - 1] values = new(8);
+                if (!values.TryReserve(4)) {
+                    return 1;
+                }
+
+                return values.Capacity;
+            }
+            """;
+
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "dynamic-storage-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.DoesNotContain(
+            run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaDynamicStorageTryReserveRValue);
+        Assert.DoesNotContain(
+            run.Blocks.Select(static block => block.Terminator),
+            static terminator => terminator.Value is SsaIntegerConstant integer
+                                 && integer.Value == System.Numerics.BigInteger.One);
+    }
+
+    [Fact]
+    public void DynamicStorageSsaKeepsTryReserveWhenCapacityMayBeInsufficient()
+    {
+        const string source = """
+            module Demo
+
+            unsafe fn u64[0 2 ** 63 - 1] Run() {
+                stack mut dynamic u32[0 2 ** 31 - 1] values = new(4);
+                if (!values.TryReserve(8)) {
+                    return 1;
+                }
+
+                return values.Capacity;
+            }
+            """;
+
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "dynamic-storage-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.Contains(
+            run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaDynamicStorageTryReserveRValue);
+    }
+
+    [Fact]
+    public void DynamicStorageSsaKeepsReserveAfterOpaqueDynamicOwnerCall()
+    {
+        const string source = """
+            module Demo
+
+            unsafe ffi fn void Observe(mut borrow dynamic u32[0 2 ** 31 - 1] values);
+
+            unsafe fn u64[0 2 ** 63 - 1] Run() {
+                stack mut dynamic u32[0 2 ** 31 - 1] values = new(8);
+                Observe(values);
+                values.Reserve(4);
+                return values.Capacity;
+            }
+            """;
+
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "dynamic-storage-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.Contains(
+            run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaDynamicStorageReserveRValue);
+    }
+
+    [Fact]
+    public void DynamicStorageSsaPreservesCapacityFactsAcrossFullInitSliceHelperCall()
+    {
+        const string source = """
+            module System.Memory
+
+            public enum MemoryError {
+                OutOfMemory,
+            }
+
+            public enum MemoryStatus {
+                Ok,
+                Err(MemoryError),
+            }
+
+            public inline finite MemoryStatus FillBytes(
+                init i8[min max][] destination,
+                i8[min max] value,
+                u64[0 2 ** 63 - 1] count);
+
+            unsafe fn u64[0 2 ** 63 - 1] Run() {
+                stack mut dynamic i8[min max] values = new(8);
+                stack init i8[min max][] tail = init values[values.Length, 4];
+                FillBytes(tail, 7, 4);
+                values.Reserve(2);
+                return values.Capacity;
+            }
+            """;
+
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "dynamic-storage-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.DoesNotContain(
+            run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaDynamicStorageReserveRValue);
+    }
+
+    [Fact]
+    public void DynamicStorageSsaDoesNotCommitLengthAfterUnrecognizedInitSliceCall()
+    {
+        const string source = """
+            module System.Memory
+
+            public enum MemoryError {
+                OutOfMemory,
+            }
+
+            public enum MemoryStatus {
+                Ok,
+                Err(MemoryError),
+            }
+
+            public fn MemoryStatus UnknownFill(
+                init i8[min max][] destination,
+                i8[min max] value,
+                u64[0 2 ** 63 - 1] count);
+
+            unsafe fn i8[min max] Run() {
+                stack mut dynamic i8[min max] values = new(8);
+                stack init i8[min max][] tail = init values[values.Length, 4];
+                UnknownFill(tail, 7, 4);
+                return values.MoveLast();
+            }
+            """;
+
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "dynamic-storage-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.Contains(
+            run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaDynamicStorageMoveLastRValue { IsKnownNonEmpty: false });
+    }
+
+    [Fact]
+    public void DynamicStorageSsaPreservesCapacityFactsAcrossReadOnlyLawCall()
+    {
+        const string source = """
+            module Demo
+
+            noinline finite law u64[0 2 ** 63 - 1] Observe(borrow dynamic u32[0 max] values) {
+                return values.Capacity;
+            }
+
+            unsafe fn u64[0 2 ** 63 - 1] Run() {
+                stack mut dynamic u32[0 max] values = new(8);
+                if (Observe(values) == 0) {
+                    return 0;
+                }
+
+                values.Reserve(4);
+                return values.Capacity;
+            }
+            """;
+
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "dynamic-storage-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.DoesNotContain(
+            run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaDynamicStorageReserveRValue);
+    }
+
+    [Fact]
+    public void DynamicStorageSsaPreservesCapacityFactsAcrossImportedReadOnlyLawCall()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-dynamic-readonly-call-ssa-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public noinline finite law u64[0 2 ** 63 - 1] Observe(borrow dynamic u32[0 max] values) {
+                    return values.Capacity;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    unsafe fn u64[0 2 ** 63 - 1] Run() {
+                        stack mut dynamic u32[0 max] values = new(8);
+                        if (Facade.Observe(values) == 0) {
+                            return 0;
+                        }
+
+                        values.Reserve(4);
+                        return values.Capacity;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "dynamic-storage-ssa"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+            Assert.NotNull(ssa);
+
+            var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+            Assert.DoesNotContain(
+                run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>(),
+                static instruction => instruction.Value is SsaDynamicStorageReserveRValue);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void DynamicStorageSsaPreservesFactsAcrossImportedGenericInlineHelper()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-dynamic-generic-inline-ssa-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public inline fn void AppendTagged<T>(
+                    mut borrow dynamic u32[0 max] values,
+                    u32[0 max] value,
+                    T tag) {
+                    init values[values.Length] = value;
+                    return;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    unsafe fn u32[0 max] Run() {
+                        stack mut dynamic u32[0 max] values = new(4);
+                        Facade.AppendTagged(values, (u32[0 max])10, (u8[0 max])1);
+                        values.Reserve(2);
+                        return values.MoveLast();
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "dynamic-storage-ssa"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+            Assert.NotNull(ssa);
+
+            var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+            var instructions = run.Blocks.SelectMany(static block => block.Instructions).ToArray();
+            Assert.DoesNotContain(
+                instructions.OfType<SsaCallInstruction>(),
+                static call => call.FunctionName.Contains("AppendTagged", StringComparison.Ordinal));
+            Assert.DoesNotContain(
+                instructions.OfType<SsaValueInstruction>(),
+                static instruction => instruction.Value is SsaDynamicStorageReserveRValue);
+            Assert.Contains(
+                instructions.OfType<SsaValueInstruction>(),
+                static instruction => instruction.Value is SsaDynamicStorageMoveLastRValue { IsKnownNonEmpty: true });
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void DynamicStorageSsaElidesFreeWhenBackingAllocationProvenAbsent()
+    {
+        const string source = """
+            module Demo
+
+            unsafe fn u64[0 2 ** 63 - 1] Run() {
+                stack mut dynamic u32[0 max] values = new(0);
+                return values.Capacity;
+            }
+            """;
+
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "dynamic-storage-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.DoesNotContain(
+            run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaDynamicStorageFreeRValue);
+    }
+
+    [Fact]
+    public void DynamicStorageSsaKeepsFreeWhenBackingAllocationMayExist()
+    {
+        const string source = """
+            module Demo
+
+            unsafe fn u64[0 2 ** 63 - 1] Run() {
+                stack mut dynamic u32[0 max] values = new(1);
+                return values.Capacity;
+            }
+            """;
+
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "dynamic-storage-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.Contains(
+            run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaDynamicStorageFreeRValue);
+    }
+
+    [Fact]
+    public void DynamicStorageSsaMarksMoveLastNonEmptyWhenPrefixFactsProveLength()
+    {
+        const string source = """
+            module Demo
+
+            unsafe fn u32[0 max] Run() {
+                stack mut dynamic u32[0 max] values = new(2);
+                init values[0] = 10;
+                return values.MoveLast();
+            }
+            """;
+
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "dynamic-storage-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.Contains(
+            run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaDynamicStorageMoveLastRValue { IsKnownNonEmpty: true });
+    }
+
+    [Fact]
+    public void DynamicStorageSsaMarksMoveAtInBoundsWhenIndexAndPrefixFactsProveIt()
+    {
+        const string source = """
+            module Demo
+
+            unsafe fn u32[0 max] Run() {
+                stack mut dynamic u32[0 max] values = new(2);
+                init values[0] = 10;
+                init values[1] = 20;
+                return values.MoveAt(0);
+            }
+            """;
+
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "dynamic-storage-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.Contains(
+            run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaDynamicStorageMoveAtRValue { IsKnownInBounds: true });
+    }
+
+    [Fact]
+    public void DynamicStorageSsaKeepsMoveAtBoundsCheckWhenIndexMayReachLength()
+    {
+        const string source = """
+            module Demo
+
+            unsafe fn u32[0 max] Run(u8[0 2] index) {
+                stack mut dynamic u32[0 max] values = new(2);
+                init values[0] = 10;
+                init values[1] = 20;
+                return values.MoveAt(index);
+            }
+            """;
+
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "dynamic-storage-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.Contains(
+            run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaDynamicStorageMoveAtRValue { IsKnownInBounds: false });
+    }
+
+    [Fact]
+    public void DynamicStorageSsaDoesNotPromoteSparseUnsafeReadsToDensePrefixFacts()
+    {
+        const string source = """
+            module Demo
+
+            fn u32[0 max] Run(u8[0 1] index) {
+                stack mut dynamic u32[0 max] values = new(2);
+                unsafe {
+                    stack u32[0 max] observed = values[index];
+                }
+
+                return values.MoveLast();
+            }
+            """;
+
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "dynamic-storage-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.Contains(
+            run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaDynamicStorageMoveLastRValue { IsKnownNonEmpty: false });
+    }
+
+    [Fact]
+    public void DynamicStorageSsaKeepsDistinctFieldOwnerFactsSeparate()
+    {
+        const string source = """
+            module Demo
+
+            struct Pair {
+                dynamic u32[0 max] Left;
+                dynamic u32[0 max] Right;
+            }
+
+            unsafe fn u32[0 max] Run() {
+                stack mut Pair pair = new Pair() {
+                    Left = new(2),
+                    Right = new(2)
+                };
+
+                init pair.Left[0] = 10;
+                return pair.Right.MoveLast();
+            }
+            """;
+
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "dynamic-storage-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.Contains(
+            run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaDynamicStorageMoveLastRValue { IsKnownNonEmpty: false });
+    }
+
+    [Fact]
+    public void DynamicStorageSsaPreservesEmptyPrefixAfterClearLoop()
+    {
+        const string source = """
+            module Demo
+
+            unsafe fn u64[0 2 ** 63 - 1] Run() {
+                stack mut dynamic u32[0 max] values = new(4);
+                init values[0] = 10;
+                init values[1] = 20;
+
+                while willexit (values.Length > 0) {
+                    stack u32[0 max] discarded = values.MoveLast();
+                }
+
+                values.Reserve(4);
+                return values.Capacity;
+            }
+            """;
+
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "dynamic-storage-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.DoesNotContain(
+            run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaDynamicStorageReserveRValue);
+    }
+
+    [Fact]
+    public void DynamicAppendLoopSsaCommitsLengthOnceAfterLoop()
+    {
+        const string source = """
+            module Demo
+
+            unsafe fn u64[0 2 ** 63 - 1] Run(i8[min max] value, u8[0 10] count) {
+                stack mut dynamic i8[min max] values = new(count);
+                if (!values.TryReserve(count)) {
+                    return 0;
+                }
+
+                for willexit (stack mut u8[0 10] index = 0; index < count; index += 1) {
+                    init values[values.Length] = value;
+                }
+
+                return values.Length;
+            }
+            """;
+
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "dynamic-append-loop-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        var definitions = CollectSsaDefinitions(run);
+        var body = Assert.Single(run.Blocks, static block => block.Label.Contains("for_body", StringComparison.Ordinal));
+        var exit = Assert.Single(run.Blocks, static block => block.Label.Contains("for_exit", StringComparison.Ordinal));
+
+        Assert.DoesNotContain(
+            body.Instructions.OfType<SsaStoreIndirectInstruction>(),
+            store => IsDynamicLengthAddress(store.Address, definitions));
+        Assert.Contains(
+            body.Instructions.OfType<SsaValueInstruction>(),
+            static instruction => instruction.Value is SsaElementAddressRValue
+            {
+                Address: SsaValueReference { Name: var addressName },
+                Index: SsaValueReference { Name: var indexName }
+            } && addressName.StartsWith("dynamic_append_tail", StringComparison.Ordinal)
+              && indexName.EndsWith("_phi", StringComparison.Ordinal));
+        Assert.Contains(
+            exit.Instructions.OfType<SsaStoreIndirectInstruction>(),
+            store => IsDynamicLengthAddress(store.Address, definitions));
+    }
+
+    [Fact]
+    public void DynamicAppendLoopSsaKeepsPerIterationCommitWhenValueReadsChangingLength()
+    {
+        const string source = """
+            module Demo
+
+            unsafe fn u64[0 2 ** 63 - 1] Run(u8[0 10] count) {
+                stack mut dynamic u64[0 max] values = new(count);
+                if (!values.TryReserve(count)) {
+                    return 0;
+                }
+
+                for willexit (stack mut u8[0 10] index = 0; index < count; index += 1) {
+                    init values[values.Length] = values.Length;
+                }
+
+                return values.Length;
+            }
+            """;
+
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "dynamic-append-loop-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        var definitions = CollectSsaDefinitions(run);
+        var body = Assert.Single(run.Blocks, static block => block.Label.Contains("for_body", StringComparison.Ordinal));
+        var exit = Assert.Single(run.Blocks, static block => block.Label.Contains("for_exit", StringComparison.Ordinal));
+
+        Assert.Contains(
+            body.Instructions.OfType<SsaStoreIndirectInstruction>(),
+            store => IsDynamicLengthAddress(store.Address, definitions));
+        Assert.DoesNotContain(
+            exit.Instructions.OfType<SsaStoreIndirectInstruction>(),
+            store => IsDynamicLengthAddress(store.Address, definitions));
+    }
+
+    [Fact]
+    public void InlineSsaPreservesConstProvenanceOnSynthesizedArgumentSlots()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                inline unsafe finite law i32[min max] Read(const i32[min max] value) {
+                    return *(&value);
+                }
+
+                unsafe fn i32[min max] Run(bool flag, const i32[min max] left, const i32[min max] right) {
+                    return Read(flag ? left : right);
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "inline-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.DoesNotContain(
+            run.Blocks
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaValueInstruction>()
+                .Select(static instruction => instruction.Value)
+                .OfType<SsaCallRValue>(),
+            static call => call.FunctionName == "Read");
+
+        var slot = Assert.Single(
+            run.Blocks
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaAllocateLocalInstruction>(),
+            static instruction => instruction.LocalName.StartsWith("arg_value_slot_inl", StringComparison.Ordinal));
+
+        Assert.True(slot.IsImmutable);
+        Assert.True(slot.HasConstProvenance);
+        Assert.Equal(ConstProvenanceKind.PermanentConst, slot.ConstProvenance);
     }
 
     [Fact]
@@ -1142,6 +2743,119 @@ public sealed class CompilerPipelineOptimizeSsaTests
     }
 
     [Fact]
+    public void ConstGraphCallCseReusesRepeatedFiniteLawReadsFromConstGraphs()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                noinline unsafe finite law i32[min max] Read(const rawmutptr<i32[min max]> ptr) {
+                    return *ptr;
+                }
+
+                unsafe fn i32[min max] Run(const rawmutptr<i32[min max]> ptr) {
+                    stack i32[min max] first = Read(ptr);
+                    stack i32[min max] second = Read(ptr);
+                    return first + second;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "cse-const-graph-calls-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.Equal(1, CountValueCalls(run, "Read"));
+    }
+
+    [Fact]
+    public void ConstGraphCallCseKeepsRepeatedReadonlyPointerLocalReadsWithoutPermanentConst()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                noinline unsafe finite law i32[min max] Read(rawptr<i32[min max]> ptr) {
+                    return *ptr;
+                }
+
+                unsafe fn i32[min max] Run(rawmutptr<i32[min max]> ptr) {
+                    stack rawptr<i32[min max]> readonlyPtr = (rawptr<i32[min max]>)ptr;
+                    stack i32[min max] first = Read(readonlyPtr);
+                    stack i32[min max] second = Read(readonlyPtr);
+                    return first + second;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "cse-const-graph-calls-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.Equal(2, CountValueCalls(run, "Read"));
+    }
+
+    [Fact]
+    public void ConstGraphCallCseKeepsRepeatedNonFiniteLawReads()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                noinline unsafe law i32[min max] Read(const rawmutptr<i32[min max]> ptr);
+
+                unsafe fn i32[min max] Run(const rawmutptr<i32[min max]> ptr) {
+                    stack i32[min max] first = Read(ptr);
+                    stack i32[min max] second = Read(ptr);
+                    return first + second;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "cse-const-graph-calls-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.Equal(2, CountValueCalls(run, "Read"));
+    }
+
+    [Fact]
+    public void ConstGraphCallCseKeepsRepeatedFfiReads()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                unsafe ffi fn i32[min max] Read(const rawmutptr<i32[min max]> ptr);
+
+                unsafe fn i32[min max] Run(const rawmutptr<i32[min max]> ptr) {
+                    stack i32[min max] first = Read(ptr);
+                    stack i32[min max] second = Read(ptr);
+                    return first + second;
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "cse-const-graph-calls-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.Equal(2, CountValueCalls(run, "Read"));
+    }
+
+    [Fact]
     public void InlineSsaSkipsAtO0()
     {
         var pipeline = DefaultCompilerPipeline.Create();
@@ -1240,6 +2954,7 @@ public sealed class CompilerPipelineOptimizeSsaTests
         Assert.True(log.Data.ContainsKey("integerRanges"));
         Assert.True(log.Data.ContainsKey("knownBits"));
         Assert.True(log.Data.ContainsKey("booleans"));
+        Assert.True(log.Data.ContainsKey("dynamicStorageRegions"));
     }
 
     [Fact]
@@ -1918,6 +3633,36 @@ public sealed class CompilerPipelineOptimizeSsaTests
     }
 
     [Fact]
+    public void ValueFactsCaptureDynamicStorageSliceLengthRanges()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module Demo
+
+                unsafe fn u32[0 max] Run() {
+                    stack mut dynamic u32[0 max] values = new(4);
+                    init values[0] = 10;
+                    init values[1] = 20;
+                    stack u32[0 max][] view = values[0, values.Length];
+                    return view[1];
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "value-facts"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.SsaValueFacts, out SsaValueFactModel? facts));
+        Assert.NotNull(facts);
+
+        var runFacts = Assert.Single(facts.Functions.Values, static function => function.FunctionName == "Run");
+        Assert.Contains(
+            runFacts.Values.Values,
+            static fact => fact.Type.Kind == StarkTypeKind.Slice
+                           && HasLengthRange(fact, 2, 2));
+    }
+
+    [Fact]
     public void ValueFactsCaptureTextLiteralLengthCallRanges()
     {
         var pipeline = DefaultCompilerPipeline.Create();
@@ -1977,6 +3722,801 @@ public sealed class CompilerPipelineOptimizeSsaTests
         var block = Assert.Single(run.Blocks);
         var resultValue = Assert.IsType<SsaIntegerConstant>(block.Terminator.Value);
         Assert.Equal(new System.Numerics.BigInteger(9), resultValue.Value);
+    }
+
+    [Fact]
+    public void ConstStdlibHelperSpecializationPrecomputesPathFactsForLiteral()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module System.IO.Path
+
+                public struct PathFacts {
+                    internal ascii Path;
+                    internal i64[min max] Length;
+                    internal i64[min max] End;
+                    internal i64[min max] SegmentStart;
+                    internal i64[min max] ExtensionStart;
+                    internal i64[min max] DirectoryLength;
+                    internal bool HasExtension;
+                }
+
+                public finite law PathFacts GetConstFacts(const ascii path);
+
+                fn PathFacts Run() {
+                    return GetConstFacts("alpha/beta.txt");
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "specialize-const-stdlib-helpers-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        Assert.DoesNotContain(
+            run.Blocks
+                .SelectMany(static block => block.Instructions)
+                .OfType<SsaValueInstruction>()
+                .Select(static instruction => instruction.Value)
+                .OfType<SsaCallRValue>(),
+            static call => call.FunctionName.Contains("GetConstFacts", StringComparison.Ordinal));
+
+        var pathFactsFields = run.Blocks
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaValueInstruction>()
+            .Select(static instruction => instruction.Value)
+            .OfType<SsaInsertFieldRValue>()
+            .ToArray();
+
+        AssertPathFact(pathFactsFields, "Length", 14);
+        AssertPathFact(pathFactsFields, "End", 14);
+        AssertPathFact(pathFactsFields, "SegmentStart", 6);
+        AssertPathFact(pathFactsFields, "ExtensionStart", 10);
+        AssertPathFact(pathFactsFields, "DirectoryLength", 5);
+        Assert.Contains(
+            pathFactsFields,
+            static field => field.FieldName == "HasExtension"
+                            && field.Value is SsaBoolConstant { Value: true });
+    }
+
+    [Fact]
+    public void ConstStdlibHelperSpecializationPrecomputesLiteralPathProjections()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module System.IO.Path
+
+                public finite law ascii Extension(ascii path);
+                public finite law ascii BaseNameConst(const ascii path);
+                public finite law ascii DirectoryNameConst(const ascii path);
+
+                fn ascii ExtensionRun() {
+                    return Extension("archive.tar.gz");
+                }
+
+                fn ascii BaseNameRun() {
+                    return BaseNameConst("alpha/beta.txt");
+                }
+
+                fn ascii DirectoryRun() {
+                    return DirectoryNameConst("alpha/beta.txt");
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "specialize-const-stdlib-helpers-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        AssertReturnedAsciiLiteral(ssa, "ExtensionRun", "\".gz\"");
+        AssertReturnedAsciiLiteral(ssa, "BaseNameRun", "\"beta\"");
+        AssertReturnedAsciiLiteral(ssa, "DirectoryRun", "\"alpha\"");
+    }
+
+    [Fact]
+    public void ConstStdlibHelperSpecializationKeepsRuntimePathInputsOnStdlibPath()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module System.IO.Path
+
+                public struct PathFacts {
+                    internal ascii Path;
+                    internal i64[min max] Length;
+                    internal i64[min max] End;
+                    internal i64[min max] SegmentStart;
+                    internal i64[min max] ExtensionStart;
+                    internal i64[min max] DirectoryLength;
+                    internal bool HasExtension;
+                }
+
+                public finite law PathFacts GetFacts(ascii path);
+                public finite law ascii Extension(ascii path);
+
+                fn PathFacts FactsRun(ascii path) {
+                    return GetFacts(path);
+                }
+
+                fn ascii ExtensionRun(ascii path) {
+                    return Extension(path);
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "specialize-const-stdlib-helpers-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var calls = ssa.Functions
+            .Where(static function => function.Name is "FactsRun" or "ExtensionRun")
+            .SelectMany(static function => function.Blocks)
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaValueInstruction>()
+            .Select(static instruction => instruction.Value)
+            .OfType<SsaCallRValue>()
+            .ToArray();
+
+        Assert.Contains(calls, static call => call.FunctionName.Contains("GetFacts", StringComparison.Ordinal));
+        Assert.Contains(calls, static call => call.FunctionName.Contains("Extension", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ConstStdlibHelperSpecializationRetargetsLiteralPathWritesToConstVariants()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module System.IO.Path
+
+                public struct OwnedAscii { }
+
+                public fn bool TryJoin(mut borrow OwnedAscii destination, ascii left, ascii right);
+                public fn bool TryJoinConst(mut borrow OwnedAscii destination, const ascii left, const ascii right);
+
+                public fn bool TryNormalizeSeparators(mut borrow OwnedAscii destination, ascii path);
+                public fn bool TryNormalizeSeparatorsConst(mut borrow OwnedAscii destination, const ascii path);
+
+                fn bool JoinRun(mut borrow OwnedAscii destination) {
+                    return TryJoin(destination, "alpha", "beta.txt");
+                }
+
+                fn bool NormalizeRun(mut borrow OwnedAscii destination) {
+                    return TryNormalizeSeparators(destination, "alpha//beta.txt");
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "specialize-const-stdlib-helpers-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        AssertRetargetedCall(ssa, "JoinRun", "TryJoinConst");
+        AssertRetargetedCall(ssa, "NormalizeRun", "TryNormalizeSeparatorsConst");
+    }
+
+    [Fact]
+    public void ConstStdlibHelperSpecializationRetargetsConstPathWritesToConstVariants()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module System.IO.Path
+
+                public struct OwnedAscii { }
+
+                public fn bool TryJoin(mut borrow OwnedAscii destination, ascii left, ascii right);
+                public fn bool TryJoinConst(mut borrow OwnedAscii destination, const ascii left, const ascii right);
+
+                public fn bool TryNormalizeSeparators(mut borrow OwnedAscii destination, ascii path);
+                public fn bool TryNormalizeSeparatorsConst(mut borrow OwnedAscii destination, const ascii path);
+
+                fn bool JoinRun(mut borrow OwnedAscii destination, const ascii left, const ascii right) {
+                    return TryJoin(destination, left, right);
+                }
+
+                fn bool NormalizeRun(mut borrow OwnedAscii destination, const ascii path) {
+                    return TryNormalizeSeparators(destination, path);
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "specialize-const-stdlib-helpers-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        AssertRetargetedCall(ssa, "JoinRun", "TryJoinConst");
+        AssertRetargetedCall(ssa, "NormalizeRun", "TryNormalizeSeparatorsConst");
+    }
+
+    [Fact]
+    public void ConstStdlibHelperSpecializationKeepsRuntimePathWritesOnSnapshotCapableVariants()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module System.IO.Path
+
+                public struct OwnedAscii { }
+
+                public fn bool TryJoin(mut borrow OwnedAscii destination, ascii left, ascii right);
+                public fn bool TryJoinConst(mut borrow OwnedAscii destination, const ascii left, const ascii right);
+
+                fn bool Run(mut borrow OwnedAscii destination, ascii left) {
+                    return TryJoin(destination, left, "beta.txt");
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "specialize-const-stdlib-helpers-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        AssertRetargetedCall(ssa, "Run", "TryJoin");
+    }
+
+    [Fact]
+    public void ConstStdlibHelperSpecializationRetargetsLiteralTextAppendsToConstDisjointVariants()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module System.Text
+
+                public struct OwnedAscii { }
+                public struct OwnedUnicode { }
+
+                public fn bool AppendAscii(mut borrow OwnedAscii destination, ascii source);
+                public fn bool AppendConstAsciiDisjoint(mut borrow OwnedAscii destination, const ascii source);
+
+                public fn bool AppendUnicode(mut borrow OwnedUnicode destination, unicode source);
+                public fn bool AppendConstUnicodeDisjoint(mut borrow OwnedUnicode destination, const unicode source);
+
+                fn bool AppendAsciiRun(mut borrow OwnedAscii destination) {
+                    return AppendAscii(destination, "alpha");
+                }
+
+                fn bool AppendUnicodeRun(mut borrow OwnedUnicode destination) {
+                    return AppendUnicode(destination, (unicode)"beta");
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "specialize-const-stdlib-helpers-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        AssertRetargetedCall(ssa, "AppendAsciiRun", "AppendConstAsciiDisjoint");
+        AssertRetargetedCall(ssa, "AppendUnicodeRun", "AppendConstUnicodeDisjoint");
+    }
+
+    [Fact]
+    public void ConstStdlibHelperSpecializationRetargetsConstTextHelpers()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module System.Text
+
+                public struct OwnedAscii { }
+                public struct OwnedUnicode { }
+
+                public fn bool AppendAscii(mut borrow OwnedAscii destination, ascii source);
+                public fn bool AppendConstAsciiDisjoint(mut borrow OwnedAscii destination, const ascii source);
+
+                public fn bool AppendUnicode(mut borrow OwnedUnicode destination, unicode source);
+                public fn bool AppendConstUnicodeDisjoint(mut borrow OwnedUnicode destination, const unicode source);
+
+                public fn bool FromAscii(out OwnedAscii destination, ascii source);
+                public fn bool FromConstAscii(out OwnedAscii destination, const ascii source);
+
+                public fn bool FromAsciiToUnicode(out OwnedUnicode destination, ascii source);
+                public fn bool FromConstAsciiToUnicode(out OwnedUnicode destination, const ascii source);
+
+                fn bool AppendAsciiRun(mut borrow OwnedAscii destination, const ascii source) {
+                    return AppendAscii(destination, source);
+                }
+
+                fn bool AppendUnicodeRun(mut borrow OwnedUnicode destination, const unicode source) {
+                    return AppendUnicode(destination, source);
+                }
+
+                fn bool FromAsciiRun(out OwnedAscii destination, const ascii source) {
+                    return FromAscii(destination, source);
+                }
+
+                fn bool FromAsciiToUnicodeRun(out OwnedUnicode destination, const ascii source) {
+                    return FromAsciiToUnicode(destination, source);
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "specialize-const-stdlib-helpers-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        AssertRetargetedCall(ssa, "AppendAsciiRun", "AppendConstAsciiDisjoint");
+        AssertRetargetedCall(ssa, "AppendUnicodeRun", "AppendConstUnicodeDisjoint");
+        AssertRetargetedCall(ssa, "FromAsciiRun", "FromConstAscii");
+        AssertRetargetedCall(ssa, "FromAsciiToUnicodeRun", "FromConstAsciiToUnicode");
+    }
+
+    [Fact]
+    public void ConstStdlibHelperSpecializationRetargetsLiteralTextMemberAppends()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module System.Text
+
+                public struct OwnedAscii {
+                    noinline fn bool AppendAscii(mut borrow OwnedAscii self, ascii source) {
+                        return false;
+                    }
+
+                    noinline fn bool AppendConstAsciiDisjoint(mut borrow OwnedAscii self, const ascii source) {
+                        return true;
+                    }
+                }
+
+                fn bool Run(mut borrow OwnedAscii destination) {
+                    return destination.AppendAscii("alpha");
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "specialize-const-stdlib-helpers-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        AssertRetargetedCall(ssa, "Run", "OwnedAscii.AppendConstAsciiDisjoint");
+    }
+
+    [Fact]
+    public void ConstStdlibHelperSpecializationKeepsRuntimeTextAppendsOnSnapshotCapableVariants()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module System.Text
+
+                public struct OwnedAscii { }
+
+                public fn bool AppendAscii(mut borrow OwnedAscii destination, ascii source);
+                public fn bool AppendConstAsciiDisjoint(mut borrow OwnedAscii destination, const ascii source);
+
+                fn bool Run(mut borrow OwnedAscii destination, ascii source) {
+                    return AppendAscii(destination, source);
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "specialize-const-stdlib-helpers-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        AssertRetargetedCall(ssa, "Run", "AppendAscii");
+    }
+
+    [Fact]
+    public void ConstStdlibHelperSpecializationRetargetsLiteralTextFactoryHelpers()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module System.Text
+
+                public struct OwnedAscii { }
+                public struct OwnedUnicode { }
+
+                public fn bool FromAscii(out OwnedAscii destination, ascii source);
+                public fn bool FromConstAscii(out OwnedAscii destination, const ascii source);
+
+                public fn bool FromAsciiToUnicode(out OwnedUnicode destination, ascii source);
+                public fn bool FromConstAsciiToUnicode(out OwnedUnicode destination, const ascii source);
+
+                fn bool FromAsciiRun(out OwnedAscii destination) {
+                    return FromAscii(destination, "alpha");
+                }
+
+                fn bool FromAsciiToUnicodeRun(out OwnedUnicode destination) {
+                    return FromAsciiToUnicode(destination, "beta");
+                }
+                """),
+            new CompilerOptions(StopAfterPassId: "specialize-const-stdlib-helpers-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        AssertRetargetedCall(ssa, "FromAsciiRun", "FromConstAscii");
+        AssertRetargetedCall(ssa, "FromAsciiToUnicodeRun", "FromConstAsciiToUnicode");
+    }
+
+    [Fact]
+    public void ConstStdlibHelperSpecializationUsesWindowsPathSeparatorsForWindowsTargets()
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(
+                """
+                module System.IO.Path
+
+                public struct PathFacts {
+                    internal ascii Path;
+                    internal i64[min max] Length;
+                    internal i64[min max] End;
+                    internal i64[min max] SegmentStart;
+                    internal i64[min max] ExtensionStart;
+                    internal i64[min max] DirectoryLength;
+                    internal bool HasExtension;
+                }
+
+                public finite law PathFacts GetConstFacts(const ascii path);
+
+                fn PathFacts Run() {
+                    return GetConstFacts("alpha\\beta.txt");
+                }
+                """),
+            new CompilerOptions(
+                StopAfterPassId: "specialize-const-stdlib-helpers-ssa",
+                TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null)));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+
+        var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+        var pathFactsFields = run.Blocks
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaValueInstruction>()
+            .Select(static instruction => instruction.Value)
+            .OfType<SsaInsertFieldRValue>()
+            .ToArray();
+
+        AssertPathFact(pathFactsFields, "SegmentStart", 6);
+        AssertPathFact(pathFactsFields, "DirectoryLength", 5);
+    }
+
+    [Fact]
+    public void ConstLookupTableOptimizationFoldsPackageConstFixedArrayIndexFromTypedInitializer()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-const-lookup-ssa-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public const i32[min max][4] Lookup = { 10, 20, 30, 40 };
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    unsafe fn i32[min max] Run() {
+                        return Facade.Lookup[2];
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "const-lookup-tables-ssa"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+            Assert.NotNull(ssa);
+
+            var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+            Assert.DoesNotContain(
+                run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>().Select(static instruction => instruction.Value),
+                static value => value is SsaLoadGlobalRValue { GlobalName: "Facade.Lookup" });
+            var resultValue = Assert.IsType<SsaIntegerConstant>(Assert.Single(run.Blocks).Terminator.Value);
+            Assert.Equal(new System.Numerics.BigInteger(30), resultValue.Value);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ConstLookupTableOptimizationFoldsPackageConstLookupHelperFromTypedInitializer()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-const-helper-lookup-ssa-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public const i32[min max][4] Lookup = { 10, 20, 30, 40 };
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    import System.Collections
+                    module Demo
+
+                    unsafe fn i32[min max] Run() {
+                        return System.Collections.Lookup(Facade.Lookup, 2);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver([tempDirectory.FullName, StandardLibrarySourceRoot()]),
+                    StopAfterPassId: "const-lookup-tables-ssa"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+            Assert.NotNull(ssa);
+
+            var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+            Assert.DoesNotContain(
+                run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>().Select(static instruction => instruction.Value),
+                static value => value is SsaLoadGlobalRValue { GlobalName: "Facade.Lookup" });
+            var resultValue = Assert.IsType<SsaIntegerConstant>(Assert.Single(run.Blocks).Terminator.Value);
+            Assert.Equal(new System.Numerics.BigInteger(30), resultValue.Value);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ConstLookupTableOptimizationKeepsConstLookupHelperWithRuntimeIndexAsLoad()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-const-helper-runtime-lookup-ssa-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public const i32[min max][4] Lookup = { 10, 20, 30, 40 };
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    import System.Collections
+                    module Demo
+
+                    unsafe fn i32[min max] Run(u64[0 2 ** 63 - 1] index) {
+                        return System.Collections.Lookup(Facade.Lookup, index);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver([tempDirectory.FullName, StandardLibrarySourceRoot()]),
+                    StopAfterPassId: "const-lookup-tables-ssa"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+            Assert.NotNull(ssa);
+
+            var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+            Assert.IsNotType<SsaIntegerConstant>(Assert.Single(run.Blocks).Terminator.Value);
+            Assert.Contains(
+                run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>().Select(static instruction => instruction.Value),
+                static value => value is SsaLoadIndirectRValue);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void ConstLookupTableOptimizationKeepsStaticFixedArrayIndexAsGlobalLoad()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-static-lookup-ssa-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public static i32[min max][4] Lookup = { 10, 20, 30, 40 };
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    unsafe fn i32[min max] Run() {
+                        return Facade.Lookup[2];
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "const-lookup-tables-ssa"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+            Assert.NotNull(ssa);
+
+            var run = Assert.Single(ssa.Functions, static function => function.Name == "Run");
+            Assert.Contains(
+                run.Blocks.SelectMany(static block => block.Instructions).OfType<SsaValueInstruction>().Select(static instruction => instruction.Value),
+                static value => value is SsaLoadGlobalRValue { GlobalName: "Facade.Lookup" });
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
     }
 
     [Fact]
@@ -3144,6 +5684,97 @@ public sealed class CompilerPipelineOptimizeSsaTests
                && fact.LengthRange is { } range
                && range.Min == new System.Numerics.BigInteger(min)
                && range.Max == new System.Numerics.BigInteger(max);
+    }
+
+    private static void AssertPathFact(
+        IReadOnlyList<SsaInsertFieldRValue> fields,
+        string fieldName,
+        int expectedValue)
+    {
+        Assert.Contains(
+            fields,
+            field => field.FieldName == fieldName
+                     && field.Value is SsaIntegerConstant integer
+                     && integer.Value == new System.Numerics.BigInteger(expectedValue));
+    }
+
+    private static void AssertReturnedAsciiLiteral(
+        SsaIrModule ssa,
+        string functionName,
+        string expectedLiteralText)
+    {
+        var function = Assert.Single(ssa.Functions, candidate => candidate.Name == functionName);
+        var block = Assert.Single(function.Blocks);
+        var value = Assert.IsType<SsaStringConstant>(block.Terminator.Value);
+        Assert.Equal(expectedLiteralText, value.LiteralText);
+    }
+
+    private static void AssertRetargetedCall(
+        SsaIrModule ssa,
+        string functionName,
+        string expectedCallName)
+    {
+        var function = Assert.Single(ssa.Functions, candidate => candidate.Name == functionName);
+        var call = Assert.Single(function.Blocks
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaValueInstruction>()
+            .Select(static instruction => instruction.Value)
+            .OfType<SsaCallRValue>());
+        Assert.Equal(expectedCallName, call.FunctionName);
+    }
+
+    private static int CountValueCalls(SsaFunction function, string functionName)
+    {
+        return function.Blocks
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaValueInstruction>()
+            .Select(static instruction => instruction.Value)
+            .OfType<SsaCallRValue>()
+            .Count(call => string.Equals(call.FunctionName, functionName, StringComparison.Ordinal));
+    }
+
+    private static SsaFunction CompileRunAfterArithmeticFold(string source)
+    {
+        var pipeline = DefaultCompilerPipeline.Create();
+        var result = pipeline.Run(
+            new CompilationInput(source),
+            new CompilerOptions(StopAfterPassId: "arithmetic-fold-ssa"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.OptimizedSsaIr, out SsaIrModule? ssa));
+        Assert.NotNull(ssa);
+        return Assert.Single(ssa.Functions, static function => function.Name == "Run");
+    }
+
+    private static IReadOnlyList<SsaBinaryRValue> GetBinaryRValues(SsaFunction function)
+    {
+        return function.Blocks
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaValueInstruction>()
+            .Select(static instruction => instruction.Value)
+            .OfType<SsaBinaryRValue>()
+            .ToArray();
+    }
+
+    private static IReadOnlyDictionary<string, SsaRValue> CollectSsaDefinitions(SsaFunction function)
+    {
+        return function.Blocks
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaValueInstruction>()
+            .ToDictionary(static instruction => instruction.ResultName, static instruction => instruction.Value, StringComparer.Ordinal);
+    }
+
+    private static bool IsDynamicLengthAddress(
+        SsaValue value,
+        IReadOnlyDictionary<string, SsaRValue> definitions)
+    {
+        return value is SsaValueReference reference
+               && definitions.TryGetValue(reference.Name, out var definition)
+               && definition is SsaFieldAddressRValue
+               {
+                   FieldName: "Length",
+                   AggregateType.Kind: StarkTypeKind.Dynamic
+               };
     }
 
     private static bool IsLessThanBranchAgainst(
