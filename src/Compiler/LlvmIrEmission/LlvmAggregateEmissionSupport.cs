@@ -119,6 +119,7 @@ internal static class LlvmAggregateEmissionSupport
             StarkTypeKind.Float when normalizedType.BitWidth is int bitWidth
                 => TryGetTargetAwareScalarLayout(bitWidth, isFloat: true, targetInfo),
             StarkTypeKind.RawPointer or StarkTypeKind.FunctionPointer or StarkTypeKind.Null => TryGetTargetAwarePointerLayout(targetInfo),
+            StarkTypeKind.Closure => TryGetTargetAwareClosureLayout(normalizedType, targetInfo),
             StarkTypeKind.Ascii or StarkTypeKind.Unicode or StarkTypeKind.Slice
                 => TryGetTargetAwareViewLayout(targetInfo),
             StarkTypeKind.Dynamic
@@ -151,6 +152,26 @@ internal static class LlvmAggregateEmissionSupport
         return alignmentBytes is null
             ? null
             : new ConcreteTypeLayout(sizeBytes, alignmentBytes.Value);
+    }
+
+    private static ConcreteTypeLayout? TryGetTargetAwareClosureLayout(StarkTypeSymbol type, LlvmTargetInfo? targetInfo)
+    {
+        var pointerLayout = TryGetTargetAwarePointerLayout(targetInfo);
+        if (pointerLayout is null)
+        {
+            return null;
+        }
+
+        var sizeBytes = AlignTo(pointerLayout.SizeBytes, pointerLayout.AlignmentBytes);
+        sizeBytes = checked(sizeBytes + pointerLayout.SizeBytes);
+        if (type.ClosureStorageKind == StarkClosureStorageKind.Heap)
+        {
+            sizeBytes = AlignTo(sizeBytes, pointerLayout.AlignmentBytes);
+            sizeBytes = checked(sizeBytes + pointerLayout.SizeBytes);
+        }
+
+        sizeBytes = AlignTo(sizeBytes, pointerLayout.AlignmentBytes);
+        return new ConcreteTypeLayout(sizeBytes, pointerLayout.AlignmentBytes);
     }
 
     private static ConcreteTypeLayout? TryGetTargetAwarePointerLayout(LlvmTargetInfo? targetInfo)
@@ -495,13 +516,19 @@ internal static class LlvmAggregateEmissionSupport
 
     private static StarkTypeSymbol NormalizeTypeForLayout(StarkTypeSymbol type)
     {
-        return type with
+        var normalized = type with
         {
             BorrowKind = StarkBorrowKind.None,
             AccessKind = StarkAccessKind.None,
             InitializationKind = StarkInitializationKind.None,
             IsMutableView = false
         };
+
+        return normalized.Kind == StarkTypeKind.Named
+               && normalized.NamedType is not null
+               && normalized.TypeArguments is { Count: > 0 }
+            ? normalized with { TypeArguments = null }
+            : normalized;
     }
 
     private static int BitsToBytes(int bitCount)

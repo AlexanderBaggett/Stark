@@ -10,8 +10,8 @@ finite law bool MemoryOk(System.Memory.MemoryStatus status) {
     }
 }
 
-export ffi fn i32[min max] main() {
-    stack mut System.Collections.List<i32[0 max]> values = new();
+export fn i32[min max] main() {
+    stack mut System.Collections.List<u32[0 max]> values = new();
 
     if (!MemoryOk(values.Push(10))) {
         return 1;
@@ -25,7 +25,7 @@ export ffi fn i32[min max] main() {
         return 3;
     }
 
-    stack mut i32[0 max] popped = 0;
+    stack mut u32[0 max] popped = 0;
     if (!values.TryPop(popped) || popped != 32) {
         return 4;
     }

@@ -89,11 +89,25 @@ parameterContractPrefix
     ;
 
 parameterMemoryContractClause
-    : WHERE disjointContract (COMMA disjointContract)* COMMA?
+    : WHERE parameterMemoryContract (COMMA parameterMemoryContract)* COMMA?
+    ;
+
+parameterMemoryContract
+    : disjointContract
+    | overlapContract
+    | sameContract
     ;
 
 disjointContract
     : DISJOINT LPAREN expressionList RPAREN
+    ;
+
+overlapContract
+    : OVERLAP LPAREN expressionList RPAREN
+    ;
+
+sameContract
+    : SAME LPAREN expressionList RPAREN
     ;
 
 typeParameterList
@@ -323,6 +337,7 @@ nonArrayType
     : dynamicType
     | rawPointerType
     | functionPointerType
+    | closureType
     | integerType
     | simpleType
     ;
@@ -341,7 +356,25 @@ functionPointerType
     ;
 
 functionPointerSignature
-    : functionKind returnType functionPointerParameterList
+    : functionKind returnType functionPointerParameterList parameterMemoryContractClause*
+    ;
+
+closureType
+    : closureStoragePrefix? CLOSURE LT closureSignature GT
+    ;
+
+closureStoragePrefix
+    : INLINE
+    | HEAP
+    ;
+
+closureSignature
+    : closureCallCapability? functionKind returnType functionPointerParameterList parameterMemoryContractClause*
+    ;
+
+closureCallCapability
+    : MUT
+    | ONCE
     ;
 
 functionPointerParameterList
@@ -398,6 +431,7 @@ block
 statement
     : block
     | unsafeStatement
+    | assumeStatement
     | localConstantDeclaration
     | localVariableDeclaration
     | ifStatement
@@ -412,7 +446,11 @@ statement
     ;
 
 unsafeStatement
-    : UNSAFE block
+    : UNSAFE (block | assumeStatement)
+    ;
+
+assumeStatement
+    : ASSUME disjointRuntimeCondition statement
     ;
 
 localConstantDeclaration
@@ -674,7 +712,11 @@ primaryExpression
     ;
 
 lambdaExpression
-    : captureClause? lambdaParameterList ARROW (expression | block)
+    : lambdaStoragePrefix? captureClause? lambdaParameterList ARROW (expression | block)
+    ;
+
+lambdaStoragePrefix
+    : HEAP
     ;
 
 captureClause
@@ -820,8 +862,13 @@ DYNAMIC     : 'dynamic';
 RAWPTR      : 'rawptr';
 RAWMUTPTR   : 'rawmutptr';
 FNPTR       : 'fnptr';
+CLOSURE     : 'closure';
 MUT         : 'mut';
+ONCE        : 'once';
 DISJOINT    : 'disjoint';
+OVERLAP     : 'overlap';
+SAME        : 'same';
+ASSUME      : 'assume';
 
 IF          : 'if';
 ELSE        : 'else';
@@ -1009,10 +1056,14 @@ fragment HexDigit
     : [0-9a-fA-F]
     ;
 
+// Line comments are trivia, including C#-style XML documentation comments
+// written with three leading slashes.
 LINE_COMMENT
     : '//' ~[\r\n]* -> skip
     ;
 
+// Block comments are trivia, including C#-style XML documentation comments
+// written with a doubled leading asterisk. Block comments do not nest.
 BLOCK_COMMENT
     : '/*' .*? '*/' -> skip
     ;

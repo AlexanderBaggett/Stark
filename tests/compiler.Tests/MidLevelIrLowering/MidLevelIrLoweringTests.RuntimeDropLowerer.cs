@@ -11,22 +11,22 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[min max] value) {
                 Counter = Counter + value;
                 return;
             }
 
             struct Buffer {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 drop {
                     Bump(self.Value);
                 }
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack Buffer box = new Buffer() { Value = 4 };
                 return;
             }
@@ -38,7 +38,7 @@ public sealed partial class MidLevelIrLoweringTests
         var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
         var callIndex = Array.FindIndex(
             statements,
-            static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+            static statement => IsDirectCallStatement(statement, "Bump"));
         var storageDeadIndex = Array.FindIndex(
             statements,
             static statement => statement.Kind == MidLevelIrStatementKind.StorageDead && statement.TargetName == "box");
@@ -48,28 +48,70 @@ public sealed partial class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void WholeLocalDestructorDropsInPlaceWithoutCopyingToDropTemporary()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Bump(i32[min max] value) {
+                return;
+            }
+
+            struct Buffer {
+                i8[min max][512] Data;
+                i32[min max] Value;
+
+                mut drop {
+                    self.Value = 0;
+                    Bump(1);
+                }
+            }
+
+            unsafe fn void Run() {
+                stack mut Buffer buffer = new Buffer();
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.Contains(
+            statements,
+            static statement => IsDirectCallStatement(statement, "Bump"));
+        Assert.DoesNotContain(
+            statements,
+            static statement => statement.Kind == MidLevelIrStatementKind.Assign
+                                && statement.TargetName is { } targetName
+                                && targetName.Contains("_drop", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void EarlyReturnBranchDropDoesNotSuppressFallthroughScopeDrop()
     {
         var result = Compile(
             """
             module Demo
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[min max] value) {
                 Counter = Counter + value;
                 return;
             }
 
             struct Buffer {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 drop {
                     Bump(self.Value);
                 }
             }
 
-            fn void Run(bool fail) {
+            unsafe fn void Run(bool fail) {
                 stack Buffer box = new Buffer() { Value = 4 };
                 if (fail) {
                     return;
@@ -84,7 +126,7 @@ public sealed partial class MidLevelIrLoweringTests
         var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
         var dropCalls = function.Blocks
             .SelectMany(static block => block.Statements)
-            .Count(static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+            .Count(static statement => IsDirectCallStatement(statement, "Bump"));
 
         Assert.Equal(2, dropCalls);
     }
@@ -96,22 +138,22 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[min max] value) {
                 Counter = Counter + value;
                 return;
             }
 
             struct Buffer {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 drop {
                     Bump(self.Value);
                 }
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack mut Buffer box = new Buffer() { Value = 1 };
                 box = new Buffer() { Value = 7 };
                 return;
@@ -128,7 +170,7 @@ public sealed partial class MidLevelIrLoweringTests
             .ToArray();
         var dropCalls = statements
             .Select((statement, index) => (statement, index))
-            .Where(static item => item.statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" })
+            .Where(static item => IsDirectCallStatement(item.statement, "Bump"))
             .ToArray();
 
         Assert.Equal(2, boxAssignments.Length);
@@ -144,22 +186,22 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[min max] value) {
                 Counter = Counter + value;
                 return;
             }
 
             struct Token {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 drop {
                     Bump(self.Value);
                 }
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack mut dynamic Token values = new(2);
                 init values[0] = new Token() { Value = 1 };
                 init values[1] = new Token() { Value = 2 };
@@ -174,7 +216,7 @@ public sealed partial class MidLevelIrLoweringTests
         Assert.Contains(function.Blocks, static block => block.Label.Contains("dynamic_drop_body", StringComparison.Ordinal));
 
         var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
-        Assert.Contains(statements, static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+        Assert.Contains(statements, static statement => IsDirectCallStatement(statement, "Bump"));
         Assert.Contains(statements, static statement => statement.Value is MidLevelIrDynamicStorageFreeRValue);
     }
 
@@ -185,15 +227,15 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[min max] value) {
                 Counter = Counter + value;
                 return;
             }
 
             struct Resource {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 drop {
                     Bump(self.Value);
@@ -205,7 +247,7 @@ public sealed partial class MidLevelIrLoweringTests
                 Occupied(Resource),
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack Slot slot = Slot.Occupied(new Resource() { Value = 7 });
                 switch (slot) {
                     case Slot.Occupied(var payload):
@@ -222,9 +264,174 @@ public sealed partial class MidLevelIrLoweringTests
         var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
         var bumpCalls = function.Blocks
             .SelectMany(static block => block.Statements)
-            .Count(static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+            .Count(static statement => IsDirectCallStatement(statement, "Bump"));
 
         Assert.Equal(1, bumpCalls);
+    }
+
+    [Fact]
+    public void LargeEnumPayloadCaptureDropsMovedPayloadOnlyOnce()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Bump(i32[min max] value) {
+                return;
+            }
+
+            struct LargeResource {
+                i8[min max][512] Data;
+                i32[min max] Value;
+
+                drop {
+                    Bump(self.Value);
+                }
+            }
+
+            enum Result {
+                Ok(LargeResource),
+                Err(i32[min max])
+            }
+
+            unsafe fn Result MakeOk() {
+                stack mut LargeResource resource = new LargeResource();
+                resource.Value = 7;
+                return Result.Ok(resource);
+            }
+
+            unsafe fn void Run() {
+                stack Result result = MakeOk();
+                switch (result) {
+                    case Result.Ok(var payload):
+                        stack LargeResource value = payload;
+                    case Result.Err(var code):
+                }
+
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+        var bumpCalls = function.Blocks
+            .SelectMany(static block => block.Statements)
+            .Count(static statement => IsDirectCallStatement(statement, "Bump"));
+
+        Assert.Equal(1, bumpCalls);
+    }
+
+    [Fact]
+    public void LargeEnumPayloadCaptureEarlyReturnKeepsDropCleanup()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Bump(i32[min max] value) {
+                return;
+            }
+
+            struct LargeResource {
+                i8[min max][512] Data;
+                i32[min max] Value;
+
+                drop {
+                    Bump(self.Value);
+                }
+            }
+
+            enum Result {
+                Ok(LargeResource),
+                Err(i32[min max])
+            }
+
+            unsafe fn Result MakeOk() {
+                stack mut LargeResource resource = new LargeResource();
+                resource.Value = 7;
+                return Result.Ok(resource);
+            }
+
+            unsafe fn void Run() {
+                stack Result result = MakeOk();
+                switch (result) {
+                    case Result.Ok(var payload):
+                        stack LargeResource value = payload;
+                        return;
+                    case Result.Err(var code):
+                        return;
+                }
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+        var bumpCalls = function.Blocks
+            .SelectMany(static block => block.Statements)
+            .Count(static statement => IsDirectCallStatement(statement, "Bump"));
+
+        Assert.True(bumpCalls >= 1);
+    }
+
+    [Fact]
+    public void LargeEnumPayloadReassignmentDropsOldAndReplacementOnce()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn void Bump(i32[min max] value) {
+                return;
+            }
+
+            struct LargeResource {
+                i8[min max][512] Data;
+                i32[min max] Value;
+
+                drop {
+                    Bump(self.Value);
+                }
+            }
+
+            enum Result {
+                Ok(LargeResource),
+                Err(i32[min max])
+            }
+
+            unsafe fn LargeResource MakeResource(i32[min max] value) {
+                stack mut LargeResource resource = new LargeResource();
+                resource.Value = value;
+                return resource;
+            }
+
+            unsafe fn Result MakeOk() {
+                stack LargeResource resource = MakeResource(7);
+                return Result.Ok(resource);
+            }
+
+            unsafe fn void Run() {
+                stack Result result = MakeOk();
+                switch (result) {
+                    case Result.Ok(var payload):
+                        stack mut LargeResource value = payload;
+                        value = MakeResource(11);
+                    case Result.Err(var code):
+                }
+
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+        var bumpCalls = function.Blocks
+            .SelectMany(static block => block.Statements)
+            .Count(static statement => IsDirectCallStatement(statement, "Bump"));
+
+        Assert.Equal(2, bumpCalls);
     }
 
     [Fact]
@@ -234,15 +441,15 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[min max] value) {
                 Counter = Counter + value;
                 return;
             }
 
             struct Resource {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 drop {
                     Bump(self.Value);
@@ -252,7 +459,7 @@ public sealed partial class MidLevelIrLoweringTests
             record Box(Resource Item) {
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack Resource owned = new Resource() { Value = 5 };
                 stack Box box = new Box(owned);
                 return;
@@ -264,7 +471,7 @@ public sealed partial class MidLevelIrLoweringTests
         var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
         var bumpCalls = function.Blocks
             .SelectMany(static block => block.Statements)
-            .Count(static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+            .Count(static statement => IsDirectCallStatement(statement, "Bump"));
 
         Assert.Equal(1, bumpCalls);
     }
@@ -276,15 +483,15 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[min max] value) {
                 Counter = Counter + value;
                 return;
             }
 
             struct Resource {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 drop {
                     Bump(self.Value);
@@ -299,7 +506,7 @@ public sealed partial class MidLevelIrLoweringTests
                 }
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack Resource owned = new Resource() { Value = 5 };
                 stack Box box = new Box(owned);
                 return;
@@ -311,7 +518,7 @@ public sealed partial class MidLevelIrLoweringTests
         var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
         var bumpCalls = function.Blocks
             .SelectMany(static block => block.Statements)
-            .Count(static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+            .Count(static statement => IsDirectCallStatement(statement, "Bump"));
 
         Assert.Equal(1, bumpCalls);
     }
@@ -323,22 +530,22 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[min max] value) {
                 Counter = Counter + value;
                 return;
             }
 
             struct Resource {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 drop {
                     Bump(self.Value);
                 }
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack Resource first = new Resource() { Value = 1 };
                 stack Resource second = new Resource() { Value = 2 };
                 stack Resource[2] resources = { first, second };
@@ -351,7 +558,7 @@ public sealed partial class MidLevelIrLoweringTests
         var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
         var bumpCalls = function.Blocks
             .SelectMany(static block => block.Statements)
-            .Count(static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+            .Count(static statement => IsDirectCallStatement(statement, "Bump"));
 
         Assert.Equal(2, bumpCalls);
     }
@@ -363,22 +570,22 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[min max] value) {
                 Counter = Counter + value;
                 return;
             }
 
             struct Resource {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 drop {
                     Bump(self.Value);
                 }
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack Resource first = new Resource() { Value = 1 };
                 stack Resource second = new Resource() { Value = 2 };
                 heap Resource[2] resources = { first, second };
@@ -392,7 +599,7 @@ public sealed partial class MidLevelIrLoweringTests
         var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
         var bumpCallIndexes = statements
             .Select((statement, index) => (statement, index))
-            .Where(static item => item.statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" })
+            .Where(static item => IsDirectCallStatement(item.statement, "Bump"))
             .Select(static item => item.index)
             .ToArray();
         var storageDeadIndex = Array.FindIndex(
@@ -411,7 +618,7 @@ public sealed partial class MidLevelIrLoweringTests
             import Lib
             module Demo
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack Lib.Buffer box = new Lib.Buffer() { Value = 4 };
                 return;
             }
@@ -424,12 +631,12 @@ public sealed partial class MidLevelIrLoweringTests
                         """
                         module Lib
 
-                        fn void Bump(i32[-2147483648 2147483647] value) {
+                        unsafe fn void Bump(i32[min max] value) {
                             return;
                         }
 
                         public struct Buffer {
-                            i32[-2147483648 2147483647] Value;
+                            i32[min max] Value;
 
                             drop {
                                 Bump(self.Value);
@@ -446,7 +653,7 @@ public sealed partial class MidLevelIrLoweringTests
         var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
         Assert.Contains(
             statements,
-            static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Lib.Bump" });
+            static statement => IsDirectCallStatement(statement, "Lib.Bump"));
     }
 
     [Fact]
@@ -456,15 +663,15 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            static mut i32[-2147483648 2147483647] Counter = 0;
+            static mut i32[min max] Counter = 0;
 
-            fn void Bump(i32[-2147483648 2147483647] value) {
+            unsafe fn void Bump(i32[min max] value) {
                 Counter = Counter + value;
                 return;
             }
 
             struct Resource {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
 
                 drop {
                     Bump(self.Value);
@@ -476,7 +683,7 @@ public sealed partial class MidLevelIrLoweringTests
                 Text(Resource),
             }
 
-            fn void Run() {
+            unsafe fn void Run() {
                 stack Token token = Token.Text(new Resource() { Value = 4 });
                 return;
             }
@@ -490,7 +697,7 @@ public sealed partial class MidLevelIrLoweringTests
         Assert.Contains(function.Blocks, static block => block.Label.Contains("enum_drop_", StringComparison.Ordinal));
         Assert.Contains(
             statements,
-            static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Bump" });
+            static statement => IsDirectCallStatement(statement, "Bump"));
         Assert.Contains(
             statements,
             static statement => statement.Kind == MidLevelIrStatementKind.StorageDead && statement.TargetName == "token");

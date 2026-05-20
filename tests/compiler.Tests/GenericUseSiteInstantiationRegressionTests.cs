@@ -17,7 +17,7 @@ public sealed class GenericUseSiteInstantiationRegressionTests
                 record Envelope<T>(Wrapper<T> Wrapped) { }
                 record Crate<T>(Envelope<T> Envelope) { }
 
-                fn i32[-2147483648 2147483647] Run(Crate<i32[-2147483648 2147483647]> crate) {
+                fn i32[min max] Run(Crate<i32[min max]> crate) {
                     return 0;
                 }
                 """),
@@ -48,7 +48,7 @@ public sealed class GenericUseSiteInstantiationRegressionTests
 
                 public record Pair<T>(T Value) { }
 
-                public record Box(i32[-2147483648 2147483647] Dummy) {
+                public record Box(i32[min max] Dummy) {
                     fn Pair<T> MakePair<T>(borrow Box self, T value) {
                         stack Pair<T> pair = new Pair<T>(value);
                         return pair;
@@ -95,7 +95,7 @@ public sealed class GenericUseSiteInstantiationRegressionTests
                     import Facade
                     module Demo
 
-                    fn Facade.Pair<i32[-2147483648 2147483647]> Run(Facade.Box box, i32[-2147483648 2147483647] value) {
+                    fn Facade.Pair<i32[min max]> Run(Facade.Box box, i32[min max] value) {
                         return Facade.Relay(box, value);
                     }
                     """,
@@ -193,7 +193,7 @@ public sealed class GenericUseSiteInstantiationRegressionTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+                    fn i32[min max] Run(i32[min max] left, i32[min max] right) {
                         return Facade.Relay(left) + Facade.Relay(right);
                     }
                     """,
@@ -244,7 +244,7 @@ public sealed class GenericUseSiteInstantiationRegressionTests
                     return pair;
                 }
 
-                public fn i32[-2147483648 2147483647] Relay<T>(T value, bool flag) {
+                public fn i32[min max] Relay<T>(T value, bool flag) {
                     stack Pair<T, bool> pair = MakePair(value, flag);
                     return pair.Second ? 1 : 0;
                 }
@@ -274,7 +274,7 @@ public sealed class GenericUseSiteInstantiationRegressionTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value, bool flag) {
+                    fn i32[min max] Run(i32[min max] value, bool flag) {
                         return Facade.Relay(value, flag);
                     }
                     """,
@@ -342,10 +342,10 @@ public sealed class GenericUseSiteInstantiationRegressionTests
                     module Demo
 
                     struct Box {
-                        i32[0 max] Value;
+                        u32[0 2 ** 31 - 1] Value;
                     }
 
-                    fn void Use(Dictionary<Box, i32[0 max]> boxes) {
+                    fn void Use(Dictionary<Box, u32[0 2 ** 31 - 1]> boxes) {
                         return;
                     }
                     """,

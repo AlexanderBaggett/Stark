@@ -77,7 +77,7 @@ public sealed class CompilerPipelineLowerHirTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                    fn i32[min max] Run(i32[min max] value) {
                         return Facade.Identity(value);
                     }
                     """,
@@ -138,10 +138,10 @@ public sealed class CompilerPipelineLowerHirTests
 
                 public enum Wrapped<T> {
                     None,
-                    Pair(i32[-2147483648 2147483647], i32[-2147483648 2147483647]),
+                    Pair(i32[min max], i32[min max]),
                 }
 
-                public fn i32[-2147483648 2147483647] ReadEnumWhole<T>(Wrapped<T> wrapped, T tag) {
+                public fn i32[min max] ReadEnumWhole<T>(Wrapped<T> wrapped, T tag) {
                     switch (wrapped) {
                         case Wrapped<T>.Pair capture:
                             return 5;
@@ -200,9 +200,9 @@ public sealed class CompilerPipelineLowerHirTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
-                        stack i32[-2147483648 2147483647] tag = 0;
-                        return Facade.ReadEnumWhole(Facade.Wrapped<i32[-2147483648 2147483647]>.Pair(2, 3), tag);
+                    fn i32[min max] Run(i32[min max] value) {
+                        stack i32[min max] tag = 0;
+                        return Facade.ReadEnumWhole(Facade.Wrapped<i32[min max]>.Pair(2, 3), tag);
                     }
                     """,
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
@@ -265,7 +265,7 @@ public sealed class CompilerPipelineLowerHirTests
                     return Identity(value);
                 }
 
-                fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                fn i32[min max] Run(i32[min max] value) {
                     return Forward(value);
                 }
                 """,
@@ -295,7 +295,7 @@ public sealed class CompilerPipelineLowerHirTests
                     return copy;
                 }
 
-                fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                fn i32[min max] Run(i32[min max] value) {
                     return Identity(value);
                 }
                 """),
@@ -334,14 +334,14 @@ public sealed class CompilerPipelineLowerHirTests
                 """
                 module Demo
 
-                public record Counter(i32[-2147483648 2147483647] Value) { }
+                public record Counter(i32[min max] Value) { }
 
-                public fn i32[-2147483648 2147483647] MakeFlag<T>(T value) {
+                public fn i32[min max] MakeFlag<T>(T value) {
                     stack Counter counter = new Counter(0);
                     return 1;
                 }
 
-                fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] value) {
+                fn i32[min max] Run(i32[min max] value) {
                     return MakeFlag(value);
                 }
                 """;

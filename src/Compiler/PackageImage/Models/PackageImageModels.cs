@@ -105,7 +105,9 @@ internal sealed record StarkPackageFunctionManifest(
     bool IsUnsafe = false,
     bool IsVarargs = false,
     string? BackendOptimizationMode = null,
-    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null);
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null);
 
 internal sealed record StarkPackageParameterManifest(
     string Name,
@@ -115,7 +117,13 @@ internal sealed record StarkPackageParameterManifest(
     string? RawPointerElementCountExpression = null);
 
 internal sealed record StarkPackageParameterDisjointGroupManifest(
-    IReadOnlyList<string> ParameterNames);
+    IReadOnlyList<string> ParameterNames,
+    IReadOnlyList<StarkPackageParameterMemoryRegionManifest>? Regions = null);
+
+internal sealed record StarkPackageParameterMemoryRegionManifest(
+    string ParameterName,
+    string? StartExpression = null,
+    string? CountExpression = null);
 
 internal sealed record StarkPackageAsmManifest(
     string ArchitectureText,
@@ -153,7 +161,9 @@ internal sealed record StarkPackageMethodManifest(
     bool IsUnsafe = false,
     bool IsVarargs = false,
     string? BackendOptimizationMode = null,
-    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null);
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null);
 
 internal sealed record StarkPackageDestructorManifest(
     bool IsMutable,
@@ -193,7 +203,8 @@ internal sealed record StarkPackageGlobalManifest(
     string Visibility,
     string Kind,
     string Type,
-    bool IsMutable);
+    bool IsMutable,
+    StarkPackageTypedConstantInitializerManifest? ConstantInitializer = null);
 
 internal sealed record StarkPackageTypeAliasManifest(
     string Name,
@@ -225,8 +236,14 @@ internal sealed record StarkPackageTypeReference(
     StarkPackageTypeReference? ElementType = null,
     IReadOnlyList<StarkPackageTypeReference>? TypeArguments = null,
     string? FunctionKind = null,
+    string? ClosureStorageKind = null,
+    string? ClosureCallCapability = null,
     StarkPackageTypeReference? ReturnType = null,
-    IReadOnlyList<StarkPackageTypeReference>? ParameterTypes = null);
+    IReadOnlyList<StarkPackageTypeReference>? ParameterTypes = null,
+    IReadOnlyList<string?>? ParameterRawPointerElementCountExpressions = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null);
 
 internal sealed record StarkPackageTypedParameterManifest(
     string Name,
@@ -266,7 +283,9 @@ internal sealed record StarkPackageTypedFunctionManifest(
     bool IsUnsafe = false,
     bool IsVarargs = false,
     string? BackendOptimizationMode = null,
-    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null);
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null);
 
 internal sealed record StarkPackageTypedMethodManifest(
     string Name,
@@ -291,7 +310,9 @@ internal sealed record StarkPackageTypedMethodManifest(
     bool IsUnsafe = false,
     bool IsVarargs = false,
     string? BackendOptimizationMode = null,
-    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null);
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null);
 
 internal sealed record StarkPackageTypedEnumVariantManifest(
     string Name,
@@ -318,7 +339,17 @@ internal sealed record StarkPackageTypedGlobalManifest(
     string Visibility,
     string Kind,
     StarkPackageTypeReference Type,
-    bool IsMutable);
+    bool IsMutable,
+    StarkPackageTypedConstantInitializerManifest? ConstantInitializer = null);
+
+internal sealed record StarkPackageTypedConstantInitializerManifest(
+    string Kind,
+    StarkPackageTypeReference Type,
+    string? IntegerValue = null,
+    string? FloatLiteralText = null,
+    bool? BoolValue = null,
+    string? TextLiteralText = null,
+    IReadOnlyList<StarkPackageTypedConstantInitializerManifest>? Elements = null);
 
 internal sealed record StarkPackageTypedTypeAliasManifest(
     string Name,
@@ -425,6 +456,7 @@ internal sealed record StarkPackageTypedTemplateStatementManifest(
     bool IsMutable = false,
     bool IsConstant = false,
     StarkPackageTypeReference? Type = null,
+    int? StorageCapacity = null,
     string? LoopBehavior = null,
     IReadOnlyList<StarkPackageTypedTemplateSwitchCaseManifest>? SwitchCases = null,
     IReadOnlyList<StarkPackageTypedTemplateStatementManifest>? InitializerStatements = null,
@@ -433,7 +465,8 @@ internal sealed record StarkPackageTypedTemplateStatementManifest(
     IReadOnlyList<StarkPackageTypedTemplateStatementManifest>? ThenStatements = null,
     IReadOnlyList<StarkPackageTypedTemplateStatementManifest>? ElseStatements = null,
     StarkPackageTypedTemplateExpressionManifest? TargetExpression = null,
-    IReadOnlyList<string>? LoopContracts = null);
+    IReadOnlyList<string>? LoopContracts = null,
+    string? ConstProvenance = null);
 
 internal sealed record StarkPackageTypedTemplateBodyManifest(
     IReadOnlyList<StarkPackageTypedTemplateStatementManifest> Statements);
@@ -456,7 +489,9 @@ internal sealed record StarkPackageTemplateDirectCallManifest(
     string? QualifiedSourceName = null,
     string? QualifiedTemplateName = null,
     IReadOnlyList<StarkPackageTypeReference>? TypeArguments = null,
-    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null);
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null);
 
 internal sealed record StarkPackageTemplateFieldAccessManifest(
     int Ordinal,
@@ -472,7 +507,89 @@ internal sealed record StarkPackageTemplateMemberCallManifest(
     string? QualifiedSourceName = null,
     string? QualifiedTemplateName = null,
     IReadOnlyList<StarkPackageTypeReference>? TypeArguments = null,
-    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null);
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null);
+
+internal sealed record StarkPackageTemplateFunctionAddressManifest(
+    int Ordinal,
+    string QualifiedResolvedName,
+    StarkPackageTypeReference TargetType,
+    StarkPackageTypeReference ReturnType,
+    IReadOnlyList<StarkPackageTypedParameterManifest> Parameters,
+    string? QualifiedSourceName = null,
+    string? QualifiedTemplateName = null,
+    IReadOnlyList<StarkPackageTypeReference>? TypeArguments = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null);
+
+internal sealed record StarkPackageTemplateCallArgumentManifest(
+    int ParameterIndex,
+    int SourceArgumentIndex,
+    StarkPackageTypeReference ParameterType,
+    StarkPackageTypeReference ArgumentType,
+    bool IsReceiver,
+    bool RequiresAddressable,
+    bool RequiresMutable,
+    bool RequiresConstProvenance,
+    bool ArgumentIsAddressable,
+    bool ArgumentIsMutable,
+    bool ArgumentHasConstProvenance);
+
+internal sealed record StarkPackageTemplateBoundOperationManifest(
+    string Kind,
+    int Line,
+    int Column,
+    StarkPackageTypeReference ResultType,
+    int? Ordinal = null,
+    string? EnclosingFunctionName = null,
+    string? QualifiedResolvedName = null,
+    StarkPackageTypeReference? ReturnType = null,
+    IReadOnlyList<StarkPackageTypedParameterManifest>? Parameters = null,
+    string? QualifiedSourceName = null,
+    string? QualifiedTemplateName = null,
+    IReadOnlyList<StarkPackageTypeReference>? TypeArguments = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null,
+    IReadOnlyList<StarkPackageTemplateCallArgumentManifest>? CallArguments = null,
+    StarkPackageTypeReference? ReceiverType = null,
+    bool? ReceiverIsAddressable = null,
+    bool? ReceiverIsMutable = null,
+    StarkPackageTypeReference? FunctionPointerType = null,
+    StarkPackageTypeReference? ClosureType = null,
+    string? AccessKind = null,
+    string? SourceKind = null,
+    StarkPackageTypeReference? SourceType = null,
+    int? IndexCount = null,
+    string? OperationName = null,
+    int? ArgumentCount = null,
+    string? ExpressionText = null,
+    StarkPackageTypeReference? CreatedType = null,
+    StarkPackagePublishedConstructorShapeManifest? Constructor = null,
+    IReadOnlyList<StarkPackageTemplateObjectInitializerMemberManifest>? InitializerMembers = null,
+    StarkPackageTypeReference? EnumType = null,
+    string? VariantName = null,
+    IReadOnlyList<StarkPackageTemplateEnumConstructorMemberManifest>? EnumMembers = null,
+    int? SegmentCount = null,
+    int? HoleCount = null,
+    bool? UsesFixedStorage = null,
+    string? BuildKind = null,
+    int? OperandCount = null,
+    string? QueryKind = null,
+    StarkPackageTypeReference? TargetType = null,
+    string? SwitchFamily = null,
+    StarkPackageTypeReference? SwitchType = null,
+    int? SectionCount = null,
+    int? LabelCount = null,
+    int? ExplicitDefaultLabelCount = null,
+    int? LoweredDefaultLabelCount = null,
+    int? LiteralLabelCount = null,
+    int? MatchAllLabelCount = null,
+    int? CaptureLabelCount = null,
+    int? StructuredPatternLabelCount = null,
+    int? GuardedLabelCount = null);
 
 internal sealed record StarkPackageFunctionTemplateManifest(
     string QualifiedResolvedName,
@@ -496,11 +613,14 @@ internal sealed record StarkPackageFunctionTemplateManifest(
     IReadOnlyList<StarkPackageTemplateDirectCallManifest>? DirectCalls = null,
     IReadOnlyList<StarkPackageTemplateFieldAccessManifest>? FieldAccesses = null,
     IReadOnlyList<StarkPackageTemplateMemberCallManifest>? MemberCalls = null,
+    IReadOnlyList<StarkPackageTemplateFunctionAddressManifest>? FunctionAddresses = null,
+    IReadOnlyList<StarkPackageTemplateBoundOperationManifest>? BoundOperations = null,
     string? BackendOptimizationMode = null);
 
 internal sealed record StarkPackageCompilerFactsSection(
     IReadOnlyList<StarkPackageFunctionEffectManifest> FunctionEffects,
     IReadOnlyList<StarkPackageAbiFunctionManifest>? AbiFunctions = null,
+    IReadOnlyList<StarkPackageTypedTypeManifest>? NamedTypes = null,
     IReadOnlyList<StarkPackageConcreteTypeLayoutManifest>? ConcreteLayouts = null,
     IReadOnlyList<StarkPackageEnumLayoutManifest>? EnumLayouts = null,
     IReadOnlyList<StarkPackageFunctionSemanticManifest>? FunctionSemantics = null,
@@ -592,7 +712,47 @@ internal sealed record StarkPackageFunctionSemanticManifest(
     StarkPackageFunctionMemoryEffectsManifest? MemoryEffects = null,
     IReadOnlyList<StarkPackageParameterMemoryEffectsManifest>? Parameters = null,
     IReadOnlyList<StarkPackageFunctionCallManifest>? Calls = null,
-    StarkPackageFunctionOptimizationManifest? Optimization = null);
+    StarkPackageFunctionOptimizationManifest? Optimization = null,
+    StarkPackageFunctionOwnershipManifest? Ownership = null);
+
+internal sealed record StarkPackageFunctionOwnershipManifest(
+    bool OwnershipValid,
+    IReadOnlyList<string> ImplicitDrops,
+    IReadOnlyList<string> Moves,
+    IReadOnlyList<StarkPackageOwnershipEventManifest>? Events = null,
+    IReadOnlyList<StarkPackageOwnershipRootManifest>? Roots = null);
+
+internal sealed record StarkPackageOwnershipPlaceManifest(
+    string RootName,
+    StarkPackageTypeReference Type,
+    IReadOnlyList<string>? ProjectionPath = null,
+    bool HasIndexProjection = false);
+
+internal sealed record StarkPackageOwnershipEventManifest(
+    string Kind,
+    StarkPackageOwnershipPlaceManifest Place,
+    StarkPackageSourceLocation? Location = null);
+
+internal sealed record StarkPackageSourceLocation(
+    string? FilePath,
+    int Line,
+    int Column);
+
+internal sealed record StarkPackageOwnershipRootManifest(
+    string Name,
+    StarkPackageTypeReference Type,
+    string RootKind,
+    bool IsMutable,
+    bool IsConstant,
+    bool IsAddressTaken,
+    bool HasRawPointerEscape,
+    bool HasMove,
+    bool HasPartialMove,
+    bool HasImplicitDrop,
+    bool HasAssignmentDrop,
+    bool HasReinitialization,
+    bool RequiresDrop,
+    string FinalAvailability);
 
 internal sealed record StarkPackageFunctionOptimizationManifest(
     int DirectCallCount,

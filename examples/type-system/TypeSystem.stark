@@ -1,18 +1,18 @@
 module TypeSystem
 
-alias Score = i32[0 100];
+alias Score = u8[0 100];
 
 struct Reading {
     Score Value;
     bool Trusted;
 }
 
-record WeightedScore(Score Value, i32[1 10] Weight) { }
+record WeightedScore(Score Value, u8[1 10] Weight) { }
 
 enum Assessment {
     Missing,
-    Fail(i32[0 100]),
-    Pass(i32[0 100]),
+    Fail(Score),
+    Pass(Score),
 }
 
 finite law Assessment Classify(Reading reading) {
@@ -31,7 +31,7 @@ finite law bool Passed(Assessment assessment) {
     return assessment == Assessment.Pass(72);
 }
 
-export ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     stack Reading reading = new Reading() {
         Value = 72,
         Trusted = true

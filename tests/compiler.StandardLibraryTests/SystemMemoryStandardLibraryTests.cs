@@ -20,12 +20,86 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
                     stack System.Memory.Allocator allocator = System.Memory.Allocator.Default();
                     return allocator.IsDefault();
                 }
+
+                fn bool MemoryOk(System.Memory.MemoryStatus status) {
+                    switch (status) {
+                        case System.Memory.MemoryStatus.Ok:
+                            return true;
+                        case System.Memory.MemoryStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn bool UsePromotedDynamicMemory() {
+                    stack mut dynamic i8[min max] bytes = new();
+                    stack mut i8[min max][4] source = { 1, 2, 3, 4 };
+                    stack u64[0 2 ** 63 - 1] four = 4;
+                    if (!MemoryOk(System.Memory.ReserveBytes(bytes, four))) {
+                        return false;
+                    }
+
+                    if (!MemoryOk(System.Memory.AppendBytes(bytes, source, four))) {
+                        return false;
+                    }
+
+                    if (!MemoryOk(System.Memory.AppendFillBytes(bytes, 9, four))) {
+                        return false;
+                    }
+
+                    if (!MemoryOk(System.Memory.MoveBytes(bytes[2, four], bytes[0, four], four))) {
+                        return false;
+                    }
+
+                    return bytes.Length == 8;
+                }
                 """,
                 appPath),
             new CompilerOptions(
                 ModuleResolver: new FileSystemModuleResolver(sourceRoot)));
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+    }
+
+    [Fact]
+    public void StdLibSourceMemoryAllocatorBuiltinsExposeFactsThroughInlineWrappers()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibMemoryAllocatorFacts.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System.Memory
+                module Demo
+
+                unsafe fn bool ExerciseAllocatorBoundary() {
+                    stack System.Memory.Allocator allocator = System.Memory.Allocator.Default();
+                    stack mut System.Memory.Allocation allocation = System.Memory.Allocate(allocator, 32, 8);
+                    if (allocation.Pointer == null) {
+                        return false;
+                    }
+
+                    allocation = System.Memory.Reallocate(allocation, 64, 8);
+                    System.Memory.Free(allocation);
+                    return true;
+                }
+                """,
+                appPath),
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                OptimizationLevel: CompilerOptimizationLevel.O0,
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
+
+        Assert.Contains("alwaysinline", FindRequiredLine(llvm, "define internal dso_local fastcc void @System_Memory_Allocate("), StringComparison.Ordinal);
+        Assert.Contains("alwaysinline", FindRequiredLine(llvm, "define internal dso_local fastcc void @System_Memory_Reallocate("), StringComparison.Ordinal);
+        Assert.Contains("alwaysinline", FindRequiredLine(llvm, "define internal dso_local fastcc void @System_Memory_Free("), StringComparison.Ordinal);
+        Assert.Contains("call noalias nonnull noundef ptr @__stark_runtime_alloc(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call nonnull noundef ptr @__stark_runtime_realloc(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call void @__stark_runtime_free(", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -58,7 +132,7 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("os_realloc_check:", llvm, StringComparison.Ordinal);
         Assert.Contains("br i1 %realloc_can_os_realloc, label %try_os_reallocate, label %fallback", llvm, StringComparison.Ordinal);
         Assert.Contains("br i1 %os_realloc_failed, label %fallback, label %os_reallocated", llvm, StringComparison.Ordinal);
-        Assert.Contains("@__stark_alloc_bucket_16 = weak_odr hidden thread_local global ptr null, align 8", llvm, StringComparison.Ordinal);
+        Assert.Contains("@__stark_alloc_bucket_16 = linkonce_odr hidden thread_local global ptr null, comdat, align 8", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("thread_local(localexec)", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@malloc(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@realloc(", llvm, StringComparison.Ordinal);
@@ -87,7 +161,7 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
                 module System.Memory
 
                 public struct Allocator {
-                    u8[0 127] Kind;
+                    u8[0 2 ** 7 - 1] Kind;
 
                     static finite law Allocator Default() {
                         return new Allocator() {
@@ -97,26 +171,26 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
                 }
 
                 internal struct Allocation {
-                    rawmutptr<i8[-128 127]> Pointer;
-                    i64[0 max] ByteLength;
-                    i64[1 max] Alignment;
+                    rawmutptr<i8[min max]> Pointer;
+                    u64[0 2 ** 63 - 1] ByteLength;
+                    u64[1 2 ** 63 - 1] Alignment;
                     Allocator Allocator;
                 }
 
-                internal fn Allocation Allocate(Allocator allocator, i64[0 max] byteLength, i64[1 max] alignment);
-                internal fn Allocation Reallocate(Allocation allocation, i64[0 max] byteLength, i64[1 max] alignment);
+                internal fn Allocation Allocate(Allocator allocator, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
+                internal fn Allocation Reallocate(Allocation allocation, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
                 internal fn void Free(Allocation allocation);
 
-                fn void Fill(borrow Allocation allocation, i64[0 max] count, i8[-128 127] value) {
-                    stack rawmutptr<i8[-128 127]> data = allocation.Pointer;
-                    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+                unsafe fn void Fill(borrow Allocation allocation, u64[0 2 ** 63 - 1] count, i8[min max] value) {
+                    stack rawmutptr<i8[min max]> data = allocation.Pointer;
+                    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
                         *(&data[index]) = value;
                     }
                 }
 
-                fn bool AllEqual(borrow Allocation allocation, i64[0 max] count, i8[-128 127] value) {
-                    stack rawmutptr<i8[-128 127]> data = allocation.Pointer;
-                    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+                unsafe fn bool AllEqual(borrow Allocation allocation, u64[0 2 ** 63 - 1] count, i8[min max] value) {
+                    stack rawmutptr<i8[min max]> data = allocation.Pointer;
+                    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
                         if (*(&data[index]) != value) {
                             return false;
                         }
@@ -125,7 +199,7 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
                     return true;
                 }
 
-                export ffi fn i32[-2147483648 2147483647] main() {
+                export unsafe fn i32[min max] main() {
                     stack mut Allocation large = Allocate(Allocator.Default(), 5000, 8);
                     if (large.Pointer == null) {
                         return 1;
@@ -483,10 +557,18 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
             import System
             module App
 
-            export ffi fn i32[-2147483648 2147483647] main() {
+            export fn i32[min max] main() {
                 System.Console.WriteLine("allocator stays unused");
                 return 0;
             }
             """);
+    }
+
+    private static string FindRequiredLine(string text, string needle)
+    {
+        return text
+            .Split('\n')
+            .FirstOrDefault(line => line.Contains(needle, StringComparison.Ordinal))
+            ?? throw new Xunit.Sdk.XunitException($"Expected LLVM IR to contain a line with '{needle}'.");
     }
 }

@@ -58,6 +58,12 @@ public sealed class CompilerPipelineLoadModulesTests
         Assert.NotNull(facadeModule);
         Assert.True(loadedModules.TryGet("Bits", out var bitsModule));
         Assert.NotNull(bitsModule);
+        Assert.True(cache.TryGet("Facade", out var cachedFacade));
+        Assert.NotNull(cachedFacade);
+        Assert.Same(cachedFacade.SyntaxModel, facadeModule.SyntaxModel);
+        Assert.True(cache.TryGet("Bits", out var cachedBits));
+        Assert.NotNull(cachedBits);
+        Assert.Same(cachedBits.SyntaxModel, bitsModule.SyntaxModel);
     }
 
     [Fact]
@@ -75,7 +81,7 @@ public sealed class CompilerPipelineLoadModulesTests
                 module Facade
 
                 public struct Box {
-                    i32[-2147483648 2147483647] Value;
+                    i32[min max] Value;
                 }
 
                 public fn retborrow Box Echo(retborrow Box value) {
@@ -134,7 +140,7 @@ public sealed class CompilerPipelineLoadModulesTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run(Facade.Box value) {
+                    fn i32[min max] Run(Facade.Box value) {
                         return value.Value;
                     }
                     """,
@@ -189,7 +195,7 @@ public sealed class CompilerPipelineLoadModulesTests
                 module Facade
 
                 public struct Box {
-                    i32[-2147483648 2147483647] Value;
+                    i32[min max] Value;
                 }
 
                 public fn void Touch(borrow mut Box box) {
@@ -281,6 +287,145 @@ public sealed class CompilerPipelineLoadModulesTests
 
 
     [Fact]
+    public void ManifestBackedModulesPreservePublishedOwnershipFactsFromCompilerFactSections()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-import-ownership-pipeline-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct Box {
+                    i32[min max] Value;
+                }
+
+                public fn void Consume(Box value) {
+                    return;
+                }
+
+                public unsafe fn i32[min max] Run() {
+                    stack mut Box box = new Box() { Value = 1 };
+                    stack rawptr<Box> pointer = &box;
+                    box = new Box() { Value = 2 };
+                    Consume(box);
+                    box = new Box() { Value = 3 };
+                    return box.Value;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = WithEffectiveLegacyCompilerSectionCopies(Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade"));
+
+            var producedRun = Assert.Single(
+                facadeModule.CompilerFacts!.FunctionSemantics!,
+                static function => string.Equals(function.QualifiedResolvedName, "Facade.Run", StringComparison.Ordinal));
+            Assert.NotNull(producedRun.Ownership);
+            Assert.Contains(producedRun.Ownership!.Events!, static ev => string.Equals(ev.Kind, "address-taken", StringComparison.Ordinal));
+            Assert.Contains(producedRun.Ownership.Events!, static ev => string.Equals(ev.Kind, "assignment-drop", StringComparison.Ordinal));
+            Assert.Contains(producedRun.Ownership.Events!, static ev => string.Equals(ev.Kind, "move", StringComparison.Ordinal));
+            var producedBoxRoot = Assert.Single(producedRun.Ownership.Roots!, static root => string.Equals(root.Name, "box", StringComparison.Ordinal));
+            Assert.True(producedBoxRoot.HasRawPointerEscape);
+            Assert.True(producedBoxRoot.HasAssignmentDrop);
+            Assert.True(producedBoxRoot.HasMove);
+            Assert.True(producedBoxRoot.HasReinitialization);
+
+            var typedOnlyManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(module => module.ModuleName == "Facade"
+                        ? module with
+                        {
+                            Functions = [],
+                            Types = [],
+                            Globals = [],
+                            TypeAliases = [],
+                            TypedInterface = facadeModule.TypedInterface,
+                            CompilerFacts = facadeModule.CompilerFacts,
+                            CompilerSections = new StarkPackageCompilerSectionsManifest(
+                                TypedInterface: facadeModule.TypedInterface,
+                                CompilerFacts: facadeModule.CompilerFacts,
+                                GenericTemplates: facadeModule.GenericTemplates),
+                            SourceSurface = new StarkPackageSourceSurfaceSection(
+                                Imports: facadeModule.EffectiveSourceSurface.Imports,
+                                ReExports: facadeModule.EffectiveSourceSurface.ReExports,
+                                Functions: [],
+                                Types: [],
+                                Globals: [],
+                                TypeAliases: [])
+                        }
+                        : module)
+                    .ToArray()
+            };
+
+            File.WriteAllText(manifestPath, typedOnlyManifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn void Run() {
+                        return;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "load-modules"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LoadedModules, out LoadedModuleSet? loadedModules));
+            Assert.NotNull(loadedModules);
+            Assert.True(loadedModules.TryGet("Facade", out var importedModule));
+            Assert.NotNull(importedModule);
+            Assert.NotNull(importedModule.PackageImageFacts);
+
+            Assert.True(importedModule.PackageImageFacts!.FunctionSemantics.TryGetValue("Facade.Run", out var importedRun));
+            Assert.NotNull(importedRun.Ownership);
+            Assert.True(importedRun.Ownership!.OwnershipValid);
+            Assert.Contains(importedRun.Ownership.Events, static ev => ev.Kind == OwnershipEventKind.AddressTaken && ev.Place.RootName == "box");
+            Assert.Contains(importedRun.Ownership.Events, static ev => ev.Kind == OwnershipEventKind.AssignmentDrop && ev.Place.RootName == "box");
+            Assert.Contains(importedRun.Ownership.Events, static ev => ev.Kind == OwnershipEventKind.Move && ev.Place.RootName == "box");
+            Assert.Contains(importedRun.Ownership.Events, static ev => ev.Kind == OwnershipEventKind.Reinitialize && ev.Place.RootName == "box");
+
+            var importedBoxRoot = Assert.Single(importedRun.Ownership.Roots, static root => string.Equals(root.Name, "box", StringComparison.Ordinal));
+            Assert.Equal(OwnershipStorageRootKind.Local, importedBoxRoot.RootKind);
+            Assert.True(importedBoxRoot.IsMutable);
+            Assert.True(importedBoxRoot.RequiresDrop);
+            Assert.True(importedBoxRoot.HasRawPointerEscape);
+            Assert.True(importedBoxRoot.HasAssignmentDrop);
+            Assert.True(importedBoxRoot.HasMove);
+            Assert.True(importedBoxRoot.HasReinitialization);
+            Assert.Equal(OwnershipRootAvailabilityKind.Initialized, importedBoxRoot.FinalAvailability);
+            Assert.Contains("Box", importedBoxRoot.Type.DisplayName, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+
+    [Fact]
     public void ManifestBackedModulesPreservePublishedGenericTemplateSemanticCallFacts()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-import-template-semantic-calls-pipeline-");
@@ -295,7 +440,7 @@ public sealed class CompilerPipelineLoadModulesTests
                 module Facade
 
                 public struct Box {
-                    i32[-2147483648 2147483647] Value;
+                    i32[min max] Value;
                 }
 
                 public fn void Reset(borrow mut Box box) {

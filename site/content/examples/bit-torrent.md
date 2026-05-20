@@ -30,5 +30,5 @@ Status: covered by `ExamplesCompileRunTests.BitTorrentTrackerResponseExampleComp
 
 ## Related
 
-- [Arrays, Slices, Text, and Views](/book/13-arrays-slices-text/)
-- [Performance Model](/book/25-performance-model/)
+- [Arrays, Slices, Text, and Views](/book/14-arrays-slices-text/)
+- [Performance Model](/book/26-performance-model/)

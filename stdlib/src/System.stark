@@ -1,15 +1,17 @@
 import System.Runtime
 import System.Syscall
+import System.Testing
 export import System.Console
 export import System.BitOperations
 export import System.Collections
 export import System.FileSystem
 export import System.IO
+export import System.IO.File
+export import System.IO.Path
 export import System.Math
 export import System.Memory
 export import System.Net
 export import System.Net.Tcp
 export import System.Process
-export import System.Text
 export import System.Threading
 module System

@@ -393,7 +393,7 @@ Goal: Stark can build real multi-file programs and expose a small but useful sta
 
 ### Runtime Surface
 
-- [ ] Define program entrypoint conventions beyond raw `export ffi fn main`
+- [ ] Define program entrypoint conventions beyond raw `export fn main`
   - [ ] hosted entrypoint rules around `main`
   - [ ] freestanding entrypoint form, if supported
   - [ ] argument and environment exposure model
@@ -458,7 +458,7 @@ Goal: the language feels broadly usable, not just impressive on a narrow subset.
 - [x] Add first-class unsigned integer width types.
   - [x] Define the source widths `u8`, `u16`, `u24`, `u32`, `u48`, `u64`, `u96`, `u128`, `u192`, `u256`, `u384`, `u512`, `u768`, and `u1024` alongside the existing signed `iN` widths.
   - [x] Extend the grammar and parser so unsigned widths are accepted anywhere integer source types are accepted.
-  - [x] Apply the existing explicit integer range rules to unsigned widths, with `min` fixed to `0` and `max` fixed to `2**N - 1` for each width.
+  - [x] Apply the existing explicit integer range rules to unsigned widths, with `min` fixed to `0` and `max` fixed to `2 ** N - 1` for each width.
   - [x] Reject negative unsigned ranges and out-of-width unsigned endpoints with friendly diagnostics.
   - [x] Preserve unsigned-ness through syntax models, type checking, HIR/MIR/SSA lowering, LLVM emission, and package images instead of treating `uN[a b]` as only a signed integer range spelling.
   - [x] Ensure unsigned arithmetic, comparisons, shifts, integer/float conversions, and formatting/parsing hooks use unsigned semantics where the operation depends on signedness.
@@ -1154,7 +1154,7 @@ surface through native executable workflows.
 Remaining near-term gaps should come from the explicit unchecked roadmap items
 below, especially:
 
-- [ ] hosted and freestanding entrypoint conventions beyond raw `export ffi fn main`
+- [ ] hosted and freestanding entrypoint conventions beyond raw `export fn main`
 - [ ] source-level `assert` / `panic` surface over the existing trap/no-unwind failure model
 - [ ] common C interop helper conventions and examples
 - [ ] captured-lambda environment lowering and full capture-mode preservation
@@ -1703,7 +1703,7 @@ turn that book outline into published website content.
 - [x] Publish draft Part II: Stark's Core Language
   - [x] Draft Chapter 5: Values, Types, and Ranges
   - [x] Draft Chapter 6: Bindings, Mutation, and Control Flow
-  - [x] Draft Chapter 7: Ownership, Moves, and Drops
+  - [x] Draft Chapter 7: Ownership, Moves, and Cleanup
   - [x] Draft Chapter 8: Borrowing in Stark
   - [x] Draft Chapter 9: Stark Borrowing Compared With Rust
   - [ ] Draft Chapter 9.5: Stronger Slice and Array Contracts
@@ -1806,25 +1806,25 @@ turn that book outline into published website content.
 
 ### Project Testing and `System.Testing`
 
-- [ ] Define the Stark test-project model.
-  - [ ] Model keywords and syntax after Xunit, such as [Fact] [Theory]
-  - [ ] decide whether test projects are a separate `kind = "test"` manifest kind or executable projects with test metadata
-  - [ ] define how solution manifests identify default test sets
-  - [ ] keep test discovery explicit and static; avoid runtime reflection as a required language feature
-- [ ] Add a standard-library testing module inspired by xUnit.
-  - [ ] add a `System.Testing` module or equivalent package-facing testing root
-  - [ ] port the core assertion vocabulary needed by the current C# xUnit tests, such as truth checks, equality checks, and failure reporting
-  - [ ] model assertion failure using Stark's no-exception failure/result story rather than hidden unwinding
-  - [ ] keep allocation and formatting costs explicit so test-only helpers do not leak into normal runtime expectations
-- [ ] Implement `stark test` on top of test projects.
-  - [ ] build test projects through the existing project/solution manifest driver
-  - [ ] run produced test executables and map their results into concise CLI output
-  - [ ] support solution-level test aliases and default test sets
-  - [ ] preserve `--dev`, `--release`, path dependencies, and package-backed dependencies for tests
-- [ ] Add examples and docs for Stark-native tests.
-  - [ ] add at least one standard-library test project using `System.Testing`
-  - [ ] document how to port existing xUnit-style test cases into Stark test projects
-  - [ ] add regression coverage for project-local and solution-level `stark test`
+- [x] Define the Stark test-project model.
+  - [x] Model keywords and syntax after Xunit, such as `[Fact]`.
+  - [x] decide whether test projects are a separate `kind = "test"` manifest kind or executable projects with test metadata
+  - [x] define how solution manifests identify default test sets
+  - [x] keep test discovery explicit and static; avoid runtime reflection as a required language feature
+- [x] Add a standard-library testing module inspired by xUnit.
+  - [x] add a `System.Testing` module or equivalent package-facing testing root
+  - [x] port the core assertion vocabulary needed by the current C# xUnit tests, such as truth checks, equality checks, and failure reporting
+  - [x] model assertion failure using Stark's no-exception failure/result story rather than hidden unwinding
+  - [x] keep allocation and formatting costs explicit so test-only helpers do not leak into normal runtime expectations
+- [x] Implement `stark test` on top of test projects.
+  - [x] build test projects through the existing project/solution manifest driver
+  - [x] run produced test executables and map their results into concise CLI output
+  - [x] support solution-level test aliases and default test sets
+  - [x] preserve `--dev`, `--release`, path dependencies, and package-backed dependencies for tests
+- [x] Add examples and docs for Stark-native tests.
+  - [x] add at least one standard-library test project using `System.Testing`
+  - [x] document how to port existing xUnit-style test cases into Stark test projects
+  - [x] add regression coverage for project-local and solution-level `stark test`
 
 ### Constrained Generics
 
@@ -1842,7 +1842,7 @@ turn that book outline into published website content.
 ### New Langauge Features
 
 - [x] Add `disjoint` function parameter contracts.
-  - [x] support the parameter-prefix form, such as `disjoint borrow u8[] source`
+  - [x] support and later retire the ordinary Stark parameter-prefix form; whole-parameter `disjoint` is now redundant with default non-overlap except for explicit FFI/asm opt-in boundaries
   - [x] support the relational `where disjoint(a, b)` form for explicit parameter pairs and groups
   - [x] define `disjoint` as a semantic contract that the named memory regions do not overlap for the duration of the call
   - [x] reject `disjoint` declarations on non-memory-backed scalar parameters
@@ -2007,8 +2007,8 @@ turn that book outline into published website content.
       - [x] add collection-level benchmark labels for Stark, Stark experimental, C, and Rust so List, Stack, Queue, LinkedList, and Dictionary can be compared independently
       - [x] add collection-level correctness suites proving stable and experimental collections agree on insertion order, removal behavior, growth, clear/drop, failed allocation status, and generic value ownership
     - [x] add `System.Experimental.Text`
-      - [x] rewrite `OwnedAscii` around `dynamic i8[-128 127]` while preserving cheap `ascii` views, allocation-status APIs, append/copy/format workflows, and drop behavior
-      - [x] rewrite `OwnedUnicode` around `dynamic i32[-2147483648 2147483647]` while preserving cheap `unicode` views, append/copy/format workflows, and drop behavior
+      - [x] rewrite `OwnedAscii` around `dynamic i8[min max]` while preserving cheap `ascii` views, allocation-status APIs, append/copy/format workflows, and drop behavior
+      - [x] rewrite `OwnedUnicode` around `dynamic i32[min max]` while preserving cheap `unicode` views, append/copy/format workflows, and drop behavior
       - [x] replace hot one-character raw pointer slicing in parsing/formatting helpers with `AsciiView`/`UnicodeView`, indexed view access, or compiler-recognized direct data access
       - [x] apply `const`, `disjoint`, `if disjoint`, and `independent` contracts to text comparison, parsing, formatting, transcoding, and copy loops where the source contract proves the fact
       - [x] add old-vs-new benchmarks for owned text allocation, ASCII-to-Unicode conversion, integer formatting, text concat/copy, parsing, and Unicode formatting
@@ -2086,7 +2086,7 @@ turn that book outline into published website content.
         - [x] add compile/lowering coverage for closed-handle reads/writes, fixed/dynamic buffer overloads, readiness errors, listener accept errors, close idempotence, direct platform socket calls, and no lowering through stable `System.Net.Tcp`
     - [x] keep `System.Runtime`, `System.Runtime.Platform.*`, syscall, OS handles, thread handles, and native FFI declarations as explicit raw-boundary modules rather than rewriting them as safe dynamic storage
       - [x] document which raw pointers are legitimate FFI/runtime boundary details and which raw-pointer uses should disappear from higher-level experimental modules
-        - [x] add `docs/Internals/ExperimentalRawBoundaries.md` describing runtime/platform/allocator handles, internal ABI handoff regions, and the intentionally low-level text caller-buffer compatibility surface
+        - [x] add the temporary experimental raw-boundaries note describing runtime/platform/allocator handles, internal ABI handoff regions, and the intentionally low-level text caller-buffer compatibility surface; the note was removed after the experimental modules were promoted into canonical `System.*`
       - [x] add checks or review tasks preventing experimental public APIs from exposing raw pointer storage when a slice, dynamic owner, text view, or buffer type carries the same contract
         - [x] add `SystemExperimentalRawBoundaryAuditTests` to reject public raw pointer APIs in higher-level experimental modules outside the documented low-level text boundary
 
@@ -2520,9 +2520,9 @@ debuggability unless a task explicitly says otherwise.
     - [x] medium literal benchmark
       - [x] focused 3-run smoke on April 28, 2026: Stark `AsciiToUnicodeConversion` averaged 1649 us versus C at 1613 us, for a same-run C ratio of 1.022
       - [x] focused 20-run smoke on April 29, 2026 after the SSA scalar-literal rewrite and benchmark stability column: Stark `AsciiToUnicodeConversion` averaged 1664 us versus C at 1734 us, for a same-run C ratio of 0.960; runtime spread was 17.49% for Stark and 37.02% for C, so keep treating single-run ratios as smoke signals
-    - [x] large literal benchmark that exercises the `llvm.memcpy` path
-      - [x] focused 3-run smoke on April 28, 2026: Stark `AsciiToUnicodeConversionLargeLiteral` averaged 1692 us versus C at 1628 us, for a same-run C ratio of 1.039
-      - [x] refreshed 3-run smoke on April 28, 2026: Stark `AsciiToUnicodeConversionLargeLiteral` averaged 1696 us versus C at 1613 us, for a same-run C ratio of 1.051
+    - [x] large literal specialization benchmark that exercises the `llvm.memcpy` path
+      - [x] focused 3-run smoke on April 28, 2026: Stark `AsciiToUnicodeLargeLiteralSpecialization` averaged 1692 us versus C at 1628 us, for a same-run C ratio of 1.039
+      - [x] refreshed 3-run smoke on April 28, 2026: Stark `AsciiToUnicodeLargeLiteralSpecialization` averaged 1696 us versus C at 1613 us, for a same-run C ratio of 1.051
       - [x] focused 20-run validation on April 29, 2026 after SSA large-literal copy lowering: Stark averaged 1638 us versus C at 1633 us, for a same-run C ratio of 1.003; runtime spread was 15.26% for Stark and 14.88% for C
     - [x] compare the public API literal path against a raw widening-kernel ceiling benchmark
       - [x] add `benchmarks/text/AsciiToUnicodeWideningKernel` to measure direct byte-to-UTF-32 widening without public `Unicode` wrapper checks

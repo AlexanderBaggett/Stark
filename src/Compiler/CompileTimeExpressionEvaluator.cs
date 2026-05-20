@@ -87,6 +87,41 @@ internal static class CompileTimeExpressionEvaluator
         return TryEvaluateAssignmentExpression(expression, services, out constant);
     }
 
+    public static bool TryEvaluate(
+        ParserRuleContext expression,
+        out CompileTimeConstant constant,
+        CompileTimeEvaluationServices services = default)
+    {
+        return expression switch
+        {
+            StarkParser.ExpressionContext typed => TryEvaluate(typed, out constant, services),
+            StarkParser.AssignmentExpressionContext typed => TryEvaluateAssignmentExpression(typed, services, out constant),
+            StarkParser.ConditionalExpressionContext typed => TryEvaluateConditionalExpression(typed, services, out constant),
+            StarkParser.LogicalOrExpressionContext typed => TryEvaluateLogicalOrExpression(typed, services, out constant),
+            StarkParser.LogicalAndExpressionContext typed => TryEvaluateLogicalAndExpression(typed, services, out constant),
+            StarkParser.BitwiseOrExpressionContext typed => TryEvaluateBitwiseOrExpression(typed, services, out constant),
+            StarkParser.BitwiseXorExpressionContext typed => TryEvaluateBitwiseXorExpression(typed, services, out constant),
+            StarkParser.BitwiseAndExpressionContext typed => TryEvaluateBitwiseAndExpression(typed, services, out constant),
+            StarkParser.EqualityExpressionContext typed => TryEvaluateEqualityExpression(typed, services, out constant),
+            StarkParser.RelationalExpressionContext typed => TryEvaluateRelationalExpression(typed, services, out constant),
+            StarkParser.ShiftExpressionContext typed => TryEvaluateShiftExpression(typed, services, out constant),
+            StarkParser.AdditiveExpressionContext typed => TryEvaluateAdditiveExpression(typed, services, out constant),
+            StarkParser.MultiplicativeExpressionContext typed => TryEvaluateMultiplicativeExpression(typed, services, out constant),
+            StarkParser.UnaryExpressionContext typed => TryEvaluateUnaryExpression(typed, services, out constant),
+            StarkParser.PowerExpressionContext typed => TryEvaluatePowerExpression(typed, services, out constant),
+            StarkParser.PostfixExpressionContext typed => TryEvaluatePostfixExpression(typed, services, out constant),
+            StarkParser.PrimaryExpressionContext typed => TryEvaluatePrimaryExpression(typed, services, out constant),
+            StarkParser.LiteralContext typed => TryEvaluateLiteral(typed, services, out constant),
+            _ => Fail(out constant)
+        };
+
+        static bool Fail(out CompileTimeConstant constant)
+        {
+            constant = default;
+            return false;
+        }
+    }
+
     public static bool TryEvaluateInteger(
         StarkParser.ExpressionContext expression,
         out BigInteger value,
@@ -135,11 +170,19 @@ internal static class CompileTimeExpressionEvaluator
         }
 
         if (constant.Kind == CompileTimeConstantKind.Integer
-            && targetType.Kind == StarkTypeKind.Integer
-            && TryFoldSignedInteger(targetType, constant.IntegerValue, out var integerCoerced))
+            && targetType.Kind == StarkTypeKind.Integer)
         {
-            coerced = integerCoerced;
-            return true;
+            if (StarkTypeSymbols.IsCompileTimeInteger(targetType))
+            {
+                coerced = CompileTimeConstant.Integer(constant.IntegerValue, targetType);
+                return true;
+            }
+
+            if (TryFoldSignedInteger(targetType, constant.IntegerValue, out var integerCoerced))
+            {
+                coerced = integerCoerced;
+                return true;
+            }
         }
 
         if (constant.Kind == CompileTimeConstantKind.Float && targetType.Kind == StarkTypeKind.Float)
@@ -756,7 +799,8 @@ internal static class CompileTimeExpressionEvaluator
         var bitWidth = targetType.BitWidth ?? 0;
         if (bitWidth <= 0)
         {
-            return false;
+            return StarkTypeSymbols.IsCompileTimeInteger(targetType)
+                && TryFoldCompileTimeIntegerBinary(operatorText, left.IntegerValue, right.IntegerValue, out constant);
         }
 
         return operatorText switch
@@ -793,6 +837,36 @@ internal static class CompileTimeExpressionEvaluator
         var value = BigInteger.Pow(baseValue, exponent);
         constant = CompileTimeConstant.Integer(value, InferIntegerLiteralType(value));
         return true;
+    }
+
+    private static bool TryFoldCompileTimeIntegerBinary(
+        string operatorText,
+        BigInteger left,
+        BigInteger right,
+        out CompileTimeConstant constant)
+    {
+        constant = default;
+        return operatorText switch
+        {
+            "+" => TryIntegerLiteralConstant(left + right, out constant),
+            "-" => TryIntegerLiteralConstant(left - right, out constant),
+            "*" => TryIntegerLiteralConstant(left * right, out constant),
+            "**" when TryGetValidPowerExponent(right, out var exponent) => TryFoldIntegerPower(left, exponent, out constant),
+            "/" when !right.IsZero => TryIntegerLiteralConstant(left / right, out constant),
+            "%" when !right.IsZero => TryIntegerLiteralConstant(left % right, out constant),
+            "&" => TryIntegerLiteralConstant(left & right, out constant),
+            "^" => TryIntegerLiteralConstant(left ^ right, out constant),
+            "|" => TryIntegerLiteralConstant(left | right, out constant),
+            "<<" when TryGetValidCompileTimeShiftAmount(right, out var leftShift) => TryIntegerLiteralConstant(left << leftShift, out constant),
+            ">>" when TryGetValidCompileTimeShiftAmount(right, out var rightShift) => TryIntegerLiteralConstant(left >> rightShift, out constant),
+            "==" => TryBoolConstant(left == right, out constant),
+            "!=" => TryBoolConstant(left != right, out constant),
+            "<" => TryBoolConstant(left < right, out constant),
+            "<=" => TryBoolConstant(left <= right, out constant),
+            ">" => TryBoolConstant(left > right, out constant),
+            ">=" => TryBoolConstant(left >= right, out constant),
+            _ => false
+        };
     }
 
     private static bool TryGetValidPowerExponent(BigInteger value, out int exponent)
@@ -864,7 +938,14 @@ internal static class CompileTimeExpressionEvaluator
 
     private static bool TryFoldIntegerNegate(CompileTimeConstant operand, out CompileTimeConstant constant)
     {
-        return TryFoldSignedInteger(operand.Type, -operand.IntegerValue, out constant);
+        var value = -operand.IntegerValue;
+        if (StarkTypeSymbols.IntegerValueFitsEffectiveRange(value, operand.Type))
+        {
+            constant = CompileTimeConstant.Integer(value, operand.Type);
+            return true;
+        }
+
+        return TryIntegerLiteralConstant(value, out constant);
     }
 
     private static bool TryFoldFloatNegate(CompileTimeConstant operand, out CompileTimeConstant constant)
@@ -896,13 +977,24 @@ internal static class CompileTimeExpressionEvaluator
         var twosComplement = operand.IntegerValue & mask;
         var inverted = (~twosComplement) & mask;
         var folded = operand.Type.IsUnsigned ? inverted : FromTwosComplement(inverted, bitWidth);
-        constant = CompileTimeConstant.Integer(folded, operand.Type);
-        return true;
+        if (StarkTypeSymbols.IntegerValueFitsEffectiveRange(folded, operand.Type))
+        {
+            constant = CompileTimeConstant.Integer(folded, operand.Type);
+            return true;
+        }
+
+        return TryIntegerLiteralConstant(folded, out constant);
     }
 
     private static bool TryBoolConstant(bool value, out CompileTimeConstant constant)
     {
         constant = CompileTimeConstant.Bool(value);
+        return true;
+    }
+
+    private static bool TryIntegerLiteralConstant(BigInteger value, out CompileTimeConstant constant)
+    {
+        constant = CompileTimeConstant.Integer(value, InferIntegerLiteralType(value));
         return true;
     }
 
@@ -1007,41 +1099,25 @@ internal static class CompileTimeExpressionEvaluator
 
     private static bool TryGetIntegerBounds(StarkTypeSymbol type, out BigInteger min, out BigInteger max)
     {
-        if (type.BitWidth is not int bitWidth || bitWidth <= 0)
-        {
-            min = BigInteger.Zero;
-            max = BigInteger.Zero;
-            return false;
-        }
-
-        if (type.IsUnsigned)
-        {
-            min = BigInteger.Zero;
-            max = (BigInteger.One << bitWidth) - BigInteger.One;
-            return true;
-        }
-
-        return TryGetSignedIntegerBounds(bitWidth, out min, out max);
-    }
-
-    private static bool TryGetSignedIntegerBounds(int bitWidth, out BigInteger min, out BigInteger max)
-    {
-        min = BigInteger.Zero;
-        max = BigInteger.Zero;
-        if (bitWidth <= 0)
-        {
-            return false;
-        }
-
-        min = -(BigInteger.One << (bitWidth - 1));
-        max = (BigInteger.One << (bitWidth - 1)) - 1;
-        return true;
+        return StarkTypeSymbols.TryGetEffectiveIntegerBounds(type, out min, out max);
     }
 
     private static bool TryGetValidShiftAmount(BigInteger value, int bitWidth, out int shift)
     {
         shift = 0;
         if (value < 0 || value >= bitWidth || value > int.MaxValue)
+        {
+            return false;
+        }
+
+        shift = (int)value;
+        return true;
+    }
+
+    private static bool TryGetValidCompileTimeShiftAmount(BigInteger value, out int shift)
+    {
+        shift = 0;
+        if (value < 0 || value > MaximumCompileTimeIntegerPowerExponent)
         {
             return false;
         }
@@ -1081,7 +1157,7 @@ internal static class CompileTimeExpressionEvaluator
             }
         }
 
-        return StarkTypeSymbols.Integer(SupportedIntegerLiteralWidths[^1], value, value);
+        return StarkTypeSymbols.CompileTimeInteger;
     }
 
     private static StarkTypeSymbol FindCommonType(StarkTypeSymbol left, StarkTypeSymbol right)
@@ -1093,6 +1169,12 @@ internal static class CompileTimeExpressionEvaluator
 
         if (left.Kind == StarkTypeKind.Integer && right.Kind == StarkTypeKind.Integer)
         {
+            if (StarkTypeSymbols.IsCompileTimeInteger(left)
+                || StarkTypeSymbols.IsCompileTimeInteger(right))
+            {
+                return StarkTypeSymbols.CompileTimeInteger;
+            }
+
             return StarkTypeSymbols.Integer(
                 Math.Max(left.BitWidth ?? 0, right.BitWidth ?? 0),
                 isUnsigned: left.IsUnsigned && right.IsUnsigned);

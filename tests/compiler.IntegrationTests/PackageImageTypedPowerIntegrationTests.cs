@@ -26,7 +26,7 @@ public sealed class PackageImageTypedPowerIntegrationTests
                 """
                 module Facade
 
-                public fn i32[-2147483648 2147483647] Observe<T>(i32[-2147483648 2147483647] value, i32[-2147483648 2147483647] exponent, T tag) {
+                public fn i32[min max] Observe<T>(i32[min max] value, i32[min max] exponent, T tag) {
                     return value ** exponent;
                 }
                 """);
@@ -92,8 +92,8 @@ public sealed class PackageImageTypedPowerIntegrationTests
                 import Facade
                 module Demo
 
-                export ffi fn i32[-2147483648 2147483647] main() {
-                    stack i32[-2147483648 2147483647] tag = 0;
+                export fn i32[min max] main() {
+                    stack i32[min max] tag = 0;
                     return Facade.Observe(3, 4, tag);
                 }
                 """);

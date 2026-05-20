@@ -1,22 +1,28 @@
 // stark-bench: compile-only
 import System.Console
+import System.Runtime.Buffer
 import System.Text
+import System.Memory
 module Benchmarks.Console.ConsoleReadSurface
 
-fn Unicode ReadUnicodeLineStable() {
+unsafe fn System.Memory.MemoryResult<System.Text.OwnedUnicode> ReadUnicodeLineExperimental() {
     return System.Console.ReadLine();
 }
 
-fn Ascii ReadAsciiLineStable() {
+unsafe fn System.Memory.MemoryResult<System.Text.OwnedAscii> ReadAsciiLineExperimental() {
     return System.Console.ReadAsciiLine();
 }
 
-fn Unicode ReadUnitStable() {
+unsafe fn System.Memory.MemoryResult<System.Text.OwnedUnicode> ReadUnitExperimental() {
     return System.Console.Read();
 }
 
-fn void EchoStable() {
-    stack Unicode line = ReadUnicodeLineStable();
-    System.Console.WriteLine(System.Text.UnicodeView(line));
-    return;
+unsafe fn System.Memory.MemoryResult<u64[0 2 ** 63 - 1]> ReadDynamicBytes(
+    mut borrow System.Runtime.Buffer.DynamicByteBuffer destination) {
+    return System.Console.ReadBytes(destination, 4096);
+}
+
+unsafe fn System.Memory.MemoryResult<u64[0 2 ** 63 - 1]> ReadFixedBytes(
+    mut borrow System.Runtime.Buffer.FixedByteBuffer8192 destination) {
+    return System.Console.ReadBytes(destination, 4096);
 }

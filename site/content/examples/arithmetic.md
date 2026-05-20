@@ -26,5 +26,5 @@ Status: covered by `ExamplesCompileRunTests.ArithmeticExampleCompilesAndRuns`.
 
 ## Related
 
-- [Integer, Floating-Point, and Overflow Policy](/book/27-integers-floats-overflow/)
+- [Integer, Floating-Point, and Overflow Policy](/book/28-integers-floats-overflow/)
 - [Language reference](/reference/language/LanguageReference/)

@@ -1,6 +1,6 @@
 module Book.FunctionGuarantees
 
-finite law i32[min max] ClampToZero(i32[min max] value) {
+inline finite law i32[min max] ClampToZero(i32[min max] value) {
     if (value < 0) {
         return 0;
     }
@@ -8,19 +8,27 @@ finite law i32[min max] ClampToZero(i32[min max] value) {
     return value;
 }
 
-finite i32[min max] SumTo(i32[0 max] limit) {
-    stack mut i32[min max] index = 0;
+inlinehint finite law i32[min max] AddBias(i32[min max] value) {
+    return value + 1;
+}
+
+noinline cold fn i32[min max] RareFallback(i32[min max] value) {
+    return value - 1;
+}
+
+finite i32[min max] SumTo(u32[0 max] limit) {
+    stack mut u32[0 max] index = 0;
     stack mut i32[min max] total = 0;
 
     while willexit (index <= limit) {
-        total += index;
+        total += (i32[min max])index;
         index += 1;
     }
 
     return total;
 }
 
-fn i32[min max] Choose(bool useClamp, i32[min max] value) {
+hot fn i32[min max] Choose(bool useClamp, i32[min max] value) {
     if (useClamp) {
         return ClampToZero(value);
     }
@@ -28,7 +36,20 @@ fn i32[min max] Choose(bool useClamp, i32[min max] value) {
     return value;
 }
 
-export ffi fn i32[min max] main() {
+strictfp finite law f64 AddStrict(f64 left, f64 right) {
+    return left + right;
+}
+
+struct ScoreMath {
+    static inline finite law i32[min max] Double(i32[min max] value) {
+        return value * 2;
+    }
+}
+
+unsafe ffi fn i32[min max] native_abs(i32[min max] value);
+unsafe ffi varargs fn i32[min max] printf(ascii format);
+
+export fn i32[min max] main() {
     if (ClampToZero(-2) != 0) {
         return 1;
     }
@@ -39,6 +60,22 @@ export ffi fn i32[min max] main() {
 
     if (Choose(false, -3) != -3) {
         return 3;
+    }
+
+    if (AddBias(4) != 5) {
+        return 4;
+    }
+
+    if (RareFallback(4) != 3) {
+        return 5;
+    }
+
+    if (ScoreMath.Double(6) != 12) {
+        return 6;
+    }
+
+    if (AddStrict(1.0, 2.0) != 3.0) {
+        return 7;
     }
 
     return 0;

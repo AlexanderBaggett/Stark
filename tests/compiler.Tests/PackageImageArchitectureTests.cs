@@ -1,5 +1,6 @@
 using Stark.Compiler;
 using Stark.Parsing;
+using System.Text.RegularExpressions;
 
 namespace compiler.Tests;
 
@@ -19,7 +20,7 @@ public sealed class PackageImageArchitectureTests
                     [Backend(Opaque)]
                     module Facade
 
-                    public fn i32[-2147483648 2147483647] Identity(i32[-2147483648 2147483647] value) {
+                    public fn i32[min max] Identity(i32[min max] value) {
                         return value;
                     }
                     """,
@@ -83,7 +84,7 @@ public sealed class PackageImageArchitectureTests
                     module Facade
 
                     [Backend(Opaque)]
-                    public finite law i32[-2147483648 2147483647] Identity(i32[-2147483648 2147483647] value) {
+                    public finite law i32[min max] Identity(i32[min max] value) {
                         return value;
                     }
 
@@ -94,9 +95,9 @@ public sealed class PackageImageArchitectureTests
 
                     [Backend(Opaque)]
                     public struct Box {
-                        i32[-2147483648 2147483647] Value;
+                        i32[min max] Value;
 
-                        public finite law i32[-2147483648 2147483647] Read(borrow Box self) {
+                        public finite law i32[min max] Read(borrow Box self) {
                             return self.Value;
                         }
                     }
@@ -201,7 +202,7 @@ public sealed class PackageImageArchitectureTests
             """
             module Helpers
 
-            public finite law i32[-2147483648 2147483647] Identity(i32[-2147483648 2147483647] value) {
+            public finite law i32[min max] Identity(i32[min max] value) {
                 return value;
             }
             """);
@@ -220,7 +221,7 @@ public sealed class PackageImageArchitectureTests
     }
 
     [Fact]
-    public void SystemCollectionsSourceUsesDictionaryBackendOpaqueWithoutModuleNameGate()
+    public void SystemCollectionsSourceUsesDefaultBackendOptimizationWithoutModuleNameGate()
     {
         var repositoryRoot = FindRepositoryRoot();
         var collectionsPath = Path.Combine(repositoryRoot, "stdlib", "src", "System", "Collections.stark");
@@ -231,9 +232,9 @@ public sealed class PackageImageArchitectureTests
         Assert.Equal(ModuleBackendOptimizationMode.Default, syntaxModel.BackendOptimizationMode);
 
         var dictionary = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Name == "Dictionary");
-        Assert.Equal(ModuleBackendOptimizationMode.Opaque, dictionary.BackendOptimizationMode);
+        Assert.Equal(ModuleBackendOptimizationMode.Default, dictionary.BackendOptimizationMode);
         var dictionaryReserve = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Name == "Dictionary.Reserve");
-        Assert.Equal(ModuleBackendOptimizationMode.Opaque, dictionaryReserve.Function!.BackendOptimizationMode);
+        Assert.Equal(ModuleBackendOptimizationMode.Default, dictionaryReserve.Function!.BackendOptimizationMode);
 
         var list = Assert.Single(syntaxModel.Declarations, static declaration => declaration.Name == "List");
         Assert.Equal(ModuleBackendOptimizationMode.Default, list.BackendOptimizationMode);
@@ -278,7 +279,7 @@ public sealed class PackageImageArchitectureTests
                     """
                     module Facade
 
-                    public ffi varargs fn i32[min max] printf(ascii format);
+                    public unsafe ffi varargs fn i32[min max] printf(ascii format);
                     """,
                     sourcePath),
                 new CompilerOptions(StopAfterPassId: "lower-abi"));
@@ -298,7 +299,7 @@ public sealed class PackageImageArchitectureTests
             Assert.True(abiFunction.IsVarargs);
 
             Assert.True(PackageImageLoader.TryBuildModuleSource(CreateResolvedPackageModule(facadeModule), out var sourceText));
-            Assert.Contains("public ffi varargs fn i32[", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public unsafe ffi varargs fn i32[", sourceText, StringComparison.Ordinal);
             Assert.Contains("printf(ascii format);", sourceText, StringComparison.Ordinal);
         }
         finally
@@ -315,7 +316,7 @@ public sealed class PackageImageArchitectureTests
     }
 
     [Fact]
-    public void PackageImagePreservesConstAndDisjointParameterQualifiers()
+    public void PackageImagePreservesConstDefaultNonOverlapAndExplicitRelationQualifiers()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-parameter-qualifiers-");
 
@@ -327,22 +328,28 @@ public sealed class PackageImageArchitectureTests
                     """
                     module Facade
 
-                    public fn void Inspect(const rawmutptr<i32[min max]> ptr) {
+                    public unsafe fn void Inspect(const rawmutptr<i32[min max]> ptr) {
                         return;
                     }
 
-                    public fn void Touch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right) {
+                    public unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
                         return;
                     }
 
-                    public fn void TouchWhere(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) where disjoint(left, right) {
+                    public unsafe ffi fn void ExternalTouch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right);
+
+                    public unsafe fn void TouchOverlap(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) where overlap(left, right) {
+                        return;
+                    }
+
+                    public unsafe fn void TouchSame(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) where same(left, right) {
                         return;
                     }
 
                     public struct Reader {
                         i32[min max] Value;
 
-                        public fn void Read(borrow Reader self, const rawmutptr<i32[min max]> ptr) {
+                        public unsafe fn void Read(borrow Reader self, const rawmutptr<i32[min max]> ptr) {
                             return;
                         }
                     }
@@ -363,12 +370,20 @@ public sealed class PackageImageArchitectureTests
             Assert.True(Assert.Single(inspect.Parameters).IsConst);
 
             var touch = Assert.Single(typedInterface.Functions, static function => function.Name == "Touch");
-            Assert.All(touch.Parameters, static parameter => Assert.True(parameter.IsDisjoint));
+            Assert.All(touch.Parameters, static parameter => Assert.False(parameter.IsDisjoint));
             Assert.Contains(touch.DisjointParameterGroups ?? [], static group => group.ParameterNames.SequenceEqual(["left", "right"]));
 
-            var touchWhere = Assert.Single(typedInterface.Functions, static function => function.Name == "TouchWhere");
-            Assert.All(touchWhere.Parameters, static parameter => Assert.False(parameter.IsDisjoint));
-            Assert.Contains(touchWhere.DisjointParameterGroups ?? [], static group => group.ParameterNames.SequenceEqual(["left", "right"]));
+            var externalTouch = Assert.Single(typedInterface.Functions, static function => function.Name == "ExternalTouch");
+            Assert.All(externalTouch.Parameters, static parameter => Assert.True(parameter.IsDisjoint));
+            Assert.Contains(externalTouch.DisjointParameterGroups ?? [], static group => group.ParameterNames.SequenceEqual(["left", "right"]));
+
+            var touchOverlap = Assert.Single(typedInterface.Functions, static function => function.Name == "TouchOverlap");
+            Assert.Contains(touchOverlap.OverlapParameterGroups ?? [], static group => group.ParameterNames.SequenceEqual(["left", "right"]));
+            Assert.Null(touchOverlap.DisjointParameterGroups);
+
+            var touchSame = Assert.Single(typedInterface.Functions, static function => function.Name == "TouchSame");
+            Assert.Contains(touchSame.SameParameterGroups ?? [], static group => group.ParameterNames.SequenceEqual(["left", "right"]));
+            Assert.Null(touchSame.DisjointParameterGroups);
 
             var reader = Assert.Single(typedInterface.Types, static type => type.Name == "Reader");
             var read = Assert.Single(reader.Methods ?? [], static method => method.Name == "Read");
@@ -377,15 +392,21 @@ public sealed class PackageImageArchitectureTests
             var resolvedModule = CreateResolvedPackageModule(facadeModule);
             Assert.True(PackageImageLoader.TryBuildModuleSource(resolvedModule, out var sourceText));
             Assert.Contains("Inspect(const rawmutptr", sourceText, StringComparison.Ordinal);
-            Assert.Contains("Touch(disjoint rawmutptr", sourceText, StringComparison.Ordinal);
-            Assert.Contains("TouchWhere(rawmutptr", sourceText, StringComparison.Ordinal);
-            Assert.Contains("where disjoint(left, right)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("Touch(rawmutptr", sourceText, StringComparison.Ordinal);
+            Assert.Contains("ExternalTouch(disjoint rawmutptr", sourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("where disjoint(left, right)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("where overlap(left, right)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("where same(left, right)", sourceText, StringComparison.Ordinal);
             Assert.Contains("Read(borrow Reader self, const rawmutptr", sourceText, StringComparison.Ordinal);
 
             Assert.True(PackageImageLoader.TryBuildLoadedPackageImageFacts(resolvedModule, out var facts));
             Assert.True(facts.FunctionSignatures["Facade.Inspect"].Parameters[0].IsConst);
-            Assert.All(facts.FunctionSignatures["Facade.Touch"].Parameters, static parameter => Assert.True(parameter.IsDisjoint));
-            Assert.Contains(facts.FunctionSignatures["Facade.TouchWhere"].DisjointGroups, static group => group.ParameterNames.SequenceEqual(["left", "right"]));
+            Assert.All(facts.FunctionSignatures["Facade.Touch"].Parameters, static parameter => Assert.False(parameter.IsDisjoint));
+            Assert.Contains(facts.FunctionSignatures["Facade.Touch"].DisjointGroups, static group => group.ParameterNames.SequenceEqual(["left", "right"]));
+            Assert.All(facts.FunctionSignatures["Facade.ExternalTouch"].Parameters, static parameter => Assert.True(parameter.IsDisjoint));
+            Assert.Contains(facts.FunctionSignatures["Facade.ExternalTouch"].DisjointGroups, static group => group.ParameterNames.SequenceEqual(["left", "right"]));
+            Assert.Contains(facts.FunctionSignatures["Facade.TouchOverlap"].OverlapGroups, static group => group.ParameterNames.SequenceEqual(["left", "right"]));
+            Assert.Contains(facts.FunctionSignatures["Facade.TouchSame"].SameGroups, static group => group.ParameterNames.SequenceEqual(["left", "right"]));
             Assert.True(facts.FunctionSignatures["Facade.Reader.Read"].Parameters[1].IsConst);
         }
         finally
@@ -414,13 +435,13 @@ public sealed class PackageImageArchitectureTests
                     """
                     module Facade
 
-                    public fn i32[-2147483648 2147483647] CountIndependent<T>(i32[-2147483648 2147483647] limit, T tag) {
-                        stack mut i32[-2147483648 2147483647] value = 0;
+                    public fn i32[min max] CountIndependent<T>(i32[min max] limit, T tag) {
+                        stack mut i32[min max] value = 0;
                         while willexit independent (value < limit) {
                             value += 1;
                         }
 
-                        for willexit independent (stack mut i32[0 10] index = 0; index < 4; index += 1) {
+                        for willexit independent (stack mut u8[0 10] index = 0; index < 4; index += 1) {
                             value += 1;
                         }
 
@@ -472,7 +493,7 @@ public sealed class PackageImageArchitectureTests
     }
 
     [Fact]
-    public void PackageImageBackedWhereDisjointCallsRejectOverlappingArguments()
+    public void PackageImageBackedDefaultNonOverlapCallsRejectOverlappingArguments()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-where-disjoint-");
         var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
@@ -486,7 +507,7 @@ public sealed class PackageImageArchitectureTests
                 """
                 module Facade
 
-                public fn void TouchWhere(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) where disjoint(left, right) {
+                public unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
                     return;
                 }
                 """,
@@ -504,8 +525,8 @@ public sealed class PackageImageArchitectureTests
                     import Facade
                     module Demo
 
-                    fn void Run(rawmutptr<i32[min max]> ptr) {
-                        Facade.TouchWhere(ptr, ptr);
+                    unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
+                        Facade.Touch(ptr, ptr);
                         return;
                     }
                     """,
@@ -519,6 +540,206 @@ public sealed class PackageImageArchitectureTests
                 result.Diagnostics,
                 static diagnostic => diagnostic.Code == "STK3030"
                     && diagnostic.Message.Contains("violates disjoint parameter contract", StringComparison.Ordinal));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImageBackedWhereOverlapCallsAllowOverlappingArguments()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-where-overlap-");
+        var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public unsafe fn void TouchOverlap(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) where overlap(left, right) {
+                    return;
+                }
+                """,
+                sourcePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(sourcePath);
+
+            var result = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
+                        Facade.TouchOverlap(ptr, ptr);
+                        return;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "type-check"));
+
+            Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImageBackedSubregionDisjointContractsRejectOverlappingImportedCalls()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-subregion-disjoint-");
+        var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public unsafe fn void Window(
+                    rawptr<i32[min max]>[8] source,
+                    rawmutptr<i32[min max]>[8] destination)
+                    where overlap(source, destination)
+                    where disjoint(source[2, 4], destination[0, 4]) {
+                    return;
+                }
+                """,
+                sourcePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(sourcePath);
+
+            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+            Assert.True(PackageImageLoader.TryBuildModuleSource(CreateResolvedPackageModule(facadeModule), out var sourceText));
+            Assert.Contains("where disjoint(source[2, 4], destination[0, 4])", sourceText, StringComparison.Ordinal);
+
+            var result = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    unsafe fn void Run(rawmutptr<i32[min max]>[8] buffer) {
+                        Facade.Window(buffer, buffer);
+                        return;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "type-check"));
+
+            Assert.False(result.Succeeded);
+            Assert.Contains(
+                result.Diagnostics,
+                static diagnostic => diagnostic.Code == "STK3030"
+                    && diagnostic.Message.Contains("disjoint subregion parameter contract", StringComparison.Ordinal));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImageBackedRetborrowDynamicIndexTemplatesReturnElementAddresses()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-retborrow-dynamic-");
+        var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct Bag<T> {
+                    public T[] Items;
+
+                    public law retborrow T Get(borrow Bag<T> self, u64[0 2 ** 63 - 1] index) {
+                        return self.Items[index];
+                    }
+                }
+                """,
+                sourcePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(sourcePath);
+
+            var result = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32[min max] Run() {
+                        stack mut Facade.Bag<i32[min max]> bag = new();
+                        return bag.Get(0);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    EmitLlvmIr: true));
+
+            Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+            Assert.NotNull(llvmModule);
+
+            var getBody = ExtractDefinitionBodyContaining(llvmModule.Text, "Facade_Bag_Get__i32");
+            var returned = Regex.Match(getBody, @"ret ptr (?<value>%[A-Za-z0-9_]+)");
+            Assert.True(returned.Success, getBody);
+            var returnedValue = returned.Groups["value"].Value;
+            Assert.Contains($"{returnedValue} = getelementptr i32, ptr ", getBody, StringComparison.Ordinal);
+            Assert.Contains($"ret ptr {returnedValue}", getBody, StringComparison.Ordinal);
+            Assert.DoesNotContain($"{returnedValue} = load i32", getBody, StringComparison.Ordinal);
         }
         finally
         {
@@ -581,8 +802,8 @@ public sealed class PackageImageArchitectureTests
 
             Assert.True(PackageImageLoader.TryBuildModuleSource(CreateResolvedPackageModule(module), out var sourceText));
             Assert.Contains("public fn u8[0 127] Keep(u8[0 127] value)", sourceText, StringComparison.Ordinal);
-            Assert.Contains("public fn u32[0 4294967295] Keep32(u32[0 4294967295] value)", sourceText, StringComparison.Ordinal);
-            Assert.Contains("public fn u96[0 79228162514264337593543950335] Keep96(u96[0 79228162514264337593543950335] value)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public fn u32[0 max] Keep32(u32[0 max] value)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public fn u96[0 max] Keep96(u96[0 max] value)", sourceText, StringComparison.Ordinal);
         }
         finally
         {
@@ -610,7 +831,7 @@ public sealed class PackageImageArchitectureTests
                 """
                 module Bits
 
-                public record Token(i32[-2147483648 2147483647] value) {
+                public record Token(i32[min max] value) {
                 }
                 """);
             File.WriteAllText(
@@ -618,7 +839,7 @@ public sealed class PackageImageArchitectureTests
                 """
                 module Math
 
-                public fn i32[-2147483648 2147483647] Id(i32[-2147483648 2147483647] value) {
+                public fn i32[min max] Id(i32[min max] value) {
                     return value;
                 }
                 """);
@@ -679,7 +900,7 @@ public sealed class PackageImageArchitectureTests
                 """
                 module Runtime
 
-                internal fn i32[-2147483648 2147483647] Hidden() {
+                internal fn i32[min max] Hidden() {
                     return 7;
                 }
                 """);
@@ -691,7 +912,7 @@ public sealed class PackageImageArchitectureTests
                     import Runtime
                     module Facade
 
-                    public fn i32[-2147483648 2147483647] Run() {
+                    public fn i32[min max] Run() {
                         return Runtime.Hidden();
                     }
                     """,
@@ -747,7 +968,7 @@ public sealed class PackageImageArchitectureTests
                 """
                 module Runtime
 
-                internal fn i32[-2147483648 2147483647] Hidden() {
+                internal fn i32[min max] Hidden() {
                     return 7;
                 }
                 """);
@@ -759,7 +980,7 @@ public sealed class PackageImageArchitectureTests
                     import Runtime
                     module Facade
 
-                    public fn i32[-2147483648 2147483647] Run() {
+                    public fn i32[min max] Run() {
                         return Runtime.Hidden();
                     }
                     """,
@@ -825,7 +1046,7 @@ public sealed class PackageImageArchitectureTests
                     module Facade
 
                     public const Small = 80;
-                    public const Big = 2**16;
+                    public const Big = 2 ** 16;
                     public const Float64 = 80.0;
                     public const Float32 = 80.0f;
                     """,
@@ -847,12 +1068,12 @@ public sealed class PackageImageArchitectureTests
                 new ResolvedPackageModule(manifestPath, libraryPath, manifest, module),
                 out var sourceText));
 
-            Assert.Contains("public const i8 Small = 0;", sourceText, StringComparison.Ordinal);
-            Assert.Contains("public const i24 Big = 0;", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public const u8 Small = 0;", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public const u24 Big = 0;", sourceText, StringComparison.Ordinal);
             Assert.Contains("public const f64 Float64 = 0;", sourceText, StringComparison.Ordinal);
             Assert.Contains("public const f32 Float32 = 0;", sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("const i8[80 80]", sourceText, StringComparison.Ordinal);
-            Assert.DoesNotContain("const i24[65536 65536]", sourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("const u8[80 80]", sourceText, StringComparison.Ordinal);
+            Assert.DoesNotContain("const u24[65536 65536]", sourceText, StringComparison.Ordinal);
         }
         finally
         {
@@ -924,6 +1145,351 @@ public sealed class PackageImageArchitectureTests
             Assert.Contains("public fn T Identity<T>(T value);", document.ParseResult.SourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("this is not valid Stark", document.ParseResult.SourceText, StringComparison.Ordinal);
             Assert.DoesNotContain("return value", document.ParseResult.SourceText, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImageGenericTemplatesPublishAllBoundOperationFamilies()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-bound-ops-");
+
+        try
+        {
+            var sourcePath = Path.Combine(tempDirectory.FullName, "System.Text.stark");
+            var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "System.Text.starkpkg.json" : "libSystem.Text.starkpkg.json");
+            var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "System.Text.lib" : "libSystem.Text.a");
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    module System.Text
+
+                    public finite law ascii AsciiView(Ascii source);
+                    public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
+
+                    enum Status {
+                        Ok,
+                        Err(i32[min max]),
+                        Named { Code: i32[min max] },
+                    }
+
+                    struct Box {
+                        i32[min max] Value;
+
+                        fn i32[min max] Get(borrow Box self) {
+                            return self.Value;
+                        }
+
+                        fn bool Fill(borrow Box self, out i32[min max] value) {
+                            value = self.Value;
+                            return true;
+                        }
+                    }
+
+                    fn i32[min max] Inc(i32[min max] value) {
+                        return value + 1;
+                    }
+
+                    unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value) {
+                        return op(value);
+                    }
+
+                    fn bool Write(out i32[min max] value) {
+                        value = 9;
+                        return true;
+                    }
+
+                    unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value) {
+                        return op(value);
+                    }
+
+                    fn i32[min max] Choose(bool flag) {
+                        switch (flag) {
+                            case true:
+                                return 1;
+                            case false:
+                                return 0;
+                        }
+                    }
+
+                    fn i32[min max] Score(Status status) {
+                        switch (status) {
+                            case Status.Ok:
+                                return 1;
+                            case Status.Err(var error):
+                                return error;
+                            case Status.Named { Code: var code }:
+                                return code;
+                        }
+                    }
+
+                    public unsafe fn T Run<T>(
+                        T input,
+                        fnptr<fn i32[min max](i32[min max])> pointerOp,
+                        closure<fn i32[min max](i32[min max])> closureOp) {
+                        stack mut Box box = new Box() { Value = 3 };
+                        stack mut i32[min max][2] values = { 4, 5 };
+                        stack mut dynamic u32[0 max] items = new(1);
+                        stack Ascii label[4 + 4] = $"ok";
+                        stack Ascii joined[12] = label + "!";
+                        stack i64[min max] boxSize = sizeof(Box);
+                        stack i64[min max] boxAlign = alignof(Box);
+                        stack mut i64[min max] marker = 0;
+                        switch (true) {
+                            case true:
+                                marker = boxSize;
+                            case false:
+                                marker = boxAlign;
+                        }
+                        stack Status ok = Status.Ok;
+                        stack Status named = Status.Named { Code: 5 };
+                        values[0] = Inc(box.Get());
+                        items.Reserve(1);
+                        if (!box.Fill(values[1])) {
+                            return input;
+                        }
+                        if (!ApplyOut(Write, values[1])) {
+                            return input;
+                        }
+                        if (Score(named) == 0) {
+                            return input;
+                        }
+                        true ? pointerOp(1) : closureOp(2);
+                        stack i32[min max] total = values[0] + values[1] + Apply(Inc, 2) + pointerOp(3) + closureOp(6) + Choose(true) + Score(Status.Ok) + Score(Status.Err(4));
+                        return input;
+                    }
+                    """,
+                    sourcePath),
+                new CompilerOptions(StopAfterPassId: "lower-abi"));
+
+            Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(result, libraryPath);
+            var module = Assert.Single(manifest.Modules, static item => item.ModuleName == "System.Text");
+            var template = Assert.Single(
+                module.EffectiveGenericTemplates!.Functions,
+                static item => item.QualifiedResolvedName == "System.Text.Run");
+            Assert.NotNull(template.TypedBody);
+            Assert.Contains("\"Kind\": \"enum-value\"", manifest.ToJson(), StringComparison.Ordinal);
+            Assert.Contains("\"EnumLayouts\"", manifest.ToJson(), StringComparison.Ordinal);
+            Assert.Contains("\"StorageCapacity\": 8", manifest.ToJson(), StringComparison.Ordinal);
+            Assert.NotNull(template.BoundOperations);
+
+            var kinds = template.BoundOperations!
+                .Select(static operation => operation.Kind)
+                .ToHashSet(StringComparer.Ordinal);
+            var requiredKinds = new HashSet<string>(
+                [
+                    "direct-call",
+                    "member-call",
+                    "function-pointer-call",
+                    "closure-call",
+                    "index-access",
+                    "object-creation",
+                    "enum-construction",
+                    "enum-call",
+                    "enum-value",
+                    "dynamic-storage-operation",
+                    "text-interpolation",
+                    "text-build",
+                    "layout-query",
+                    "switch-dispatch"
+                ],
+                StringComparer.Ordinal);
+            foreach (var requiredKind in requiredKinds)
+            {
+                Assert.Contains(requiredKind, kinds);
+            }
+
+            Assert.Contains(
+                template.BoundOperations!,
+                static operation => operation.Kind == "function-pointer-call"
+                    && operation.FunctionPointerType?.Kind == "functionpointer");
+            Assert.Contains(
+                template.BoundOperations!,
+                static operation => operation.Kind == "dynamic-storage-operation"
+                    && operation.ReceiverType?.ElementType?.Kind == "integer"
+                    && operation.ResultType.Kind == "void");
+
+            Assert.True(PackageImageLoader.TryBuildLoadedPackageImageFacts(CreateResolvedPackageModule(module), out var facts));
+            var importedTemplate = Assert.Single(facts.FunctionTemplates, static pair => pair.Key == "System.Text.Run").Value;
+            Assert.Contains(importedTemplate.BoundOperations, static operation => operation.Operation is BoundFunctionPointerCallOperation);
+            Assert.Contains(importedTemplate.BoundOperations, static operation => operation.Operation is BoundDynamicStorageOperation);
+            Assert.Contains(importedTemplate.BoundOperations, static operation => operation.Operation is BoundSwitchDispatchOperation);
+
+            var corruptedTemplates = new StarkPackageGenericTemplateSection(
+                module.EffectiveGenericTemplates!.Functions
+                    .Select(static item => item.QualifiedResolvedName == "System.Text.Run"
+                        ? item with { BodyText = "{ return this is not valid Stark; }" }
+                        : item)
+                    .ToArray());
+            var corruptedModule = module with
+            {
+                GenericTemplates = corruptedTemplates,
+                CompilerSections = module.CompilerSections is null
+                    ? null
+                    : module.CompilerSections with { GenericTemplates = corruptedTemplates }
+            };
+            var corruptedManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(item => item.ModuleName == "System.Text" ? corruptedModule : item)
+                    .ToArray()
+            };
+            File.WriteAllText(manifestPath, corruptedManifest.ToJson());
+            Assert.True(PackageImageLoader.TryBuildModuleSource(
+                new ResolvedPackageModule(manifestPath, libraryPath, corruptedManifest, corruptedModule),
+                out var corruptedSourceText));
+            Assert.DoesNotContain("this is not valid Stark", corruptedSourceText, StringComparison.Ordinal);
+            File.Delete(sourcePath);
+
+            var consumerResult = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    import System.Text
+                    module Demo
+
+                    fn i32[min max] LocalInc(i32[min max] value) {
+                        return value + 1;
+                    }
+
+                    unsafe fn i32[min max] Run() {
+                        stack fnptr<fn i32[min max](i32[min max])> pointerOp = LocalInc;
+                        stack closure<fn i32[min max](i32[min max])> closureOp =
+                            (i32[min max] value) => value + 6;
+                        return System.Text.Run(7, pointerOp, closureOp);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "emit-llvm"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(consumerResult, "Imported generic typed-body consumer builds");
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+            Assert.NotNull(mir);
+            MidLevelIrLoweringTests.AssertMirHasNoNullLoweringArtifacts(mir);
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+            Assert.NotNull(llvm);
+            Assert.DoesNotContain("this is not valid Stark", llvm!.Text, StringComparison.Ordinal);
+            Assert.Contains("__stark_mono_fn_Demo__System_Text_Run__", llvm.Text, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImageConsumerLowersImportedGenericTypedBodyAfterSourceAndBodyTextAreRemoved()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-bound-typed-consumer-");
+
+        try
+        {
+            var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+            var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+            var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    module Facade
+
+                    public struct Pair<T> {
+                        T Left;
+                        T Right;
+                    }
+
+                    public fn T Pick<T>(T left, T right, bool choose) {
+                        stack Pair<T> pair = new Pair<T>() { Left = left, Right = right };
+                        switch (choose) {
+                            case true:
+                                return pair.Left;
+                            case false:
+                                return pair.Right;
+                        }
+                    }
+                    """,
+                    sourcePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            var facadeModule = Assert.Single(manifest.Modules, static item => item.ModuleName == "Facade");
+            var pickTemplate = Assert.Single(
+                facadeModule.EffectiveGenericTemplates!.Functions,
+                static item => item.QualifiedResolvedName == "Facade.Pick");
+            Assert.NotNull(pickTemplate.TypedBody);
+            Assert.Contains(pickTemplate.BoundOperations ?? [], static operation => operation.Kind == "object-creation");
+            Assert.Contains(pickTemplate.BoundOperations ?? [], static operation => operation.Kind == "switch-dispatch");
+
+            var corruptedTemplates = new StarkPackageGenericTemplateSection(
+                facadeModule.EffectiveGenericTemplates!.Functions
+                    .Select(static template => template.QualifiedResolvedName == "Facade.Pick"
+                        ? template with { BodyText = "{ return this is not valid Stark; }" }
+                        : template)
+                    .ToArray());
+            var corruptedModule = facadeModule with
+            {
+                GenericTemplates = corruptedTemplates,
+                CompilerSections = facadeModule.CompilerSections is null
+                    ? null
+                    : facadeModule.CompilerSections with { GenericTemplates = corruptedTemplates }
+            };
+            var corruptedManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(item => item.ModuleName == "Facade" ? corruptedModule : item)
+                    .ToArray()
+            };
+            File.WriteAllText(manifestPath, corruptedManifest.ToJson());
+            File.Delete(sourcePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32[min max] Run(bool choose) {
+                        stack i32[min max] left = 3;
+                        stack i32[min max] right = 4;
+                        return Facade.Pick(left, right, choose);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "emit-llvm"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(consumerResult, "Imported generic typed-body consumer builds");
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+            Assert.NotNull(mir);
+            MidLevelIrLoweringTests.AssertMirHasNoNullLoweringArtifacts(mir);
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+            Assert.NotNull(llvm);
+            Assert.DoesNotContain("this is not valid Stark", llvm!.Text, StringComparison.Ordinal);
+            Assert.Contains("__stark_mono_fn_Demo__Facade_Pick__i32", llvm.Text, StringComparison.Ordinal);
         }
         finally
         {
@@ -1070,6 +1636,36 @@ public sealed class PackageImageArchitectureTests
             $"/virtual/lib{module.ModuleName}.a",
             new StarkPackageManifest(module.ModuleName, $"lib{module.ModuleName}.a", [module]),
             module);
+    }
+
+    private static string ExtractDefinitionBody(string llvm, string symbolName)
+    {
+        var headerMatch = Regex.Match(
+            llvm,
+            $@"^define [^\n]*@{Regex.Escape(symbolName)}\([^\n]*\)[^\n]*",
+            RegexOptions.Multiline);
+        Assert.True(headerMatch.Success, $"Expected LLVM definition for '{symbolName}'.");
+
+        var start = headerMatch.Index;
+        var nextDefinition = llvm.IndexOf("\ndefine ", start + headerMatch.Length, StringComparison.Ordinal);
+        return nextDefinition < 0
+            ? llvm[start..]
+            : llvm[start..nextDefinition];
+    }
+
+    private static string ExtractDefinitionBodyContaining(string llvm, string symbolNameFragment)
+    {
+        var headerMatch = Regex.Match(
+            llvm,
+            $@"^define [^\n]*@[^\s(]*{Regex.Escape(symbolNameFragment)}[^\s(]*\([^\n]*\)[^\n]*",
+            RegexOptions.Multiline);
+        Assert.True(headerMatch.Success, $"Expected LLVM definition containing '{symbolNameFragment}'.");
+
+        var start = headerMatch.Index;
+        var nextDefinition = llvm.IndexOf("\ndefine ", start + headerMatch.Length, StringComparison.Ordinal);
+        return nextDefinition < 0
+            ? llvm[start..]
+            : llvm[start..nextDefinition];
     }
 
     private static string FindRepositoryRoot()

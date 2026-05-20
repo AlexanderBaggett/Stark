@@ -1,3 +1,4 @@
+using System.Numerics;
 using System.Text;
 using Stark.Parsing;
 
@@ -34,6 +35,9 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private const string RuntimeAllocatorLockName = "__stark_alloc_lock";
     private const string RuntimeAllocatorLockAcquireHelperName = "__stark_alloc_lock_acquire";
     private const string RuntimeAllocatorLockReleaseHelperName = "__stark_alloc_lock_release";
+    private const string WindowsI128DivideHelperName = "__divti3";
+    private const string WindowsI128ModuloHelperName = "__modti3";
+    private const string WindowsI128UnsignedDivRemHelperName = "__stark_u128_divrem";
     private const string OutOfMemoryTrapHelperName = "__stark_oom_trap";
     private const string UnreachableTrapHelperName = "__stark_unreachable_trap";
     private const int AggregateScalarizationThresholdBytes = 16;
@@ -186,6 +190,12 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             declarations.Add($"declare noundef ptr @HeapReAlloc(ptr, i32, ptr, {AllocatorSizeType} noundef) allocsize(3) allockind(\"realloc\") {OsAllocatorFamilyAttribute} nounwind");
             declarations.Add($"declare i32 @HeapFree(ptr, i32, ptr) allockind(\"free\") {OsAllocatorFamilyAttribute} nounwind");
         }
+        else if (usesRuntimeAllocator && IsMacOSTarget())
+        {
+            declarations.Add($"declare noalias noundef ptr @malloc({AllocatorSizeType} noundef) allocsize(0) allockind(\"alloc,uninitialized\") {OsAllocatorFamilyAttribute} nounwind");
+            declarations.Add($"declare noundef ptr @realloc(ptr, {AllocatorSizeType} noundef) allocsize(1) allockind(\"realloc\") {OsAllocatorFamilyAttribute} nounwind");
+            declarations.Add($"declare void @free(ptr) allockind(\"free\") {OsAllocatorFamilyAttribute} nounwind");
+        }
 
         if (usesRuntimeAllocator
             || usesTextConcatBuiltin
@@ -276,6 +286,12 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             builder.AppendLine();
         }
 
+        if (UsesWindowsI128DivisionLibcall())
+        {
+            EmitWindowsI128DivisionLibcallDefinitions(builder);
+            builder.AppendLine();
+        }
+
         if (_usesUnreachableTrapHelper())
         {
             EmitTrapHelperDefinition(builder, UnreachableTrapHelperName);
@@ -302,10 +318,103 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         }
     }
 
-    private static void EmitTrapHelperDefinition(StringBuilder builder, string helperName)
+    private bool UsesWindowsI128DivisionLibcall()
     {
+        return IsWindowsTarget()
+            && _enumerateBinaryOperations().Any(static binary =>
+                binary.Type.Kind == StarkTypeKind.Integer
+                && binary.Type.BitWidth == 128
+                && binary.Operator is SsaBinaryOperator.Divide or SsaBinaryOperator.Modulo);
+    }
+
+    private static void EmitWindowsI128DivisionLibcallDefinitions(StringBuilder builder)
+    {
+        builder.AppendLine($"${WindowsI128DivideHelperName} = comdat any");
+        builder.AppendLine($"${WindowsI128ModuloHelperName} = comdat any");
+        builder.AppendLine();
+        builder.AppendLine($"define internal dso_local {{ i128, i128 }} @{WindowsI128UnsignedDivRemHelperName}(i128 %numerator, i128 %denominator) unnamed_addr nounwind {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine("  br label %loop");
+        builder.AppendLine();
+        builder.AppendLine("loop:");
+        builder.AppendLine("  %index = phi i32 [ 127, %entry ], [ %next_index, %continue ]");
+        builder.AppendLine("  %quotient = phi i128 [ 0, %entry ], [ %next_quotient, %continue ]");
+        builder.AppendLine("  %remainder = phi i128 [ 0, %entry ], [ %next_remainder, %continue ]");
+        builder.AppendLine("  %shift = zext i32 %index to i128");
+        builder.AppendLine("  %numerator_shifted = lshr i128 %numerator, %shift");
+        builder.AppendLine("  %next_bit = and i128 %numerator_shifted, 1");
+        builder.AppendLine("  %remainder_shifted = shl i128 %remainder, 1");
+        builder.AppendLine("  %candidate_remainder = or i128 %remainder_shifted, %next_bit");
+        builder.AppendLine("  %can_subtract = icmp uge i128 %candidate_remainder, %denominator");
+        builder.AppendLine("  %subtracted_remainder = sub i128 %candidate_remainder, %denominator");
+        builder.AppendLine("  %next_remainder = select i1 %can_subtract, i128 %subtracted_remainder, i128 %candidate_remainder");
+        builder.AppendLine("  %quotient_bit = shl i128 1, %shift");
+        builder.AppendLine("  %quotient_with_bit = or i128 %quotient, %quotient_bit");
+        builder.AppendLine("  %next_quotient = select i1 %can_subtract, i128 %quotient_with_bit, i128 %quotient");
+        builder.AppendLine("  %done = icmp eq i32 %index, 0");
+        builder.AppendLine("  br i1 %done, label %exit, label %continue");
+        builder.AppendLine();
+        builder.AppendLine("continue:");
+        builder.AppendLine("  %next_index = add i32 %index, -1");
+        builder.AppendLine("  br label %loop");
+        builder.AppendLine();
+        builder.AppendLine("exit:");
+        builder.AppendLine("  %with_quotient = insertvalue { i128, i128 } undef, i128 %next_quotient, 0");
+        builder.AppendLine("  %with_remainder = insertvalue { i128, i128 } %with_quotient, i128 %next_remainder, 1");
+        builder.AppendLine("  ret { i128, i128 } %with_remainder");
+        builder.AppendLine("}");
+        builder.AppendLine();
+        builder.AppendLine($"define linkonce_odr dso_local <2 x i64> @{WindowsI128DivideHelperName}(ptr nocapture readonly %left, ptr nocapture readonly %right) unnamed_addr nounwind comdat {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine("  %left_value = load i128, ptr %left, align 8");
+        builder.AppendLine("  %right_value = load i128, ptr %right, align 8");
+        builder.AppendLine("  %left_negative = icmp slt i128 %left_value, 0");
+        builder.AppendLine("  %right_negative = icmp slt i128 %right_value, 0");
+        builder.AppendLine("  %negated_left = sub i128 0, %left_value");
+        builder.AppendLine("  %negated_right = sub i128 0, %right_value");
+        builder.AppendLine("  %abs_left = select i1 %left_negative, i128 %negated_left, i128 %left_value");
+        builder.AppendLine("  %abs_right = select i1 %right_negative, i128 %negated_right, i128 %right_value");
+        builder.AppendLine($"  %divrem = call {{ i128, i128 }} @{WindowsI128UnsignedDivRemHelperName}(i128 %abs_left, i128 %abs_right)");
+        builder.AppendLine("  %unsigned_quotient = extractvalue { i128, i128 } %divrem, 0");
+        builder.AppendLine("  %quotient_negative = xor i1 %left_negative, %right_negative");
+        builder.AppendLine("  %negated_quotient = sub i128 0, %unsigned_quotient");
+        builder.AppendLine("  %quotient = select i1 %quotient_negative, i128 %negated_quotient, i128 %unsigned_quotient");
+        EmitI128VectorReturn(builder, "%quotient");
+        builder.AppendLine("}");
+        builder.AppendLine();
+        builder.AppendLine($"define linkonce_odr dso_local <2 x i64> @{WindowsI128ModuloHelperName}(ptr nocapture readonly %left, ptr nocapture readonly %right) unnamed_addr nounwind comdat {{");
+        builder.AppendLine("entry:");
+        builder.AppendLine("  %left_value = load i128, ptr %left, align 8");
+        builder.AppendLine("  %right_value = load i128, ptr %right, align 8");
+        builder.AppendLine("  %left_negative = icmp slt i128 %left_value, 0");
+        builder.AppendLine("  %right_negative = icmp slt i128 %right_value, 0");
+        builder.AppendLine("  %negated_left = sub i128 0, %left_value");
+        builder.AppendLine("  %negated_right = sub i128 0, %right_value");
+        builder.AppendLine("  %abs_left = select i1 %left_negative, i128 %negated_left, i128 %left_value");
+        builder.AppendLine("  %abs_right = select i1 %right_negative, i128 %negated_right, i128 %right_value");
+        builder.AppendLine($"  %divrem = call {{ i128, i128 }} @{WindowsI128UnsignedDivRemHelperName}(i128 %abs_left, i128 %abs_right)");
+        builder.AppendLine("  %unsigned_remainder = extractvalue { i128, i128 } %divrem, 1");
+        builder.AppendLine("  %negated_remainder = sub i128 0, %unsigned_remainder");
+        builder.AppendLine("  %remainder = select i1 %left_negative, i128 %negated_remainder, i128 %unsigned_remainder");
+        EmitI128VectorReturn(builder, "%remainder");
+        builder.AppendLine("}");
+    }
+
+    private static void EmitI128VectorReturn(StringBuilder builder, string valueName)
+    {
+        builder.AppendLine($"  %return_low = trunc i128 {valueName} to i64");
+        builder.AppendLine($"  %return_high_i128 = lshr i128 {valueName}, 64");
+        builder.AppendLine("  %return_high = trunc i128 %return_high_i128 to i64");
+        builder.AppendLine("  %return_low_vector = insertelement <2 x i64> undef, i64 %return_low, i32 0");
+        builder.AppendLine("  %return_vector = insertelement <2 x i64> %return_low_vector, i64 %return_high, i32 1");
+        builder.AppendLine("  ret <2 x i64> %return_vector");
+    }
+
+    private void EmitTrapHelperDefinition(StringBuilder builder, string helperName)
+    {
+        var callingConvention = TrapCallingConventionPrefix();
         builder.AppendLine(
-            $"define internal dso_local coldcc void @{helperName}() unnamed_addr cold noreturn nounwind {{");
+            $"define internal dso_local {callingConvention}void @{helperName}() unnamed_addr cold noreturn nounwind {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  call void @llvm.trap()");
         builder.AppendLine("  unreachable");
@@ -333,6 +442,8 @@ internal sealed class LlvmBuiltinAndHelperEmitter
 
     private void EmitRuntimeAllocatorHelperDefinitions(StringBuilder builder)
     {
+        EmitRuntimeAllocatorComdatDefinitions(builder);
+        builder.AppendLine();
         EmitRuntimeAllocatorGlobalDefinitions(builder);
         builder.AppendLine();
         EmitRuntimeAllocatorLockHelperDefinitions(builder);
@@ -351,13 +462,41 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine();
         EmitOsAllocateHelperDefinition(builder);
         builder.AppendLine();
-        if (IsWindowsTarget())
+        if (CanUseOsReallocateFastPath())
         {
             EmitOsReallocateHelperDefinition(builder);
             builder.AppendLine();
         }
 
         EmitOsFreeHelperDefinition(builder);
+    }
+
+    private void EmitRuntimeAllocatorComdatDefinitions(StringBuilder builder)
+    {
+        if (!SupportsComdat())
+        {
+            return;
+        }
+
+        builder.AppendLine($"${RuntimeAllocatorLockName} = comdat any");
+        foreach (var bucketSize in RuntimeAllocatorBucketSizes)
+        {
+            builder.AppendLine($"${GetRuntimeAllocatorBucketGlobalName(bucketSize)} = comdat any");
+        }
+
+        builder.AppendLine($"${RuntimeAllocatorLockAcquireHelperName} = comdat any");
+        builder.AppendLine($"${RuntimeAllocatorLockReleaseHelperName} = comdat any");
+        builder.AppendLine($"${RuntimeAllocateHelperName} = comdat any");
+        builder.AppendLine($"${RuntimeTryAllocateHelperName} = comdat any");
+        builder.AppendLine($"${RuntimeReallocateHelperName} = comdat any");
+        builder.AppendLine($"${RuntimeTryReallocateHelperName} = comdat any");
+        builder.AppendLine($"${RuntimeFreeHelperName} = comdat any");
+        builder.AppendLine($"${DynamicStorageAllocateHelperName} = comdat any");
+        builder.AppendLine($"${DynamicStorageReserveHelperName} = comdat any");
+        builder.AppendLine($"${DynamicStorageTryReserveHelperName} = comdat any");
+        builder.AppendLine($"${DynamicStorageTryReserveCapacityHelperName} = comdat any");
+        builder.AppendLine($"${DynamicStorageMoveLastPointerHelperName} = comdat any");
+        builder.AppendLine($"${DynamicStorageMoveAtToOutHelperName} = comdat any");
     }
 
     private void EmitDynamicStorageHelperDefinitions(StringBuilder builder)
@@ -382,7 +521,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             : "%capacity_size";
 
         builder.AppendLine(
-            $"define weak_odr hidden {{ ptr, i64, i64 }} @{DynamicStorageAllocateHelperName}(i64 noundef %capacity, {AllocatorSizeType} noundef %element_size, {AllocatorSizeType} noundef allocalign %alignment, i64 noundef %max_count) unnamed_addr nounwind {{");
+            $"define linkonce_odr hidden {{ ptr, i64, i64 }} @{DynamicStorageAllocateHelperName}(i64 noundef %capacity, {AllocatorSizeType} noundef %element_size, {AllocatorSizeType} noundef allocalign %alignment, i64 noundef %max_count) unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  %is_zero = icmp eq i64 %capacity, 0");
         builder.AppendLine("  br i1 %is_zero, label %zero, label %check");
@@ -427,7 +566,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             : "%new_count";
 
         builder.AppendLine(
-            $"define weak_odr hidden void @{DynamicStorageReserveHelperName}(ptr nocapture %storage, i64 noundef %additional, {AllocatorSizeType} noundef %element_size, {AllocatorSizeType} noundef allocalign %alignment, i64 noundef %max_count) unnamed_addr nounwind {{");
+            $"define linkonce_odr hidden void @{DynamicStorageReserveHelperName}(ptr nocapture %storage, i64 noundef %additional, {AllocatorSizeType} noundef %element_size, {AllocatorSizeType} noundef allocalign %alignment, i64 noundef %max_count) unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  %current = load { ptr, i64, i64 }, ptr %storage");
         builder.AppendLine("  %ptr = extractvalue { ptr, i64, i64 } %current, 0");
@@ -486,7 +625,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             : "%new_count";
 
         builder.AppendLine(
-            $"define weak_odr hidden i1 @{DynamicStorageTryReserveHelperName}(ptr nocapture %storage, i64 noundef %additional, {AllocatorSizeType} noundef %element_size, {AllocatorSizeType} noundef allocalign %alignment, i64 noundef %max_count) unnamed_addr nounwind {{");
+            $"define linkonce_odr hidden i1 @{DynamicStorageTryReserveHelperName}(ptr nocapture %storage, i64 noundef %additional, {AllocatorSizeType} noundef %element_size, {AllocatorSizeType} noundef allocalign %alignment, i64 noundef %max_count) unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  %current = load { ptr, i64, i64 }, ptr %storage");
         builder.AppendLine("  %ptr = extractvalue { ptr, i64, i64 } %current, 0");
@@ -548,7 +687,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             : "%target_count";
 
         builder.AppendLine(
-            $"define weak_odr hidden i1 @{DynamicStorageTryReserveCapacityHelperName}(ptr nocapture %storage, i64 noundef %target_capacity, {AllocatorSizeType} noundef %element_size, {AllocatorSizeType} noundef allocalign %alignment, i64 noundef %max_count) unnamed_addr nounwind {{");
+            $"define linkonce_odr hidden i1 @{DynamicStorageTryReserveCapacityHelperName}(ptr nocapture %storage, i64 noundef %target_capacity, {AllocatorSizeType} noundef %element_size, {AllocatorSizeType} noundef allocalign %alignment, i64 noundef %max_count) unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  %current = load { ptr, i64, i64 }, ptr %storage");
         builder.AppendLine("  %ptr = extractvalue { ptr, i64, i64 } %current, 0");
@@ -590,7 +729,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private void EmitDynamicStorageMoveLastPointerHelperDefinition(StringBuilder builder)
     {
         builder.AppendLine(
-            $"define weak_odr hidden nonnull ptr @{DynamicStorageMoveLastPointerHelperName}(ptr nocapture %storage, i64 noundef %element_size) unnamed_addr nounwind {{");
+            $"define linkonce_odr hidden nonnull ptr @{DynamicStorageMoveLastPointerHelperName}(ptr nocapture %storage, i64 noundef %element_size) unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  %current = load { ptr, i64, i64 }, ptr %storage");
         builder.AppendLine("  %length = extractvalue { ptr, i64, i64 } %current, 1");
@@ -615,7 +754,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private void EmitDynamicStorageMoveAtToOutHelperDefinition(StringBuilder builder)
     {
         builder.AppendLine(
-            $"define weak_odr hidden void @{DynamicStorageMoveAtToOutHelperName}(ptr nocapture %storage, i64 noundef %index, ptr nocapture writeonly %out, i64 noundef %element_size) unnamed_addr nounwind {{");
+            $"define linkonce_odr hidden void @{DynamicStorageMoveAtToOutHelperName}(ptr nocapture %storage, i64 noundef %index, ptr nocapture writeonly %out, i64 noundef %element_size) unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  %current = load { ptr, i64, i64 }, ptr %storage");
         builder.AppendLine("  %length = extractvalue { ptr, i64, i64 } %current, 1");
@@ -673,20 +812,20 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private void EmitRuntimeAllocatorGlobalDefinitions(StringBuilder builder)
     {
         var pointerSizeBytes = GetTargetPointerSizeBytes();
-        var bucketThreadLocalStorage = IsWindowsTarget()
+        var bucketThreadLocalStorage = IsWindowsTarget() || IsMacOSTarget()
             ? "thread_local"
             : "thread_local(localexec)";
 
-        builder.AppendLine($"@{RuntimeAllocatorLockName} = weak_odr hidden global i32 0, align 4");
+        builder.AppendLine($"@{RuntimeAllocatorLockName} = linkonce_odr hidden global i32 0{GlobalComdatSuffix()}, align 4");
         foreach (var bucketSize in RuntimeAllocatorBucketSizes)
         {
-            builder.AppendLine($"@{GetRuntimeAllocatorBucketGlobalName(bucketSize)} = weak_odr hidden {bucketThreadLocalStorage} global ptr null, align {pointerSizeBytes}");
+            builder.AppendLine($"@{GetRuntimeAllocatorBucketGlobalName(bucketSize)} = linkonce_odr hidden {bucketThreadLocalStorage} global ptr null{GlobalComdatSuffix()}, align {pointerSizeBytes}");
         }
     }
 
-    private static void EmitRuntimeAllocatorLockHelperDefinitions(StringBuilder builder)
+    private void EmitRuntimeAllocatorLockHelperDefinitions(StringBuilder builder)
     {
-        builder.AppendLine($"define weak_odr hidden void @{RuntimeAllocatorLockAcquireHelperName}() unnamed_addr nounwind {{");
+        builder.AppendLine($"define linkonce_odr hidden void @{RuntimeAllocatorLockAcquireHelperName}() unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  br label %try_lock");
         builder.AppendLine();
@@ -699,7 +838,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("  ret void");
         builder.AppendLine("}");
         builder.AppendLine();
-        builder.AppendLine($"define weak_odr hidden void @{RuntimeAllocatorLockReleaseHelperName}() unnamed_addr nounwind {{");
+        builder.AppendLine($"define linkonce_odr hidden void @{RuntimeAllocatorLockReleaseHelperName}() unnamed_addr nounwind{ComdatDefinitionSuffix()} {{");
         builder.AppendLine("entry:");
         builder.AppendLine($"  store atomic i32 0, ptr @{RuntimeAllocatorLockName} release, align 4");
         builder.AppendLine("  ret void");
@@ -732,7 +871,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             : "noalias noundef ptr";
 
         builder.AppendLine(
-            $"define weak_odr hidden {returnAttributes} @{helperName}({AllocatorSizeType} noundef %size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") {RuntimeAllocatorFamilyAttribute} nounwind {{");
+            $"define linkonce_odr hidden {returnAttributes} @{helperName}({AllocatorSizeType} noundef %size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized,aligned\") {RuntimeAllocatorFamilyAttribute} nounwind{ComdatDefinitionSuffix()} {{");
         builder.AppendLine("entry:");
         builder.AppendLine($"  %size_is_zero = icmp eq {AllocatorSizeType} %size, 0");
         builder.AppendLine($"  %requested_size = select i1 %size_is_zero, {AllocatorSizeType} 1, {AllocatorSizeType} %size");
@@ -820,7 +959,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("oom:");
         if (trapsOnFailure)
         {
-            builder.AppendLine($"  call coldcc void @{OutOfMemoryTrapHelperName}()");
+            builder.AppendLine($"  call {TrapCallingConventionPrefix()}void @{OutOfMemoryTrapHelperName}()");
             builder.AppendLine("  unreachable");
         }
         else
@@ -947,12 +1086,12 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             ? copyLength
             : "%copy_length_i64";
         var allocationFailureProfile = _context.GetMetadataTupleRef(["!\"branch_weights\"", "i32 1", "i32 2000"]);
-        var nonBucketLabel = IsWindowsTarget()
+        var nonBucketLabel = CanUseOsReallocateFastPath()
             ? "os_realloc_check"
             : "fallback";
 
         builder.AppendLine(
-            $"define weak_odr hidden nonnull noundef ptr @{RuntimeReallocateHelperName}(ptr %old_ptr, {AllocatorSizeType} noundef %old_size, {AllocatorSizeType} noundef %new_size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(2) allockind(\"realloc,aligned\") {RuntimeAllocatorFamilyAttribute} nounwind {{");
+            $"define linkonce_odr hidden nonnull noundef ptr @{RuntimeReallocateHelperName}(ptr %old_ptr, {AllocatorSizeType} noundef %old_size, {AllocatorSizeType} noundef %new_size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(2) allockind(\"realloc,aligned\") {RuntimeAllocatorFamilyAttribute} nounwind{ComdatDefinitionSuffix()} {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  %old_is_null = icmp eq ptr %old_ptr, null");
         builder.AppendLine("  br i1 %old_is_null, label %allocate_only, label %check_alignment");
@@ -985,9 +1124,9 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("reuse_old:");
         builder.AppendLine("  ret ptr %old_ptr");
         builder.AppendLine();
-        if (IsWindowsTarget())
+        if (CanUseOsReallocateFastPath())
         {
-            EmitRuntimeWindowsOsReallocateFastPath(
+            EmitRuntimeOsReallocateFastPath(
                 builder,
                 pointerSizeBytes,
                 headerBytes,
@@ -1010,7 +1149,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("  ret ptr %new_ptr");
         builder.AppendLine();
         builder.AppendLine("oom:");
-        builder.AppendLine($"  call coldcc void @{OutOfMemoryTrapHelperName}()");
+        builder.AppendLine($"  call {TrapCallingConventionPrefix()}void @{OutOfMemoryTrapHelperName}()");
         builder.AppendLine("  unreachable");
         builder.AppendLine("}");
     }
@@ -1026,12 +1165,12 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             ? copyLength
             : "%copy_length_i64";
         var allocationFailureProfile = _context.GetMetadataTupleRef(["!\"branch_weights\"", "i32 1", "i32 2000"]);
-        var nonBucketLabel = IsWindowsTarget()
+        var nonBucketLabel = CanUseOsReallocateFastPath()
             ? "os_realloc_check"
             : "fallback";
 
         builder.AppendLine(
-            $"define weak_odr hidden ptr @{RuntimeTryReallocateHelperName}(ptr %old_ptr, {AllocatorSizeType} noundef %old_size, {AllocatorSizeType} noundef %new_size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(2) allockind(\"realloc,aligned\") {RuntimeAllocatorFamilyAttribute} nounwind {{");
+            $"define linkonce_odr hidden ptr @{RuntimeTryReallocateHelperName}(ptr %old_ptr, {AllocatorSizeType} noundef %old_size, {AllocatorSizeType} noundef %new_size, {AllocatorSizeType} noundef allocalign %alignment) unnamed_addr allocsize(2) allockind(\"realloc,aligned\") {RuntimeAllocatorFamilyAttribute} nounwind{ComdatDefinitionSuffix()} {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  %old_is_null = icmp eq ptr %old_ptr, null");
         builder.AppendLine("  br i1 %old_is_null, label %allocate_only, label %check_alignment");
@@ -1064,9 +1203,9 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("reuse_old:");
         builder.AppendLine("  ret ptr %old_ptr");
         builder.AppendLine();
-        if (IsWindowsTarget())
+        if (CanUseOsReallocateFastPath())
         {
-            EmitRuntimeWindowsOsReallocateFastPath(
+            EmitRuntimeOsReallocateFastPath(
                 builder,
                 pointerSizeBytes,
                 headerBytes,
@@ -1097,7 +1236,12 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("}");
     }
 
-    private void EmitRuntimeWindowsOsReallocateFastPath(
+    private bool CanUseOsReallocateFastPath()
+    {
+        return IsWindowsTarget() || IsMacOSTarget();
+    }
+
+    private void EmitRuntimeOsReallocateFastPath(
         StringBuilder builder,
         int pointerSizeBytes,
         int headerBytes,
@@ -1143,7 +1287,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         var headerBytes = GetRuntimeAllocationHeaderBytes(pointerSizeBytes);
         var bucketSizeSlotOffset = pointerSizeBytes + GetAllocatorSizeBytes();
 
-        builder.AppendLine($"define weak_odr hidden void @{RuntimeFreeHelperName}(ptr %ptr) unnamed_addr allockind(\"free\") {RuntimeAllocatorFamilyAttribute} nounwind {{");
+        builder.AppendLine($"define linkonce_odr hidden void @{RuntimeFreeHelperName}(ptr %ptr) unnamed_addr allockind(\"free\") {RuntimeAllocatorFamilyAttribute} nounwind{ComdatDefinitionSuffix()} {{");
         builder.AppendLine("entry:");
         builder.AppendLine("  %is_null = icmp eq ptr %ptr, null");
         builder.AppendLine("  br i1 %is_null, label %done, label %free");
@@ -1204,6 +1348,16 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             return;
         }
 
+        if (IsMacOSTarget())
+        {
+            builder.AppendLine($"define internal dso_local noalias noundef ptr @{OsAllocateHelperName}({AllocatorSizeType} noundef %size) unnamed_addr allocsize(0) allockind(\"alloc,uninitialized\") {OsAllocatorFamilyAttribute} nounwind {{");
+            builder.AppendLine("entry:");
+            builder.AppendLine($"  %ptr = call noalias noundef ptr @malloc({AllocatorSizeType} noundef %size)");
+            builder.AppendLine("  ret ptr %ptr");
+            builder.AppendLine("}");
+            return;
+        }
+
         if (IsLinuxTarget())
         {
             EmitLinuxOsAllocateHelperDefinition(builder);
@@ -1215,11 +1369,30 @@ internal sealed class LlvmBuiltinAndHelperEmitter
 
     private void EmitOsReallocateHelperDefinition(StringBuilder builder)
     {
+        if (IsWindowsTarget())
+        {
+            builder.AppendLine($"define internal dso_local noundef ptr @{OsReallocateHelperName}(ptr %ptr, {AllocatorSizeType} noundef %size) unnamed_addr allocsize(1) allockind(\"realloc\") {OsAllocatorFamilyAttribute} nounwind {{");
+            builder.AppendLine("entry:");
+            builder.AppendLine("  %heap = call ptr @GetProcessHeap()");
+            builder.AppendLine($"  %next = call noundef ptr @HeapReAlloc(ptr %heap, i32 0, ptr %ptr, {AllocatorSizeType} noundef %size)");
+            builder.AppendLine("  ret ptr %next");
+            builder.AppendLine("}");
+            return;
+        }
+
+        if (IsMacOSTarget())
+        {
+            builder.AppendLine($"define internal dso_local noundef ptr @{OsReallocateHelperName}(ptr %ptr, {AllocatorSizeType} noundef %size) unnamed_addr allocsize(1) allockind(\"realloc\") {OsAllocatorFamilyAttribute} nounwind {{");
+            builder.AppendLine("entry:");
+            builder.AppendLine($"  %next = call noundef ptr @realloc(ptr %ptr, {AllocatorSizeType} noundef %size)");
+            builder.AppendLine("  ret ptr %next");
+            builder.AppendLine("}");
+            return;
+        }
+
         builder.AppendLine($"define internal dso_local noundef ptr @{OsReallocateHelperName}(ptr %ptr, {AllocatorSizeType} noundef %size) unnamed_addr allocsize(1) allockind(\"realloc\") {OsAllocatorFamilyAttribute} nounwind {{");
         builder.AppendLine("entry:");
-        builder.AppendLine("  %heap = call ptr @GetProcessHeap()");
-        builder.AppendLine($"  %next = call noundef ptr @HeapReAlloc(ptr %heap, i32 0, ptr %ptr, {AllocatorSizeType} noundef %size)");
-        builder.AppendLine("  ret ptr %next");
+        builder.AppendLine("  ret ptr null");
         builder.AppendLine("}");
     }
 
@@ -1231,6 +1404,16 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             builder.AppendLine("entry:");
             builder.AppendLine("  %heap = call ptr @GetProcessHeap()");
             builder.AppendLine("  %ignored = call i32 @HeapFree(ptr %heap, i32 0, ptr %ptr)");
+            builder.AppendLine("  ret void");
+            builder.AppendLine("}");
+            return;
+        }
+
+        if (IsMacOSTarget())
+        {
+            builder.AppendLine($"define internal dso_local void @{OsFreeHelperName}(ptr %ptr, {AllocatorSizeType} noundef %size) unnamed_addr allockind(\"free\") {OsAllocatorFamilyAttribute} nounwind {{");
+            builder.AppendLine("entry:");
+            builder.AppendLine("  call void @free(ptr %ptr)");
             builder.AppendLine("  ret void");
             builder.AppendLine("}");
             return;
@@ -1565,6 +1748,50 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         return OperatingSystem.IsWindows();
     }
 
+    private bool IsMacOSTarget()
+    {
+        var triple = TargetInfo?.Triple;
+        if (!string.IsNullOrWhiteSpace(triple))
+        {
+            return triple.Contains("darwin", StringComparison.OrdinalIgnoreCase)
+                || triple.Contains("macos", StringComparison.OrdinalIgnoreCase)
+                || triple.Contains("macosx", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return OperatingSystem.IsMacOS();
+    }
+
+    private string TrapCallingConventionPrefix()
+    {
+        var triple = TargetInfo?.Triple;
+        if (!string.IsNullOrWhiteSpace(triple)
+            && (triple.StartsWith("aarch64", StringComparison.OrdinalIgnoreCase)
+                || triple.StartsWith("arm64", StringComparison.OrdinalIgnoreCase)))
+        {
+            return string.Empty;
+        }
+
+        return "coldcc ";
+    }
+
+    private string ComdatDefinitionSuffix() => SupportsComdat() ? " comdat" : string.Empty;
+
+    private string GlobalComdatSuffix() => SupportsComdat() ? ", comdat" : string.Empty;
+
+    private bool SupportsComdat()
+    {
+        var triple = TargetInfo?.Triple;
+        if (!string.IsNullOrWhiteSpace(triple))
+        {
+            return !triple.Contains("darwin", StringComparison.OrdinalIgnoreCase)
+                && !triple.Contains("macos", StringComparison.OrdinalIgnoreCase)
+                && !triple.Contains("macosx", StringComparison.OrdinalIgnoreCase)
+                && !triple.Contains("apple", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return true;
+    }
+
     private IReadOnlyList<StarkTypeSymbol> CollectTextEqualityTypes()
     {
         return _enumerateBinaryOperations()
@@ -1596,11 +1823,21 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private IReadOnlyList<int> CollectIntegerExponentBitWidths()
     {
         return _enumerateBinaryOperations()
-            .Where(static binary => binary.Operator == SsaBinaryOperator.Exponent && binary.Type.Kind == StarkTypeKind.Integer && binary.Type.BitWidth is int)
+            .Where(static binary => binary.Operator is SsaBinaryOperator.Exponent or SsaBinaryOperator.WrappingExponent
+                                    && binary.Type.Kind == StarkTypeKind.Integer
+                                    && binary.Type.BitWidth is int
+                                    && !IsSmallConstantIntegerExponent(binary))
             .Select(static binary => binary.Type.BitWidth!.Value)
             .Distinct()
             .OrderBy(static bitWidth => bitWidth)
             .ToArray();
+    }
+
+    private static bool IsSmallConstantIntegerExponent(SsaBinaryRValue binary)
+    {
+        return binary.Right is SsaIntegerConstant exponent
+               && exponent.Value >= BigInteger.Zero
+               && exponent.Value <= new BigInteger(8);
     }
 
     private IReadOnlyList<StarkTypeSymbol> CollectFixedArrayOrderedComparisonTypes()
@@ -2260,13 +2497,18 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine();
         builder.AppendLine("loop_header:");
         builder.AppendLine($"  %pow_result = phi {llvmType} [ 1, %entry ], [ %pow_next, %loop_body ]");
+        builder.AppendLine($"  %pow_base = phi {llvmType} [ %base, %entry ], [ %pow_base_next, %loop_body ]");
         builder.AppendLine($"  %pow_exp = phi {llvmType} [ %exponent, %entry ], [ %pow_exp_next, %loop_body ]");
         builder.AppendLine($"  %pow_done = icmp eq {llvmType} %pow_exp, 0");
         builder.AppendLine("  br i1 %pow_done, label %return_result, label %loop_body");
         builder.AppendLine();
         builder.AppendLine("loop_body:");
-        builder.AppendLine($"  %pow_next = mul {llvmType} %pow_result, %base");
-        builder.AppendLine($"  %pow_exp_next = sub {llvmType} %pow_exp, 1");
+        builder.AppendLine($"  %pow_odd_bits = and {llvmType} %pow_exp, 1");
+        builder.AppendLine($"  %pow_is_odd = icmp ne {llvmType} %pow_odd_bits, 0");
+        builder.AppendLine($"  %pow_multiplied = mul {llvmType} %pow_result, %pow_base");
+        builder.AppendLine($"  %pow_next = select i1 %pow_is_odd, {llvmType} %pow_multiplied, {llvmType} %pow_result");
+        builder.AppendLine($"  %pow_base_next = mul {llvmType} %pow_base, %pow_base");
+        builder.AppendLine($"  %pow_exp_next = lshr {llvmType} %pow_exp, 1");
         builder.AppendLine("  br label %loop_header");
         builder.AppendLine();
         builder.AppendLine("return_zero:");
@@ -2923,8 +3165,23 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         var receiverPointer = $"%{EscapeIdentifier(receiver.LlvmName)}";
 
         builder.AppendLine("entry:");
-        builder.AppendLine($"  %list_data_addr = getelementptr{GetProvenInObjectGepFlags()} {listType}, ptr {receiverPointer}, i32 0, i32 {listShape.DataFieldIndex}");
-        builder.AppendLine($"  %list_length_addr = getelementptr{GetProvenInObjectGepFlags()} {listType}, ptr {receiverPointer}, i32 0, i32 {listShape.LengthFieldIndex}");
+        if (listShape.ItemsFieldIndex is int itemsFieldIndex && listShape.ItemsFieldType is { } itemsFieldType)
+        {
+            var itemsType = MapType(itemsFieldType);
+            builder.AppendLine($"  %list_items_addr = getelementptr{GetProvenInObjectGepFlags()} {listType}, ptr {receiverPointer}, i32 0, i32 {itemsFieldIndex}");
+            builder.AppendLine($"  %list_data_addr = getelementptr{GetProvenInObjectGepFlags()} {itemsType}, ptr %list_items_addr, i32 0, i32 0");
+            builder.AppendLine($"  %list_length_addr = getelementptr{GetProvenInObjectGepFlags()} {itemsType}, ptr %list_items_addr, i32 0, i32 1");
+        }
+        else if (listShape.DataFieldIndex is int dataFieldIndex && listShape.LengthFieldIndex is int lengthFieldIndex)
+        {
+            builder.AppendLine($"  %list_data_addr = getelementptr{GetProvenInObjectGepFlags()} {listType}, ptr {receiverPointer}, i32 0, i32 {dataFieldIndex}");
+            builder.AppendLine($"  %list_length_addr = getelementptr{GetProvenInObjectGepFlags()} {listType}, ptr {receiverPointer}, i32 0, i32 {lengthFieldIndex}");
+        }
+        else
+        {
+            throw new InvalidOperationException("System.Collections List<T> slice-view builtin is missing a supported list storage shape.");
+        }
+
         builder.AppendLine("  %list_data = load ptr, ptr %list_data_addr");
         builder.AppendLine("  %list_length = load i64, ptr %list_length_addr");
         builder.AppendLine($"  %slice_with_ptr = insertvalue {resultType} zeroinitializer, ptr %list_data, 0");
@@ -3964,20 +4221,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             {
                 foreach (var instruction in block.Instructions)
                 {
-                    if (instruction is not SsaValueInstruction
-                        {
-                            Value: SsaCallRValue
-                            {
-                                Arguments:
-                                [
-                                    _,
-                                    SsaStringConstant
-                                    {
-                                        Type.Kind: StarkTypeKind.Ascii
-                                    } source
-                                ]
-                            } call
-                        }
+                    if (!TryGetAsciiToUnicodeLiteralCall(instruction, out var call, out var source)
                         || !IsPotentialTryConvertAsciiToUnicodeCall(call.FunctionName)
                         || !TextLiteralDecoder.TryDecode(
                             source.LiteralText,
@@ -3996,6 +4240,53 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         }
 
         return false;
+    }
+
+    private static bool TryGetAsciiToUnicodeLiteralCall(
+        SsaInstruction instruction,
+        out ISsaDirectCallOperation call,
+        out SsaStringConstant source)
+    {
+        switch (instruction)
+        {
+            case SsaValueInstruction
+            {
+                Value: SsaCallRValue
+                {
+                    Arguments:
+                    [
+                        _,
+                        SsaStringConstant
+                        {
+                            Type.Kind: StarkTypeKind.Ascii
+                        } valueSource
+                    ]
+                } valueCall
+            }:
+                call = valueCall;
+                source = valueSource;
+                return true;
+
+            case SsaCallInstruction
+            {
+                Arguments:
+                [
+                    _,
+                    SsaStringConstant
+                    {
+                        Type.Kind: StarkTypeKind.Ascii
+                    } statementSource
+                ]
+            } statementCall:
+                call = statementCall;
+                source = statementSource;
+                return true;
+
+            default:
+                call = default!;
+                source = default!;
+                return false;
+        }
     }
 
     private static bool IsPotentialTryConvertAsciiToUnicodeCall(string functionName)
@@ -4219,14 +4510,9 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         if (functionName.Contains('.', StringComparison.Ordinal))
         {
             const string systemTextPrefix = "System.Text.";
-            const string experimentalTextPrefix = "System.Experimental.Text.";
             if (functionName.StartsWith(systemTextPrefix, StringComparison.Ordinal))
             {
                 sourceName = functionName[systemTextPrefix.Length..];
-            }
-            else if (functionName.StartsWith(experimentalTextPrefix, StringComparison.Ordinal))
-            {
-                sourceName = functionName[experimentalTextPrefix.Length..];
             }
             else
             {
@@ -4268,8 +4554,8 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private static bool IsSystemTextBuiltinHostModule(string moduleName)
     {
         return string.Equals(moduleName, "System.Text", StringComparison.Ordinal)
-            || string.Equals(moduleName, "System.Experimental.Text", StringComparison.Ordinal)
             || string.Equals(moduleName, "System.Runtime.Platform.Linux", StringComparison.Ordinal)
+            || string.Equals(moduleName, "System.Runtime.Platform.MacOS", StringComparison.Ordinal)
             || string.Equals(moduleName, "System.Runtime.Platform.Windows", StringComparison.Ordinal);
     }
 
@@ -4774,10 +5060,25 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             || !listType.TryGetField("Length", out var lengthField, out var lengthFieldIndex)
             || lengthField.Type.Kind != StarkTypeKind.Integer)
         {
-            throw new InvalidOperationException("System.Collections List<T> must contain Data and Length fields for slice-view builtins.");
+            if (!listType.TryGetField("Items", out var itemsField, out var itemsFieldIndex)
+                || itemsField.Type.Kind != StarkTypeKind.Dynamic
+                || itemsField.Type.ElementType is null)
+            {
+                throw new InvalidOperationException("System.Collections List<T> must contain Data/Length fields or a dynamic Items field for slice-view builtins.");
+            }
+
+            return new SystemCollectionsListShape(
+                DataFieldIndex: null,
+                LengthFieldIndex: null,
+                ItemsFieldIndex: itemsFieldIndex,
+                ItemsFieldType: itemsField.Type);
         }
 
-        return new SystemCollectionsListShape(dataFieldIndex, lengthFieldIndex);
+        return new SystemCollectionsListShape(
+            DataFieldIndex: dataFieldIndex,
+            LengthFieldIndex: lengthFieldIndex,
+            ItemsFieldIndex: null,
+            ItemsFieldType: null);
     }
 
     private static StarkTypeSymbol ValidateSystemCollectionsDictionaryKeySignature(
@@ -5001,8 +5302,10 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     }
 
     private readonly record struct SystemCollectionsListShape(
-        int DataFieldIndex,
-        int LengthFieldIndex);
+        int? DataFieldIndex,
+        int? LengthFieldIndex,
+        int? ItemsFieldIndex,
+        StarkTypeSymbol? ItemsFieldType);
 
     private readonly record struct SystemMathSinCosSignature(
         StarkTypeSymbol ScalarType,

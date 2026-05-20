@@ -1,0 +1,108 @@
+module Book.Closures
+
+inline fn i32[min max] ApplyInline(
+    i32[min max] value,
+    inline closure<fn i32[min max](i32[min max])> op) {
+    return op(value);
+}
+
+fn i32[min max] ApplyBorrow(
+    borrow closure<fn i32[min max](i32[min max])> op,
+    i32[min max] value) {
+    return op(value);
+}
+
+finite i32[min max] ApplyFinite(
+    borrow closure<finite i32[min max](i32[min max])> op,
+    i32[min max] value) {
+    return op(value);
+}
+
+law bool ApplyLaw(
+    borrow closure<law bool(i32[min max])> predicate,
+    i32[min max] value) {
+    return predicate(value);
+}
+
+inline finite law i32[min max] ApplyInlineFiniteLaw(
+    i32[min max] value,
+    inline closure<finite law i32[min max](i32[min max])> op) {
+    return op(value);
+}
+
+fn void PushEvent(
+    mut borrow closure<mut fn void(i32[min max])> sink,
+    i32[min max] value) {
+    sink(value);
+    return;
+}
+
+fn heap closure<fn i32[min max](i32[min max])> MakeAdder(i32[min max] offset) {
+    return heap capture(copy offset) (i32[min max] value) => value + offset;
+}
+
+fn heap closure<finite law i32[min max](i32[min max])> MakePureAdder(i32[min max] offset) {
+    return heap capture(copy offset) (i32[min max] value) => value + offset;
+}
+
+fn heap closure<once fn i32[min max]()> MakeOnce(i32[min max] code) {
+    return heap capture(copy code) () => code;
+}
+
+fn i32[min max] RunOnce(heap closure<once fn i32[min max]()> producer) {
+    return producer();
+}
+
+export fn i32[min max] main() {
+    stack i32[min max] offset = 10;
+
+    if (ApplyInline(32, capture(copy offset) (i32[min max] value) => value + offset) != 42) {
+        return 1;
+    }
+
+    if (ApplyBorrow(capture(copy offset) (i32[min max] value) => value + offset, 32) != 42) {
+        return 2;
+    }
+
+    if (ApplyFinite(capture(copy offset) (i32[min max] value) => value + offset, 32) != 42) {
+        return 3;
+    }
+
+    if (!ApplyLaw(capture(copy offset) (i32[min max] value) => value > offset, 42)) {
+        return 4;
+    }
+
+    if (ApplyInlineFiniteLaw(32, capture(copy offset) (i32[min max] value) => value + offset) != 42) {
+        return 5;
+    }
+
+    stack mut i32[min max] total = 0;
+    stack mut closure<mut fn void(i32[min max])> add =
+        capture(mut total) (i32[min max] value) => {
+            total += value;
+            return;
+        };
+
+    PushEvent(add, 40);
+    PushEvent(add, 2);
+    if (total != 42) {
+        return 6;
+    }
+
+    stack heap closure<fn i32[min max](i32[min max])> addTwo = MakeAdder(2);
+    if (addTwo(40) != 42) {
+        return 7;
+    }
+
+    stack heap closure<finite law i32[min max](i32[min max])> pureAddTwo = MakePureAdder(2);
+    if (pureAddTwo(40) != 42) {
+        return 8;
+    }
+
+    stack heap closure<once fn i32[min max]()> producer = MakeOnce(42);
+    if (RunOnce(producer) != 42) {
+        return 9;
+    }
+
+    return 0;
+}

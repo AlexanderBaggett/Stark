@@ -124,7 +124,9 @@ internal static partial class PackageImageLoader
                         publishedOverloadKey: publishedOverloadKey,
                         isUnsafe: method.IsUnsafe,
                         backendOptimizationMode: methodBackendOptimizationMode,
-                        disjointParameterGroups: method.DisjointParameterGroups),
+                        disjointParameterGroups: method.DisjointParameterGroups,
+                        overlapParameterGroups: method.OverlapParameterGroups,
+                        sameParameterGroups: method.SameParameterGroups),
                     Attributes: BuildBackendAttributes(methodBackendOptimizationMode),
                     BackendOptimizationMode: methodBackendOptimizationMode));
             }
@@ -190,7 +192,9 @@ internal static partial class PackageImageLoader
                     publishedOverloadKey: publishedOverloadKey,
                     isUnsafe: function.IsUnsafe,
                     backendOptimizationMode: functionBackendOptimizationMode,
-                    disjointParameterGroups: function.DisjointParameterGroups),
+                    disjointParameterGroups: function.DisjointParameterGroups,
+                    overlapParameterGroups: function.OverlapParameterGroups,
+                    sameParameterGroups: function.SameParameterGroups),
                 Attributes: BuildBackendAttributes(functionBackendOptimizationMode),
                 BackendOptimizationMode: functionBackendOptimizationMode));
         }

@@ -6,6 +6,16 @@ enum Token {
     Move { X: i32[min max], Y: i32[min max] },
 }
 
+struct Box {
+    i32[min max] Value;
+}
+
+enum Packet {
+    Empty,
+    Boxed(Box),
+    Count(i32[min max]),
+}
+
 finite law i32[min max] Score(Token token) {
     switch (token) {
         case Token.End:
@@ -17,7 +27,18 @@ finite law i32[min max] Score(Token token) {
     }
 }
 
-export ffi fn i32[min max] main() {
+fn i32[min max] ConsumePacket(Packet packet) {
+    switch (packet) {
+        case Packet.Empty:
+            return 0;
+        case Packet.Boxed(var box):
+            return box.Value;
+        case Packet.Count(var count):
+            return count;
+    }
+}
+
+export fn i32[min max] main() {
     if (Score(Token.End) != 0) {
         return 1;
     }
@@ -28,6 +49,18 @@ export ffi fn i32[min max] main() {
 
     if (Score(Token.Move { X: 2, Y: 3 }) != 5) {
         return 3;
+    }
+
+    stack Box box = new Box() {
+        Value = 9
+    };
+
+    if (ConsumePacket(Packet.Boxed(box)) != 9) {
+        return 4;
+    }
+
+    if (ConsumePacket(Packet.Count(6)) != 6) {
+        return 5;
     }
 
     return 0;

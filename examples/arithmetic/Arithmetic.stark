@@ -1,6 +1,6 @@
 module Arithmetic
 
-export ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     stack i32[min max] left = 6;
     stack i32[min max] right = 7;
     stack i32[min max] combined = (left + right) * 2 - 5;

@@ -3,11 +3,11 @@ module Benchmarks.Micro.ReadonlyOtherLocalFieldStore
 
 record Box(i64[min max] Value) { }
 
-noinline finite law i64[min max] ReadValue(borrow Box box) {
+noinline unsafe finite law i64[min max] ReadValue(borrow Box box) {
     return box.Value;
 }
 
-finite law i64[min max] Accumulate(i64[min max] seed, i64[min max] salt) {
+unsafe finite law i64[min max] Accumulate(i64[min max] seed, i64[min max] salt) {
     stack mut Box left = new Box(seed);
     stack mut Box right = new Box(salt);
     left.Value = seed + salt;
@@ -16,10 +16,10 @@ finite law i64[min max] Accumulate(i64[min max] seed, i64[min max] salt) {
     return left.Value + observed;
 }
 
-export ffi fn i32[min max] main() {
+export unsafe ffi fn i32[min max] main() {
     stack mut i64[min max] total = (i64[min max])System.Process.CurrentId();
 
-    for willexit (stack mut i32[0 200000] i = 0; i < 200000; i += 1) {
+    for willexit (stack mut u24[0 200000] i = 0; i < 200000; i += 1) {
         total += Accumulate(total % 1000000007, (i64[min max])i);
         total = total % 1000000007;
     }

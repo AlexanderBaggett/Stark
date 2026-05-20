@@ -1,65 +1,37 @@
 // stark-bench: compile-only
 import System
+import System.Memory
+import System.Text
 module Benchmarks.Text.TextPathCallerBuffer
 
-export ffi fn i32[min max] main() {
-    stack mut i8[-128 127][128] asciiBuffer = {
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-    };
-    stack mut i32[-2147483648 2147483647][128] unicodeBuffer = {
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-    };
+unsafe fn bool Ok(System.Memory.MemoryStatus status) {
+    switch (status) {
+        case System.Memory.MemoryStatus.Ok:
+            return true;
+        case System.Memory.MemoryStatus.Err(var error):
+            return false;
+    }
+}
 
-    stack mut Ascii joined = new Ascii() {
-        Data = &asciiBuffer[0],
-        Length = 0,
-        Capacity = 128
-    };
-    stack mut Unicode unicodeText = new Unicode() {
-        Data = &unicodeBuffer[0],
-        Length = 0,
-        Capacity = 128
-    };
+export unsafe ffi fn i32[min max] main() {
+    stack mut System.Text.OwnedAscii joined = new();
+    stack mut System.Text.OwnedUnicode unicodeText = new();
     stack mut i64[min max] checksum = 0;
 
-    for willexit (stack mut i32[0 2000] i = 0; i < 2000; i += 1) {
-        if (!System.IO.Path.TryJoin(&joined, "alpha", "beta.txt")) {
+    for willexit (stack mut u16[0 2000] i = 0; i < 2000; i += 1) {
+        if (!Ok(System.IO.Path.TryJoin(joined, "alpha", "beta.txt"))) {
             return 1;
         }
 
-        stack Ascii conversionView = new Ascii() {
-            Data = joined.Data,
-            Length = joined.Length,
-            Capacity = joined.Capacity
-        };
-        if (!System.Text.TryConvertAsciiToUnicode(&unicodeText, System.Text.AsciiView(conversionView))) {
+        if (!Ok(System.Text.FromAsciiToUnicode(unicodeText, joined.View()))) {
             return 2;
         }
 
-        stack Ascii extensionView = new Ascii() {
-            Data = joined.Data,
-            Length = joined.Length,
-            Capacity = joined.Capacity
-        };
-        checksum += System.Text.AsciiLength(System.IO.Path.Extension(System.Text.AsciiView(extensionView)));
-        checksum += unicodeText.Length;
+        checksum += System.Text.AsciiLength(System.IO.Path.Extension(joined.View()));
+        checksum += unicodeText.Length();
     }
 
-    if (checksum != 26000) {
+    if (checksum != 36000) {
         return 3;
     }
 

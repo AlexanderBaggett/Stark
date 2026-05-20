@@ -22,6 +22,7 @@ public static class CompilerArtifactKeys
     public static readonly ArtifactKey<EnumLayoutModel> EnumLayoutModel = new("typing.enum-layout");
     public static readonly ArtifactKey<SemanticValidationModel> SemanticValidation = new("semantics.validation");
     public static readonly ArtifactKey<OwnershipValidationModel> OwnershipValidation = new("semantics.ownership");
+    public static readonly ArtifactKey<LoweringContractValidationModel> LoweringContractValidation = new("lowering.contract-validation");
     public static readonly ArtifactKey<HighLevelIrModule> HighLevelIr = new("lowering.hir");
     public static readonly ArtifactKey<MidLevelIrModule> MidLevelIr = new("lowering.mir");
     public static readonly ArtifactKey<SsaIrModule> SsaIr = new("lowering.ssa");
@@ -98,17 +99,43 @@ internal static class FunctionKindFacts
 
 internal static class CallableValueFacts
 {
+    public const string ClosureEnvironmentParameterName = "$env";
+
     public static string BuildLambdaFunctionName(string enclosingFunctionName, SourceLocation location)
     {
         return $"{enclosingFunctionName}.__lambda_{location.Line}_{location.Column}";
     }
+
+    public static string BuildClosureEnvironmentTypeName(string lambdaFunctionName)
+    {
+        return $"{lambdaFunctionName}.__env";
+    }
+
+    public static string BuildClosureDropFunctionName(string lambdaFunctionName)
+    {
+        return $"{lambdaFunctionName}.__drop";
+    }
+
+    public static string BuildClosureFunctionAdapterName(string enclosingFunctionName, SourceLocation location)
+    {
+        return $"{enclosingFunctionName}.__closure_adapter_{location.Line}_{location.Column}";
+    }
+
+    public static string EmptyClosureDropFunctionName => "__stark_closure_drop_empty";
 
     public static TypedFunctionSignature BuildLambdaSignature(LambdaTypingRecord lambda)
     {
         var returnType = lambda.FunctionPointerType.FunctionPointerReturnType ?? StarkTypeSymbols.Error;
         var parameterTypes = lambda.FunctionPointerType.FunctionPointerParameterTypes ?? [];
         var parameters = parameterTypes
-            .Select((type, index) => new TypedParameterSymbol(lambda.ParameterNames[index], type))
+            .Select((type, index) => new TypedParameterSymbol(
+                lambda.ParameterNames[index],
+                type,
+                RawPointerElementCountExpression: MapFunctionPointerRawPointerElementCountExpressionToLambdaParameterNames(
+                    StarkTypeSymbols.GetFunctionPointerParameterRawPointerElementCountExpression(
+                        lambda.FunctionPointerType,
+                        index),
+                    lambda.ParameterNames)))
             .ToArray();
 
         return new TypedFunctionSignature(
@@ -119,14 +146,296 @@ internal static class CallableValueFacts
             Kind: lambda.FunctionPointerType.FunctionPointerKind ?? StarkFunctionKind.Fn);
     }
 
+    public static TypedFunctionSignature BuildClosureLambdaSignature(ClosureLambdaTypingRecord lambda)
+    {
+        var returnType = lambda.ClosureType.ClosureReturnType ?? StarkTypeSymbols.Error;
+        var parameterTypes = lambda.ClosureType.ClosureParameterTypes ?? [];
+        var parameters = new List<TypedParameterSymbol>(parameterTypes.Count + 1)
+        {
+            new(
+                ClosureEnvironmentParameterName,
+                lambda.EnvironmentParameterType)
+        };
+
+        parameters.AddRange(parameterTypes.Select((type, index) => new TypedParameterSymbol(
+                lambda.ParameterNames[index],
+                type,
+                RawPointerElementCountExpression: MapFunctionPointerRawPointerElementCountExpressionToLambdaParameterNames(
+                    StarkTypeSymbols.GetClosureParameterRawPointerElementCountExpression(
+                        lambda.ClosureType,
+                        index),
+                    lambda.ParameterNames))));
+
+        return new TypedFunctionSignature(
+            lambda.FunctionName,
+            returnType,
+            parameters.ToArray(),
+            SourceName: lambda.FunctionName,
+            Kind: lambda.ClosureType.ClosureFunctionKind ?? StarkFunctionKind.Fn);
+    }
+
+    public static TypedFunctionSignature BuildClosureFunctionAdapterSignature(ClosureFunctionPromotionTypingRecord adapter)
+    {
+        var returnType = adapter.ClosureType.ClosureReturnType ?? StarkTypeSymbols.Error;
+        var parameterTypes = adapter.ClosureType.ClosureParameterTypes ?? [];
+        var parameters = new List<TypedParameterSymbol>(parameterTypes.Count + 1)
+        {
+            new(
+                ClosureEnvironmentParameterName,
+                BuildClosureEnvironmentPointerType(adapter.ClosureType))
+        };
+
+        parameters.AddRange(parameterTypes.Select((parameterType, index) => new TypedParameterSymbol(
+            $"arg{index}",
+            parameterType,
+            RawPointerElementCountExpression: StarkTypeSymbols.GetClosureParameterRawPointerElementCountExpression(
+                adapter.ClosureType,
+                index))));
+
+        return new TypedFunctionSignature(
+            adapter.AdapterFunctionName,
+            returnType,
+            parameters,
+            SourceName: adapter.AdapterFunctionName,
+            Kind: adapter.ClosureType.ClosureFunctionKind ?? StarkFunctionKind.Fn);
+    }
+
+    public static TypedFunctionSignature BuildClosureDropSignature(string functionName)
+    {
+        return new TypedFunctionSignature(
+            functionName,
+            StarkTypeSymbols.Void,
+            [
+                new TypedParameterSymbol(
+                    ClosureEnvironmentParameterName,
+                    BuildClosureDropEnvironmentPointerType())
+            ],
+            SourceName: functionName,
+            Kind: StarkFunctionKind.Fn);
+    }
+
+    public static FunctionEffectProfile BuildClosureDropEffectProfile(string functionName)
+    {
+        return new FunctionEffectProfile(
+            functionName,
+            StarkFunctionKind.Fn,
+            ReadsArgumentMemory: true,
+            IsPure: false,
+            NoSync: true,
+            NoFree: false,
+            NoUnwind: true,
+            WillReturn: true,
+            MustProgress: true,
+            UseFastCallingConvention: false,
+            IsFfi: false,
+            IsVarargs: false,
+            IsHot: false,
+            IsCold: true,
+            InlinePreference: InlinePreference.InlineHint,
+            IsStrictFp: false);
+    }
+
+    public static StarkTypeSymbol BuildClosureEnvironmentPointerType(StarkTypeSymbol closureType)
+    {
+        return StarkTypeSymbols.RawPointer(
+            StarkTypeSymbols.Integer(8),
+            isMutable: closureType.ClosureCallCapability is StarkClosureCallCapability.Mut or StarkClosureCallCapability.Once);
+    }
+
+    public static StarkTypeSymbol BuildClosureDropEnvironmentPointerType()
+    {
+        return StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: true);
+    }
+
+    public static StarkTypeSymbol BuildClosureDropFunctionPointerType()
+    {
+        return StarkTypeSymbols.FunctionPointer(
+            StarkFunctionKind.Fn,
+            StarkTypeSymbols.Void,
+            [BuildClosureDropEnvironmentPointerType()]);
+    }
+
+    public static NamedTypeSymbol BuildClosureEnvironmentNamedType(
+        string environmentTypeName,
+        IReadOnlyList<ClosureCaptureFieldSymbol> captureFields)
+    {
+        var orderedFields = captureFields
+            .Select(static capture => new FieldSymbol(capture.FieldName, capture.FieldType))
+            .ToArray();
+        var fields = orderedFields.ToDictionary(static field => field.Name, StringComparer.Ordinal);
+        return new NamedTypeSymbol(environmentTypeName, DeclarationKind.Struct, fields, orderedFields);
+    }
+
+    public static ClosureCaptureStorageKind GetLambdaCaptureStorageKind(string mode)
+    {
+        return mode is "read" or "mut" or "out" or "init"
+            ? ClosureCaptureStorageKind.Address
+            : ClosureCaptureStorageKind.Value;
+    }
+
+    public static StarkTypeSymbol GetLambdaCaptureBodyType(StarkTypeSymbol type, string mode)
+    {
+        return mode switch
+        {
+            "addr" => StarkTypeSymbols.RawPointer(StarkTypeSymbols.FreezeAddressPointeeType(type), isMutable: false),
+            "shared" => StarkTypeSymbols.WithQualifiers(type, accessKind: StarkAccessKind.Shared, isMutableView: false),
+            "out" => StarkTypeSymbols.WithQualifiers(type, initializationKind: StarkInitializationKind.Out),
+            "init" => StarkTypeSymbols.WithQualifiers(type, initializationKind: StarkInitializationKind.Init),
+            _ => type
+        };
+    }
+
+    public static StarkTypeSymbol GetLambdaCaptureFieldType(StarkTypeSymbol type, string mode)
+    {
+        var bodyType = GetLambdaCaptureBodyType(type, mode);
+        return GetLambdaCaptureStorageKind(mode) == ClosureCaptureStorageKind.Address
+            ? StarkTypeSymbols.RawPointer(GetLambdaCaptureAddressPointeeType(bodyType), isMutable: LambdaCaptureModeExposesWritableBinding(mode))
+            : bodyType;
+    }
+
+    public static StarkTypeSymbol GetLambdaCaptureAddressPointeeType(StarkTypeSymbol bodyType)
+    {
+        return StarkTypeSymbols.WithQualifiers(
+            bodyType,
+            borrowKind: StarkBorrowKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+    }
+
+    public static bool LambdaCaptureModeExposesWritableBinding(string mode)
+    {
+        return mode is "mut" or "out" or "init";
+    }
+
+    public static StarkTypeSymbol BuildClosureInvokeFunctionPointerType(StarkTypeSymbol closureType)
+    {
+        var environmentPointerType = BuildClosureEnvironmentPointerType(closureType);
+        var sourceParameterTypes = closureType.ClosureParameterTypes ?? [];
+        var parameterTypes = new List<StarkTypeSymbol>(sourceParameterTypes.Count + 1)
+        {
+            environmentPointerType
+        };
+        parameterTypes.AddRange(sourceParameterTypes);
+
+        var rawPointerBounds = new string?[parameterTypes.Count];
+        for (var index = 0; index < sourceParameterTypes.Count; index++)
+        {
+            rawPointerBounds[index + 1] = ShiftSyntheticArgumentExpression(
+                StarkTypeSymbols.GetClosureParameterRawPointerElementCountExpression(closureType, index),
+                offset: 1);
+        }
+
+        return StarkTypeSymbols.FunctionPointer(
+            closureType.ClosureFunctionKind ?? StarkFunctionKind.Fn,
+            closureType.ClosureReturnType ?? StarkTypeSymbols.Error,
+            parameterTypes,
+            ShiftDisjointGroups(closureType.ClosureDisjointParameterGroups ?? [], offset: 1),
+            ShiftOverlapGroups(closureType.ClosureOverlapParameterGroups ?? [], offset: 1),
+            ShiftSameGroups(closureType.ClosureSameParameterGroups ?? [], offset: 1),
+            rawPointerBounds);
+    }
+
+    private static IReadOnlyList<ParameterDisjointGroup> ShiftDisjointGroups(
+        IReadOnlyList<ParameterDisjointGroup> groups,
+        int offset)
+    {
+        return groups
+            .Select(group => new ParameterDisjointGroup(
+                group.ParameterNames.Select(name => ShiftSyntheticArgumentName(name, offset)).ToArray(),
+                group.MemoryRegions
+                    .Select(region => new ParameterMemoryRegion(
+                        ShiftSyntheticArgumentName(region.ParameterName, offset),
+                        ShiftSyntheticArgumentExpression(region.StartExpression, offset),
+                        ShiftSyntheticArgumentExpression(region.CountExpression, offset)))
+                    .ToArray()))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<ParameterOverlapGroup> ShiftOverlapGroups(
+        IReadOnlyList<ParameterOverlapGroup> groups,
+        int offset)
+    {
+        return groups
+            .Select(group => new ParameterOverlapGroup(group.ParameterNames.Select(name => ShiftSyntheticArgumentName(name, offset)).ToArray()))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<ParameterSameGroup> ShiftSameGroups(
+        IReadOnlyList<ParameterSameGroup> groups,
+        int offset)
+    {
+        return groups
+            .Select(group => new ParameterSameGroup(group.ParameterNames.Select(name => ShiftSyntheticArgumentName(name, offset)).ToArray()))
+            .ToArray();
+    }
+
+    private static string ShiftSyntheticArgumentName(string name, int offset)
+    {
+        return name.StartsWith("arg", StringComparison.Ordinal)
+            && int.TryParse(name[3..], out var index)
+            && index >= 0
+                ? $"arg{index + offset}"
+                : name;
+    }
+
+    private static string? ShiftSyntheticArgumentExpression(string? expression, int offset)
+    {
+        if (string.IsNullOrWhiteSpace(expression))
+        {
+            return expression;
+        }
+
+        return expression.StartsWith("arg", StringComparison.Ordinal)
+            && int.TryParse(expression[3..], out var index)
+            && index >= 0
+                ? $"arg{index + offset}"
+                : expression;
+    }
+
+    private static string? MapFunctionPointerRawPointerElementCountExpressionToLambdaParameterNames(
+        string? expression,
+        IReadOnlyList<string> parameterNames)
+    {
+        if (string.IsNullOrWhiteSpace(expression)
+            || !expression.StartsWith("arg", StringComparison.Ordinal)
+            || !int.TryParse(expression[3..], out var parameterIndex)
+            || parameterIndex < 0
+            || parameterIndex >= parameterNames.Count)
+        {
+            return expression;
+        }
+
+        return parameterNames[parameterIndex];
+    }
+
     public static FunctionEffectProfile BuildLambdaEffectProfile(LambdaTypingRecord lambda)
     {
         var kind = lambda.FunctionPointerType.FunctionPointerKind ?? StarkFunctionKind.Fn;
+        return BuildLambdaEffectProfile(lambda.FunctionName, kind);
+    }
+
+    public static FunctionEffectProfile BuildClosureLambdaEffectProfile(ClosureLambdaTypingRecord lambda)
+    {
+        var kind = lambda.ClosureType.ClosureFunctionKind ?? StarkFunctionKind.Fn;
+        return BuildLambdaEffectProfile(lambda.FunctionName, kind);
+    }
+
+    public static FunctionEffectProfile BuildClosureFunctionAdapterEffectProfile(ClosureFunctionPromotionTypingRecord adapter)
+    {
+        var kind = adapter.ClosureType.ClosureFunctionKind ?? adapter.Signature.Kind;
+        return BuildLambdaEffectProfile(adapter.AdapterFunctionName, kind) with
+        {
+            InlinePreference = InlinePreference.Inline
+        };
+    }
+
+    private static FunctionEffectProfile BuildLambdaEffectProfile(string functionName, StarkFunctionKind kind)
+    {
         var isLaw = FunctionKindFacts.IsLaw(kind);
         var isFinite = FunctionKindFacts.IsFinite(kind);
 
         return new FunctionEffectProfile(
-            lambda.FunctionName,
+            functionName,
             kind,
             ReadsArgumentMemory: false,
             IsPure: isLaw,
@@ -143,6 +452,7 @@ internal static class CallableValueFacts
             InlinePreference: InlinePreference.InlineHint,
             IsStrictFp: false);
     }
+
 }
 
 public enum InlinePreference
@@ -196,7 +506,31 @@ public sealed record ParameterModel(
     bool IsConst = false,
     string? RawPointerElementCountExpression = null);
 
-public sealed record ParameterDisjointGroup(IReadOnlyList<string> ParameterNames);
+public sealed record ParameterMemoryRegion(
+    string ParameterName,
+    string? StartExpression = null,
+    string? CountExpression = null)
+{
+    public bool IsWholeParameter => StartExpression is null && CountExpression is null;
+
+    public string DisplayText => IsWholeParameter
+        ? ParameterName
+        : $"{ParameterName}[{StartExpression}, {CountExpression}]";
+}
+
+public sealed record ParameterDisjointGroup(
+    IReadOnlyList<string> ParameterNames,
+    IReadOnlyList<ParameterMemoryRegion>? Regions = null)
+{
+    public IReadOnlyList<ParameterMemoryRegion> MemoryRegions =>
+        Regions ?? ParameterNames.Select(static name => new ParameterMemoryRegion(name)).ToArray();
+
+    public bool HasSubregions => MemoryRegions.Any(static region => !region.IsWholeParameter);
+}
+
+public sealed record ParameterOverlapGroup(IReadOnlyList<string> ParameterNames);
+
+public sealed record ParameterSameGroup(IReadOnlyList<string> ParameterNames);
 
 public sealed record ImportDeclarationModel(
     string ModuleName,
@@ -218,11 +552,15 @@ public sealed record FunctionDeclarationModel(
     bool IsStatic = false,
     IReadOnlyList<ModuleAttributeModel>? Attributes = null,
     ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default,
-    IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null)
+    IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null,
+    IReadOnlyList<ParameterOverlapGroup>? OverlapParameterGroups = null,
+    IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null)
 {
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
     public bool IsGeneric => GenericParameterNames is { Count: > 0 };
     public IReadOnlyList<ParameterDisjointGroup> DisjointGroups => DisjointParameterGroups ?? [];
+    public IReadOnlyList<ParameterOverlapGroup> OverlapGroups => OverlapParameterGroups ?? [];
+    public IReadOnlyList<ParameterSameGroup> SameGroups => SameParameterGroups ?? [];
 }
 
 public sealed record DestructorDeclarationModel(
@@ -436,6 +774,8 @@ public sealed record ImportedFunctionTemplateSummary(
     IReadOnlyList<ImportedTemplateDirectCallSummary>? DirectCallSummaries = null,
     IReadOnlyList<ImportedTemplateFieldAccessSummary>? FieldAccessSummaries = null,
     IReadOnlyList<ImportedTemplateMemberCallSummary>? MemberCallSummaries = null,
+    IReadOnlyList<ImportedTemplateFunctionAddressSummary>? FunctionAddressSummaries = null,
+    IReadOnlyList<ImportedTemplateBoundOperationSummary>? BoundOperationSummaries = null,
     ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default)
 {
     public ImportedFunctionSemanticSummary? Semantics => SemanticSummary;
@@ -493,6 +833,12 @@ public sealed record ImportedFunctionTemplateSummary(
 
     public IReadOnlyList<ImportedTemplateMemberCallSummary> MemberCalls =>
         MemberCallSummaries ?? [];
+
+    public IReadOnlyList<ImportedTemplateFunctionAddressSummary> FunctionAddresses =>
+        FunctionAddressSummaries ?? [];
+
+    public IReadOnlyList<ImportedTemplateBoundOperationSummary> BoundOperations =>
+        BoundOperationSummaries ?? [];
 }
 
 public enum ImportedTemplateTypedBodyStatementKind
@@ -546,9 +892,14 @@ public enum ImportedTemplateTypedBodyExpressionKind
     EnumCall,
     EnumValue,
     DirectCall,
+    ClosureCall,
     IndexAccess,
     FieldAccess,
     MemberCall,
+    FunctionAddress,
+    DynamicStorageOperation,
+    TextInterpolation,
+    TextBuild,
     TypeLayout
 }
 
@@ -610,6 +961,7 @@ public sealed record ImportedTemplateTypedBodyStatementSummary(
     bool IsMutable = false,
     bool IsConstant = false,
     StarkTypeSymbol? Type = null,
+    int? StorageCapacity = null,
     string? LoopBehavior = null,
     IReadOnlyList<ImportedTemplateTypedSwitchCaseSummary>? SwitchCaseSummaries = null,
     IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? InitializerStatements = null,
@@ -618,7 +970,8 @@ public sealed record ImportedTemplateTypedBodyStatementSummary(
     IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? ThenStatements = null,
     IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? ElseStatements = null,
     ImportedTemplateTypedBodyExpressionSummary? TargetExpression = null,
-    IReadOnlyList<string>? LoopContracts = null)
+    IReadOnlyList<string>? LoopContracts = null,
+    ConstProvenanceKind ConstProvenance = ConstProvenanceKind.None)
 {
     public IReadOnlyList<ImportedTemplateTypedBodyStatementSummary> Initializer =>
         InitializerStatements ?? [];
@@ -730,9 +1083,18 @@ public sealed record ImportedTemplateMemberCallSummary(
     int Ordinal,
     TypedFunctionSignature Signature);
 
+public sealed record ImportedTemplateFunctionAddressSummary(
+    int Ordinal,
+    TypedFunctionSignature Signature,
+    StarkTypeSymbol TargetType);
+
 public sealed record ImportedTemplateConversionSummary(
     int Ordinal,
     StarkTypeSymbol TargetType);
+
+public sealed record ImportedTemplateBoundOperationSummary(
+    int? Ordinal,
+    BoundOperation Operation);
 
 public sealed record LoadedPackageImageFacts(
     IReadOnlyDictionary<string, FunctionEffectProfile> FunctionEffects,
@@ -864,6 +1226,20 @@ public enum StarkInitializationKind
     Init
 }
 
+public enum StarkClosureStorageKind
+{
+    Unspecified,
+    Inline,
+    Heap
+}
+
+public enum StarkClosureCallCapability
+{
+    None,
+    Mut,
+    Once
+}
+
 public enum StarkTypeKind
 {
     Error,
@@ -878,6 +1254,7 @@ public enum StarkTypeKind
     Slice,
     Dynamic,
     FunctionPointer,
+    Closure,
     Named,
     Null
 }
@@ -892,6 +1269,19 @@ public sealed record StarkTypeSymbol(
     StarkFunctionKind? FunctionPointerKind = null,
     StarkTypeSymbol? FunctionPointerReturnType = null,
     IReadOnlyList<StarkTypeSymbol>? FunctionPointerParameterTypes = null,
+    IReadOnlyList<string?>? FunctionPointerParameterRawPointerElementCountExpressions = null,
+    IReadOnlyList<ParameterDisjointGroup>? FunctionPointerDisjointParameterGroups = null,
+    IReadOnlyList<ParameterOverlapGroup>? FunctionPointerOverlapParameterGroups = null,
+    IReadOnlyList<ParameterSameGroup>? FunctionPointerSameParameterGroups = null,
+    StarkClosureStorageKind ClosureStorageKind = StarkClosureStorageKind.Unspecified,
+    StarkClosureCallCapability ClosureCallCapability = StarkClosureCallCapability.None,
+    StarkFunctionKind? ClosureFunctionKind = null,
+    StarkTypeSymbol? ClosureReturnType = null,
+    IReadOnlyList<StarkTypeSymbol>? ClosureParameterTypes = null,
+    IReadOnlyList<string?>? ClosureParameterRawPointerElementCountExpressions = null,
+    IReadOnlyList<ParameterDisjointGroup>? ClosureDisjointParameterGroups = null,
+    IReadOnlyList<ParameterOverlapGroup>? ClosureOverlapParameterGroups = null,
+    IReadOnlyList<ParameterSameGroup>? ClosureSameParameterGroups = null,
     BigInteger? RangeMin = null,
     BigInteger? RangeMax = null,
     bool IsUnsigned = false,
@@ -910,6 +1300,7 @@ public static class StarkTypeSymbols
     public static readonly StarkTypeSymbol Error = new(StarkTypeKind.Error, "<error>");
     public static readonly StarkTypeSymbol Void = new(StarkTypeKind.Void, "void");
     public static readonly StarkTypeSymbol Bool = new(StarkTypeKind.Bool, "bool");
+    public static readonly StarkTypeSymbol CompileTimeInteger = new(StarkTypeKind.Integer, "integer");
     public static readonly StarkTypeSymbol Ascii = new(StarkTypeKind.Ascii, "ascii");
     public static readonly StarkTypeSymbol Unicode = new(StarkTypeKind.Unicode, "unicode");
     public static readonly StarkTypeSymbol OwnedAscii = new(StarkTypeKind.Named, OwnedAsciiName, NamedType: OwnedAsciiName);
@@ -939,6 +1330,68 @@ public static class StarkTypeSymbols
             IsUnsigned: isUnsigned);
     }
 
+    public static bool IsCompileTimeInteger(StarkTypeSymbol type) =>
+        type.Kind == StarkTypeKind.Integer && type.BitWidth is null;
+
+    public static bool TryGetIntegerStorageBounds(StarkTypeSymbol type, out BigInteger min, out BigInteger max)
+    {
+        if (type.Kind != StarkTypeKind.Integer || type.BitWidth is not int bitWidth || bitWidth <= 0)
+        {
+            min = BigInteger.Zero;
+            max = BigInteger.Zero;
+            return false;
+        }
+
+        if (type.IsUnsigned)
+        {
+            min = BigInteger.Zero;
+            max = (BigInteger.One << bitWidth) - BigInteger.One;
+            return true;
+        }
+
+        min = -(BigInteger.One << (bitWidth - 1));
+        max = (BigInteger.One << (bitWidth - 1)) - BigInteger.One;
+        return true;
+    }
+
+    public static bool TryGetEffectiveIntegerBounds(StarkTypeSymbol type, out BigInteger min, out BigInteger max)
+    {
+        if (!TryGetIntegerStorageBounds(type, out min, out max))
+        {
+            return false;
+        }
+
+        if (type.RangeMin is { } rangeMin && type.RangeMax is { } rangeMax)
+        {
+            if (rangeMin > rangeMax || rangeMin < min || rangeMax > max)
+            {
+                min = BigInteger.Zero;
+                max = BigInteger.Zero;
+                return false;
+            }
+
+            min = rangeMin;
+            max = rangeMax;
+            return true;
+        }
+
+        return true;
+    }
+
+    public static bool IntegerValueFitsEffectiveRange(BigInteger value, StarkTypeSymbol type)
+    {
+        return TryGetEffectiveIntegerBounds(type, out var min, out var max)
+               && value >= min
+               && value <= max;
+    }
+
+    public static bool IntegerValueFitsStorage(BigInteger value, StarkTypeSymbol type)
+    {
+        return TryGetIntegerStorageBounds(type, out var min, out var max)
+               && value >= min
+               && value <= max;
+    }
+
     public static StarkTypeSymbol Float(int bitWidth) => new(StarkTypeKind.Float, $"f{bitWidth}", BitWidth: bitWidth);
 
     public static StarkTypeSymbol RawPointer(StarkTypeSymbol elementType, bool isMutable) =>
@@ -964,22 +1417,197 @@ public static class StarkTypeSymbols
     public static StarkTypeSymbol FunctionPointer(
         StarkFunctionKind functionKind,
         StarkTypeSymbol returnType,
-        IReadOnlyList<StarkTypeSymbol> parameterTypes)
+        IReadOnlyList<StarkTypeSymbol> parameterTypes,
+        IReadOnlyList<ParameterDisjointGroup>? disjointGroups = null,
+        IReadOnlyList<ParameterOverlapGroup>? overlapGroups = null,
+        IReadOnlyList<ParameterSameGroup>? sameGroups = null,
+        IReadOnlyList<string?>? parameterRawPointerElementCountExpressions = null)
     {
-        var displayKind = functionKind switch
+        var displayKind = FormatCallableFunctionKind(functionKind);
+        var effectiveRawPointerElementCountExpressions =
+            NormalizeFunctionPointerParameterRawPointerElementCountExpressions(
+                parameterTypes,
+                parameterRawPointerElementCountExpressions);
+        var parameters = parameterTypes
+            .Select((parameter, index) => new TypedParameterSymbol(
+                $"arg{index}",
+                parameter,
+                RawPointerElementCountExpression: GetFunctionPointerParameterRawPointerElementCountExpression(
+                    effectiveRawPointerElementCountExpressions,
+                    index)))
+            .ToArray();
+        var effectiveOverlapGroups = overlapGroups ?? [];
+        var effectiveSameGroups = sameGroups ?? [];
+        var effectiveDisjointGroups = disjointGroups
+            ?? ParameterMemoryContractFacts.BuildEffectiveDisjointGroups(
+                parameters,
+                explicitDisjointGroups: [],
+                overlapGroups: effectiveOverlapGroups,
+                sameGroups: effectiveSameGroups,
+                applyDefaultNonOverlap: true);
+        var displayName = $"fnptr<{displayKind} {returnType.DisplayName}({string.Join(", ", parameterTypes.Select((parameter, index) => FormatFunctionPointerParameterDisplayName(parameter, effectiveRawPointerElementCountExpressions, index)))}){FormatFunctionPointerMemoryContracts(effectiveOverlapGroups, effectiveSameGroups)}>";
+        return new StarkTypeSymbol(
+            StarkTypeKind.FunctionPointer,
+            displayName,
+            FunctionPointerKind: functionKind,
+            FunctionPointerReturnType: returnType,
+            FunctionPointerParameterTypes: parameterTypes.ToArray(),
+            FunctionPointerParameterRawPointerElementCountExpressions: effectiveRawPointerElementCountExpressions,
+            FunctionPointerDisjointParameterGroups: effectiveDisjointGroups,
+            FunctionPointerOverlapParameterGroups: effectiveOverlapGroups,
+            FunctionPointerSameParameterGroups: effectiveSameGroups);
+    }
+
+    public static StarkTypeSymbol Closure(
+        StarkClosureStorageKind storageKind,
+        StarkClosureCallCapability callCapability,
+        StarkFunctionKind functionKind,
+        StarkTypeSymbol returnType,
+        IReadOnlyList<StarkTypeSymbol> parameterTypes,
+        IReadOnlyList<ParameterDisjointGroup>? disjointGroups = null,
+        IReadOnlyList<ParameterOverlapGroup>? overlapGroups = null,
+        IReadOnlyList<ParameterSameGroup>? sameGroups = null,
+        IReadOnlyList<string?>? parameterRawPointerElementCountExpressions = null)
+    {
+        var displayKind = FormatCallableFunctionKind(functionKind);
+        var storagePrefix = storageKind switch
+        {
+            StarkClosureStorageKind.Inline => "inline ",
+            StarkClosureStorageKind.Heap => "heap ",
+            _ => string.Empty
+        };
+        var capabilityPrefix = callCapability switch
+        {
+            StarkClosureCallCapability.Mut => "mut ",
+            StarkClosureCallCapability.Once => "once ",
+            _ => string.Empty
+        };
+        var effectiveRawPointerElementCountExpressions =
+            NormalizeFunctionPointerParameterRawPointerElementCountExpressions(
+                parameterTypes,
+                parameterRawPointerElementCountExpressions);
+        var parameters = parameterTypes
+            .Select((parameter, index) => new TypedParameterSymbol(
+                $"arg{index}",
+                parameter,
+                RawPointerElementCountExpression: GetFunctionPointerParameterRawPointerElementCountExpression(
+                    effectiveRawPointerElementCountExpressions,
+                    index)))
+            .ToArray();
+        var effectiveOverlapGroups = overlapGroups ?? [];
+        var effectiveSameGroups = sameGroups ?? [];
+        var effectiveDisjointGroups = disjointGroups
+            ?? ParameterMemoryContractFacts.BuildEffectiveDisjointGroups(
+                parameters,
+                explicitDisjointGroups: [],
+                overlapGroups: effectiveOverlapGroups,
+                sameGroups: effectiveSameGroups,
+                applyDefaultNonOverlap: true);
+        var displayName = $"{storagePrefix}closure<{capabilityPrefix}{displayKind} {returnType.DisplayName}({string.Join(", ", parameterTypes.Select((parameter, index) => FormatFunctionPointerParameterDisplayName(parameter, effectiveRawPointerElementCountExpressions, index)))}){FormatFunctionPointerMemoryContracts(effectiveOverlapGroups, effectiveSameGroups)}>";
+        return new StarkTypeSymbol(
+            StarkTypeKind.Closure,
+            displayName,
+            ClosureStorageKind: storageKind,
+            ClosureCallCapability: callCapability,
+            ClosureFunctionKind: functionKind,
+            ClosureReturnType: returnType,
+            ClosureParameterTypes: parameterTypes.ToArray(),
+            ClosureParameterRawPointerElementCountExpressions: effectiveRawPointerElementCountExpressions,
+            ClosureDisjointParameterGroups: effectiveDisjointGroups,
+            ClosureOverlapParameterGroups: effectiveOverlapGroups,
+            ClosureSameParameterGroups: effectiveSameGroups);
+    }
+
+    private static string FormatCallableFunctionKind(StarkFunctionKind functionKind)
+    {
+        return functionKind switch
         {
             StarkFunctionKind.FiniteLaw => "finite law",
             StarkFunctionKind.Finite => "finite",
             StarkFunctionKind.Law => "law",
             _ => "fn"
         };
-        var displayName = $"fnptr<{displayKind} {returnType.DisplayName}({string.Join(", ", parameterTypes.Select(static parameter => parameter.DisplayName))})>";
-        return new StarkTypeSymbol(
-            StarkTypeKind.FunctionPointer,
-            displayName,
-            FunctionPointerKind: functionKind,
-            FunctionPointerReturnType: returnType,
-            FunctionPointerParameterTypes: parameterTypes.ToArray());
+    }
+
+    public static string? GetFunctionPointerParameterRawPointerElementCountExpression(
+        StarkTypeSymbol functionPointerType,
+        int parameterIndex)
+    {
+        return GetFunctionPointerParameterRawPointerElementCountExpression(
+            functionPointerType.FunctionPointerParameterRawPointerElementCountExpressions,
+            parameterIndex);
+    }
+
+    public static string? GetClosureParameterRawPointerElementCountExpression(
+        StarkTypeSymbol closureType,
+        int parameterIndex)
+    {
+        return GetFunctionPointerParameterRawPointerElementCountExpression(
+            closureType.ClosureParameterRawPointerElementCountExpressions,
+            parameterIndex);
+    }
+
+    private static IReadOnlyList<string?>? NormalizeFunctionPointerParameterRawPointerElementCountExpressions(
+        IReadOnlyList<StarkTypeSymbol> parameterTypes,
+        IReadOnlyList<string?>? parameterRawPointerElementCountExpressions)
+    {
+        if (parameterRawPointerElementCountExpressions is null
+            || parameterRawPointerElementCountExpressions.All(string.IsNullOrWhiteSpace))
+        {
+            return null;
+        }
+
+        var normalized = new string?[parameterTypes.Count];
+        for (var index = 0; index < normalized.Length; index++)
+        {
+            normalized[index] = index < parameterRawPointerElementCountExpressions.Count
+                && parameterTypes[index].Kind == StarkTypeKind.RawPointer
+                && !string.IsNullOrWhiteSpace(parameterRawPointerElementCountExpressions[index])
+                    ? parameterRawPointerElementCountExpressions[index]
+                    : null;
+        }
+
+        return normalized.Any(static expression => !string.IsNullOrWhiteSpace(expression))
+            ? normalized
+            : null;
+    }
+
+    private static string? GetFunctionPointerParameterRawPointerElementCountExpression(
+        IReadOnlyList<string?>? parameterRawPointerElementCountExpressions,
+        int parameterIndex)
+    {
+        return parameterRawPointerElementCountExpressions is not null
+               && parameterIndex >= 0
+               && parameterIndex < parameterRawPointerElementCountExpressions.Count
+               && !string.IsNullOrWhiteSpace(parameterRawPointerElementCountExpressions[parameterIndex])
+            ? parameterRawPointerElementCountExpressions[parameterIndex]
+            : null;
+    }
+
+    private static string FormatFunctionPointerParameterDisplayName(
+        StarkTypeSymbol parameterType,
+        IReadOnlyList<string?>? parameterRawPointerElementCountExpressions,
+        int parameterIndex)
+    {
+        var countExpression = GetFunctionPointerParameterRawPointerElementCountExpression(
+            parameterRawPointerElementCountExpressions,
+            parameterIndex);
+        return countExpression is null
+            ? parameterType.DisplayName
+            : $"{parameterType.DisplayName}[{countExpression}]";
+    }
+
+    private static string FormatFunctionPointerMemoryContracts(
+        IReadOnlyList<ParameterOverlapGroup> overlapGroups,
+        IReadOnlyList<ParameterSameGroup> sameGroups)
+    {
+        var clauses = overlapGroups
+            .Select(static group => $"overlap({string.Join(", ", group.ParameterNames)})")
+            .Concat(sameGroups.Select(static group => $"same({string.Join(", ", group.ParameterNames)})"))
+            .ToArray();
+        return clauses.Length == 0
+            ? string.Empty
+            : $" where {string.Join(", ", clauses)}";
     }
 
     public static StarkTypeSymbol Named(string name) => new(StarkTypeKind.Named, name, NamedType: name);
@@ -1181,6 +1809,7 @@ public static class StarkTypeSymbols
             StarkTypeKind.Integer or
             StarkTypeKind.Float or
             StarkTypeKind.FunctionPointer or
+            StarkTypeKind.Closure or
             StarkTypeKind.Null)
         {
             return WithQualifiers(type, accessKind: StarkAccessKind.None, isMutableView: false);
@@ -1229,7 +1858,27 @@ public static class StarkTypeSymbols
             StarkTypeKind.FunctionPointer when type.FunctionPointerKind is { } functionKind
                                                && type.FunctionPointerReturnType is { } returnType
                                                && type.FunctionPointerParameterTypes is { } parameterTypes
-                => FunctionPointer(functionKind, returnType, parameterTypes),
+                => FunctionPointer(
+                    functionKind,
+                    returnType,
+                    parameterTypes,
+                    type.FunctionPointerDisjointParameterGroups,
+                    type.FunctionPointerOverlapParameterGroups,
+                    type.FunctionPointerSameParameterGroups,
+                    type.FunctionPointerParameterRawPointerElementCountExpressions),
+            StarkTypeKind.Closure when type.ClosureFunctionKind is { } closureFunctionKind
+                                       && type.ClosureReturnType is { } closureReturnType
+                                       && type.ClosureParameterTypes is { } closureParameterTypes
+                => Closure(
+                    type.ClosureStorageKind,
+                    type.ClosureCallCapability,
+                    closureFunctionKind,
+                    closureReturnType,
+                    closureParameterTypes,
+                    type.ClosureDisjointParameterGroups,
+                    type.ClosureOverlapParameterGroups,
+                    type.ClosureSameParameterGroups,
+                    type.ClosureParameterRawPointerElementCountExpressions),
             StarkTypeKind.Named when type.NamedType == OwnedAsciiName => OwnedAscii,
             StarkTypeKind.Named when type.NamedType == OwnedUnicodeName => OwnedUnicode,
             StarkTypeKind.Named when type.TypeArguments is { Count: > 0 } && type.NamedType is not null
@@ -1393,13 +2042,17 @@ public sealed record TypedFunctionSignature(
     bool IsUnsafe = false,
     bool IsVarargs = false,
     ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default,
-    IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null)
+    IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null,
+    IReadOnlyList<ParameterOverlapGroup>? OverlapParameterGroups = null,
+    IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null)
 {
     public string DisplaySourceName => SourceName ?? Name;
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
     public bool IsGeneric => GenericParameterNames is { Count: > 0 };
     public bool IsGenericInstantiation => TemplateName is not null && TypeArguments is { Count: > 0 };
     public IReadOnlyList<ParameterDisjointGroup> DisjointGroups => DisjointParameterGroups ?? [];
+    public IReadOnlyList<ParameterOverlapGroup> OverlapGroups => OverlapParameterGroups ?? [];
+    public IReadOnlyList<ParameterSameGroup> SameGroups => SameParameterGroups ?? [];
 }
 
 public enum GlobalBindingKind
@@ -1409,14 +2062,44 @@ public enum GlobalBindingKind
     Mutable
 }
 
+public enum TypedConstantInitializerKind
+{
+    Integer,
+    Float,
+    Bool,
+    Text,
+    Null,
+    FixedArray
+}
+
+public sealed record TypedConstantInitializer(
+    TypedConstantInitializerKind Kind,
+    StarkTypeSymbol Type,
+    BigInteger? IntegerValue = null,
+    string? FloatLiteralText = null,
+    bool? BoolValue = null,
+    string? TextLiteralText = null,
+    IReadOnlyList<TypedConstantInitializer>? Elements = null)
+{
+    public IReadOnlyList<TypedConstantInitializer> ElementValues => Elements ?? [];
+}
+
 public sealed record TypedGlobalSymbol(
     string Name,
     StarkTypeSymbol Type,
-    GlobalBindingKind BindingKind)
+    GlobalBindingKind BindingKind,
+    TypedConstantInitializer? ConstantInitializer = null)
 {
     public bool IsMutable => BindingKind == GlobalBindingKind.Mutable;
 
     public bool IsConst => BindingKind == GlobalBindingKind.Const;
+
+    public ConstProvenanceKind ConstProvenance => BindingKind switch
+    {
+        GlobalBindingKind.Const => ConstProvenanceKind.PermanentConst,
+        GlobalBindingKind.Immutable => ConstProvenanceKind.StaticImmutableBinding,
+        _ => ConstProvenanceKind.None
+    };
 }
 
 public sealed record LiteralTypingRecord(
@@ -1434,16 +2117,56 @@ public sealed record LocalDeclarationTypingRecord(
     string Kind,
     StarkTypeSymbol Type,
     SourceLocation Location,
+    string? EnclosingFunctionName = null,
+    IReadOnlyDictionary<string, ConstProvenanceKind>? DeclaratorConstProvenance = null)
+{
+    public IReadOnlyDictionary<string, ConstProvenanceKind> ConstProvenanceByDeclarator =>
+        DeclaratorConstProvenance ?? EmptyConstProvenanceByDeclarator;
+
+    private static readonly IReadOnlyDictionary<string, ConstProvenanceKind> EmptyConstProvenanceByDeclarator =
+        new Dictionary<string, ConstProvenanceKind>(StringComparer.Ordinal);
+}
+
+public sealed record LocalStorageCapacityTypingRecord(
+    string Kind,
+    string Name,
+    int Capacity,
+    SourceLocation Location,
     string? EnclosingFunctionName = null);
+
+public sealed record CallArgumentTypingRecord(
+    int ParameterIndex,
+    int SourceArgumentIndex,
+    StarkTypeSymbol ParameterType,
+    StarkTypeSymbol ArgumentType,
+    bool IsReceiver,
+    bool RequiresAddressable,
+    bool RequiresMutable,
+    bool RequiresConstProvenance,
+    bool ArgumentIsAddressable,
+    bool ArgumentIsMutable,
+    bool ArgumentHasConstProvenance);
 
 public sealed record DirectCallTypingRecord(
     TypedFunctionSignature Signature,
     SourceLocation Location,
-    string? EnclosingFunctionName = null);
+    string? EnclosingFunctionName = null,
+    IReadOnlyList<CallArgumentTypingRecord>? ArgumentRecords = null)
+{
+    public IReadOnlyList<CallArgumentTypingRecord> Arguments =>
+        ArgumentRecords ?? [];
+}
 
 public sealed record FunctionPointerPromotionTypingRecord(
     TypedFunctionSignature Signature,
     StarkTypeSymbol TargetType,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null);
+
+public sealed record ClosureFunctionPromotionTypingRecord(
+    TypedFunctionSignature Signature,
+    StarkTypeSymbol ClosureType,
+    string AdapterFunctionName,
     SourceLocation Location,
     string? EnclosingFunctionName = null);
 
@@ -1455,6 +2178,276 @@ public sealed record AddressTakenFunctionTypingRecord(
 public sealed record IndirectCallTypingRecord(
     StarkTypeSymbol FunctionPointerType,
     SourceLocation Location,
+    string? EnclosingFunctionName = null,
+    IReadOnlyList<CallArgumentTypingRecord>? ArgumentRecords = null)
+{
+    public IReadOnlyList<CallArgumentTypingRecord> Arguments =>
+        ArgumentRecords ?? [];
+}
+
+public sealed record ClosureCallTypingRecord(
+    StarkTypeSymbol ClosureType,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null,
+    IReadOnlyList<CallArgumentTypingRecord>? ArgumentRecords = null)
+{
+    public IReadOnlyList<CallArgumentTypingRecord> Arguments =>
+        ArgumentRecords ?? [];
+}
+
+public sealed record IndexAccessTypingRecord(
+    string Kind,
+    StarkTypeSymbol SourceType,
+    StarkTypeSymbol ResultType,
+    int IndexCount,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null);
+
+public sealed record DynamicStorageOperationTypingRecord(
+    string OperationName,
+    StarkTypeSymbol ReceiverType,
+    StarkTypeSymbol ResultType,
+    int ArgumentCount,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null,
+    bool ReceiverIsAddressable = true,
+    bool ReceiverIsMutable = true);
+
+public enum BoundOperationKind
+{
+    DirectCall,
+    MemberCall,
+    FunctionPointerCall,
+    ClosureCall,
+    IndexAccess,
+    SliceAccess,
+    ObjectCreation,
+    EnumConstruction,
+    EnumCall,
+    EnumValue,
+    DynamicStorageOperation,
+    TextInterpolation,
+    TextBuild,
+    LayoutQuery,
+    SwitchDispatch
+}
+
+public enum BoundIndexAccessKind
+{
+    Element,
+    Slice,
+    TextElement,
+    TextSlice,
+    DynamicElement,
+    DynamicSlice,
+    RawPointerRegion
+}
+
+public enum BoundLayoutQueryKind
+{
+    SizeOf,
+    AlignOf
+}
+
+public abstract record BoundOperation(
+    BoundOperationKind Kind,
+    StarkTypeSymbol ResultType,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null);
+
+public sealed record BoundDirectCallOperation(
+    TypedFunctionSignature Signature,
+    IReadOnlyList<CallArgumentTypingRecord>? ArgumentRecords,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(BoundOperationKind.DirectCall, Signature.ReturnType, Location, EnclosingFunctionName)
+{
+    public IReadOnlyList<CallArgumentTypingRecord> Arguments =>
+        ArgumentRecords ?? [];
+}
+
+public sealed record BoundMemberCallOperation(
+    TypedFunctionSignature Signature,
+    StarkTypeSymbol ReceiverType,
+    bool ReceiverIsAddressable,
+    bool ReceiverIsMutable,
+    IReadOnlyList<CallArgumentTypingRecord>? ArgumentRecords,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(BoundOperationKind.MemberCall, Signature.ReturnType, Location, EnclosingFunctionName)
+{
+    public IReadOnlyList<CallArgumentTypingRecord> Arguments =>
+        ArgumentRecords ?? [];
+}
+
+public sealed record BoundFunctionPointerCallOperation(
+    StarkTypeSymbol FunctionPointerType,
+    IReadOnlyList<CallArgumentTypingRecord>? ArgumentRecords,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(
+        BoundOperationKind.FunctionPointerCall,
+        FunctionPointerType.FunctionPointerReturnType ?? StarkTypeSymbols.Error,
+        Location,
+        EnclosingFunctionName)
+{
+    public IReadOnlyList<CallArgumentTypingRecord> Arguments =>
+        ArgumentRecords ?? [];
+}
+
+public sealed record BoundClosureCallOperation(
+    StarkTypeSymbol ClosureType,
+    IReadOnlyList<CallArgumentTypingRecord>? ArgumentRecords,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(
+        BoundOperationKind.ClosureCall,
+        ClosureType.ClosureReturnType ?? StarkTypeSymbols.Error,
+        Location,
+        EnclosingFunctionName)
+{
+    public IReadOnlyList<CallArgumentTypingRecord> Arguments =>
+        ArgumentRecords ?? [];
+}
+
+public sealed record BoundIndexAccessOperation(
+    BoundIndexAccessKind AccessKind,
+    string SourceKind,
+    StarkTypeSymbol SourceType,
+    StarkTypeSymbol ResultType,
+    int IndexCount,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(
+        AccessKind is BoundIndexAccessKind.Slice
+            or BoundIndexAccessKind.TextSlice
+            or BoundIndexAccessKind.DynamicSlice
+            or BoundIndexAccessKind.RawPointerRegion
+            ? BoundOperationKind.SliceAccess
+            : BoundOperationKind.IndexAccess,
+        ResultType,
+        Location,
+        EnclosingFunctionName);
+
+public sealed record BoundDynamicStorageOperation(
+    string OperationName,
+    StarkTypeSymbol ReceiverType,
+    StarkTypeSymbol ResultType,
+    int ArgumentCount,
+    bool ReceiverIsAddressable,
+    bool ReceiverIsMutable,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(BoundOperationKind.DynamicStorageOperation, ResultType, Location, EnclosingFunctionName);
+
+public sealed record BoundObjectCreationOperation(
+    string ExpressionText,
+    StarkTypeSymbol CreatedType,
+    TypedConstructorShape? Constructor,
+    IReadOnlyList<ObjectInitializerMemberTypingRecord>? InitializerMembers,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(BoundOperationKind.ObjectCreation, CreatedType, Location, EnclosingFunctionName)
+{
+    public IReadOnlyList<ObjectInitializerMemberTypingRecord> Members =>
+        InitializerMembers ?? [];
+}
+
+public sealed record BoundEnumConstructionOperation(
+    StarkTypeSymbol EnumType,
+    string VariantName,
+    IReadOnlyList<EnumConstructorMemberTypingRecord>? MemberRecords,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(BoundOperationKind.EnumConstruction, EnumType, Location, EnclosingFunctionName)
+{
+    public IReadOnlyList<EnumConstructorMemberTypingRecord> Members =>
+        MemberRecords ?? [];
+}
+
+public sealed record BoundEnumCallOperation(
+    StarkTypeSymbol EnumType,
+    string VariantName,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(BoundOperationKind.EnumCall, EnumType, Location, EnclosingFunctionName);
+
+public sealed record BoundEnumValueOperation(
+    StarkTypeSymbol EnumType,
+    string VariantName,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(BoundOperationKind.EnumValue, EnumType, Location, EnclosingFunctionName);
+
+public sealed record BoundTextInterpolationOperation(
+    StarkTypeSymbol ResultType,
+    int SegmentCount,
+    int HoleCount,
+    bool UsesFixedStorage,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(BoundOperationKind.TextInterpolation, ResultType, Location, EnclosingFunctionName);
+
+public sealed record BoundTextBuildOperation(
+    string BuildKind,
+    StarkTypeSymbol ResultType,
+    int OperandCount,
+    bool UsesFixedStorage,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(BoundOperationKind.TextBuild, ResultType, Location, EnclosingFunctionName);
+
+public sealed record BoundLayoutQueryOperation(
+    BoundLayoutQueryKind QueryKind,
+    StarkTypeSymbol TargetType,
+    StarkTypeSymbol ResultType,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(BoundOperationKind.LayoutQuery, ResultType, Location, EnclosingFunctionName);
+
+public sealed record BoundSwitchDispatchOperation(
+    string Family,
+    StarkTypeSymbol SwitchType,
+    int SectionCount,
+    int LabelCount,
+    int ExplicitDefaultLabelCount,
+    int LoweredDefaultLabelCount,
+    int LiteralLabelCount,
+    int MatchAllLabelCount,
+    int CaptureLabelCount,
+    int StructuredPatternLabelCount,
+    int GuardedLabelCount,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null)
+    : BoundOperation(BoundOperationKind.SwitchDispatch, StarkTypeSymbols.Void, Location, EnclosingFunctionName);
+
+public static class SwitchLoweringFamilies
+{
+    public const string Native = "native";
+    public const string PartitionedText = "partitioned-text";
+    public const string Guarded = "guarded";
+
+    public static bool IsKnown(string family)
+    {
+        return string.Equals(family, Native, StringComparison.Ordinal)
+            || string.Equals(family, PartitionedText, StringComparison.Ordinal)
+            || string.Equals(family, Guarded, StringComparison.Ordinal);
+    }
+}
+
+public sealed record SwitchTypingRecord(
+    string Family,
+    StarkTypeSymbol SwitchType,
+    int SectionCount,
+    int LabelCount,
+    int ExplicitDefaultLabelCount,
+    int LoweredDefaultLabelCount,
+    int LiteralLabelCount,
+    int MatchAllLabelCount,
+    int CaptureLabelCount,
+    int StructuredPatternLabelCount,
+    int GuardedLabelCount,
+    SourceLocation Location,
     string? EnclosingFunctionName = null);
 
 public sealed record LambdaTypingRecord(
@@ -1463,6 +2456,38 @@ public sealed record LambdaTypingRecord(
     IReadOnlyList<string> ParameterNames,
     SourceLocation Location,
     string? EnclosingFunctionName = null);
+
+public sealed record ClosureLambdaTypingRecord(
+    string FunctionName,
+    StarkTypeSymbol ClosureType,
+    StarkTypeSymbol EnvironmentParameterType,
+    IReadOnlyList<string> ParameterNames,
+    SourceLocation Location,
+    string? EnclosingFunctionName = null,
+    string? EnvironmentTypeName = null,
+    IReadOnlyList<ClosureCaptureFieldSymbol>? CaptureFieldRecords = null)
+{
+    public IReadOnlyList<ClosureCaptureFieldSymbol> CaptureFields =>
+        CaptureFieldRecords ?? [];
+
+    public bool HasCaptures => CaptureFields.Count != 0;
+}
+
+public enum ClosureCaptureStorageKind
+{
+    Value,
+    Address
+}
+
+public sealed record ClosureCaptureFieldSymbol(
+    string Name,
+    string FieldName,
+    string Mode,
+    bool IsUnsafe,
+    StarkTypeSymbol SourceType,
+    StarkTypeSymbol BodyType,
+    StarkTypeSymbol FieldType,
+    ClosureCaptureStorageKind StorageKind);
 
 public sealed record LambdaCaptureTypingRecord(
     string Name,
@@ -1488,7 +2513,12 @@ public sealed record FieldAccessTypingRecord(
 public sealed record MemberCallTypingRecord(
     TypedFunctionSignature Signature,
     SourceLocation Location,
-    string? EnclosingFunctionName = null);
+    string? EnclosingFunctionName = null,
+    IReadOnlyList<CallArgumentTypingRecord>? ArgumentRecords = null)
+{
+    public IReadOnlyList<CallArgumentTypingRecord> Arguments =>
+        ArgumentRecords ?? [];
+}
 
 public sealed record ObjectInitializerMemberTypingRecord(
     string FieldName,
@@ -1577,6 +2607,18 @@ public sealed record TypeInstantiationTriggerRecord(
     IReadOnlyList<StarkTypeSymbol> TypeArguments,
     SourceLocation Location);
 
+public sealed record LoweringContractValidationModel(
+    string ModuleName,
+    int CheckedFunctionCount,
+    int CheckedCallCount,
+    int CheckedIndexAccessCount,
+    int CheckedObjectCreationCount,
+    int CheckedEnumConstructorCount,
+    int CheckedLambdaCount,
+    int CheckedTypeLayoutExpressionCount,
+    int CheckedDynamicStorageOperationCount,
+    int CheckedSwitchCount);
+
 public sealed record TypeCheckModel(
     string ModuleName,
     IReadOnlyDictionary<string, NamedTypeSymbol> NamedTypes,
@@ -1596,16 +2638,24 @@ public sealed record TypeCheckModel(
     IReadOnlyList<EnumPatternTypingRecord>? EnumPatternRecords = null,
     IReadOnlyList<AggregatePatternTypingRecord>? AggregatePatternRecords = null,
     IReadOnlyList<LocalDeclarationTypingRecord>? LocalDeclarationRecords = null,
+    IReadOnlyList<LocalStorageCapacityTypingRecord>? LocalStorageCapacityRecords = null,
     IReadOnlyList<ConversionTypingRecord>? ConversionRecords = null,
     IReadOnlyList<DirectCallTypingRecord>? DirectCallRecords = null,
     IReadOnlyList<FunctionPointerPromotionTypingRecord>? FunctionPointerPromotionRecords = null,
     IReadOnlyList<IndirectCallTypingRecord>? IndirectCallRecords = null,
+    IReadOnlyList<ClosureCallTypingRecord>? ClosureCallRecords = null,
     IReadOnlyList<FieldAccessTypingRecord>? FieldAccessRecords = null,
     IReadOnlyList<MemberCallTypingRecord>? MemberCallRecords = null,
     IReadOnlyList<TypeLayoutExpressionTypingRecord>? TypeLayoutExpressionRecords = null,
     IReadOnlyList<LambdaTypingRecord>? LambdaRecords = null,
+    IReadOnlyList<ClosureLambdaTypingRecord>? ClosureLambdaRecords = null,
     IReadOnlyList<LambdaCaptureTypingRecord>? LambdaCaptureRecords = null,
-    IReadOnlyList<AddressTakenFunctionTypingRecord>? AddressTakenFunctionRecords = null)
+    IReadOnlyList<AddressTakenFunctionTypingRecord>? AddressTakenFunctionRecords = null,
+    IReadOnlyList<IndexAccessTypingRecord>? IndexAccessRecords = null,
+    IReadOnlyList<DynamicStorageOperationTypingRecord>? DynamicStorageOperationRecords = null,
+    IReadOnlyList<SwitchTypingRecord>? SwitchRecords = null,
+    IReadOnlyList<ClosureFunctionPromotionTypingRecord>? ClosureFunctionPromotionRecords = null,
+    IReadOnlyList<BoundOperation>? BoundOperationRecords = null)
 {
     public IReadOnlyDictionary<string, IReadOnlyList<TypedFunctionSignature>> Overloads =>
         FunctionOverloads
@@ -1646,6 +2696,9 @@ public sealed record TypeCheckModel(
     public IReadOnlyList<LocalDeclarationTypingRecord> LocalDeclarations =>
         LocalDeclarationRecords ?? [];
 
+    public IReadOnlyList<LocalStorageCapacityTypingRecord> LocalStorageCapacities =>
+        LocalStorageCapacityRecords ?? [];
+
     public IReadOnlyList<ConversionTypingRecord> Conversions =>
         ConversionRecords ?? [];
 
@@ -1655,14 +2708,23 @@ public sealed record TypeCheckModel(
     public IReadOnlyList<FunctionPointerPromotionTypingRecord> FunctionPointerPromotions =>
         FunctionPointerPromotionRecords ?? [];
 
+    public IReadOnlyList<ClosureFunctionPromotionTypingRecord> ClosureFunctionPromotions =>
+        ClosureFunctionPromotionRecords ?? [];
+
     public IReadOnlyList<AddressTakenFunctionTypingRecord> AddressTakenFunctions =>
         AddressTakenFunctionRecords ?? [];
 
     public IReadOnlyList<IndirectCallTypingRecord> IndirectCalls =>
         IndirectCallRecords ?? [];
 
+    public IReadOnlyList<ClosureCallTypingRecord> ClosureCalls =>
+        ClosureCallRecords ?? [];
+
     public IReadOnlyList<LambdaTypingRecord> Lambdas =>
         LambdaRecords ?? [];
+
+    public IReadOnlyList<ClosureLambdaTypingRecord> ClosureLambdas =>
+        ClosureLambdaRecords ?? [];
 
     public IReadOnlyList<LambdaCaptureTypingRecord> LambdaCaptures =>
         LambdaCaptureRecords ?? [];
@@ -1675,6 +2737,18 @@ public sealed record TypeCheckModel(
 
     public IReadOnlyList<TypeLayoutExpressionTypingRecord> TypeLayoutExpressions =>
         TypeLayoutExpressionRecords ?? [];
+
+    public IReadOnlyList<IndexAccessTypingRecord> IndexAccesses =>
+        IndexAccessRecords ?? [];
+
+    public IReadOnlyList<DynamicStorageOperationTypingRecord> DynamicStorageOperations =>
+        DynamicStorageOperationRecords ?? [];
+
+    public IReadOnlyList<SwitchTypingRecord> Switches =>
+        SwitchRecords ?? [];
+
+    public IReadOnlyList<BoundOperation> BoundOperations =>
+        BoundOperationRecords ?? [];
 }
 
 internal static class TemplateLocalDeclarationFacts
@@ -1957,6 +3031,13 @@ internal static class ConcreteTypeLayoutHelper
             IsMutableView = false
         };
 
+        if (concreteType.Kind == StarkTypeKind.Named
+            && concreteType.NamedType is not null
+            && concreteType.TypeArguments is { Count: > 0 })
+        {
+            concreteType = concreteType with { TypeArguments = null };
+        }
+
         return concreteType.Kind switch
         {
             StarkTypeKind.Bool => new ConcreteTypeLayout(1, 1),
@@ -1966,6 +3047,8 @@ internal static class ConcreteTypeLayoutHelper
                 TryGetScalarLayout((floatWidth + 7) / 8),
             StarkTypeKind.RawPointer or StarkTypeKind.FunctionPointer or StarkTypeKind.Null =>
                 TryGetPointerLayout(),
+            StarkTypeKind.Closure =>
+                TryGetClosureLayout(type),
             StarkTypeKind.Slice or StarkTypeKind.Ascii or StarkTypeKind.Unicode =>
                 TryGetViewLayout(),
             StarkTypeKind.Dynamic =>
@@ -2150,6 +3233,21 @@ internal static class ConcreteTypeLayoutHelper
         return new ConcreteTypeLayout(sizeBytes, alignmentBytes);
     }
 
+    private static ConcreteTypeLayout TryGetClosureLayout(StarkTypeSymbol type)
+    {
+        var pointerLayout = TryGetPointerLayout();
+        var sizeBytes = AlignTo(pointerLayout.SizeBytes, pointerLayout.AlignmentBytes);
+        sizeBytes = checked(sizeBytes + pointerLayout.SizeBytes);
+        if (type.ClosureStorageKind == StarkClosureStorageKind.Heap)
+        {
+            sizeBytes = AlignTo(sizeBytes, pointerLayout.AlignmentBytes);
+            sizeBytes = checked(sizeBytes + pointerLayout.SizeBytes);
+        }
+
+        sizeBytes = AlignTo(sizeBytes, pointerLayout.AlignmentBytes);
+        return new ConcreteTypeLayout(sizeBytes, pointerLayout.AlignmentBytes);
+    }
+
     private static ConcreteTypeLayout TryGetDynamicStorageLayout()
     {
         var pointerLayout = TryGetPointerLayout();
@@ -2272,22 +3370,94 @@ public sealed record ImportedFunctionSemanticSummary(
     FunctionMemoryEffectSummary? MemoryEffects = null,
     IReadOnlyList<ParameterMemoryEffectSummary>? Parameters = null,
     IReadOnlyList<CallMemoryEffectSummary>? CallSummaries = null,
-    FunctionOptimizationSummary? OptimizationSummary = null)
+    FunctionOptimizationSummary? OptimizationSummary = null,
+    FunctionOwnershipSummary? OwnershipSummary = null)
 {
     public IReadOnlyList<CallMemoryEffectSummary> Calls => CallSummaries ?? [];
 
     public bool CanStrengthenKind => FunctionKindFacts.Rank(EffectiveKind) > FunctionKindFacts.Rank(DeclaredKind);
+
+    public FunctionOwnershipSummary? Ownership => OwnershipSummary;
 }
 
 public sealed record SemanticValidationModel(
     string ModuleName,
     IReadOnlyDictionary<string, FunctionValidationSummary> Functions);
 
+public enum OwnershipStorageRootKind
+{
+    Local,
+    Parameter,
+    Global
+}
+
+public enum OwnershipRootAvailabilityKind
+{
+    Unknown,
+    Initialized,
+    Uninitialized,
+    PartiallyInitialized,
+    Moved,
+    ControlFlow
+}
+
+public enum OwnershipEventKind
+{
+    Move,
+    FieldMove,
+    ImplicitDrop,
+    AssignmentDrop,
+    Reinitialize,
+    AddressTaken
+}
+
+public sealed record OwnershipPlaceSummary(
+    string RootName,
+    StarkTypeSymbol Type,
+    IReadOnlyList<string>? ProjectionPath = null,
+    bool HasIndexProjection = false)
+{
+    public IReadOnlyList<string> Projections => ProjectionPath ?? [];
+
+    public string DisplayName =>
+        Projections.Count == 0
+            ? RootName
+            : $"{RootName}.{string.Join(".", Projections)}";
+}
+
+public sealed record OwnershipEventSummary(
+    OwnershipEventKind Kind,
+    OwnershipPlaceSummary Place,
+    SourceLocation? Location = null);
+
+public sealed record OwnershipRootSummary(
+    string Name,
+    StarkTypeSymbol Type,
+    OwnershipStorageRootKind RootKind,
+    bool IsMutable,
+    bool IsConstant,
+    bool IsAddressTaken,
+    bool HasRawPointerEscape,
+    bool HasMove,
+    bool HasPartialMove,
+    bool HasImplicitDrop,
+    bool HasAssignmentDrop,
+    bool HasReinitialization,
+    bool RequiresDrop,
+    OwnershipRootAvailabilityKind FinalAvailability);
+
 public sealed record FunctionOwnershipSummary(
     string Name,
     bool OwnershipValid,
     IReadOnlyList<string> ImplicitDrops,
-    IReadOnlyList<string> Moves);
+    IReadOnlyList<string> Moves,
+    IReadOnlyList<OwnershipEventSummary>? OwnershipEvents = null,
+    IReadOnlyList<OwnershipRootSummary>? OwnershipRoots = null)
+{
+    public IReadOnlyList<OwnershipEventSummary> Events => OwnershipEvents ?? [];
+
+    public IReadOnlyList<OwnershipRootSummary> Roots => OwnershipRoots ?? [];
+}
 
 public sealed record OwnershipValidationModel(
     string ModuleName,
@@ -2327,6 +3497,12 @@ public enum MidLevelIrStatementKind
     Evaluate
 }
 
+public enum MemoryWriteKind
+{
+    Replacement,
+    Initialization
+}
+
 public enum MidLevelIrUnaryOperator
 {
     Negate,
@@ -2361,6 +3537,13 @@ public enum MidLevelIrBinaryOperator
     GreaterThanOrEqual
 }
 
+public enum IndexedElementOperationFamily
+{
+    FixedArrayElement,
+    ViewComponent,
+    ClosureComponent
+}
+
 public enum MidLevelIrTerminatorKind
 {
     Goto,
@@ -2378,7 +3561,8 @@ public sealed record MidLevelIrLocal(
     bool IsConstant,
     bool IsAddressable = false,
     SourceLocation? Location = null,
-    bool HasConstProvenance = false);
+    bool HasConstProvenance = false,
+    ConstProvenanceKind ConstProvenance = ConstProvenanceKind.None);
 
 public abstract record MidLevelIrOperand(StarkTypeSymbol Type, string Text);
 
@@ -2397,6 +3581,9 @@ public sealed record MidLevelIrGlobalAddressOperand(string Name, StarkTypeSymbol
 public sealed record MidLevelIrFunctionAddressOperand(string FunctionName, StarkTypeSymbol Type)
     : MidLevelIrOperand(Type, FunctionName);
 
+public sealed record MidLevelIrClosureValueOperand(string InvokeFunctionName, StarkTypeSymbol Type)
+    : MidLevelIrOperand(Type, $"closure<{InvokeFunctionName}>");
+
 public sealed record MidLevelIrIntegerConstantOperand(BigInteger Value, StarkTypeSymbol Type)
     : MidLevelIrOperand(Type, Value.ToString());
 
@@ -2414,6 +3601,47 @@ public sealed record MidLevelIrNullOperand(StarkTypeSymbol Type)
 
 public sealed record MidLevelIrZeroInitializerOperand(StarkTypeSymbol Type)
     : MidLevelIrOperand(Type, "zeroinitializer");
+
+public enum MidLevelIrObjectConstructionKind
+{
+    Empty,
+    PrimaryConstructor,
+    ExplicitConstructor,
+    Initializer,
+    ConstructorAndInitializer
+}
+
+public sealed record MidLevelIrObjectConstructionFacts(
+    StarkTypeSymbol CreatedType,
+    string TypeName,
+    MidLevelIrObjectConstructionKind Kind,
+    TypedConstructorShape? Constructor,
+    IReadOnlyList<ObjectInitializerMemberTypingRecord> InitializerMembers,
+    string? ConstructorBodyKey = null);
+
+public sealed record MidLevelIrObjectConstructionOperand(
+    MidLevelIrOperand Value,
+    MidLevelIrObjectConstructionFacts Facts)
+    : MidLevelIrOperand(MidLevelIrArtifactValidation.ValidateObjectConstruction(Value, Facts), Value.Text);
+
+public sealed record MidLevelIrEnumPayloadFieldConstructionFacts(
+    string FieldName,
+    int FieldIndex,
+    StarkTypeSymbol FieldType,
+    string StorageFieldName,
+    int StorageFieldIndex,
+    StarkTypeSymbol StorageFieldType);
+
+public sealed record MidLevelIrEnumConstructionFacts(
+    StarkTypeSymbol EnumType,
+    EnumLayoutSymbol Layout,
+    EnumVariantLayoutSymbol Variant,
+    IReadOnlyList<MidLevelIrEnumPayloadFieldConstructionFacts> PayloadFields);
+
+public sealed record MidLevelIrEnumConstructionOperand(
+    MidLevelIrOperand Value,
+    MidLevelIrEnumConstructionFacts Facts)
+    : MidLevelIrOperand(MidLevelIrArtifactValidation.ValidateEnumConstruction(Value, Facts), Value.Text);
 
 public abstract record MidLevelIrRValue(StarkTypeSymbol Type, string Text);
 
@@ -2444,20 +3672,49 @@ public sealed record MidLevelIrCallRValue(
     StarkTypeSymbol? SourceReturnType = null,
     IReadOnlyList<MidLevelIrOperand?>? IndirectArgumentAddresses = null,
     IReadOnlyList<MidLevelIrDynamicStorageLengthCommit>? PostCallDynamicLengthCommits = null)
-    : MidLevelIrRValue(Type, Text);
+    : MidLevelIrRValue(MidLevelIrArtifactValidation.ValidateValueCallType(Type, FunctionName), Text);
 
 public sealed record MidLevelIrDynamicStorageLengthCommit(
     MidLevelIrOperand StorageAddress,
     StarkTypeSymbol StorageType,
     MidLevelIrOperand InitializedLength);
 
+public abstract record MidLevelIrCallStatementOperation(
+    StarkTypeSymbol ReturnType,
+    string Text);
+
+public sealed record MidLevelIrDirectCallStatementOperation(
+    string FunctionName,
+    IReadOnlyList<MidLevelIrOperand> Arguments,
+    StarkTypeSymbol ReturnType,
+    string Text,
+    IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
+    StarkTypeSymbol? SourceReturnType = null,
+    IReadOnlyList<MidLevelIrOperand?>? IndirectArgumentAddresses = null,
+    IReadOnlyList<MidLevelIrDynamicStorageLengthCommit>? PostCallDynamicLengthCommits = null)
+    : MidLevelIrCallStatementOperation(ReturnType, Text);
+
+public sealed record MidLevelIrIndirectCallStatementOperation(
+    MidLevelIrOperand Target,
+    IReadOnlyList<MidLevelIrOperand> Arguments,
+    StarkTypeSymbol ReturnType,
+    string Text,
+    StarkTypeSymbol? SourceReturnType = null,
+    IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
+    IReadOnlyList<MidLevelIrOperand?>? IndirectArgumentAddresses = null,
+    bool MayFree = false)
+    : MidLevelIrCallStatementOperation(ReturnType, Text);
+
 public sealed record MidLevelIrIndirectCallRValue(
     MidLevelIrOperand Target,
     IReadOnlyList<MidLevelIrOperand> Arguments,
     StarkTypeSymbol Type,
     string Text,
-    StarkTypeSymbol? SourceReturnType = null)
-    : MidLevelIrRValue(Type, Text);
+    StarkTypeSymbol? SourceReturnType = null,
+    IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
+    IReadOnlyList<MidLevelIrOperand?>? IndirectArgumentAddresses = null,
+    bool MayFree = false)
+    : MidLevelIrRValue(MidLevelIrArtifactValidation.ValidateValueCallType(Type, Text), Text);
 
 public sealed record MidLevelIrConvertRValue(
     MidLevelIrOperand Operand,
@@ -2485,17 +3742,363 @@ public sealed record MidLevelIrInsertFieldRValue(
 public sealed record MidLevelIrExtractIndexRValue(
     MidLevelIrOperand Target,
     int ElementIndex,
+    IndexedElementOperationFamily OperationFamily,
     StarkTypeSymbol Type,
     string Text)
-    : MidLevelIrRValue(Type, Text);
+    : MidLevelIrRValue(MidLevelIrArtifactValidation.ValidateIndexExtraction(Target, ElementIndex, OperationFamily, Type, Text), Text);
 
 public sealed record MidLevelIrInsertIndexRValue(
     MidLevelIrOperand Target,
     int ElementIndex,
+    IndexedElementOperationFamily OperationFamily,
     MidLevelIrOperand Value,
     StarkTypeSymbol Type,
     string Text)
-    : MidLevelIrRValue(Type, Text);
+    : MidLevelIrRValue(MidLevelIrArtifactValidation.ValidateIndexInsertion(Target, ElementIndex, OperationFamily, Value, Type, Text), Text);
+
+internal static class MidLevelIrArtifactValidation
+{
+    public static StarkTypeSymbol ValidateValueCallType(StarkTypeSymbol type, string callName)
+    {
+        if (type.Kind == StarkTypeKind.Void)
+        {
+            throw new ArgumentException(
+                $"MIR value call '{callName}' cannot have void result type. Use a statement-only call operation instead.",
+                nameof(type));
+        }
+
+        return type;
+    }
+
+    public static StarkTypeSymbol ValidateIndexExtraction(
+        MidLevelIrOperand target,
+        int elementIndex,
+        IndexedElementOperationFamily operationFamily,
+        StarkTypeSymbol resultType,
+        string text)
+    {
+        var elementType = GetIndexElementType(target.Type, elementIndex, operationFamily, text, "MIR");
+        if (!HaveSameIndexType(elementType, resultType))
+        {
+            throw new ArgumentException(
+                $"MIR index extraction '{text}' result type '{resultType.DisplayName}' does not match indexed element type '{elementType.DisplayName}'.",
+                nameof(resultType));
+        }
+
+        return resultType;
+    }
+
+    public static StarkTypeSymbol ValidateIndexInsertion(
+        MidLevelIrOperand target,
+        int elementIndex,
+        IndexedElementOperationFamily operationFamily,
+        MidLevelIrOperand value,
+        StarkTypeSymbol resultType,
+        string text)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+
+        var elementType = GetIndexElementType(target.Type, elementIndex, operationFamily, text, "MIR");
+        if (!HaveSameIndexType(target.Type, resultType))
+        {
+            throw new ArgumentException(
+                $"MIR index insertion '{text}' result type '{resultType.DisplayName}' does not match target type '{target.Type.DisplayName}'.",
+                nameof(resultType));
+        }
+
+        if (!HaveSameIndexType(elementType, value.Type))
+        {
+            throw new ArgumentException(
+                $"MIR index insertion '{text}' value type '{value.Type.DisplayName}' does not match indexed element type '{elementType.DisplayName}'.",
+                nameof(value));
+        }
+
+        return resultType;
+    }
+
+    private static StarkTypeSymbol GetIndexElementType(
+        StarkTypeSymbol targetType,
+        int elementIndex,
+        IndexedElementOperationFamily operationFamily,
+        string text,
+        string artifactName)
+    {
+        return operationFamily switch
+        {
+            IndexedElementOperationFamily.FixedArrayElement => GetFixedArrayIndexElementType(targetType, elementIndex, text, artifactName),
+            IndexedElementOperationFamily.ViewComponent => GetViewIndexElementType(targetType, elementIndex, text, artifactName),
+            IndexedElementOperationFamily.ClosureComponent => GetClosureIndexElementType(targetType, elementIndex, text, artifactName),
+            _ => throw new ArgumentException(
+                $"{artifactName} index operation '{text}' uses unsupported operation family '{operationFamily}'.",
+                nameof(operationFamily))
+        };
+    }
+
+    private static StarkTypeSymbol GetFixedArrayIndexElementType(
+        StarkTypeSymbol targetType,
+        int elementIndex,
+        string text,
+        string artifactName)
+    {
+        if (targetType.Kind != StarkTypeKind.FixedArray
+            || targetType.ElementType is not { } elementType
+            || targetType.FixedLength is not int fixedLength)
+        {
+            throw new ArgumentException(
+                $"{artifactName} fixed-array index operation '{text}' requires a fixed-array target, but found '{targetType.DisplayName}'.",
+                nameof(targetType));
+        }
+
+        if (elementIndex < 0 || elementIndex >= fixedLength)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(elementIndex),
+                $"{artifactName} fixed-array index operation '{text}' index '{elementIndex}' is out of range for '{targetType.DisplayName}' with length {fixedLength}.");
+        }
+
+        return elementType;
+    }
+
+    private static StarkTypeSymbol GetViewIndexElementType(
+        StarkTypeSymbol targetType,
+        int elementIndex,
+        string text,
+        string artifactName)
+    {
+        if (elementIndex is not 0 and not 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(elementIndex),
+                $"{artifactName} view index operation '{text}' index '{elementIndex}' is out of range for '{targetType.DisplayName}' with 2 component(s).");
+        }
+
+        return targetType.Kind switch
+        {
+            StarkTypeKind.Slice when targetType.ElementType is { } elementType => elementIndex == 0
+                ? StarkTypeSymbols.RawPointer(elementType, isMutable: targetType.IsMutableView)
+                : StarkTypeSymbols.Integer(64),
+            StarkTypeKind.Ascii => elementIndex == 0
+                ? StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: false)
+                : StarkTypeSymbols.Integer(64),
+            StarkTypeKind.Unicode => elementIndex == 0
+                ? StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(32), isMutable: false)
+                : StarkTypeSymbols.Integer(64),
+            StarkTypeKind.Slice => throw new ArgumentException(
+                $"{artifactName} view index operation '{text}' requires a slice with a known element type, but found '{targetType.DisplayName}'.",
+                nameof(targetType)),
+            _ => throw new ArgumentException(
+                $"{artifactName} view index operation '{text}' requires a slice or text target, but found '{targetType.DisplayName}'.",
+                nameof(targetType))
+        };
+    }
+
+    private static StarkTypeSymbol GetClosureIndexElementType(
+        StarkTypeSymbol targetType,
+        int elementIndex,
+        string text,
+        string artifactName)
+    {
+        if (targetType.Kind != StarkTypeKind.Closure)
+        {
+            throw new ArgumentException(
+                $"{artifactName} closure index operation '{text}' requires a closure target, but found '{targetType.DisplayName}'.",
+                nameof(targetType));
+        }
+
+        var elementType = elementIndex switch
+        {
+            0 => CallableValueFacts.BuildClosureInvokeFunctionPointerType(targetType),
+            1 => CallableValueFacts.BuildClosureEnvironmentPointerType(targetType),
+            2 when targetType.ClosureStorageKind == StarkClosureStorageKind.Heap
+                => CallableValueFacts.BuildClosureDropFunctionPointerType(),
+            _ => StarkTypeSymbols.Error
+        };
+
+        if (elementType.Kind == StarkTypeKind.Error)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(elementIndex),
+                $"{artifactName} closure index operation '{text}' index '{elementIndex}' is out of range or unresolved for closure value '{targetType.DisplayName}'.");
+        }
+
+        return elementType;
+    }
+
+    private static bool HaveSameIndexType(StarkTypeSymbol expectedType, StarkTypeSymbol actualType)
+    {
+        return expectedType == actualType
+            || expectedType.Kind == actualType.Kind
+            && string.Equals(expectedType.DisplayName, actualType.DisplayName, StringComparison.Ordinal);
+    }
+
+    public static StarkTypeSymbol ValidateObjectConstruction(
+        MidLevelIrOperand value,
+        MidLevelIrObjectConstructionFacts facts)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        ArgumentNullException.ThrowIfNull(facts);
+        ArgumentNullException.ThrowIfNull(facts.InitializerMembers);
+
+        if (facts.CreatedType.Kind != StarkTypeKind.Named || string.IsNullOrWhiteSpace(facts.CreatedType.NamedType))
+        {
+            throw new ArgumentException(
+                $"MIR object construction requires a named created type, but received '{facts.CreatedType.DisplayName}'.",
+                nameof(facts));
+        }
+
+        if (value.Type != facts.CreatedType)
+        {
+            throw new ArgumentException(
+                $"MIR object construction value type '{value.Type.DisplayName}' does not match constructed type '{facts.CreatedType.DisplayName}'.",
+                nameof(value));
+        }
+
+        if (string.IsNullOrWhiteSpace(facts.TypeName))
+        {
+            throw new ArgumentException("MIR object construction facts require a type name.", nameof(facts));
+        }
+
+        switch (facts.Kind)
+        {
+            case MidLevelIrObjectConstructionKind.Empty:
+            case MidLevelIrObjectConstructionKind.Initializer:
+                if (facts.Constructor is not null || facts.ConstructorBodyKey is not null)
+                {
+                    throw new ArgumentException(
+                        $"MIR object construction kind '{facts.Kind}' cannot carry constructor facts.",
+                        nameof(facts));
+                }
+
+                break;
+
+            case MidLevelIrObjectConstructionKind.PrimaryConstructor:
+                if (facts.Constructor is not { IsPrimaryShape: true } || facts.ConstructorBodyKey is not null)
+                {
+                    throw new ArgumentException(
+                        "MIR primary-constructor object construction requires a primary constructor shape and no body key.",
+                        nameof(facts));
+                }
+
+                break;
+
+            case MidLevelIrObjectConstructionKind.ExplicitConstructor:
+                if (facts.Constructor is not { IsPrimaryShape: false }
+                    || string.IsNullOrWhiteSpace(facts.ConstructorBodyKey)
+                    || !string.Equals(facts.Constructor.BodyKey, facts.ConstructorBodyKey, StringComparison.Ordinal))
+                {
+                    throw new ArgumentException(
+                        "MIR explicit-constructor object construction requires a resolved constructor body key.",
+                        nameof(facts));
+                }
+
+                break;
+
+            case MidLevelIrObjectConstructionKind.ConstructorAndInitializer:
+                if (facts.Constructor is null)
+                {
+                    throw new ArgumentException(
+                        "MIR constructor-plus-initializer object construction requires constructor facts.",
+                        nameof(facts));
+                }
+
+                if (!facts.Constructor.IsPrimaryShape
+                    && (string.IsNullOrWhiteSpace(facts.ConstructorBodyKey)
+                        || !string.Equals(facts.Constructor.BodyKey, facts.ConstructorBodyKey, StringComparison.Ordinal)))
+                {
+                    throw new ArgumentException(
+                        "MIR explicit constructor-plus-initializer object construction requires a resolved constructor body key.",
+                        nameof(facts));
+                }
+
+                break;
+
+            default:
+                throw new ArgumentException(
+                    $"Unsupported MIR object construction kind '{facts.Kind}'.",
+                    nameof(facts));
+        }
+
+        foreach (var member in facts.InitializerMembers)
+        {
+            if (string.IsNullOrWhiteSpace(member.FieldName)
+                || member.FieldIndex < 0
+                || member.FieldType.Kind == StarkTypeKind.Error)
+            {
+                throw new ArgumentException(
+                    $"MIR object construction has invalid initializer member fact '{member}'.",
+                    nameof(facts));
+            }
+        }
+
+        return facts.CreatedType;
+    }
+
+    public static StarkTypeSymbol ValidateEnumConstruction(
+        MidLevelIrOperand value,
+        MidLevelIrEnumConstructionFacts facts)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+        ArgumentNullException.ThrowIfNull(facts);
+        ArgumentNullException.ThrowIfNull(facts.Layout);
+        ArgumentNullException.ThrowIfNull(facts.Variant);
+        ArgumentNullException.ThrowIfNull(facts.PayloadFields);
+
+        if (facts.EnumType.Kind != StarkTypeKind.Named || string.IsNullOrWhiteSpace(facts.EnumType.NamedType))
+        {
+            throw new ArgumentException(
+                $"MIR enum construction requires a named enum type, but received '{facts.EnumType.DisplayName}'.",
+                nameof(facts));
+        }
+
+        if (value.Type != facts.EnumType)
+        {
+            throw new ArgumentException(
+                $"MIR enum construction value type '{value.Type.DisplayName}' does not match enum type '{facts.EnumType.DisplayName}'.",
+                nameof(value));
+        }
+
+        if (facts.Layout.Kind != EnumLayoutKind.DirectTag)
+        {
+            throw new ArgumentException(
+                $"MIR enum construction does not support layout kind '{facts.Layout.Kind}'.",
+                nameof(facts));
+        }
+
+        if (!facts.Layout.TryGetVariant(facts.Variant.Name, out var layoutVariant)
+            || !ReferenceEquals(layoutVariant, facts.Variant) && layoutVariant != facts.Variant)
+        {
+            throw new ArgumentException(
+                $"MIR enum construction variant '{facts.Variant.Name}' is not present in layout '{facts.Layout.EnumName}'.",
+                nameof(facts));
+        }
+
+        if (facts.PayloadFields.Count != facts.Variant.Fields.Count)
+        {
+            throw new ArgumentException(
+                $"MIR enum construction for '{facts.Variant.Name}' carries {facts.PayloadFields.Count} payload fact(s), but the variant requires {facts.Variant.Fields.Count}.",
+                nameof(facts));
+        }
+
+        for (var index = 0; index < facts.PayloadFields.Count; index++)
+        {
+            var payload = facts.PayloadFields[index];
+            var field = facts.Variant.Fields[index];
+            if (payload.FieldIndex != index
+                || payload.FieldType != field.Type
+                || !string.Equals(payload.StorageFieldName, field.StorageFieldName, StringComparison.Ordinal)
+                || payload.StorageFieldIndex != field.StorageFieldIndex
+                || payload.StorageFieldType != field.Type
+                || string.IsNullOrWhiteSpace(payload.FieldName))
+            {
+                throw new ArgumentException(
+                    $"MIR enum construction payload fact {index} does not match variant field '{field.StorageFieldName}'.",
+                    nameof(facts));
+            }
+        }
+
+        return facts.EnumType;
+    }
+}
 
 public sealed record MidLevelIrMakeSliceFromLocalRValue(
     string LocalName,
@@ -2519,6 +4122,11 @@ public sealed record MidLevelIrDynamicStorageAllocationRValue(
 
 public sealed record MidLevelIrDynamicStorageFreeRValue(
     MidLevelIrOperand Storage,
+    string Text)
+    : MidLevelIrRValue(StarkTypeSymbols.Void, Text);
+
+public sealed record MidLevelIrHeapStorageFreeRValue(
+    MidLevelIrOperand Pointer,
     string Text)
     : MidLevelIrRValue(StarkTypeSymbols.Void, Text);
 
@@ -2631,7 +4239,9 @@ public sealed record MidLevelIrStatement(
     MidLevelIrRValue? Value = null,
     SourceLocation? Location = null,
     IReadOnlyList<ScopedNoAliasGroup>? ScopedNoAliasGroups = null,
-    IReadOnlyList<string>? LoopAccessGroups = null);
+    IReadOnlyList<string>? LoopAccessGroups = null,
+    MemoryWriteKind WriteKind = MemoryWriteKind.Replacement,
+    MidLevelIrCallStatementOperation? Call = null);
 
 public sealed record MidLevelIrSwitchCase(
     string Label,
@@ -2650,6 +4260,7 @@ public sealed record MidLevelIrTerminator(
     int? DefaultTarget = null,
     SourceLocation? Location = null,
     IReadOnlyList<int>? BranchWeights = null,
+    string? LoopBehavior = null,
     IReadOnlyList<string>? LoopContracts = null,
     IReadOnlyList<string>? LoopAccessGroups = null);
 
@@ -2670,7 +4281,14 @@ public sealed record MidLevelIrFunction(
     IReadOnlyList<MidLevelIrLocal> Locals,
     IReadOnlyList<MidLevelIrBasicBlock> Blocks,
     FunctionBodyLoweringKind BodyLoweringKind = FunctionBodyLoweringKind.DeclarationOnly,
-    SourceLocation? Location = null);
+    SourceLocation? Location = null,
+    IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null,
+    IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null,
+    FunctionOwnershipSummary? Ownership = null)
+{
+    public IReadOnlyList<ParameterDisjointGroup> DisjointGroups => DisjointParameterGroups ?? [];
+    public IReadOnlyList<ParameterSameGroup> SameGroups => SameParameterGroups ?? [];
+}
 
 public sealed record MidLevelIrModule(
     string ModuleName,
@@ -2713,6 +4331,9 @@ public sealed record SsaGlobalAddressValue(string GlobalName, StarkTypeSymbol Po
 public sealed record SsaFunctionAddressValue(string FunctionName, StarkTypeSymbol Type)
     : SsaValue(Type, FunctionName);
 
+public sealed record SsaClosureValue(string InvokeFunctionName, StarkTypeSymbol Type)
+    : SsaValue(Type, $"closure<{InvokeFunctionName}>");
+
 public sealed record SsaUndefValue(StarkTypeSymbol Type)
     : SsaValue(Type, "undef");
 
@@ -2743,6 +4364,7 @@ public enum SsaBinaryOperator
     BitwiseXor,
     BitwiseOr,
     Exponent,
+    WrappingExponent,
     ShiftLeft,
     ShiftRight,
     Equal,
@@ -2783,6 +4405,42 @@ public sealed record SsaSelectRValue(
     string Text)
     : SsaRValue(Type, Text);
 
+public interface ISsaDirectCallOperation
+{
+    string FunctionName { get; }
+
+    IReadOnlyList<SsaValue> Arguments { get; }
+
+    StarkTypeSymbol Type { get; }
+
+    string Text { get; }
+
+    IReadOnlyList<string?>? IndirectArgumentLocalNames { get; }
+
+    StarkTypeSymbol? SourceReturnType { get; }
+
+    IReadOnlyList<SsaValue?>? IndirectArgumentAddresses { get; }
+}
+
+public interface ISsaIndirectCallOperation
+{
+    SsaValue Target { get; }
+
+    IReadOnlyList<SsaValue> Arguments { get; }
+
+    StarkTypeSymbol Type { get; }
+
+    string Text { get; }
+
+    StarkTypeSymbol? SourceReturnType { get; }
+
+    IReadOnlyList<string?>? IndirectArgumentLocalNames { get; }
+
+    IReadOnlyList<SsaValue?>? IndirectArgumentAddresses { get; }
+
+    bool MayFree { get; }
+}
+
 public sealed record SsaCallRValue(
     string FunctionName,
     IReadOnlyList<SsaValue> Arguments,
@@ -2791,15 +4449,196 @@ public sealed record SsaCallRValue(
     IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
     StarkTypeSymbol? SourceReturnType = null,
     IReadOnlyList<SsaValue?>? IndirectArgumentAddresses = null)
-    : SsaRValue(Type, Text);
+    : SsaRValue(SsaArtifactValidation.ValidateValueCallType(Type, FunctionName), Text),
+        ISsaDirectCallOperation;
 
 public sealed record SsaIndirectCallRValue(
     SsaValue Target,
     IReadOnlyList<SsaValue> Arguments,
     StarkTypeSymbol Type,
     string Text,
-    StarkTypeSymbol? SourceReturnType = null)
-    : SsaRValue(Type, Text);
+    StarkTypeSymbol? SourceReturnType = null,
+    IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
+    IReadOnlyList<SsaValue?>? IndirectArgumentAddresses = null,
+    bool MayFree = false)
+    : SsaRValue(SsaArtifactValidation.ValidateValueCallType(Type, Text), Text),
+        ISsaIndirectCallOperation;
+
+internal static class SsaArtifactValidation
+{
+    public static StarkTypeSymbol ValidateValueCallType(StarkTypeSymbol type, string callName)
+    {
+        if (type.Kind == StarkTypeKind.Void)
+        {
+            throw new ArgumentException(
+                $"SSA value call '{callName}' cannot have void result type. Use a statement-only call instruction instead.",
+                nameof(type));
+        }
+
+        return type;
+    }
+
+    public static StarkTypeSymbol ValidateIndexExtraction(
+        SsaValue target,
+        int elementIndex,
+        IndexedElementOperationFamily operationFamily,
+        StarkTypeSymbol resultType,
+        string text)
+    {
+        var elementType = GetIndexElementType(target.Type, elementIndex, operationFamily, text, "SSA");
+        if (!HaveSameIndexType(elementType, resultType))
+        {
+            throw new ArgumentException(
+                $"SSA index extraction '{text}' result type '{resultType.DisplayName}' does not match indexed element type '{elementType.DisplayName}'.",
+                nameof(resultType));
+        }
+
+        return resultType;
+    }
+
+    public static StarkTypeSymbol ValidateIndexInsertion(
+        SsaValue target,
+        int elementIndex,
+        IndexedElementOperationFamily operationFamily,
+        SsaValue value,
+        StarkTypeSymbol resultType,
+        string text)
+    {
+        ArgumentNullException.ThrowIfNull(value);
+
+        var elementType = GetIndexElementType(target.Type, elementIndex, operationFamily, text, "SSA");
+        if (!HaveSameIndexType(target.Type, resultType))
+        {
+            throw new ArgumentException(
+                $"SSA index insertion '{text}' result type '{resultType.DisplayName}' does not match target type '{target.Type.DisplayName}'.",
+                nameof(resultType));
+        }
+
+        if (!HaveSameIndexType(elementType, value.Type))
+        {
+            throw new ArgumentException(
+                $"SSA index insertion '{text}' value type '{value.Type.DisplayName}' does not match indexed element type '{elementType.DisplayName}'.",
+                nameof(value));
+        }
+
+        return resultType;
+    }
+
+    private static StarkTypeSymbol GetIndexElementType(
+        StarkTypeSymbol targetType,
+        int elementIndex,
+        IndexedElementOperationFamily operationFamily,
+        string text,
+        string artifactName)
+    {
+        return operationFamily switch
+        {
+            IndexedElementOperationFamily.FixedArrayElement => GetFixedArrayIndexElementType(targetType, elementIndex, text, artifactName),
+            IndexedElementOperationFamily.ViewComponent => GetViewIndexElementType(targetType, elementIndex, text, artifactName),
+            IndexedElementOperationFamily.ClosureComponent => GetClosureIndexElementType(targetType, elementIndex, text, artifactName),
+            _ => throw new ArgumentException(
+                $"{artifactName} index operation '{text}' uses unsupported operation family '{operationFamily}'.",
+                nameof(operationFamily))
+        };
+    }
+
+    private static StarkTypeSymbol GetFixedArrayIndexElementType(
+        StarkTypeSymbol targetType,
+        int elementIndex,
+        string text,
+        string artifactName)
+    {
+        if (targetType.Kind != StarkTypeKind.FixedArray
+            || targetType.ElementType is not { } elementType
+            || targetType.FixedLength is not int fixedLength)
+        {
+            throw new ArgumentException(
+                $"{artifactName} fixed-array index operation '{text}' requires a fixed-array target, but found '{targetType.DisplayName}'.",
+                nameof(targetType));
+        }
+
+        if (elementIndex < 0 || elementIndex >= fixedLength)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(elementIndex),
+                $"{artifactName} fixed-array index operation '{text}' index '{elementIndex}' is out of range for '{targetType.DisplayName}' with length {fixedLength}.");
+        }
+
+        return elementType;
+    }
+
+    private static StarkTypeSymbol GetViewIndexElementType(
+        StarkTypeSymbol targetType,
+        int elementIndex,
+        string text,
+        string artifactName)
+    {
+        if (elementIndex is not 0 and not 1)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(elementIndex),
+                $"{artifactName} view index operation '{text}' index '{elementIndex}' is out of range for '{targetType.DisplayName}' with 2 component(s).");
+        }
+
+        return targetType.Kind switch
+        {
+            StarkTypeKind.Slice when targetType.ElementType is { } elementType => elementIndex == 0
+                ? StarkTypeSymbols.RawPointer(elementType, isMutable: targetType.IsMutableView)
+                : StarkTypeSymbols.Integer(64),
+            StarkTypeKind.Ascii => elementIndex == 0
+                ? StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: false)
+                : StarkTypeSymbols.Integer(64),
+            StarkTypeKind.Unicode => elementIndex == 0
+                ? StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(32), isMutable: false)
+                : StarkTypeSymbols.Integer(64),
+            StarkTypeKind.Slice => throw new ArgumentException(
+                $"{artifactName} view index operation '{text}' requires a slice with a known element type, but found '{targetType.DisplayName}'.",
+                nameof(targetType)),
+            _ => throw new ArgumentException(
+                $"{artifactName} view index operation '{text}' requires a slice or text target, but found '{targetType.DisplayName}'.",
+                nameof(targetType))
+        };
+    }
+
+    private static StarkTypeSymbol GetClosureIndexElementType(
+        StarkTypeSymbol targetType,
+        int elementIndex,
+        string text,
+        string artifactName)
+    {
+        if (targetType.Kind != StarkTypeKind.Closure)
+        {
+            throw new ArgumentException(
+                $"{artifactName} closure index operation '{text}' requires a closure target, but found '{targetType.DisplayName}'.",
+                nameof(targetType));
+        }
+
+        var elementType = elementIndex switch
+        {
+            0 => CallableValueFacts.BuildClosureInvokeFunctionPointerType(targetType),
+            1 => CallableValueFacts.BuildClosureEnvironmentPointerType(targetType),
+            2 when targetType.ClosureStorageKind == StarkClosureStorageKind.Heap
+                => CallableValueFacts.BuildClosureDropFunctionPointerType(),
+            _ => StarkTypeSymbols.Error
+        };
+
+        if (elementType.Kind == StarkTypeKind.Error)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(elementIndex),
+                $"{artifactName} closure index operation '{text}' index '{elementIndex}' is out of range or unresolved for closure value '{targetType.DisplayName}'.");
+        }
+
+        return elementType;
+    }
+
+    private static bool HaveSameIndexType(StarkTypeSymbol expectedType, StarkTypeSymbol actualType)
+    {
+        return expectedType == actualType
+            || expectedType.Kind == actualType.Kind
+            && string.Equals(expectedType.DisplayName, actualType.DisplayName, StringComparison.Ordinal);
+    }
+}
 
 public sealed record SsaConvertRValue(
     SsaValue Operand,
@@ -2827,17 +4666,19 @@ public sealed record SsaInsertFieldRValue(
 public sealed record SsaExtractIndexRValue(
     SsaValue Target,
     int ElementIndex,
+    IndexedElementOperationFamily OperationFamily,
     StarkTypeSymbol Type,
     string Text)
-    : SsaRValue(Type, Text);
+    : SsaRValue(SsaArtifactValidation.ValidateIndexExtraction(Target, ElementIndex, OperationFamily, Type, Text), Text);
 
 public sealed record SsaInsertIndexRValue(
     SsaValue Target,
     int ElementIndex,
+    IndexedElementOperationFamily OperationFamily,
     SsaValue Value,
     StarkTypeSymbol Type,
     string Text)
-    : SsaRValue(Type, Text);
+    : SsaRValue(SsaArtifactValidation.ValidateIndexInsertion(Target, ElementIndex, OperationFamily, Value, Type, Text), Text);
 
 public sealed record SsaMakeSliceFromLocalRValue(
     string LocalName,
@@ -2861,6 +4702,11 @@ public sealed record SsaDynamicStorageAllocationRValue(
 
 public sealed record SsaDynamicStorageFreeRValue(
     SsaValue Storage,
+    string Text)
+    : SsaRValue(StarkTypeSymbols.Void, Text);
+
+public sealed record SsaHeapStorageFreeRValue(
+    SsaValue Pointer,
     string Text)
     : SsaRValue(StarkTypeSymbols.Void, Text);
 
@@ -2889,7 +4735,8 @@ public sealed record SsaDynamicStorageMoveLastRValue(
     SsaValue StorageAddress,
     StarkTypeSymbol StorageType,
     StarkTypeSymbol Type,
-    string Text)
+    string Text,
+    bool IsKnownNonEmpty = false)
     : SsaRValue(Type, Text);
 
 public sealed record SsaDynamicStorageMoveAtRValue(
@@ -2897,7 +4744,8 @@ public sealed record SsaDynamicStorageMoveAtRValue(
     StarkTypeSymbol StorageType,
     SsaValue Index,
     StarkTypeSymbol Type,
-    string Text)
+    string Text,
+    bool IsKnownInBounds = false)
     : SsaRValue(Type, Text);
 
 public sealed record SsaLoadSliceElementRValue(
@@ -2994,13 +4842,43 @@ public sealed record SsaValueInstruction(
     IReadOnlyList<string>? LoopAccessGroups = null)
     : SsaInstruction;
 
+public sealed record SsaCallInstruction(
+    string FunctionName,
+    IReadOnlyList<SsaValue> Arguments,
+    StarkTypeSymbol Type,
+    string Text,
+    IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
+    StarkTypeSymbol? SourceReturnType = null,
+    IReadOnlyList<SsaValue?>? IndirectArgumentAddresses = null,
+    SourceLocation? Location = null,
+    IReadOnlyList<ScopedNoAliasGroup>? ScopedNoAliasGroups = null,
+    IReadOnlyList<string>? LoopAccessGroups = null)
+    : SsaInstruction,
+        ISsaDirectCallOperation;
+
+public sealed record SsaIndirectCallInstruction(
+    SsaValue Target,
+    IReadOnlyList<SsaValue> Arguments,
+    StarkTypeSymbol Type,
+    string Text,
+    StarkTypeSymbol? SourceReturnType = null,
+    IReadOnlyList<string?>? IndirectArgumentLocalNames = null,
+    IReadOnlyList<SsaValue?>? IndirectArgumentAddresses = null,
+    bool MayFree = false,
+    SourceLocation? Location = null,
+    IReadOnlyList<ScopedNoAliasGroup>? ScopedNoAliasGroups = null,
+    IReadOnlyList<string>? LoopAccessGroups = null)
+    : SsaInstruction,
+        ISsaIndirectCallOperation;
+
 public sealed record SsaAllocateLocalInstruction(
     string LocalName,
     StarkTypeSymbol LocalType,
     string StorageClass = "stack",
     SourceLocation? Location = null,
     bool IsImmutable = false,
-    bool HasConstProvenance = false)
+    bool HasConstProvenance = false,
+    ConstProvenanceKind ConstProvenance = ConstProvenanceKind.None)
     : SsaInstruction;
 
 public sealed record SsaLifetimeStartInstruction(
@@ -3026,7 +4904,8 @@ public sealed record SsaStoreLocalInstruction(
     string LocalName,
     StarkTypeSymbol LocalType,
     SsaValue Value,
-    SourceLocation? Location = null)
+    SourceLocation? Location = null,
+    MemoryWriteKind WriteKind = MemoryWriteKind.Replacement)
     : SsaInstruction;
 
 public sealed record SsaStoreIndirectInstruction(
@@ -3035,7 +4914,8 @@ public sealed record SsaStoreIndirectInstruction(
     SsaValue Value,
     SourceLocation? Location = null,
     IReadOnlyList<ScopedNoAliasGroup>? ScopedNoAliasGroups = null,
-    IReadOnlyList<string>? LoopAccessGroups = null)
+    IReadOnlyList<string>? LoopAccessGroups = null,
+    MemoryWriteKind WriteKind = MemoryWriteKind.Replacement)
     : SsaInstruction;
 
 public enum SsaMemoryTransferKind
@@ -3051,7 +4931,8 @@ public sealed record SsaCopyMemoryInstruction(
     SsaMemoryTransferKind TransferKind = SsaMemoryTransferKind.Copy,
     SourceLocation? Location = null,
     IReadOnlyList<ScopedNoAliasGroup>? ScopedNoAliasGroups = null,
-    IReadOnlyList<string>? LoopAccessGroups = null)
+    IReadOnlyList<string>? LoopAccessGroups = null,
+    MemoryWriteKind WriteKind = MemoryWriteKind.Replacement)
     : SsaInstruction;
 
 public sealed record SsaStoreGlobalInstruction(
@@ -3079,6 +4960,7 @@ public sealed record SsaTerminator(
     int? DefaultTarget = null,
     SourceLocation? Location = null,
     IReadOnlyList<int>? BranchWeights = null,
+    string? LoopBehavior = null,
     IReadOnlyList<string>? LoopContracts = null,
     IReadOnlyList<string>? LoopAccessGroups = null);
 
@@ -3098,7 +4980,14 @@ public sealed record SsaFunction(
     int EntryBlockId,
     IReadOnlyList<SsaBasicBlock> Blocks,
     FunctionBodyLoweringKind BodyLoweringKind = FunctionBodyLoweringKind.DeclarationOnly,
-    SourceLocation? Location = null);
+    SourceLocation? Location = null,
+    IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null,
+    IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null,
+    FunctionOwnershipSummary? Ownership = null)
+{
+    public IReadOnlyList<ParameterDisjointGroup> DisjointGroups => DisjointParameterGroups ?? [];
+    public IReadOnlyList<ParameterSameGroup> SameGroups => SameParameterGroups ?? [];
+}
 
 public sealed record SsaIrModule(
     string ModuleName,
@@ -3136,6 +5025,36 @@ public sealed record SsaTextLiteralPayloadFact(
     int Utf8Length,
     int Utf32Length);
 
+public sealed record SsaBoundedRawPointerRegionFact(
+    SsaValue ElementCount,
+    SsaIntegerRangeFact? ElementCountRange = null,
+    int? ElementAlignmentBytes = null);
+
+public enum SsaDynamicStorageBackingAllocationKind
+{
+    Unknown,
+    None,
+    RuntimeAllocation
+}
+
+public enum SsaDynamicStorageAllocatorProvenanceKind
+{
+    Unknown,
+    RuntimeDefault
+}
+
+public sealed record SsaDynamicStorageRegionFact(
+    string? OwnerRootName,
+    SsaDynamicStorageBackingAllocationKind BackingAllocationKind,
+    string? BackingAllocationId,
+    StarkTypeSymbol ElementType,
+    SsaIntegerRangeFact? CapacityRange,
+    SsaIntegerRangeFact? InitializedLengthRange,
+    SsaIntegerRangeFact? InitializedPrefixRange,
+    SsaIntegerRangeFact? SpareCapacityRange,
+    int? ElementAlignmentBytes,
+    SsaDynamicStorageAllocatorProvenanceKind AllocatorProvenance);
+
 public sealed record SsaValueFacts(
     string ValueName,
     StarkTypeSymbol Type,
@@ -3150,8 +5069,16 @@ public sealed record SsaValueFacts(
     int? PointerAlignmentBytes = null,
     SsaFactLatticeKind LengthKind = SsaFactLatticeKind.Unknown,
     SsaIntegerRangeFact? LengthRange = null,
+    SsaFactLatticeKind CapacityKind = SsaFactLatticeKind.Unknown,
+    SsaIntegerRangeFact? CapacityRange = null,
+    SsaFactLatticeKind InitializedPrefixKind = SsaFactLatticeKind.Unknown,
+    SsaIntegerRangeFact? InitializedPrefixRange = null,
     SsaFactLatticeKind TextLiteralPayloadKind = SsaFactLatticeKind.Unknown,
-    SsaTextLiteralPayloadFact? TextLiteralPayload = null);
+    SsaTextLiteralPayloadFact? TextLiteralPayload = null,
+    SsaFactLatticeKind BoundedRawPointerRegionKind = SsaFactLatticeKind.Unknown,
+    SsaBoundedRawPointerRegionFact? BoundedRawPointerRegion = null,
+    SsaFactLatticeKind DynamicStorageRegionKind = SsaFactLatticeKind.Unknown,
+    SsaDynamicStorageRegionFact? DynamicStorageRegion = null);
 
 public sealed record SsaFunctionFactModel(
     string FunctionName,

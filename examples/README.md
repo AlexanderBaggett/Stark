@@ -25,10 +25,8 @@ dotnet run --project ../src -- build breakout
 dotnet run --project ../src -- build http-get
 ```
 
-The `standard-library` manifest is present, but the current example still hits
-a packaged `System.BitOperations` lookup gap when built through the project
-driver. Use the source-imported direct compiler command in that section until
-that package consumption bug is fixed.
+The `standard-library` manifest builds through the project driver and is the
+recommended smoke test for examples that use the packaged standard library.
 
 `raylib` and `breakout` require Raylib to be available through `pkg-config` or
 through a local native path configured in `Stark.user.toml` or
@@ -126,14 +124,19 @@ dotnet run --project src -- examples/ffi/Ffi.stark --emit-exe -o examples/ffi/ff
 
 Standard-library sample that combines `System.BitOperations` with `System.Console` output and status handling.
 
-Validate it against the standard-library source tree:
+Build it through the examples solution:
+
+```bash
+cd examples
+dotnet run --project ../src -- build standard-library
+./.stark/build/dev/standard-library/standard-library
+```
+
+For a quick source-imported check from the repository root:
 
 ```bash
 dotnet run --project src -- examples/standard-library/StandardLibrary.stark --check -I stdlib/src
 ```
-
-The packaged build path is temporarily blocked by a packaged
-`System.BitOperations` lookup gap.
 
 ## `http-get/HttpGet.stark`
 
@@ -228,7 +231,7 @@ dotnet run --project src -- examples/bit-torrent/Handshake.stark --emit-exe -o e
 
 ## `breakout/BreakoutCore.stark`
 
-Deterministic Breakout game-core slice for the future Raylib example. It uses fixed brick storage, explicit ball/paddle state, and enum step results for brick hits, paddle bounces, win, and loss handling without depending on a local graphics library. This is not the playable Raylib clone yet.
+Deterministic Breakout game-core slice shared with the Raylib-backed example. It uses fixed brick storage, explicit ball/paddle state, and enum step results for brick hits, paddle bounces, win, and loss handling without depending on a local graphics library.
 
 Build and run it directly:
 

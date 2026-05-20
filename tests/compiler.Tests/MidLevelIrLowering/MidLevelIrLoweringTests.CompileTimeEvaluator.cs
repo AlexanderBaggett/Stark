@@ -12,7 +12,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 return (1 + 2) * 3;
             }
             """);
@@ -27,14 +27,46 @@ public sealed partial class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void ConstantIntegerExponentComparisonOperandFoldsBeforeMirWidthSelection()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn bool Run(u64[0 2 ** 63 - 1] count) {
+                if (count > 2 ** 61 - 1) {
+                    return true;
+                }
+
+                return false;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.DoesNotContain(
+            statements,
+            static statement => statement.Value is MidLevelIrBinaryRValue { Operator: MidLevelIrBinaryOperator.Exponent });
+        var comparison = Assert.Single(
+            statements,
+            static statement => statement.Value is MidLevelIrBinaryRValue { Operator: MidLevelIrBinaryOperator.GreaterThan });
+        var greaterThan = Assert.IsType<MidLevelIrBinaryRValue>(comparison.Value);
+        var right = Assert.IsType<MidLevelIrIntegerConstantOperand>(greaterThan.Right);
+        Assert.Equal(BigInteger.Pow(new BigInteger(2), 61) - BigInteger.One, right.Value);
+        Assert.Equal(64, right.Type.BitWidth);
+    }
+
+    [Fact]
     public void ConstantLawCallsFoldToMirConstants()
     {
         var result = Compile(
             """
             module Demo
 
-            finite law i32[-2147483648 2147483647] Adjust(i32[-2147483648 2147483647] value) {
-                stack mut i32[-2147483648 2147483647] current = value;
+            unsafe finite law i32[min max] Adjust(i32[min max] value) {
+                stack mut i32[min max] current = value;
                 if (current < 10) {
                     current = current + 3;
                 }
@@ -42,7 +74,7 @@ public sealed partial class MidLevelIrLoweringTests
                 return current;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 return Adjust(4);
             }
             """);
@@ -64,11 +96,11 @@ public sealed partial class MidLevelIrLoweringTests
             module Demo
 
             [Backend(Opaque)]
-            finite law i32[-2147483648 2147483647] Adjust(i32[-2147483648 2147483647] value) {
+            unsafe finite law i32[min max] Adjust(i32[min max] value) {
                 return value + 3;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 return Adjust(4);
             }
             """);
@@ -77,7 +109,7 @@ public sealed partial class MidLevelIrLoweringTests
         var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
         var block = Assert.Single(function.Blocks);
 
-        Assert.Contains(block.Statements, static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Adjust" });
+        Assert.Contains(block.Statements, static statement => IsDirectCallStatement(statement, "Adjust"));
     }
 
     [Fact]
@@ -87,8 +119,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
-                stack i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
+            unsafe fn i32[min max] Run() {
+                stack i32[min max][3] values = { 1, 2, 3 };
                 return values[1 + 1];
             }
             """);

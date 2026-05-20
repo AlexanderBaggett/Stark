@@ -1,4 +1,5 @@
 using Stark.Compiler;
+using System.Text.RegularExpressions;
 
 namespace compiler.Tests;
 
@@ -17,10 +18,17 @@ public sealed class PackageImageCallableValueTests
                 """
                 module Facade
 
+                public struct Token {
+                    i32[min max] Value;
+                }
+
                 public fn void Register(fnptr<fn void()> callback);
-                public fn void RegisterFinite(fnptr<finite i32[0 max]()> callback);
+                public fn void RegisterOverlap(fnptr<fn void(borrow mut Token, borrow mut Token) where overlap(arg0, arg1)> callback);
+                public fn void RegisterSame(fnptr<fn void(borrow mut Token, borrow mut Token) where same(arg0, arg1)> callback);
+                public fn void RegisterFinite(fnptr<finite u32[0 2 ** 31 - 1]()> callback);
                 public fn void RegisterLaw(fnptr<law bool()> callback);
-                public fn void RegisterFiniteLaw(fnptr<finite law i32[0 max]()> callback);
+                public fn void RegisterFiniteLaw(fnptr<finite law u32[0 2 ** 31 - 1]()> callback);
+                public unsafe fn void RegisterBounded(fnptr<fn void(rawptr<i32[min max]>[arg1], u8[1 10])> callback);
                 public unsafe fn void Dangerous();
                 """,
                 sourcePath));
@@ -38,9 +46,17 @@ public sealed class PackageImageCallableValueTests
             Assert.Equal("fn", callbackType.FunctionKind);
             Assert.Equal("void", callbackType.ReturnType!.Kind);
             Assert.Empty(callbackType.ParameterTypes ?? []);
+            var overlapCallbackType = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "RegisterOverlap").Parameters.Single().Type;
+            var overlapGroup = Assert.Single(overlapCallbackType.OverlapParameterGroups ?? []);
+            Assert.Equal(["arg0", "arg1"], overlapGroup.ParameterNames);
+            var sameCallbackType = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "RegisterSame").Parameters.Single().Type;
+            var sameGroup = Assert.Single(sameCallbackType.SameParameterGroups ?? []);
+            Assert.Equal(["arg0", "arg1"], sameGroup.ParameterNames);
             AssertFunctionPointerKind(module, "RegisterFinite", "finite");
             AssertFunctionPointerKind(module, "RegisterLaw", "law");
             AssertFunctionPointerKind(module, "RegisterFiniteLaw", "finite law");
+            var boundedCallbackType = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "RegisterBounded").Parameters.Single().Type;
+            Assert.Equal(["arg1", null], boundedCallbackType.ParameterRawPointerElementCountExpressions);
 
             var dangerous = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "Dangerous");
             Assert.True(dangerous.IsUnsafe);
@@ -53,6 +69,12 @@ public sealed class PackageImageCallableValueTests
                     module),
                 out var sourceText));
             Assert.Contains("public unsafe fn void Dangerous();", sourceText, StringComparison.Ordinal);
+            Assert.Contains("RegisterOverlap", sourceText, StringComparison.Ordinal);
+            Assert.Contains("where overlap(arg0, arg1)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("RegisterSame", sourceText, StringComparison.Ordinal);
+            Assert.Contains("where same(arg0, arg1)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("RegisterBounded", sourceText, StringComparison.Ordinal);
+            Assert.Contains("[arg1]", sourceText, StringComparison.Ordinal);
         }
         finally
         {
@@ -79,6 +101,93 @@ public sealed class PackageImageCallableValueTests
     }
 
     [Fact]
+    public void PackageImagePreservesClosureTypes()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-closures-");
+        var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "Facade.starkpkg.json");
+
+        try
+        {
+            var result = DefaultCompilerPipeline.Create().Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct Token {
+                    i32[min max] Value;
+                }
+
+                public fn void RegisterInline(inline closure<fn void(borrow mut Token)> callback);
+                public fn void RegisterBorrow(borrow closure<fn void(borrow mut Token)> callback);
+                public fn void RegisterMut(mut borrow closure<mut fn void(i32[min max])> callback);
+                public fn void RegisterOverlap(borrow closure<fn void(borrow mut Token, borrow mut Token) where overlap(arg0, arg1)> callback);
+                public unsafe fn void RegisterBounded(borrow closure<finite void(rawptr<i32[min max]>[arg1], u8[1 10])> callback);
+                public fn heap closure<fn i32[min max](i32[min max])> Factory(heap closure<fn i32[min max](i32[min max])> callback);
+                """,
+                sourcePath));
+
+            Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                result,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var module = Assert.Single(manifest.Modules, static item => item.ModuleName == "Facade");
+
+            var inlineCallback = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "RegisterInline").Parameters.Single().Type;
+            Assert.Equal("closure", inlineCallback.Kind);
+            Assert.Equal("inline", inlineCallback.ClosureStorageKind);
+            Assert.Equal("fn", inlineCallback.FunctionKind);
+
+            var borrowCallback = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "RegisterBorrow").Parameters.Single().Type;
+            Assert.Equal("closure", borrowCallback.Kind);
+            Assert.Equal("borrow", borrowCallback.BorrowKind);
+            Assert.Null(borrowCallback.ClosureStorageKind);
+
+            var mutCallback = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "RegisterMut").Parameters.Single().Type;
+            Assert.Equal("mut", mutCallback.ClosureCallCapability);
+            Assert.True(mutCallback.IsMutableView);
+
+            var overlapCallback = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "RegisterOverlap").Parameters.Single().Type;
+            var overlapGroup = Assert.Single(overlapCallback.OverlapParameterGroups ?? []);
+            Assert.Equal(["arg0", "arg1"], overlapGroup.ParameterNames);
+
+            var boundedCallback = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "RegisterBounded").Parameters.Single().Type;
+            Assert.Equal(["arg1", null], boundedCallback.ParameterRawPointerElementCountExpressions);
+
+            var factory = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "Factory");
+            Assert.Equal("closure", factory.ReturnType.Kind);
+            Assert.Equal("heap", factory.ReturnType.ClosureStorageKind);
+
+            Assert.True(PackageImageLoader.TryBuildModuleSource(
+                new ResolvedPackageModule(
+                    manifestPath,
+                    Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"),
+                    manifest,
+                    module),
+                out var sourceText));
+            Assert.Contains("inline closure<fn void(mut borrow Token)>", sourceText, StringComparison.Ordinal);
+            Assert.Contains("borrow closure<fn void(mut borrow Token)>", sourceText, StringComparison.Ordinal);
+            Assert.Contains("RegisterMut", sourceText, StringComparison.Ordinal);
+            Assert.Contains("closure<mut fn void(i32", sourceText, StringComparison.Ordinal);
+            Assert.Contains("where overlap(arg0, arg1)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("rawptr<i32", sourceText, StringComparison.Ordinal);
+            Assert.Contains("[arg1]", sourceText, StringComparison.Ordinal);
+            Assert.Contains("heap closure<fn i32", sourceText, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
     public void PackageImageBackedExplicitConstructorWithAliasCallableParameterLowersWithoutSource()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-callable-constructor-");
@@ -93,10 +202,10 @@ public sealed class PackageImageCallableValueTests
                 """
                 module Facade
 
-                public alias Factory = fnptr<fn i32[-2147483648 2147483647]()>;
+                public alias Factory = fnptr<fn i32[min max]()>;
 
                 public struct Box {
-                    internal i32[-2147483648 2147483647] Value;
+                    internal i32[min max] Value;
 
                     Box(Factory factory) {
                         self.Value = factory();
@@ -106,6 +215,7 @@ public sealed class PackageImageCallableValueTests
                 sourcePath));
 
             Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(libraryResult, "Package-image library builds", sourcePath);
 
             var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
             File.WriteAllText(manifestPath, manifest.ToJson());
@@ -117,11 +227,11 @@ public sealed class PackageImageCallableValueTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Make() {
+                    fn i32[min max] Make() {
                         return 11;
                     }
 
-                    fn i32[-2147483648 2147483647] Run() {
+                    fn i32[min max] Run() {
                         stack Facade.Box box = new(Make);
                         return 0;
                     }
@@ -161,10 +271,10 @@ public sealed class PackageImageCallableValueTests
                 """
                 module Facade
 
-                public alias StrictFactory = fnptr<finite law i32[0 max]()>;
+                public alias StrictFactory = fnptr<finite law u32[0 2 ** 31 - 1]()>;
 
                 public struct Box {
-                    internal i32[0 max] Value;
+                    internal u32[0 2 ** 31 - 1] Value;
 
                     Box(StrictFactory factory) {
                         self.Value = factory();
@@ -174,6 +284,7 @@ public sealed class PackageImageCallableValueTests
                 sourcePath));
 
             Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(libraryResult, "Package-image library builds", sourcePath);
 
             var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
             var module = Assert.Single(manifest.Modules, static item => item.ModuleName == "Facade");
@@ -190,11 +301,11 @@ public sealed class PackageImageCallableValueTests
                     import Facade
                     module Demo
 
-                    finite law i32[0 max] Make() {
+                    finite law u32[0 2 ** 31 - 1] Make() {
                         return 11;
                     }
 
-                    fn i32[0 max] Run() {
+                    fn u32[0 2 ** 31 - 1] Run() {
                         stack Facade.Box box = new(Make);
                         return 0;
                     }
@@ -205,6 +316,153 @@ public sealed class PackageImageCallableValueTests
                     StopAfterPassId: "lower-mir"));
 
             Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImageBackedCallableAliasDrivesIndirectCallSiteEffectAttributes()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-callable-alias-llvm-");
+        var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public alias StrictTransform = fnptr<finite law i32[min max](i32[min max])>;
+                """,
+                sourcePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(libraryResult, "Package-image library builds", sourcePath);
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(sourcePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    finite law i32[min max] Apply(Facade.StrictTransform transform, i32[min max] value) {
+                        return transform(value);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    OptimizationLevel: CompilerOptimizationLevel.O0,
+                    StopAfterPassId: "emit-llvm"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+            Assert.NotNull(llvm);
+
+            var indirectCall = Regex.Match(
+                llvm.Text,
+                @"call fastcc i32 %arg_transform\([^\n]*\)[^\n]*",
+                RegexOptions.CultureInvariant).Value;
+            Assert.NotEmpty(indirectCall);
+            Assert.Contains("willreturn", indirectCall, StringComparison.Ordinal);
+            Assert.Contains("mustprogress", indirectCall, StringComparison.Ordinal);
+            Assert.Contains("nosync", indirectCall, StringComparison.Ordinal);
+            Assert.Contains("nofree", indirectCall, StringComparison.Ordinal);
+            Assert.Contains("memory(none)", indirectCall, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImageBackedGenericTemplateFnptrCallKeepsKindedIndirectCallAttributes()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-generic-fnptr-kind-llvm-");
+        var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public finite law T Apply<T>(fnptr<finite law T(T)> transform, T value) {
+                    return transform(value);
+                }
+                """,
+                sourcePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(libraryResult, "Package-image library builds", sourcePath);
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(sourcePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    finite law i32[min max] Double(i32[min max] value) {
+                        return value * 2;
+                    }
+
+                    fn i32[min max] Run(i32[min max] value) {
+                        stack fnptr<finite law i32[min max](i32[min max])> transform = Double;
+                        return Facade.Apply(transform, value);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    OptimizationLevel: CompilerOptimizationLevel.O0,
+                    StopAfterPassId: "emit-llvm"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+            Assert.NotNull(llvm);
+
+            var indirectCall = Regex.Match(
+                llvm.Text,
+                @"call fastcc i32 %arg_transform\([^\n]*\)[^\n]*",
+                RegexOptions.CultureInvariant).Value;
+            Assert.NotEmpty(indirectCall);
+            Assert.Contains("willreturn", indirectCall, StringComparison.Ordinal);
+            Assert.Contains("mustprogress", indirectCall, StringComparison.Ordinal);
+            Assert.Contains("nosync", indirectCall, StringComparison.Ordinal);
+            Assert.Contains("nofree", indirectCall, StringComparison.Ordinal);
+            Assert.Contains("memory(none)", indirectCall, StringComparison.Ordinal);
         }
         finally
         {
@@ -234,13 +492,14 @@ public sealed class PackageImageCallableValueTests
                 """
                 module Facade
 
-                public fn i32[-2147483648 2147483647] Apply(
-                    fnptr<finite law i32[-2147483648 2147483647](i32[-2147483648 2147483647])> callback,
-                    i32[-2147483648 2147483647] value);
+                public fn i32[min max] Apply(
+                    fnptr<finite law i32[min max](i32[min max])> callback,
+                    i32[min max] value);
                 """,
                 sourcePath));
 
             Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(libraryResult, "Package-image library builds", sourcePath);
 
             var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
             File.WriteAllText(manifestPath, manifest.ToJson());
@@ -252,8 +511,8 @@ public sealed class PackageImageCallableValueTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
-                        return Facade.Apply((i32[-2147483648 2147483647] value) => value + 1, 41);
+                    fn i32[min max] Run() {
+                        return Facade.Apply((i32[min max] value) => value + 1, 41);
                     }
                     """,
                     Path.Combine(tempDirectory.FullName, "Demo.stark")),
@@ -283,7 +542,7 @@ public sealed class PackageImageCallableValueTests
             Assert.Equal(lambda.FunctionName, Assert.Single(llvm.AddressTakenFunctions));
             Assert.Contains("; synthetic definition: Run.__lambda_", llvm.Text, StringComparison.Ordinal);
             Assert.Matches(@"define internal dso_local fastcc noundef(?: range\([^)]*\))? i32 @Run___lambda_", llvm.Text);
-            Assert.Matches(@"call fastcc i32 @Facade_Apply\(ptr (noundef )?@Run___lambda_", llvm.Text);
+            Assert.Matches(@"call fastcc i32 @Facade_Apply\(ptr (noundef )?nonnull @Run___lambda_", llvm.Text);
         }
         finally
         {
@@ -313,11 +572,12 @@ public sealed class PackageImageCallableValueTests
                 """
                 module Facade
 
-                public fn void Register(fnptr<law i32[-2147483648 2147483647]()> callback);
+                public fn void Register(fnptr<law i32[min max]()> callback);
                 """,
                 sourcePath));
 
             Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(libraryResult, "Package-image library builds", sourcePath);
 
             var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
             File.WriteAllText(manifestPath, manifest.ToJson());
@@ -329,9 +589,9 @@ public sealed class PackageImageCallableValueTests
                     import Facade
                     module Demo
 
-                    static i32[-2147483648 2147483647] Counter = 1;
+                    static i32[min max] Counter = 1;
 
-                    fn i32[-2147483648 2147483647] Impure() {
+                    fn i32[min max] Impure() {
                         return Counter;
                     }
 
@@ -384,7 +644,7 @@ public sealed class PackageImageCallableValueTests
                 """
                 module Facade
 
-                public fn i32[-2147483648 2147483647] Make();
+                public fn i32[min max] Make();
                 """,
                 sourcePath));
 
@@ -400,8 +660,8 @@ public sealed class PackageImageCallableValueTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
-                        stack fnptr<fn i32[-2147483648 2147483647]()> callback = Facade.Make;
+                    fn i32[min max] Run() {
+                        stack fnptr<fn i32[min max]()> callback = Facade.Make;
                         return callback();
                     }
                     """,
@@ -447,10 +707,10 @@ public sealed class PackageImageCallableValueTests
                 """
                 module Facade
 
-                public fn i32[-2147483648 2147483647] Plain();
-                public finite i32[-2147483648 2147483647] FiniteOnly();
-                public law i32[-2147483648 2147483647] LawOnly();
-                public finite law i32[-2147483648 2147483647] Strict();
+                public fn i32[min max] Plain();
+                public finite i32[min max] FiniteOnly();
+                public law i32[min max] LawOnly();
+                public finite law i32[min max] Strict();
                 """,
                 sourcePath));
 
@@ -467,10 +727,10 @@ public sealed class PackageImageCallableValueTests
                     module Demo
 
                     fn void Run() {
-                        stack fnptr<fn i32[-2147483648 2147483647]()> plain = Facade.Plain;
-                        stack fnptr<finite i32[-2147483648 2147483647]()> finiteOnly = Facade.FiniteOnly;
-                        stack fnptr<law i32[-2147483648 2147483647]()> lawOnly = Facade.LawOnly;
-                        stack fnptr<finite law i32[-2147483648 2147483647]()> strict = Facade.Strict;
+                        stack fnptr<fn i32[min max]()> plain = Facade.Plain;
+                        stack fnptr<finite i32[min max]()> finiteOnly = Facade.FiniteOnly;
+                        stack fnptr<law i32[min max]()> lawOnly = Facade.LawOnly;
+                        stack fnptr<finite law i32[min max]()> strict = Facade.Strict;
                         return;
                     }
                     """,
@@ -524,8 +784,8 @@ public sealed class PackageImageCallableValueTests
                 """
                 module Facade
 
-                public fn i32[-2147483648 2147483647] Pick();
-                public fn i32[-2147483648 2147483647] Pick(i32[-2147483648 2147483647] value);
+                public fn i32[min max] Pick();
+                public fn i32[min max] Pick(i32[min max] value);
                 """,
                 sourcePath));
 
@@ -541,9 +801,9 @@ public sealed class PackageImageCallableValueTests
                     import Facade
                     module Demo
 
-                    fn i32[-2147483648 2147483647] Run() {
-                        stack fnptr<fn i32[-2147483648 2147483647]()> first = Facade.Pick;
-                        stack fnptr<fn i32[-2147483648 2147483647](i32[-2147483648 2147483647])> second = Facade.Pick;
+                    fn i32[min max] Run() {
+                        stack fnptr<fn i32[min max]()> first = Facade.Pick;
+                        stack fnptr<fn i32[min max](i32[min max])> second = Facade.Pick;
                         return first() + second(2);
                     }
                     """,
@@ -596,9 +856,9 @@ public sealed class PackageImageCallableValueTests
                 """
                 module Facade
 
-                public fn i32[-2147483648 2147483647] Plain();
-                public finite i32[-2147483648 2147483647] FiniteOnly();
-                public law i32[-2147483648 2147483647] LawOnly();
+                public fn i32[min max] Plain();
+                public finite i32[min max] FiniteOnly();
+                public law i32[min max] LawOnly();
                 """,
                 sourcePath));
 
@@ -615,10 +875,10 @@ public sealed class PackageImageCallableValueTests
                     module Demo
 
                     fn void Run() {
-                        stack fnptr<finite i32[-2147483648 2147483647]()> needsFinite = Facade.Plain;
-                        stack fnptr<law i32[-2147483648 2147483647]()> needsLaw = Facade.Plain;
-                        stack fnptr<finite law i32[-2147483648 2147483647]()> needsBothFromFinite = Facade.FiniteOnly;
-                        stack fnptr<finite law i32[-2147483648 2147483647]()> needsBothFromLaw = Facade.LawOnly;
+                        stack fnptr<finite i32[min max]()> needsFinite = Facade.Plain;
+                        stack fnptr<law i32[min max]()> needsLaw = Facade.Plain;
+                        stack fnptr<finite law i32[min max]()> needsBothFromFinite = Facade.FiniteOnly;
+                        stack fnptr<finite law i32[min max]()> needsBothFromLaw = Facade.LawOnly;
                         return;
                     }
                     """,
@@ -680,7 +940,7 @@ public sealed class PackageImageCallableValueTests
                 """
                 module Facade
 
-                public unsafe fn i32[-2147483648 2147483647] Touch();
+                public unsafe fn i32[min max] Touch();
                 """,
                 sourcePath));
 
@@ -697,7 +957,7 @@ public sealed class PackageImageCallableValueTests
                     module Demo
 
                     fn void Run() {
-                        stack fnptr<fn i32[-2147483648 2147483647]()> callback = Facade.Touch;
+                        stack fnptr<fn i32[min max]()> callback = Facade.Touch;
                         return;
                     }
                     """,
@@ -792,6 +1052,79 @@ public sealed class PackageImageCallableValueTests
                     StopAfterPassId: "type-check"));
 
             Assert.True(good.Succeeded, string.Join(", ", good.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImageBackedAcceptedProgramEmitsLlvmWithoutFallbackLogs()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-fallback-gate-");
+        var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public fn T Choose<T>(T left, T right, bool takeRight) {
+                    stack mut T current = left;
+                    if (takeRight) {
+                        current = right;
+                    }
+
+                    return current;
+                }
+
+                public fn i32[min max] Twice(i32[min max] value) {
+                    return value + value;
+                }
+                """,
+                sourcePath),
+                new CompilerOptions(
+                    EmitLlvmIr: true,
+                    TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(libraryResult, "Package-image library builds", sourcePath);
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(sourcePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32[min max] Run(i32[min max] left, i32[min max] right, bool takeRight) {
+                        return Facade.Choose(left, right, takeRight) + Facade.Twice(5);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    EmitLlvmIr: true,
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName)));
+
+            Assert.True(consumerResult.Succeeded, string.Join(Environment.NewLine, consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(consumerResult, "Accepted package-image-backed consumer builds");
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+            Assert.NotNull(llvmModule);
         }
         finally
         {

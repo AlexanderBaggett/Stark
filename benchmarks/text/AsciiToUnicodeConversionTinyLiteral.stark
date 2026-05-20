@@ -1,8 +1,9 @@
 import System
+import System.Text
 module Benchmarks.Text.AsciiToUnicodeConversionTinyLiteral
 
-export ffi fn i32[min max] main() {
-    stack mut i32[-2147483648 2147483647][8] unicodeBuffer = {
+export unsafe ffi fn i32[min max] main() {
+    stack mut i32[min max][8] unicodeBuffer = {
         0, 0, 0, 0, 0, 0, 0, 0
     };
     stack mut Unicode unicodeText = new Unicode() {
@@ -12,7 +13,7 @@ export ffi fn i32[min max] main() {
     };
     stack mut i64[min max] checksum = 0;
 
-    for willexit (stack mut i32[0 500000] i = 0; i < 500000; i += 1) {
+    for willexit (stack mut u24[0 500000] i = 0; i < 500000; i += 1) {
         if (!System.Text.TryConvertAsciiToUnicode(&unicodeText, "OK")) {
             return 1;
         }

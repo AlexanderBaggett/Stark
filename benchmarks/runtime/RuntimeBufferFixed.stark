@@ -1,0 +1,62 @@
+import System.Runtime.Buffer
+import System.Memory
+module Benchmarks.Runtime.RuntimeBufferFixed
+
+const Iterations = 6000;
+
+unsafe fn bool Ok(System.Memory.MemoryStatus status) {
+    switch (status) {
+        case System.Memory.MemoryStatus.Err(var error):
+            return false;
+        case System.Memory.MemoryStatus.Ok:
+            return true;
+    }
+}
+
+unsafe fn i64[min max] SumBytes(borrow i8[min max][] values, u64[0 2 ** 63 - 1] count) {
+    stack mut i64[min max] checksum = count;
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
+        checksum += (i64[min max])values[index];
+    }
+
+    return checksum;
+}
+
+export unsafe ffi fn i32[min max] main() {
+    stack mut i64[min max] checksum = 0;
+    stack mut i8[min max][32] source = {
+        1, 2, 3, 4, 5, 6, 7, 8,
+        9, 10, 11, 12, 13, 14, 15, 16,
+        1, 2, 3, 4, 5, 6, 7, 8,
+        9, 10, 11, 12, 13, 14, 15, 16
+    };
+    stack mut System.Runtime.Buffer.FixedByteBuffer512 buffer = new();
+
+    if (!Ok(buffer.WriteFill(0, 0))) {
+        return 1;
+    }
+
+    for willexit (stack mut u16[0 6000] iteration = 0; iteration < Iterations; iteration += 1) {
+        buffer.Clear();
+
+        if (!Ok(buffer.WriteSlice(source, 32)) || !Ok(buffer.WriteFill(3, 96))) {
+            return 2;
+        }
+
+        checksum += SumBytes(buffer.ReadSlice(), buffer.Readable());
+        buffer.AdvanceRead(48);
+        buffer.Compact();
+
+        if (!Ok(buffer.WriteSlice(source, 32))) {
+            return 3;
+        }
+
+        checksum += SumBytes(buffer.ReadSlice(), buffer.Readable());
+    }
+
+    if (checksum != 7872000) {
+        return 4;
+    }
+
+    return 0;
+}

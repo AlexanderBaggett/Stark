@@ -26,15 +26,15 @@ public sealed class PackageImageTypedComparisonChainIntegrationTests
                 """
                 module Facade
 
-                public static mut i32[-2147483648 2147483647] OrderedCalls = 0;
-                public static mut i32[-2147483648 2147483647] EqualityCalls = 0;
+                public static mut i32[min max] OrderedCalls = 0;
+                public static mut i32[min max] EqualityCalls = 0;
 
-                public fn i32[-2147483648 2147483647] NextOrdered() {
+                public fn i32[min max] NextOrdered() {
                     OrderedCalls += 1;
                     return 1;
                 }
 
-                public fn i32[-2147483648 2147483647] NextEquality() {
+                public fn i32[min max] NextEquality() {
                     EqualityCalls += 1;
                     return 1;
                 }
@@ -112,8 +112,8 @@ public sealed class PackageImageTypedComparisonChainIntegrationTests
                 import Facade
                 module Demo
 
-                export ffi fn i32[-2147483648 2147483647] main() {
-                    stack i32[-2147483648 2147483647] tag = 0;
+                export fn i32[min max] main() {
+                    stack i32[min max] tag = 0;
                     if (!Facade.ObserveOrdered(tag)) {
                         return 21;
                     }

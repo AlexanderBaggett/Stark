@@ -28,7 +28,7 @@ fn i32[min max] MoveThenReinitialize() {
     return box.Value;
 }
 
-export ffi fn i32[min max] main() {
+export fn i32[min max] main() {
     if (ScalarsCopy() != 20) {
         return 1;
     }

@@ -1,3 +1,4 @@
+using System.Numerics;
 using Stark.Compiler;
 
 namespace compiler.Tests;
@@ -12,7 +13,7 @@ public sealed partial class MidLevelIrLoweringTests
             module Demo
 
             enum Error {
-                Unknown(i32[-2147483648 2147483647]),
+                Unknown(i32[min max]),
             }
 
             enum Result<T> {
@@ -20,11 +21,11 @@ public sealed partial class MidLevelIrLoweringTests
                 Err(Error),
             }
 
-            fn Result<bool> Ok() {
+            unsafe fn Result<bool> Ok() {
                 return Result<bool>.Ok(true);
             }
 
-            fn Result<bool> Bad() {
+            unsafe fn Result<bool> Bad() {
                 return Result<bool>.Err(Error.Unknown(-1));
             }
             """,
@@ -43,7 +44,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law i32[-2147483648 2147483647] Run() {
+            unsafe finite law i32[min max] Run() {
                 if (true) {
                     return 1;
                 } else {
@@ -71,7 +72,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law void Run() {
+            unsafe finite law void Run() {
                 while willexit (true) {
                     break;
                 }
@@ -96,8 +97,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law void Run() {
-                for willexit (stack mut i32[-2147483648 2147483647] i = 0; i < 4; i = i + 1) {
+            unsafe finite law void Run() {
+                for willexit (stack mut i32[min max] i = 0; i < 4; i = i + 1) {
                     continue;
                 }
 
@@ -123,11 +124,11 @@ public sealed partial class MidLevelIrLoweringTests
 
             enum Token {
                 End,
-                Integer(i32[-2147483648 2147483647]),
-                Move { X: i32[-2147483648 2147483647], Y: i32[-2147483648 2147483647] },
+                Integer(i32[min max]),
+                Move { X: i32[min max], Y: i32[min max] },
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack Token a = Token.End;
                 stack Token b = Token.Integer(5);
                 stack Token c = Token.Move { X: 1, Y: 2 };
@@ -144,6 +145,17 @@ public sealed partial class MidLevelIrLoweringTests
         Assert.Contains(statements, static statement => statement.Value is MidLevelIrInsertFieldRValue { FieldName: "$Integer_0" });
         Assert.Contains(statements, static statement => statement.Value is MidLevelIrInsertFieldRValue { FieldName: "$Move_X" });
         Assert.Contains(statements, static statement => statement.Value is MidLevelIrInsertFieldRValue { FieldName: "$Move_Y" });
+
+        var constructions = statements
+            .Select(static statement => statement.Value)
+            .OfType<MidLevelIrUseRValue>()
+            .Select(static use => use.Operand)
+            .OfType<MidLevelIrEnumConstructionOperand>()
+            .Select(static construction => construction.Facts)
+            .ToArray();
+        Assert.Contains(constructions, static facts => facts.Variant.Name == "End" && facts.PayloadFields.Count == 0);
+        Assert.Contains(constructions, static facts => facts.Variant.Name == "Integer" && facts.PayloadFields.Count == 1);
+        Assert.Contains(constructions, static facts => facts.Variant.Name == "Move" && facts.PayloadFields.Count == 2);
     }
 
     [Fact]
@@ -153,11 +165,11 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Next() {
+            unsafe fn i32[min max] Next() {
                 return 1;
             }
 
-            fn bool Run() {
+            unsafe fn bool Run() {
                 return 0 < Next() < 3;
             }
             """);
@@ -168,7 +180,7 @@ public sealed partial class MidLevelIrLoweringTests
         Assert.True(run.SupportsDirectCodeGeneration);
         Assert.Single(
             run.Blocks.SelectMany(static block => block.Statements),
-            static statement => statement.Value is MidLevelIrCallRValue { FunctionName: "Next" });
+            static statement => IsDirectCallStatement(statement, "Next"));
         Assert.Contains(run.Blocks, block => block.Label.Contains("cmpchain_next_1", StringComparison.Ordinal));
         Assert.Contains(run.Blocks, block => block.Label.Contains("cmpchain_false_0", StringComparison.Ordinal));
         Assert.Contains(run.Blocks, block => block.Label.Contains("cmpchain_join", StringComparison.Ordinal));
@@ -181,7 +193,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn bool Run(bool left, bool right, bool fallback) {
+            unsafe fn bool Run(bool left, bool right, bool fallback) {
                 return left || right || fallback;
             }
             """);
@@ -202,7 +214,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(bool flag) {
+            unsafe fn i32[min max] Run(bool flag) {
                 return flag ? 1 : 2;
             }
             """);
@@ -224,12 +236,12 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn void Reset(rawmutptr<i32[-2147483648 2147483647]> value, i32[-2147483648 2147483647] next) {
+            unsafe fn void Reset(rawmutptr<i32[min max]> value, i32[min max] next) {
                 *value = next;
                 return;
             }
 
-            fn void Run(bool flag, rawmutptr<i32[-2147483648 2147483647]> left, rawmutptr<i32[-2147483648 2147483647]> right) {
+            unsafe fn void Run(bool flag, rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
                 flag ? Reset(left, 7) : Reset(right, 9);
                 return;
             }
@@ -245,8 +257,34 @@ public sealed partial class MidLevelIrLoweringTests
 
         var trueBlock = Assert.Single(function.Blocks, static block => block.Label.Contains("cond_true", StringComparison.Ordinal));
         var falseBlock = Assert.Single(function.Blocks, static block => block.Label.Contains("cond_false", StringComparison.Ordinal));
-        Assert.Contains(trueBlock.Statements, static statement => statement.Kind == MidLevelIrStatementKind.Evaluate && statement.Value is MidLevelIrCallRValue call && call.FunctionName == "Reset");
-        Assert.Contains(falseBlock.Statements, static statement => statement.Kind == MidLevelIrStatementKind.Evaluate && statement.Value is MidLevelIrCallRValue call && call.FunctionName == "Reset");
+        Assert.Contains(trueBlock.Statements, static statement => statement.Kind == MidLevelIrStatementKind.Evaluate && IsDirectCallStatement(statement, "Reset"));
+        Assert.Contains(falseBlock.Statements, static statement => statement.Kind == MidLevelIrStatementKind.Evaluate && IsDirectCallStatement(statement, "Reset"));
+    }
+
+    [Fact]
+    public void VoidFunctionPointerCallsLowerAsStatementOnlyOperations()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            noinline finite law void Target(i32[min max] value) {
+                return;
+            }
+
+            unsafe fn void Run() {
+                stack fnptr<fn void(i32[min max])> op = Target;
+                op(1);
+                return;
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetMir(result).Functions, static function => function.Name == "Run");
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.Contains(statements, static statement => statement.Call is MidLevelIrIndirectCallStatementOperation);
+        Assert.DoesNotContain(statements, static statement => statement.Value is MidLevelIrIndirectCallRValue { Type.Kind: StarkTypeKind.Void });
     }
 
     [Fact]
@@ -256,8 +294,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
-                stack mut i32[-2147483648 2147483647] value = 1;
+            unsafe fn i32[min max] Run() {
+                stack mut i32[min max] value = 1;
                 value = value + 1;
                 return value;
             }
@@ -283,13 +321,95 @@ public sealed partial class MidLevelIrLoweringTests
     }
 
     [Fact]
+    public void SizeofAndAlignofLowerToConcreteIntegerConstants()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn i64[min max] Run() {
+                return sizeof(i32[min max]) + alignof(i64[min max]);
+            }
+            """);
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetMir(result).Functions);
+        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
+
+        Assert.True(function.SupportsDirectCodeGeneration);
+        Assert.Contains(
+            statements,
+            static statement => statement.Value is MidLevelIrBinaryRValue
+            {
+                Operator: MidLevelIrBinaryOperator.Add,
+                Left: MidLevelIrIntegerConstantOperand { Value: var left },
+                Right: MidLevelIrIntegerConstantOperand { Value: var right }
+            }
+            && left == 4
+            && right == 8);
+    }
+
+    [Fact]
+    public void HugeCompileTimeIntegerConversionMaterializesConcreteMirConstant()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe finite law u1024[0 max] Run() {
+                return (u1024[0 max])(2 ** 1024 - 1);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "lower-mir"));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetMir(result).Functions);
+        var returned = Assert.IsType<MidLevelIrIntegerConstantOperand>(function.Blocks[function.EntryBlockId].Terminator.Value);
+        var expected = (BigInteger.One << 1024) - BigInteger.One;
+
+        Assert.Equal(expected, returned.Value);
+        Assert.Equal(1024, returned.Type.BitWidth);
+        Assert.True(returned.Type.IsUnsigned);
+        Assert.Equal(BigInteger.Zero, returned.Type.RangeMin);
+        Assert.Equal(expected, returned.Type.RangeMax);
+        Assert.DoesNotContain(
+            function.Blocks.SelectMany(static block => block.Statements),
+            static statement => statement.Value is MidLevelIrConvertRValue);
+    }
+
+    [Fact]
+    public void ConstantNarrowingConversionMaterializesWrappedMirConstant()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe finite law i8[min max] Run() {
+                return (i8[min max])300;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "lower-mir"));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var function = Assert.Single(GetMir(result).Functions);
+        var returned = Assert.IsType<MidLevelIrIntegerConstantOperand>(function.Blocks[function.EntryBlockId].Terminator.Value);
+
+        Assert.Equal(new BigInteger(44), returned.Value);
+        Assert.Equal(8, returned.Type.BitWidth);
+        Assert.False(returned.Type.IsUnsigned);
+        Assert.DoesNotContain(
+            function.Blocks.SelectMany(static block => block.Statements),
+            static statement => statement.Value is MidLevelIrConvertRValue);
+    }
+
+    [Fact]
     public void BitwiseXorExpressionLowersToMirBinaryOperation()
     {
         var result = Compile(
             """
             module Demo
 
-            finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe finite law i32[min max] Run(i32[min max] left, i32[min max] right) {
                 return left ^ right;
             }
             """);
@@ -311,8 +431,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run() {
-                stack mut i32[-2147483648 2147483647] value = 6;
+            unsafe fn i32[min max] Run() {
+                stack mut i32[min max] value = 6;
                 value ^= 3;
                 return value;
             }
@@ -335,7 +455,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] middle, i32[-2147483648 2147483647] right, i32[-2147483648 2147483647] mask) {
+            unsafe fn i32[min max] Run(i32[min max] left, i32[min max] middle, i32[min max] right, i32[min max] mask) {
                 return left | middle ^ right & mask << 1 >> 1;
             }
             """);
@@ -368,15 +488,15 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
-                stack mut i32[-2147483648 2147483647] wrapped = left;
+            unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right) {
+                stack mut i32[min max] wrapped = left;
                 wrapped +%= right;
-                stack i32[-2147483648 2147483647] wrapProduct = -%wrapped *% 2;
+                stack i32[min max] wrapProduct = -%wrapped *% 2;
 
-                stack mut i32[-2147483648 2147483647] saturated = left;
+                stack mut i32[min max] saturated = left;
                 saturated +|= right;
                 saturated *|= 2;
-                stack i32[-2147483648 2147483647] bounded = saturated -| 3;
+                stack i32[min max] bounded = saturated -| 3;
 
                 return wrapProduct + bounded;
             }
@@ -407,7 +527,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law f32 Run(f32 left, f32 right) {
+            unsafe finite law f32 Run(f32 left, f32 right) {
                 return left ** right;
             }
             """);
@@ -429,7 +549,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law i32[-2147483648 2147483647] Run(i32[-2147483648 2147483647] left, i32[-2147483648 2147483647] right) {
+            unsafe finite law i32[min max] Run(i32[min max] left, i32[min max] right) {
                 return left ** right;
             }
             """);
@@ -453,7 +573,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            strictfp finite law f64 Run(f32 left, i32[-2147483648 2147483647] middle, f64 right, f32 divisor) {
+            strictfp finite law f64 Run(f32 left, i32[min max] middle, f64 right, f32 divisor) {
                 return left + middle * right / divisor - 1.0;
             }
             """);
@@ -480,11 +600,11 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law ascii AsciiChar() {
+            unsafe finite law ascii AsciiChar() {
                 return 'a';
             }
 
-            finite law unicode UnicodeChar() {
+            unsafe finite law unicode UnicodeChar() {
                 return (unicode)'\u03B1';
             }
             """);
@@ -511,7 +631,7 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            finite law unicode Run() {
+            unsafe finite law unicode Run() {
                 return (unicode)"Hello";
             }
             """);
@@ -540,10 +660,10 @@ public sealed partial class MidLevelIrLoweringTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack Box box = new Box() { Value = 41 };
                 return box.Value;
             }
@@ -556,6 +676,15 @@ public sealed partial class MidLevelIrLoweringTests
         Assert.True(function.SupportsDirectCodeGeneration);
         Assert.Contains(statements, static statement => statement.Value is MidLevelIrInsertFieldRValue);
         Assert.Contains(statements, static statement => statement.Value is MidLevelIrExtractFieldRValue);
+
+        var construction = Assert.Single(statements
+            .Select(static statement => statement.Value)
+            .OfType<MidLevelIrUseRValue>()
+            .Select(static use => use.Operand)
+            .OfType<MidLevelIrObjectConstructionOperand>());
+        Assert.Equal(MidLevelIrObjectConstructionKind.Initializer, construction.Facts.Kind);
+        Assert.Equal("Box", construction.Facts.TypeName);
+        Assert.Single(construction.Facts.InitializerMembers, static member => member.FieldName == "Value" && member.FieldIndex == 0);
     }
 
     [Fact]
@@ -565,17 +694,17 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            record Pair(i32[-2147483648 2147483647] Left, i32[-2147483648 2147483647] Right) { }
+            record Pair(i32[min max] Left, i32[min max] Right) { }
 
-            fn i32[-2147483648 2147483647] First() {
+            unsafe fn i32[min max] First() {
                 return 1;
             }
 
-            fn i32[-2147483648 2147483647] Second() {
+            unsafe fn i32[min max] Second() {
                 return 2;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack Pair pair = new Pair(First(), Second());
                 return pair.Right;
             }
@@ -599,6 +728,15 @@ public sealed partial class MidLevelIrLoweringTests
         Assert.Equal(2, insertTexts.Length);
         Assert.Contains(".Left = First()", insertTexts[0], StringComparison.Ordinal);
         Assert.Contains(".Right = Second()", insertTexts[1], StringComparison.Ordinal);
+
+        var construction = Assert.Single(statements
+            .Select(static statement => statement.Value)
+            .OfType<MidLevelIrUseRValue>()
+            .Select(static use => use.Operand)
+            .OfType<MidLevelIrObjectConstructionOperand>());
+        Assert.Equal(MidLevelIrObjectConstructionKind.PrimaryConstructor, construction.Facts.Kind);
+        Assert.NotNull(construction.Facts.Constructor);
+        Assert.True(construction.Facts.Constructor!.IsPrimaryShape);
     }
 
     [Fact]
@@ -608,19 +746,19 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            record Pair(i32[-2147483648 2147483647] Left) {
-                i32[-2147483648 2147483647] Right;
+            record Pair(i32[min max] Left) {
+                i32[min max] Right;
             }
 
-            fn i32[-2147483648 2147483647] First() {
+            unsafe fn i32[min max] First() {
                 return 1;
             }
 
-            fn i32[-2147483648 2147483647] Override() {
+            unsafe fn i32[min max] Override() {
                 return 4;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack Pair pair = new Pair(First()) { Right = Override() };
                 return pair.Right;
             }
@@ -654,27 +792,27 @@ public sealed partial class MidLevelIrLoweringTests
             module Demo
 
             struct Inner {
-                i32[-2147483648 2147483647][2] Pair;
+                i32[min max][2] Pair;
             }
 
             struct Outer {
-                i32[-2147483648 2147483647] Score;
+                i32[min max] Score;
                 Inner Node;
             }
 
-            fn i32[-2147483648 2147483647] MakeScore() {
+            unsafe fn i32[min max] MakeScore() {
                 return 9;
             }
 
-            fn i32[-2147483648 2147483647] MakeLeft() {
+            unsafe fn i32[min max] MakeLeft() {
                 return 4;
             }
 
-            fn i32[-2147483648 2147483647] MakeRight() {
+            unsafe fn i32[min max] MakeRight() {
                 return 7;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 stack Outer outer = new Outer() {
                     Score = MakeScore(),
                     Node = { Pair = { MakeLeft(), MakeRight() } }
@@ -707,20 +845,20 @@ public sealed partial class MidLevelIrLoweringTests
             module Demo
 
             struct Box {
-                fn i32[-2147483648 2147483647] Pick(Box box, i32[-2147483648 2147483647] value) {
+                unsafe fn i32[min max] Pick(Box box, i32[min max] value) {
                     return value;
                 }
             }
 
-            fn Box Make() {
+            unsafe fn Box Make() {
                 return new Box();
             }
 
-            fn i32[-2147483648 2147483647] Next() {
+            unsafe fn i32[min max] Next() {
                 return 7;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 return Make().Pick(Next());
             }
             """);
@@ -748,11 +886,11 @@ public sealed partial class MidLevelIrLoweringTests
                 i32[min max] Value;
             }
 
-            fn Box Make(i32[min max] value) {
+            unsafe fn Box Make(i32[min max] value) {
                 return new() { Value = value };
             }
 
-            fn i32[min max] Run(i32[min max] value) {
+            unsafe fn i32[min max] Run(i32[min max] value) {
                 stack mut Box box = new() { Value = value };
                 box = new() { Value = value + 1 };
                 return box.Value + Make(value).Value;
@@ -782,10 +920,10 @@ public sealed partial class MidLevelIrLoweringTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 register Box box = new Box() { Value = 7 };
                 return box.Value;
             }
@@ -811,10 +949,10 @@ public sealed partial class MidLevelIrLoweringTests
             module Demo
 
             struct Box {
-                i32[-2147483648 2147483647] Value;
+                i32[min max] Value;
             }
 
-            fn i32[-2147483648 2147483647] Run() {
+            unsafe fn i32[min max] Run() {
                 heap Box box = new Box() { Value = 7 };
                 return box.Value;
             }

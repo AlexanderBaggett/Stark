@@ -16,10 +16,10 @@ public sealed class TextOrderedComparisonRuntimeTests
             """
             module Demo
 
-            export ffi fn i32[-2147483648 2147483647] main() {
-                stack i32[-2147483648 2147483647][3] values = { 1, 2, 3 };
-                stack rawptr<i32[-2147483648 2147483647]> p0 = (rawptr<i32[-2147483648 2147483647]>)(&values[0]);
-                stack rawptr<i32[-2147483648 2147483647]> p1 = (rawptr<i32[-2147483648 2147483647]>)(&values[1]);
+            export unsafe fn i32[min max] main() {
+                stack i32[min max][3] values = { 1, 2, 3 };
+                stack rawptr<i32[min max]> p0 = (rawptr<i32[min max]>)(&values[0]);
+                stack rawptr<i32[min max]> p1 = (rawptr<i32[min max]>)(&values[1]);
 
                 if ("ab" < "aba"
                     && "aba" > "ab"

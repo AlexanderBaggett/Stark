@@ -60,6 +60,7 @@ The first release baseline does not treat the following internal implementation 
 - `System.Runtime.Buffer`
 - `System.Runtime.Platform`
 - `System.Runtime.Platform.Linux`
+- `System.Runtime.Platform.MacOS`
 - `System.Runtime.Platform.Windows`
 - `System.Syscall`
 
