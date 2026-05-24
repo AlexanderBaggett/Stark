@@ -1,0 +1,82 @@
+module Book.BorrowingNonOverlap
+
+struct Cell
+{
+    i32[min max] Value;
+}
+
+struct Pair
+{
+    Cell Left;
+    Cell Right;
+}
+
+fn void AddSeparate(mut borrow Cell left, mut borrow Cell right)
+{
+    left.Value += 1;
+    right.Value += 10;
+    return;
+}
+
+fn void AddOverlapSafe(mut borrow Cell left, mut borrow Cell right)
+    where overlap(left, right)
+{
+    left.Value += 1;
+    right.Value += 10;
+    return;
+}
+
+finite law bool SameCell(borrow Cell left, borrow Cell right)
+    where same(left, right)
+{
+    return left.Value == right.Value;
+}
+
+fn void AddPairFields(mut borrow Pair pair)
+{
+    AddSeparate(pair.Left, pair.Right);
+    return;
+}
+
+fn void AddMaybeSame(mut borrow Cell first, mut borrow Cell second)
+    where overlap(first, second)
+{
+    AddOverlapSafe(first, second);
+    return;
+}
+
+export fn i32[min max] main()
+{
+    stack mut Pair pair = new Pair()
+    {
+        Left = new Cell()
+        {
+            Value = 1
+        },
+        Right = new Cell()
+        {
+            Value = 20
+        }
+    };
+
+    AddPairFields(pair);
+
+    if (pair.Left.Value != 2 || pair.Right.Value != 30)
+    {
+        return 1;
+    }
+
+    AddMaybeSame(pair.Left, pair.Left);
+
+    if (pair.Left.Value != 13)
+    {
+        return 2;
+    }
+
+    if (!SameCell(pair.Right, pair.Right))
+    {
+        return 3;
+    }
+
+    return 0;
+}

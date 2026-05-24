@@ -1,4 +1,11 @@
 {{- $path := .Get 0 -}}
 {{- $language := .Get 1 | default "text" -}}
-{{- $source := readFile $path -}}
+{{- $sourcePath := $path -}}
+{{- if and .Page.File (not (fileExists $sourcePath)) -}}
+    {{- $bundlePath := path.Join "content" .Page.File.Dir $path -}}
+    {{- if fileExists $bundlePath -}}
+        {{- $sourcePath = $bundlePath -}}
+    {{- end -}}
+{{- end -}}
+{{- $source := readFile $sourcePath -}}
 <pre><code class="language-{{ $language }}">{{ $source | htmlEscape | safeHTML }}</code></pre>
