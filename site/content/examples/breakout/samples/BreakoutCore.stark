@@ -1,0 +1,175 @@
+module BreakoutCore
+
+const BoardWidth = 80;
+const BoardHeight = 60;
+const BrickY = 8;
+const PaddleY = 55;
+const PaddleHalfWidth = 6;
+
+enum StepResult {
+    Running,
+    Won,
+    Lost,
+}
+
+struct BreakoutGame {
+    i32[min max] BallX;
+    i32[min max] BallY;
+    i32[min max] VelocityX;
+    i32[min max] VelocityY;
+    i32[min max] PaddleX;
+    i32[min max] BrickCount;
+    bool[5] Bricks;
+
+    finite void Reset(borrow mut BreakoutGame self) {
+        self.BallX = 20;
+        self.BallY = 30;
+        self.VelocityX = 1;
+        self.VelocityY = -1;
+        self.PaddleX = 20;
+        self.BrickCount = 5;
+        self.Bricks[0] = true;
+        self.Bricks[1] = true;
+        self.Bricks[2] = true;
+        self.Bricks[3] = true;
+        self.Bricks[4] = true;
+    }
+
+    finite law i32[min max] BrickIndexAt(borrow BreakoutGame self, i32[min max] x) {
+        if (x >= 8 && x <= 15) {
+            return 0;
+        }
+
+        if (x >= 18 && x <= 25) {
+            return 1;
+        }
+
+        if (x >= 28 && x <= 35) {
+            return 2;
+        }
+
+        if (x >= 38 && x <= 45) {
+            return 3;
+        }
+
+        if (x >= 48 && x <= 55) {
+            return 4;
+        }
+
+        return -1;
+    }
+
+    finite bool HitsPaddle(borrow BreakoutGame self, i32[min max] x, i32[min max] y) {
+        return y == PaddleY && x >= self.PaddleX - PaddleHalfWidth && x <= self.PaddleX + PaddleHalfWidth;
+    }
+
+    finite StepResult Step(borrow mut BreakoutGame self) {
+        stack mut i32[min max] nextX = self.BallX + self.VelocityX;
+        stack mut i32[min max] nextY = self.BallY + self.VelocityY;
+
+        if (nextX <= 0 || nextX >= BoardWidth - 1) {
+            self.VelocityX = 0 - self.VelocityX;
+            nextX = self.BallX + self.VelocityX;
+        }
+
+        if (nextY <= 0) {
+            self.VelocityY = 0 - self.VelocityY;
+            nextY = self.BallY + self.VelocityY;
+        }
+
+        if (nextY == BrickY) {
+            stack i32[min max] brickIndex = self.BrickIndexAt(nextX);
+            if (brickIndex >= 0 && self.Bricks[brickIndex]) {
+                self.Bricks[brickIndex] = false;
+                self.BrickCount -= 1;
+                self.VelocityY = 0 - self.VelocityY;
+                nextY = self.BallY + self.VelocityY;
+            }
+        }
+
+        if (self.HitsPaddle(nextX, nextY)) {
+            self.VelocityY = -1;
+            nextY = self.BallY + self.VelocityY;
+        }
+
+        if (nextY >= BoardHeight) {
+            return StepResult.Lost;
+        }
+
+        self.BallX = nextX;
+        self.BallY = nextY;
+
+        if (self.BrickCount == 0) {
+            return StepResult.Won;
+        }
+
+        return StepResult.Running;
+    }
+}
+
+finite i32[min max] RunProgramStatus() {
+    stack mut BreakoutGame game = new BreakoutGame();
+    game.Reset();
+
+    if (game.BrickCount != 5) {
+        return 1;
+    }
+
+    game.BallX = 20;
+    game.BallY = 7;
+    game.VelocityX = 0;
+    game.VelocityY = 1;
+
+    stack StepResult brickStep = game.Step();
+    if (brickStep != StepResult.Running) {
+        return 2;
+    }
+
+    if (game.BrickCount != 4 || game.Bricks[1]) {
+        return 3;
+    }
+
+    if (game.VelocityY != -1) {
+        return 4;
+    }
+
+    game.BallX = game.PaddleX;
+    game.BallY = PaddleY - 1;
+    game.VelocityX = 0;
+    game.VelocityY = 1;
+
+    stack StepResult paddleStep = game.Step();
+    if (paddleStep != StepResult.Running) {
+        return 5;
+    }
+
+    if (game.VelocityY != -1) {
+        return 6;
+    }
+
+    game.Bricks[0] = false;
+    game.Bricks[1] = false;
+    game.Bricks[2] = true;
+    game.Bricks[3] = false;
+    game.Bricks[4] = false;
+    game.BrickCount = 1;
+    game.BallX = 30;
+    game.BallY = 7;
+    game.VelocityX = 0;
+    game.VelocityY = 1;
+
+    stack StepResult finalStep = game.Step();
+    if (finalStep != StepResult.Won) {
+        return 7;
+    }
+
+    if (game.BrickCount != 0) {
+        return 8;
+    }
+
+    return 0;
+}
+
+export unsafe fn i32[min max] main() {
+    return RunProgramStatus();
+}

@@ -1,0 +1,5 @@
+module Math
+
+public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
+    return left + right;
+}

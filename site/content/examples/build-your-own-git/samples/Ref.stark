@@ -1,0 +1,45 @@
+import System
+module BuildYourOwnGitRef
+
+finite law bool BoolValue(System.IO.IOResult<bool> result) {
+    switch (result) {
+        case System.IO.IOResult<bool>.Ok(var value):
+            return value;
+        case System.IO.IOResult<bool>.Err(var error):
+            return false;
+    }
+}
+
+fn bool WriteMainRef() {
+    if (!BoolValue(System.FileSystem.IsFile("starkgit-demo/.starkgit/objects/demo-commit"))) {
+        return false;
+    }
+
+    stack System.IO.IOResult<System.IO.File.File> opened =
+        System.IO.File.Open("starkgit-demo/.starkgit/refs/heads/main", System.IO.File.FileMode.Write);
+
+    switch (opened) {
+        case System.IO.IOResult<System.IO.File.File>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+            stack mut System.IO.File.File file = value;
+            if (!file.IsOpen()) {
+                return false;
+            }
+
+            file.WriteLine("demo-commit");
+            return file.Close() == System.IO.IOStatus.Ok;
+    }
+}
+
+export fn i32[min max] main() {
+    if (!WriteMainRef()) {
+        return 1;
+    }
+
+    if (System.Console.WriteLine("Updated main ref") != System.IO.IOStatus.Ok) {
+        return 2;
+    }
+
+    return 0;
+}

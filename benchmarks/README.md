@@ -78,7 +78,7 @@ benchmarks/text/OwnedTextAllocation,rust
 Useful environment variables:
 
 - `STARK_BENCH_RUNS`: measured executions per benchmark after one warmup run.
-  Defaults to `20`. Set it lower for quick smoke runs.
+  Defaults to `100`. Set it lower for quick smoke runs.
 - `STARK_BENCH_FILTER`: substring filter matched against benchmark file paths.
 - `STARK_BENCH_SUBSET`: PowerShell runner shortcut for targeted Windows
   investigations. Supported values are `allocator`, `console`, `directory`,

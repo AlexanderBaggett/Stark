@@ -1,0 +1,6 @@
+import Math
+module App
+
+export fn i32[min max] main() {
+    return Math.Add(3, 4);
+}

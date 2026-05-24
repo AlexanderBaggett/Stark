@@ -3,75 +3,101 @@ title = "Benchmarks"
 weight = 50
 +++
 
-Stark benchmarks currently live in the repository `benchmarks/` directory.
+Stark benchmarks live in the repository `benchmarks/` directory. The suite now
+contains 74 Stark benchmark sources across allocator, collections, console, IO,
+micro, network, runtime-buffer, text, and path workloads.
+
 Executable scenarios use same-stem Stark, C, and Rust sources so local runs can
-compare equivalent source-level work across languages.
+compare equivalent source-level work across languages:
+
+```text
+benchmarks/text/OwnedTextAllocation.stark
+benchmarks/text/OwnedTextAllocation.c
+benchmarks/text/OwnedTextAllocation.rs
+```
 
 The comparison contract lives in
 [`benchmarks/Fairness.md`](/reference/benchmarks/Fairness.md). It defines the
-initial fairness rules, default optimization levels, timing rules, and gap
-classification vocabulary for future C and Rust baselines.
+fairness rules, default optimization levels, timing rules, and gap
+classification vocabulary used when comparing Stark against C and Rust.
 
 ## Current Coverage
 
-### Microbenchmarks
+| Suite | Stark sources | Focus |
+| --- | ---: | --- |
+| allocator | 5 | heap-local reuse, reserve growth, reallocation, copy/fill/move helpers |
+| collections | 16 | list, stack, queue, linked-list, and dictionary workloads |
+| console | 2 | console writes plus compile-only read-surface coverage |
+| io | 3 | directory enumeration, buffered files, filesystem path transcoding |
+| micro | 27 | arithmetic, calls, branch facts, alias facts, scalar forwarding, inlining |
+| network | 2 | loopback TCP throughput and scatter/gather-style socket paths |
+| runtime | 2 | fixed and dynamic runtime buffers |
+| text | 17 | text allocation, formatting, parsing, paths, ASCII/Unicode conversion |
 
-- `micro/Arithmetic.stark` measures tight integer arithmetic with a runtime
-  process-id seed.
-- `micro/AbstractionHandWritten.stark`,
-  `micro/AbstractionLawWrapper.stark`, and
-  `micro/AbstractionGenericWrapper.stark` compare equivalent direct,
-  law-wrapper, and generic-wrapper scalar code.
-- `micro/AlgebraicIdentitySimplification.stark` measures integer arithmetic and
-  bitwise identity rewrites.
-- `micro/BitwiseRangePruning.stark` measures bitwise-derived range facts.
-- `micro/Branching.stark` measures nested `if` dispatch plus `switch` dispatch.
-- `micro/Calls.stark` measures repeated calls through a `noinline` helper.
-- `micro/DirectCallInlining.stark` measures a short `inline finite law`
-  wrapper chain that should disappear before LLVM lowering.
-- `micro/ExplicitArithmeticRangePruning.stark` measures range pruning for
-  explicit wrapping and saturating arithmetic operators.
-- `micro/FactDrivenBranchPruning.stark` measures branch and switch pruning from
-  propagated value facts.
-- `micro/FunctionPointerDevirtualization.stark` measures a known function
-  pointer call shape that should optimize to a direct call.
-- `micro/NullBranchPruning.stark` measures raw-pointer nullability facts from
-  branch edges.
-- `micro/TextLiteralLengthPruning.stark` measures branch pruning from exact
-  `ascii` and `unicode` literal length facts.
-- `micro/StackScalarLoadForwarding.stark` measures same-block forwarding for
-  non-escaping stack scalar locals.
-- `micro/MemoryAccess.stark` measures stack-array indexed load/store traffic.
+### Micro And Optimizer Probes
 
-### Allocator And Memory
+The `micro/` suite exercises small code shapes that are useful when changing
+MIR, SSA, LLVM emission, and optimization passes:
 
-- `allocator/HeapLocalBucketReuse.stark` exercises heap-local allocation and
-  scope cleanup through the default allocator buckets.
-- `allocator/SystemMemoryBucketReallocate.stark` checks bucket-backed
-  `System.Memory.Reallocate` behavior when storage can be reused in place.
-- `allocator/SystemMemoryFallbackReallocate.stark` checks the conservative
-  allocate-copy-free reallocation path when a value no longer fits the old
-  bucket.
+- Arithmetic and bit facts: `Arithmetic`, `AlgebraicIdentitySimplification`,
+  `BitwiseRangePruning`, and `ExplicitArithmeticRangePruning`.
+- Branch and switch facts: `Branching`, `BranchSelectPredication`,
+  `FactDrivenBranchPruning`, `NullBranchPruning`, and
+  `TextLiteralLengthPruning`.
+- Calls and abstraction costs: `Calls`, `DirectCallInlining`,
+  `FunctionPointerDevirtualization`, `AbstractionHandWritten`,
+  `AbstractionLawWrapper`, and `AbstractionGenericWrapper`.
+- Load/store and alias facts: `MemoryAccess`, `StackScalarLoadForwarding`,
+  `StackFieldLoadForwarding`, `StackNestedFieldForwarding`,
+  `StackFieldBranchForwarding`, `AggregatePhiFieldForwarding`,
+  `DeadStackFieldStore`, `ReadonlyOtherLocalFieldStore`,
+  `GlobalScalarLoadForwarding`, `PureCallGlobalForwarding`,
+  `IndependentSliceAdd`, and `IndependentRawPointerRegions`.
 
-### Collections
+### Allocator, Runtime, And Collections
 
-- `collections/ListGrowth.stark` grows and drains `System.Collections.List<T>`,
-  checking count, capacity, and push/pop behavior.
-- `collections/QueueGrowth.stark` exercises queue growth and FIFO removal over
-  the first owned collection implementation.
-- `collections/ListIteration.stark` exercises indexed list traversal over a
-  grown contiguous collection.
-- `collections/DictionaryLookup.stark` exercises integer-key dictionary setup
-  and repeated lookup.
+The allocator suite covers `HeapLocalBucketReuse`, `MemoryCopyFill`,
+`MemoryDynamicReserveGrowth`, `SystemMemoryBucketReallocate`, and
+`SystemMemoryFallbackReallocate`.
 
-### Text And Paths
+The runtime suite covers `RuntimeBufferFixed` and `RuntimeBufferDynamic`, with
+write/copy, fill, read/advance, compact, clear, and repeated-growth behavior.
 
-- `text/OwnedTextAllocation.stark` measures allocation-visible owned text
-  conversion and concatenation paths.
-- `text/OwnedPathAllocation.stark` measures owned path joining and path-view
-  inspection helpers.
-- `text/TextPathCallerBuffer.stark` is compile-only coverage for caller-owned
-  path buffers and low-level text conversion helpers.
+The collections suite covers the canonical `System.Collections` APIs:
+`ListGrowth`, `ListIteration`, `StackGrowth`, `QueueGrowth`, `QueueDequeue`,
+`QueueChurn`, `LinkedListPush`, `LinkedListReservedPush`,
+`LinkedListPopOnly`, `LinkedListBuildClear`, `LinkedListChurn`,
+`DictionaryInsert`, `DictionaryLookup`, `DictionaryUpdate`,
+`DictionaryRemove`, and `DictionaryMixed`.
+
+### Text, Paths, IO, Console, And Network
+
+Text and path benchmarks include owned text/path allocation, concatenation,
+formatting, parsing, path facts, path joins, normalization, repeated small path
+operations, ASCII-to-Unicode conversion, and widening kernels:
+`OwnedTextAllocation`, `OwnedPathAllocation`, `TextConcatCopy`,
+`ConstantIntegerFormatting`, `UnicodeFormatting`, `TextParsing`, `PathFacts`,
+`PathJoin`, `PathNormalize`, `PathQueries`, `PathRepeatedSmallOps`,
+`AsciiToUnicodeConversion`, `AsciiToUnicodeConversionRuntime`,
+`AsciiToUnicodeConversionTinyLiteral`,
+`AsciiToUnicodeLargeLiteralSpecialization`, and
+`AsciiToUnicodeWideningKernel`.
+
+IO and console coverage includes `DirectoryEnumeration`,
+`FileBufferedReadWrite`, `FileSystemPathTranscode`, `ConsoleWrites`, and the
+compile-only `ConsoleReadSurface` source. Network coverage includes
+`TcpLoopbackThroughput` and `TcpScatterGatherLoopback` through
+`System.Net.Tcp`.
+
+Two Stark sources are compile-only regression tests rather than executable
+timing benchmarks: `benchmarks/console/ConsoleReadSurface.stark` and
+`benchmarks/text/TextPathCallerBuffer.stark`. The executable runner skips them,
+while `BenchmarkSourceTests` still checks that they lower successfully.
+
+Rust benchmarks may also include same-stem variants named
+`<benchmark>.rust-<variant>.rs`. For example,
+`allocator/HeapLocalBucketReuse.rust-fixed-batch.rs` emits an additional
+`rust-fixed-batch` row when Rust rows are enabled.
 
 ## Running Locally
 
@@ -81,57 +107,96 @@ Use the repository benchmark harness:
 scripts/run-benchmarks.sh
 ```
 
-The harness compiles each executable benchmark for Stark, C, and Rust with the
-locked flags from `benchmarks/Fairness.md`, records executable size, runs one
-warmup execution per binary, then prints CSV timing rows and writes timestamped
-result files under `benchmarks/results/`:
+On Windows, use:
 
-```text
-benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us
+```powershell
+scripts\run-benchmarks.ps1
 ```
 
-Useful controls:
+Both runners compile executable Stark, C, and Rust benchmarks, perform one
+warmup execution per binary, and write timestamped CSV and machine metadata
+under `benchmarks/results/`.
 
-- `STARK_BENCH_RUNS=3` lowers the measured execution count for quick smoke runs.
-  The default is `50`.
-- `STARK_BENCH_FILTER=text` limits the run to paths containing a substring.
-- `STARK_BENCH_LANGUAGES=stark,c,rust` selects which language rows to run.
-- `STARK_TARGET=...` passes an LLVM target triple to the compiler.
-- `STARK_COMPILER_ARGS=...` adds compiler arguments for local experiments.
-- `STARK_BENCH_C_COMPILER=clang` selects the C compiler command.
-- `STARK_BENCH_RUST_COMPILER=rustc` selects the Rust compiler command.
-- `STARK_BENCH_OUTPUT_DIR=...` changes where timestamped CSV and machine
-  metadata files are written.
-- `STARK_BENCH_RESULTS_FILE=...` writes CSV to an explicit file.
-- `STARK_BENCH_MACHINE_FILE=...` writes host/toolchain metadata to an explicit
-  file.
-- `STARK_BENCH_BASELINE_FILE=...` compares the current run against a previous
-  CSV and fails if configured thresholds are exceeded.
-- `STARK_BENCH_REGRESSION_METRIC=binary_bytes` switches the baseline gate to
-  code-size checks; `compile_us` checks compile-time regressions, and
-  `llvm_object_us`, `link_us`, or `toolchain_us` check Stark LLVM/backend
-  regressions.
-- `STARK_BENCH_MIN_REGRESSION_DELTA=...` sets the minimum absolute metric delta
-  before a gate can fail.
-- `STARK_BENCH_MAX_STARK_TO_C_RATIO=...` and
-  `STARK_BENCH_MAX_STARK_TO_RUST_RATIO=...` enable same-run gates against C and
-  Rust rows.
+The Bash runner writes rows shaped like this:
 
-Benchmarks marked with `// stark-bench: compile-only` are codegen regression
-sources. The executable runner skips them, but `BenchmarkSourceTests` still
-checks that every benchmark source lowers successfully and does not fall back to
-direct `malloc`, `realloc`, or `free` declarations in generated LLVM IR.
+```text
+benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib,c_avg_ratio
+```
+
+The Windows PowerShell runner also records median runtime and C-median ratios:
+
+```text
+benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,median_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib,c_median_ratio,c_avg_ratio
+```
+
+Useful quick runs:
+
+```bash
+STARK_BENCH_FILTER=benchmarks/text scripts/run-benchmarks.sh
+STARK_BENCH_LANGUAGES=stark,c STARK_BENCH_RUNS=5 scripts/run-benchmarks.sh
+STARK_BENCH_CAPTURE_RSS=1 scripts/run-benchmarks.sh
+```
+
+Important controls:
+
+- `STARK_BENCH_RUNS`: measured executions after warmup. The default is `100`.
+- `STARK_BENCH_FILTER`: substring filter matched against benchmark file paths.
+- `STARK_BENCH_LANGUAGES`: comma-separated language list, default
+  `stark,c,rust`.
+- `STARK_BENCH_SUBSET`: PowerShell shortcut for targeted Windows runs:
+  `allocator`, `console`, `directory`, `file`, `socket`, `network`,
+  `windows-io`, or `windows-core`.
+- `STARK_BENCH_CAPTURE_RSS`: set to `1` to collect `peak_rss_kib`.
+- `STARK_TARGET` and `STARK_COMPILER_ARGS`: optional Stark target and extra
+  compiler arguments.
+- `STARK_BENCH_C_COMPILER` and `STARK_BENCH_RUST_COMPILER`: C and Rust compiler
+  commands.
+- `STARK_BENCH_OUTPUT_DIR`, `STARK_BENCH_RESULTS_FILE`, and
+  `STARK_BENCH_MACHINE_FILE`: result and metadata output controls.
+- `STARK_BENCH_BASELINE_FILE`, `STARK_BENCH_MAX_REGRESSION_PCT`,
+  `STARK_BENCH_REGRESSION_METRIC`, and `STARK_BENCH_MIN_REGRESSION_DELTA`:
+  same-language baseline gates.
+- `STARK_BENCH_MAX_STARK_TO_C_RATIO` and
+  `STARK_BENCH_MAX_STARK_TO_RUST_RATIO`: same-run gates against C and Rust rows.
+
+The locked default flags are:
+
+- Stark: `--emit-exe -O3`
+- C: `clang -O3 -DNDEBUG -std=c17`
+- Rust: `rustc -C opt-level=3 -C debug-assertions=no -C overflow-checks=no`
+
+More runner details are in
+[`benchmarks/README.md`](/reference/benchmarks/README.md).
+
+## Reading Results
+
+Compile time, link time, executable size, runtime, runtime spread, and peak RSS
+are separate signals. A fast payload with expensive linking is a different
+problem from a slow payload with a small binary.
+
+The C ratio columns divide each row by the same benchmark's C row. Lower than
+`1.0` is faster than the C baseline for that run, higher than `1.0` is slower,
+and a blank ratio means no same-benchmark C row was available. Treat high
+`runtime_spread_pct` as a warning that the run may be too noisy for a
+performance conclusion.
+
+For Windows standard-library investigations, prefer `median_us` and
+`c_median_ratio`. Use runtime-only mode with preserved binaries when linker or
+ThinLTO cost would otherwise hide the payload runtime.
 
 ## Publication Bar
 
-These numbers are useful for local compiler work, but they are not yet
-publication-quality performance claims. The formal benchmark suite still needs:
+These numbers are useful for local compiler and standard-library work, but they
+are not automatically publication-quality performance claims. Before publishing
+results, a benchmark needs equivalent C and Rust baselines, natural code for
+each language, validated observable output, recorded machine/toolchain
+metadata, and enough repeated measurement to understand variance.
 
-- IO, networking, and parser/text-processing benchmark families
-- variance reporting across repeated independent invocations
-- machine-specific baseline files and CI policy for which threshold gates are
-  required on release branches
+Remaining suite work is mostly about consolidation and confidence:
 
-Until that suite exists, treat this page as a map of what the repository
-exercises today, not as a claim that Stark is faster than C or Rust on these
-workloads.
+- Curate a smaller public result set from the larger development suite.
+- Add repeated independent invocations and variance summaries.
+- Pin machine-specific baselines and CI policies for release branches.
+- Review C and Rust baselines for every published scenario.
+- Keep Linux, Windows, and macOS coverage aligned where platform APIs differ.
+- Add benchmark narratives for representative workloads so ratios have context.

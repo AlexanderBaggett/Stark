@@ -1,0 +1,8 @@
+[project]
+name = "simple-database"
+version = "0.1.0"
+kind = "executable"
+
+[executable]
+root = "MemoryTable.stark"
+output = "memory-table"

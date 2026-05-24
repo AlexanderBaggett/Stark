@@ -1,0 +1,44 @@
+import System
+module BuildYourOwnGitCommit
+
+finite law bool IsOk(System.IO.IOStatus status) {
+    switch (status) {
+        case System.IO.IOStatus.Ok:
+            return true;
+        case System.IO.IOStatus.Err(var error):
+            return false;
+    }
+}
+
+fn bool WriteDemoCommitObject() {
+    stack System.IO.IOResult<System.IO.File.File> opened =
+        System.IO.File.Open("starkgit-demo/.starkgit/objects/demo-commit", System.IO.File.FileMode.Write);
+
+    switch (opened) {
+        case System.IO.IOResult<System.IO.File.File>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+            stack mut System.IO.File.File file = value;
+            if (!file.IsOpen()) {
+                return false;
+            }
+
+            file.WriteLine("tree empty");
+            file.WriteLine("author Stark Example");
+            file.WriteLine("");
+            file.WriteLine("initial commit");
+            return IsOk(file.Close());
+    }
+}
+
+export fn i32[min max] main() {
+    if (!WriteDemoCommitObject()) {
+        return 1;
+    }
+
+    if (System.Console.WriteLine("Wrote demo commit object") != System.IO.IOStatus.Ok) {
+        return 2;
+    }
+
+    return 0;
+}
