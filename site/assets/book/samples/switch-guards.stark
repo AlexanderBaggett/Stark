@@ -1,7 +1,9 @@
 module Book.SwitchGuards
 
-finite law i32[min max] Bucket(i32[min max] value) {
-    switch (value) {
+finite law i32[min max] Bucket(i32[min max] value)
+{
+    switch (value)
+    {
         case var captured when captured < 0:
             return -1;
         case 0:
@@ -13,20 +15,25 @@ finite law i32[min max] Bucket(i32[min max] value) {
     }
 }
 
-export fn i32[min max] main() {
-    if (Bucket(-3) != -1) {
+export fn i32[min max] main()
+{
+    if (Bucket(-3) != -1)
+    {
         return 1;
     }
 
-    if (Bucket(0) != 0) {
+    if (Bucket(0) != 0)
+    {
         return 2;
     }
 
-    if (Bucket(7) != 1) {
+    if (Bucket(7) != 1)
+    {
         return 3;
     }
 
-    if (Bucket(12) != 2) {
+    if (Bucket(12) != 2)
+    {
         return 4;
     }
 

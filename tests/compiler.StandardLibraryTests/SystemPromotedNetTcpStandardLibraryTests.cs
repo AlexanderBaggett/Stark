@@ -19,8 +19,10 @@ public sealed class SystemPromotedNetTcpStandardLibraryTests : StandardLibraryTe
                 import System.Net
                 module Demo
 
-                fn bool StatusOk(System.Net.NetStatus status) {
-                    switch (status) {
+                fn bool StatusOk(System.Net.NetStatus status)
+                {
+                    switch (status)
+                    {
                         case System.Net.NetStatus.Ok:
                             return true;
                         case System.Net.NetStatus.Err(var error):
@@ -28,8 +30,10 @@ public sealed class SystemPromotedNetTcpStandardLibraryTests : StandardLibraryTe
                     }
                 }
 
-                fn bool CountFailed(System.Net.NetResult<u64[0 2 ** 63 - 1]> result) {
-                    switch (result) {
+                fn bool CountFailed(System.Net.NetResult<u64[0 2 ** 63 - 1]> result)
+                {
+                    switch (result)
+                    {
                         case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var value):
                             return false;
                         case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
@@ -37,8 +41,10 @@ public sealed class SystemPromotedNetTcpStandardLibraryTests : StandardLibraryTe
                     }
                 }
 
-                fn bool ClientFailed(System.Net.NetResult<System.Net.Tcp.TcpClient> result) {
-                    switch (result) {
+                fn bool ClientFailed(System.Net.NetResult<System.Net.Tcp.TcpClient> result)
+                {
+                    switch (result)
+                    {
                         case System.Net.NetResult<System.Net.Tcp.TcpClient>.Ok(var value):
                             return false;
                         case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var error):
@@ -46,72 +52,97 @@ public sealed class SystemPromotedNetTcpStandardLibraryTests : StandardLibraryTe
                     }
                 }
 
-                fn i32[min max] RunClosedSurface() {
+                fn i32[min max] RunClosedSurface()
+                {
                     stack mut System.Net.Tcp.TcpClient client = new();
-                    stack mut i8[min max][4] rawBuffer = { 1, 2, 3, 4 };
-                    stack mut i8[min max][2] rawFirst = { 1, 2 };
-                    stack mut i8[min max][2] rawSecond = { 3, 4 };
+                    stack mut i8[min max][4] rawBuffer =
+                    {
+                        1, 2, 3, 4
+                    };
+                    stack mut i8[min max][2] rawFirst =
+                    {
+                        1, 2
+                    };
+                    stack mut i8[min max][2] rawSecond =
+                    {
+                        3, 4
+                    };
                     stack mut System.Runtime.Buffer.FixedByteBuffer512 fixedBuffer = new();
                     stack mut System.Runtime.Buffer.DynamicByteBuffer dynamicBuffer = new();
 
-                    if (client.IsOpen()) {
+                    if (client.IsOpen())
+                    {
                         return 1;
                     }
 
-                    if (!CountFailed(client.Read(rawBuffer))) {
+                    if (!CountFailed(client.Read(rawBuffer)))
+                    {
                         return 2;
                     }
 
-                    if (!CountFailed(client.Read(fixedBuffer))) {
+                    if (!CountFailed(client.Read(fixedBuffer)))
+                    {
                         return 3;
                     }
 
-                    if (!CountFailed(client.Read(dynamicBuffer, 4))) {
+                    if (!CountFailed(client.Read(dynamicBuffer, 4)))
+                    {
                         return 4;
                     }
 
-                    if (!CountFailed(client.Write(rawBuffer))) {
+                    if (!CountFailed(client.Write(rawBuffer)))
+                    {
                         return 5;
                     }
 
-                    if (!CountFailed(client.ReadVectored(rawFirst, rawSecond))) {
+                    if (!CountFailed(client.ReadVectored(rawFirst, rawSecond)))
+                    {
                         return 6;
                     }
 
-                    if (!CountFailed(client.WriteVectored(rawFirst, rawSecond))) {
+                    if (!CountFailed(client.WriteVectored(rawFirst, rawSecond)))
+                    {
                         return 7;
                     }
 
-                    if (!CountFailed(client.Write(fixedBuffer))) {
+                    if (!CountFailed(client.Write(fixedBuffer)))
+                    {
                         return 8;
                     }
 
-                    if (StatusOk(client.WaitReadable(0)) || StatusOk(client.WaitWritable(0))) {
+                    if (StatusOk(client.WaitReadable(0)) || StatusOk(client.WaitWritable(0)))
+                    {
                         return 9;
                     }
 
-                    if (StatusOk(client.Shutdown(System.Net.Tcp.TcpShutdown.Both))) {
+                    if (StatusOk(client.Shutdown(System.Net.Tcp.TcpShutdown.Both)))
+                    {
                         return 10;
                     }
 
-                    if (!StatusOk(client.Close())) {
+                    if (!StatusOk(client.Close()))
+                    {
                         return 11;
                     }
 
                     stack mut System.Net.Tcp.TcpListener listener = new();
-                    if (listener.IsOpen()) {
+                    if (listener.IsOpen())
+                    {
                         return 12;
                     }
 
-                    if (!ClientFailed(listener.Accept())) {
+                    if (!ClientFailed(listener.Accept()))
+                    {
                         return 13;
                     }
 
-                    if (StatusOk(listener.WaitReadable(0))) {
+                    if (StatusOk(listener.WaitReadable(0)))
+                    {
                         return 14;
                     }
 
-                    if (!StatusOk(listener.Close())) {
+                    if (!StatusOk(listener.Close()))
+                    {
                         return 15;
                     }
 
@@ -161,7 +192,7 @@ public sealed class SystemPromotedNetTcpStandardLibraryTests : StandardLibraryTe
         var fixedReads = string.Join(Environment.NewLine, [fixed512Read, fixed4096Read, fixed8192Read]);
 
         Assert.Contains("ptr noundef nonnull noalias nocapture dereferenceable(528) align 8 %arg_destination", fixed512Read, StringComparison.Ordinal);
-        Assert.Contains("System_Runtime_Platform_ReadSocket", fixedReads, StringComparison.Ordinal);
+        Assert.Contains("LinuxSyscall3HandleBuffer", fixedReads, StringComparison.Ordinal);
         Assert.Contains("System_Runtime_Platform_ReadSocketVector2", llvm, StringComparison.Ordinal);
         Assert.Contains("System_Runtime_Platform_WriteSocketVector2", llvm, StringComparison.Ordinal);
         Assert.Contains("FixedByteBuffer512_WriteSlice__mutborrowFixedByteBuffer512_", fixed512Read, StringComparison.Ordinal);
@@ -177,7 +208,7 @@ public sealed class SystemPromotedNetTcpStandardLibraryTests : StandardLibraryTe
         Assert.DoesNotContain("alloca [4096 x i8]", fixed4096Read, StringComparison.Ordinal);
         Assert.DoesNotContain("alloca [8192 x i8]", fixed8192Read, StringComparison.Ordinal);
 
-        Assert.Contains("System_Runtime_Platform_ReadSocket", dynamicRead, StringComparison.Ordinal);
+        Assert.Contains("LinuxSyscall3HandleBuffer", dynamicRead, StringComparison.Ordinal);
         Assert.Contains("DynamicByteBuffer_WriteSlice", dynamicRead, StringComparison.Ordinal);
         Assert.DoesNotContain("DynamicByteBuffer_WriteByte", dynamicRead, StringComparison.Ordinal);
 

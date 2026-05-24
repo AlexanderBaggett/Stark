@@ -1,25 +1,31 @@
 module Book.PackageSurface
 
-public struct Rectangle {
+public struct Rectangle
+{
     u16[0 1000] Width;
     u16[0 1000] Height;
 }
 
-internal finite law i32[min max] Multiply(u16[0 1000] left, u16[0 1000] right) {
+internal finite law i32[min max] Multiply(u16[0 1000] left, u16[0 1000] right)
+{
     return (i32[min max])left * (i32[min max])right;
 }
 
-public finite law i32[min max] Area(Rectangle rectangle) {
+public finite law i32[min max] Area(Rectangle rectangle)
+{
     return Multiply(rectangle.Width, rectangle.Height);
 }
 
-export fn i32[min max] main() {
-    stack Rectangle rectangle = new Rectangle() {
+export fn i32[min max] main()
+{
+    stack Rectangle rectangle = new Rectangle()
+    {
         Width = 6,
         Height = 7
     };
 
-    if (Area(rectangle) != 42) {
+    if (Area(rectangle) != 42)
+    {
         return 1;
     }
 

@@ -20,10 +20,14 @@ matching is how code reads that shape back out.
 An enum variant can be unit-like, tuple-like, or named-field:
 
 ```stark
-enum Token {
+enum Token
+{
     End,
     Integer(i32[min max]),
-    Move { X: i32[min max], Y: i32[min max] },
+    Move
+    {
+        X: i32[min max], Y: i32[min max]
+    },
 }
 ```
 
@@ -32,7 +36,10 @@ Construct variants through the enum name:
 ```stark
 Token.End
 Token.Integer(5)
-Token.Move { X: 2, Y: 3 }
+Token.Move
+{
+    X: 2, Y: 3
+}
 ```
 
 The enum is closed. Code that handles `Token` only needs to consider variants
@@ -43,12 +50,16 @@ declared on `Token`.
 Use `switch` to branch on enum shape:
 
 ```stark
-switch (token) {
+switch (token)
+{
     case Token.End:
         return 0;
     case Token.Integer(var value):
         return value;
-    case Token.Move { X: var x, Y: var y }:
+    case Token.Move
+    {
+        X: var x, Y: var y
+    }:
         return x + y;
 }
 ```
@@ -63,7 +74,8 @@ Patterns are not limited to enums. Stark switch cases also support literal
 patterns, discard patterns, captures, and guards:
 
 ```stark
-switch (value) {
+switch (value)
+{
     case 0:
         return false;
     case _:
@@ -92,18 +104,22 @@ discarding payloads, or checking a unit-like variant does not create hidden
 ownership magic.
 
 ```stark
-struct Box {
+struct Box
+{
     i32[min max] Value;
 }
 
-enum Packet {
+enum Packet
+{
     Empty,
     Boxed(Box),
     Count(i32[min max]),
 }
 
-fn i32[min max] ConsumePacket(Packet packet) {
-    switch (packet) {
+fn i32[min max] ConsumePacket(Packet packet)
+{
+    switch (packet)
+    {
         case Packet.Empty:
             return 0;
         case Packet.Boxed(var box):

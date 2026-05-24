@@ -1,14 +1,17 @@
 module Book.Negative.FrozenWrite
 
-struct Box {
+struct Box
+{
     i32[min max] Value;
 }
 
-fn void WriteFrozen(frozen Box box) {
+fn void WriteFrozen(frozen Box box)
+{
     box.Value = 3;
     return;
 }
 
-export fn i32[min max] main() {
+export fn i32[min max] main()
+{
     return 0;
 }

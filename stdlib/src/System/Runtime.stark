@@ -2,12 +2,14 @@ import System.Runtime.Buffer
 import System.Runtime.Platform
 module System.Runtime
 
-internal struct ByteSliceParts {
+internal struct ByteSliceParts
+{
     rawptr<i8[min max]> Data;
     u64[0 2 ** 63 - 1] Length;
 }
 
-internal struct MutableByteSliceParts {
+internal struct MutableByteSliceParts
+{
     rawmutptr<i8[min max]> Data;
     u64[0 2 ** 63 - 1] Length;
 }

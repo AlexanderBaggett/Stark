@@ -16,7 +16,10 @@ root so normal programs do not pick up test helper names by default.
 ## Surface
 
 ```stark
-public enum TestStatus { Passed, Failed }
+public enum TestStatus
+{
+    Passed, Failed
+}
 
 public fn bool True(bool condition);
 public fn bool False(bool condition);
@@ -52,13 +55,16 @@ import System.Testing
 module DemoTests
 
 [Fact]
-fn bool AddsNumbers() {
+fn bool AddsNumbers()
+{
     return System.Testing.Equal(4, 2 + 2);
 }
 
-export fn i32[min max] main() {
+export fn i32[min max] main()
+{
     stack mut u8[0 1] failed = 0;
-    if (System.Testing.RunFact("AddsNumbers", AddsNumbers()) != 0) {
+    if (System.Testing.RunFact("AddsNumbers", AddsNumbers()) != 0)
+    {
         failed = 1;
     }
 

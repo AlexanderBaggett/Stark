@@ -9,43 +9,53 @@ public sealed class LoweringContractValidationTests
 
         public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
 
-        enum Status {
+        enum Status
+        {
             Ok,
             Err(i32[min max]),
         }
 
-        struct Box {
+        struct Box
+        {
             i32[min max] Value;
 
-            fn i32[min max] Get(borrow Box self) {
+            fn i32[min max] Get(borrow Box self)
+            {
                 return self.Value;
             }
 
-            fn bool Fill(borrow Box self, out i32[min max] value) {
+            fn bool Fill(borrow Box self, out i32[min max] value)
+            {
                 value = self.Value;
                 return true;
             }
         }
 
-        fn i32[min max] Inc(i32[min max] value) {
+        fn i32[min max] Inc(i32[min max] value)
+        {
             return value + 1;
         }
 
-        unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value) {
+        unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value)
+        {
             return op(value);
         }
 
-        fn bool Write(out i32[min max] value) {
+        fn bool Write(out i32[min max] value)
+        {
             value = 9;
             return true;
         }
 
-        unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value) {
+        unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value)
+        {
             return op(value);
         }
 
-        fn i32[min max] Choose(bool flag) {
-            switch (flag) {
+        fn i32[min max] Choose(bool flag)
+        {
+            switch (flag)
+            {
                 case true:
                     return 1;
                 case false:
@@ -53,8 +63,10 @@ public sealed class LoweringContractValidationTests
             }
         }
 
-        fn i32[min max] Score(Status status) {
-            switch (status) {
+        fn i32[min max] Score(Status status)
+        {
+            switch (status)
+            {
                 case Status.Ok:
                     return 1;
                 case Status.Err(var error):
@@ -62,9 +74,16 @@ public sealed class LoweringContractValidationTests
             }
         }
 
-        unsafe fn i32[min max] Run() {
-            stack mut Box box = new Box() { Value = 3 };
-            stack mut i32[min max][2] values = { 4, 5 };
+        unsafe fn i32[min max] Run()
+        {
+            stack mut Box box = new Box()
+            {
+                Value = 3
+            };
+            stack mut i32[min max][2] values =
+            {
+                4, 5
+            };
             stack fnptr<fn i32[min max](i32[min max])> lambda = (i32[min max] value) => Inc(value);
             stack closure<finite law i32[min max](i32[min max])> closureOp =
                 (i32[min max] value) => value + 6;
@@ -75,10 +94,12 @@ public sealed class LoweringContractValidationTests
             stack Ascii joined[12] = label + "!";
             values[0] = Inc(box.Get());
             items.Reserve(1);
-            if (!box.Fill(values[1])) {
+            if (!box.Fill(values[1]))
+            {
                 return 0;
             }
-            if (!ApplyOut(Write, values[1])) {
+            if (!ApplyOut(Write, values[1]))
+            {
                 return 0;
             }
             return values[0] + values[1] + Apply(Inc, 2) + Apply(lambda, 3) + closureOp(6) + Choose(true) + Score(Status.Err(4));

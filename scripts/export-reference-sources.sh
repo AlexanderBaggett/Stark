@@ -171,6 +171,7 @@ for source in \
     "${REPOSITORY_ROOT}/docs/StandardLibrary/System.Threading.md" \
     "${REPOSITORY_ROOT}/docs/StandardLibrary/System.Net.md" \
     "${REPOSITORY_ROOT}/docs/StandardLibrary/System.Net.Tcp.md" \
+    "${REPOSITORY_ROOT}/docs/StandardLibrary/System.Runtime.Buffer.md" \
     "${REPOSITORY_ROOT}/docs/StandardLibrary/System.Math.md" \
     "${REPOSITORY_ROOT}/docs/StandardLibrary/System.Testing.md" \
     "${REPOSITORY_ROOT}/docs/StandardLibrary/System.Process.md"; do

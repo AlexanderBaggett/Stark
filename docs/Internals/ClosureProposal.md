@@ -99,7 +99,8 @@ Capture is never implicit. A lambda body can use only:
 The capture clause is:
 
 ```stark
-capture(copy scale, read table) (u64[0 max] index) => {
+capture(copy scale, read table) (u64[0 max] index) =>
+{
     return table[index] * scale;
 }
 ```
@@ -135,27 +136,33 @@ callee to specialize for the closure body and capture facts.
 ```stark
 module Demo
 
-struct Ui {
-    fn void Label(mut borrow Ui self, ascii text) {
+struct Ui
+{
+    fn void Label(mut borrow Ui self, ascii text)
+    {
         return;
     }
 
-    fn void TextEdit(mut borrow Ui self, mut borrow ascii text) {
+    fn void TextEdit(mut borrow Ui self, mut borrow ascii text)
+    {
         return;
     }
 }
 
 inline fn void Horizontal(
     mut borrow Ui ui,
-    inline closure<fn void(mut borrow Ui)> body) {
+    inline closure<fn void(mut borrow Ui)> body)
+{
     body(ui);
     return;
 }
 
-fn void Draw(mut borrow Ui ui, mut borrow ascii name) {
+fn void Draw(mut borrow Ui ui, mut borrow ascii name)
+{
     Horizontal(
         ui,
-        capture(mut name) (mut borrow Ui row) => {
+        capture(mut name) (mut borrow Ui row) =>
+        {
             row.Label("Name");
             row.TextEdit(name);
             return;
@@ -169,7 +176,8 @@ The compiler specializes `Horizontal` for the lambda body. The optimized result
 is equivalent to a direct block:
 
 ```stark
-fn void Draw(mut borrow Ui ui, mut borrow ascii name) {
+fn void Draw(mut borrow Ui ui, mut borrow ascii name)
+{
     ui.Label("Name");
     ui.TextEdit(name);
     return;
@@ -188,7 +196,8 @@ operation:
 inline fn void Window(
     mut borrow Ui ui,
     ascii title,
-    inline closure<fn void(mut borrow Ui)> body) {
+    inline closure<fn void(mut borrow Ui)> body)
+{
     ui.BeginWindow(title);
     body(ui);
     ui.EndWindow();
@@ -198,24 +207,28 @@ inline fn void Window(
 inline fn void DisabledIf(
     mut borrow Ui ui,
     bool disabled,
-    inline closure<fn void(mut borrow Ui)> body) {
+    inline closure<fn void(mut borrow Ui)> body)
+{
     ui.PushDisabled(disabled);
     body(ui);
     ui.PopDisabled();
     return;
 }
 
-fn void DrawSettings(mut borrow Ui ui, mut borrow Settings settings) {
+fn void DrawSettings(mut borrow Ui ui, mut borrow Settings settings)
+{
     Window(
         ui,
         "Settings",
-        capture(mut settings) (mut borrow Ui panel) => {
+        capture(mut settings) (mut borrow Ui panel) =>
+        {
             panel.Checkbox(settings.Enabled, "Enabled");
 
             DisabledIf(
                 panel,
                 !settings.Enabled,
-                capture(mut settings) (mut borrow Ui inner) => {
+                capture(mut settings) (mut borrow Ui inner) =>
+                {
                     inner.Slider(settings.Volume, 0, 100);
                     return;
                 });
@@ -266,20 +279,24 @@ captured `mut`, `out`, or `init` state:
 ```stark
 inline fn void Repeat(
     u64[0 max] count,
-    inline closure<mut fn void(u64[0 max])> body) {
-    for willexit (stack mut u64[0 max] index = 0; index < count; index += 1) {
+    inline closure<mut fn void(u64[0 max])> body)
+{
+    for willexit (stack mut u64[0 max] index = 0; index < count; index += 1)
+    {
         body(index);
     }
 
     return;
 }
 
-fn i32[min max] Count4() {
+fn i32[min max] Count4()
+{
     stack mut i32[min max] total = 0;
 
     Repeat(
         4,
-        capture(mut total) (u64[0 max] index) => {
+        capture(mut total) (u64[0 max] index) =>
+        {
             total += 1;
             return;
         });
@@ -293,7 +310,8 @@ most once. If the body is invoked, the closure environment is consumed:
 
 ```stark
 inline fn Packet BuildWith(
-    inline closure<once fn Packet()> producer) {
+    inline closure<once fn Packet()> producer)
+{
     return producer();
 }
 ```
@@ -310,29 +328,35 @@ but it is not stored for later.
 ```stark
 module Demo
 
-struct Ui {
-    fn void BeginGroup(mut borrow Ui self) {
+struct Ui
+{
+    fn void BeginGroup(mut borrow Ui self)
+    {
         return;
     }
 
-    fn void EndGroup(mut borrow Ui self) {
+    fn void EndGroup(mut borrow Ui self)
+    {
         return;
     }
 }
 
 fn void WithGroup(
     mut borrow Ui ui,
-    borrow closure<fn void(mut borrow Ui)> body) {
+    borrow closure<fn void(mut borrow Ui)> body)
+{
     ui.BeginGroup();
     body(ui);
     ui.EndGroup();
     return;
 }
 
-fn void Draw(mut borrow Ui ui, mut borrow Settings settings) {
+fn void Draw(mut borrow Ui ui, mut borrow Settings settings)
+{
     WithGroup(
         ui,
-        capture(mut settings) (mut borrow Ui group) => {
+        capture(mut settings) (mut borrow Ui group) =>
+        {
             group.Checkbox(settings.Enabled, "Enabled");
             return;
         });
@@ -378,16 +402,19 @@ module Demo
 
 fn void PushEvent(
     mut borrow closure<mut fn void(i32[min max])> sink,
-    i32[min max] value) {
+    i32[min max] value)
+{
     sink(value);
     return;
 }
 
-fn i32[min max] Run() {
+fn i32[min max] Run()
+{
     stack mut i32[min max] total = 0;
 
     stack mut closure<mut fn void(i32[min max])> add =
-        capture(mut total) (i32[min max] value) => {
+        capture(mut total) (i32[min max] value) =>
+        {
             total += value;
             return;
         };
@@ -461,12 +488,15 @@ commands, timers, and callbacks returned from factories.
 ```stark
 module Demo
 
-struct Button {
+struct Button
+{
     heap closure<fn void()> OnClick;
 }
 
-fn void Configure(mut borrow Button button, Command command) {
-    button.OnClick = heap capture(move command) () => {
+fn void Configure(mut borrow Button button, Command command)
+{
+    button.OnClick = heap capture(move command) () =>
+    {
         command.Execute();
         return;
     };
@@ -483,11 +513,13 @@ current call and requires heap storage.
 ```stark
 module Demo
 
-fn heap closure<fn i32[min max](i32[min max])> MakeAdder(i32[min max] offset) {
+fn heap closure<fn i32[min max](i32[min max])> MakeAdder(i32[min max] offset)
+{
     return heap capture(copy offset) (i32[min max] value) => value + offset;
 }
 
-fn i32[min max] Run() {
+fn i32[min max] Run()
+{
     heap closure<fn i32[min max](i32[min max])> addTen = MakeAdder(10);
     return addTen(5);
 }
@@ -511,7 +543,8 @@ Heap closures do not capture ordinary stack borrows by default. The following
 is rejected:
 
 ```stark
-fn heap closure<fn i32[min max]()> Bad() {
+fn heap closure<fn i32[min max]()> Bad()
+{
     stack i32[min max] value = 7;
 
     return heap capture(read value) () => value;
@@ -521,7 +554,8 @@ fn heap closure<fn i32[min max]()> Bad() {
 The fix is to copy or move data into the heap closure environment:
 
 ```stark
-fn heap closure<fn i32[min max]()> Good() {
+fn heap closure<fn i32[min max]()> Good()
+{
     stack i32[min max] value = 7;
 
     return heap capture(copy value) () => value;
@@ -533,10 +567,12 @@ mutable borrow into heap storage is rejected because the local does not live as
 long as the heap closure:
 
 ```stark
-fn heap closure<mut fn void(i32[min max])> BadCounter() {
+fn heap closure<mut fn void(i32[min max])> BadCounter()
+{
     stack mut i32[min max] total = 0;
 
-    return heap capture(mut total) (i32[min max] value) => {
+    return heap capture(mut total) (i32[min max] value) =>
+    {
         total += value;
         return;
     };
@@ -546,16 +582,20 @@ fn heap closure<mut fn void(i32[min max])> BadCounter() {
 The valid version moves an owned state object into the environment:
 
 ```stark
-struct Counter {
+struct Counter
+{
     i32[min max] Total;
 }
 
-fn heap closure<mut fn void(i32[min max])> MakeCounter() {
-    heap Counter counter = new Counter() {
+fn heap closure<mut fn void(i32[min max])> MakeCounter()
+{
+    heap Counter counter = new Counter()
+    {
         Total = 0
     };
 
-    return heap capture(move counter) (i32[min max] value) => {
+    return heap capture(move counter) (i32[min max] value) =>
+    {
         counter.Total += value;
         return;
     };
@@ -569,14 +609,17 @@ environment. Dropping the closure drops the environment and any captured owned
 values.
 
 ```stark
-fn void Register(heap closure<fn void()> callback) {
+fn void Register(heap closure<fn void()> callback)
+{
     callback();
     return;
 }
 
-fn void Run(Command command) {
+fn void Run(Command command)
+{
     heap closure<fn void()> callback =
-        heap capture(move command) () => {
+        heap capture(move command) () =>
+        {
             command.Execute();
             return;
         };
@@ -592,21 +635,26 @@ fn void Run(Command command) {
 A heap `closure<once ...>` is consumed by invocation:
 
 ```stark
-struct Packet {
+struct Packet
+{
     i32[min max] Code;
 }
 
-fn Packet RunOnce(heap closure<once fn Packet()> producer) {
+fn Packet RunOnce(heap closure<once fn Packet()> producer)
+{
     return producer();
 }
 
-fn Packet Build() {
-    heap Packet packet = new Packet() {
+fn Packet Build()
+{
+    heap Packet packet = new Packet()
+    {
         Code = 42
     };
 
     heap closure<once fn Packet()> producer =
-        heap capture(move packet) () => {
+        heap capture(move packet) () =>
+        {
             return packet;
         };
 

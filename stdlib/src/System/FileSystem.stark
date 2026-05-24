@@ -6,40 +6,47 @@ import System.Runtime.Platform
 import System.Runtime.Buffer
 module System.FileSystem
 
-public enum FileSystemEntryKind {
+public enum FileSystemEntryKind
+{
     File,
     Directory,
     Symlink,
     Other,
 }
 
-public struct FileSystemEntry {
+public struct FileSystemEntry
+{
     System.Text.OwnedAscii Name;
     FileSystemEntryKind Kind;
 
-    finite ascii NameView(mut borrow FileSystemEntry self) {
+    finite ascii NameView(mut borrow FileSystemEntry self)
+    {
         return self.Name.View();
     }
 }
 
-public struct FileSystemEntryInfo {
+public struct FileSystemEntryInfo
+{
     u64[0 2 ** 63 - 1] NameLength;
     FileSystemEntryKind Kind;
 }
 
-public enum DirectoryReadResult {
+public enum DirectoryReadResult
+{
     Entry(FileSystemEntry),
     End,
     Err(System.IO.IOError),
 }
 
-public enum DirectoryReadInfoResult {
+public enum DirectoryReadInfoResult
+{
     Entry(FileSystemEntryInfo),
     End,
     Err(System.IO.IOError),
 }
 
-public struct Directory {
+public struct Directory
+{
     internal rawptr<i8[min max]> Handle;
     internal bool Closed;
     internal i64[min max] BufferReadPos;
@@ -47,13 +54,17 @@ public struct Directory {
     internal u64[0 2 ** 63 - 1] BufferCapacity;
     internal System.Runtime.Buffer.FixedByteBuffer8192 Buffer;
 
-    finite law bool IsOpen(borrow Directory self) {
+    finite law bool IsOpen(borrow Directory self)
+    {
         return !self.Closed;
     }
 
-    inline fn System.IO.IOStatus Close(mut borrow Directory self) {
-        unsafe {
-            if (self.Closed || self.Handle == null) {
+    inline fn System.IO.IOStatus Close(mut borrow Directory self)
+    {
+        unsafe
+        {
+            if (self.Closed || self.Handle == null)
+            {
                 self.Handle = null;
                 self.Closed = true;
                 self.BufferReadPos = 0;
@@ -78,19 +89,23 @@ public struct Directory {
         rawmutptr<i64[min max]> nameLength,
         rawmutptr<i32[min max]> kindCode)
     {
-        unsafe {
-            if (nameLength == null || kindCode == null) {
+        unsafe
+        {
+            if (nameLength == null || kindCode == null)
+            {
                 return -1;
             }
 
-            if (self.Closed || self.Handle == null) {
+            if (self.Closed || self.Handle == null)
+            {
                 *nameLength = -2;
                 *kindCode = -1;
                 return -1;
             }
 
             stack rawmutptr<i8[min max]> buffer = self.Buffer.WritePointer();
-            if (buffer == null || self.BufferCapacity == 0 || self.BufferCapacity > self.Buffer.Capacity()) {
+            if (buffer == null || self.BufferCapacity == 0 || self.BufferCapacity > self.Buffer.Capacity())
+            {
                 *nameLength = -2;
                 *kindCode = -36;
                 return -36;
@@ -111,17 +126,21 @@ public struct Directory {
         mut borrow Directory self,
         i64[min max] expectedCount)
     {
-        unsafe {
-            if (expectedCount < 0) {
+        unsafe
+        {
+            if (expectedCount < 0)
+            {
                 return -1;
             }
 
-            if (self.Closed || self.Handle == null) {
+            if (self.Closed || self.Handle == null)
+            {
                 return -1;
             }
 
             stack rawmutptr<i8[min max]> buffer = &self.Buffer.Storage[0];
-            if (self.BufferCapacity == 0 || self.BufferCapacity > (u64[0 2 ** 63 - 1])8192) {
+            if (self.BufferCapacity == 0 || self.BufferCapacity > (u64[0 2 ** 63 - 1])8192)
+            {
                 return -1;
             }
 
@@ -135,8 +154,10 @@ public struct Directory {
         }
     }
 
-    fn DirectoryReadInfoResult ReadNextInfo(mut borrow Directory self) {
-        unsafe {
+    fn DirectoryReadInfoResult ReadNextInfo(mut borrow Directory self)
+    {
+        unsafe
+        {
             stack mut i64[min max] nameLength = 0;
             stack mut i32[min max] kindCode = 0;
             self.ReadNextInfoRaw(&nameLength, &kindCode);
@@ -144,25 +165,31 @@ public struct Directory {
         }
     }
 
-    fn DirectoryReadResult ReadNext(mut borrow Directory self) {
-        unsafe {
-            if (self.Closed || self.Handle == null) {
+    fn DirectoryReadResult ReadNext(mut borrow Directory self)
+    {
+        unsafe
+        {
+            if (self.Closed || self.Handle == null)
+            {
                 return DirectoryReadResult.Err(System.IO.IOError.Unknown(-1));
             }
 
             stack rawmutptr<i8[min max]> buffer = self.Buffer.WritePointer();
-            if (buffer == null || self.BufferCapacity == 0 || self.BufferCapacity > self.Buffer.Capacity()) {
+            if (buffer == null || self.BufferCapacity == 0 || self.BufferCapacity > self.Buffer.Capacity())
+            {
                 return DirectoryReadResult.Err(System.IO.IOError.InvalidPath);
             }
 
             stack mut i8[min max][256] nameStorage;
-            stack mut Ascii name = new Ascii() {
+            stack mut Ascii name = new Ascii()
+            {
                 Data = &nameStorage[0],
                 Length = 0,
                 Capacity = 256
             };
             stack mut i32[min max] kindCode = 0;
-            unsafe {
+            unsafe
+            {
                 System.Runtime.Platform.ReadDirectoryEntry(
                     self.Handle,
                     buffer,
@@ -177,57 +204,71 @@ public struct Directory {
         }
     }
 
-    mut drop {
+    mut drop
+    {
         self.Close();
     }
 }
 
-fn System.IO.IOError IOErrorFromPlatformResult(i32[min max] result) {
-    if (result == -2 || result == -3 || result == -20) {
+fn System.IO.IOError IOErrorFromPlatformResult(i32[min max] result)
+{
+    if (result == -2 || result == -3 || result == -20)
+    {
         return System.IO.IOError.NotFound;
     }
 
-    if (result == -5 || result == -13) {
+    if (result == -5 || result == -13)
+    {
         return System.IO.IOError.PermissionDenied;
     }
 
-    if (result == -17 || result == -183) {
+    if (result == -17 || result == -183)
+    {
         return System.IO.IOError.AlreadyExists;
     }
 
-    if (result == -28 || result == -112) {
+    if (result == -28 || result == -112)
+    {
         return System.IO.IOError.DiskFull;
     }
 
-    if (result == -32) {
+    if (result == -32)
+    {
         return System.IO.IOError.BrokenPipe;
     }
 
-    if (result == -36 || result == -206) {
+    if (result == -36 || result == -206)
+    {
         return System.IO.IOError.InvalidPath;
     }
 
     return System.IO.IOError.Unknown(result);
 }
 
-fn System.IO.IOStatus StatusFromPlatformResult(i32[min max] result) {
-    if (result < 0) {
+fn System.IO.IOStatus StatusFromPlatformResult(i32[min max] result)
+{
+    if (result < 0)
+    {
         return System.IO.IOStatus.Err(IOErrorFromPlatformResult(result));
     }
 
     return System.IO.IOStatus.Ok;
 }
 
-fn FileSystemEntryKind FileSystemEntryKindFromPlatformKind(i32[min max] kindCode) {
-    if (kindCode == 1) {
+fn FileSystemEntryKind FileSystemEntryKindFromPlatformKind(i32[min max] kindCode)
+{
+    if (kindCode == 1)
+    {
         return FileSystemEntryKind.File;
     }
 
-    if (kindCode == 2) {
+    if (kindCode == 2)
+    {
         return FileSystemEntryKind.Directory;
     }
 
-    if (kindCode == 3) {
+    if (kindCode == 3)
+    {
         return FileSystemEntryKind.Symlink;
     }
 
@@ -238,15 +279,18 @@ fn DirectoryReadInfoResult DirectoryReadInfoResultFromPlatformInfo(
     i64[min max] nameLength,
     i32[min max] kindCode)
 {
-    if (nameLength == -1) {
+    if (nameLength == -1)
+    {
         return DirectoryReadInfoResult.End;
     }
 
-    if (nameLength < 0) {
+    if (nameLength < 0)
+    {
         return DirectoryReadInfoResult.Err(IOErrorFromPlatformResult(kindCode));
     }
 
-    stack FileSystemEntryInfo entry = new FileSystemEntryInfo() {
+    stack FileSystemEntryInfo entry = new FileSystemEntryInfo()
+    {
         NameLength = (u64[0 2 ** 63 - 1])nameLength,
         Kind = FileSystemEntryKindFromPlatformKind(kindCode)
     };
@@ -257,62 +301,74 @@ fn DirectoryReadResult DirectoryReadResultFromPlatformResult(
     Ascii name,
     i32[min max] kindCode)
 {
-    if (name.Length == -1) {
+    if (name.Length == -1)
+    {
         return DirectoryReadResult.End;
     }
 
-    if (name.Length < 0) {
+    if (name.Length < 0)
+    {
         return DirectoryReadResult.Err(IOErrorFromPlatformResult(kindCode));
     }
 
     stack FileSystemEntryKind kind = FileSystemEntryKindFromPlatformKind(kindCode);
 
-    if (name.Length < 0 || name.Length > name.Capacity) {
+    if (name.Length < 0 || name.Length > name.Capacity)
+    {
         return DirectoryReadResult.Err(System.IO.IOError.InvalidPath);
     }
 
     stack mut System.Text.OwnedAscii entryName = new();
     stack System.Memory.MemoryStatus status = entryName.AppendAsciiDisjoint(System.Text.AsciiView(name));
-    switch (status) {
+    switch (status)
+    {
         case System.Memory.MemoryStatus.Err(var error):
             return DirectoryReadResult.Err(System.IO.IOError.Unknown(-1));
         case System.Memory.MemoryStatus.Ok:
     }
 
-    stack FileSystemEntry entry = new FileSystemEntry() {
+    stack FileSystemEntry entry = new FileSystemEntry()
+    {
         Name = entryName,
         Kind = kind
     };
     return DirectoryReadResult.Entry(entry);
 }
 
-fn System.IO.IOResult<Directory> OpenDirectoryWithPlatform(ascii path) {
-    unsafe {
+fn System.IO.IOResult<Directory> OpenDirectoryWithPlatform(ascii path)
+{
+    unsafe
+    {
         stack mut System.Runtime.Buffer.FixedByteBuffer8192 bufferStorage = new();
         stack u64[0 2 ** 63 - 1] bufferCapacity = System.Runtime.Platform.DirectoryBufferCapacity();
-        if (bufferCapacity == 0 || bufferCapacity > bufferStorage.Capacity()) {
+        if (bufferCapacity == 0 || bufferCapacity > bufferStorage.Capacity())
+        {
             return System.IO.IOResult<Directory>.Err(System.IO.IOError.InvalidPath);
         }
 
         stack rawmutptr<i8[min max]> buffer = bufferStorage.WritePointer();
-        if (buffer == null) {
+        if (buffer == null)
+        {
             return System.IO.IOResult<Directory>.Err(System.IO.IOError.InvalidPath);
         }
 
         stack mut i64[min max] initialLength = 0;
         stack mut rawptr<i8[min max]> handle = null;
-        unsafe {
+        unsafe
+        {
             handle = System.Runtime.Platform.OpenDirectoryFastInto(
                 path,
                 buffer,
                 bufferCapacity,
                 &initialLength);
         }
-        if (handle == null) {
+        if (handle == null)
+        {
             return System.IO.IOResult<Directory>.Err(System.IO.IOError.Unknown(-1));
         }
 
-        stack Directory directory = new Directory() {
+        stack Directory directory = new Directory()
+        {
             Handle = handle,
             Closed = false,
             BufferReadPos = 0,
@@ -324,30 +380,37 @@ fn System.IO.IOResult<Directory> OpenDirectoryWithPlatform(ascii path) {
     }
 }
 
-public fn System.IO.IOStatus CreateDirectory(ascii path) {
+public fn System.IO.IOStatus CreateDirectory(ascii path)
+{
     return StatusFromPlatformResult(System.Runtime.Platform.CreateDirectory(path));
 }
 
-public fn System.IO.IOStatus DeleteDirectory(ascii path) {
+public fn System.IO.IOStatus DeleteDirectory(ascii path)
+{
     return StatusFromPlatformResult(System.Runtime.Platform.DeleteDirectory(path));
 }
 
-public fn System.IO.IOResult<Directory> OpenDirectory(ascii path) {
+public fn System.IO.IOResult<Directory> OpenDirectory(ascii path)
+{
     return OpenDirectoryWithPlatform(path);
 }
 
-public fn System.IO.IOResult<bool> Exists(ascii path) {
+public fn System.IO.IOResult<bool> Exists(ascii path)
+{
     return System.IO.IOResult<bool>.Ok(System.Runtime.Platform.PathExists(path));
 }
 
-public fn System.IO.IOResult<bool> IsFile(ascii path) {
+public fn System.IO.IOResult<bool> IsFile(ascii path)
+{
     return System.IO.IOResult<bool>.Ok(System.Runtime.Platform.IsFile(path));
 }
 
-public fn System.IO.IOResult<bool> IsDirectory(ascii path) {
+public fn System.IO.IOResult<bool> IsDirectory(ascii path)
+{
     return System.IO.IOResult<bool>.Ok(System.Runtime.Platform.IsDirectory(path));
 }
 
-public fn System.IO.IOStatus Move(ascii oldPath, ascii newPath) {
+public fn System.IO.IOStatus Move(ascii oldPath, ascii newPath)
+{
     return StatusFromPlatformResult(System.Runtime.Platform.MoveFile(oldPath, newPath));
 }

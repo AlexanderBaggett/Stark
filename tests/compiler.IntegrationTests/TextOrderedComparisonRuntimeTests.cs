@@ -16,8 +16,12 @@ public sealed class TextOrderedComparisonRuntimeTests
             """
             module Demo
 
-            export unsafe fn i32[min max] main() {
-                stack i32[min max][3] values = { 1, 2, 3 };
+            export unsafe fn i32[min max] main()
+            {
+                stack i32[min max][3] values =
+                {
+                    1, 2, 3
+                };
                 stack rawptr<i32[min max]> p0 = (rawptr<i32[min max]>)(&values[0]);
                 stack rawptr<i32[min max]> p1 = (rawptr<i32[min max]>)(&values[1]);
 
@@ -34,8 +38,9 @@ public sealed class TextOrderedComparisonRuntimeTests
                     && ((unicode)"cafe") < ((unicode)"caf\u00E9")
                     && ((unicode)"caf\u00E9") > ((unicode)"cafe")
                     && ((unicode)"cafe")[0, 3] <= ((unicode)"cafg")[0, 3]
-                    && ((unicode)"cafg")[0, 3] >= ((unicode)"cafe")[0, 3]) {
-                    return 7;
+                    && ((unicode)"cafg")[0, 3] >= ((unicode)"cafe")[0, 3])
+                    {
+                        return 7;
                 }
 
                 return 0;

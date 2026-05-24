@@ -613,14 +613,19 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private bool CanDeferAddressForwardedAggregateValueInstruction(SsaValueInstruction instruction)
     {
-        if (!ShouldPreferAddressBasedAggregateLowering(instruction.Value.Type)
-            || TryGetConcreteTypeLayout(NormalizeAggregateType(instruction.Value.Type)) is not { SizeBytes: > AggregateMemcpyThresholdBytes }
-            || RequiresAggregateValueMaterialization(instruction.ResultName, instruction.Value.Type))
+        return CanDeferAddressForwardedAggregateValueInstruction(instruction.ResultName, instruction.Value);
+    }
+
+    private bool CanDeferAddressForwardedAggregateValueInstruction(string resultName, SsaRValue value)
+    {
+        if (!ShouldPreferAddressBasedAggregateLowering(value.Type)
+            || TryGetConcreteTypeLayout(NormalizeAggregateType(value.Type)) is not { SizeBytes: > AggregateMemcpyThresholdBytes }
+            || RequiresAggregateValueMaterialization(resultName, value.Type))
         {
             return false;
         }
 
-        return instruction.Value switch
+        return value switch
         {
             SsaUseRValue => true,
             SsaExtractFieldRValue extractField => IsFreshIndirectAggregateValueReference(extractField.Target),
@@ -629,6 +634,77 @@ internal sealed partial class LlvmFunctionBodyEmitter
             SsaInsertIndexRValue => true,
             _ => false
         };
+    }
+
+    private string FormatAggregateValueUse(SsaValue value, StarkTypeSymbol valueType, string purpose)
+    {
+        if (!ShouldPreferAddressBasedAggregateLowering(valueType)
+            || ValueHasDirectLlvmRepresentation(value, new HashSet<string>(StringComparer.Ordinal)))
+        {
+            return FormatValue(value);
+        }
+
+        if (!TryResolveAggregateSourceAddress(value, valueType, out var sourceAddress, out var sourceAlignmentBytes))
+        {
+            return FormatValue(value);
+        }
+
+        var loadedValue = $"%{EscapeIdentifier(CreateAbiTempName(purpose))}";
+        AppendLine($"  {loadedValue} = load {MapType(valueType)}, ptr {sourceAddress}{GetAlignmentSuffix(sourceAlignmentBytes)}{GetValueRangeMetadataSuffix(valueType)}");
+        return loadedValue;
+    }
+
+    private bool ValueHasDirectLlvmRepresentation(SsaValue value, ISet<string> visitedValueNames)
+    {
+        if (value is not SsaValueReference reference)
+        {
+            return true;
+        }
+
+        if (_materializedParameters.ContainsKey(reference.Name)
+            || _phisByResultName.ContainsKey(reference.Name))
+        {
+            return true;
+        }
+
+        if (!visitedValueNames.Add(reference.Name))
+        {
+            return false;
+        }
+
+        if (_trivialValueAliases.TryGetValue(reference.Name, out var alias))
+        {
+            return ValueHasDirectLlvmRepresentation(alias, visitedValueNames);
+        }
+
+        if (!_valueDefinitions.TryGetValue(reference.Name, out var definition))
+        {
+            return true;
+        }
+
+        if (definition is SsaUseRValue use)
+        {
+            return ValueHasDirectLlvmRepresentation(use.Value, visitedValueNames);
+        }
+
+        if (definition is SsaConvertRValue convert && IsNoOpConversion(convert.Operand.Type, convert.TargetType))
+        {
+            return ValueHasDirectLlvmRepresentation(convert.Operand, visitedValueNames);
+        }
+
+        if (definition is SsaCallRValue call
+            && _resolveCallAbi(_function.Name, call.FunctionName)?.ReturnsIndirect == true)
+        {
+            return RequiresAggregateValueMaterialization(reference.Name, call.SourceReturnType ?? call.Type);
+        }
+
+        if (definition is SsaIndirectCallRValue indirectCall
+            && BuildIndirectCallAbi(indirectCall).ReturnsIndirect)
+        {
+            return RequiresAggregateValueMaterialization(reference.Name, indirectCall.SourceReturnType ?? indirectCall.Type);
+        }
+
+        return !CanDeferAddressForwardedAggregateValueInstruction(reference.Name, definition);
     }
 
     private bool CanAliasLocalToFreshIndirectAggregateSource(SsaValue value, StarkTypeSymbol localType)

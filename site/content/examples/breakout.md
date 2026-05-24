@@ -33,9 +33,19 @@ Status: the core is covered by `ExamplesCompileRunTests.BreakoutCoreExampleCompi
 - [BreakoutRaylib.stark](/reference/examples/breakout/BreakoutRaylib.stark)
 - [Stark.toml](/reference/examples/breakout/Stark.toml)
 
+### BreakoutCore.stark
+
 {{< file-sample "static/reference/examples/breakout/BreakoutCore.stark" "stark" >}}
+
+### BreakoutRaylib.stark
+
+{{< file-sample "static/reference/examples/breakout/BreakoutRaylib.stark" "stark" >}}
+
+### Stark.toml
+
+{{< file-sample "static/reference/examples/breakout/Stark.toml" "toml" >}}
 
 ## Related
 
-- [Native Package Project](/book/36-project-native-package/)
+- [Native Package Project](/book/39-project-native-package/)
 - [Raylib example](/examples/raylib/)

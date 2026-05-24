@@ -43,7 +43,7 @@ before running these examples.
   </article>
   <article class="example-card">
     <strong>Data Model</strong>
-    <span>Structs, records, and object initializers.</span>
+    <span>Structs, records, and field initializers.</span>
     <a href="/examples/data-model/">Details</a>
     <a href="/reference/examples/data-model/DataModel.stark">Source</a>
   </article>
@@ -88,10 +88,16 @@ before running these examples.
     <a href="/reference/examples/standard-library/StandardLibrary.stark">Source</a>
   </article>
   <article class="example-card">
-    <strong>HTTP GET</strong>
-    <span>Manual networked HTTP/1.1 client over `System.Net.Tcp`.</span>
+    <strong>HTTPS GET</strong>
+    <span>HTTPS request/response sample with a small OpenSSL native shim.</span>
     <a href="/examples/http-get/">Details</a>
     <a href="/reference/examples/http-get/HttpGet.stark">Source</a>
+  </article>
+  <article class="example-card">
+    <strong>Standard Library Tests</strong>
+    <span>Small `System.Testing` fact-runner project.</span>
+    <a href="/examples/standard-library-tests/">Details</a>
+    <a href="/reference/examples/standard-library-tests/StandardLibraryTests.stark">Source</a>
   </article>
   <article class="example-card">
     <strong>Build Your Own Git</strong>
@@ -145,9 +151,16 @@ before running these examples.
 ## Manifests
 
 The examples directory uses `Stark.toml` project manifests and a root
-`Stark.solution.toml` solution manifest for `stark build` and `stark run`.
+`Stark.solution.toml` solution manifest for `stark build`, `stark run`, and
+`stark test`. Each detail page embeds its local manifest; the root solution
+manifest is embedded here.
 
 - [examples/Stark.solution.toml](/reference/examples/Stark.solution.toml)
 - [hello/Stark.toml](/reference/examples/hello/Stark.toml)
 - [static-library/Stark.toml](/reference/examples/static-library/Stark.toml)
+- [standard-library-tests/Stark.toml](/reference/examples/standard-library-tests/Stark.toml)
 - [raylib/Stark.toml](/reference/examples/raylib/Stark.toml)
+
+### examples/Stark.solution.toml
+
+{{< file-sample "static/reference/examples/Stark.solution.toml" "toml" >}}

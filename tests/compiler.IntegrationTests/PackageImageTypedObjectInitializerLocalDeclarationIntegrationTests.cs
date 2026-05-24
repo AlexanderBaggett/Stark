@@ -26,10 +26,16 @@ public sealed class PackageImageTypedObjectInitializerLocalDeclarationIntegratio
                 """
                 module Facade
 
-                public record Pair(i32[min max] First, i32[min max] Second) { }
+                public record Pair(i32[min max] First, i32[min max] Second)
+                {
+                }
 
-                public fn i32[min max] Observe<T>(i32[min max] value, T tag) {
-                    stack Pair pair = { First = value, Second = value + 1 };
+                public fn i32[min max] Observe<T>(i32[min max] value, T tag)
+                {
+                    stack Pair pair =
+                    {
+                        First = value, Second = value + 1
+                    };
                     return pair.First + pair.Second;
                 }
                 """);
@@ -95,7 +101,8 @@ public sealed class PackageImageTypedObjectInitializerLocalDeclarationIntegratio
                 import Facade
                 module Demo
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     return Facade.Observe(7, 0);
                 }
                 """);

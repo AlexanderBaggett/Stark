@@ -24,7 +24,8 @@ public sealed class CompilerPipelineIntegrationTests
                 """
                 module Math
 
-                public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
+                public finite law i32[min max] Add(i32[min max] left, i32[min max] right)
+                {
                     return left + right;
                 }
                 """);
@@ -35,7 +36,8 @@ public sealed class CompilerPipelineIntegrationTests
                 export import Math
                 module Facade
 
-                public finite law i32[min max] Double(i32[min max] value) {
+                public finite law i32[min max] Double(i32[min max] value)
+                {
                     return Math.Add(value, value);
                 }
                 """);
@@ -61,7 +63,8 @@ public sealed class CompilerPipelineIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run() {
+                    fn i32[min max] Run()
+                    {
                         return Math.Add(3, 4);
                     }
                     """,

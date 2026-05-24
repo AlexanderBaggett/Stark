@@ -12,12 +12,17 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            unsafe fn i32[min max] Run() {
-                stack mut Box box = new Box() { Value = 1 };
+            unsafe fn i32[min max] Run()
+            {
+                stack mut Box box = new Box()
+                {
+                    Value = 1
+                };
                 box.Value = 2;
                 return box.Value;
             }
@@ -39,12 +44,17 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            unsafe fn i32[min max] Run() {
-                stack mut Box box = new Box() { Value = 1 };
+            unsafe fn i32[min max] Run()
+            {
+                stack mut Box box = new Box()
+                {
+                    Value = 1
+                };
                 box.Value += 2;
                 return box.Value;
             }
@@ -69,8 +79,12 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run() {
-                stack i32[min max][3] values = { 1, 2, 3 };
+            unsafe fn i32[min max] Run()
+            {
+                stack i32[min max][3] values =
+                {
+                    1, 2, 3
+                };
                 return values[1];
             }
             """);
@@ -91,12 +105,20 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max][3] Values;
             }
 
-            unsafe fn i32[min max] Run() {
-                stack Box box = new Box() { Values = { 1, 2 } };
+            unsafe fn i32[min max] Run()
+            {
+                stack Box box = new Box()
+                {
+                    Values =
+                    {
+                        1, 2
+                    }
+                };
                 return box.Values[2];
             }
             """);
@@ -118,8 +140,12 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run() {
-                stack mut i32[min max][3] values = { 1, 2, 3 };
+            unsafe fn i32[min max] Run()
+            {
+                stack mut i32[min max][3] values =
+                {
+                    1, 2, 3
+                };
                 values[1] = 9;
                 return values[1];
             }
@@ -141,7 +167,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn i8[min max] Run() {
+            unsafe fn i8[min max] Run()
+            {
                 stack mut i8[min max][256] values;
                 values[7] = 42;
                 return values[7];
@@ -170,13 +197,22 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            struct Big {
+            struct Big
+            {
                 i8[min max][256] Data;
                 i32[min max] Count;
             }
 
-            unsafe fn i8[min max] Run() {
-                stack mut Big big = new Big() { Data = { 0 }, Count = 0 };
+            unsafe fn i8[min max] Run()
+            {
+                stack mut Big big = new Big()
+                {
+                    Data =
+                    {
+                        0
+                    },
+                    Count = 0
+                };
                 big.Data[7] = 42;
                 return big.Data[7];
             }
@@ -205,8 +241,12 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(i32[min max] index) {
-                stack i32[min max][3] values = { 4, 7, 9 };
+            unsafe fn i32[min max] Run(i32[min max] index)
+            {
+                stack i32[min max][3] values =
+                {
+                    4, 7, 9
+                };
                 stack i32[min max][] view = values;
                 return view[index];
             }
@@ -230,7 +270,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn void Fill(init u32[0 max][] destination) {
+            unsafe fn void Fill(init u32[0 max][] destination)
+            {
                 init destination[0] = 7;
                 return;
             }
@@ -254,7 +295,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            fn void Write(out u32[0 max] value) {
+            fn void Write(out u32[0 max] value)
+            {
                 value = 7;
                 return;
             }
@@ -278,7 +320,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn ascii Run(ascii text, i32[min max] start, i32[min max] length) {
+            unsafe fn ascii Run(ascii text, i32[min max] start, i32[min max] length)
+            {
                 return text[start, length];
             }
             """);
@@ -307,11 +350,13 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn ascii SliceAscii(ascii text) {
+            unsafe fn ascii SliceAscii(ascii text)
+            {
                 return text[];
             }
 
-            unsafe fn unicode SliceUnicode(unicode text) {
+            unsafe fn unicode SliceUnicode(unicode text)
+            {
                 return text[];
             }
             """);
@@ -339,11 +384,13 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn ascii PickAscii(ascii text, i32[min max] index) {
+            unsafe fn ascii PickAscii(ascii text, i32[min max] index)
+            {
                 return text[index];
             }
 
-            unsafe fn unicode PickUnicode(unicode text, i32[min max] index) {
+            unsafe fn unicode PickUnicode(unicode text, i32[min max] index)
+            {
                 return text[index];
             }
             """);
@@ -375,8 +422,12 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(i32[min max] index) {
-                stack mut i32[min max][3] values = { 1, 2, 3 };
+            unsafe fn i32[min max] Run(i32[min max] index)
+            {
+                stack mut i32[min max][3] values =
+                {
+                    1, 2, 3
+                };
                 values[index] = 9;
                 return values[index];
             }
@@ -401,7 +452,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(i32[min max][3] values, i32[min max] index) {
+            unsafe fn i32[min max] Run(i32[min max][3] values, i32[min max] index)
+            {
                 return values[index];
             }
             """);
@@ -423,17 +475,31 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            struct Cell {
+            struct Cell
+            {
                 i32[min max] Value;
             }
 
-            struct Holder {
+            struct Holder
+            {
                 Cell[2] Cells;
             }
 
-            unsafe fn i32[min max] Run(i32[min max] index) {
-                stack mut Holder holder = new Holder() {
-                    Cells = { new Cell() { Value = 1 }, new Cell() { Value = 2 } }
+            unsafe fn i32[min max] Run(i32[min max] index)
+            {
+                stack mut Holder holder = new Holder()
+                {
+                    Cells =
+                    {
+                        new Cell()
+                        {
+                            Value = 1
+                        },
+                        new Cell()
+                        {
+                            Value = 2
+                        }
+                    }
                 };
                 holder.Cells[index].Value += 4;
                 return holder.Cells[index].Value;
@@ -462,7 +528,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(mut i32[min max][] view, i32[min max] index) {
+            unsafe fn i32[min max] Run(mut i32[min max][] view, i32[min max] index)
+            {
                 view[index] = 9;
                 return view[index];
             }
@@ -485,21 +552,36 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            struct Cell {
+            struct Cell
+            {
                 i32[min max] Value;
             }
 
-            struct Holder {
+            struct Holder
+            {
                 Cell[2] Cells;
             }
 
-            unsafe fn Holder Make() {
-                return new Holder() {
-                    Cells = { new Cell() { Value = 3 }, new Cell() { Value = 5 } }
+            unsafe fn Holder Make()
+            {
+                return new Holder()
+                {
+                    Cells =
+                    {
+                        new Cell()
+                        {
+                            Value = 3
+                        },
+                        new Cell()
+                        {
+                            Value = 5
+                        }
+                    }
                 };
             }
 
-            unsafe fn i32[min max] Run() {
+            unsafe fn i32[min max] Run()
+            {
                 return Make().Cells[1].Value;
             }
             """);
@@ -526,7 +608,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(i64[min max] bits) {
+            unsafe fn i32[min max] Run(i64[min max] bits)
+            {
                 stack mut i32[min max] value = 1;
                 stack rawmutptr<i32[min max]> ptr = &value;
                 stack rawptr<i32[min max]> readonlyPtr = (rawptr<i32[min max]>)ptr;
@@ -563,14 +646,19 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
             static mut i32[min max] Counter = 0;
 
-            unsafe fn i32[min max] Run(i32[min max] input) {
-                stack mut Box box = new Box() { Value = 1 };
+            unsafe fn i32[min max] Run(i32[min max] input)
+            {
+                stack mut Box box = new Box()
+                {
+                    Value = 1
+                };
                 *(&(box.Value)) = input;
                 Counter = *(&(box.Value));
                 return *(&Counter);
@@ -598,12 +686,14 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            struct Buffer {
+            struct Buffer
+            {
                 i8[min max][16] Storage;
                 i64[min max] WritePos;
             }
 
-            unsafe fn i32[min max] Touch(rawmutptr<Buffer> buffer, i64[min max] index, i8[min max] value) {
+            unsafe fn i32[min max] Touch(rawmutptr<Buffer> buffer, i64[min max] index, i8[min max] value)
+            {
                 *(&(*buffer).Storage[index]) = value;
                 return (i32[min max])*(&(*buffer).Storage[index]);
             }
@@ -627,18 +717,24 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
             static i32[min max] Counter = 0;
-            static Box Current = new Box() { Value = 5 };
+            static Box Current = new Box()
+            {
+                Value = 5
+            };
 
-            unsafe fn rawptr<i32[min max]> CounterPtr() {
+            unsafe fn rawptr<i32[min max]> CounterPtr()
+            {
                 return &Counter;
             }
 
-            unsafe fn rawptr<i32[min max]> FieldPtr() {
+            unsafe fn rawptr<i32[min max]> FieldPtr()
+            {
                 return &(Current.Value);
             }
             """);
@@ -680,17 +776,23 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            const Box Current = new Box() { Value = 5 };
+            const Box Current = new Box()
+            {
+                Value = 5
+            };
 
-            unsafe fn rawptr<frozen Box> BoxPtr() {
+            unsafe fn rawptr<frozen Box> BoxPtr()
+            {
                 return &Current;
             }
 
-            unsafe fn rawptr<frozen i32[min max]> FieldPtr() {
+            unsafe fn rawptr<frozen i32[min max]> FieldPtr()
+            {
                 return &(Current.Value);
             }
             """);
@@ -734,11 +836,13 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            unsafe fn rawptr<frozen i32[min max]> FieldPtr(const Box box) {
+            unsafe fn rawptr<frozen i32[min max]> FieldPtr(const Box box)
+            {
                 return &(box.Value);
             }
             """);
@@ -780,7 +884,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn rawptr<frozen i32[min max]> Forward(const rawmutptr<i32[min max]> ptr) {
+            unsafe fn rawptr<frozen i32[min max]> Forward(const rawmutptr<i32[min max]> ptr)
+            {
                 stack rawptr<frozen i32[min max]> local = ptr;
                 return local;
             }
@@ -800,7 +905,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn rawptr<frozen i32[min max]> FirstPtr(frozen i32[min max][] view) {
+            unsafe fn rawptr<frozen i32[min max]> FirstPtr(frozen i32[min max][] view)
+            {
                 return &(view[0]);
             }
             """);

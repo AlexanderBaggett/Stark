@@ -22,7 +22,13 @@ Status: covered by `ExamplesCompileRunTests.BasicSyntaxExampleCompilesAndRuns`.
 - [BasicSyntax.stark](/reference/examples/basic-syntax/BasicSyntax.stark)
 - [Stark.toml](/reference/examples/basic-syntax/Stark.toml)
 
+### BasicSyntax.stark
+
 {{< file-sample "static/reference/examples/basic-syntax/BasicSyntax.stark" "stark" >}}
+
+### Stark.toml
+
+{{< file-sample "static/reference/examples/basic-syntax/Stark.toml" "toml" >}}
 
 ## Related
 

@@ -47,12 +47,15 @@ public sealed class SystemThreadingStandardLibraryTests : StandardLibraryTestSui
                 import System.Threading
                 module App
 
-                fn i32[min max] Worker() {
+                fn i32[min max] Worker()
+                {
                     return 7;
                 }
 
-                fn bool JoinResultIs(System.Threading.ThreadJoinResult result, i32[min max] expected) {
-                    switch (result) {
+                fn bool JoinResultIs(System.Threading.ThreadJoinResult result, i32[min max] expected)
+                {
+                    switch (result)
+                    {
                         case System.Threading.ThreadJoinResult.Ok(var value):
                             return value == expected;
                         case System.Threading.ThreadJoinResult.Err(var error):
@@ -60,8 +63,10 @@ public sealed class SystemThreadingStandardLibraryTests : StandardLibraryTestSui
                     }
                 }
 
-                fn bool StatusOk(System.Threading.ThreadStatus status) {
-                    switch (status) {
+                fn bool StatusOk(System.Threading.ThreadStatus status)
+                {
+                    switch (status)
+                    {
                         case System.Threading.ThreadStatus.Ok:
                             return true;
                         case System.Threading.ThreadStatus.Err(var error):
@@ -69,46 +74,55 @@ public sealed class SystemThreadingStandardLibraryTests : StandardLibraryTestSui
                     }
                 }
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     stack ThreadEntry entry = Worker;
                     Thread.Yield();
                     Thread.SleepMilliseconds(0);
-                    if (entry() != 7) {
+                    if (entry() != 7)
+                    {
                         return 1;
                     }
 
                     stack ThreadEntry lambdaEntry = () => 11;
-                    if (lambdaEntry() != 11) {
+                    if (lambdaEntry() != 11)
+                    {
                         return 7;
                     }
 
                     stack mut Thread worker = new(Worker);
-                    if (!worker.IsJoinable()) {
+                    if (!worker.IsJoinable())
+                    {
                         return 2;
                     }
 
                     stack ThreadJoinResult joined = worker.Join();
-                    if (!JoinResultIs(joined, 7)) {
+                    if (!JoinResultIs(joined, 7))
+                    {
                         return 3;
                     }
 
-                    if (worker.IsJoinable()) {
+                    if (worker.IsJoinable())
+                    {
                         return 4;
                     }
 
                     stack mut Thread detached = new(Worker);
                     stack ThreadStatus detachedStatus = detached.Detach();
-                    if (!StatusOk(detachedStatus)) {
+                    if (!StatusOk(detachedStatus))
+                    {
                         return 5;
                     }
 
-                    if (detached.IsJoinable()) {
+                    if (detached.IsJoinable())
+                    {
                         return 6;
                     }
 
                     stack mut Thread lambdaWorker = new(() => 13);
                     stack ThreadJoinResult lambdaJoined = lambdaWorker.Join();
-                    if (!JoinResultIs(lambdaJoined, 13)) {
+                    if (!JoinResultIs(lambdaJoined, 13))
+                    {
                         return 8;
                     }
 
@@ -161,17 +175,20 @@ public sealed class SystemThreadingStandardLibraryTests : StandardLibraryTestSui
                 import System.Threading
                 module Demo
 
-                fn i32[min max] Worker() {
+                fn i32[min max] Worker()
+                {
                     return 7;
                 }
 
-                fn i32[min max] Run() {
+                fn i32[min max] Run()
+                {
                     stack System.Threading.ThreadEntry entry = Worker;
                     stack System.Threading.ThreadEntry lambdaEntry = () => 11;
                     System.Threading.Thread.Yield();
                     System.Threading.Thread.SleepMilliseconds(0);
                     stack mut System.Threading.Thread worker = new(Worker);
-                    if (!worker.IsJoinable()) {
+                    if (!worker.IsJoinable())
+                    {
                         return 1;
                     }
 
@@ -224,7 +241,8 @@ public sealed class SystemThreadingStandardLibraryTests : StandardLibraryTestSui
                 import System.Threading
                 module Demo
 
-                fn void Run() {
+                fn void Run()
+                {
                     stack i32[min max] exitCode = 7;
                     stack System.Threading.ThreadEntry entry = capture(copy exitCode) () => exitCode;
                     stack mut System.Threading.Thread worker = new(capture(copy exitCode) () => exitCode);

@@ -15,13 +15,17 @@ public sealed class CompilerPipelineInstantiationOwnershipTests
                 """
                 module Demo
 
-                record Pair<T>(T Value) { }
+                record Pair<T>(T Value)
+                {
+                }
 
-                fn T Identity<T>(T value) {
+                fn T Identity<T>(T value)
+                {
                     return value;
                 }
 
-                fn i32[min max] Run(Pair<i32[min max]> pair) {
+                fn i32[min max] Run(Pair<i32[min max]> pair)
+                {
                     return Identity(pair.Value);
                 }
                 """),
@@ -60,9 +64,12 @@ public sealed class CompilerPipelineInstantiationOwnershipTests
                 """
                 module Facade
 
-                public record Pair<T>(T Value) { }
+                public record Pair<T>(T Value)
+                {
+                }
 
-                public fn T Identity<T>(T value) {
+                public fn T Identity<T>(T value)
+                {
                     return value;
                 }
                 """);
@@ -74,7 +81,8 @@ public sealed class CompilerPipelineInstantiationOwnershipTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(Facade.Pair<i32[min max]> pair) {
+                    fn i32[min max] Run(Facade.Pair<i32[min max]> pair)
+                    {
                         return Facade.Identity(pair.Value);
                     }
                     """,
@@ -129,7 +137,9 @@ public sealed class CompilerPipelineInstantiationOwnershipTests
                 """
                 module Facade
 
-                public record Pair<T>(T Value) { }
+                public record Pair<T>(T Value)
+                {
+                }
 
                 public fn T Identity<T>(T value);
                 """,
@@ -148,7 +158,8 @@ public sealed class CompilerPipelineInstantiationOwnershipTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(Facade.Pair<i32[min max]> pair) {
+                    fn i32[min max] Run(Facade.Pair<i32[min max]> pair)
+                    {
                         return Facade.Identity(pair.Value);
                     }
                     """,

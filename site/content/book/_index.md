@@ -18,13 +18,13 @@ The book will center on:
 - `fn`, `finite`, `law`, and `finite law`
 - modules, visibility, project manifests, and package images
 - native package metadata for FFI-backed libraries
-- memory separation, bounded raw pointer regions, and independent loop contracts
+- memory separation, bounded raw pointer regions, and independent loop rules
 - `dynamic T`, `init T`, and safe spare-capacity initialization
 - standard-library ownership patterns
-- reading diagnostics and inspecting generated IR
+- reading diagnostics and inspecting generated output
 
 The published book is currently the v1.35 draft. Numbered chapters are written
-as tutorial steps that build from source facts to projects, while appendices
+as tutorial steps that build from source examples to projects, while appendices
 stay compact reference material. See the [book changes](/book/changes/) page
 for user-facing updates between published drafts. A generated
 [single-file Markdown export](/book/stark-book.md) is also available for

@@ -45,29 +45,35 @@ collection.
 The first useful mental mapping is:
 
 ```rust
-struct Counter {
+struct Counter
+{
     value: i32,
 }
 
-fn current(counter: &Counter) -> i32 {
+fn current(counter: &Counter) -> i32
+{
     counter.value
 }
 
-fn add(counter: &mut Counter, amount: i32) {
+fn add(counter: &mut Counter, amount: i32)
+{
     counter.value += amount;
 }
 ```
 
 ```stark
-struct Counter {
+struct Counter
+{
     i32[min max] Value;
 }
 
-finite law i32[min max] Current(borrow Counter counter) {
+finite law i32[min max] Current(borrow Counter counter)
+{
     return counter.Value;
 }
 
-finite void Add(mut borrow Counter counter, i32[min max] amount) {
+finite void Add(mut borrow Counter counter, i32[min max] amount)
+{
     counter.Value += amount;
     return;
 }
@@ -99,7 +105,8 @@ Stark is also stricter at function boundaries. Memory-backed parameters are
 non-overlapping by default, even when the access is readonly:
 
 ```stark
-fn void AddSeparate(mut borrow Cell left, mut borrow Cell right) {
+fn void AddSeparate(mut borrow Cell left, mut borrow Cell right)
+{
     left.Value += 1;
     right.Value += 10;
     return;
@@ -150,10 +157,12 @@ directly.
 For example, a returned mutable field borrow is written into the return type:
 
 ```stark
-struct Counter {
+struct Counter
+{
     i32[min max] Value;
 
-    finite retborrow mut i32[min max] Slot(mut borrow Counter self) {
+    finite retborrow mut i32[min max] Slot(mut borrow Counter self)
+    {
         return self.Value;
     }
 }
@@ -186,7 +195,8 @@ Stark keeps that distinction visible. Use ordinary `borrow` when the callee
 only needs a readonly view through one path:
 
 ```stark
-finite law i32[min max] ReadOne(borrow Box box) {
+finite law i32[min max] ReadOne(borrow Box box)
+{
     return box.Value;
 }
 ```
@@ -195,7 +205,8 @@ Use `frozen` when the callee needs a stronger promise about everything
 reachable through that value:
 
 ```stark
-finite law i32[min max] ReadFrozenTwice(frozen Box box) {
+finite law i32[min max] ReadFrozenTwice(frozen Box box)
+{
     return box.Value + box.Value;
 }
 ```
@@ -216,8 +227,10 @@ unwinding.
 Rust often models this as an owned return:
 
 ```rust
-fn try_divide(numerator: i32, denominator: i32) -> Option<i32> {
-    if denominator == 0 {
+fn try_divide(numerator: i32, denominator: i32) -> Option<i32>
+{
+    if denominator == 0
+    {
         return None;
     }
 
@@ -229,8 +242,10 @@ That is a good Rust API. In Stark, `out` is available when the caller already
 owns the destination storage and the callee's job is to write it:
 
 ```stark
-fn bool TryDivide(i32[min max] numerator, i32[min max] denominator, out i32[min max] result) {
-    if (denominator == 0) {
+fn bool TryDivide(i32[min max] numerator, i32[min max] denominator, out i32[min max] result)
+{
+    if (denominator == 0)
+    {
         result = 0;
         return false;
     }
@@ -240,7 +255,7 @@ fn bool TryDivide(i32[min max] numerator, i32[min max] denominator, out i32[min 
 }
 ```
 
-For larger values, this can avoid materializing an owned aggregate just to move
+For larger values, this can avoid materializing an owned struct or record just to move
 it into caller storage. It also keeps the write-before-read rule explicit:
 inside the callee, the old destination contents are not input.
 
@@ -262,7 +277,8 @@ fn slot<'a>(counter: &'a mut Counter) -> &'a mut i32 {
 Stark makes that escape class part of the returned type:
 
 ```stark
-fn retborrow mut i32[min max] Slot(mut borrow Counter counter) {
+fn retborrow mut i32[min max] Slot(mut borrow Counter counter)
+{
     return counter.Value;
 }
 ```
@@ -281,7 +297,8 @@ fn view<'a>(value: &'a Box) -> &'a Box
 becomes this Stark question:
 
 ```stark
-fn retborrow Box View(retborrow Box value) {
+fn retborrow Box View(retborrow Box value)
+{
     return value;
 }
 ```
@@ -298,7 +315,8 @@ complicated aliasing. Stark makes the function contract more explicit.
 The default Stark function:
 
 ```stark
-fn void CopyDisjoint(borrow u8[] source, borrow mut u8[] destination) {
+fn void CopyDisjoint(borrow u8[] source, borrow mut u8[] destination)
+{
     return;
 }
 ```
@@ -308,7 +326,8 @@ If the operation is correct when regions overlap, say so:
 
 ```stark
 fn void MoveOverlapSafe(borrow u8[] source, borrow mut u8[] destination)
-    where overlap(source, destination) {
+    where overlap(source, destination)
+{
     return;
 }
 ```
@@ -318,7 +337,8 @@ that instead:
 
 ```stark
 fn bool SameBytes(borrow u8[] left, borrow u8[] right)
-    where same(left, right) {
+    where same(left, right)
+{
     return left.Length == right.Length;
 }
 ```
@@ -345,16 +365,19 @@ The usual Stark rewrite is to keep one owner and pass explicit mutable borrows
 through the part of the program that performs the update:
 
 ```stark
-struct Accumulator {
+struct Accumulator
+{
     i32[min max] Total;
 }
 
-fn void Add(mut borrow Accumulator accumulator, i32[min max] value) {
+fn void Add(mut borrow Accumulator accumulator, i32[min max] value)
+{
     accumulator.Total += value;
     return;
 }
 
-fn void AddBoth(mut borrow Accumulator accumulator) {
+fn void AddBoth(mut borrow Accumulator accumulator)
+{
     Add(accumulator, 10);
     Add(accumulator, 20);
     return;
@@ -366,19 +389,23 @@ explicit owner plus an index, handle, or returned borrow instead of hidden
 shared ownership:
 
 ```stark
-struct Slot {
+struct Slot
+{
     i32[min max] Value;
 }
 
-struct Table {
+struct Table
+{
     Slot[4] Slots;
 }
 
-fn retborrow mut Slot Get(mut borrow Table table, u64[0 3] index) {
+fn retborrow mut Slot Get(mut borrow Table table, u64[0 3] index)
+{
     return table.Slots[index];
 }
 
-fn void Increment(mut borrow Table table, u64[0 3] index) {
+fn void Increment(mut borrow Table table, u64[0 3] index)
+{
     table.Slots[index].Value += 1;
     return;
 }
@@ -397,7 +424,8 @@ shaped at runtime.
 Use safe borrows for normal Stark code:
 
 ```stark
-fn i32[min max] Read(borrow Counter counter) {
+fn i32[min max] Read(borrow Counter counter)
+{
     return counter.Value;
 }
 ```
@@ -406,7 +434,8 @@ Use raw pointers when the boundary is actually raw: FFI, platform APIs,
 nullable handles, pointer arithmetic, or low-level memory code.
 
 ```stark
-unsafe fn bool IsNull(rawptr<i32[min max]> pointer) {
+unsafe fn bool IsNull(rawptr<i32[min max]> pointer)
+{
     return pointer == null;
 }
 ```
@@ -424,11 +453,13 @@ trades some of that flexibility for stronger default facts.
 For example:
 
 ```stark
-finite law i32[min max] ReadFrozenTwice(frozen Box box) {
+finite law i32[min max] ReadFrozenTwice(frozen Box box)
+{
     return box.Value + box.Value;
 }
 
-fn void AddSeparate(mut borrow Cell left, mut borrow Cell right) {
+fn void AddSeparate(mut borrow Cell left, mut borrow Cell right)
+{
     left.Value += 1;
     right.Value += 10;
     return;

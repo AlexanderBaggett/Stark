@@ -13,7 +13,8 @@ the Stark standard library; it should be built later as a package on top of
 ```stark
 module System.Net
 
-public enum NetworkError {
+public enum NetworkError
+{
     AddressInvalid,
     AddressInUse,
     ConnectionRefused,
@@ -25,24 +26,28 @@ public enum NetworkError {
     Unknown(i32),
 }
 
-public enum NetStatus {
+public enum NetStatus
+{
     Ok,
     Err(NetworkError),
 }
 
-public enum NetResult<T> {
+public enum NetResult<T>
+{
     Ok(T),
     Err(NetworkError),
 }
 
-public struct IPv4Address {
+public struct IPv4Address
+{
     u8[0 max] A;
     u8[0 max] B;
     u8[0 max] C;
     u8[0 max] D;
 }
 
-public struct IPv4Endpoint {
+public struct IPv4Endpoint
+{
     IPv4Address Address;
     u16[0 max] Port;
 }

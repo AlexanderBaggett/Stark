@@ -29,11 +29,11 @@ The implementation may split these into source files such as
 `System/Collections/List.stark`, but the public package should make the common
 types available from `System.Collections`.
 
-`Dictionary<K, V>` is exposed only for key types with a compiler-proven
-`DictionaryKey<K>` contract. The first implementation proves that contract for
-`bool` and Stark integer key types. Struct, record, text, pointer, and other key
-types remain rejected until Stark has full user-defined hash/equality
-constraint solving.
+`Dictionary<K, V>` is exposed only for key types with supported
+`DictionaryKey<K>` behavior. The first implementation supports that behavior
+for `bool` and Stark integer key types. Struct, record, text, pointer, and
+other key types remain rejected until Stark has full user-defined hash/equality
+support.
 
 ## Const Lookup Tables
 
@@ -73,7 +73,8 @@ releases that storage in its destructor.
 `List<T>` is the primary growable contiguous collection.
 
 ```stark
-public struct List<T> {
+public struct List<T>
+{
     finite law i64[0 max] Count(borrow List<T> self);
     finite law i64[0 max] Capacity(borrow List<T> self);
     finite law bool IsEmpty(borrow List<T> self);
@@ -88,16 +89,17 @@ public struct List<T> {
 }
 ```
 
-Indexing must be bounds-checked unless the compiler can prove the range. The
-range facts should be preserved so LLVM can see non-wrapping index and GEP
-facts after lowering.
+Indexing must be bounds-checked unless the source range guarantees the index.
+Collection APIs should keep ranges narrow so callers can write loops whose
+index bounds are easy to see.
 
 ## `Stack<T>`
 
 `Stack<T>` is a last-in, first-out collection backed by owned dynamic storage.
 
 ```stark
-public struct Stack<T> {
+public struct Stack<T>
+{
     finite law i64[0 max] Count(borrow Stack<T> self);
     finite law bool IsEmpty(borrow Stack<T> self);
     fn System.Memory.MemoryStatus Push(mut borrow Stack<T> self, T value);
@@ -117,7 +119,8 @@ storage. Dequeue and peek are O(1): the implementation keeps head/length
 metadata and moves only the occupied slot being removed.
 
 ```stark
-public struct Queue<T> {
+public struct Queue<T>
+{
     finite law i64[0 max] Count(borrow Queue<T> self);
     finite law bool IsEmpty(borrow Queue<T> self);
     fn System.Memory.MemoryStatus Enqueue(mut borrow Queue<T> self, T value);
@@ -131,7 +134,8 @@ public struct Queue<T> {
 need an explicit capacity check while keeping FIFO operations O(1).
 
 ```stark
-public struct RingQueue<T> {
+public struct RingQueue<T>
+{
     finite law i64[0 max] Count(borrow RingQueue<T> self);
     finite law i64[0 max] Capacity(borrow RingQueue<T> self);
     finite law bool IsEmpty(borrow RingQueue<T> self);
@@ -149,7 +153,8 @@ public struct RingQueue<T> {
 movement is undesirable.
 
 ```stark
-public struct LinkedList<T> {
+public struct LinkedList<T>
+{
     finite law i64[0 max] Count(borrow LinkedList<T> self);
     finite law bool IsEmpty(borrow LinkedList<T> self);
     fn System.Memory.MemoryStatus ReserveNodes(mut borrow LinkedList<T> self, i64[0 max] count);
@@ -164,20 +169,23 @@ public struct LinkedList<T> {
 The first public surface should avoid exposing node pointers. Node-handle APIs
 can come later once the borrow and iterator story is deliberate.
 
-## Dictionary Key Contracts
+## Dictionary Key Requirements
 
-Dictionary pre-work lives in the source module as compile-time contracts:
+Dictionary key requirements live in the source module:
 
 ```stark
-public trait Equatable<T> {
+public trait Equatable<T>
+{
     finite law bool Equals(borrow T left, borrow T right);
 }
 
-public trait Hashable<T> {
+public trait Hashable<T>
+{
     finite law u64[0 max] Hash(borrow T value);
 }
 
-public doctrine DictionaryKey<T> {
+public doctrine DictionaryKey<T>
+{
     finite law bool Equals(borrow T left, borrow T right);
     finite law u64[0 max] Hash(borrow T value);
 }
@@ -186,18 +194,17 @@ public doctrine DictionaryKey<T> {
 `Equals` and `Hash` are `finite law` because dictionary lookup needs both
 operations to be pure, read-only, and guaranteed to return for valid keys.
 
-The compiler enforces a conservative first phase for dictionary keys: `bool`
-and Stark integer types are accepted, while key types without a proven
-hash/equality contract are rejected at generic use sites. Package-image-backed
-imports preserve that same check because the compiler recognizes
-`System.Collections.Dictionary<K, V>` after manifest loading.
+The first dictionary implementation is conservative: `bool` and Stark integer
+types are accepted, while key types without supported hash/equality behavior
+are rejected at generic use sites.
 
 ## `Dictionary<K, V>`
 
 `Dictionary<K, V>` is an owned hash table.
 
 ```stark
-public struct Dictionary<K, V> {
+public struct Dictionary<K, V>
+{
     finite law i64[0 max] Count(borrow Dictionary<K, V> self);
     finite law i64[0 max] Capacity(borrow Dictionary<K, V> self);
     finite law bool IsEmpty(borrow Dictionary<K, V> self);
@@ -210,10 +217,10 @@ public struct Dictionary<K, V> {
 }
 ```
 
-`ContainsKey` is valid as a `law` method only because the accepted
-`DictionaryKey<K>` operations are compiler-owned pure operations in this first
-phase. User-defined key contracts need a later design pass before structs,
-records, text, or other richer values can become dictionary keys.
+`ContainsKey` is valid as a `law` method only for key types whose hash and
+equality behavior is supported by the current standard-library surface.
+User-defined key support needs a later design pass before structs, records,
+text, or other richer values can become dictionary keys.
 
 ## Design Rules
 
@@ -262,15 +269,14 @@ records, text, or other richer values can become dictionary keys.
 - `LinkedList<T>` now uses one allocation per internal node. Each node stores
   next/previous links and the element value together.
 - `Equatable<T>`, `Hashable<T>`, and `DictionaryKey<T>` are present as the
-  first dictionary key contract vocabulary.
+  first dictionary key requirement vocabulary.
 - `Dictionary<K, V>` is implemented as an owned open-addressed hash table for
-  compiler-proven `bool` and Stark integer key types.
+  supported `bool` and Stark integer key types.
 - Dictionary key diagnostics reject unsupported key types before the dictionary
   is used, including through package-image-backed `System.Collections` imports.
 - Collection growth, move/drop, and package-consumption coverage now exists as
-  compiler regressions: source imports lower the full collection growth program
-  through LLVM IR, and package-image imports validate the same surface through
-  `--check`.
+  checked coverage: source imports compile the full collection growth program,
+  and package-image imports validate the same surface through `--check`.
 - `benchmarks/collections` contains compile-only `List<T>` and `Queue<T>`
   growth benchmark sources. They are intentionally skipped by the executable
   benchmark runner until imported collection executable linking is complete.

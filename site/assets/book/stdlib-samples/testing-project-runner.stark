@@ -2,25 +2,107 @@ import System.Testing
 module Book.TestingProjectRunner
 
 [Fact]
-fn bool ArithmeticStillWorks() {
-    return System.Testing.Equal(42, 2 * 21);
+fn bool ArithmeticStillWorks()
+{
+    return Equal(42, 2 * 21);
 }
 
 [Fact]
-fn bool TextStillMatches() {
-    return System.Testing.Equal("Stark", "Stark");
+fn bool BooleanHelpersWork()
+{
+    return True(2 + 2 == 4)
+        && False(2 + 2 == 5);
 }
 
-export fn i32[min max] main() {
+[Fact]
+fn bool EqualOverloadsWork()
+{
+    return Equal(true, true)
+        && Equal((i32[min max])42, (i32[min max])42)
+        && Equal((i64[min max])42, (i64[min max])42)
+        && Equal((u32[0 max])42, (u32[0 max])42)
+        && Equal((u64[0 max])42, (u64[0 max])42)
+        && Equal("ascii", "ascii")
+        && Equal((unicode)"unicode", (unicode)"unicode");
+}
+
+[Fact]
+fn bool TextStillMatches()
+{
+    return Equal("Stark", "Stark");
+}
+
+[Fact]
+fn bool FailDocumentsUnexpectedBranches()
+{
+    if (false)
+    {
+        return Fail("unreachable branch ran");
+    }
+
+    return True(true);
+}
+
+[Fact]
+fn bool StatusMapsAssertions()
+{
+    stack TestStatus passed = Status(true);
+    stack TestStatus failed = Status(false);
+
+    switch (passed)
+    {
+        case TestStatus.Failed:
+            return false;
+        case TestStatus.Passed:
+    }
+
+    switch (failed)
+    {
+        case TestStatus.Passed:
+            return false;
+        case TestStatus.Failed:
+            return true;
+    }
+}
+
+export fn i32[min max] main()
+{
     stack mut u8[0 1] failed = 0;
 
-    if (System.Testing.RunFact("ArithmeticStillWorks", ArithmeticStillWorks()) != 0) {
+    if (RunFact("ArithmeticStillWorks", ArithmeticStillWorks()) != 0)
+    {
         failed = 1;
     }
 
-    if (System.Testing.RunFact("TextStillMatches", TextStillMatches()) != 0) {
+    if (RunFact("BooleanHelpersWork", BooleanHelpersWork()) != 0)
+    {
         failed = 1;
     }
 
-    return System.Testing.ExitCode(failed);
+    if (RunFact("EqualOverloadsWork", EqualOverloadsWork()) != 0)
+    {
+        failed = 1;
+    }
+
+    if (RunFact("TextStillMatches", TextStillMatches()) != 0)
+    {
+        failed = 1;
+    }
+
+    if (RunFact("FailDocumentsUnexpectedBranches", FailDocumentsUnexpectedBranches()) != 0)
+    {
+        failed = 1;
+    }
+
+    if (RunFact("StatusMapsAssertions", StatusMapsAssertions()) != 0)
+    {
+        failed = 1;
+    }
+
+    if (RunFact((unicode)"UnicodeFactName", TextStillMatches()) != 0)
+    {
+        failed = 1;
+    }
+
+    return ExitCode(failed);
 }

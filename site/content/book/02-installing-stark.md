@@ -51,8 +51,12 @@ then add that directory to the user `Path` from PowerShell:
 ```powershell
 $starkBin = "C:\Tools\Stark"
 $current = [Environment]::GetEnvironmentVariable("Path", "User")
-$parts = @($current -split ";" | Where-Object { $_ })
-if ($parts -notcontains $starkBin) {
+$parts = @($current -split ";" | Where-Object
+{
+    $_
+})
+if ($parts -notcontains $starkBin)
+{
     [Environment]::SetEnvironmentVariable("Path", (($parts + $starkBin) -join ";"), "User")
 }
 ```

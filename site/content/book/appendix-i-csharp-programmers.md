@@ -15,7 +15,7 @@ much more restrictive.
 ## Similar Instincts
 
 - member functions use a C#-like call style
-- records and object initializers should feel familiar
+- records and field initializers should feel familiar
 - lambdas use an arrow form
 - generic type syntax uses angle brackets
 - project metadata is separate from source files

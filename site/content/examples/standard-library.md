@@ -27,7 +27,13 @@ Status: covered by `ExamplesCompileRunTests.StandardLibraryExampleCompilesAndRun
 - [StandardLibrary.stark](/reference/examples/standard-library/StandardLibrary.stark)
 - [Stark.toml](/reference/examples/standard-library/Stark.toml)
 
+### StandardLibrary.stark
+
 {{< file-sample "static/reference/examples/standard-library/StandardLibrary.stark" "stark" >}}
+
+### Stark.toml
+
+{{< file-sample "static/reference/examples/standard-library/Stark.toml" "toml" >}}
 
 ## Related
 

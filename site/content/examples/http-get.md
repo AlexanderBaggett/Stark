@@ -1,11 +1,11 @@
 +++
-title = "HTTP GET"
+title = "HTTPS GET"
 weight = 120
 +++
 
-This example is a minimal HTTP/1.1 client over `System.Net.Tcp`. Stark does not
-ship DNS or TLS yet, so it connects to a fixed IPv4 endpoint and sends a plain
-HTTP request.
+This example performs an HTTPS GET request to `https://www.google.com/`. Stark
+code builds the request, checks write/read status, and streams the response;
+`HttpsNative.c` supplies the TLS transport through OpenSSL.
 
 ## Build And Run
 
@@ -15,20 +15,31 @@ dotnet run --project ../src -- build http-get
 ./.stark/build/dev/http-get/http-get
 ```
 
-Expected behavior: writes the HTTP response to stdout when the network path is
-available. This example requires outbound networking and is not part of the
-ordinary no-network integration run.
+Expected behavior: writes the HTTPS response to stdout when the network path
+and OpenSSL setup are available. This example requires outbound networking and
+is not part of the ordinary no-network integration run.
 
 Status: manual/networked example.
 
 ## Source Files
 
 - [HttpGet.stark](/reference/examples/http-get/HttpGet.stark)
+- [HttpsNative.c](/reference/examples/http-get/HttpsNative.c)
 - [Stark.toml](/reference/examples/http-get/Stark.toml)
 
+### HttpGet.stark
+
 {{< file-sample "static/reference/examples/http-get/HttpGet.stark" "stark" >}}
+
+### HttpsNative.c
+
+{{< file-sample "static/reference/examples/http-get/HttpsNative.c" "c" >}}
+
+### Stark.toml
+
+{{< file-sample "static/reference/examples/http-get/Stark.toml" "toml" >}}
 
 ## Related
 
 - [Threading and TCP](/book/24-threading-tcp/)
-- [`System.Net.Tcp`](/reference/standard-library/System.Net.Tcp/)
+- [FFI, Raw Pointers, and Native Packages](/book/20-ffi-raw-pointers-native-packages/)
