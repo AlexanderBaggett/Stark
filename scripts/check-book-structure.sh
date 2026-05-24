@@ -6,7 +6,7 @@ REPOSITORY_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BOOK_DIR="${REPOSITORY_ROOT}/site/content/book"
 
 shopt -s nullglob
-chapters=("${BOOK_DIR}"/[0-9][0-9]-*.md)
+chapters=("${BOOK_DIR}"/[0-9][0-9]-*/index.md)
 
 status=0
 
@@ -35,7 +35,7 @@ check_book_link() {
     if [[ -z "${slug}" ]]; then
         target="${BOOK_DIR}/_index.md"
     else
-        target="${BOOK_DIR}/${slug}.md"
+        target="${BOOK_DIR}/${slug}/index.md"
     fi
 
     if [[ ! -f "${target}" ]]; then
@@ -50,7 +50,7 @@ fi
 expected=1
 for chapter in "${chapters[@]}"; do
     relative="${chapter#${REPOSITORY_ROOT}/}"
-    file_name="$(basename "${chapter}")"
+    file_name="$(basename "$(dirname "${chapter}")")"
     number="${file_name:0:2}"
     expected_number="$(printf "%02d" "${expected}")"
 
