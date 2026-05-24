@@ -9,7 +9,8 @@ public sealed class FloatingPointFeatureTests : FeatureLlvmTestBase
             """
             module Demo
 
-            fn f32 Run() {
+            fn f32 Run()
+            {
                 return 2.0 ** 3.0;
             }
             """);

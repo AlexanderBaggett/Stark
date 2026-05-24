@@ -43,8 +43,10 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                 """
                 import System
                 module Demo
-                fn bool StatusOk(System.IO.IOStatus status) {
-                    switch (status) {
+                fn bool StatusOk(System.IO.IOStatus status)
+                {
+                    switch (status)
+                    {
                         case System.IO.IOStatus.Ok:
                             return true;
                         case System.IO.IOStatus.Err(var error):
@@ -52,8 +54,10 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
-                    switch (result) {
+                fn bool BoolOrFalse(System.IO.IOResult<bool> result)
+                {
+                    switch (result)
+                    {
                         case System.IO.IOResult<bool>.Ok(var value):
                             return value;
                         case System.IO.IOResult<bool>.Err(var error):
@@ -61,15 +65,18 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
-                    switch (result) {
+                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result)
+                {
+                    switch (result)
+                    {
                         case System.IO.IOResult<System.IO.File.File>.Ok(var value):
                             return value;
                         case System.IO.IOResult<System.IO.File.File>.Err(var error):
                             return new();
                     }
                 }
-                unsafe fn void Use() {
+                unsafe fn void Use()
+                {
                     stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open("demo.txt", System.IO.File.FileMode.Write));
                     file.WriteText("ascii");
                     file.WriteText((unicode)"ascii");
@@ -99,8 +106,10 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                 """
                 import System
                 module Demo
-                fn bool StatusOk(System.IO.IOStatus status) {
-                    switch (status) {
+                fn bool StatusOk(System.IO.IOStatus status)
+                {
+                    switch (status)
+                    {
                         case System.IO.IOStatus.Ok:
                             return true;
                         case System.IO.IOStatus.Err(var error):
@@ -108,8 +117,10 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
-                    switch (result) {
+                fn bool BoolOrFalse(System.IO.IOResult<bool> result)
+                {
+                    switch (result)
+                    {
                         case System.IO.IOResult<bool>.Ok(var value):
                             return value;
                         case System.IO.IOResult<bool>.Err(var error):
@@ -117,15 +128,18 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
-                    switch (result) {
+                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result)
+                {
+                    switch (result)
+                    {
                         case System.IO.IOResult<System.IO.File.File>.Ok(var value):
                             return value;
                         case System.IO.IOResult<System.IO.File.File>.Err(var error):
                             return new();
                     }
                 }
-                unsafe fn void Use() {
+                unsafe fn void Use()
+                {
                     stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open("demo.txt", System.IO.File.FileMode.ReadWrite));
                     file.Seek(0, System.IO.File.SeekOrigin.Begin);
                     file.Seek(1, System.IO.File.SeekOrigin.Current);
@@ -290,8 +304,10 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                 """
                 import System
                 module App
-                fn bool StatusOk(System.IO.IOStatus status) {
-                    switch (status) {
+                fn bool StatusOk(System.IO.IOStatus status)
+                {
+                    switch (status)
+                    {
                         case System.IO.IOStatus.Ok:
                             return true;
                         case System.IO.IOStatus.Err(var error):
@@ -299,8 +315,10 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
-                    switch (result) {
+                fn bool BoolOrFalse(System.IO.IOResult<bool> result)
+                {
+                    switch (result)
+                    {
                         case System.IO.IOResult<bool>.Ok(var value):
                             return value;
                         case System.IO.IOResult<bool>.Err(var error):
@@ -308,8 +326,10 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
-                    switch (result) {
+                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result)
+                {
+                    switch (result)
+                    {
                         case System.IO.IOResult<System.IO.File.File>.Ok(var value):
                             return value;
                         case System.IO.IOResult<System.IO.File.File>.Err(var error):
@@ -317,8 +337,10 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn i64[min max] CountOrNegative(System.IO.IOResult<u64[0 2 ** 63 - 1]> result) {
-                    switch (result) {
+                fn i64[min max] CountOrNegative(System.IO.IOResult<u64[0 2 ** 63 - 1]> result)
+                {
+                    switch (result)
+                    {
                         case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Ok(var value):
                             return (i64[min max])value;
                         case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(var error):
@@ -326,61 +348,78 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                export unsafe fn i32[min max] main() {
-                    stack mut i8[min max][1] buffer = { 0 };
+                export unsafe fn i32[min max] main()
+                {
+                    stack mut i8[min max][1] buffer =
+                    {
+                        0
+                    };
                     stack mut System.IO.File.File read = OpenOrEmpty(System.IO.File.Open("seek.txt", System.IO.File.FileMode.Read));
-                    if (!read.IsOpen()) {
+                    if (!read.IsOpen())
+                    {
                         return 1;
                     }
 
                     stack mut System.IO.File.File result = OpenOrEmpty(System.IO.File.Open("seek-result.txt", System.IO.File.FileMode.Write));
-                    if (!result.IsOpen()) {
+                    if (!result.IsOpen())
+                    {
                         return 2;
                     }
 
                     stack mut i8[min max][] byte = slice(&buffer[0], 1);
 
-                    if (CountOrNegative(read.Seek(2, System.IO.File.SeekOrigin.Begin)) != 2) {
+                    if (CountOrNegative(read.Seek(2, System.IO.File.SeekOrigin.Begin)) != 2)
+                    {
                         return 3;
                     }
 
-                    if (CountOrNegative(read.Read(byte)) != 1) {
+                    if (CountOrNegative(read.Read(byte)) != 1)
+                    {
                         return 4;
                     }
 
-                    if (CountOrNegative(result.Write(byte)) != 1) {
+                    if (CountOrNegative(result.Write(byte)) != 1)
+                    {
                         return 5;
                     }
 
-                    if (CountOrNegative(read.Seek(-1, System.IO.File.SeekOrigin.Current)) != 2) {
+                    if (CountOrNegative(read.Seek(-1, System.IO.File.SeekOrigin.Current)) != 2)
+                    {
                         return 6;
                     }
 
-                    if (CountOrNegative(read.Read(byte)) != 1) {
+                    if (CountOrNegative(read.Read(byte)) != 1)
+                    {
                         return 7;
                     }
 
-                    if (CountOrNegative(result.Write(byte)) != 1) {
+                    if (CountOrNegative(result.Write(byte)) != 1)
+                    {
                         return 8;
                     }
 
-                    if (CountOrNegative(read.Seek(-1, System.IO.File.SeekOrigin.End)) != 4) {
+                    if (CountOrNegative(read.Seek(-1, System.IO.File.SeekOrigin.End)) != 4)
+                    {
                         return 9;
                     }
 
-                    if (CountOrNegative(read.Read(byte)) != 1) {
+                    if (CountOrNegative(read.Read(byte)) != 1)
+                    {
                         return 10;
                     }
 
-                    if (CountOrNegative(result.Write(byte)) != 1) {
+                    if (CountOrNegative(result.Write(byte)) != 1)
+                    {
                         return 11;
                     }
 
-                    if (!StatusOk(read.Close())) {
+                    if (!StatusOk(read.Close()))
+                    {
                         return 12;
                     }
 
-                    if (!StatusOk(result.Close())) {
+                    if (!StatusOk(result.Close()))
+                    {
                         return 13;
                     }
 
@@ -477,8 +516,10 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                 """
                 import System
                 module App
-                fn bool StatusOk(System.IO.IOStatus status) {
-                    switch (status) {
+                fn bool StatusOk(System.IO.IOStatus status)
+                {
+                    switch (status)
+                    {
                         case System.IO.IOStatus.Ok:
                             return true;
                         case System.IO.IOStatus.Err(var error):
@@ -486,8 +527,10 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
-                    switch (result) {
+                fn bool BoolOrFalse(System.IO.IOResult<bool> result)
+                {
+                    switch (result)
+                    {
                         case System.IO.IOResult<bool>.Ok(var value):
                             return value;
                         case System.IO.IOResult<bool>.Err(var error):
@@ -495,8 +538,10 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
-                    switch (result) {
+                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result)
+                {
+                    switch (result)
+                    {
                         case System.IO.IOResult<System.IO.File.File>.Ok(var value):
                             return value;
                         case System.IO.IOResult<System.IO.File.File>.Err(var error):
@@ -504,8 +549,10 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn i64[min max] CountOrNegative(System.IO.IOResult<u64[0 2 ** 63 - 1]> result) {
-                    switch (result) {
+                fn i64[min max] CountOrNegative(System.IO.IOResult<u64[0 2 ** 63 - 1]> result)
+                {
+                    switch (result)
+                    {
                         case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Ok(var value):
                             return (i64[min max])value;
                         case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(var error):
@@ -513,30 +560,38 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn void WriteOwned() {
+                fn void WriteOwned()
+                {
                     stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open("owned-test.txt", System.IO.File.FileMode.Write));
                     file.WriteLine("Owned");
                     return;
                 }
 
-                export unsafe fn i32[min max] main() {
+                export unsafe fn i32[min max] main()
+                {
                     WriteOwned();
 
-                    if (!BoolOrFalse(System.IO.File.Exists("owned-test.txt"))) {
+                    if (!BoolOrFalse(System.IO.File.Exists("owned-test.txt")))
+                    {
                         return 2;
                     }
 
-                    if (BoolOrFalse(System.IO.File.Exists("missing-test.txt"))) {
+                    if (BoolOrFalse(System.IO.File.Exists("missing-test.txt")))
+                    {
                         return 3;
                     }
 
-                    stack mut i8[min max][8] buffer = { 0, 0, 0, 0, 0, 0, 0, 0 };
+                    stack mut i8[min max][8] buffer =
+                    {
+                        0, 0, 0, 0, 0, 0, 0, 0
+                    };
                     stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open("owned-test.txt", System.IO.File.FileMode.Read));
                     stack mut i8[min max][] destination = slice(&buffer[0], 6);
                     stack i64[min max] count = CountOrNegative(file.Read(destination));
                     file.Close();
 
-                    if (count != 6) {
+                    if (count != 6)
+                    {
                         return 4;
                     }
 
@@ -630,8 +685,10 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                 """
                 import System
                 module App
-                fn bool StatusOk(System.IO.IOStatus status) {
-                    switch (status) {
+                fn bool StatusOk(System.IO.IOStatus status)
+                {
+                    switch (status)
+                    {
                         case System.IO.IOStatus.Ok:
                             return true;
                         case System.IO.IOStatus.Err(var error):
@@ -639,8 +696,10 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
-                    switch (result) {
+                fn bool BoolOrFalse(System.IO.IOResult<bool> result)
+                {
+                    switch (result)
+                    {
                         case System.IO.IOResult<bool>.Ok(var value):
                             return value;
                         case System.IO.IOResult<bool>.Err(var error):
@@ -648,8 +707,10 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
-                    switch (result) {
+                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result)
+                {
+                    switch (result)
+                    {
                         case System.IO.IOResult<System.IO.File.File>.Ok(var value):
                             return value;
                         case System.IO.IOResult<System.IO.File.File>.Err(var error):
@@ -657,8 +718,10 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn i64[min max] CountOrNegative(System.IO.IOResult<u64[0 2 ** 63 - 1]> result) {
-                    switch (result) {
+                fn i64[min max] CountOrNegative(System.IO.IOResult<u64[0 2 ** 63 - 1]> result)
+                {
+                    switch (result)
+                    {
                         case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Ok(var value):
                             return (i64[min max])value;
                         case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(var error):
@@ -666,10 +729,15 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                unsafe fn i64[min max] ReadCount(ascii path, u64[0 2 ** 63 - 1] expected) {
-                    stack mut i8[min max][16] buffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                unsafe fn i64[min max] ReadCount(ascii path, u64[0 2 ** 63 - 1] expected)
+                {
+                    stack mut i8[min max][16] buffer =
+                    {
+                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+                    };
                     stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open(path, System.IO.File.FileMode.Read));
-                    if (!file.IsOpen()) {
+                    if (!file.IsOpen())
+                    {
                         return -1;
                     }
 
@@ -679,56 +747,68 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     return count;
                 }
 
-                export unsafe fn i32[min max] main() {
+                export unsafe fn i32[min max] main()
+                {
                     stack mut System.IO.File.File defaulted = OpenOrEmpty(System.IO.File.Open("default.txt", System.IO.File.FileMode.Write));
                     defaulted.WriteLine("Default");
-                    if (ReadCount("default.txt", 8) != 0) {
+                    if (ReadCount("default.txt", 8) != 0)
+                    {
                         return 1;
                     }
 
-                    if (!StatusOk(defaulted.Close())) {
+                    if (!StatusOk(defaulted.Close()))
+                    {
                         return 2;
                     }
 
-                    if (ReadCount("default.txt", 8) != 8) {
+                    if (ReadCount("default.txt", 8) != 8)
+                    {
                         return 3;
                     }
 
                     stack mut System.IO.File.File full = OpenOrEmpty(System.IO.File.Open("full.txt", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.Full));
                     full.WriteLine("Full");
-                    if (ReadCount("full.txt", 5) != 0) {
+                    if (ReadCount("full.txt", 5) != 0)
+                    {
                         return 4;
                     }
 
-                    if (!StatusOk(full.Flush())) {
+                    if (!StatusOk(full.Flush()))
+                    {
                         return 5;
                     }
 
-                    if (ReadCount("full.txt", 5) != 5) {
+                    if (ReadCount("full.txt", 5) != 5)
+                    {
                         return 6;
                     }
 
-                    if (!StatusOk(full.Close())) {
+                    if (!StatusOk(full.Close()))
+                    {
                         return 7;
                     }
 
                     stack mut System.IO.File.File line = OpenOrEmpty(System.IO.File.Open("line.txt", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.Line));
                     line.WriteLine("Line");
-                    if (ReadCount("line.txt", 5) != 5) {
+                    if (ReadCount("line.txt", 5) != 5)
+                    {
                         return 8;
                     }
 
-                    if (!StatusOk(line.Close())) {
+                    if (!StatusOk(line.Close()))
+                    {
                         return 9;
                     }
 
                     stack mut System.IO.File.File none = OpenOrEmpty(System.IO.File.Open("none.txt", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.None));
                     none.WriteText("None");
-                    if (ReadCount("none.txt", 4) != 4) {
+                    if (ReadCount("none.txt", 4) != 4)
+                    {
                         return 10;
                     }
 
-                    if (!StatusOk(none.Close())) {
+                    if (!StatusOk(none.Close()))
+                    {
                         return 11;
                     }
 
@@ -826,8 +906,10 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                 import System
                 import System.Text
                 module App
-                fn bool StatusOk(System.IO.IOStatus status) {
-                    switch (status) {
+                fn bool StatusOk(System.IO.IOStatus status)
+                {
+                    switch (status)
+                    {
                         case System.IO.IOStatus.Ok:
                             return true;
                         case System.IO.IOStatus.Err(var error):
@@ -835,8 +917,10 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
-                    switch (result) {
+                fn bool BoolOrFalse(System.IO.IOResult<bool> result)
+                {
+                    switch (result)
+                    {
                         case System.IO.IOResult<bool>.Ok(var value):
                             return value;
                         case System.IO.IOResult<bool>.Err(var error):
@@ -844,17 +928,24 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
-                    switch (result) {
+                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result)
+                {
+                    switch (result)
+                    {
                         case System.IO.IOResult<System.IO.File.File>.Ok(var value):
                             return value;
                         case System.IO.IOResult<System.IO.File.File>.Err(var error):
                             return new();
                     }
                 }
-                export unsafe fn i32[min max] main() {
-                    stack mut i32[min max][1] gothicBuffer = { 66376 };
-                    stack mut Unicode gothic = new Unicode() {
+                export unsafe fn i32[min max] main()
+                {
+                    stack mut i32[min max][1] gothicBuffer =
+                    {
+                        66376
+                    };
+                    stack mut Unicode gothic = new Unicode()
+                    {
                         Data = &gothicBuffer[0],
                         Length = 1,
                         Capacity = 1
@@ -863,7 +954,8 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     stack mut System.IO.File.File utf8 = OpenOrEmpty(System.IO.File.Open("utf8.txt", System.IO.File.FileMode.Write, System.Text.Encoding.UTF8));
                     utf8.WriteText("Hi ");
                     utf8.WriteLine((unicode)"Î±");
-                    if (!StatusOk(utf8.Close())) {
+                    if (!StatusOk(utf8.Close()))
+                    {
                         return 1;
                     }
 
@@ -871,11 +963,13 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     utf16.WriteText("A");
                     utf16.WriteText(System.Text.UnicodeView(gothic));
                     utf16.WriteLine((unicode)"Î²");
-                    if (!StatusOk(utf16.Close())) {
+                    if (!StatusOk(utf16.Close()))
+                    {
                         return 2;
                     }
 
-                    gothic = new Unicode() {
+                    gothic = new Unicode()
+                    {
                         Data = &gothicBuffer[0],
                         Length = 1,
                         Capacity = 1
@@ -885,7 +979,8 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     utf32.WriteText("Z");
                     utf32.WriteText(System.Text.UnicodeView(gothic));
                     utf32.WriteLine((unicode)"Î³");
-                    if (!StatusOk(utf32.Close())) {
+                    if (!StatusOk(utf32.Close()))
+                    {
                         return 3;
                     }
 
@@ -989,8 +1084,10 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                 """
                 import System
                 module App
-                fn bool StatusOk(System.IO.IOStatus status) {
-                    switch (status) {
+                fn bool StatusOk(System.IO.IOStatus status)
+                {
+                    switch (status)
+                    {
                         case System.IO.IOStatus.Ok:
                             return true;
                         case System.IO.IOStatus.Err(var error):
@@ -998,8 +1095,10 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
-                    switch (result) {
+                fn bool BoolOrFalse(System.IO.IOResult<bool> result)
+                {
+                    switch (result)
+                    {
                         case System.IO.IOResult<bool>.Ok(var value):
                             return value;
                         case System.IO.IOResult<bool>.Err(var error):
@@ -1007,49 +1106,61 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
-                    switch (result) {
+                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result)
+                {
+                    switch (result)
+                    {
                         case System.IO.IOResult<System.IO.File.File>.Ok(var value):
                             return value;
                         case System.IO.IOResult<System.IO.File.File>.Err(var error):
                             return new();
                     }
                 }
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open("before.txt", System.IO.File.FileMode.Write));
-                    if (!file.IsOpen()) {
+                    if (!file.IsOpen())
+                    {
                         return 1;
                     }
 
-                    if (!StatusOk(file.WriteLine("Move me"))) {
+                    if (!StatusOk(file.WriteLine("Move me")))
+                    {
                         return 2;
                     }
 
-                    if (!StatusOk(file.Close())) {
+                    if (!StatusOk(file.Close()))
+                    {
                         return 2;
                     }
 
-                    if (!BoolOrFalse(System.IO.File.Exists("before.txt"))) {
+                    if (!BoolOrFalse(System.IO.File.Exists("before.txt")))
+                    {
                         return 3;
                     }
 
-                    if (!StatusOk(System.IO.File.Move("before.txt", "after.txt"))) {
+                    if (!StatusOk(System.IO.File.Move("before.txt", "after.txt")))
+                    {
                         return 4;
                     }
 
-                    if (BoolOrFalse(System.IO.File.Exists("before.txt"))) {
+                    if (BoolOrFalse(System.IO.File.Exists("before.txt")))
+                    {
                         return 5;
                     }
 
-                    if (!BoolOrFalse(System.IO.File.Exists("after.txt"))) {
+                    if (!BoolOrFalse(System.IO.File.Exists("after.txt")))
+                    {
                         return 6;
                     }
 
-                    if (!StatusOk(System.IO.File.Delete("after.txt"))) {
+                    if (!StatusOk(System.IO.File.Delete("after.txt")))
+                    {
                         return 7;
                     }
 
-                    if (BoolOrFalse(System.IO.File.Exists("after.txt"))) {
+                    if (BoolOrFalse(System.IO.File.Exists("after.txt")))
+                    {
                         return 8;
                     }
 
@@ -1145,8 +1256,10 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                 import System
                 import System.Text
                 module App
-                fn bool StatusOk(System.IO.IOStatus status) {
-                    switch (status) {
+                fn bool StatusOk(System.IO.IOStatus status)
+                {
+                    switch (status)
+                    {
                         case System.IO.IOStatus.Ok:
                             return true;
                         case System.IO.IOStatus.Err(var error):
@@ -1154,8 +1267,10 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
-                    switch (result) {
+                fn bool BoolOrFalse(System.IO.IOResult<bool> result)
+                {
+                    switch (result)
+                    {
                         case System.IO.IOResult<bool>.Ok(var value):
                             return value;
                         case System.IO.IOResult<bool>.Err(var error):
@@ -1163,29 +1278,36 @@ public sealed class SystemIOFileStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
-                    switch (result) {
+                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result)
+                {
+                    switch (result)
+                    {
                         case System.IO.IOResult<System.IO.File.File>.Ok(var value):
                             return value;
                         case System.IO.IOResult<System.IO.File.File>.Err(var error):
                             return new();
                     }
                 }
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open("unicode.txt", System.IO.File.FileMode.Write, System.Text.Encoding.UTF8));
-                    if (!file.IsOpen()) {
+                    if (!file.IsOpen())
+                    {
                         return 1;
                     }
 
-                    if (!StatusOk(file.WriteLine((unicode)"File \u03B1"))) {
+                    if (!StatusOk(file.WriteLine((unicode)"File \u03B1")))
+                    {
                         return 2;
                     }
 
-                    if (!StatusOk(file.Close())) {
+                    if (!StatusOk(file.Close()))
+                    {
                         return 2;
                     }
 
-                    switch (System.Console.WriteLine((unicode)"Console \u03B1")) {
+                    switch (System.Console.WriteLine((unicode)"Console \u03B1"))
+                    {
                         case System.IO.IOStatus.Ok:
                             return 0;
                         case System.IO.IOStatus.Err(var error):

@@ -24,7 +24,21 @@ Status: covered by `ExamplesCompileRunTests.ModulesExampleCompilesAndRuns`.
 - [Units.stark](/reference/examples/modules/Units.stark)
 - [Stark.toml](/reference/examples/modules/Stark.toml)
 
+### App.stark
+
 {{< file-sample "static/reference/examples/modules/App.stark" "stark" >}}
+
+### Geometry.stark
+
+{{< file-sample "static/reference/examples/modules/Geometry.stark" "stark" >}}
+
+### Units.stark
+
+{{< file-sample "static/reference/examples/modules/Units.stark" "stark" >}}
+
+### Stark.toml
+
+{{< file-sample "static/reference/examples/modules/Stark.toml" "toml" >}}
 
 ## Related
 

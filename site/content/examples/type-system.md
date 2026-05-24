@@ -22,7 +22,13 @@ Status: covered by `ExamplesCompileRunTests.TypeSystemExampleCompilesAndRuns`.
 - [TypeSystem.stark](/reference/examples/type-system/TypeSystem.stark)
 - [Stark.toml](/reference/examples/type-system/Stark.toml)
 
+### TypeSystem.stark
+
 {{< file-sample "static/reference/examples/type-system/TypeSystem.stark" "stark" >}}
+
+### Stark.toml
+
+{{< file-sample "static/reference/examples/type-system/Stark.toml" "toml" >}}
 
 ## Related
 

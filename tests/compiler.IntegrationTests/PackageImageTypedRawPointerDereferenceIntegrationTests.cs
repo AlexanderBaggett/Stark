@@ -26,7 +26,8 @@ public sealed class PackageImageTypedRawPointerDereferenceIntegrationTests
                 """
                 module Facade
 
-                public unsafe fn i32[min max] Observe<T>(rawmutptr<i32[min max]> ptr, i32[min max] value, T tag) {
+                public unsafe fn i32[min max] Observe<T>(rawmutptr<i32[min max]> ptr, i32[min max] value, T tag)
+                {
                     stack mut i32[min max] copy = *ptr;
                     return *ptr += copy + value;
                 }
@@ -93,7 +94,8 @@ public sealed class PackageImageTypedRawPointerDereferenceIntegrationTests
                 import Facade
                 module Demo
 
-                export unsafe fn i32[min max] main() {
+                export unsafe fn i32[min max] main()
+                {
                     stack mut i32[min max] current = 5;
                     stack i32[min max] tag = 0;
                     return Facade.Observe(&current, 3, tag);
@@ -173,13 +175,17 @@ public sealed class PackageImageTypedRawPointerDereferenceIntegrationTests
                 """
                 module Facade
 
-                public record Buffer(i32[min max] First, i32[min max][4] Values) { }
+                public record Buffer(i32[min max] First, i32[min max][4] Values)
+                {
+                }
 
-                public unsafe fn rawmutptr<Buffer> Pick<T>(rawmutptr<Buffer> ptr, T tag) {
+                public unsafe fn rawmutptr<Buffer> Pick<T>(rawmutptr<Buffer> ptr, T tag)
+                {
                     return ptr;
                 }
 
-                public unsafe fn i32[min max] Observe<T>(rawmutptr<Buffer> ptr, i32[min max] slot, i32[min max] value, T tag) {
+                public unsafe fn i32[min max] Observe<T>(rawmutptr<Buffer> ptr, i32[min max] slot, i32[min max] value, T tag)
+                {
                     (*ptr).First += value;
                     return (*Pick(ptr, tag)).Values[slot] = (*ptr).First + value;
                 }
@@ -246,9 +252,16 @@ public sealed class PackageImageTypedRawPointerDereferenceIntegrationTests
                 import Facade
                 module Demo
 
-                export unsafe fn i32[min max] main() {
-                    stack mut i32[min max][4] values = { 10, 20, 30, 40 };
-                    stack mut Facade.Buffer buffer = { First = 5, Values = values };
+                export unsafe fn i32[min max] main()
+                {
+                    stack mut i32[min max][4] values =
+                    {
+                        10, 20, 30, 40
+                    };
+                    stack mut Facade.Buffer buffer =
+                    {
+                        First = 5, Values = values
+                    };
                     stack i32[min max] tag = 0;
                     return Facade.Observe(&buffer, 2, 3, tag);
                 }
@@ -327,11 +340,20 @@ public sealed class PackageImageTypedRawPointerDereferenceIntegrationTests
                 """
                 module Facade
 
-                public record Buffer(i32[min max] First, i32[min max][4] Values) { }
+                public record Buffer(i32[min max] First, i32[min max][4] Values)
+                {
+                }
 
-                public unsafe fn i32[min max] Observe<T>(i32[min max] value, T tag) {
-                    stack mut i32[min max][4] data = { 1, 2, 3, 4 };
-                    stack mut Buffer buffer = { First = value, Values = data };
+                public unsafe fn i32[min max] Observe<T>(i32[min max] value, T tag)
+                {
+                    stack mut i32[min max][4] data =
+                    {
+                        1, 2, 3, 4
+                    };
+                    stack mut Buffer buffer =
+                    {
+                        First = value, Values = data
+                    };
                     stack rawmutptr<i32[min max]> firstPtr = &buffer.First;
                     stack rawmutptr<i32[min max]> slotPtr = &buffer.Values[2];
                     stack rawmutptr<i32[min max]> aliasPtr = &*slotPtr;
@@ -400,7 +422,8 @@ public sealed class PackageImageTypedRawPointerDereferenceIntegrationTests
                 import Facade
                 module Demo
 
-                export unsafe fn i32[min max] main() {
+                export unsafe fn i32[min max] main()
+                {
                     stack i32[min max] tag = 0;
                     return Facade.Observe(5, tag);
                 }

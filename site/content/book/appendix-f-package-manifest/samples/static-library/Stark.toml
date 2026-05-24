@@ -1,0 +1,8 @@
+[project]
+name = "static-library"
+version = "0.1.0"
+kind = "library"
+
+[library]
+root = "Facade.stark"
+output = "Facade"

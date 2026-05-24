@@ -12,8 +12,10 @@ public sealed class SystemPromotedConsoleStandardLibraryTests : StandardLibraryT
         import System.Memory
         module App
 
-        fn bool StatusOk(System.IO.IOStatus status) {
-            switch (status) {
+        fn bool StatusOk(System.IO.IOStatus status)
+        {
+            switch (status)
+            {
                 case System.IO.IOStatus.Ok:
                     return true;
                 case System.IO.IOStatus.Err(var error):
@@ -21,8 +23,10 @@ public sealed class SystemPromotedConsoleStandardLibraryTests : StandardLibraryT
             }
         }
 
-        fn bool MemoryOk(System.Memory.MemoryStatus status) {
-            switch (status) {
+        fn bool MemoryOk(System.Memory.MemoryStatus status)
+        {
+            switch (status)
+            {
                 case System.Memory.MemoryStatus.Ok:
                     return true;
                 case System.Memory.MemoryStatus.Err(var error):
@@ -30,8 +34,10 @@ public sealed class SystemPromotedConsoleStandardLibraryTests : StandardLibraryT
             }
         }
 
-        fn bool ReadCount(System.Memory.MemoryResult<u64[0 2 ** 63 - 1]> result, u64[0 2 ** 63 - 1] expected) {
-            switch (result) {
+        fn bool ReadCount(System.Memory.MemoryResult<u64[0 2 ** 63 - 1]> result, u64[0 2 ** 63 - 1] expected)
+        {
+            switch (result)
+            {
                 case System.Memory.MemoryResult<u64[0 2 ** 63 - 1]>.Ok(var value):
                     return value == expected;
                 case System.Memory.MemoryResult<u64[0 2 ** 63 - 1]>.Err(var error):
@@ -39,13 +45,16 @@ public sealed class SystemPromotedConsoleStandardLibraryTests : StandardLibraryT
             }
         }
 
-        fn bool IsAlpha(System.Memory.MemoryResult<System.Text.OwnedAscii> result) {
-            switch (result) {
+        fn bool IsAlpha(System.Memory.MemoryResult<System.Text.OwnedAscii> result)
+        {
+            switch (result)
+            {
                 case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
                     return false;
                 case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
                     stack mut System.Text.OwnedAscii line = value;
-                    if (line.Length() != 5) {
+                    if (line.Length() != 5)
+                    {
                         return false;
                     }
 
@@ -58,13 +67,16 @@ public sealed class SystemPromotedConsoleStandardLibraryTests : StandardLibraryT
             }
         }
 
-        fn bool IsCafe(System.Memory.MemoryResult<System.Text.OwnedUnicode> result) {
-            switch (result) {
+        fn bool IsCafe(System.Memory.MemoryResult<System.Text.OwnedUnicode> result)
+        {
+            switch (result)
+            {
                 case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Err(var error):
                     return false;
                 case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Ok(var value):
                     stack mut System.Text.OwnedUnicode line = value;
-                    if (line.Length() != 4) {
+                    if (line.Length() != 4)
+                    {
                         return false;
                     }
 
@@ -76,13 +88,16 @@ public sealed class SystemPromotedConsoleStandardLibraryTests : StandardLibraryT
             }
         }
 
-        fn bool IsZ(System.Memory.MemoryResult<System.Text.OwnedUnicode> result) {
-            switch (result) {
+        fn bool IsZ(System.Memory.MemoryResult<System.Text.OwnedUnicode> result)
+        {
+            switch (result)
+            {
                 case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Err(var error):
                     return false;
                 case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Ok(var value):
                     stack mut System.Text.OwnedUnicode unit = value;
-                    if (unit.Length() != 1) {
+                    if (unit.Length() != 1)
+                    {
                         return false;
                     }
 
@@ -91,12 +106,15 @@ public sealed class SystemPromotedConsoleStandardLibraryTests : StandardLibraryT
             }
         }
 
-        fn bool IsTooLargeAscii(System.Memory.MemoryResult<System.Text.OwnedAscii> result) {
-            switch (result) {
+        fn bool IsTooLargeAscii(System.Memory.MemoryResult<System.Text.OwnedAscii> result)
+        {
+            switch (result)
+            {
                 case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
                     return false;
                 case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
-                    switch (error) {
+                    switch (error)
+                    {
                         case System.Memory.MemoryError.OutOfMemory:
                             return false;
                         case System.Memory.MemoryError.TooLarge:
@@ -109,15 +127,21 @@ public sealed class SystemPromotedConsoleStandardLibraryTests : StandardLibraryT
             }
         }
 
-        export unsafe fn i32[min max] main() {
+        export unsafe fn i32[min max] main()
+        {
             stack mut System.Text.OwnedAscii owned = new();
-            if (!MemoryOk(owned.AppendAscii("owned"))) {
+            if (!MemoryOk(owned.AppendAscii("owned")))
+            {
                 return 1;
             }
 
-            stack mut i8[min max][3] bufferBytes = { 66, 85, 70 };
+            stack mut i8[min max][3] bufferBytes =
+            {
+                66, 85, 70
+            };
             stack mut System.Runtime.Buffer.FixedByteBuffer512 fixedBuffer = new();
-            if (!MemoryOk(fixedBuffer.WriteSlice(bufferBytes, 3))) {
+            if (!MemoryOk(fixedBuffer.WriteSlice(bufferBytes, 3)))
+            {
                 return 2;
             }
 
@@ -126,33 +150,40 @@ public sealed class SystemPromotedConsoleStandardLibraryTests : StandardLibraryT
                 || !StatusOk(System.Console.Write((unicode)"unicode:"))
                 || !StatusOk(System.Console.WriteLine((unicode)"α"))
                 || !StatusOk(System.Console.WriteLine(fixedBuffer))
-                || !StatusOk(System.Console.WriteErrorLine("err"))) {
-                return 3;
+                || !StatusOk(System.Console.WriteErrorLine("err")))
+                {
+                    return 3;
             }
 
-            if (!IsAlpha(System.Console.ReadAsciiLine())) {
+            if (!IsAlpha(System.Console.ReadAsciiLine()))
+            {
                 return 4;
             }
 
-            if (!IsCafe(System.Console.ReadUnicodeLine())) {
+            if (!IsCafe(System.Console.ReadUnicodeLine()))
+            {
                 return 5;
             }
 
-            if (!IsZ(System.Console.Read())) {
+            if (!IsZ(System.Console.Read()))
+            {
                 return 6;
             }
 
             stack mut System.Runtime.Buffer.DynamicByteBuffer dynamicBytes = new();
-            if (!ReadCount(System.Console.ReadBytes(dynamicBytes, 3), 3)) {
+            if (!ReadCount(System.Console.ReadBytes(dynamicBytes, 3), 3))
+            {
                 return 7;
             }
 
             stack i8[min max][] readBytes = dynamicBytes.ReadSlice();
-            if (readBytes[0] != 49 || readBytes[1] != 50 || readBytes[2] != 51) {
+            if (readBytes[0] != 49 || readBytes[1] != 50 || readBytes[2] != 51)
+            {
                 return 8;
             }
 
-            if (!IsTooLargeAscii(System.Console.ReadAsciiLine())) {
+            if (!IsTooLargeAscii(System.Console.ReadAsciiLine()))
+            {
                 return 9;
             }
 
@@ -176,20 +207,24 @@ public sealed class SystemPromotedConsoleStandardLibraryTests : StandardLibraryT
                 import System.Memory
                 module Demo
 
-                fn System.IO.IOStatus WriteOwned(mut borrow System.Text.OwnedAscii text) {
+                fn System.IO.IOStatus WriteOwned(mut borrow System.Text.OwnedAscii text)
+                {
                     return System.Console.WriteLine(text);
                 }
 
-                fn System.IO.IOStatus WriteBuffer(borrow System.Runtime.Buffer.DynamicByteBuffer buffer) {
+                fn System.IO.IOStatus WriteBuffer(borrow System.Runtime.Buffer.DynamicByteBuffer buffer)
+                {
                     return System.Console.Write(buffer);
                 }
 
                 fn System.Memory.MemoryResult<u64[0 2 ** 63 - 1]> ReadInto(
-                    mut borrow System.Runtime.Buffer.FixedByteBuffer8192 buffer) {
-                    return System.Console.ReadBytes(buffer, 32);
+                    mut borrow System.Runtime.Buffer.FixedByteBuffer8192 buffer)
+                    {
+                        return System.Console.ReadBytes(buffer, 32);
                 }
 
-                fn System.Memory.MemoryResult<System.Text.OwnedUnicode> ReadLine() {
+                fn System.Memory.MemoryResult<System.Text.OwnedUnicode> ReadLine()
+                {
                     return System.Console.ReadLine();
                 }
                 """,

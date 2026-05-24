@@ -1,6 +1,0 @@
-module Book.Negative.SliceLiteralHiddenStorage
-
-fn i32[min max] InvalidSliceLiteral() {
-    stack i32[min max][] view = { 1, 2, 3 };
-    return view[0];
-}

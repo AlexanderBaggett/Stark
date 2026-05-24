@@ -12,20 +12,24 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            enum Error {
+            enum Error
+            {
                 Unknown(i32[min max]),
             }
 
-            enum Result<T> {
+            enum Result<T>
+            {
                 Ok(T),
                 Err(Error),
             }
 
-            unsafe fn Result<bool> Ok() {
+            unsafe fn Result<bool> Ok()
+            {
                 return Result<bool>.Ok(true);
             }
 
-            unsafe fn Result<bool> Bad() {
+            unsafe fn Result<bool> Bad()
+            {
                 return Result<bool>.Err(Error.Unknown(-1));
             }
             """,
@@ -44,10 +48,14 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe finite law i32[min max] Run() {
-                if (true) {
+            unsafe finite law i32[min max] Run()
+            {
+                if (true)
+                {
                     return 1;
-                } else {
+                }
+                else
+                {
                     return 2;
                 }
             }
@@ -72,8 +80,10 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe finite law void Run() {
-                while willexit (true) {
+            unsafe finite law void Run()
+            {
+                while willexit (true)
+                {
                     break;
                 }
 
@@ -97,8 +107,10 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe finite law void Run() {
-                for willexit (stack mut i32[min max] i = 0; i < 4; i = i + 1) {
+            unsafe finite law void Run()
+            {
+                for willexit (stack mut i32[min max] i = 0; i < 4; i = i + 1)
+                {
                     continue;
                 }
 
@@ -122,16 +134,24 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            enum Token {
+            enum Token
+            {
                 End,
                 Integer(i32[min max]),
-                Move { X: i32[min max], Y: i32[min max] },
+                Move
+                {
+                    X: i32[min max], Y: i32[min max]
+                },
             }
 
-            unsafe fn i32[min max] Run() {
+            unsafe fn i32[min max] Run()
+            {
                 stack Token a = Token.End;
                 stack Token b = Token.Integer(5);
-                stack Token c = Token.Move { X: 1, Y: 2 };
+                stack Token c = Token.Move
+                {
+                    X: 1, Y: 2
+                };
                 return 0;
             }
             """);
@@ -165,11 +185,13 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Next() {
+            unsafe fn i32[min max] Next()
+            {
                 return 1;
             }
 
-            unsafe fn bool Run() {
+            unsafe fn bool Run()
+            {
                 return 0 < Next() < 3;
             }
             """);
@@ -193,7 +215,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn bool Run(bool left, bool right, bool fallback) {
+            unsafe fn bool Run(bool left, bool right, bool fallback)
+            {
                 return left || right || fallback;
             }
             """);
@@ -214,7 +237,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(bool flag) {
+            unsafe fn i32[min max] Run(bool flag)
+            {
                 return flag ? 1 : 2;
             }
             """);
@@ -236,12 +260,14 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn void Reset(rawmutptr<i32[min max]> value, i32[min max] next) {
+            unsafe fn void Reset(rawmutptr<i32[min max]> value, i32[min max] next)
+            {
                 *value = next;
                 return;
             }
 
-            unsafe fn void Run(bool flag, rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Run(bool flag, rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 flag ? Reset(left, 7) : Reset(right, 9);
                 return;
             }
@@ -268,11 +294,13 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            noinline finite law void Target(i32[min max] value) {
+            noinline finite law void Target(i32[min max] value)
+            {
                 return;
             }
 
-            unsafe fn void Run() {
+            unsafe fn void Run()
+            {
                 stack fnptr<fn void(i32[min max])> op = Target;
                 op(1);
                 return;
@@ -294,7 +322,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run() {
+            unsafe fn i32[min max] Run()
+            {
                 stack mut i32[min max] value = 1;
                 value = value + 1;
                 return value;
@@ -327,7 +356,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn i64[min max] Run() {
+            unsafe fn i64[min max] Run()
+            {
                 return sizeof(i32[min max]) + alignof(i64[min max]);
             }
             """);
@@ -356,7 +386,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe finite law u1024[0 max] Run() {
+            unsafe finite law u1024[0 max] Run()
+            {
                 return (u1024[0 max])(2 ** 1024 - 1);
             }
             """,
@@ -384,7 +415,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe finite law i8[min max] Run() {
+            unsafe finite law i8[min max] Run()
+            {
                 return (i8[min max])300;
             }
             """,
@@ -409,7 +441,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe finite law i32[min max] Run(i32[min max] left, i32[min max] right) {
+            unsafe finite law i32[min max] Run(i32[min max] left, i32[min max] right)
+            {
                 return left ^ right;
             }
             """);
@@ -431,7 +464,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run() {
+            unsafe fn i32[min max] Run()
+            {
                 stack mut i32[min max] value = 6;
                 value ^= 3;
                 return value;
@@ -455,7 +489,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(i32[min max] left, i32[min max] middle, i32[min max] right, i32[min max] mask) {
+            unsafe fn i32[min max] Run(i32[min max] left, i32[min max] middle, i32[min max] right, i32[min max] mask)
+            {
                 return left | middle ^ right & mask << 1 >> 1;
             }
             """);
@@ -488,7 +523,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right) {
+            unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right)
+            {
                 stack mut i32[min max] wrapped = left;
                 wrapped +%= right;
                 stack i32[min max] wrapProduct = -%wrapped *% 2;
@@ -527,7 +563,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe finite law f32 Run(f32 left, f32 right) {
+            unsafe finite law f32 Run(f32 left, f32 right)
+            {
                 return left ** right;
             }
             """);
@@ -549,7 +586,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe finite law i32[min max] Run(i32[min max] left, i32[min max] right) {
+            unsafe finite law i32[min max] Run(i32[min max] left, i32[min max] right)
+            {
                 return left ** right;
             }
             """);
@@ -573,7 +611,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            strictfp finite law f64 Run(f32 left, i32[min max] middle, f64 right, f32 divisor) {
+            strictfp finite law f64 Run(f32 left, i32[min max] middle, f64 right, f32 divisor)
+            {
                 return left + middle * right / divisor - 1.0;
             }
             """);
@@ -600,11 +639,13 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe finite law ascii AsciiChar() {
+            unsafe finite law ascii AsciiChar()
+            {
                 return 'a';
             }
 
-            unsafe finite law unicode UnicodeChar() {
+            unsafe finite law unicode UnicodeChar()
+            {
                 return (unicode)'\u03B1';
             }
             """);
@@ -631,7 +672,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe finite law unicode Run() {
+            unsafe finite law unicode Run()
+            {
                 return (unicode)"Hello";
             }
             """);
@@ -659,12 +701,17 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            unsafe fn i32[min max] Run() {
-                stack Box box = new Box() { Value = 41 };
+            unsafe fn i32[min max] Run()
+            {
+                stack Box box = new Box()
+                {
+                    Value = 41
+                };
                 return box.Value;
             }
             """);
@@ -694,17 +741,22 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            record Pair(i32[min max] Left, i32[min max] Right) { }
+            record Pair(i32[min max] Left, i32[min max] Right)
+            {
+            }
 
-            unsafe fn i32[min max] First() {
+            unsafe fn i32[min max] First()
+            {
                 return 1;
             }
 
-            unsafe fn i32[min max] Second() {
+            unsafe fn i32[min max] Second()
+            {
                 return 2;
             }
 
-            unsafe fn i32[min max] Run() {
+            unsafe fn i32[min max] Run()
+            {
                 stack Pair pair = new Pair(First(), Second());
                 return pair.Right;
             }
@@ -746,20 +798,27 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            record Pair(i32[min max] Left) {
+            record Pair(i32[min max] Left)
+            {
                 i32[min max] Right;
             }
 
-            unsafe fn i32[min max] First() {
+            unsafe fn i32[min max] First()
+            {
                 return 1;
             }
 
-            unsafe fn i32[min max] Override() {
+            unsafe fn i32[min max] Override()
+            {
                 return 4;
             }
 
-            unsafe fn i32[min max] Run() {
-                stack Pair pair = new Pair(First()) { Right = Override() };
+            unsafe fn i32[min max] Run()
+            {
+                stack Pair pair = new Pair(First())
+                {
+                    Right = Override()
+                };
                 return pair.Right;
             }
             """);
@@ -791,31 +850,44 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            struct Inner {
+            struct Inner
+            {
                 i32[min max][2] Pair;
             }
 
-            struct Outer {
+            struct Outer
+            {
                 i32[min max] Score;
                 Inner Node;
             }
 
-            unsafe fn i32[min max] MakeScore() {
+            unsafe fn i32[min max] MakeScore()
+            {
                 return 9;
             }
 
-            unsafe fn i32[min max] MakeLeft() {
+            unsafe fn i32[min max] MakeLeft()
+            {
                 return 4;
             }
 
-            unsafe fn i32[min max] MakeRight() {
+            unsafe fn i32[min max] MakeRight()
+            {
                 return 7;
             }
 
-            unsafe fn i32[min max] Run() {
-                stack Outer outer = new Outer() {
+            unsafe fn i32[min max] Run()
+            {
+                stack Outer outer = new Outer()
+                {
                     Score = MakeScore(),
-                    Node = { Pair = { MakeLeft(), MakeRight() } }
+                    Node =
+                    {
+                        Pair =
+                        {
+                            MakeLeft(), MakeRight()
+                        }
+                    }
                 };
                 return outer.Node.Pair[1] + outer.Score;
             }
@@ -844,21 +916,26 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            struct Box {
-                unsafe fn i32[min max] Pick(Box box, i32[min max] value) {
+            struct Box
+            {
+                unsafe fn i32[min max] Pick(Box box, i32[min max] value)
+                {
                     return value;
                 }
             }
 
-            unsafe fn Box Make() {
+            unsafe fn Box Make()
+            {
                 return new Box();
             }
 
-            unsafe fn i32[min max] Next() {
+            unsafe fn i32[min max] Next()
+            {
                 return 7;
             }
 
-            unsafe fn i32[min max] Run() {
+            unsafe fn i32[min max] Run()
+            {
                 return Make().Pick(Next());
             }
             """);
@@ -882,17 +959,29 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            unsafe fn Box Make(i32[min max] value) {
-                return new() { Value = value };
+            unsafe fn Box Make(i32[min max] value)
+            {
+                return new()
+                {
+                    Value = value
+                };
             }
 
-            unsafe fn i32[min max] Run(i32[min max] value) {
-                stack mut Box box = new() { Value = value };
-                box = new() { Value = value + 1 };
+            unsafe fn i32[min max] Run(i32[min max] value)
+            {
+                stack mut Box box = new()
+                {
+                    Value = value
+                };
+                box = new()
+                {
+                    Value = value + 1
+                };
                 return box.Value + Make(value).Value;
             }
             """);
@@ -919,12 +1008,17 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            unsafe fn i32[min max] Run() {
-                register Box box = new Box() { Value = 7 };
+            unsafe fn i32[min max] Run()
+            {
+                register Box box = new Box()
+                {
+                    Value = 7
+                };
                 return box.Value;
             }
             """);
@@ -948,12 +1042,17 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            unsafe fn i32[min max] Run() {
-                heap Box box = new Box() { Value = 7 };
+            unsafe fn i32[min max] Run()
+            {
+                heap Box box = new Box()
+                {
+                    Value = 7
+                };
                 return box.Value;
             }
             """);

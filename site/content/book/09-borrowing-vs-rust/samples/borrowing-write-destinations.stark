@@ -1,0 +1,50 @@
+module Book.BorrowingWriteDestinations
+
+fn bool TryDivide(i32[min max] numerator, i32[min max] denominator, out i32[min max] result)
+{
+    if (denominator == 0)
+    {
+        result = 0;
+        return false;
+    }
+
+    result = numerator / denominator;
+    return true;
+}
+
+fn void Fill(init u32[0 max][] destination, u64[0 max] count, u32[0 max] value)
+{
+    for willexit (stack mut u64[0 max] index = 0; index < count; index += 1)
+    {
+        init destination[index] = value;
+    }
+
+    return;
+}
+
+export fn i32[min max] main()
+{
+    stack mut i32[min max] result = 0;
+
+    if (!TryDivide(21, 3, result))
+    {
+        return 1;
+    }
+
+    if (result != 7)
+    {
+        return 2;
+    }
+
+    if (TryDivide(21, 0, result))
+    {
+        return 3;
+    }
+
+    if (result != 0)
+    {
+        return 4;
+    }
+
+    return 0;
+}

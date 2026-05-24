@@ -11,8 +11,10 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe finite law i32[min max] Run(i32[min max] value) {
-                switch (value) {
+            unsafe finite law i32[min max] Run(i32[min max] value)
+            {
+                switch (value)
+                {
                     case 1:
                         return 10;
                     case 2:
@@ -39,9 +41,11 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(i32[min max] value) {
+            unsafe fn i32[min max] Run(i32[min max] value)
+            {
                 stack mut i32[min max] result = 0;
-                switch (value) {
+                switch (value)
+                {
                     case 1:
                         result = 10;
                         break;
@@ -84,8 +88,10 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe finite law i32[min max] Run(i32[min max] value, bool allow) {
-                switch (value) {
+            unsafe finite law i32[min max] Run(i32[min max] value, bool allow)
+            {
+                switch (value)
+                {
                     case 1 when allow:
                         return 10;
                     default:
@@ -109,8 +115,10 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe finite law i32[min max] Run(i32[min max] value, bool allow) {
-                switch (value) {
+            unsafe finite law i32[min max] Run(i32[min max] value, bool allow)
+            {
+                switch (value)
+                {
                     case _ when allow:
                         return 10;
                     default:
@@ -134,8 +142,10 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe finite law i32[min max] Run(i32[min max] value, bool allow) {
-                switch (value) {
+            unsafe finite law i32[min max] Run(i32[min max] value, bool allow)
+            {
+                switch (value)
+                {
                     case 1:
                     case _ when allow:
                         return 10;
@@ -162,8 +172,10 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe finite law i32[min max] Run(i32[min max] value, bool allow) {
-                switch (value) {
+            unsafe finite law i32[min max] Run(i32[min max] value, bool allow)
+            {
+                switch (value)
+                {
                     case 1:
                     case 2 when allow:
                         return 10;
@@ -190,8 +202,10 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe finite law i32[min max] Run(i32[min max] value, bool allow) {
-                switch (value) {
+            unsafe finite law i32[min max] Run(i32[min max] value, bool allow)
+            {
+                switch (value)
+                {
                     case var capture when allow:
                         return capture;
                     default:
@@ -230,10 +244,14 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            record Pair(i32[min max] Left, i32[min max] Right) { }
+            record Pair(i32[min max] Left, i32[min max] Right)
+            {
+            }
 
-            unsafe finite law i32[min max] Run(Pair value) {
-                switch (value) {
+            unsafe finite law i32[min max] Run(Pair value)
+            {
+                switch (value)
+                {
                     case Pair(1, var right):
                         return right;
                     default:
@@ -271,10 +289,14 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            record Pair(i32[min max] Left, i32[min max] Right) { }
+            record Pair(i32[min max] Left, i32[min max] Right)
+            {
+            }
 
-            unsafe finite law i32[min max] Run(Pair value) {
-                switch (value) {
+            unsafe finite law i32[min max] Run(Pair value)
+            {
+                switch (value)
+                {
                     case Pair capture:
                         return capture.Right;
                 }
@@ -303,11 +325,17 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            record Pair(i32[min max] Left, i32[min max] Right) { }
-            record Outer(Pair Values, i32[min max] Tail) { }
+            record Pair(i32[min max] Left, i32[min max] Right)
+            {
+            }
+            record Outer(Pair Values, i32[min max] Tail)
+            {
+            }
 
-            unsafe finite law i32[min max] Run(Outer value) {
-                switch (value) {
+            unsafe finite law i32[min max] Run(Outer value)
+            {
+                switch (value)
+                {
                     case Outer(Pair capture, var tail):
                         return tail;
                 }
@@ -336,13 +364,16 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            enum Token {
+            enum Token
+            {
                 Empty,
                 Pair(i32[min max], i32[min max]),
             }
 
-            unsafe fn i32[min max] Run(Token value) {
-                switch (value) {
+            unsafe fn i32[min max] Run(Token value)
+            {
+                switch (value)
+                {
                     case Token.Pair capture:
                         return 1;
                     default:
@@ -373,11 +404,17 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            record Pair(i32[min max] Left, i32[min max] Right) { }
-            record Outer(Pair Values, i32[min max] Tail) { }
+            record Pair(i32[min max] Left, i32[min max] Right)
+            {
+            }
+            record Outer(Pair Values, i32[min max] Tail)
+            {
+            }
 
-            unsafe finite law i32[min max] Run(Outer value) {
-                switch (value) {
+            unsafe finite law i32[min max] Run(Outer value)
+            {
+                switch (value)
+                {
                     case Outer(Pair(1, var right), var tail):
                         return right + tail;
                     default:
@@ -416,19 +453,28 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            enum Token {
+            enum Token
+            {
                 End,
                 Integer(i32[min max]),
-                Move { X: i32[min max], Y: i32[min max] },
+                Move
+                {
+                    X: i32[min max], Y: i32[min max]
+                },
             }
 
-            unsafe fn i32[min max] Run(Token token) {
-                switch (token) {
+            unsafe fn i32[min max] Run(Token token)
+            {
+                switch (token)
+                {
                     case Token.End:
                         return 0;
                     case Token.Integer(var value):
                         return value;
-                    case Token.Move { X: var x, Y: var y }:
+                    case Token.Move
+                    {
+                        X: var x, Y: var y
+                    }:
                         return x + y;
                 }
             }
@@ -453,17 +499,21 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            enum Status {
+            enum Status
+            {
                 Ok,
                 Err(i32[min max]),
             }
 
-            unsafe fn Status Next() {
+            unsafe fn Status Next()
+            {
                 return Status.Ok;
             }
 
-            unsafe fn i32[min max] Run() {
-                switch (Next()) {
+            unsafe fn i32[min max] Run()
+            {
+                switch (Next())
+                {
                     case Status.Ok:
                         return 1;
                     case Status.Err(var error):
@@ -488,8 +538,10 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(ascii value, bool allow) {
-                switch (value) {
+            unsafe fn i32[min max] Run(ascii value, bool allow)
+            {
+                switch (value)
+                {
                     case "ab":
                         return 1;
                     case "cd" when allow:
@@ -522,8 +574,10 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(ascii value) {
-                switch (value) {
+            unsafe fn i32[min max] Run(ascii value)
+            {
+                switch (value)
+                {
                     case "":
                         return 0;
                     case "a":
@@ -568,8 +622,10 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(unicode value) {
-                switch (value) {
+            unsafe fn i32[min max] Run(unicode value)
+            {
+                switch (value)
+                {
                     case "\u03c0":
                         return 1;
                     case "\u03bb":
@@ -594,8 +650,10 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(f32 value, bool allow) {
-                switch (value) {
+            unsafe fn i32[min max] Run(f32 value, bool allow)
+            {
+                switch (value)
+                {
                     case 1.5:
                         return 1;
                     case 2.5 when allow:
@@ -621,8 +679,10 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(rawptr<i32[min max]> value) {
-                switch (value) {
+            unsafe fn i32[min max] Run(rawptr<i32[min max]> value)
+            {
+                switch (value)
+                {
                     case null:
                         return 1;
                     default:
@@ -648,10 +708,14 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            record Label(ascii Tag, unicode Word) { }
+            record Label(ascii Tag, unicode Word)
+            {
+            }
 
-            unsafe fn i32[min max] Run(Label value) {
-                switch (value) {
+            unsafe fn i32[min max] Run(Label value)
+            {
+                switch (value)
+                {
                     case Label("ab", var word):
                         return word == (unicode)"cat" ? 7 : 3;
                     default:
@@ -679,14 +743,23 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            enum Token {
+            enum Token
+            {
                 Empty,
-                Text { Tag: ascii, Word: unicode },
+                Text
+                {
+                    Tag: ascii, Word: unicode
+                },
             }
 
-            unsafe fn i32[min max] Run(Token value) {
-                switch (value) {
-                    case Token.Text { Tag: "ab", Word: var word }:
+            unsafe fn i32[min max] Run(Token value)
+            {
+                switch (value)
+                {
+                    case Token.Text
+                    {
+                        Tag: "ab", Word: var word
+                    }:
                         return word == (unicode)"cat" ? 7 : 3;
                     case Token.Empty:
                         return 0;

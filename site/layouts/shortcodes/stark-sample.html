@@ -1,3 +1,10 @@
 {{- $path := .Get 0 -}}
-{{- $source := readFile $path -}}
+{{- $sourcePath := $path -}}
+{{- if and .Page.File (not (fileExists $sourcePath)) -}}
+    {{- $bundlePath := path.Join "content" .Page.File.Dir $path -}}
+    {{- if fileExists $bundlePath -}}
+        {{- $sourcePath = $bundlePath -}}
+    {{- end -}}
+{{- end -}}
+{{- $source := readFile $sourcePath -}}
 <pre><code class="language-stark">{{ $source | htmlEscape | safeHTML }}</code></pre>

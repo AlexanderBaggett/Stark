@@ -1,0 +1,8 @@
+module Book.Negative.ImmutableLocalAssignment
+
+export fn i32[min max] main()
+{
+    stack i32[min max] value = 1;
+    value = 2;
+    return value;
+}

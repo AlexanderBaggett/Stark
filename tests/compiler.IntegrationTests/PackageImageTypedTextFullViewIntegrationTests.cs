@@ -26,7 +26,8 @@ public sealed class PackageImageTypedTextFullViewIntegrationTests
                 """
                 module Facade
 
-                public fn ascii WholeAscii<T>(ascii text, T tag) {
+                public fn ascii WholeAscii<T>(ascii text, T tag)
+                {
                     return text[];
                 }
                 """);
@@ -82,12 +83,15 @@ public sealed class PackageImageTypedTextFullViewIntegrationTests
                 import Facade
                 module Demo
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     stack ascii text = Facade.WholeAscii("hello", 0);
-                    if (text != "hello") {
+                    if (text != "hello")
+                    {
                         return 1;
                     }
-                    if (text[1] != 'e') {
+                    if (text[1] != 'e')
+                    {
                         return 2;
                     }
                     return 0;

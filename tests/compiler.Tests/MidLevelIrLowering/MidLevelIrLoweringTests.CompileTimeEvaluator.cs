@@ -12,7 +12,8 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run() {
+            unsafe fn i32[min max] Run()
+            {
                 return (1 + 2) * 3;
             }
             """);
@@ -33,8 +34,10 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn bool Run(u64[0 2 ** 63 - 1] count) {
-                if (count > 2 ** 61 - 1) {
+            unsafe fn bool Run(u64[0 2 ** 63 - 1] count)
+            {
+                if (count > 2 ** 61 - 1)
+                {
                     return true;
                 }
 
@@ -65,16 +68,19 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe finite law i32[min max] Adjust(i32[min max] value) {
+            unsafe finite law i32[min max] Adjust(i32[min max] value)
+            {
                 stack mut i32[min max] current = value;
-                if (current < 10) {
+                if (current < 10)
+                {
                     current = current + 3;
                 }
 
                 return current;
             }
 
-            unsafe fn i32[min max] Run() {
+            unsafe fn i32[min max] Run()
+            {
                 return Adjust(4);
             }
             """);
@@ -96,11 +102,13 @@ public sealed partial class MidLevelIrLoweringTests
             module Demo
 
             [Backend(Opaque)]
-            unsafe finite law i32[min max] Adjust(i32[min max] value) {
+            unsafe finite law i32[min max] Adjust(i32[min max] value)
+            {
                 return value + 3;
             }
 
-            unsafe fn i32[min max] Run() {
+            unsafe fn i32[min max] Run()
+            {
                 return Adjust(4);
             }
             """);
@@ -119,8 +127,12 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run() {
-                stack i32[min max][3] values = { 1, 2, 3 };
+            unsafe fn i32[min max] Run()
+            {
+                stack i32[min max][3] values =
+                {
+                    1, 2, 3
+                };
                 return values[1 + 1];
             }
             """);

@@ -14,8 +14,10 @@ public sealed class SystemTextStandardLibraryTests
         const ascii ConstAsciiSuffix = "Const";
         const ascii ConstUnicodeAsciiSuffix = " AZ";
 
-        fn bool Ok(System.Memory.MemoryStatus status) {
-            switch (status) {
+        fn bool Ok(System.Memory.MemoryStatus status)
+        {
+            switch (status)
+            {
                 case System.Memory.MemoryStatus.Ok:
                     return true;
                 case System.Memory.MemoryStatus.Err(var error):
@@ -23,12 +25,15 @@ public sealed class SystemTextStandardLibraryTests
             }
         }
 
-        fn bool TooLargeStatus(System.Memory.MemoryStatus status) {
-            switch (status) {
+        fn bool TooLargeStatus(System.Memory.MemoryStatus status)
+        {
+            switch (status)
+            {
                 case System.Memory.MemoryStatus.Ok:
                     return false;
                 case System.Memory.MemoryStatus.Err(var error):
-                    switch (error) {
+                    switch (error)
+                    {
                         case System.Memory.MemoryError.OutOfMemory:
                             return false;
                         case System.Memory.MemoryError.TooLarge:
@@ -39,12 +44,15 @@ public sealed class SystemTextStandardLibraryTests
             }
         }
 
-        fn bool TooLargeAsciiResult(System.Memory.MemoryResult<System.Text.OwnedAscii> result) {
-            switch (result) {
+        fn bool TooLargeAsciiResult(System.Memory.MemoryResult<System.Text.OwnedAscii> result)
+        {
+            switch (result)
+            {
                 case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
                     return false;
                 case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
-                    switch (error) {
+                    switch (error)
+                    {
                         case System.Memory.MemoryError.OutOfMemory:
                             return false;
                         case System.Memory.MemoryError.TooLarge:
@@ -55,8 +63,10 @@ public sealed class SystemTextStandardLibraryTests
             }
         }
 
-        fn bool ReadParsedBool(System.Text.TextResult<bool> result, bool expected) {
-            switch (result) {
+        fn bool ReadParsedBool(System.Text.TextResult<bool> result, bool expected)
+        {
+            switch (result)
+            {
                 case System.Text.TextResult<bool>.Ok(var value):
                     return value == expected;
                 case System.Text.TextResult<bool>.Err(var error):
@@ -64,12 +74,15 @@ public sealed class SystemTextStandardLibraryTests
             }
         }
 
-        fn bool IsInvalidBool(System.Text.TextResult<bool> result) {
-            switch (result) {
+        fn bool IsInvalidBool(System.Text.TextResult<bool> result)
+        {
+            switch (result)
+            {
                 case System.Text.TextResult<bool>.Ok(var value):
                     return false;
                 case System.Text.TextResult<bool>.Err(var error):
-                    switch (error) {
+                    switch (error)
+                    {
                         case System.Text.TextError.InvalidFormat:
                             return true;
                         case System.Text.TextError.Overflow:
@@ -78,8 +91,10 @@ public sealed class SystemTextStandardLibraryTests
             }
         }
 
-        fn System.Text.Encoding ReadParsedEncoding(System.Text.TextResult<System.Text.Encoding> result) {
-            switch (result) {
+        fn System.Text.Encoding ReadParsedEncoding(System.Text.TextResult<System.Text.Encoding> result)
+        {
+            switch (result)
+            {
                 case System.Text.TextResult<System.Text.Encoding>.Ok(var value):
                     return value;
                 case System.Text.TextResult<System.Text.Encoding>.Err(var error):
@@ -87,12 +102,15 @@ public sealed class SystemTextStandardLibraryTests
             }
         }
 
-        fn bool IsInvalidEncoding(System.Text.TextResult<System.Text.Encoding> result) {
-            switch (result) {
+        fn bool IsInvalidEncoding(System.Text.TextResult<System.Text.Encoding> result)
+        {
+            switch (result)
+            {
                 case System.Text.TextResult<System.Text.Encoding>.Ok(var value):
                     return false;
                 case System.Text.TextResult<System.Text.Encoding>.Err(var error):
-                    switch (error) {
+                    switch (error)
+                    {
                         case System.Text.TextError.InvalidFormat:
                             return true;
                         case System.Text.TextError.Overflow:
@@ -101,8 +119,10 @@ public sealed class SystemTextStandardLibraryTests
             }
         }
 
-        fn System.Text.TextError ReadParsedTextError(System.Text.TextResult<System.Text.TextError> result) {
-            switch (result) {
+        fn System.Text.TextError ReadParsedTextError(System.Text.TextResult<System.Text.TextError> result)
+        {
+            switch (result)
+            {
                 case System.Text.TextResult<System.Text.TextError>.Ok(var value):
                     return value;
                 case System.Text.TextResult<System.Text.TextError>.Err(var error):
@@ -112,8 +132,10 @@ public sealed class SystemTextStandardLibraryTests
 
         fn i64[min max] ReadParsedI64(
             System.Text.TextResult<i64[min max]> result,
-            i64[min max] fallback) {
-            switch (result) {
+            i64[min max] fallback)
+            {
+                switch (result)
+            {
                 case System.Text.TextResult<i64[min max]>.Ok(var value):
                     return value;
                 case System.Text.TextResult<i64[min max]>.Err(var error):
@@ -121,8 +143,10 @@ public sealed class SystemTextStandardLibraryTests
             }
         }
 
-        fn u64[0 max] ReadParsedU64(System.Text.TextResult<u64[0 max]> result, u64[0 max] fallback) {
-            switch (result) {
+        fn u64[0 max] ReadParsedU64(System.Text.TextResult<u64[0 max]> result, u64[0 max] fallback)
+        {
+            switch (result)
+            {
                 case System.Text.TextResult<u64[0 max]>.Ok(var value):
                     return value;
                 case System.Text.TextResult<u64[0 max]>.Err(var error):
@@ -130,8 +154,10 @@ public sealed class SystemTextStandardLibraryTests
             }
         }
 
-        fn i96[min max] ReadParsedI96(System.Text.TextResult<i96[min max]> result, i96[min max] fallback) {
-            switch (result) {
+        fn i96[min max] ReadParsedI96(System.Text.TextResult<i96[min max]> result, i96[min max] fallback)
+        {
+            switch (result)
+            {
                 case System.Text.TextResult<i96[min max]>.Ok(var value):
                     return value;
                 case System.Text.TextResult<i96[min max]>.Err(var error):
@@ -139,8 +165,10 @@ public sealed class SystemTextStandardLibraryTests
             }
         }
 
-        fn u96[0 max] ReadParsedU96(System.Text.TextResult<u96[0 max]> result, u96[0 max] fallback) {
-            switch (result) {
+        fn u96[0 max] ReadParsedU96(System.Text.TextResult<u96[0 max]> result, u96[0 max] fallback)
+        {
+            switch (result)
+            {
                 case System.Text.TextResult<u96[0 max]>.Ok(var value):
                     return value;
                 case System.Text.TextResult<u96[0 max]>.Err(var error):
@@ -148,12 +176,15 @@ public sealed class SystemTextStandardLibraryTests
             }
         }
 
-        fn bool IsOverflowI8(System.Text.TextResult<i8[min max]> result) {
-            switch (result) {
+        fn bool IsOverflowI8(System.Text.TextResult<i8[min max]> result)
+        {
+            switch (result)
+            {
                 case System.Text.TextResult<i8[min max]>.Ok(var value):
                     return false;
                 case System.Text.TextResult<i8[min max]>.Err(var error):
-                    switch (error) {
+                    switch (error)
+                    {
                         case System.Text.TextError.InvalidFormat:
                             return false;
                         case System.Text.TextError.Overflow:
@@ -162,12 +193,15 @@ public sealed class SystemTextStandardLibraryTests
             }
         }
 
-        fn bool IsOverflowU32(System.Text.TextResult<u32[0 max]> result) {
-            switch (result) {
+        fn bool IsOverflowU32(System.Text.TextResult<u32[0 max]> result)
+        {
+            switch (result)
+            {
                 case System.Text.TextResult<u32[0 max]>.Ok(var value):
                     return false;
                 case System.Text.TextResult<u32[0 max]>.Err(var error):
-                    switch (error) {
+                    switch (error)
+                    {
                         case System.Text.TextError.InvalidFormat:
                             return false;
                         case System.Text.TextError.Overflow:
@@ -176,8 +210,10 @@ public sealed class SystemTextStandardLibraryTests
             }
         }
 
-        fn bool OwnedAsciiLength(System.Memory.MemoryResult<System.Text.OwnedAscii> result, u64[0 2 ** 63 - 1] expected) {
-            switch (result) {
+        fn bool OwnedAsciiLength(System.Memory.MemoryResult<System.Text.OwnedAscii> result, u64[0 2 ** 63 - 1] expected)
+        {
+            switch (result)
+            {
                 case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
                     return value.Length() == expected;
                 case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
@@ -185,8 +221,10 @@ public sealed class SystemTextStandardLibraryTests
             }
         }
 
-        fn bool OwnedUnicodeLength(System.Memory.MemoryResult<System.Text.OwnedUnicode> result, u64[0 2 ** 63 - 1] expected) {
-            switch (result) {
+        fn bool OwnedUnicodeLength(System.Memory.MemoryResult<System.Text.OwnedUnicode> result, u64[0 2 ** 63 - 1] expected)
+        {
+            switch (result)
+            {
                 case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Ok(var value):
                     return value.Length() == expected;
                 case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Err(var error):
@@ -198,9 +236,11 @@ public sealed class SystemTextStandardLibraryTests
             mut borrow System.Text.OwnedAscii text,
             u64[0 2 ** 63 - 1] expectedLength,
             i8[min max] expectedFirst,
-            i8[min max] expectedLast) {
-            stack i8[min max][] view = text.AsSlice();
-            if (text.Length() != expectedLength) {
+            i8[min max] expectedLast)
+            {
+                stack i8[min max][] view = text.AsSlice();
+            if (text.Length() != expectedLength)
+            {
                 return false;
             }
 
@@ -211,87 +251,106 @@ public sealed class SystemTextStandardLibraryTests
             mut borrow System.Text.OwnedUnicode text,
             u64[0 2 ** 63 - 1] expectedLength,
             i32[min max] expectedFirst,
-            i32[min max] expectedLast) {
-            stack i32[min max][] view = text.AsSlice();
-            if (text.Length() != expectedLength) {
+            i32[min max] expectedLast)
+            {
+                stack i32[min max][] view = text.AsSlice();
+            if (text.Length() != expectedLength)
+            {
                 return false;
             }
 
             return view[0] == expectedFirst && view[(u64[0 2 ** 63 - 1])(expectedLength - 1)] == expectedLast;
         }
 
-        fn bool ProbeOwnedAscii() {
+        fn bool ProbeOwnedAscii()
+        {
             stack mut System.Text.OwnedAscii text = new();
-            if (!Ok(text.Reserve(16)) || !Ok(text.AppendAscii("Score: ")) || !Ok(text.AppendI64(-42)) || !Ok(text.AppendByte((i8[min max])33))) {
+            if (!Ok(text.Reserve(16)) || !Ok(text.AppendAscii("Score: ")) || !Ok(text.AppendI64(-42)) || !Ok(text.AppendByte((i8[min max])33)))
+            {
                 return false;
             }
 
-            if (text.Length() != 11 || text.Capacity() < 16) {
+            if (text.Length() != 11 || text.Capacity() < 16)
+            {
                 return false;
             }
 
             stack i8[min max][] view = text.AsSlice();
-            if (view[0] != (i8[min max])83 || view[10] != (i8[min max])33) {
+            if (view[0] != (i8[min max])83 || view[10] != (i8[min max])33)
+            {
                 return false;
             }
 
             stack ascii aliasView = text.View();
-            if (!Ok(text.AppendAscii(aliasView)) || text.Length() != 22) {
+            if (!Ok(text.AppendAscii(aliasView)) || text.Length() != 22)
+            {
                 return false;
             }
 
             stack i8[min max][] aliased = text.AsSlice();
-            if (aliased[11] != (i8[min max])83 || aliased[21] != (i8[min max])33) {
+            if (aliased[11] != (i8[min max])83 || aliased[21] != (i8[min max])33)
+            {
                 return false;
             }
 
-            if (!Ok(text.AppendConstAscii(ConstAsciiSuffix)) || text.Length() != 27) {
+            if (!Ok(text.AppendConstAscii(ConstAsciiSuffix)) || text.Length() != 27)
+            {
                 return false;
             }
 
             return text.AsSlice()[22] == (i8[min max])67 && text.AsSlice()[26] == (i8[min max])116;
         }
 
-        fn bool ProbeOwnedUnicode() {
+        fn bool ProbeOwnedUnicode()
+        {
             stack mut System.Text.OwnedUnicode text = new();
-            if (!Ok(text.Reserve(16)) || !Ok(text.AppendUnicode((unicode)"Value: ")) || !Ok(text.AppendI64(100))) {
+            if (!Ok(text.Reserve(16)) || !Ok(text.AppendUnicode((unicode)"Value: ")) || !Ok(text.AppendI64(100)))
+            {
                 return false;
             }
 
-            if (text.Length() != 10 || text.Capacity() < 16) {
+            if (text.Length() != 10 || text.Capacity() < 16)
+            {
                 return false;
             }
 
             stack i32[min max][] view = text.AsSlice();
-            if (view[0] != 86 || view[9] != 48) {
+            if (view[0] != 86 || view[9] != 48)
+            {
                 return false;
             }
 
             stack mut System.Text.OwnedUnicode suffix = new();
-            if (!Ok(suffix.AppendAscii(" AZ")) || !Ok(text.AppendSlice(suffix.AsSlice(), suffix.Length()))) {
+            if (!Ok(suffix.AppendAscii(" AZ")) || !Ok(text.AppendSlice(suffix.AsSlice(), suffix.Length())))
+            {
                 return false;
             }
 
             stack i32[min max][] appended = text.AsSlice();
-            if (text.Length() != 13 || appended[10] != 32 || appended[12] != 90) {
+            if (text.Length() != 13 || appended[10] != 32 || appended[12] != 90)
+            {
                 return false;
             }
 
             stack unicode aliasView = text.View();
-            if (!Ok(text.AppendUnicode(aliasView)) || text.Length() != 26) {
+            if (!Ok(text.AppendUnicode(aliasView)) || text.Length() != 26)
+            {
                 return false;
             }
 
             stack i32[min max][] aliased = text.AsSlice();
-            if (aliased[13] != 86 || aliased[25] != 90) {
+            if (aliased[13] != 86 || aliased[25] != 90)
+            {
                 return false;
             }
 
-            if (!Ok(text.AppendConstUnicode((unicode)" ok")) || text.Length() != 29) {
+            if (!Ok(text.AppendConstUnicode((unicode)" ok")) || text.Length() != 29)
+            {
                 return false;
             }
 
-            if (!Ok(text.AppendConstAscii(ConstUnicodeAsciiSuffix)) || text.Length() != 32) {
+            if (!Ok(text.AppendConstAscii(ConstUnicodeAsciiSuffix)) || text.Length() != 32)
+            {
                 return false;
             }
 
@@ -299,70 +358,83 @@ public sealed class SystemTextStandardLibraryTests
             return constAppended[26] == 32 && constAppended[31] == 90;
         }
 
-        export unsafe fn i32[min max] main() {
-            if (!ProbeOwnedAscii()) {
+        export unsafe fn i32[min max] main()
+        {
+            if (!ProbeOwnedAscii())
+            {
                 return 1;
             }
 
-            if (!ProbeOwnedUnicode()) {
+            if (!ProbeOwnedUnicode())
+            {
                 return 2;
             }
 
             stack mut System.Text.OwnedAscii asciiValue = new();
             if (!Ok(asciiValue.AppendI64((i32[min max])(-(2 ** 31))))
-                || !AsciiOwnedMatches(asciiValue, 11, (i8[min max])45, (i8[min max])56)) {
-                return 3;
+                || !AsciiOwnedMatches(asciiValue, 11, (i8[min max])45, (i8[min max])56))
+                {
+                    return 3;
             }
 
             stack mut System.Text.OwnedAscii unsignedAscii = new();
             if (!Ok(unsignedAscii.AppendU64((u64[0 max])(2 ** 64 - 1)))
-                || !AsciiOwnedMatches(unsignedAscii, 20, (i8[min max])49, (i8[min max])53)) {
-                return 4;
+                || !AsciiOwnedMatches(unsignedAscii, 20, (i8[min max])49, (i8[min max])53))
+                {
+                    return 4;
             }
 
             stack mut System.Text.OwnedUnicode unicodeValue = new();
             if (!Ok(unicodeValue.AppendBool(false))
-                || !UnicodeOwnedMatches(unicodeValue, 5, 102, 101)) {
-                return 5;
+                || !UnicodeOwnedMatches(unicodeValue, 5, 102, 101))
+                {
+                    return 5;
             }
 
             stack mut System.Text.OwnedUnicode converted = new();
             if (!Ok(converted.AppendAscii("AZ"))
-                || !UnicodeOwnedMatches(converted, 2, 65, 90)) {
-                return 6;
+                || !UnicodeOwnedMatches(converted, 2, 65, 90))
+                {
+                    return 6;
             }
 
             if (!ReadParsedBool(System.Text.ParseBoolAscii("true"), true)
                 || !ReadParsedBool(System.Text.ParseBoolUnicode((unicode)"false"), false)
-                || !IsInvalidBool(System.Text.ParseBoolAscii("True"))) {
-                return 7;
+                || !IsInvalidBool(System.Text.ParseBoolAscii("True")))
+                {
+                    return 7;
             }
 
             if (ReadParsedEncoding(System.Text.ParseEncodingAscii("UTF16")) != System.Text.Encoding.UTF16
                 || ReadParsedEncoding(System.Text.ParseEncodingUnicode((unicode)"UTF32")) != System.Text.Encoding.UTF32
-                || !IsInvalidEncoding(System.Text.ParseEncodingAscii("utf8"))) {
-                return 8;
+                || !IsInvalidEncoding(System.Text.ParseEncodingAscii("utf8")))
+                {
+                    return 8;
             }
 
             if (ReadParsedTextError(System.Text.ParseTextErrorAscii("Overflow")) != System.Text.TextError.Overflow
-                || ReadParsedTextError(System.Text.ParseTextErrorUnicode((unicode)"InvalidFormat")) != System.Text.TextError.InvalidFormat) {
-                return 9;
+                || ReadParsedTextError(System.Text.ParseTextErrorUnicode((unicode)"InvalidFormat")) != System.Text.TextError.InvalidFormat)
+                {
+                    return 9;
             }
 
             if (ReadParsedI64(System.Text.ParseI64Ascii("-9223372036854775808"), 0) != (i64[min max])(-(2 ** 63))
                 || ReadParsedU64(System.Text.ParseU64Unicode((unicode)"18446744073709551615"), 0) != (u64[0 max])(2 ** 64 - 1)
                 || IsOverflowI8(System.Text.ParseI8Ascii("-129")) == false
-                || IsOverflowU32(System.Text.ParseU32Unicode((unicode)"4294967296")) == false) {
-                return 10;
+                || IsOverflowU32(System.Text.ParseU32Unicode((unicode)"4294967296")) == false)
+                {
+                    return 10;
             }
 
             if (ReadParsedI96(System.Text.ParseI96Ascii("-39614081257132168796771975168"), 0) != (i96[min max])(-(2 ** 95))
-                || ReadParsedU96(System.Text.ParseU96Unicode((unicode)"79228162514264337593543950335"), 0) != (u96[0 max])(2 ** 96 - 1)) {
-                return 11;
+                || ReadParsedU96(System.Text.ParseU96Unicode((unicode)"79228162514264337593543950335"), 0) != (u96[0 max])(2 ** 96 - 1))
+                {
+                    return 11;
             }
 
             stack mut i8[min max][320] asciiStorage;
-            stack mut Ascii formattedAscii = new Ascii() {
+            stack mut Ascii formattedAscii = new Ascii()
+            {
                 Data = &asciiStorage[0],
                 Length = 0,
                 Capacity = 320
@@ -370,22 +442,26 @@ public sealed class SystemTextStandardLibraryTests
             if (!System.Text.TryFormatEncodingAscii(&formattedAscii, System.Text.Encoding.UTF8)
                 || formattedAscii.Length != 4
                 || !System.Text.TryFormatI1024Ascii(&formattedAscii, (i1024[min max])(-(2 ** 1023)))
-                || formattedAscii.Length != 309) {
-                return 12;
+                || formattedAscii.Length != 309)
+                {
+                    return 12;
             }
 
-            if (!System.Text.TryFormatU1024Ascii(&formattedAscii, (u1024[0 max])7)) {
+            if (!System.Text.TryFormatU1024Ascii(&formattedAscii, (u1024[0 max])7))
+            {
                 return 70;
             }
 
             stack rawptr<i8[min max]> asciiSingleDigit = formattedAscii.Data;
             if (formattedAscii.Length != 1
                 || asciiSingleDigit == null
-                || *(&asciiSingleDigit[0]) != (i8[min max])55) {
-                return 71;
+                || *(&asciiSingleDigit[0]) != (i8[min max])55)
+                {
+                    return 71;
             }
 
-            if (!System.Text.TryFormatU1024Ascii(&formattedAscii, (u1024[0 max])(10**100))) {
+            if (!System.Text.TryFormatU1024Ascii(&formattedAscii, (u1024[0 max])(10**100)))
+            {
                 return 72;
             }
 
@@ -393,12 +469,14 @@ public sealed class SystemTextStandardLibraryTests
             if (formattedAscii.Length != 101
                 || asciiMidSize == null
                 || *(&asciiMidSize[0]) != (i8[min max])49
-                || *(&asciiMidSize[100]) != (i8[min max])48) {
-                return 73;
+                || *(&asciiMidSize[100]) != (i8[min max])48)
+                {
+                    return 73;
             }
 
             stack mut i32[min max][320] unicodeStorage;
-            stack mut Unicode formattedUnicode = new Unicode() {
+            stack mut Unicode formattedUnicode = new Unicode()
+            {
                 Data = &unicodeStorage[0],
                 Length = 0,
                 Capacity = 320
@@ -427,22 +505,26 @@ public sealed class SystemTextStandardLibraryTests
                 || !System.Text.TryFormatU1024Unicode(&formattedUnicode, (u1024[0 max])(10**300))
                 || formattedUnicode.Length != 301
                 || *(&formattedUnicode.Data[0]) != 49
-                || *(&formattedUnicode.Data[300]) != 48) {
-                return 13;
+                || *(&formattedUnicode.Data[300]) != 48)
+                {
+                    return 13;
             }
 
-            if (!System.Text.TryFormatU1024Unicode(&formattedUnicode, (u1024[0 max])7)) {
+            if (!System.Text.TryFormatU1024Unicode(&formattedUnicode, (u1024[0 max])7))
+            {
                 return 74;
             }
 
             stack rawmutptr<i32[min max]> unicodeSingleDigit = formattedUnicode.Data;
             if (formattedUnicode.Length != 1
                 || unicodeSingleDigit == null
-                || *(&unicodeSingleDigit[0]) != 55) {
-                return 75;
+                || *(&unicodeSingleDigit[0]) != 55)
+                {
+                    return 75;
             }
 
-            if (!System.Text.TryFormatU1024Unicode(&formattedUnicode, (u1024[0 max])(10**100))) {
+            if (!System.Text.TryFormatU1024Unicode(&formattedUnicode, (u1024[0 max])(10**100)))
+            {
                 return 76;
             }
 
@@ -450,29 +532,33 @@ public sealed class SystemTextStandardLibraryTests
             if (formattedUnicode.Length != 101
                 || unicodeMidSize == null
                 || *(&unicodeMidSize[0]) != 49
-                || *(&unicodeMidSize[100]) != 48) {
-                return 77;
+                || *(&unicodeMidSize[100]) != 48)
+                {
+                    return 77;
             }
 
             if (!OwnedAsciiLength(System.Text.ToAscii((i32[min max])(-(2 ** 31))), 11)
                 || !OwnedAsciiLength(System.Text.ToAscii(System.Text.Encoding.Binary), 6)
                 || !OwnedUnicodeLength(System.Text.ToUnicode((u96[0 max])(2 ** 96 - 1)), 29)
-                || !OwnedUnicodeLength(System.Text.ToUnicode(System.Text.TextError.Overflow), 8)) {
-                return 14;
+                || !OwnedUnicodeLength(System.Text.ToUnicode(System.Text.TextError.Overflow), 8))
+                {
+                    return 14;
             }
 
             stack mut System.Text.OwnedUnicode unicodeBuffer = new();
             if (!Ok(System.Text.FromAsciiToUnicode(unicodeBuffer, "caf\u00E9"))
                 || unicodeBuffer.Length() != 4
-                || unicodeBuffer.AsSlice()[3] != 233) {
-                return 15;
+                || unicodeBuffer.AsSlice()[3] != 233)
+                {
+                    return 15;
             }
 
             stack mut System.Text.OwnedAscii tooLarge = new();
             if (!Ok(tooLarge.AppendByte((i8[min max])65))
                 || !TooLargeStatus(tooLarge.Reserve((u64[0 2 ** 63 - 1])(2 ** 63 - 1)))
-                || !TooLargeAsciiResult(System.Text.ConcatAscii("x", (u64[0 2 ** 63 - 1])(2 ** 63 - 1), System.Text.ToAscii((i32[min max])1)))) {
-                return 16;
+                || !TooLargeAsciiResult(System.Text.ConcatAscii("x", (u64[0 2 ** 63 - 1])(2 ** 63 - 1), System.Text.ToAscii((i32[min max])1))))
+                {
+                    return 16;
             }
 
             return 0;
@@ -495,8 +581,10 @@ public sealed class SystemTextStandardLibraryTests
                 import System.Memory
                 module Demo
 
-                fn bool Ok(System.Memory.MemoryStatus status) {
-                    switch (status) {
+                fn bool Ok(System.Memory.MemoryStatus status)
+                {
+                    switch (status)
+                    {
                         case System.Memory.MemoryStatus.Ok:
                             return true;
                         case System.Memory.MemoryStatus.Err(var error):
@@ -504,9 +592,11 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn u64[0 2 ** 63 - 1] GrowAndRead() {
+                fn u64[0 2 ** 63 - 1] GrowAndRead()
+                {
                     stack mut System.Text.OwnedAscii text = new();
-                    if (!Ok(text.Reserve(8)) || !Ok(text.AppendAscii("abc")) || !Ok(text.AppendI64(42))) {
+                    if (!Ok(text.Reserve(8)) || !Ok(text.AppendAscii("abc")) || !Ok(text.AppendI64(42)))
+                    {
                         return 0;
                     }
 
@@ -777,22 +867,26 @@ public sealed class SystemTextStandardLibraryTests
                 import System.Text
                 module App
 
-                unsafe fn bool ProbeAscii(rawmutptr<Ascii> destination) {
+                unsafe fn bool ProbeAscii(rawmutptr<Ascii> destination)
+                {
                     return System.Text.TryFormatI1024Ascii(destination, (i1024[min max])(-(2 ** 1023)))
                         && System.Text.TryFormatU1024Ascii(destination, (u1024[0 max])(2 ** 1024 - 1));
                 }
 
-                unsafe fn bool ProbeUnicode(rawmutptr<Unicode> destination) {
+                unsafe fn bool ProbeUnicode(rawmutptr<Unicode> destination)
+                {
                     return System.Text.TryFormatI192Unicode(destination, (i192[min max])(-(2 ** 191)))
                         && System.Text.TryFormatU768Unicode(destination, (u768[0 max])(2 ** 768 - 1));
                 }
 
-                unsafe fn bool ProbeFloat(rawmutptr<Ascii> asciiDestination, rawmutptr<Unicode> unicodeDestination) {
+                unsafe fn bool ProbeFloat(rawmutptr<Ascii> asciiDestination, rawmutptr<Unicode> unicodeDestination)
+                {
                     return System.Text.TryFormatF64Ascii(asciiDestination, -12.5)
                         && System.Text.TryFormatF32Unicode(unicodeDestination, 3.25f);
                 }
 
-                fn bool ProbeOwnedText() {
+                fn bool ProbeOwnedText()
+                {
                     stack i64[min max] count = 42;
                     stack f64 ratio = 3.5;
                     stack bool ready = true;
@@ -817,29 +911,46 @@ public sealed class SystemTextStandardLibraryTests
                         && OwnedUnicodeLength((unicode)"Value: " + ratio.ToUnicode(), 15);
                 }
 
-                unsafe fn bool ProbeFixedConcat() {
-                    stack mut i8[min max][2] leftStorage = { 65, 0 };
-                    stack mut Ascii left = new Ascii() {
+                unsafe fn bool ProbeFixedConcat()
+                {
+                    stack mut i8[min max][2] leftStorage =
+                    {
+                        65, 0
+                    };
+                    stack mut Ascii left = new Ascii()
+                    {
                         Data = &leftStorage[0],
                         Length = 1,
                         Capacity = 2
                     };
-                    stack mut i8[min max][2] rightStorage = { 66, 0 };
-                    stack mut Ascii right = new Ascii() {
+                    stack mut i8[min max][2] rightStorage =
+                    {
+                        66, 0
+                    };
+                    stack mut Ascii right = new Ascii()
+                    {
                         Data = &rightStorage[0],
                         Length = 1,
                         Capacity = 2
                     };
                     stack Ascii combined[4] = left + right;
 
-                    stack mut i32[min max][2] wideLeftStorage = { 65, 0 };
-                    stack mut Unicode wideLeft = new Unicode() {
+                    stack mut i32[min max][2] wideLeftStorage =
+                    {
+                        65, 0
+                    };
+                    stack mut Unicode wideLeft = new Unicode()
+                    {
                         Data = &wideLeftStorage[0],
                         Length = 1,
                         Capacity = 2
                     };
-                    stack mut i32[min max][2] wideRightStorage = { 66, 0 };
-                    stack mut Unicode wideRight = new Unicode() {
+                    stack mut i32[min max][2] wideRightStorage =
+                    {
+                        66, 0
+                    };
+                    stack mut Unicode wideRight = new Unicode()
+                    {
                         Data = &wideRightStorage[0],
                         Length = 1,
                         Capacity = 2
@@ -849,7 +960,8 @@ public sealed class SystemTextStandardLibraryTests
                         && System.Text.UnicodeLength(System.Text.UnicodeView(wideCombined)) == 2;
                 }
 
-                fn bool ProbeFixedInterpolation() {
+                fn bool ProbeFixedInterpolation()
+                {
                     stack i64[min max] count = 42;
                     stack Ascii label[32] = $"Score: {count}";
                     stack Unicode wideLabel[32] = $"Score: {count}";
@@ -857,7 +969,8 @@ public sealed class SystemTextStandardLibraryTests
                         && System.Text.UnicodeLength(System.Text.UnicodeView(wideLabel)) == 9;
                 }
 
-                fn bool ProbeParse() {
+                fn bool ProbeParse()
+                {
                     return ReadParsedBool(System.Text.ParseBoolAscii("true"))
                         && !ReadParsedBool(System.Text.ParseBoolAscii("false"))
                         && IsInvalidBool(System.Text.ParseBoolUnicode((unicode)"True"))
@@ -880,15 +993,18 @@ public sealed class SystemTextStandardLibraryTests
                         && IsOverflowU96(System.Text.ParseU96Ascii("79228162514264337593543950336"));
                 }
 
-                unsafe fn bool ProbeEnumFormat() {
+                unsafe fn bool ProbeEnumFormat()
+                {
                     stack mut i8[min max][16] asciiStorage;
-                    stack mut Ascii asciiText = new Ascii() {
+                    stack mut Ascii asciiText = new Ascii()
+                    {
                         Data = &asciiStorage[0],
                         Length = 0,
                         Capacity = 16
                     };
                     stack mut i32[min max][16] unicodeStorage;
-                    stack mut Unicode unicodeText = new Unicode() {
+                    stack mut Unicode unicodeText = new Unicode()
+                    {
                         Data = &unicodeStorage[0],
                         Length = 0,
                         Capacity = 16
@@ -903,8 +1019,10 @@ public sealed class SystemTextStandardLibraryTests
                         && unicodeText.Length == 8;
                 }
 
-                fn bool OwnedAsciiLength(System.Memory.MemoryResult<System.Text.OwnedAscii> result, u64[0 2 ** 63 - 1] expected) {
-                    switch (result) {
+                fn bool OwnedAsciiLength(System.Memory.MemoryResult<System.Text.OwnedAscii> result, u64[0 2 ** 63 - 1] expected)
+                {
+                    switch (result)
+                    {
                         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
                             return value.Length() == expected;
                         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
@@ -912,8 +1030,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn bool OwnedUnicodeLength(System.Memory.MemoryResult<System.Text.OwnedUnicode> result, u64[0 2 ** 63 - 1] expected) {
-                    switch (result) {
+                fn bool OwnedUnicodeLength(System.Memory.MemoryResult<System.Text.OwnedUnicode> result, u64[0 2 ** 63 - 1] expected)
+                {
+                    switch (result)
+                    {
                         case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Ok(var value):
                             return value.Length() == expected;
                         case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Err(var error):
@@ -921,8 +1041,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn bool ReadParsedBool(System.Text.TextResult<bool> result) {
-                    switch (result) {
+                fn bool ReadParsedBool(System.Text.TextResult<bool> result)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<bool>.Ok(var value):
                             return value;
                         case System.Text.TextResult<bool>.Err(var error):
@@ -930,12 +1052,15 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn bool IsInvalidBool(System.Text.TextResult<bool> result) {
-                    switch (result) {
+                fn bool IsInvalidBool(System.Text.TextResult<bool> result)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<bool>.Ok(var value):
                             return false;
                         case System.Text.TextResult<bool>.Err(var error):
-                            switch (error) {
+                            switch (error)
+                            {
                                 case System.Text.TextError.InvalidFormat:
                                     return true;
                                 case System.Text.TextError.Overflow:
@@ -944,8 +1069,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn System.Text.Encoding ReadParsedEncoding(System.Text.TextResult<System.Text.Encoding> result) {
-                    switch (result) {
+                fn System.Text.Encoding ReadParsedEncoding(System.Text.TextResult<System.Text.Encoding> result)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<System.Text.Encoding>.Ok(var value):
                             return value;
                         case System.Text.TextResult<System.Text.Encoding>.Err(var error):
@@ -953,8 +1080,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn System.Text.TextError ReadParsedTextError(System.Text.TextResult<System.Text.TextError> result) {
-                    switch (result) {
+                fn System.Text.TextError ReadParsedTextError(System.Text.TextResult<System.Text.TextError> result)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<System.Text.TextError>.Ok(var value):
                             return value;
                         case System.Text.TextResult<System.Text.TextError>.Err(var error):
@@ -962,12 +1091,15 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn bool IsInvalidEncoding(System.Text.TextResult<System.Text.Encoding> result) {
-                    switch (result) {
+                fn bool IsInvalidEncoding(System.Text.TextResult<System.Text.Encoding> result)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<System.Text.Encoding>.Ok(var value):
                             return false;
                         case System.Text.TextResult<System.Text.Encoding>.Err(var error):
-                            switch (error) {
+                            switch (error)
+                            {
                                 case System.Text.TextError.InvalidFormat:
                                     return true;
                                 case System.Text.TextError.Overflow:
@@ -976,12 +1108,15 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn bool IsInvalidTextError(System.Text.TextResult<System.Text.TextError> result) {
-                    switch (result) {
+                fn bool IsInvalidTextError(System.Text.TextResult<System.Text.TextError> result)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<System.Text.TextError>.Ok(var value):
                             return false;
                         case System.Text.TextResult<System.Text.TextError>.Err(var error):
-                            switch (error) {
+                            switch (error)
+                            {
                                 case System.Text.TextError.InvalidFormat:
                                     return true;
                                 case System.Text.TextError.Overflow:
@@ -990,8 +1125,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn i64[min max] ReadParsedI64(System.Text.TextResult<i64[min max]> result, i64[min max] fallback) {
-                    switch (result) {
+                fn i64[min max] ReadParsedI64(System.Text.TextResult<i64[min max]> result, i64[min max] fallback)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<i64[min max]>.Ok(var value):
                             return value;
                         case System.Text.TextResult<i64[min max]>.Err(var error):
@@ -999,8 +1136,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn u64[0 max] ReadParsedU64(System.Text.TextResult<u64[0 max]> result, u64[0 max] fallback) {
-                    switch (result) {
+                fn u64[0 max] ReadParsedU64(System.Text.TextResult<u64[0 max]> result, u64[0 max] fallback)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<u64[0 max]>.Ok(var value):
                             return value;
                         case System.Text.TextResult<u64[0 max]>.Err(var error):
@@ -1008,8 +1147,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn i24[min max] ReadParsedI24(System.Text.TextResult<i24[min max]> result, i24[min max] fallback) {
-                    switch (result) {
+                fn i24[min max] ReadParsedI24(System.Text.TextResult<i24[min max]> result, i24[min max] fallback)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<i24[min max]>.Ok(var value):
                             return value;
                         case System.Text.TextResult<i24[min max]>.Err(var error):
@@ -1017,8 +1158,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn u48[0 max] ReadParsedU48(System.Text.TextResult<u48[0 max]> result, u48[0 max] fallback) {
-                    switch (result) {
+                fn u48[0 max] ReadParsedU48(System.Text.TextResult<u48[0 max]> result, u48[0 max] fallback)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<u48[0 max]>.Ok(var value):
                             return value;
                         case System.Text.TextResult<u48[0 max]>.Err(var error):
@@ -1026,8 +1169,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn i96[min max] ReadParsedI96(System.Text.TextResult<i96[min max]> result, i96[min max] fallback) {
-                    switch (result) {
+                fn i96[min max] ReadParsedI96(System.Text.TextResult<i96[min max]> result, i96[min max] fallback)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<i96[min max]>.Ok(var value):
                             return value;
                         case System.Text.TextResult<i96[min max]>.Err(var error):
@@ -1035,8 +1180,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn u96[0 max] ReadParsedU96(System.Text.TextResult<u96[0 max]> result, u96[0 max] fallback) {
-                    switch (result) {
+                fn u96[0 max] ReadParsedU96(System.Text.TextResult<u96[0 max]> result, u96[0 max] fallback)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<u96[0 max]>.Ok(var value):
                             return value;
                         case System.Text.TextResult<u96[0 max]>.Err(var error):
@@ -1044,12 +1191,15 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn bool IsOverflowI8(System.Text.TextResult<i8[min max]> result) {
-                    switch (result) {
+                fn bool IsOverflowI8(System.Text.TextResult<i8[min max]> result)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<i8[min max]>.Ok(var value):
                             return false;
                         case System.Text.TextResult<i8[min max]>.Err(var error):
-                            switch (error) {
+                            switch (error)
+                            {
                                 case System.Text.TextError.InvalidFormat:
                                     return false;
                                 case System.Text.TextError.Overflow:
@@ -1058,12 +1208,15 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn bool IsOverflowU32(System.Text.TextResult<u32[0 max]> result) {
-                    switch (result) {
+                fn bool IsOverflowU32(System.Text.TextResult<u32[0 max]> result)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<u32[0 max]>.Ok(var value):
                             return false;
                         case System.Text.TextResult<u32[0 max]>.Err(var error):
-                            switch (error) {
+                            switch (error)
+                            {
                                 case System.Text.TextError.InvalidFormat:
                                     return false;
                                 case System.Text.TextError.Overflow:
@@ -1072,12 +1225,15 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn bool IsOverflowU64(System.Text.TextResult<u64[0 max]> result) {
-                    switch (result) {
+                fn bool IsOverflowU64(System.Text.TextResult<u64[0 max]> result)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<u64[0 max]>.Ok(var value):
                             return false;
                         case System.Text.TextResult<u64[0 max]>.Err(var error):
-                            switch (error) {
+                            switch (error)
+                            {
                                 case System.Text.TextError.InvalidFormat:
                                     return false;
                                 case System.Text.TextError.Overflow:
@@ -1086,12 +1242,15 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn bool IsOverflowI96(System.Text.TextResult<i96[min max]> result) {
-                    switch (result) {
+                fn bool IsOverflowI96(System.Text.TextResult<i96[min max]> result)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<i96[min max]>.Ok(var value):
                             return false;
                         case System.Text.TextResult<i96[min max]>.Err(var error):
-                            switch (error) {
+                            switch (error)
+                            {
                                 case System.Text.TextError.InvalidFormat:
                                     return false;
                                 case System.Text.TextError.Overflow:
@@ -1100,12 +1259,15 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn bool IsOverflowU96(System.Text.TextResult<u96[0 max]> result) {
-                    switch (result) {
+                fn bool IsOverflowU96(System.Text.TextResult<u96[0 max]> result)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<u96[0 max]>.Ok(var value):
                             return false;
                         case System.Text.TextResult<u96[0 max]>.Err(var error):
-                            switch (error) {
+                            switch (error)
+                            {
                                 case System.Text.TextError.InvalidFormat:
                                     return false;
                                 case System.Text.TextError.Overflow:
@@ -1217,8 +1379,10 @@ public sealed class SystemTextStandardLibraryTests
                 import System.Text
                 module Demo
 
-                fn bool ReadParsedBool(System.Text.TextResult<bool> result) {
-                    switch (result) {
+                fn bool ReadParsedBool(System.Text.TextResult<bool> result)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<bool>.Ok(var value):
                             return value;
                         case System.Text.TextResult<bool>.Err(var error):
@@ -1226,12 +1390,15 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn bool IsInvalidBool(System.Text.TextResult<bool> result) {
-                    switch (result) {
+                fn bool IsInvalidBool(System.Text.TextResult<bool> result)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<bool>.Ok(var value):
                             return false;
                         case System.Text.TextResult<bool>.Err(var error):
-                            switch (error) {
+                            switch (error)
+                            {
                                 case System.Text.TextError.InvalidFormat:
                                     return true;
                                 case System.Text.TextError.Overflow:
@@ -1240,8 +1407,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn System.Text.Encoding ReadParsedEncoding(System.Text.TextResult<System.Text.Encoding> result) {
-                    switch (result) {
+                fn System.Text.Encoding ReadParsedEncoding(System.Text.TextResult<System.Text.Encoding> result)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<System.Text.Encoding>.Ok(var value):
                             return value;
                         case System.Text.TextResult<System.Text.Encoding>.Err(var error):
@@ -1249,8 +1418,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn System.Text.TextError ReadParsedTextError(System.Text.TextResult<System.Text.TextError> result) {
-                    switch (result) {
+                fn System.Text.TextError ReadParsedTextError(System.Text.TextResult<System.Text.TextError> result)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<System.Text.TextError>.Ok(var value):
                             return value;
                         case System.Text.TextResult<System.Text.TextError>.Err(var error):
@@ -1258,12 +1429,15 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn bool IsInvalidEncoding(System.Text.TextResult<System.Text.Encoding> result) {
-                    switch (result) {
+                fn bool IsInvalidEncoding(System.Text.TextResult<System.Text.Encoding> result)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<System.Text.Encoding>.Ok(var value):
                             return false;
                         case System.Text.TextResult<System.Text.Encoding>.Err(var error):
-                            switch (error) {
+                            switch (error)
+                            {
                                 case System.Text.TextError.InvalidFormat:
                                     return true;
                                 case System.Text.TextError.Overflow:
@@ -1272,12 +1446,15 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn bool IsInvalidTextError(System.Text.TextResult<System.Text.TextError> result) {
-                    switch (result) {
+                fn bool IsInvalidTextError(System.Text.TextResult<System.Text.TextError> result)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<System.Text.TextError>.Ok(var value):
                             return false;
                         case System.Text.TextResult<System.Text.TextError>.Err(var error):
-                            switch (error) {
+                            switch (error)
+                            {
                                 case System.Text.TextError.InvalidFormat:
                                     return true;
                                 case System.Text.TextError.Overflow:
@@ -1286,8 +1463,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn i64[min max] ReadParsedI64(System.Text.TextResult<i64[min max]> result, i64[min max] fallback) {
-                    switch (result) {
+                fn i64[min max] ReadParsedI64(System.Text.TextResult<i64[min max]> result, i64[min max] fallback)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<i64[min max]>.Ok(var value):
                             return value;
                         case System.Text.TextResult<i64[min max]>.Err(var error):
@@ -1295,8 +1474,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn u64[0 max] ReadParsedU64(System.Text.TextResult<u64[0 max]> result, u64[0 max] fallback) {
-                    switch (result) {
+                fn u64[0 max] ReadParsedU64(System.Text.TextResult<u64[0 max]> result, u64[0 max] fallback)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<u64[0 max]>.Ok(var value):
                             return value;
                         case System.Text.TextResult<u64[0 max]>.Err(var error):
@@ -1304,8 +1485,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn i8[min max] ReadParsedI8(System.Text.TextResult<i8[min max]> result, i8[min max] fallback) {
-                    switch (result) {
+                fn i8[min max] ReadParsedI8(System.Text.TextResult<i8[min max]> result, i8[min max] fallback)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<i8[min max]>.Ok(var value):
                             return value;
                         case System.Text.TextResult<i8[min max]>.Err(var error):
@@ -1313,8 +1496,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn i24[min max] ReadParsedI24(System.Text.TextResult<i24[min max]> result, i24[min max] fallback) {
-                    switch (result) {
+                fn i24[min max] ReadParsedI24(System.Text.TextResult<i24[min max]> result, i24[min max] fallback)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<i24[min max]>.Ok(var value):
                             return value;
                         case System.Text.TextResult<i24[min max]>.Err(var error):
@@ -1322,8 +1507,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn i48[min max] ReadParsedI48(System.Text.TextResult<i48[min max]> result, i48[min max] fallback) {
-                    switch (result) {
+                fn i48[min max] ReadParsedI48(System.Text.TextResult<i48[min max]> result, i48[min max] fallback)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<i48[min max]>.Ok(var value):
                             return value;
                         case System.Text.TextResult<i48[min max]>.Err(var error):
@@ -1331,8 +1518,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn u8[0 max] ReadParsedU8(System.Text.TextResult<u8[0 max]> result, u8[0 max] fallback) {
-                    switch (result) {
+                fn u8[0 max] ReadParsedU8(System.Text.TextResult<u8[0 max]> result, u8[0 max] fallback)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<u8[0 max]>.Ok(var value):
                             return value;
                         case System.Text.TextResult<u8[0 max]>.Err(var error):
@@ -1340,8 +1529,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn u32[0 max] ReadParsedU32(System.Text.TextResult<u32[0 max]> result, u32[0 max] fallback) {
-                    switch (result) {
+                fn u32[0 max] ReadParsedU32(System.Text.TextResult<u32[0 max]> result, u32[0 max] fallback)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<u32[0 max]>.Ok(var value):
                             return value;
                         case System.Text.TextResult<u32[0 max]>.Err(var error):
@@ -1349,8 +1540,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn u48[0 max] ReadParsedU48(System.Text.TextResult<u48[0 max]> result, u48[0 max] fallback) {
-                    switch (result) {
+                fn u48[0 max] ReadParsedU48(System.Text.TextResult<u48[0 max]> result, u48[0 max] fallback)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<u48[0 max]>.Ok(var value):
                             return value;
                         case System.Text.TextResult<u48[0 max]>.Err(var error):
@@ -1358,8 +1551,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn i96[min max] ReadParsedI96(System.Text.TextResult<i96[min max]> result, i96[min max] fallback) {
-                    switch (result) {
+                fn i96[min max] ReadParsedI96(System.Text.TextResult<i96[min max]> result, i96[min max] fallback)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<i96[min max]>.Ok(var value):
                             return value;
                         case System.Text.TextResult<i96[min max]>.Err(var error):
@@ -1367,8 +1562,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn u96[0 max] ReadParsedU96(System.Text.TextResult<u96[0 max]> result, u96[0 max] fallback) {
-                    switch (result) {
+                fn u96[0 max] ReadParsedU96(System.Text.TextResult<u96[0 max]> result, u96[0 max] fallback)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<u96[0 max]>.Ok(var value):
                             return value;
                         case System.Text.TextResult<u96[0 max]>.Err(var error):
@@ -1376,8 +1573,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn i192[min max] ReadParsedI192(System.Text.TextResult<i192[min max]> result, i192[min max] fallback) {
-                    switch (result) {
+                fn i192[min max] ReadParsedI192(System.Text.TextResult<i192[min max]> result, i192[min max] fallback)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<i192[min max]>.Ok(var value):
                             return value;
                         case System.Text.TextResult<i192[min max]>.Err(var error):
@@ -1385,8 +1584,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn u192[0 max] ReadParsedU192(System.Text.TextResult<u192[0 max]> result, u192[0 max] fallback) {
-                    switch (result) {
+                fn u192[0 max] ReadParsedU192(System.Text.TextResult<u192[0 max]> result, u192[0 max] fallback)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<u192[0 max]>.Ok(var value):
                             return value;
                         case System.Text.TextResult<u192[0 max]>.Err(var error):
@@ -1394,12 +1595,15 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn bool IsInvalidI64(System.Text.TextResult<i64[min max]> result) {
-                    switch (result) {
+                fn bool IsInvalidI64(System.Text.TextResult<i64[min max]> result)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<i64[min max]>.Ok(var value):
                             return false;
                         case System.Text.TextResult<i64[min max]>.Err(var error):
-                            switch (error) {
+                            switch (error)
+                            {
                                 case System.Text.TextError.InvalidFormat:
                                     return true;
                                 case System.Text.TextError.Overflow:
@@ -1408,12 +1612,15 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn bool IsOverflowI64(System.Text.TextResult<i64[min max]> result) {
-                    switch (result) {
+                fn bool IsOverflowI64(System.Text.TextResult<i64[min max]> result)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<i64[min max]>.Ok(var value):
                             return false;
                         case System.Text.TextResult<i64[min max]>.Err(var error):
-                            switch (error) {
+                            switch (error)
+                            {
                                 case System.Text.TextError.InvalidFormat:
                                     return false;
                                 case System.Text.TextError.Overflow:
@@ -1422,12 +1629,15 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn bool IsOverflowI8(System.Text.TextResult<i8[min max]> result) {
-                    switch (result) {
+                fn bool IsOverflowI8(System.Text.TextResult<i8[min max]> result)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<i8[min max]>.Ok(var value):
                             return false;
                         case System.Text.TextResult<i8[min max]>.Err(var error):
-                            switch (error) {
+                            switch (error)
+                            {
                                 case System.Text.TextError.InvalidFormat:
                                     return false;
                                 case System.Text.TextError.Overflow:
@@ -1436,12 +1646,15 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn bool IsOverflowU32(System.Text.TextResult<u32[0 max]> result) {
-                    switch (result) {
+                fn bool IsOverflowU32(System.Text.TextResult<u32[0 max]> result)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<u32[0 max]>.Ok(var value):
                             return false;
                         case System.Text.TextResult<u32[0 max]>.Err(var error):
-                            switch (error) {
+                            switch (error)
+                            {
                                 case System.Text.TextError.InvalidFormat:
                                     return false;
                                 case System.Text.TextError.Overflow:
@@ -1450,12 +1663,15 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn bool IsOverflowU64(System.Text.TextResult<u64[0 max]> result) {
-                    switch (result) {
+                fn bool IsOverflowU64(System.Text.TextResult<u64[0 max]> result)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<u64[0 max]>.Ok(var value):
                             return false;
                         case System.Text.TextResult<u64[0 max]>.Err(var error):
-                            switch (error) {
+                            switch (error)
+                            {
                                 case System.Text.TextError.InvalidFormat:
                                     return false;
                                 case System.Text.TextError.Overflow:
@@ -1464,12 +1680,15 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn bool IsOverflowI96(System.Text.TextResult<i96[min max]> result) {
-                    switch (result) {
+                fn bool IsOverflowI96(System.Text.TextResult<i96[min max]> result)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<i96[min max]>.Ok(var value):
                             return false;
                         case System.Text.TextResult<i96[min max]>.Err(var error):
-                            switch (error) {
+                            switch (error)
+                            {
                                 case System.Text.TextError.InvalidFormat:
                                     return false;
                                 case System.Text.TextError.Overflow:
@@ -1478,12 +1697,15 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn bool IsOverflowU96(System.Text.TextResult<u96[0 max]> result) {
-                    switch (result) {
+                fn bool IsOverflowU96(System.Text.TextResult<u96[0 max]> result)
+                {
+                    switch (result)
+                    {
                         case System.Text.TextResult<u96[0 max]>.Ok(var value):
                             return false;
                         case System.Text.TextResult<u96[0 max]>.Err(var error):
-                            switch (error) {
+                            switch (error)
+                            {
                                 case System.Text.TextError.InvalidFormat:
                                     return false;
                                 case System.Text.TextError.Overflow:
@@ -1492,8 +1714,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn bool OwnedAsciiMatches(System.Memory.MemoryResult<System.Text.OwnedAscii> result, u64[0 2 ** 63 - 1] expectedLength, i8[min max] expectedFirst, i8[min max] expectedLast) {
-                    switch (result) {
+                fn bool OwnedAsciiMatches(System.Memory.MemoryResult<System.Text.OwnedAscii> result, u64[0 2 ** 63 - 1] expectedLength, i8[min max] expectedFirst, i8[min max] expectedLast)
+                {
+                    switch (result)
+                    {
                         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
                             stack u64[0 2 ** 63 - 1] actualLength = value.Length();
                             stack i8[min max][] data = value.AsSlice();
@@ -1505,8 +1729,10 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                fn bool OwnedUnicodeMatches(System.Memory.MemoryResult<System.Text.OwnedUnicode> result, u64[0 2 ** 63 - 1] expectedLength, i32[min max] expectedFirst, i32[min max] expectedLast) {
-                    switch (result) {
+                fn bool OwnedUnicodeMatches(System.Memory.MemoryResult<System.Text.OwnedUnicode> result, u64[0 2 ** 63 - 1] expectedLength, i32[min max] expectedFirst, i32[min max] expectedLast)
+                {
+                    switch (result)
+                    {
                         case System.Memory.MemoryResult<System.Text.OwnedUnicode>.Ok(var value):
                             stack u64[0 2 ** 63 - 1] actualLength = value.Length();
                             stack i32[min max][] data = value.AsSlice();
@@ -1518,57 +1744,69 @@ public sealed class SystemTextStandardLibraryTests
                     }
                 }
 
-                export unsafe fn i32[min max] main() {
+                export unsafe fn i32[min max] main()
+                {
                     stack mut i8[min max][320] buffer;
                     stack mut i32[min max][320] unicodeBuffer;
-                    stack mut Ascii formatted = new Ascii() {
+                    stack mut Ascii formatted = new Ascii()
+                    {
                         Data = &buffer[0],
                         Length = 0,
                         Capacity = 320
                     };
-                    stack mut Unicode wide = new Unicode() {
+                    stack mut Unicode wide = new Unicode()
+                    {
                         Data = &unicodeBuffer[0],
                         Length = 0,
                         Capacity = 320
                     };
 
-                    if (!System.Text.TryFormatI32Ascii(&formatted, (i32[min max])(-(2 ** 31)))) {
+                    if (!System.Text.TryFormatI32Ascii(&formatted, (i32[min max])(-(2 ** 31))))
+                    {
                         return 1;
                     }
 
                     stack rawptr<i8[min max]> data = formatted.Data;
-                    if (data == null) {
+                    if (data == null)
+                    {
                         return 2;
                     }
 
-                    if (formatted.Length != 11) {
+                    if (formatted.Length != 11)
+                    {
                         return 3;
                     }
 
-                    if (*(&data[0]) != (i8[min max])45) {
+                    if (*(&data[0]) != (i8[min max])45)
+                    {
                         return 4;
                     }
 
-                    if (*(&data[10]) != (i8[min max])56) {
+                    if (*(&data[10]) != (i8[min max])56)
+                    {
                         return 5;
                     }
 
-                    if (!System.Text.TryFormatI64Ascii(&formatted, (i64[min max])(-(2 ** 63)))) {
+                    if (!System.Text.TryFormatI64Ascii(&formatted, (i64[min max])(-(2 ** 63))))
+                    {
                         return 6;
                     }
 
                     stack rawptr<i8[min max]> i64Data = formatted.Data;
-                    if (i64Data == null) {
+                    if (i64Data == null)
+                    {
                         return 7;
                     }
 
                     if (formatted.Length != 20
                         || *(&i64Data[0]) != (i8[min max])45
-                        || *(&i64Data[19]) != (i8[min max])56) {
-                        return 8;
+                        || *(&i64Data[19]) != (i8[min max])56)
+                        {
+                            return 8;
                     }
 
-                    if (!System.Text.TryFormatBoolAscii(&formatted, true)) {
+                    if (!System.Text.TryFormatBoolAscii(&formatted, true))
+                    {
                         return 9;
                     }
 
@@ -1576,11 +1814,13 @@ public sealed class SystemTextStandardLibraryTests
                     if (formatted.Length != 4
                         || trueData == null
                         || *(&trueData[0]) != (i8[min max])116
-                        || *(&trueData[3]) != (i8[min max])101) {
-                        return 10;
+                        || *(&trueData[3]) != (i8[min max])101)
+                        {
+                            return 10;
                     }
 
-                    if (!System.Text.TryFormatBoolAscii(&formatted, false)) {
+                    if (!System.Text.TryFormatBoolAscii(&formatted, false))
+                    {
                         return 11;
                     }
 
@@ -1588,11 +1828,13 @@ public sealed class SystemTextStandardLibraryTests
                     if (formatted.Length != 5
                         || falseData == null
                         || *(&falseData[0]) != (i8[min max])102
-                        || *(&falseData[4]) != (i8[min max])101) {
-                        return 12;
+                        || *(&falseData[4]) != (i8[min max])101)
+                        {
+                            return 12;
                     }
 
-                    if (!System.Text.TryFormatI64Unicode(&wide, (i64[min max])(-(2 ** 63)))) {
+                    if (!System.Text.TryFormatI64Unicode(&wide, (i64[min max])(-(2 ** 63))))
+                    {
                         return 13;
                     }
 
@@ -1600,11 +1842,13 @@ public sealed class SystemTextStandardLibraryTests
                     if (wide.Length != 20
                         || wideData == null
                         || *(&wideData[0]) != 45
-                        || *(&wideData[19]) != 56) {
-                        return 14;
+                        || *(&wideData[19]) != 56)
+                        {
+                            return 14;
                     }
 
-                    if (!System.Text.TryFormatBoolUnicode(&wide, false)) {
+                    if (!System.Text.TryFormatBoolUnicode(&wide, false))
+                    {
                         return 15;
                     }
 
@@ -1612,11 +1856,13 @@ public sealed class SystemTextStandardLibraryTests
                     if (wide.Length != 5
                         || wideBoolData == null
                         || *(&wideBoolData[0]) != 102
-                        || *(&wideBoolData[4]) != 101) {
-                        return 16;
+                        || *(&wideBoolData[4]) != 101)
+                        {
+                            return 16;
                     }
 
-                    if (!System.Text.TryFormatU32Ascii(&formatted, (u32[0 max])(2 ** 32 - 1))) {
+                    if (!System.Text.TryFormatU32Ascii(&formatted, (u32[0 max])(2 ** 32 - 1)))
+                    {
                         return 17;
                     }
 
@@ -1624,11 +1870,13 @@ public sealed class SystemTextStandardLibraryTests
                     if (formatted.Length != 10
                         || u32Data == null
                         || *(&u32Data[0]) != (i8[min max])52
-                        || *(&u32Data[9]) != (i8[min max])53) {
-                        return 18;
+                        || *(&u32Data[9]) != (i8[min max])53)
+                        {
+                            return 18;
                     }
 
-                    if (!System.Text.TryFormatU64Ascii(&formatted, (u64[0 max])(2 ** 64 - 1))) {
+                    if (!System.Text.TryFormatU64Ascii(&formatted, (u64[0 max])(2 ** 64 - 1)))
+                    {
                         return 19;
                     }
 
@@ -1637,11 +1885,13 @@ public sealed class SystemTextStandardLibraryTests
                         || u64Data == null
                         || *(&u64Data[0]) != (i8[min max])49
                         || *(&u64Data[1]) != (i8[min max])56
-                        || *(&u64Data[19]) != (i8[min max])53) {
-                        return 20;
+                        || *(&u64Data[19]) != (i8[min max])53)
+                        {
+                            return 20;
                     }
 
-                    if (!System.Text.TryFormatU64Unicode(&wide, (u64[0 max])(2 ** 64 - 1))) {
+                    if (!System.Text.TryFormatU64Unicode(&wide, (u64[0 max])(2 ** 64 - 1)))
+                    {
                         return 21;
                     }
 
@@ -1650,11 +1900,13 @@ public sealed class SystemTextStandardLibraryTests
                         || wideU64Data == null
                         || *(&wideU64Data[0]) != 49
                         || *(&wideU64Data[1]) != 56
-                        || *(&wideU64Data[19]) != 53) {
-                        return 22;
+                        || *(&wideU64Data[19]) != 53)
+                        {
+                            return 22;
                     }
 
-                    if (!System.Text.TryFormatI8Ascii(&formatted, (i8[min max])(-(2 ** 7)))) {
+                    if (!System.Text.TryFormatI8Ascii(&formatted, (i8[min max])(-(2 ** 7))))
+                    {
                         return 23;
                     }
 
@@ -1662,11 +1914,13 @@ public sealed class SystemTextStandardLibraryTests
                     if (formatted.Length != 4
                         || i8Data == null
                         || *(&i8Data[0]) != (i8[min max])45
-                        || *(&i8Data[3]) != (i8[min max])56) {
-                        return 24;
+                        || *(&i8Data[3]) != (i8[min max])56)
+                        {
+                            return 24;
                     }
 
-                    if (!System.Text.TryFormatU8Ascii(&formatted, (u8[0 max])(2 ** 8 - 1))) {
+                    if (!System.Text.TryFormatU8Ascii(&formatted, (u8[0 max])(2 ** 8 - 1)))
+                    {
                         return 25;
                     }
 
@@ -1674,11 +1928,13 @@ public sealed class SystemTextStandardLibraryTests
                     if (formatted.Length != 3
                         || u8Data == null
                         || *(&u8Data[0]) != (i8[min max])50
-                        || *(&u8Data[2]) != (i8[min max])53) {
-                        return 26;
+                        || *(&u8Data[2]) != (i8[min max])53)
+                        {
+                            return 26;
                     }
 
-                    if (!System.Text.TryFormatI16Unicode(&wide, (i16[min max])(-(2 ** 15)))) {
+                    if (!System.Text.TryFormatI16Unicode(&wide, (i16[min max])(-(2 ** 15))))
+                    {
                         return 27;
                     }
 
@@ -1686,11 +1942,13 @@ public sealed class SystemTextStandardLibraryTests
                     if (wide.Length != 6
                         || wideI16Data == null
                         || *(&wideI16Data[0]) != 45
-                        || *(&wideI16Data[5]) != 56) {
-                        return 28;
+                        || *(&wideI16Data[5]) != 56)
+                        {
+                            return 28;
                     }
 
-                    if (!System.Text.TryFormatU16Unicode(&wide, (u16[0 max])(2 ** 16 - 1))) {
+                    if (!System.Text.TryFormatU16Unicode(&wide, (u16[0 max])(2 ** 16 - 1)))
+                    {
                         return 29;
                     }
 
@@ -1698,11 +1956,13 @@ public sealed class SystemTextStandardLibraryTests
                     if (wide.Length != 5
                         || wideU16Data == null
                         || *(&wideU16Data[0]) != 54
-                        || *(&wideU16Data[4]) != 53) {
-                        return 30;
+                        || *(&wideU16Data[4]) != 53)
+                        {
+                            return 30;
                     }
 
-                    if (!System.Text.TryFormatI24Ascii(&formatted, (i24[min max])(-(2 ** 23)))) {
+                    if (!System.Text.TryFormatI24Ascii(&formatted, (i24[min max])(-(2 ** 23))))
+                    {
                         return 31;
                     }
 
@@ -1710,11 +1970,13 @@ public sealed class SystemTextStandardLibraryTests
                     if (formatted.Length != 8
                         || i24Data == null
                         || *(&i24Data[0]) != (i8[min max])45
-                        || *(&i24Data[7]) != (i8[min max])56) {
-                        return 32;
+                        || *(&i24Data[7]) != (i8[min max])56)
+                        {
+                            return 32;
                     }
 
-                    if (!System.Text.TryFormatU24Ascii(&formatted, (u24[0 max])(2 ** 24 - 1))) {
+                    if (!System.Text.TryFormatU24Ascii(&formatted, (u24[0 max])(2 ** 24 - 1)))
+                    {
                         return 33;
                     }
 
@@ -1722,11 +1984,13 @@ public sealed class SystemTextStandardLibraryTests
                     if (formatted.Length != 8
                         || u24Data == null
                         || *(&u24Data[0]) != (i8[min max])49
-                        || *(&u24Data[7]) != (i8[min max])53) {
-                        return 34;
+                        || *(&u24Data[7]) != (i8[min max])53)
+                        {
+                            return 34;
                     }
 
-                    if (!System.Text.TryFormatI48Unicode(&wide, (i48[min max])(-(2 ** 47)))) {
+                    if (!System.Text.TryFormatI48Unicode(&wide, (i48[min max])(-(2 ** 47))))
+                    {
                         return 35;
                     }
 
@@ -1734,11 +1998,13 @@ public sealed class SystemTextStandardLibraryTests
                     if (wide.Length != 16
                         || wideI48Data == null
                         || *(&wideI48Data[0]) != 45
-                        || *(&wideI48Data[15]) != 56) {
-                        return 36;
+                        || *(&wideI48Data[15]) != 56)
+                        {
+                            return 36;
                     }
 
-                    if (!System.Text.TryFormatU48Unicode(&wide, (u48[0 max])(2 ** 48 - 1))) {
+                    if (!System.Text.TryFormatU48Unicode(&wide, (u48[0 max])(2 ** 48 - 1)))
+                    {
                         return 37;
                     }
 
@@ -1746,11 +2012,13 @@ public sealed class SystemTextStandardLibraryTests
                     if (wide.Length != 15
                         || wideU48Data == null
                         || *(&wideU48Data[0]) != 50
-                        || *(&wideU48Data[14]) != 53) {
-                        return 38;
+                        || *(&wideU48Data[14]) != 53)
+                        {
+                            return 38;
                     }
 
-                    if (!System.Text.TryFormatI128Ascii(&formatted, (i128[min max])(-(2 ** 127)))) {
+                    if (!System.Text.TryFormatI128Ascii(&formatted, (i128[min max])(-(2 ** 127))))
+                    {
                         return 39;
                     }
 
@@ -1758,11 +2026,13 @@ public sealed class SystemTextStandardLibraryTests
                     if (formatted.Length != 40
                         || i128Data == null
                         || *(&i128Data[0]) != (i8[min max])45
-                        || *(&i128Data[39]) != (i8[min max])56) {
-                        return 40;
+                        || *(&i128Data[39]) != (i8[min max])56)
+                        {
+                            return 40;
                     }
 
-                    if (!System.Text.TryFormatU128Ascii(&formatted, (u128[0 max])(2 ** 128 - 1))) {
+                    if (!System.Text.TryFormatU128Ascii(&formatted, (u128[0 max])(2 ** 128 - 1)))
+                    {
                         return 41;
                     }
 
@@ -1770,11 +2040,13 @@ public sealed class SystemTextStandardLibraryTests
                     if (formatted.Length != 39
                         || u128Data == null
                         || *(&u128Data[0]) != (i8[min max])51
-                        || *(&u128Data[38]) != (i8[min max])53) {
-                        return 42;
+                        || *(&u128Data[38]) != (i8[min max])53)
+                        {
+                            return 42;
                     }
 
-                    if (!System.Text.TryFormatI96Unicode(&wide, (i96[min max])(-(2 ** 95)))) {
+                    if (!System.Text.TryFormatI96Unicode(&wide, (i96[min max])(-(2 ** 95))))
+                    {
                         return 43;
                     }
 
@@ -1782,11 +2054,13 @@ public sealed class SystemTextStandardLibraryTests
                     if (wide.Length != 30
                         || wideI96Data == null
                         || *(&wideI96Data[0]) != 45
-                        || *(&wideI96Data[29]) != 56) {
-                        return 44;
+                        || *(&wideI96Data[29]) != 56)
+                        {
+                            return 44;
                     }
 
-                    if (!System.Text.TryFormatU96Unicode(&wide, (u96[0 max])(2 ** 96 - 1))) {
+                    if (!System.Text.TryFormatU96Unicode(&wide, (u96[0 max])(2 ** 96 - 1)))
+                    {
                         return 45;
                     }
 
@@ -1794,32 +2068,39 @@ public sealed class SystemTextStandardLibraryTests
                     if (wide.Length != 29
                         || wideU96Data == null
                         || *(&wideU96Data[0]) != 55
-                        || *(&wideU96Data[28]) != 53) {
-                        return 46;
+                        || *(&wideU96Data[28]) != 53)
+                        {
+                            return 46;
                     }
 
-                    if (!System.Text.TryFormatI1024Ascii(&formatted, (i1024[min max])(-(2 ** 1023)))) {
+                    if (!System.Text.TryFormatI1024Ascii(&formatted, (i1024[min max])(-(2 ** 1023))))
+                    {
                         return 47;
                     }
 
                     stack rawptr<i8[min max]> i1024Data = formatted.Data;
-                    if (i1024Data == null) {
+                    if (i1024Data == null)
+                    {
                         return 48;
                     }
 
-                    if (formatted.Length != 309) {
+                    if (formatted.Length != 309)
+                    {
                         return 49;
                     }
 
-                    if (*(&i1024Data[0]) != (i8[min max])45) {
+                    if (*(&i1024Data[0]) != (i8[min max])45)
+                    {
                         return 50;
                     }
 
-                    if (*(&i1024Data[308]) != (i8[min max])56) {
+                    if (*(&i1024Data[308]) != (i8[min max])56)
+                    {
                         return 51;
                     }
 
-                    if (!System.Text.TryFormatU1024Ascii(&formatted, (u1024[0 max])(2 ** 1024 - 1))) {
+                    if (!System.Text.TryFormatU1024Ascii(&formatted, (u1024[0 max])(2 ** 1024 - 1)))
+                    {
                         return 52;
                     }
 
@@ -1827,11 +2108,13 @@ public sealed class SystemTextStandardLibraryTests
                     if (formatted.Length != 309
                         || u1024Data == null
                         || *(&u1024Data[0]) != (i8[min max])49
-                        || *(&u1024Data[308]) != (i8[min max])53) {
-                        return 53;
+                        || *(&u1024Data[308]) != (i8[min max])53)
+                        {
+                            return 53;
                     }
 
-                    if (!System.Text.TryFormatI192Unicode(&wide, (i192[min max])(-(2 ** 191)))) {
+                    if (!System.Text.TryFormatI192Unicode(&wide, (i192[min max])(-(2 ** 191))))
+                    {
                         return 54;
                     }
 
@@ -1839,11 +2122,13 @@ public sealed class SystemTextStandardLibraryTests
                     if (wide.Length != 59
                         || wideI192Data == null
                         || *(&wideI192Data[0]) != 45
-                        || *(&wideI192Data[58]) != 56) {
-                        return 55;
+                        || *(&wideI192Data[58]) != 56)
+                        {
+                            return 55;
                     }
 
-                    if (!System.Text.TryFormatU768Unicode(&wide, (u768[0 max])(2 ** 768 - 1))) {
+                    if (!System.Text.TryFormatU768Unicode(&wide, (u768[0 max])(2 ** 768 - 1)))
+                    {
                         return 56;
                     }
 
@@ -1851,104 +2136,128 @@ public sealed class SystemTextStandardLibraryTests
                     if (wide.Length != 232
                         || wideU768Data == null
                         || *(&wideU768Data[0]) != 49
-                        || *(&wideU768Data[231]) != 53) {
-                        return 57;
+                        || *(&wideU768Data[231]) != 53)
+                        {
+                            return 57;
                     }
 
-                    if (!ReadParsedBool(System.Text.ParseBoolAscii("true"))) {
+                    if (!ReadParsedBool(System.Text.ParseBoolAscii("true")))
+                    {
                         return 58;
                     }
 
-                    if (ReadParsedBool(System.Text.ParseBoolAscii("false"))) {
+                    if (ReadParsedBool(System.Text.ParseBoolAscii("false")))
+                    {
                         return 59;
                     }
 
-                    if (!ReadParsedBool(System.Text.ParseBoolUnicode((unicode)"true"))) {
+                    if (!ReadParsedBool(System.Text.ParseBoolUnicode((unicode)"true")))
+                    {
                         return 60;
                     }
 
-                    if (!IsInvalidBool(System.Text.ParseBoolAscii("True"))) {
+                    if (!IsInvalidBool(System.Text.ParseBoolAscii("True")))
+                    {
                         return 61;
                     }
 
-                    if (!IsInvalidBool(System.Text.ParseBoolUnicode((unicode)""))) {
+                    if (!IsInvalidBool(System.Text.ParseBoolUnicode((unicode)"")))
+                    {
                         return 62;
                     }
 
-                    if (ReadParsedI64(System.Text.ParseI64Ascii("-9223372036854775808"), 0) != (i64[min max])(-(2 ** 63))) {
+                    if (ReadParsedI64(System.Text.ParseI64Ascii("-9223372036854775808"), 0) != (i64[min max])(-(2 ** 63)))
+                    {
                         return 63;
                     }
 
-                    if (ReadParsedI64(System.Text.ParseI64Unicode((unicode)"9223372036854775807"), 0) != (i64[min max])(2 ** 63 - 1)) {
+                    if (ReadParsedI64(System.Text.ParseI64Unicode((unicode)"9223372036854775807"), 0) != (i64[min max])(2 ** 63 - 1))
+                    {
                         return 64;
                     }
 
-                    if (ReadParsedU64(System.Text.ParseU64Ascii("18446744073709551615"), 0) != (u64[0 max])(2 ** 64 - 1)) {
+                    if (ReadParsedU64(System.Text.ParseU64Ascii("18446744073709551615"), 0) != (u64[0 max])(2 ** 64 - 1))
+                    {
                         return 65;
                     }
 
-                    if (!IsInvalidI64(System.Text.ParseI64Ascii("12x"))) {
+                    if (!IsInvalidI64(System.Text.ParseI64Ascii("12x")))
+                    {
                         return 66;
                     }
 
-                    if (!IsOverflowI64(System.Text.ParseI64Ascii("9223372036854775808"))) {
+                    if (!IsOverflowI64(System.Text.ParseI64Ascii("9223372036854775808")))
+                    {
                         return 67;
                     }
 
-                    if (!IsOverflowU64(System.Text.ParseU64Unicode((unicode)"18446744073709551616"))) {
+                    if (!IsOverflowU64(System.Text.ParseU64Unicode((unicode)"18446744073709551616")))
+                    {
                         return 68;
                     }
 
-                    if (ReadParsedI8(System.Text.ParseI8Ascii("-128"), 0) != (i8[min max])(-(2 ** 7))) {
+                    if (ReadParsedI8(System.Text.ParseI8Ascii("-128"), 0) != (i8[min max])(-(2 ** 7)))
+                    {
                         return 69;
                     }
 
-                    if (ReadParsedI24(System.Text.ParseI24Unicode((unicode)"-8388608"), 0) != (i24[min max])(-(2 ** 23))) {
+                    if (ReadParsedI24(System.Text.ParseI24Unicode((unicode)"-8388608"), 0) != (i24[min max])(-(2 ** 23)))
+                    {
                         return 70;
                     }
 
-                    if (ReadParsedI48(System.Text.ParseI48Ascii("-140737488355328"), 0) != (i48[min max])(-(2 ** 47))) {
+                    if (ReadParsedI48(System.Text.ParseI48Ascii("-140737488355328"), 0) != (i48[min max])(-(2 ** 47)))
+                    {
                         return 71;
                     }
 
-                    if (ReadParsedU8(System.Text.ParseU8Unicode((unicode)"255"), 0) != (u8[0 max])(2 ** 8 - 1)) {
+                    if (ReadParsedU8(System.Text.ParseU8Unicode((unicode)"255"), 0) != (u8[0 max])(2 ** 8 - 1))
+                    {
                         return 72;
                     }
 
-                    if (ReadParsedU32(System.Text.ParseU32Ascii("4294967295"), 0) != (u32[0 max])(2 ** 32 - 1)) {
+                    if (ReadParsedU32(System.Text.ParseU32Ascii("4294967295"), 0) != (u32[0 max])(2 ** 32 - 1))
+                    {
                         return 73;
                     }
 
-                    if (ReadParsedU48(System.Text.ParseU48Unicode((unicode)"281474976710655"), 0) != (u48[0 max])(2 ** 48 - 1)) {
+                    if (ReadParsedU48(System.Text.ParseU48Unicode((unicode)"281474976710655"), 0) != (u48[0 max])(2 ** 48 - 1))
+                    {
                         return 74;
                     }
 
-                    if (!IsOverflowI8(System.Text.ParseI8Ascii("-129"))) {
+                    if (!IsOverflowI8(System.Text.ParseI8Ascii("-129")))
+                    {
                         return 75;
                     }
 
-                    if (!IsOverflowU32(System.Text.ParseU32Unicode((unicode)"4294967296"))) {
+                    if (!IsOverflowU32(System.Text.ParseU32Unicode((unicode)"4294967296")))
+                    {
                         return 76;
                     }
 
                     stack i96[min max] parsedI96 = ReadParsedI96(System.Text.ParseI96Ascii("-39614081257132168796771975168"), 0);
-                    if (!System.Text.TryFormatI96Ascii(&formatted, parsedI96)) {
+                    if (!System.Text.TryFormatI96Ascii(&formatted, parsedI96))
+                    {
                         return 77;
                     }
 
                     stack rawptr<i8[min max]> parsedI96Data = formatted.Data;
-                    if (formatted.Length != 30) {
+                    if (formatted.Length != 30)
+                    {
                         return 78;
                     }
 
                     if (parsedI96Data == null
                         || *(&parsedI96Data[0]) != (i8[min max])45
-                        || *(&parsedI96Data[29]) != (i8[min max])56) {
-                        return 78;
+                        || *(&parsedI96Data[29]) != (i8[min max])56)
+                        {
+                            return 78;
                     }
 
                     stack u96[0 max] parsedU96 = ReadParsedU96(System.Text.ParseU96Unicode((unicode)"79228162514264337593543950335"), 0);
-                    if (!System.Text.TryFormatU96Ascii(&formatted, parsedU96)) {
+                    if (!System.Text.TryFormatU96Ascii(&formatted, parsedU96))
+                    {
                         return 79;
                     }
 
@@ -1956,12 +2265,14 @@ public sealed class SystemTextStandardLibraryTests
                     if (formatted.Length != 29
                         || parsedU96Data == null
                         || *(&parsedU96Data[0]) != (i8[min max])55
-                        || *(&parsedU96Data[28]) != (i8[min max])53) {
-                        return 80;
+                        || *(&parsedU96Data[28]) != (i8[min max])53)
+                        {
+                            return 80;
                     }
 
                     stack i192[min max] parsedI192 = ReadParsedI192(System.Text.ParseI192Ascii("-42"), 0);
-                    if (!System.Text.TryFormatI192Ascii(&formatted, parsedI192)) {
+                    if (!System.Text.TryFormatI192Ascii(&formatted, parsedI192))
+                    {
                         return 91;
                     }
 
@@ -1969,12 +2280,14 @@ public sealed class SystemTextStandardLibraryTests
                     if (formatted.Length != 3
                         || parsedI192Data == null
                         || *(&parsedI192Data[0]) != (i8[min max])45
-                        || *(&parsedI192Data[2]) != (i8[min max])50) {
-                        return 92;
+                        || *(&parsedI192Data[2]) != (i8[min max])50)
+                        {
+                            return 92;
                     }
 
                     stack u192[0 max] parsedU192 = ReadParsedU192(System.Text.ParseU192Unicode((unicode)"42"), 0);
-                    if (!System.Text.TryFormatU192Ascii(&formatted, parsedU192)) {
+                    if (!System.Text.TryFormatU192Ascii(&formatted, parsedU192))
+                    {
                         return 93;
                     }
 
@@ -1982,19 +2295,23 @@ public sealed class SystemTextStandardLibraryTests
                     if (formatted.Length != 2
                         || parsedU192Data == null
                         || *(&parsedU192Data[0]) != (i8[min max])52
-                        || *(&parsedU192Data[1]) != (i8[min max])50) {
-                        return 94;
+                        || *(&parsedU192Data[1]) != (i8[min max])50)
+                        {
+                            return 94;
                     }
 
-                    if (!IsOverflowI96(System.Text.ParseI96Ascii("-39614081257132168796771975169"))) {
+                    if (!IsOverflowI96(System.Text.ParseI96Ascii("-39614081257132168796771975169")))
+                    {
                         return 81;
                     }
 
-                    if (!IsOverflowU96(System.Text.ParseU96Ascii("79228162514264337593543950336"))) {
+                    if (!IsOverflowU96(System.Text.ParseU96Ascii("79228162514264337593543950336")))
+                    {
                         return 82;
                     }
 
-                    if (!System.Text.TryFormatF64Ascii(&formatted, -12.5)) {
+                    if (!System.Text.TryFormatF64Ascii(&formatted, -12.5))
+                    {
                         return 83;
                     }
 
@@ -2004,11 +2321,13 @@ public sealed class SystemTextStandardLibraryTests
                         || *(&f64Data[0]) != (i8[min max])45
                         || *(&f64Data[3]) != (i8[min max])46
                         || *(&f64Data[4]) != (i8[min max])53
-                        || *(&f64Data[9]) != (i8[min max])48) {
-                        return 84;
+                        || *(&f64Data[9]) != (i8[min max])48)
+                        {
+                            return 84;
                     }
 
-                    if (!System.Text.TryFormatF32Unicode(&wide, 3.25f)) {
+                    if (!System.Text.TryFormatF32Unicode(&wide, 3.25f))
+                    {
                         return 85;
                     }
 
@@ -2018,87 +2337,105 @@ public sealed class SystemTextStandardLibraryTests
                         || *(&f32WideData[0]) != 51
                         || *(&f32WideData[1]) != 46
                         || *(&f32WideData[2]) != 50
-                        || *(&f32WideData[7]) != 48) {
-                        return 86;
+                        || *(&f32WideData[7]) != 48)
+                        {
+                            return 86;
                     }
 
                     stack i64[min max] ownedCount = 42;
-                    if (!OwnedAsciiMatches(ownedCount.ToAscii(), 2, (i8[min max])52, (i8[min max])50)) {
+                    if (!OwnedAsciiMatches(ownedCount.ToAscii(), 2, (i8[min max])52, (i8[min max])50))
+                    {
                         return 87;
                     }
 
                     stack f64 ownedRatio = 1.25;
-                    if (!OwnedAsciiMatches(ownedRatio.ToAscii(), 8, (i8[min max])49, (i8[min max])48)) {
+                    if (!OwnedAsciiMatches(ownedRatio.ToAscii(), 8, (i8[min max])49, (i8[min max])48))
+                    {
                         return 88;
                     }
 
                     stack u64[0 max] ownedUnsigned = 99;
-                    if (!OwnedUnicodeMatches(ownedUnsigned.ToUnicode(), 2, 57, 57)) {
+                    if (!OwnedUnicodeMatches(ownedUnsigned.ToUnicode(), 2, 57, 57))
+                    {
                         return 89;
                     }
 
                     stack f64 ownedWideRatio = 3.5;
-                    if (!OwnedUnicodeMatches(ownedWideRatio.ToUnicode(), 8, 51, 48)) {
+                    if (!OwnedUnicodeMatches(ownedWideRatio.ToUnicode(), 8, 51, 48))
+                    {
                         return 90;
                     }
 
                     stack bool ownedFlag = true;
-                    if (!OwnedAsciiMatches(ownedFlag.ToAscii(), 4, (i8[min max])116, (i8[min max])101)) {
+                    if (!OwnedAsciiMatches(ownedFlag.ToAscii(), 4, (i8[min max])116, (i8[min max])101))
+                    {
                         return 109;
                     }
 
                     stack bool ownedWideFlag = false;
-                    if (!OwnedUnicodeMatches(ownedWideFlag.ToUnicode(), 5, 102, 101)) {
+                    if (!OwnedUnicodeMatches(ownedWideFlag.ToUnicode(), 5, 102, 101))
+                    {
                         return 110;
                     }
 
-                    if (!OwnedAsciiMatches(System.Text.Encoding.UTF8.ToAscii(), 4, (i8[min max])85, (i8[min max])56)) {
+                    if (!OwnedAsciiMatches(System.Text.Encoding.UTF8.ToAscii(), 4, (i8[min max])85, (i8[min max])56))
+                    {
                         return 111;
                     }
 
-                    if (!OwnedAsciiMatches(System.Text.TextError.Overflow.ToAscii(), 8, (i8[min max])79, (i8[min max])119)) {
+                    if (!OwnedAsciiMatches(System.Text.TextError.Overflow.ToAscii(), 8, (i8[min max])79, (i8[min max])119))
+                    {
                         return 112;
                     }
 
-                    if (!OwnedUnicodeMatches(System.Text.Encoding.UTF16.ToUnicode(), 5, 85, 54)) {
+                    if (!OwnedUnicodeMatches(System.Text.Encoding.UTF16.ToUnicode(), 5, 85, 54))
+                    {
                         return 113;
                     }
 
-                    if (!OwnedUnicodeMatches(System.Text.TextError.InvalidFormat.ToUnicode(), 13, 73, 116)) {
+                    if (!OwnedUnicodeMatches(System.Text.TextError.InvalidFormat.ToUnicode(), 13, 73, 116))
+                    {
                         return 114;
                     }
 
                     stack i32[min max] ownedI32 = (i32[min max])(-(2 ** 31));
-                    if (!OwnedAsciiMatches(ownedI32.ToAscii(), 11, (i8[min max])45, (i8[min max])56)) {
+                    if (!OwnedAsciiMatches(ownedI32.ToAscii(), 11, (i8[min max])45, (i8[min max])56))
+                    {
                         return 115;
                     }
 
                     stack u32[0 max] ownedU32 = (u32[0 max])(2 ** 32 - 1);
-                    if (!OwnedUnicodeMatches(ownedU32.ToUnicode(), 10, 52, 53)) {
+                    if (!OwnedUnicodeMatches(ownedU32.ToUnicode(), 10, 52, 53))
+                    {
                         return 116;
                     }
 
                     stack i96[min max] ownedI96 = (i96[min max])(-(2 ** 95));
-                    if (!OwnedAsciiMatches(ownedI96.ToAscii(), 30, (i8[min max])45, (i8[min max])56)) {
+                    if (!OwnedAsciiMatches(ownedI96.ToAscii(), 30, (i8[min max])45, (i8[min max])56))
+                    {
                         return 117;
                     }
 
                     stack u96[0 max] ownedU96 = (u96[0 max])(2 ** 96 - 1);
-                    if (!OwnedUnicodeMatches(ownedU96.ToUnicode(), 29, 55, 53)) {
+                    if (!OwnedUnicodeMatches(ownedU96.ToUnicode(), 29, 55, 53))
+                    {
                         return 118;
                     }
 
                     stack i64[min max] score = 100;
-                    if (!OwnedAsciiMatches("Score: " + score.ToAscii(), 10, (i8[min max])83, (i8[min max])48)) {
+                    if (!OwnedAsciiMatches("Score: " + score.ToAscii(), 10, (i8[min max])83, (i8[min max])48))
+                    {
                         return 95;
                     }
 
                     stack f64 wideScore = 3.5;
-                    if (!OwnedUnicodeMatches((unicode)"Value: " + wideScore.ToUnicode(), 15, 86, 48)) {
+                    if (!OwnedUnicodeMatches((unicode)"Value: " + wideScore.ToUnicode(), 15, 86, 48))
+                    {
                         return 96;
                     }
 
-                    if (!System.Text.TryFormatEncodingAscii(&formatted, System.Text.Encoding.UTF16)) {
+                    if (!System.Text.TryFormatEncodingAscii(&formatted, System.Text.Encoding.UTF16))
+                    {
                         return 97;
                     }
 
@@ -2106,11 +2443,13 @@ public sealed class SystemTextStandardLibraryTests
                     if (formatted.Length != 5
                         || encodingData == null
                         || *(&encodingData[0]) != (i8[min max])85
-                        || *(&encodingData[4]) != (i8[min max])54) {
-                        return 98;
+                        || *(&encodingData[4]) != (i8[min max])54)
+                        {
+                            return 98;
                     }
 
-                    if (!System.Text.TryFormatTextErrorAscii(&formatted, System.Text.TextError.InvalidFormat)) {
+                    if (!System.Text.TryFormatTextErrorAscii(&formatted, System.Text.TextError.InvalidFormat))
+                    {
                         return 99;
                     }
 
@@ -2118,11 +2457,13 @@ public sealed class SystemTextStandardLibraryTests
                     if (formatted.Length != 13
                         || errorData == null
                         || *(&errorData[0]) != (i8[min max])73
-                        || *(&errorData[12]) != (i8[min max])116) {
-                        return 100;
+                        || *(&errorData[12]) != (i8[min max])116)
+                        {
+                            return 100;
                     }
 
-                    if (!System.Text.TryFormatEncodingUnicode(&wide, System.Text.Encoding.Binary)) {
+                    if (!System.Text.TryFormatEncodingUnicode(&wide, System.Text.Encoding.Binary))
+                    {
                         return 101;
                     }
 
@@ -2130,11 +2471,13 @@ public sealed class SystemTextStandardLibraryTests
                     if (wide.Length != 6
                         || wideEncodingData == null
                         || *(&wideEncodingData[0]) != 66
-                        || *(&wideEncodingData[5]) != 121) {
-                        return 102;
+                        || *(&wideEncodingData[5]) != 121)
+                        {
+                            return 102;
                     }
 
-                    if (!System.Text.TryFormatTextErrorUnicode(&wide, System.Text.TextError.Overflow)) {
+                    if (!System.Text.TryFormatTextErrorUnicode(&wide, System.Text.TextError.Overflow))
+                    {
                         return 103;
                     }
 
@@ -2142,23 +2485,28 @@ public sealed class SystemTextStandardLibraryTests
                     if (wide.Length != 8
                         || wideErrorData == null
                         || *(&wideErrorData[0]) != 79
-                        || *(&wideErrorData[7]) != 119) {
-                        return 104;
+                        || *(&wideErrorData[7]) != 119)
+                        {
+                            return 104;
                     }
 
-                    if (ReadParsedEncoding(System.Text.ParseEncodingUnicode((unicode)"UTF32")) != System.Text.Encoding.UTF32) {
+                    if (ReadParsedEncoding(System.Text.ParseEncodingUnicode((unicode)"UTF32")) != System.Text.Encoding.UTF32)
+                    {
                         return 105;
                     }
 
-                    if (!IsInvalidEncoding(System.Text.ParseEncodingAscii("utf8"))) {
+                    if (!IsInvalidEncoding(System.Text.ParseEncodingAscii("utf8")))
+                    {
                         return 106;
                     }
 
-                    if (ReadParsedTextError(System.Text.ParseTextErrorAscii("Overflow")) != System.Text.TextError.Overflow) {
+                    if (ReadParsedTextError(System.Text.ParseTextErrorAscii("Overflow")) != System.Text.TextError.Overflow)
+                    {
                         return 107;
                     }
 
-                    if (!IsInvalidTextError(System.Text.ParseTextErrorUnicode((unicode)"Unknown"))) {
+                    if (!IsInvalidTextError(System.Text.ParseTextErrorUnicode((unicode)"Unknown")))
+                    {
                         return 108;
                     }
 

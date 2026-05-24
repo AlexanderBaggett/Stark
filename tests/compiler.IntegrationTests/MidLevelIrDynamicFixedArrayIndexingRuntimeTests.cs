@@ -16,7 +16,8 @@ public sealed class MidLevelIrDynamicFixedArrayIndexingRuntimeTests
             """
             module Demo
 
-            export fn i32[min max] main() {
+            export fn i32[min max] main()
+            {
                 stack i32[min max] index = 2;
                 return (new i32[min max][3])[index];
             }

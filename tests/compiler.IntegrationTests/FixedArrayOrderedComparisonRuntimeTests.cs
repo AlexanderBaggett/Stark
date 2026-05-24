@@ -16,40 +16,76 @@ public sealed class FixedArrayOrderedComparisonRuntimeTests
             """
             module Demo
 
-            fn bool Less(i32[min max][3] left, i32[min max][3] right) {
+            fn bool Less(i32[min max][3] left, i32[min max][3] right)
+            {
                 return left < right;
             }
 
-            fn bool LessOrEqual(i32[min max][3] left, i32[min max][3] right) {
+            fn bool LessOrEqual(i32[min max][3] left, i32[min max][3] right)
+            {
                 return left <= right;
             }
 
-            fn bool Greater(i32[min max][3] left, i32[min max][3] right) {
+            fn bool Greater(i32[min max][3] left, i32[min max][3] right)
+            {
                 return left > right;
             }
 
-            fn bool GreaterOrEqual(i32[min max][3] left, i32[min max][3] right) {
+            fn bool GreaterOrEqual(i32[min max][3] left, i32[min max][3] right)
+            {
                 return left >= right;
             }
 
-            export unsafe fn i32[min max] main() {
-                stack i32[min max][3] lessLeft = { 1, 2, 3 };
-                stack i32[min max][3] lessRight = { 1, 2, 4 };
-                stack i32[min max][3] lessOrEqualLeft = { 1, 2, 3 };
-                stack i32[min max][3] lessOrEqualRight = { 1, 2, 3 };
-                stack i32[min max][3] greaterLeft = { 1, 2, 4 };
-                stack i32[min max][3] greaterRight = { 1, 2, 3 };
-                stack i32[min max][3] greaterOrEqualLeft = { 1, 2, 3 };
-                stack i32[min max][3] greaterOrEqualRight = { 1, 2, 3 };
-                stack i32[min max][3] topLeft = { 2, 0, 0 };
-                stack i32[min max][3] topRight = { 1, 9, 9 };
+            export unsafe fn i32[min max] main()
+            {
+                stack i32[min max][3] lessLeft =
+                {
+                    1, 2, 3
+                };
+                stack i32[min max][3] lessRight =
+                {
+                    1, 2, 4
+                };
+                stack i32[min max][3] lessOrEqualLeft =
+                {
+                    1, 2, 3
+                };
+                stack i32[min max][3] lessOrEqualRight =
+                {
+                    1, 2, 3
+                };
+                stack i32[min max][3] greaterLeft =
+                {
+                    1, 2, 4
+                };
+                stack i32[min max][3] greaterRight =
+                {
+                    1, 2, 3
+                };
+                stack i32[min max][3] greaterOrEqualLeft =
+                {
+                    1, 2, 3
+                };
+                stack i32[min max][3] greaterOrEqualRight =
+                {
+                    1, 2, 3
+                };
+                stack i32[min max][3] topLeft =
+                {
+                    2, 0, 0
+                };
+                stack i32[min max][3] topRight =
+                {
+                    1, 9, 9
+                };
 
                 if (Less(lessLeft, lessRight)
                     && LessOrEqual(lessOrEqualLeft, lessOrEqualRight)
                     && Greater(greaterLeft, greaterRight)
                     && GreaterOrEqual(greaterOrEqualLeft, greaterOrEqualRight)
-                    && GreaterOrEqual(topLeft, topRight)) {
-                    return 7;
+                    && GreaterOrEqual(topLeft, topRight))
+                    {
+                        return 7;
                 }
 
                 return 0;

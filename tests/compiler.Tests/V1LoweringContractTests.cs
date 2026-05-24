@@ -11,7 +11,8 @@ public sealed class V1LoweringContractTests
             """
             module Demo
 
-            unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right) {
+            unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right)
+            {
                 return left + right;
             }
             """);
@@ -30,15 +31,18 @@ public sealed class V1LoweringContractTests
             """
             module Demo
 
-            unsafe fn ascii Echo(ascii text) {
+            unsafe fn ascii Echo(ascii text)
+            {
                 return text;
             }
 
-            unsafe fn unicode Wide(unicode text) {
+            unsafe fn unicode Wide(unicode text)
+            {
                 return text;
             }
 
-            unsafe fn i32[min max] Read(i32[min max][] view, i32[min max] index) {
+            unsafe fn i32[min max] Read(i32[min max][] view, i32[min max] index)
+            {
                 return view[index];
             }
             """);
@@ -62,7 +66,8 @@ public sealed class V1LoweringContractTests
 
             unsafe ffi fn i32[min max] puts(ascii text);
 
-            export unsafe fn i32[min max] main() {
+            export unsafe fn i32[min max] main()
+            {
                 puts("Hello");
                 return 0;
             }
@@ -84,7 +89,8 @@ public sealed class V1LoweringContractTests
             """
             module Demo
 
-            export fn i32[min max] main() {
+            export fn i32[min max] main()
+            {
                 return 0;
             }
             """);
@@ -103,7 +109,8 @@ public sealed class V1LoweringContractTests
             """
             module Demo
 
-            export fn i32[min max] AddOne(i32[min max] value) {
+            export fn i32[min max] AddOne(i32[min max] value)
+            {
                 return value + 1;
             }
             """);
@@ -122,12 +129,14 @@ public sealed class V1LoweringContractTests
             """
             module Demo
 
-            struct Pair {
+            struct Pair
+            {
                 i8[min max] Tag;
                 i32[min max] Value;
             }
 
-            unsafe fn void Inspect(borrow Pair pair) {
+            unsafe fn void Inspect(borrow Pair pair)
+            {
                 return;
             }
             """);
@@ -146,12 +155,14 @@ public sealed class V1LoweringContractTests
             """
             module Demo
 
-            struct Pair {
+            struct Pair
+            {
                 i64[min max] Left;
                 i64[min max] Right;
             }
 
-            unsafe fn Pair Step(Pair value) {
+            unsafe fn Pair Step(Pair value)
+            {
                 return value;
             }
             """);
@@ -172,13 +183,15 @@ public sealed class V1LoweringContractTests
             """
             module Demo
 
-            struct Big {
+            struct Big
+            {
                 i64[min max] A;
                 i64[min max] B;
                 i64[min max] C;
             }
 
-            unsafe fn Big Step(Big value) {
+            unsafe fn Big Step(Big value)
+            {
                 return value;
             }
             """);
@@ -198,11 +211,13 @@ public sealed class V1LoweringContractTests
             """
             module Demo
 
-            unsafe fn i32[min max] Read4(i32[min max][4] values) {
+            unsafe fn i32[min max] Read4(i32[min max][4] values)
+            {
                 return values[0];
             }
 
-            unsafe fn i32[min max] Read5(i32[min max][5] values) {
+            unsafe fn i32[min max] Read5(i32[min max][5] values)
+            {
                 return values[0];
             }
             """);

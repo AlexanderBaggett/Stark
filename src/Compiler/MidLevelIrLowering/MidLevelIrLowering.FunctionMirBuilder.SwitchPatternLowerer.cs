@@ -13,10 +13,11 @@ internal sealed partial class MidLevelIrLowerer
         }
 
         private bool TryRegisterSwitchCaptureLocals(
-            IEnumerable<IReadOnlyList<LowerableSwitchLabel>> sectionLabels,
-            StarkTypeSymbol switchType)
+            IReadOnlyList<LowerableSwitchLabel> labels,
+            StarkTypeSymbol switchType,
+            out IReadOnlyList<LowerableSwitchLabel> registeredLabels)
         {
-            return _switchPatternLowerer.TryRegisterSwitchCaptureLocals(sectionLabels, switchType);
+            return _switchPatternLowerer.TryRegisterSwitchCaptureLocals(labels, switchType, out registeredLabels);
         }
 
         private bool EmitSwitchSectionDecision(
@@ -365,7 +366,12 @@ internal sealed partial class MidLevelIrLowerer
                 return false;
             }
 
-            var sections = parsedSections
+            if (!TryRegisterSwitchCaptureLocalsCore(parsedSections, switchValue.Type, out var registeredSections))
+            {
+                return false;
+            }
+
+            var sections = registeredSections
                 .Select((section, index) => (
                     section.Section,
                     section.Labels,
@@ -377,11 +383,6 @@ internal sealed partial class MidLevelIrLowerer
                 .Where(static section => section.Labels.Any(static label => label.IsDefault && label.GuardExpression is null && label.ImportedGuardExpression is null && label.CaptureName is null))
                 .Select(static section => section.BodyBlock.Id)
                 .FirstOrDefault(exitBlock.Id);
-
-            if (!TryRegisterSwitchCaptureLocals(sections.Select(static section => section.Labels), switchValue.Type))
-            {
-                return false;
-            }
 
             var switchEntryDropStates = SnapshotRuntimeDropStates();
             var bodyEntryDropStates = new Dictionary<int, Dictionary<string, bool>>();
@@ -486,7 +487,11 @@ internal sealed partial class MidLevelIrLowerer
             {
                 if (label.CaptureName is { } captureName)
                 {
-                    TrackSwitchSectionCaptureLocal(captureName, switchType, seen);
+                    TrackSwitchSectionCaptureLocal(
+                        captureName,
+                        label.CaptureStorageName ?? captureName,
+                        switchType,
+                        seen);
                 }
 
                 if (label.AggregatePattern is { } aggregatePattern)
@@ -503,14 +508,22 @@ internal sealed partial class MidLevelIrLowerer
         {
             if (aggregatePattern.WholeCaptureName is { } wholeCaptureName)
             {
-                TrackSwitchSectionCaptureLocal(wholeCaptureName, aggregateValueType, seen);
+                TrackSwitchSectionCaptureLocal(
+                    wholeCaptureName,
+                    aggregatePattern.WholeCaptureStorageName ?? wholeCaptureName,
+                    aggregateValueType,
+                    seen);
             }
 
             foreach (var fieldPattern in aggregatePattern.FieldPatterns)
             {
                 if (fieldPattern.Kind == AggregatePatternFieldKind.Capture && fieldPattern.CaptureName is not null)
                 {
-                    TrackSwitchSectionCaptureLocal(fieldPattern.CaptureName, fieldPattern.FieldType, seen);
+                    TrackSwitchSectionCaptureLocal(
+                        fieldPattern.CaptureName,
+                        fieldPattern.CaptureStorageName ?? fieldPattern.CaptureName,
+                        fieldPattern.FieldType,
+                        seen);
                     continue;
                 }
 
@@ -521,17 +534,25 @@ internal sealed partial class MidLevelIrLowerer
             }
         }
 
-        private void TrackSwitchSectionCaptureLocal(string name, StarkTypeSymbol type, HashSet<string> seen)
+        private void TrackSwitchSectionCaptureLocal(
+            string sourceName,
+            string storageName,
+            StarkTypeSymbol type,
+            HashSet<string> seen)
         {
-            if (!seen.Add(name))
+            if (!seen.Add(sourceName))
             {
                 return;
             }
 
-            var trackedType = _localsByName.TryGetValue(name, out var local)
+            var trackedType = _localsByName.TryGetValue(storageName, out var local)
                 ? local.Type
                 : type;
-            TrackDeclaredLocal(name, trackedType);
+            TrackDeclaredLocal(storageName, trackedType);
+            if (!string.Equals(sourceName, storageName, StringComparison.Ordinal))
+            {
+                PushScopedNameAlias(sourceName, storageName);
+            }
         }
 
         private bool EmitSwitchSectionDecisionCore(
@@ -1302,91 +1323,163 @@ internal sealed partial class MidLevelIrLowerer
         }
 
         private bool TryRegisterSwitchCaptureLocalsCore(
-            IEnumerable<IReadOnlyList<LowerableSwitchLabel>> sectionLabels,
-            StarkTypeSymbol switchType)
+            IReadOnlyList<LowerableSwitchSection> sections,
+            StarkTypeSymbol switchType,
+            out IReadOnlyList<LowerableSwitchSection> registeredSections)
         {
-            foreach (var labels in sectionLabels)
+            var rewrittenSections = new List<LowerableSwitchSection>(sections.Count);
+            foreach (var section in sections)
             {
-                var aggregateLabels = labels.Where(static label => label.AggregatePattern is not null).ToArray();
-                if (aggregateLabels.Length != 0)
+                if (!TryRegisterSwitchCaptureLocalsCore(section.Labels, switchType, out var registeredLabels))
                 {
-                    if (aggregateLabels.Length != 1 || labels.Count != 1)
-                    {
-                        return false;
-                    }
-
-                    var aggregatePattern = aggregateLabels[0].AggregatePattern!;
-                    if (!TryRegisterAggregatePatternCaptureLocals(aggregatePattern, switchType))
-                    {
-                        return false;
-                    }
-
-                    continue;
-                }
-
-                var captureLabels = labels.Where(static label => label.CaptureName is not null).ToArray();
-                if (captureLabels.Length == 0)
-                {
-                    continue;
-                }
-
-                if (captureLabels.Length != 1 || labels.Count != 1)
-                {
+                    registeredSections = [];
                     return false;
                 }
 
-                var captureName = captureLabels[0].CaptureName!;
-                if (_localsByName.ContainsKey(captureName) || _parametersByName.ContainsKey(captureName))
-                {
-                    return false;
-                }
-
-                RegisterLocal(captureName, switchType, storageClass: "match", isMutable: false, isConstant: false);
-                InitializeRuntimeDropState(captureName, switchType, isActive: false);
+                rewrittenSections.Add(section with { Labels = registeredLabels });
             }
 
+            registeredSections = rewrittenSections;
             return true;
         }
 
-        private bool TryRegisterAggregatePatternCaptureLocals(LowerableAggregatePattern aggregatePattern, StarkTypeSymbol aggregateValueType)
+        private bool TryRegisterSwitchCaptureLocalsCore(
+            IReadOnlyList<LowerableSwitchLabel> labels,
+            StarkTypeSymbol switchType,
+            out IReadOnlyList<LowerableSwitchLabel> registeredLabels)
         {
-            if (aggregatePattern.WholeCaptureName is { } wholeCaptureName)
+            var rewrittenLabels = labels.ToArray();
+            var seenCaptures = new HashSet<string>(StringComparer.Ordinal);
+
+            var aggregateLabels = labels.Where(static label => label.AggregatePattern is not null).ToArray();
+            if (aggregateLabels.Length != 0)
             {
-                if (_localsByName.ContainsKey(wholeCaptureName) || _parametersByName.ContainsKey(wholeCaptureName))
+                if (aggregateLabels.Length != 1 || labels.Count != 1)
                 {
+                    registeredLabels = [];
                     return false;
                 }
 
-                RegisterLocal(wholeCaptureName, aggregateValueType, storageClass: "match", isMutable: false, isConstant: false);
-                InitializeRuntimeDropState(wholeCaptureName, aggregateValueType, isActive: false);
+                var aggregatePattern = aggregateLabels[0].AggregatePattern!;
+                if (!TryRegisterAggregatePatternCaptureLocals(
+                        aggregatePattern,
+                        switchType,
+                        seenCaptures,
+                        out var registeredAggregatePattern))
+                {
+                    registeredLabels = [];
+                    return false;
+                }
+
+                rewrittenLabels[0] = labels[0] with { AggregatePattern = registeredAggregatePattern };
+                registeredLabels = rewrittenLabels;
+                return true;
             }
 
+            var captureLabels = labels.Where(static label => label.CaptureName is not null).ToArray();
+            if (captureLabels.Length == 0)
+            {
+                registeredLabels = rewrittenLabels;
+                return true;
+            }
+
+            if (captureLabels.Length != 1 || labels.Count != 1)
+            {
+                registeredLabels = [];
+                return false;
+            }
+
+            var captureName = captureLabels[0].CaptureName!;
+            if (!TryRegisterSwitchCaptureLocal(captureName, switchType, seenCaptures, out var storageName))
+            {
+                registeredLabels = [];
+                return false;
+            }
+
+            rewrittenLabels[0] = labels[0] with { CaptureStorageName = storageName };
+            registeredLabels = rewrittenLabels;
+            return true;
+        }
+
+        private bool TryRegisterAggregatePatternCaptureLocals(
+            LowerableAggregatePattern aggregatePattern,
+            StarkTypeSymbol aggregateValueType,
+            HashSet<string> seenCaptures,
+            out LowerableAggregatePattern registeredPattern)
+        {
+            registeredPattern = aggregatePattern;
+            string? wholeCaptureStorageName = null;
+            if (aggregatePattern.WholeCaptureName is { } wholeCaptureName)
+            {
+                if (!TryRegisterSwitchCaptureLocal(
+                        wholeCaptureName,
+                        aggregateValueType,
+                        seenCaptures,
+                        out wholeCaptureStorageName))
+                {
+                    return false;
+                }
+            }
+
+            var rewrittenFields = aggregatePattern.FieldPatterns.ToArray();
             foreach (var fieldPattern in aggregatePattern.FieldPatterns)
             {
+                var fieldIndex = Array.IndexOf(rewrittenFields, fieldPattern);
                 if (fieldPattern.Kind == AggregatePatternFieldKind.Capture)
                 {
                     if (fieldPattern.CaptureName is null
-                        || _localsByName.ContainsKey(fieldPattern.CaptureName)
-                        || _parametersByName.ContainsKey(fieldPattern.CaptureName))
+                        || !TryRegisterSwitchCaptureLocal(
+                            fieldPattern.CaptureName,
+                            fieldPattern.FieldType,
+                            seenCaptures,
+                            out var fieldStorageName))
                     {
                         return false;
                     }
 
-                    RegisterLocal(fieldPattern.CaptureName, fieldPattern.FieldType, storageClass: "match", isMutable: false, isConstant: false);
-                    InitializeRuntimeDropState(fieldPattern.CaptureName, fieldPattern.FieldType, isActive: false);
+                    rewrittenFields[fieldIndex] = fieldPattern with { CaptureStorageName = fieldStorageName };
                     continue;
                 }
 
                 if (fieldPattern.Kind == AggregatePatternFieldKind.Nested)
                 {
                     if (fieldPattern.NestedPattern is null
-                        || !TryRegisterAggregatePatternCaptureLocals(fieldPattern.NestedPattern, fieldPattern.FieldType))
+                        || !TryRegisterAggregatePatternCaptureLocals(
+                            fieldPattern.NestedPattern,
+                            fieldPattern.FieldType,
+                            seenCaptures,
+                            out var registeredNestedPattern))
                     {
                         return false;
                     }
+
+                    rewrittenFields[fieldIndex] = fieldPattern with { NestedPattern = registeredNestedPattern };
                 }
             }
 
+            registeredPattern = aggregatePattern with
+            {
+                FieldPatterns = rewrittenFields,
+                WholeCaptureStorageName = wholeCaptureStorageName
+            };
+            return true;
+        }
+
+        private bool TryRegisterSwitchCaptureLocal(
+            string sourceName,
+            StarkTypeSymbol type,
+            HashSet<string> seenCaptures,
+            out string storageName)
+        {
+            storageName = string.Empty;
+            if (!seenCaptures.Add(sourceName))
+            {
+                return false;
+            }
+
+            storageName = AllocateLocalStorageName(sourceName);
+            RegisterLocal(storageName, type, storageClass: "match", isMutable: false, isConstant: false);
+            InitializeRuntimeDropState(storageName, type, isActive: false);
             return true;
         }
 
@@ -1394,7 +1487,7 @@ internal sealed partial class MidLevelIrLowerer
         {
             IReadOnlyList<PendingSwitchBinding> bindings = label.CaptureName is null
                 ? []
-                : [new PendingSwitchBinding(label.CaptureName, switchValue)];
+                : [new PendingSwitchBinding(label.CaptureName, label.CaptureStorageName ?? label.CaptureName, switchValue)];
 
             return EmitSwitchBindingsAndGuard(label.GuardExpression, label.ImportedGuardExpression, bindings, targetBlockId, nextTarget);
         }
@@ -1442,7 +1535,10 @@ internal sealed partial class MidLevelIrLowerer
         {
             if (aggregatePattern.WholeCaptureName is { } wholeCaptureName)
             {
-                bindings.Add(new PendingSwitchBinding(wholeCaptureName, switchValue));
+                bindings.Add(new PendingSwitchBinding(
+                    wholeCaptureName,
+                    aggregatePattern.WholeCaptureStorageName ?? wholeCaptureName,
+                    switchValue));
             }
 
             var fieldPatterns = aggregatePattern.FieldPatterns;
@@ -1510,6 +1606,7 @@ internal sealed partial class MidLevelIrLowerer
                 {
                     bindings.Add(new PendingSwitchBinding(
                         fieldPattern.CaptureName!,
+                        fieldPattern.CaptureStorageName ?? fieldPattern.CaptureName!,
                         fieldValue,
                         RequiresRuntimeDrop(fieldPattern.FieldType) ? switchValue : null));
                     CurrentBlock.Terminator = new MidLevelIrTerminator(MidLevelIrTerminatorKind.Goto, [nextTarget]);
@@ -1573,10 +1670,10 @@ internal sealed partial class MidLevelIrLowerer
 
             foreach (var binding in bindings)
             {
-                var capture = new MidLevelIrLocalOperand(binding.Name, binding.Source.Type);
-                Emit(MidLevelIrStatementKind.StorageLive, binding.Name, binding.Name, binding.Source.Type);
+                var capture = new MidLevelIrLocalOperand(binding.StorageName, binding.Source.Type);
+                Emit(MidLevelIrStatementKind.StorageLive, binding.StorageName, binding.SourceName, binding.Source.Type);
                 EmitOperandAssignment(capture, binding.Source, binding.Source.Text);
-                SetRuntimeDropState(binding.Name, isActive: true);
+                SetRuntimeDropState(binding.StorageName, isActive: true);
                 if (binding.RuntimeMoveSource is not null)
                 {
                     RecordMoveFromOperand(binding.RuntimeMoveSource, binding.RuntimeMoveSource.Type);
@@ -1630,10 +1727,11 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             public bool TryRegisterSwitchCaptureLocals(
-                IEnumerable<IReadOnlyList<LowerableSwitchLabel>> sectionLabels,
-                StarkTypeSymbol switchType)
+                IReadOnlyList<LowerableSwitchLabel> labels,
+                StarkTypeSymbol switchType,
+                out IReadOnlyList<LowerableSwitchLabel> registeredLabels)
             {
-                return _builder.TryRegisterSwitchCaptureLocalsCore(sectionLabels, switchType);
+                return _builder.TryRegisterSwitchCaptureLocalsCore(labels, switchType, out registeredLabels);
             }
 
             public bool EmitSwitchSectionDecision(

@@ -410,8 +410,16 @@ internal static class LlvmSpecializationEmissionPlanner
         var visited = new HashSet<string>(StringComparer.Ordinal);
         var pending = new Queue<string>();
 
-        foreach (var rootFunction in rootFunctions)
+        var visitedRootReachability = new HashSet<string>(StringComparer.Ordinal);
+        var rootReachability = new Queue<string>(rootFunctions);
+        while (rootReachability.Count != 0)
         {
+            var rootFunction = rootReachability.Dequeue();
+            if (!visitedRootReachability.Add(rootFunction))
+            {
+                continue;
+            }
+
             if (!callsByFunction.TryGetValue(rootFunction, out var callees))
             {
                 continue;
@@ -420,6 +428,11 @@ internal static class LlvmSpecializationEmissionPlanner
             foreach (var callee in callees)
             {
                 EnqueueIfEligibleInlineDependency(callee);
+                if (ssaByName.ContainsKey(callee)
+                    && !importedCandidates.ContainsKey(callee))
+                {
+                    rootReachability.Enqueue(callee);
+                }
             }
         }
 
