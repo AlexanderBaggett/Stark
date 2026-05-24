@@ -11,15 +11,18 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            fn i32[min max] Pick(ascii text) {
+            fn i32[min max] Pick(ascii text)
+            {
                 return 1;
             }
 
-            fn i32[min max] Pick(unicode text) {
+            fn i32[min max] Pick(unicode text)
+            {
                 return 2;
             }
 
-            export fn i32[min max] main() {
+            export fn i32[min max] main()
+            {
                 return Pick("caf\u00E9");
             }
             """);
@@ -34,8 +37,10 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            export fn i32[min max] main() {
-                if ("Score: " + "100" == "Score: 100") {
+            export fn i32[min max] main()
+            {
+                if ("Score: " + "100" == "Score: 100")
+                {
                     return 0;
                 }
 
@@ -60,36 +65,54 @@ public sealed class MidLevelIrRuntimeTests
             public unsafe fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
             public unsafe fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
 
-            export unsafe fn i32[min max] main() {
-                stack mut i8[min max][2] leftStorage = { 65, 0 };
-                stack mut Ascii left = new Ascii() {
+            export unsafe fn i32[min max] main()
+            {
+                stack mut i8[min max][2] leftStorage =
+                {
+                    65, 0
+                };
+                stack mut Ascii left = new Ascii()
+                {
                     Data = &leftStorage[0],
                     Length = 1,
                     Capacity = 2
                 };
-                stack mut i8[min max][2] rightStorage = { 66, 0 };
-                stack mut Ascii right = new Ascii() {
+                stack mut i8[min max][2] rightStorage =
+                {
+                    66, 0
+                };
+                stack mut Ascii right = new Ascii()
+                {
                     Data = &rightStorage[0],
                     Length = 1,
                     Capacity = 2
                 };
                 stack Ascii combined[4] = left + right;
 
-                stack mut i32[min max][2] wideLeftStorage = { 65, 0 };
-                stack mut Unicode wideLeft = new Unicode() {
+                stack mut i32[min max][2] wideLeftStorage =
+                {
+                    65, 0
+                };
+                stack mut Unicode wideLeft = new Unicode()
+                {
                     Data = &wideLeftStorage[0],
                     Length = 1,
                     Capacity = 2
                 };
-                stack mut i32[min max][2] wideRightStorage = { 66, 0 };
-                stack mut Unicode wideRight = new Unicode() {
+                stack mut i32[min max][2] wideRightStorage =
+                {
+                    66, 0
+                };
+                stack mut Unicode wideRight = new Unicode()
+                {
                     Data = &wideRightStorage[0],
                     Length = 1,
                     Capacity = 2
                 };
                 stack Unicode wideCombined[4] = wideLeft + wideRight;
 
-                if (AsciiLength(AsciiView(combined)) == 2 && UnicodeLength(UnicodeView(wideCombined)) == 2) {
+                if (AsciiLength(AsciiView(combined)) == 2 && UnicodeLength(UnicodeView(wideCombined)) == 2)
+                {
                     return 0;
                 }
 
@@ -110,9 +133,14 @@ public sealed class MidLevelIrRuntimeTests
             public unsafe fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
             public unsafe fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
 
-            unsafe fn bool RejectsAsciiNegativeCapacity() {
-                stack mut i8[min max][4] storage = { 0, 0, 0, 0 };
-                stack mut Ascii destination = new Ascii() {
+            unsafe fn bool RejectsAsciiNegativeCapacity()
+            {
+                stack mut i8[min max][4] storage =
+                {
+                    0, 0, 0, 0
+                };
+                stack mut Ascii destination = new Ascii()
+                {
                     Data = &storage[0],
                     Length = 0,
                     Capacity = -1
@@ -121,9 +149,14 @@ public sealed class MidLevelIrRuntimeTests
                 return !TryConcatAscii(&destination, "A", "B");
             }
 
-            unsafe fn bool RejectsUnicodeNegativeCapacity() {
-                stack mut i32[min max][4] storage = { 0, 0, 0, 0 };
-                stack mut Unicode destination = new Unicode() {
+            unsafe fn bool RejectsUnicodeNegativeCapacity()
+            {
+                stack mut i32[min max][4] storage =
+                {
+                    0, 0, 0, 0
+                };
+                stack mut Unicode destination = new Unicode()
+                {
                     Data = &storage[0],
                     Length = 0,
                     Capacity = -1
@@ -132,8 +165,10 @@ public sealed class MidLevelIrRuntimeTests
                 return !TryConcatUnicode(&destination, (unicode)"A", (unicode)"B");
             }
 
-            export unsafe fn i32[min max] main() {
-                if (RejectsAsciiNegativeCapacity() && RejectsUnicodeNegativeCapacity()) {
+            export unsafe fn i32[min max] main()
+            {
+                if (RejectsAsciiNegativeCapacity() && RejectsUnicodeNegativeCapacity())
+                {
                     return 0;
                 }
 
@@ -155,18 +190,22 @@ public sealed class MidLevelIrRuntimeTests
             public finite law i64[min max] AsciiLength(ascii source);
             public unsafe fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
 
-            public unsafe fn bool TryFormatI32Ascii(rawmutptr<Ascii> destination, i32[min max] value) {
-                if (value == 42) {
+            public unsafe fn bool TryFormatI32Ascii(rawmutptr<Ascii> destination, i32[min max] value)
+            {
+                if (value == 42)
+                {
                     return TryConcatAscii(destination, "", "42");
                 }
 
                 return false;
             }
 
-            export unsafe fn i32[min max] main() {
+            export unsafe fn i32[min max] main()
+            {
                 stack i32[min max] score = 42;
                 stack Ascii label[32] = $"Score: {score}";
-                if (AsciiLength(AsciiView(label)) == 9) {
+                if (AsciiLength(AsciiView(label)) == 9)
+                {
                     return 0;
                 }
 
@@ -188,18 +227,22 @@ public sealed class MidLevelIrRuntimeTests
             public finite law i64[min max] UnicodeLength(unicode source);
             public unsafe fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
 
-            public unsafe fn bool TryFormatI32Unicode(rawmutptr<Unicode> destination, i32[min max] value) {
-                if (value == 42) {
+            public unsafe fn bool TryFormatI32Unicode(rawmutptr<Unicode> destination, i32[min max] value)
+            {
+                if (value == 42)
+                {
                     return TryConcatUnicode(destination, (unicode)"", (unicode)"42");
                 }
 
                 return false;
             }
 
-            export unsafe fn i32[min max] main() {
+            export unsafe fn i32[min max] main()
+            {
                 stack i32[min max] score = 42;
                 stack Unicode label[32] = $"Score: {score}";
-                if (UnicodeLength(UnicodeView(label)) == 9) {
+                if (UnicodeLength(UnicodeView(label)) == 9)
+                {
                     return 0;
                 }
 
@@ -217,9 +260,11 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            export fn i32[min max] main() {
+            export fn i32[min max] main()
+            {
                 const score = 100;
-                if ($"Score: {score}" == "Score: 100") {
+                if ($"Score: {score}" == "Score: 100")
+                {
                     return 0;
                 }
 
@@ -242,11 +287,13 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            strictfp fn f32 Add(f32 left, f32 right) {
+            strictfp fn f32 Add(f32 left, f32 right)
+            {
                 return left + right;
             }
 
-            export fn i32[min max] main() {
+            export fn i32[min max] main()
+            {
                 return (i32[min max])Add(1.0, 2.0);
             }
             """);
@@ -266,11 +313,13 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            strictfp fn f64 Compute(f32 left, i32[min max] middle, f64 right, f32 divisor) {
+            strictfp fn f64 Compute(f32 left, i32[min max] middle, f64 right, f32 divisor)
+            {
                 return left + middle * right / divisor - 1.0;
             }
 
-            export fn i32[min max] main() {
+            export fn i32[min max] main()
+            {
                 return (i32[min max])Compute(1.5, 2, 3.0, 0.5);
             }
             """);
@@ -290,12 +339,17 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            export fn i32[min max] main() {
-                heap Box box = new Box() { Value = 7 };
+            export fn i32[min max] main()
+            {
+                heap Box box = new Box()
+                {
+                    Value = 7
+                };
                 return box.Value;
             }
             """);
@@ -315,21 +369,26 @@ public sealed class MidLevelIrRuntimeTests
             """
             module System.Memory
 
-            public struct Allocator {
+            public struct Allocator
+            {
                 u8[0 127] Kind;
 
-                static finite law Allocator Default() {
-                    return new Allocator() {
+                static finite law Allocator Default()
+                {
+                    return new Allocator()
+                    {
                         Kind = 0
                     };
                 }
 
-                finite law bool IsDefault(borrow Allocator self) {
+                finite law bool IsDefault(borrow Allocator self)
+                {
                     return self.Kind == 0;
                 }
             }
 
-            internal struct Allocation {
+            internal struct Allocation
+            {
                 rawmutptr<i8[min max]> Pointer;
                 u64[0 max] ByteLength;
                 u64[1 max] Alignment;
@@ -340,8 +399,10 @@ public sealed class MidLevelIrRuntimeTests
             internal fn Allocation Reallocate(Allocation allocation, u64[0 max] byteLength, u64[1 max] alignment);
             internal fn void Free(Allocation allocation);
 
-            export unsafe fn i32[min max] main() {
-                stack Allocator allocator = new Allocator() {
+            export unsafe fn i32[min max] main()
+            {
+                stack Allocator allocator = new Allocator()
+                {
                     Kind = 42
                 };
                 stack Allocation allocation = Allocate(allocator, 16, 8);
@@ -349,7 +410,8 @@ public sealed class MidLevelIrRuntimeTests
                 stack u8[0 127] kind = grown.Allocator.Kind;
                 Free(grown);
 
-                if (kind == 42) {
+                if (kind == 42)
+                {
                     return 0;
                 }
 
@@ -372,12 +434,17 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            fn i32[min max] Read(i32[min max][3] values, i32[min max] index) {
+            fn i32[min max] Read(i32[min max][3] values, i32[min max] index)
+            {
                 return values[index];
             }
 
-            export fn i32[min max] main() {
-                stack i32[min max][3] values = { 4, 7, 9 };
+            export fn i32[min max] main()
+            {
+                stack i32[min max][3] values =
+                {
+                    4, 7, 9
+                };
                 return Read(values, 1);
             }
             """);
@@ -397,12 +464,20 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max][3] Values;
             }
 
-            export fn i32[min max] main() {
-                stack Box box = new Box() { Values = { 4, 7 } };
+            export fn i32[min max] main()
+            {
+                stack Box box = new Box()
+                {
+                    Values =
+                    {
+                        4, 7
+                    }
+                };
                 return box.Values[0] + box.Values[1] + box.Values[2];
             }
             """);
@@ -422,8 +497,10 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            fn i32[min max] Pick(ascii text, i32[min max] index) {
-                switch (text[index]) {
+            fn i32[min max] Pick(ascii text, i32[min max] index)
+            {
+                switch (text[index])
+                {
                     case 'b':
                         return 7;
                     default:
@@ -431,7 +508,8 @@ public sealed class MidLevelIrRuntimeTests
                 }
             }
 
-            export fn i32[min max] main() {
+            export fn i32[min max] main()
+            {
                 return Pick("abc", 1);
             }
             """);
@@ -451,12 +529,15 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            fn ascii Whole(ascii text) {
+            fn ascii Whole(ascii text)
+            {
                 return text[];
             }
 
-            export fn i32[min max] main() {
-                switch (Whole("abc")[1]) {
+            export fn i32[min max] main()
+            {
+                switch (Whole("abc")[1])
+                {
                     case 'b':
                         return 7;
                     default:
@@ -480,23 +561,29 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            record Pair(i32[min max] Left, i32[min max] Right) { }
+            record Pair(i32[min max] Left, i32[min max] Right)
+            {
+            }
 
-            fn bool Same(Pair left, Pair right) {
+            fn bool Same(Pair left, Pair right)
+            {
                 return left == right;
             }
 
-            fn bool Different(Pair left, Pair right) {
+            fn bool Different(Pair left, Pair right)
+            {
                 return left != right;
             }
 
-            export unsafe fn i32[min max] main() {
+            export unsafe fn i32[min max] main()
+            {
                 stack Pair sameLeft = new Pair(1, 2);
                 stack Pair sameRight = new Pair(1, 2);
                 stack Pair differentLeft = new Pair(1, 2);
                 stack Pair differentRight = new Pair(2, 1);
 
-                if (Same(sameLeft, sameRight) && Different(differentLeft, differentRight)) {
+                if (Same(sameLeft, sameRight) && Different(differentLeft, differentRight))
+                {
                     return 7;
                 }
 
@@ -519,25 +606,32 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            record Many(i32[min max] A, i32[min max] B, i32[min max] C, i32[min max] D, i32[min max] E) { }
+            record Many(i32[min max] A, i32[min max] B, i32[min max] C, i32[min max] D, i32[min max] E)
+            {
+            }
 
-            fn bool Less(Many left, Many right) {
+            fn bool Less(Many left, Many right)
+            {
                 return left < right;
             }
 
-            fn bool LessOrEqual(Many left, Many right) {
+            fn bool LessOrEqual(Many left, Many right)
+            {
                 return left <= right;
             }
 
-            fn bool Greater(Many left, Many right) {
+            fn bool Greater(Many left, Many right)
+            {
                 return left > right;
             }
 
-            fn bool GreaterOrEqual(Many left, Many right) {
+            fn bool GreaterOrEqual(Many left, Many right)
+            {
                 return left >= right;
             }
 
-            export unsafe fn i32[min max] main() {
+            export unsafe fn i32[min max] main()
+            {
                 stack Many lessLeft = new Many(1, 2, 3, 4, 5);
                 stack Many lessRight = new Many(1, 2, 3, 4, 6);
                 stack Many lessOrEqualLeft = new Many(1, 2, 3, 4, 5);
@@ -553,8 +647,9 @@ public sealed class MidLevelIrRuntimeTests
                     && LessOrEqual(lessOrEqualLeft, lessOrEqualRight)
                     && Greater(greaterLeft, greaterRight)
                     && GreaterOrEqual(greaterOrEqualLeft, greaterOrEqualRight)
-                    && GreaterOrEqual(topLeft, topRight)) {
-                    return 7;
+                    && GreaterOrEqual(topLeft, topRight))
+                    {
+                        return 7;
                 }
 
                 return 0;
@@ -576,21 +671,37 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            fn bool Same(i32[min max][2] left, i32[min max][2] right) {
+            fn bool Same(i32[min max][2] left, i32[min max][2] right)
+            {
                 return left == right;
             }
 
-            fn bool Different(i32[min max][2] left, i32[min max][2] right) {
+            fn bool Different(i32[min max][2] left, i32[min max][2] right)
+            {
                 return left != right;
             }
 
-            export unsafe fn i32[min max] main() {
-                stack i32[min max][2] sameLeft = { 1, 2 };
-                stack i32[min max][2] sameRight = { 1, 2 };
-                stack i32[min max][2] differentLeft = { 1, 2 };
-                stack i32[min max][2] differentRight = { 2, 1 };
+            export unsafe fn i32[min max] main()
+            {
+                stack i32[min max][2] sameLeft =
+                {
+                    1, 2
+                };
+                stack i32[min max][2] sameRight =
+                {
+                    1, 2
+                };
+                stack i32[min max][2] differentLeft =
+                {
+                    1, 2
+                };
+                stack i32[min max][2] differentRight =
+                {
+                    2, 1
+                };
 
-                if (Same(sameLeft, sameRight) && Different(differentLeft, differentRight)) {
+                if (Same(sameLeft, sameRight) && Different(differentLeft, differentRight))
+                {
                     return 7;
                 }
 
@@ -613,18 +724,27 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            struct Counter {
+            struct Counter
+            {
                 i32[min max] Value;
 
-                fn void Set(borrow mut Counter self, i32[min max] next) {
+                fn void Set(borrow mut Counter self, i32[min max] next)
+                {
                     self.Value = next;
                     return;
                 }
             }
 
-            export fn i32[min max] main() {
-                stack mut Counter left = new Counter() { Value = 0 };
-                stack mut Counter right = new Counter() { Value = 0 };
+            export fn i32[min max] main()
+            {
+                stack mut Counter left = new Counter()
+                {
+                    Value = 0
+                };
+                stack mut Counter right = new Counter()
+                {
+                    Value = 0
+                };
                 true ? left.Set(7) : right.Set(9);
                 return left.Value + right.Value;
             }
@@ -645,20 +765,24 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            enum Token {
+            enum Token
+            {
                 None,
                 Number(i32[min max]),
             }
 
-            fn bool Same(Token left, Token right) {
+            fn bool Same(Token left, Token right)
+            {
                 return left == right;
             }
 
-            fn bool Different(Token left, Token right) {
+            fn bool Different(Token left, Token right)
+            {
                 return left != right;
             }
 
-            export unsafe fn i32[min max] main() {
+            export unsafe fn i32[min max] main()
+            {
                 stack Token sameLeft = Token.Number(7);
                 stack Token sameRight = Token.Number(7);
                 stack Token differentPayloadLeft = Token.Number(7);
@@ -668,8 +792,9 @@ public sealed class MidLevelIrRuntimeTests
 
                 if (Same(sameLeft, sameRight)
                     && Different(differentPayloadLeft, differentPayloadRight)
-                    && Different(differentVariantLeft, differentVariantRight)) {
-                    return 7;
+                    && Different(differentVariantLeft, differentVariantRight))
+                    {
+                        return 7;
                 }
 
                 return 0;
@@ -691,29 +816,35 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            enum Token {
+            enum Token
+            {
                 None,
                 Number(i32[min max]),
                 Pair(i32[min max], i32[min max]),
             }
 
-            fn bool Less(Token left, Token right) {
+            fn bool Less(Token left, Token right)
+            {
                 return left < right;
             }
 
-            fn bool LessOrEqual(Token left, Token right) {
+            fn bool LessOrEqual(Token left, Token right)
+            {
                 return left <= right;
             }
 
-            fn bool Greater(Token left, Token right) {
+            fn bool Greater(Token left, Token right)
+            {
                 return left > right;
             }
 
-            fn bool GreaterOrEqual(Token left, Token right) {
+            fn bool GreaterOrEqual(Token left, Token right)
+            {
                 return left >= right;
             }
 
-            export unsafe fn i32[min max] main() {
+            export unsafe fn i32[min max] main()
+            {
                 stack Token lessPayloadLeft = Token.Number(7);
                 stack Token lessPayloadRight = Token.Number(9);
                 stack Token lessVariantLeft = Token.None;
@@ -732,8 +863,9 @@ public sealed class MidLevelIrRuntimeTests
                     && Greater(greaterPayloadLeft, greaterPayloadRight)
                     && Greater(greaterVariantLeft, greaterVariantRight)
                     && LessOrEqual(lessOrEqualLeft, lessOrEqualRight)
-                    && GreaterOrEqual(greaterOrEqualLeft, greaterOrEqualRight)) {
-                    return 7;
+                    && GreaterOrEqual(greaterOrEqualLeft, greaterOrEqualRight))
+                    {
+                        return 7;
                 }
 
                 return 0;
@@ -755,47 +887,69 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            record Many(i32[min max] A, i32[min max] B, i32[min max] C, i32[min max] D, i32[min max] E) { }
+            record Many(i32[min max] A, i32[min max] B, i32[min max] C, i32[min max] D, i32[min max] E)
+            {
+            }
 
-            enum Token {
+            enum Token
+            {
                 None,
                 Many(i32[min max], i32[min max], i32[min max], i32[min max], i32[min max]),
             }
 
-            fn bool SameRecord(Many left, Many right) {
+            fn bool SameRecord(Many left, Many right)
+            {
                 return left == right;
             }
 
-            fn bool DifferentRecord(Many left, Many right) {
+            fn bool DifferentRecord(Many left, Many right)
+            {
                 return left != right;
             }
 
-            fn bool SameArray(i32[min max][5] left, i32[min max][5] right) {
+            fn bool SameArray(i32[min max][5] left, i32[min max][5] right)
+            {
                 return left == right;
             }
 
-            fn bool DifferentArray(i32[min max][5] left, i32[min max][5] right) {
+            fn bool DifferentArray(i32[min max][5] left, i32[min max][5] right)
+            {
                 return left != right;
             }
 
-            fn bool SameToken(Token left, Token right) {
+            fn bool SameToken(Token left, Token right)
+            {
                 return left == right;
             }
 
-            fn bool DifferentToken(Token left, Token right) {
+            fn bool DifferentToken(Token left, Token right)
+            {
                 return left != right;
             }
 
-            export unsafe fn i32[min max] main() {
+            export unsafe fn i32[min max] main()
+            {
                 stack Many sameRecordLeft = new Many(1, 2, 3, 4, 5);
                 stack Many sameRecordRight = new Many(1, 2, 3, 4, 5);
                 stack Many differentRecordLeft = new Many(1, 2, 3, 4, 5);
                 stack Many differentRecordRight = new Many(1, 2, 3, 4, 6);
 
-                stack i32[min max][5] sameArrayLeft = { 1, 2, 3, 4, 5 };
-                stack i32[min max][5] sameArrayRight = { 1, 2, 3, 4, 5 };
-                stack i32[min max][5] differentArrayLeft = { 1, 2, 3, 4, 5 };
-                stack i32[min max][5] differentArrayRight = { 1, 2, 3, 4, 6 };
+                stack i32[min max][5] sameArrayLeft =
+                {
+                    1, 2, 3, 4, 5
+                };
+                stack i32[min max][5] sameArrayRight =
+                {
+                    1, 2, 3, 4, 5
+                };
+                stack i32[min max][5] differentArrayLeft =
+                {
+                    1, 2, 3, 4, 5
+                };
+                stack i32[min max][5] differentArrayRight =
+                {
+                    1, 2, 3, 4, 6
+                };
 
                 stack Token sameTokenLeft = Token.Many(1, 2, 3, 4, 5);
                 stack Token sameTokenRight = Token.Many(1, 2, 3, 4, 5);
@@ -807,8 +961,9 @@ public sealed class MidLevelIrRuntimeTests
                     && SameArray(sameArrayLeft, sameArrayRight)
                     && DifferentArray(differentArrayLeft, differentArrayRight)
                     && SameToken(sameTokenLeft, sameTokenRight)
-                    && DifferentToken(differentTokenLeft, differentTokenRight)) {
-                    return 7;
+                    && DifferentToken(differentTokenLeft, differentTokenRight))
+                    {
+                        return 7;
                 }
 
                 return 0;
@@ -830,25 +985,32 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            record Label(ascii Tag, unicode Word) { }
+            record Label(ascii Tag, unicode Word)
+            {
+            }
 
-            fn bool SameAscii(ascii left, ascii right) {
+            fn bool SameAscii(ascii left, ascii right)
+            {
                 return left == right;
             }
 
-            fn bool DifferentUnicode(unicode left, unicode right) {
+            fn bool DifferentUnicode(unicode left, unicode right)
+            {
                 return left != right;
             }
 
-            fn bool SameLabel(Label left, Label right) {
+            fn bool SameLabel(Label left, Label right)
+            {
                 return left == right;
             }
 
-            fn bool DifferentLabel(Label left, Label right) {
+            fn bool DifferentLabel(Label left, Label right)
+            {
                 return left != right;
             }
 
-            export unsafe fn i32[min max] main() {
+            export unsafe fn i32[min max] main()
+            {
                 if (SameAscii("cab!"[1, 2], "zab?"[1, 2])
                     && DifferentUnicode(((unicode)"caf\u00E9!")[0, 4], ((unicode)"cafe?")[0, 4])
                     && SameLabel(
@@ -856,8 +1018,9 @@ public sealed class MidLevelIrRuntimeTests
                         new Label("zab?"[1, 2], ((unicode)"caf\u00E9?")[0, 4]))
                     && DifferentLabel(
                         new Label("cab!"[1, 2], ((unicode)"caf\u00E9!")[0, 4]),
-                        new Label("zbx?"[1, 2], ((unicode)"cafe?")[0, 4]))) {
-                    return 7;
+                        new Label("zbx?"[1, 2], ((unicode)"cafe?")[0, 4])))
+                        {
+                            return 7;
                 }
 
                 return 0;
@@ -879,44 +1042,70 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            record Window(i32[min max][] Items, i32[min max] Count) { }
+            record Window(i32[min max][] Items, i32[min max] Count)
+            {
+            }
 
-            fn bool SameSliceSelf(i32[min max][] value) {
+            fn bool SameSliceSelf(i32[min max][] value)
+            {
                 return value == value;
             }
 
-            fn bool DifferentSlice(i32[min max][] left, i32[min max][] right) {
+            fn bool DifferentSlice(i32[min max][] left, i32[min max][] right)
+            {
                 return left != right;
             }
 
-            fn bool SameWindowSelf(Window value) {
+            fn bool SameWindowSelf(Window value)
+            {
                 return value == value;
             }
 
-            fn bool DifferentWindow(Window left, Window right) {
+            fn bool DifferentWindow(Window left, Window right)
+            {
                 return left != right;
             }
 
-            export unsafe fn i32[min max] main() {
-                stack i32[min max][3] selfValues = { 1, 2, 3 };
+            export unsafe fn i32[min max] main()
+            {
+                stack i32[min max][3] selfValues =
+                {
+                    1, 2, 3
+                };
                 stack i32[min max][] selfView = selfValues;
 
-                stack i32[min max][3] leftValues = { 1, 2, 3 };
-                stack i32[min max][3] rightValues = { 1, 2, 3 };
+                stack i32[min max][3] leftValues =
+                {
+                    1, 2, 3
+                };
+                stack i32[min max][3] rightValues =
+                {
+                    1, 2, 3
+                };
                 stack i32[min max][] leftView = leftValues;
                 stack i32[min max][] rightView = rightValues;
 
-                stack i32[min max][3] selfWindowValues = { 1, 2, 3 };
-                stack i32[min max][3] leftWindowValues = { 1, 2, 3 };
-                stack i32[min max][3] rightWindowValues = { 1, 2, 3 };
+                stack i32[min max][3] selfWindowValues =
+                {
+                    1, 2, 3
+                };
+                stack i32[min max][3] leftWindowValues =
+                {
+                    1, 2, 3
+                };
+                stack i32[min max][3] rightWindowValues =
+                {
+                    1, 2, 3
+                };
 
                 if (SameSliceSelf(selfView)
                     && DifferentSlice(leftView, rightView)
                     && SameWindowSelf(new Window(selfWindowValues, 3))
                     && DifferentWindow(
                         new Window(leftWindowValues, 3),
-                        new Window(rightWindowValues, 3))) {
-                    return 7;
+                        new Window(rightWindowValues, 3)))
+                        {
+                            return 7;
                 }
 
                 return 0;
@@ -940,26 +1129,34 @@ public sealed class MidLevelIrRuntimeTests
 
             static mut i32[min max] Counter = 0;
 
-            fn void Bump(i32[min max] value) {
+            fn void Bump(i32[min max] value)
+            {
                 Counter = Counter + value;
                 return;
             }
 
-            struct Resource {
+            struct Resource
+            {
                 i32[min max] Value;
 
-                drop {
+                drop
+                {
                     Bump(self.Value);
                 }
             }
 
-            enum Token {
+            enum Token
+            {
                 End,
                 Text(Resource),
             }
 
-            export fn i32[min max] main() {
-                stack mut Token token = Token.Text(new Resource() { Value = 1 });
+            export fn i32[min max] main()
+            {
+                stack mut Token token = Token.Text(new Resource()
+                {
+                    Value = 1
+                });
                 token = Token.End;
                 return Counter;
             }
@@ -982,34 +1179,47 @@ public sealed class MidLevelIrRuntimeTests
 
             static mut i32[min max] Counter = 0;
 
-            fn void Bump(i32[min max] value) {
+            fn void Bump(i32[min max] value)
+            {
                 Counter = Counter + value;
                 return;
             }
 
-            struct Resource {
+            struct Resource
+            {
                 i32[min max] Value;
 
-                drop {
+                drop
+                {
                     Bump(self.Value);
                 }
             }
 
-            enum Token {
+            enum Token
+            {
                 End,
                 Text(Resource),
             }
 
-            struct Holder {
+            struct Holder
+            {
                 Token Token;
                 Resource Backup;
             }
 
-            export fn i32[min max] main() {
+            export fn i32[min max] main()
+            {
                 {
-                    stack Holder holder = new Holder() {
-                        Token = Token.Text(new Resource() { Value = 3 }),
-                        Backup = new Resource() { Value = 4 }
+                    stack Holder holder = new Holder()
+                    {
+                        Token = Token.Text(new Resource()
+                        {
+                            Value = 3
+                        }),
+                        Backup = new Resource()
+                        {
+                            Value = 4
+                        }
                     };
                 }
 
@@ -1034,36 +1244,47 @@ public sealed class MidLevelIrRuntimeTests
 
             static mut i32[min max] Counter = 0;
 
-            fn void Bump(i32[min max] value) {
+            fn void Bump(i32[min max] value)
+            {
                 Counter = Counter + value;
                 return;
             }
 
-            struct Resource {
+            struct Resource
+            {
                 i32[min max] Value;
 
-                drop {
+                drop
+                {
                     Bump(self.Value);
                 }
             }
 
-            enum Result<T> {
+            enum Result<T>
+            {
                 Missing,
                 Removed(T),
             }
 
-            fn Result<Resource> Make() {
-                return Result<Resource>.Removed(new Resource() { Value = 3 });
+            fn Result<Resource> Make()
+            {
+                return Result<Resource>.Removed(new Resource()
+                {
+                    Value = 3
+                });
             }
 
-            export fn i32[min max] main() {
+            export fn i32[min max] main()
+            {
                 {
                     stack Result<Resource> result = Make();
-                    switch (result) {
+                    switch (result)
+                    {
                         case Result<Resource>.Missing:
                             return 1;
                         case Result<Resource>.Removed(var removed):
-                            if (Counter != 0 || removed.Value != 3) {
+                            if (Counter != 0 || removed.Value != 3)
+                            {
                                 return 2;
                             }
                     }
@@ -1088,27 +1309,35 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            struct Counter {
+            struct Counter
+            {
                 i32[min max] Value;
 
-                fn void Reset(borrow mut Counter self) {
+                fn void Reset(borrow mut Counter self)
+                {
                     self.Value = 0;
                     return;
                 }
 
-                fn void ResetThenAdd(borrow mut Counter self, i32[min max] value) {
+                fn void ResetThenAdd(borrow mut Counter self, i32[min max] value)
+                {
                     self.Reset();
                     self.Value += value;
                     return;
                 }
 
-                fn i32[min max] Current(borrow Counter self) {
+                fn i32[min max] Current(borrow Counter self)
+                {
                     return self.Value;
                 }
             }
 
-            export fn i32[min max] main() {
-                stack mut Counter counter = new Counter() { Value = 9 };
+            export fn i32[min max] main()
+            {
+                stack mut Counter counter = new Counter()
+                {
+                    Value = 9
+                };
                 counter.ResetThenAdd(7);
                 return counter.Current();
             }
@@ -1129,29 +1358,37 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            struct Counter {
+            struct Counter
+            {
                 u32[0 max] Value;
 
-                fn void Increment(mut borrow Counter self) {
+                fn void Increment(mut borrow Counter self)
+                {
                     self.Value += 1;
                 }
             }
 
-            struct Holder {
+            struct Holder
+            {
                 Counter Inner;
 
-                fn void Bump(mut borrow Holder self) {
+                fn void Bump(mut borrow Holder self)
+                {
                     self.Inner.Increment();
                 }
 
-                finite law u32[0 max] Get(borrow Holder self) {
+                finite law u32[0 max] Get(borrow Holder self)
+                {
                     return self.Inner.Value;
                 }
             }
 
-            export fn i32[min max] main() {
-                stack mut Holder holder = new Holder() {
-                    Inner = new Counter() {
+            export fn i32[min max] main()
+            {
+                stack mut Holder holder = new Holder()
+                {
+                    Inner = new Counter()
+                    {
                         Value = 0
                     }
                 };
@@ -1177,14 +1414,17 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            fn bool WriteValue(out u32[0 max] value) {
+            fn bool WriteValue(out u32[0 max] value)
+            {
                 value = 7;
                 return true;
             }
 
-            export fn i32[min max] main() {
+            export fn i32[min max] main()
+            {
                 stack mut u32[0 max] value = 1;
-                if (!WriteValue(value)) {
+                if (!WriteValue(value))
+                {
                     return 99;
                 }
 
@@ -1209,18 +1449,22 @@ public sealed class MidLevelIrRuntimeTests
 
             static mut i32[min max] Counter = 0;
 
-            enum Status {
+            enum Status
+            {
                 Ok,
                 Err(i32[min max]),
             }
 
-            fn Status Next() {
+            fn Status Next()
+            {
                 Counter += 1;
                 return Status.Ok;
             }
 
-            export fn i32[min max] main() {
-                switch (Next()) {
+            export fn i32[min max] main()
+            {
+                switch (Next())
+                {
                     case Status.Ok:
                         return Counter;
                     case Status.Err(var error):
@@ -1244,15 +1488,23 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            record Label(ascii Tag, unicode Word) { }
-
-            enum Token {
-                Empty,
-                Text { Tag: ascii, Word: unicode },
+            record Label(ascii Tag, unicode Word)
+            {
             }
 
-            fn bool MatchLabel(Label value) {
-                switch (value) {
+            enum Token
+            {
+                Empty,
+                Text
+                {
+                    Tag: ascii, Word: unicode
+                },
+            }
+
+            fn bool MatchLabel(Label value)
+            {
+                switch (value)
+                {
                     case Label("ab", var word):
                         return word == (unicode)"cat";
                     default:
@@ -1260,9 +1512,14 @@ public sealed class MidLevelIrRuntimeTests
                 }
             }
 
-            fn bool MatchToken(Token value) {
-                switch (value) {
-                    case Token.Text { Tag: "ab", Word: var word }:
+            fn bool MatchToken(Token value)
+            {
+                switch (value)
+                {
+                    case Token.Text
+                    {
+                        Tag: "ab", Word: var word
+                    }:
                         return word == (unicode)"cat";
                     case Token.Empty:
                         return false;
@@ -1271,12 +1528,22 @@ public sealed class MidLevelIrRuntimeTests
                 }
             }
 
-            export unsafe fn i32[min max] main() {
+            export unsafe fn i32[min max] main()
+            {
                 if (MatchLabel(new Label("ab", (unicode)"cat"))
-                    && MatchToken(Token.Text { Tag: "ab", Word: (unicode)"cat" })
+                    && MatchToken(Token.Text
+                    {
+                        Tag: "ab", Word: (unicode)"cat"
+                    }
+                    )
                     && !MatchLabel(new Label("zz", (unicode)"cat"))
-                    && !MatchToken(Token.Text { Tag: "zz", Word: (unicode)"cat" })) {
-                    return 7;
+                    && !MatchToken(Token.Text
+                    {
+                        Tag: "zz", Word: (unicode)"cat"
+                    }
+                    ))
+                    {
+                        return 7;
                 }
 
                 return 0;
@@ -1298,21 +1565,25 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            struct Buffer {
+            struct Buffer
+            {
                 i8[min max][16] Storage;
                 i64[min max] WritePos;
             }
 
-            unsafe fn void Put(rawmutptr<Buffer> buffer, i64[min max] index, i8[min max] value) {
+            unsafe fn void Put(rawmutptr<Buffer> buffer, i64[min max] index, i8[min max] value)
+            {
                 *(&(*buffer).Storage[index]) = value;
                 return;
             }
 
-            unsafe fn i32[min max] Read(rawmutptr<Buffer> buffer, i64[min max] index) {
+            unsafe fn i32[min max] Read(rawmutptr<Buffer> buffer, i64[min max] index)
+            {
                 return (i32[min max])*(&(*buffer).Storage[index]);
             }
 
-            export unsafe fn i32[min max] main() {
+            export unsafe fn i32[min max] main()
+            {
                 stack mut Buffer buffer = new Buffer();
                 Put(&buffer, 3, (i8[min max])90);
                 return Read(&buffer, 3);
@@ -1334,17 +1605,23 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            unsafe fn void Put(rawmutptr<i8[min max]> data, i64[min max] index, i8[min max] value) {
+            unsafe fn void Put(rawmutptr<i8[min max]> data, i64[min max] index, i8[min max] value)
+            {
                 *(&data[index]) = value;
                 return;
             }
 
-            unsafe fn i32[min max] Read(rawmutptr<i8[min max]> data, i64[min max] index) {
+            unsafe fn i32[min max] Read(rawmutptr<i8[min max]> data, i64[min max] index)
+            {
                 return (i32[min max])*(&data[index]);
             }
 
-            export unsafe fn i32[min max] main() {
-                stack mut i8[min max][16] buffer = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+            export unsafe fn i32[min max] main()
+            {
+                stack mut i8[min max][16] buffer =
+                {
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+                };
                 Put(&buffer[0], 4, (i8[min max])77);
                 return Read(&buffer[0], 4);
             }
@@ -1365,20 +1642,24 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            struct Buffer {
+            struct Buffer
+            {
                 i8[min max][16] Storage;
 
-                unsafe fn void Put(borrow mut Buffer self, u8[0 15] index, i8[min max] value) {
+                unsafe fn void Put(borrow mut Buffer self, u8[0 15] index, i8[min max] value)
+                {
                     *(&self.Storage[index]) = value;
                     return;
                 }
 
-                unsafe fn i32[min max] Read(borrow Buffer self, u8[0 15] index) {
+                unsafe fn i32[min max] Read(borrow Buffer self, u8[0 15] index)
+                {
                     return (i32[min max])*(&self.Storage[index]);
                 }
             }
 
-            export unsafe fn i32[min max] main() {
+            export unsafe fn i32[min max] main()
+            {
                 stack mut Buffer buffer = new Buffer();
                 buffer.Put(5, (i8[min max])65);
                 return buffer.Read(5);
@@ -1400,21 +1681,28 @@ public sealed class MidLevelIrRuntimeTests
             """
             module Demo
 
-            struct Big {
+            struct Big
+            {
                 i64[min max] A;
                 i64[min max] B;
                 i64[min max] C;
             }
 
-            fn Big Make(i64[min max] seed) {
-                return new Big() { A = seed, B = seed + 1, C = seed + 2 };
+            fn Big Make(i64[min max] seed)
+            {
+                return new Big()
+                {
+                    A = seed, B = seed + 1, C = seed + 2
+                };
             }
 
-            fn i32[min max] Read(Big value) {
+            fn i32[min max] Read(Big value)
+            {
                 return (i32[min max])(value.A + value.C);
             }
 
-            export fn i32[min max] main() {
+            export fn i32[min max] main()
+            {
                 return Read(Make(20));
             }
             """);

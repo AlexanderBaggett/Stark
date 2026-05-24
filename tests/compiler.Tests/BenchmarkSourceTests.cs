@@ -118,6 +118,77 @@ public sealed class BenchmarkSourceTests
     }
 
     [Fact]
+    public void NetworkTcpBenchmarksUseImportedInlineSocketClonesThroughLocalHelpers()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var targetInfo = new LlvmTargetInfo("x86_64-unknown-linux-gnu", null);
+        var loopback = CompileBenchmarkLlvm(repositoryRoot, "network/TcpLoopbackThroughput.stark", targetInfo);
+        var scatterGather = CompileBenchmarkLlvm(repositoryRoot, "network/TcpScatterGatherLoopback.stark", targetInfo);
+
+        var loopbackMain = ExtractDefinedFunctionText(
+            loopback,
+            "define i32 @main(",
+            "Expected TcpLoopbackThroughput main definition to be emitted.");
+        Assert.Contains(
+            "@__stark_inline_clone_System_Net_Tcp_TcpClient_Write__mutborrowTcpClient_borrowSystem_Runtime_Buffer_FixedByteBuffer4096_(",
+            loopbackMain,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "@__stark_inline_clone_System_Net_Tcp_TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_FixedByteBuffer4096_(",
+            loopbackMain,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "call fastcc void @System_Net_Tcp_TcpClient_Write__mutborrowTcpClient_borrowSystem_Runtime_Buffer_FixedByteBuffer4096_(",
+            loopbackMain,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "call fastcc void @System_Net_Tcp_TcpClient_Read__mutborrowTcpClient_mutborrowSystem_Runtime_Buffer_FixedByteBuffer4096_(",
+            loopbackMain,
+            StringComparison.Ordinal);
+
+        var loopbackSliceWriteClone = ExtractDefinedFunctionText(
+            loopback,
+            "define internal dso_local fastcc void @__stark_inline_clone_System_Net_Tcp_TcpClient_Write__mutborrowTcpClient_borrowi8_minmax____(",
+            "Expected TcpClient slice write inline clone to be emitted.");
+        Assert.Contains("@LinuxSyscall3HandleBuffer(", loopbackSliceWriteClone, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Runtime_Platform_WriteSocket(", loopbackSliceWriteClone, StringComparison.Ordinal);
+        Assert.DoesNotContain("@System_Runtime_Platform_Linux_WriteSocket(", loopbackSliceWriteClone, StringComparison.Ordinal);
+
+        Assert.Contains(
+            "call fastcc void @__stark_inline_clone_System_Net_Tcp_TcpClient_WriteVectored(",
+            scatterGather,
+            StringComparison.Ordinal);
+        Assert.Contains(
+            "call fastcc void @__stark_inline_clone_System_Net_Tcp_TcpClient_ReadVectored(",
+            scatterGather,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "call fastcc void @System_Net_Tcp_TcpClient_WriteVectored(",
+            scatterGather,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            "call fastcc void @System_Net_Tcp_TcpClient_ReadVectored(",
+            scatterGather,
+            StringComparison.Ordinal);
+
+        var scatterReadVectorClone = ExtractDefinedFunctionText(
+            scatterGather,
+            "define internal dso_local fastcc noundef i64 @__stark_inline_clone_System_Runtime_Platform_Linux_ReadSocketVector2(",
+            "Expected Linux read-vector inline clone to be emitted.");
+        var scatterWriteVectorClone = ExtractDefinedFunctionText(
+            scatterGather,
+            "define internal dso_local fastcc noundef i64 @__stark_inline_clone_System_Runtime_Platform_Linux_WriteSocketVector2(",
+            "Expected Linux write-vector inline clone to be emitted.");
+        Assert.Contains("%System_Runtime_Platform_Linux_LinuxIovec = type { ptr, i64 }", scatterGather, StringComparison.Ordinal);
+        Assert.Contains("@System_Runtime_Platform_Linux_LinuxReadvSyscallNumber", scatterReadVectorClone, StringComparison.Ordinal);
+        Assert.Contains("[2 x %System_Runtime_Platform_Linux_LinuxIovec]", scatterReadVectorClone, StringComparison.Ordinal);
+        Assert.Contains("i64 2", scatterReadVectorClone, StringComparison.Ordinal);
+        Assert.Contains("@System_Runtime_Platform_Linux_LinuxWritevSyscallNumber", scatterWriteVectorClone, StringComparison.Ordinal);
+        Assert.Contains("[2 x %System_Runtime_Platform_Linux_LinuxIovec]", scatterWriteVectorClone, StringComparison.Ordinal);
+        Assert.Contains("i64 2", scatterWriteVectorClone, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void WindowsAllocatorBenchmarksUseHeapReAllocFastPath()
     {
         var repositoryRoot = FindRepositoryRoot();
@@ -230,15 +301,18 @@ public sealed class BenchmarkSourceTests
             import System.IO.File
             module Demo
 
-            unsafe fn i32[min max] OpenAndClose() {
+            unsafe fn i32[min max] OpenAndClose()
+            {
                 stack System.IO.IOResult<System.IO.File.File> opened =
                     System.IO.File.Open("large-file-payload-test.tmp", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.None);
-                switch (opened) {
+                switch (opened)
+                {
                     case System.IO.IOResult<System.IO.File.File>.Err(var openError):
                         return 1;
                     case System.IO.IOResult<System.IO.File.File>.Ok(var fileValue):
                         stack mut System.IO.File.File file = fileValue;
-                        switch (file.Close()) {
+                        switch (file.Close())
+                        {
                             case System.IO.IOStatus.Ok:
                                 return 0;
                             case System.IO.IOStatus.Err(var closeError):

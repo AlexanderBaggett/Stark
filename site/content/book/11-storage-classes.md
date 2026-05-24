@@ -21,7 +21,10 @@ Stark wants storage to be visible. A local declaration does not merely say
 
 ```stark
 stack i32[min max] answer = 42;
-stack mut Counter counter = new Counter() { Value = 0 };
+stack mut Counter counter = new Counter()
+{
+    Value = 0
+};
 ```
 
 Use `stack` when the value belongs to the current scope and should be cleaned up

@@ -1085,9 +1085,17 @@ internal sealed partial class MidLevelIrLowerer
                 .Select(static section => section.BodyBlock.Id)
                 .FirstOrDefault(exitBlock.Id);
 
-            if (!TryRegisterSwitchCaptureLocals(sections.Select(static section => section.Labels), switchValue.Type))
+            for (var index = 0; index < sections.Length; index++)
             {
-                return false;
+                if (!TryRegisterSwitchCaptureLocals(
+                        sections[index].Labels,
+                        switchValue.Type,
+                        out var registeredLabels))
+                {
+                    return false;
+                }
+
+                sections[index].Labels = registeredLabels;
             }
 
             if (sections.Length == 0)
@@ -1123,9 +1131,20 @@ internal sealed partial class MidLevelIrLowerer
                 foreach (var section in sections)
                 {
                     CurrentBlock = section.BodyBlock;
-                    if (!TryLowerImportedTypedTemplateStatementList(section.Case.Statements, createScope: false))
+                    _scopes.Push(new ScopeFrame());
+                    TrackSwitchSectionCaptureLocals(section.Labels, switchValue.Type);
+                    try
                     {
-                        return false;
+                        if (!TryLowerImportedTypedTemplateStatementList(section.Case.Statements, createScope: false))
+                        {
+                            return false;
+                        }
+                    }
+                    finally
+                    {
+                        var scope = _scopes.Pop();
+                        EmitStorageDead(scope);
+                        RestoreScopedNameAliases(scope);
                     }
 
                     if (!CurrentBlock.HasTerminator)

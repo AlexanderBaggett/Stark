@@ -4,7 +4,7 @@ This file is the single source of truth for the planned contents of the Stark
 Book.
 
 The book should have Rust Book-like coverage, but it must be centered on
-Stark's own design: restrictive semantics, explicit storage, static proof,
+Stark's own design: restrictive semantics, explicit storage, visible guarantees,
 native interop, and performance guarantees.
 
 ## Audience
@@ -23,7 +23,8 @@ with Stark-specific framing:
   chapters; keep appendices and language-reference pages separate from the
   tutorial voice
 - replace a guessing-game style tutorial with an example that does not imply
-  hidden allocation, hidden exceptions, dynamic dispatch, or reflection
+  hidden allocation, hidden exceptions, dynamic callable indirection, or
+  reflection
 - teach explicit storage, integer ranges, and function guarantees early
 - teach Stark's stricter default borrow escape rules instead of leading with
   Rust-style lifetime syntax
@@ -34,7 +35,7 @@ with Stark-specific framing:
 - teach result/status enums and trap-only unrecoverable failure instead of
   exception or unwinding patterns
 - split implemented generic/function-pointer/lambda behavior from future
-  constrained-generic and capture-lowering work
+  constrained-generic and capture support
 - teach the implemented `kind = "test"` project model, explicit `System.Testing`
   fact runners, and `stark test`
 - teach callable values and current lambda boundaries without implying a
@@ -42,7 +43,7 @@ with Stark-specific framing:
 - teach threading through `System.Threading` and safe thread entries; keep
   synchronization and shared mutable state scoped to what Stark actually
   supports
-- mark async, macros, runtime object dispatch, and OOP-style inheritance as
+- mark async, macros, runtime object patterns, and OOP-style inheritance as
   absent from current tutorial examples unless roadmap items land
 
 ## Book Metadata
@@ -113,17 +114,17 @@ with Stark-specific framing:
    - how Stark's `retborrow`, `frozen`, `out`, and explicit storage classes
      express intent differently
    - examples translated between Rust-like thinking and Stark code
-   - why the restrictions matter for aliasing, allocation, and LLVM guarantees
+   - why the restrictions matter for aliasing, allocation, and visible cost
 10. Storage Classes and Lifetimes
     - `stack`
     - `heap`
     - `arena`
     - globals, `const`, `static`, and `static mut`
     - allocator-aware ownership
-11. Aggregates and Layout-Aware Design
+11. Structs, Records, and Layout-Aware Design
     - structs
     - records
-    - object initializers
+    - field initializers
     - constructors and destructors
     - field access
     - representation stability and ABI boundaries
@@ -162,18 +163,18 @@ with Stark-specific framing:
     - `out` parameters for fallible writes
     - traps and unrecoverable failure
     - no unwinding as a language and runtime constraint
-17. Generics, Traits, Doctrines, and Specialization
+17. Generics, Traits, and Doctrines
     - generic types and functions
-    - use-site instantiation
-    - current trait/doctrine surface
-    - constrained generics roadmap
-    - static dispatch and closed-world bias
+    - generic enums and variant constructors
+    - trait contracts
+    - doctrine law helpers
+    - choosing the right abstraction
 18. Callable Values and Thread Entries
     - function items
     - function pointers
     - non-capturing lambdas
     - explicit capture-list lambdas
-    - current capture-lowering limits
+    - current capture limits
     - thread entry values
 19. FFI, Raw Pointers, and Native Packages
     - `unsafe ffi fn`
@@ -186,27 +187,49 @@ with Stark-specific framing:
 
 ## Part IV: The Standard Library
 
-20. Console, Process, and Platform Basics
+21. Console, Process, and Platform Basics
     - console output and input
+    - byte-buffer console input and output
     - process exit
     - target-specific runtime boundaries
-21. Memory and Collections
+22. Memory and Collections
     - `System.Memory`
     - default allocator
+    - byte and code-point memory helpers
     - `List<T>`, `Stack<T>`, `Queue<T>`, `LinkedList<T>`, and `Dictionary<K,V>`
+    - dictionary key and removal patterns
     - ownership of collection elements
-22. Files, Directories, Paths, and Text
+23. Files, Directories, Paths, and Text
     - `System.IO`
     - `System.IO.File`
     - `System.IO.Path`
     - `System.FileSystem`
+    - path normalization and path facts
+    - directory entry and directory-info iteration
     - owned text and path buffers
-23. Threading and TCP
+24. Threading and TCP
     - threads, join, detach, yield, and sleep
     - blocking TCP
     - safe slices at IO boundaries
+    - byte-buffer, vectored, and wait-based TCP APIs
     - current synchronization gaps
-24. Testing Stark Code
+25. Math Helpers
+    - `System.Math`
+    - `Sqrt`, `Pow`, `Min`, `Max`, rounding, `Sin`, `Cos`, and `FusedMultiplyAdd`
+    - `SinCos` when both sine and cosine are needed
+    - deterministic pseudo-random values with `XorShift32`
+    - compact signature reference for the remaining math helpers
+26. Bit Operations
+    - `System.BitOperations`
+    - leading zero count, trailing zero count, and population count
+    - rotate-left and rotate-right
+    - masks, flags, compact indexes, and hash-style mixing
+27. Byte Buffers
+    - `System.Runtime.Buffer`
+    - fixed byte buffers and dynamic byte buffers
+    - readable and writable cursor workflows
+    - console, file, and TCP buffer handoff
+28. Testing Stark Code
     - `kind = "test"` manifests
     - explicit `System.Testing`
     - xUnit-inspired assertions without hidden exceptions
@@ -214,73 +237,73 @@ with Stark-specific framing:
 
 ## Part V: Performance and Systems Programming
 
-25. Stark's Performance Model
+29. Stark's Performance Model
     - why restrictions are part of the design
-    - memory separation contracts and `if disjoint`
+    - memory separation requirements and `if disjoint`
     - raw pointer region expressions in `where disjoint` and `if disjoint`
     - bounded raw pointer copy, fill, transform, and overlap-safe fallback paths
-    - const parameter provenance and deep immutability
-    - `independent` loop contracts for slices, arrays, and bounded raw pointer regions
+    - const parameters and deep immutability
+    - `independent` loop requirements for slices, arrays, and bounded raw pointer regions
     - no hidden allocation
-    - static dispatch by default
+    - direct calls by default
     - no unwinding
-    - safe code as optimizer-friendly code
-26. Memory Layout, ABI, and Interop Expectations
+    - safe code with visible costs
+30. Memory Layout, ABI, and Interop Expectations
     - source-visible layout promises
     - ABI-visible `export`
     - C interop expectations
     - package boundaries
-27. Integer, Floating-Point, and Overflow Policy
+31. Integer, Floating-Point, and Overflow Policy
     - range-checked integers
     - wrapping and saturating operations
     - float conversions
-    - `strictfp` versus optimizer-friendly math
-28. Performance Tuning
+    - `strictfp` versus default fast math
+32. Performance Tuning
     - small measured kernels
     - `inline`, `inlinehint`, and `noinline`
     - default non-overlap, `where overlap`, `where same`, and `if disjoint`
     - bounded raw pointer regions in hot loops
-    - benchmark and IR inspection workflow
-29. Unsafe Stark and Raw Pointers
-    - unsafe as a proof boundary
+    - benchmark and output-inspection workflow
+33. Unsafe Stark and Raw Pointers
+    - unsafe as an audited boundary
     - bounded raw pointer regions
     - scoped `assume disjoint(...)`
     - null and mutability boundaries
     - returning to safe Stark wrappers
-30. Reading Stark Diagnostics
+34. Reading Stark Diagnostics
     - parse diagnostics
     - type diagnostics
     - ownership and borrow diagnostics
     - package/native dependency diagnostics
-31. Looking at Generated IR
-    - MIR, SSA, and LLVM artifacts as advanced tools
-    - when to inspect IR
-    - relating source restrictions to generated code
+35. Inspecting Generated Output
+    - output views as focused troubleshooting tools
+    - when to inspect generated output
+    - relating source choices to emitted behavior
 
 ## Part VI: Projects
 
-32. Project: Command-Line Text Tool
+36. Project: Command-Line Text Tool
     - arguments once the entrypoint model supports them
     - console and text processing
     - result/status handling
-33. Project: Multi-Module Package
+37. Project: Multi-Module Package
     - internal helpers
     - public package API
     - solution manifests
     - package consumption
-34. Project: File Processing Utility
+38. Project: File Processing Utility
     - file open/read/write
     - directory inspection
     - owned handles and cleanup
-35. Project: Native-Backed Package
+39. Project: Native-Backed Package
     - Raylib-style native shim
     - package-owned native metadata
     - downstream executable build
-36. Project: Performance Case Study
+40. Project: Performance Case Study
     - choose a tight loop
     - write Stark with explicit storage
     - compare against C/Rust-like implementation strategy
-    - inspect emitted IR and benchmark output
+    - inspect emitted output and benchmark output
 
 ## Appendices
 

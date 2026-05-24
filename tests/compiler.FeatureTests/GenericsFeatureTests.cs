@@ -11,14 +11,17 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
             """
             module Demo
 
-            enum Option<T> {
+            enum Option<T>
+            {
                 None,
                 Some(T),
             }
 
-            export fn i32[min max] main() {
+            export fn i32[min max] main()
+            {
                 stack Option<i32[min max]> opt = Option<i32[min max]>.Some(42);
-                switch (opt) {
+                switch (opt)
+                {
                     case Option<i32[min max]>.None:
                         return 0;
                     case Option<i32[min max]>.Some(var value):
@@ -39,9 +42,12 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
             """
             module Demo
 
-            record Pair<A, B>(A First, B Second) { }
+            record Pair<A, B>(A First, B Second)
+            {
+            }
 
-            export fn i32[min max] main() {
+            export fn i32[min max] main()
+            {
                 stack Pair<i32[min max], i32[min max]> p = new Pair<i32[min max], i32[min max]>(3, 7);
                 return p.First + p.Second;
             }
@@ -58,13 +64,16 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
             """
             module Demo
 
-            enum Option<T> {
+            enum Option<T>
+            {
                 None,
                 Some(T),
             }
 
-            finite law i32[min max] GetI32(Option<i32[min max]> opt) {
-                switch (opt) {
+            finite law i32[min max] GetI32(Option<i32[min max]> opt)
+            {
+                switch (opt)
+                {
                     case Option<i32[min max]>.None:
                         return 0;
                     case Option<i32[min max]>.Some(var value):
@@ -72,8 +81,10 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
                 }
             }
 
-            finite law bool GetBool(Option<bool> opt) {
-                switch (opt) {
+            finite law bool GetBool(Option<bool> opt)
+            {
+                switch (opt)
+                {
                     case Option<bool>.None:
                         return false;
                     case Option<bool>.Some(var value):
@@ -81,7 +92,8 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
                 }
             }
 
-            export fn i32[min max] main() {
+            export fn i32[min max] main()
+            {
                 stack Option<i32[min max]> a = Option<i32[min max]>.Some(5);
                 stack Option<bool> b = Option<bool>.Some(true);
                 stack i32[min max] sum = GetI32(a);
@@ -103,13 +115,16 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
             """
             module Demo
 
-            enum Option<T> {
+            enum Option<T>
+            {
                 None,
                 Some(T),
             }
 
-            finite law bool IsPresent(Option<Option<i32[min max]>> outer) {
-                switch (outer) {
+            finite law bool IsPresent(Option<Option<i32[min max]>> outer)
+            {
+                switch (outer)
+                {
                     case Option<Option<i32[min max]>>.None:
                         return false;
                     case Option<Option<i32[min max]>>.Some(var inner):
@@ -134,11 +149,13 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
             """
             module Demo
 
-            finite law T Identity<T>(T value) {
+            finite law T Identity<T>(T value)
+            {
                 return value;
             }
 
-            finite law i32[min max] Run(i32[min max] value) {
+            finite law i32[min max] Run(i32[min max] value)
+            {
                 return Identity(value);
             }
             """,
@@ -157,18 +174,21 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
             """
             module Demo
 
-            struct Big {
+            struct Big
+            {
                 i64[min max] A;
                 i64[min max] B;
                 i64[min max] C;
                 i64[min max] D;
             }
 
-            inline finite law i64[min max] Read<T>(T value) {
+            inline finite law i64[min max] Read<T>(T value)
+            {
                 return 1;
             }
 
-            finite law i64[min max] Run(Big value) {
+            finite law i64[min max] Run(Big value)
+            {
                 return Read(value);
             }
             """,

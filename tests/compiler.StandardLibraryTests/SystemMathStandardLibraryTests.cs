@@ -34,40 +34,49 @@ public sealed class SystemMathStandardLibraryTests
                 import System.Math
                 module App
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     stack mut System.Math.XorShift32 rng = System.Math.XorShift32.Seeded(1);
-                    if (rng.CurrentState() != 1) {
+                    if (rng.CurrentState() != 1)
+                    {
                         return 1;
                     }
 
-                    if (rng.NextU32() != 270369) {
+                    if (rng.NextU32() != 270369)
+                    {
                         return 2;
                     }
 
-                    if (rng.NextU32() != 67634689) {
+                    if (rng.NextU32() != 67634689)
+                    {
                         return 3;
                     }
 
-                    if (rng.NextI32() != -1647531835) {
+                    if (rng.NextI32() != -1647531835)
+                    {
                         return 4;
                     }
 
                     stack f32 unit = rng.NextF32();
-                    if (unit <= 0.0 || unit >= 1.0) {
+                    if (unit <= 0.0 || unit >= 1.0)
+                    {
                         return 5;
                     }
 
                     rng.Reseed(0);
-                    if (rng.CurrentState() != 2463534242) {
+                    if (rng.CurrentState() != 2463534242)
+                    {
                         return 6;
                     }
 
-                    if (rng.NextU32() == 0) {
+                    if (rng.NextU32() == 0)
+                    {
                         return 7;
                     }
 
                     stack mut System.Math.XorShift32 defaultRng = new System.Math.XorShift32();
-                    if (defaultRng.CurrentState() != 2463534242) {
+                    if (defaultRng.CurrentState() != 2463534242)
+                    {
                         return 8;
                     }
 
@@ -132,12 +141,14 @@ public sealed class SystemMathStandardLibraryTests
                 import System.Math
                 module Demo
 
-                fn u32[0 max] DrawU32(u32[0 max] seed) {
+                fn u32[0 max] DrawU32(u32[0 max] seed)
+                {
                     stack mut System.Math.XorShift32 rng = System.Math.XorShift32.Seeded(seed);
                     return rng.NextU32();
                 }
 
-                fn f32 DrawF32(u32[0 max] seed) {
+                fn f32 DrawF32(u32[0 max] seed)
+                {
                     stack mut System.Math.XorShift32 rng = System.Math.XorShift32.Seeded(seed);
                     return rng.NextF32();
                 }

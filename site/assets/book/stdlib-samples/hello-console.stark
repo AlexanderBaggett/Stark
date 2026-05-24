@@ -1,7 +1,8 @@
 import System.Console
 module Book.HelloConsole
 
-export fn i32[min max] main() {
+export fn i32[min max] main()
+{
     WriteLine("Hello, World!");
     return 0;
 }

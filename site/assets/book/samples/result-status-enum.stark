@@ -1,20 +1,25 @@
 module Book.ResultStatusEnum
 
-enum DivideResult {
+enum DivideResult
+{
     Ok(i32[min max]),
     DivideByZero,
 }
 
-finite law DivideResult Divide(i32[min max] numerator, i32[min max] denominator) {
-    if (denominator == 0) {
+finite law DivideResult Divide(i32[min max] numerator, i32[min max] denominator)
+{
+    if (denominator == 0)
+    {
         return DivideResult.DivideByZero;
     }
 
     return DivideResult.Ok(numerator / denominator);
 }
 
-finite law bool IsExpectedQuotient(DivideResult result, i32[min max] expected) {
-    switch (result) {
+finite law bool IsExpectedQuotient(DivideResult result, i32[min max] expected)
+{
+    switch (result)
+    {
         case DivideResult.Ok(var value):
             return value == expected;
         case DivideResult.DivideByZero:
@@ -22,12 +27,15 @@ finite law bool IsExpectedQuotient(DivideResult result, i32[min max] expected) {
     }
 }
 
-export fn i32[min max] main() {
-    if (!IsExpectedQuotient(Divide(24, 3), 8)) {
+export fn i32[min max] main()
+{
+    if (!IsExpectedQuotient(Divide(24, 3), 8))
+    {
         return 1;
     }
 
-    switch (Divide(1, 0)) {
+    switch (Divide(1, 0))
+    {
         case DivideResult.Ok(var ignored):
             return 2;
         case DivideResult.DivideByZero:

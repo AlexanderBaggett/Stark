@@ -20,7 +20,8 @@ public sealed class PackageImageArchitectureTests
                     [Backend(Opaque)]
                     module Facade
 
-                    public fn i32[min max] Identity(i32[min max] value) {
+                    public fn i32[min max] Identity(i32[min max] value)
+                    {
                         return value;
                     }
                     """,
@@ -84,20 +85,24 @@ public sealed class PackageImageArchitectureTests
                     module Facade
 
                     [Backend(Opaque)]
-                    public finite law i32[min max] Identity(i32[min max] value) {
+                    public finite law i32[min max] Identity(i32[min max] value)
+                    {
                         return value;
                     }
 
                     [Backend(Opaque)]
-                    public finite law T Echo<T>(T value) {
+                    public finite law T Echo<T>(T value)
+                    {
                         return value;
                     }
 
                     [Backend(Opaque)]
-                    public struct Box {
+                    public struct Box
+                    {
                         i32[min max] Value;
 
-                        public finite law i32[min max] Read(borrow Box self) {
+                        public finite law i32[min max] Read(borrow Box self)
+                        {
                             return self.Value;
                         }
                     }
@@ -202,7 +207,8 @@ public sealed class PackageImageArchitectureTests
             """
             module Helpers
 
-            public finite law i32[min max] Identity(i32[min max] value) {
+            public finite law i32[min max] Identity(i32[min max] value)
+            {
                 return value;
             }
             """);
@@ -328,28 +334,34 @@ public sealed class PackageImageArchitectureTests
                     """
                     module Facade
 
-                    public unsafe fn void Inspect(const rawmutptr<i32[min max]> ptr) {
+                    public unsafe fn void Inspect(const rawmutptr<i32[min max]> ptr)
+                    {
                         return;
                     }
 
-                    public unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+                    public unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+                    {
                         return;
                     }
 
                     public unsafe ffi fn void ExternalTouch(disjoint rawmutptr<i32[min max]> left, disjoint rawmutptr<i32[min max]> right);
 
-                    public unsafe fn void TouchOverlap(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) where overlap(left, right) {
+                    public unsafe fn void TouchOverlap(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) where overlap(left, right)
+                    {
                         return;
                     }
 
-                    public unsafe fn void TouchSame(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) where same(left, right) {
+                    public unsafe fn void TouchSame(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) where same(left, right)
+                    {
                         return;
                     }
 
-                    public struct Reader {
+                    public struct Reader
+                    {
                         i32[min max] Value;
 
-                        public unsafe fn void Read(borrow Reader self, const rawmutptr<i32[min max]> ptr) {
+                        public unsafe fn void Read(borrow Reader self, const rawmutptr<i32[min max]> ptr)
+                        {
                             return;
                         }
                     }
@@ -435,13 +447,16 @@ public sealed class PackageImageArchitectureTests
                     """
                     module Facade
 
-                    public fn i32[min max] CountIndependent<T>(i32[min max] limit, T tag) {
+                    public fn i32[min max] CountIndependent<T>(i32[min max] limit, T tag)
+                    {
                         stack mut i32[min max] value = 0;
-                        while willexit independent (value < limit) {
+                        while willexit independent (value < limit)
+                        {
                             value += 1;
                         }
 
-                        for willexit independent (stack mut u8[0 10] index = 0; index < 4; index += 1) {
+                        for willexit independent (stack mut u8[0 10] index = 0; index < 4; index += 1)
+                        {
                             value += 1;
                         }
 
@@ -507,7 +522,8 @@ public sealed class PackageImageArchitectureTests
                 """
                 module Facade
 
-                public unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+                public unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+                {
                     return;
                 }
                 """,
@@ -525,7 +541,8 @@ public sealed class PackageImageArchitectureTests
                     import Facade
                     module Demo
 
-                    unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
+                    unsafe fn void Run(rawmutptr<i32[min max]> ptr)
+                    {
                         Facade.Touch(ptr, ptr);
                         return;
                     }
@@ -569,7 +586,8 @@ public sealed class PackageImageArchitectureTests
                 """
                 module Facade
 
-                public unsafe fn void TouchOverlap(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) where overlap(left, right) {
+                public unsafe fn void TouchOverlap(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) where overlap(left, right)
+                {
                     return;
                 }
                 """,
@@ -587,7 +605,8 @@ public sealed class PackageImageArchitectureTests
                     import Facade
                     module Demo
 
-                    unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
+                    unsafe fn void Run(rawmutptr<i32[min max]> ptr)
+                    {
                         Facade.TouchOverlap(ptr, ptr);
                         return;
                     }
@@ -631,8 +650,9 @@ public sealed class PackageImageArchitectureTests
                     rawptr<i32[min max]>[8] source,
                     rawmutptr<i32[min max]>[8] destination)
                     where overlap(source, destination)
-                    where disjoint(source[2, 4], destination[0, 4]) {
-                    return;
+                    where disjoint(source[2, 4], destination[0, 4])
+                    {
+                        return;
                 }
                 """,
                 sourcePath));
@@ -653,7 +673,8 @@ public sealed class PackageImageArchitectureTests
                     import Facade
                     module Demo
 
-                    unsafe fn void Run(rawmutptr<i32[min max]>[8] buffer) {
+                    unsafe fn void Run(rawmutptr<i32[min max]>[8] buffer)
+                    {
                         Facade.Window(buffer, buffer);
                         return;
                     }
@@ -697,10 +718,12 @@ public sealed class PackageImageArchitectureTests
                 """
                 module Facade
 
-                public struct Bag<T> {
+                public struct Bag<T>
+                {
                     public T[] Items;
 
-                    public law retborrow T Get(borrow Bag<T> self, u64[0 2 ** 63 - 1] index) {
+                    public law retborrow T Get(borrow Bag<T> self, u64[0 2 ** 63 - 1] index)
+                    {
                         return self.Items[index];
                     }
                 }
@@ -719,7 +742,8 @@ public sealed class PackageImageArchitectureTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run() {
+                    fn i32[min max] Run()
+                    {
                         stack mut Facade.Bag<i32[min max]> bag = new();
                         return bag.Get(0);
                     }
@@ -767,15 +791,18 @@ public sealed class PackageImageArchitectureTests
                     """
                     module Bytes
 
-                    public fn u8[0 127] Keep(u8[min 127] value) {
+                    public fn u8[0 127] Keep(u8[min 127] value)
+                    {
                         return value;
                     }
 
-                    public fn u32[0 max] Keep32(u32[0 max] value) {
+                    public fn u32[0 max] Keep32(u32[0 max] value)
+                    {
                         return value;
                     }
 
-                    public fn u96[0 max] Keep96(u96[0 max] value) {
+                    public fn u96[0 max] Keep96(u96[0 max] value)
+                    {
                         return value;
                     }
                     """,
@@ -831,7 +858,8 @@ public sealed class PackageImageArchitectureTests
                 """
                 module Bits
 
-                public record Token(i32[min max] value) {
+                public record Token(i32[min max] value)
+                {
                 }
                 """);
             File.WriteAllText(
@@ -839,7 +867,8 @@ public sealed class PackageImageArchitectureTests
                 """
                 module Math
 
-                public fn i32[min max] Id(i32[min max] value) {
+                public fn i32[min max] Id(i32[min max] value)
+                {
                     return value;
                 }
                 """);
@@ -852,7 +881,8 @@ public sealed class PackageImageArchitectureTests
                     export import Bits
                     module Facade
 
-                    public fn Bits.Token Forward(Bits.Token value) {
+                    public fn Bits.Token Forward(Bits.Token value)
+                    {
                         return value;
                     }
                     """,
@@ -900,7 +930,8 @@ public sealed class PackageImageArchitectureTests
                 """
                 module Runtime
 
-                internal fn i32[min max] Hidden() {
+                internal fn i32[min max] Hidden()
+                {
                     return 7;
                 }
                 """);
@@ -912,7 +943,8 @@ public sealed class PackageImageArchitectureTests
                     import Runtime
                     module Facade
 
-                    public fn i32[min max] Run() {
+                    public fn i32[min max] Run()
+                    {
                         return Runtime.Hidden();
                     }
                     """,
@@ -968,7 +1000,8 @@ public sealed class PackageImageArchitectureTests
                 """
                 module Runtime
 
-                internal fn i32[min max] Hidden() {
+                internal fn i32[min max] Hidden()
+                {
                     return 7;
                 }
                 """);
@@ -980,7 +1013,8 @@ public sealed class PackageImageArchitectureTests
                     import Runtime
                     module Facade
 
-                    public fn i32[min max] Run() {
+                    public fn i32[min max] Run()
+                    {
                         return Runtime.Hidden();
                     }
                     """,
@@ -1103,7 +1137,8 @@ public sealed class PackageImageArchitectureTests
                     """
                     module Facade
 
-                    public fn T Identity<T>(T value) {
+                    public fn T Identity<T>(T value)
+                    {
                         return value;
                     }
                     """,
@@ -1177,44 +1212,57 @@ public sealed class PackageImageArchitectureTests
                     public finite law ascii AsciiView(Ascii source);
                     public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
 
-                    enum Status {
+                    enum Status
+                    {
                         Ok,
                         Err(i32[min max]),
-                        Named { Code: i32[min max] },
+                        Named
+                        {
+                            Code: i32[min max]
+                        },
                     }
 
-                    struct Box {
+                    struct Box
+                    {
                         i32[min max] Value;
 
-                        fn i32[min max] Get(borrow Box self) {
+                        fn i32[min max] Get(borrow Box self)
+                        {
                             return self.Value;
                         }
 
-                        fn bool Fill(borrow Box self, out i32[min max] value) {
+                        fn bool Fill(borrow Box self, out i32[min max] value)
+                        {
                             value = self.Value;
                             return true;
                         }
                     }
 
-                    fn i32[min max] Inc(i32[min max] value) {
+                    fn i32[min max] Inc(i32[min max] value)
+                    {
                         return value + 1;
                     }
 
-                    unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value) {
+                    unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value)
+                    {
                         return op(value);
                     }
 
-                    fn bool Write(out i32[min max] value) {
+                    fn bool Write(out i32[min max] value)
+                    {
                         value = 9;
                         return true;
                     }
 
-                    unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value) {
+                    unsafe fn bool ApplyOut(fnptr<fn bool(out i32[min max])> op, out i32[min max] value)
+                    {
                         return op(value);
                     }
 
-                    fn i32[min max] Choose(bool flag) {
-                        switch (flag) {
+                    fn i32[min max] Choose(bool flag)
+                    {
+                        switch (flag)
+                        {
                             case true:
                                 return 1;
                             case false:
@@ -1222,13 +1270,18 @@ public sealed class PackageImageArchitectureTests
                         }
                     }
 
-                    fn i32[min max] Score(Status status) {
-                        switch (status) {
+                    fn i32[min max] Score(Status status)
+                    {
+                        switch (status)
+                        {
                             case Status.Ok:
                                 return 1;
                             case Status.Err(var error):
                                 return error;
-                            case Status.Named { Code: var code }:
+                            case Status.Named
+                            {
+                                Code: var code
+                            }:
                                 return code;
                         }
                     }
@@ -1236,32 +1289,46 @@ public sealed class PackageImageArchitectureTests
                     public unsafe fn T Run<T>(
                         T input,
                         fnptr<fn i32[min max](i32[min max])> pointerOp,
-                        closure<fn i32[min max](i32[min max])> closureOp) {
-                        stack mut Box box = new Box() { Value = 3 };
-                        stack mut i32[min max][2] values = { 4, 5 };
+                        closure<fn i32[min max](i32[min max])> closureOp)
+                        {
+                            stack mut Box box = new Box()
+                        {
+                            Value = 3
+                        };
+                        stack mut i32[min max][2] values =
+                        {
+                            4, 5
+                        };
                         stack mut dynamic u32[0 max] items = new(1);
                         stack Ascii label[4 + 4] = $"ok";
                         stack Ascii joined[12] = label + "!";
                         stack i64[min max] boxSize = sizeof(Box);
                         stack i64[min max] boxAlign = alignof(Box);
                         stack mut i64[min max] marker = 0;
-                        switch (true) {
+                        switch (true)
+                        {
                             case true:
                                 marker = boxSize;
                             case false:
                                 marker = boxAlign;
                         }
                         stack Status ok = Status.Ok;
-                        stack Status named = Status.Named { Code: 5 };
+                        stack Status named = Status.Named
+                        {
+                            Code: 5
+                        };
                         values[0] = Inc(box.Get());
                         items.Reserve(1);
-                        if (!box.Fill(values[1])) {
+                        if (!box.Fill(values[1]))
+                        {
                             return input;
                         }
-                        if (!ApplyOut(Write, values[1])) {
+                        if (!ApplyOut(Write, values[1]))
+                        {
                             return input;
                         }
-                        if (Score(named) == 0) {
+                        if (Score(named) == 0)
+                        {
                             return input;
                         }
                         true ? pointerOp(1) : closureOp(2);
@@ -1359,11 +1426,13 @@ public sealed class PackageImageArchitectureTests
                     import System.Text
                     module Demo
 
-                    fn i32[min max] LocalInc(i32[min max] value) {
+                    fn i32[min max] LocalInc(i32[min max] value)
+                    {
                         return value + 1;
                     }
 
-                    unsafe fn i32[min max] Run() {
+                    unsafe fn i32[min max] Run()
+                    {
                         stack fnptr<fn i32[min max](i32[min max])> pointerOp = LocalInc;
                         stack closure<fn i32[min max](i32[min max])> closureOp =
                             (i32[min max] value) => value + 6;
@@ -1414,14 +1483,20 @@ public sealed class PackageImageArchitectureTests
                     """
                     module Facade
 
-                    public struct Pair<T> {
+                    public struct Pair<T>
+                    {
                         T Left;
                         T Right;
                     }
 
-                    public fn T Pick<T>(T left, T right, bool choose) {
-                        stack Pair<T> pair = new Pair<T>() { Left = left, Right = right };
-                        switch (choose) {
+                    public fn T Pick<T>(T left, T right, bool choose)
+                    {
+                        stack Pair<T> pair = new Pair<T>()
+                        {
+                            Left = left, Right = right
+                        };
+                        switch (choose)
+                        {
                             case true:
                                 return pair.Left;
                             case false:
@@ -1470,7 +1545,8 @@ public sealed class PackageImageArchitectureTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(bool choose) {
+                    fn i32[min max] Run(bool choose)
+                    {
                         stack i32[min max] left = 3;
                         stack i32[min max] right = 4;
                         return Facade.Pick(left, right, choose);

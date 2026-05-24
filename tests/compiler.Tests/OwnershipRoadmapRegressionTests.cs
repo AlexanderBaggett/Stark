@@ -11,18 +11,27 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            fn void Consume(Box value) {
+            fn void Consume(Box value)
+            {
                 return;
             }
 
-            fn i32[min max] Run() {
-                stack mut Box box = new Box() { Value = 1 };
+            fn i32[min max] Run()
+            {
+                stack mut Box box = new Box()
+                {
+                    Value = 1
+                };
                 Consume(box);
-                box = new Box() { Value = 2 };
+                box = new Box()
+                {
+                    Value = 2
+                };
                 return box.Value;
             }
             """);
@@ -41,20 +50,32 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            fn void Consume(Box value) {
+            fn void Consume(Box value)
+            {
                 return;
             }
 
-            unsafe fn i32[min max] Run() {
-                stack mut Box box = new Box() { Value = 1 };
+            unsafe fn i32[min max] Run()
+            {
+                stack mut Box box = new Box()
+                {
+                    Value = 1
+                };
                 stack rawptr<Box> pointer = &box;
-                box = new Box() { Value = 2 };
+                box = new Box()
+                {
+                    Value = 2
+                };
                 Consume(box);
-                box = new Box() { Value = 3 };
+                box = new Box()
+                {
+                    Value = 3
+                };
                 return box.Value;
             }
             """);
@@ -101,19 +122,29 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Name {
+            struct Name
+            {
                 i32[min max] Value;
             }
 
-            struct Container {
+            struct Container
+            {
                 Name Name;
                 Name Label;
             }
 
-            finite law Name Run() {
-                stack Container value = new Container() {
-                    Name = new Name() { Value = 1 },
-                    Label = new Name() { Value = 2 }
+            finite law Name Run()
+            {
+                stack Container value = new Container()
+                {
+                    Name = new Name()
+                    {
+                        Value = 1
+                    },
+                    Label = new Name()
+                    {
+                        Value = 2
+                    }
                 };
                 return value.Name;
             }
@@ -142,20 +173,30 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            fn void Consume(Box value) {
+            fn void Consume(Box value)
+            {
                 return;
             }
 
-            fn i32[min max] Run() {
-                stack mut Box box = new Box() { Value = 1 };
+            fn i32[min max] Run()
+            {
+                stack mut Box box = new Box()
+                {
+                    Value = 1
+                };
 
-                if (true) {
+                if (true)
+                {
                     Consume(box);
-                    box = new Box() { Value = 2 };
+                    box = new Box()
+                    {
+                        Value = 2
+                    };
                 }
 
                 return box.Value;
@@ -174,21 +215,31 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            fn void Consume(Box value) {
+            fn void Consume(Box value)
+            {
                 return;
             }
 
-            fn i32[min max] Run() {
-                stack mut Box box = new Box() { Value = 1 };
+            fn i32[min max] Run()
+            {
+                stack mut Box box = new Box()
+                {
+                    Value = 1
+                };
                 stack mut i32[min max] count = 0;
 
-                while willexit (count < 1) {
+                while willexit (count < 1)
+                {
                     Consume(box);
-                    box = new Box() { Value = 2 };
+                    box = new Box()
+                    {
+                        Value = 2
+                    };
                     count = count + 1;
                 }
 
@@ -208,21 +259,33 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            fn void Consume(Box value) {
+            fn void Consume(Box value)
+            {
                 return;
             }
 
-            fn i32[min max] Run() {
-                stack mut Box box = new Box() { Value = 1 };
+            fn i32[min max] Run()
+            {
+                stack mut Box box = new Box()
+                {
+                    Value = 1
+                };
 
-                if (true) {
+                if (true)
+                {
                     Consume(box);
-                } else {
-                    box = new Box() { Value = 2 };
+                }
+                else
+                {
+                    box = new Box()
+                    {
+                        Value = 2
+                    };
                 }
 
                 return box.Value;
@@ -240,17 +303,22 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            enum Token {
+            enum Token
+            {
                 End,
                 Integer(i32[min max]),
             }
 
-            fn i32[min max] Run(bool choose) {
+            fn i32[min max] Run(bool choose)
+            {
                 stack mut Token token;
 
-                if (choose) {
+                if (choose)
+                {
                     token = Token.End;
-                } else {
+                }
+                else
+                {
                     token = Token.Integer(1);
                 }
 
@@ -271,15 +339,18 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            enum Token {
+            enum Token
+            {
                 End,
                 Integer(i32[min max]),
             }
 
-            fn i32[min max] Run(bool choose) {
+            fn i32[min max] Run(bool choose)
+            {
                 stack mut Token token;
 
-                if (choose) {
+                if (choose)
+                {
                     token = Token.End;
                 }
 
@@ -300,17 +371,23 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Payload {
+            struct Payload
+            {
                 ascii Text;
             }
 
-            enum Token {
+            enum Token
+            {
                 End,
                 Text(Payload),
             }
 
-            fn i32[min max] Run() {
-                stack Token token = Token.Text(new Payload() { Text = "hello" });
+            fn i32[min max] Run()
+            {
+                stack Token token = Token.Text(new Payload()
+                {
+                    Text = "hello"
+                });
                 return 0;
             }
             """);
@@ -328,17 +405,25 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Payload {
+            struct Payload
+            {
                 ascii Text;
             }
 
-            enum Token {
+            enum Token
+            {
                 End,
                 Text(Payload),
             }
 
-            fn i32[min max] Run(bool choose) {
-                stack Token token = choose ? Token.Text(new Payload() { Text = "hello" }) : Token.End;
+            fn i32[min max] Run(bool choose)
+            {
+                stack Token token = choose ? Token.Text(new Payload()
+                {
+                    Text = "hello"
+                }
+                )
+                : Token.End;
                 return 0;
             }
             """);
@@ -357,20 +442,27 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Payload {
+            struct Payload
+            {
                 ascii Text;
             }
 
-            enum Token {
+            enum Token
+            {
                 Empty,
                 Text(Payload),
             }
 
-            fn i32[min max] Run(bool choose) {
+            fn i32[min max] Run(bool choose)
+            {
                 stack mut Token token;
 
-                if (choose) {
-                    token = Token.Text(new Payload() { Text = "hello" });
+                if (choose)
+                {
+                    token = Token.Text(new Payload()
+                    {
+                        Text = "hello"
+                    });
                 }
 
                 return 0;
@@ -388,23 +480,33 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            enum Token {
+            enum Token
+            {
                 Empty,
                 Full(Box),
             }
 
-            fn void Consume(Box box) {
+            fn void Consume(Box box)
+            {
                 return;
             }
 
-            fn i32[min max] Run(bool choose) {
-                stack mut Token token = choose ? Token.Full(new Box() { Value = 1 }) : Token.Empty;
+            fn i32[min max] Run(bool choose)
+            {
+                stack mut Token token = choose ? Token.Full(new Box()
+                {
+                    Value = 1
+                }
+                )
+                : Token.Empty;
 
-                switch (token) {
+                switch (token)
+                {
                     case Token.Full(var box):
                         Consume(box);
                     case Token.Empty:
@@ -429,23 +531,33 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            enum Token {
+            enum Token
+            {
                 Empty,
                 Full(Box),
             }
 
-            fn void Consume(Box box) {
+            fn void Consume(Box box)
+            {
                 return;
             }
 
-            fn i32[min max] Run(bool choose) {
-                stack mut Token token = choose ? Token.Full(new Box() { Value = 1 }) : Token.Empty;
+            fn i32[min max] Run(bool choose)
+            {
+                stack mut Token token = choose ? Token.Full(new Box()
+                {
+                    Value = 1
+                }
+                )
+                : Token.Empty;
 
-                switch (token) {
+                switch (token)
+                {
                     case Token.Full(var box):
                         Consume(box);
                         token = Token.Empty;
@@ -471,27 +583,40 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            enum Token {
+            enum Token
+            {
                 Empty,
                 Full(Box),
             }
 
-            struct Wrapper {
+            struct Wrapper
+            {
                 Token Value;
             }
 
-            fn void Consume(Box box) {
+            fn void Consume(Box box)
+            {
                 return;
             }
 
-            fn i32[min max] Run() {
-                stack Wrapper wrapper = new Wrapper() { Value = Token.Full(new Box() { Value = 1 }) };
+            fn i32[min max] Run()
+            {
+                stack Wrapper wrapper = new Wrapper()
+                {
+                    Value = Token.Full(new Box()
+                    {
+                        Value = 1
+                    }
+                    )
+                };
 
-                switch (wrapper.Value) {
+                switch (wrapper.Value)
+                {
                     case Token.Full(var box):
                         Consume(box);
                     case Token.Empty:
@@ -513,17 +638,23 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Payload {
+            struct Payload
+            {
                 ascii Text;
             }
 
-            enum Token {
+            enum Token
+            {
                 End,
                 Text(Payload),
             }
 
-            fn i32[min max] Run() {
-                stack mut Token token = Token.Text(new Payload() { Text = "hello" });
+            fn i32[min max] Run()
+            {
+                stack mut Token token = Token.Text(new Payload()
+                {
+                    Text = "hello"
+                });
                 token = Token.End;
                 return 0;
             }
@@ -543,21 +674,26 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Payload {
+            struct Payload
+            {
                 ascii Text;
             }
 
-            enum Token {
+            enum Token
+            {
                 Empty,
                 Text(Payload),
             }
 
-            fn void Consume(Payload text) {
+            fn void Consume(Payload text)
+            {
                 return;
             }
 
-            fn i32[min max] Run(Token token) {
-                switch (token) {
+            fn i32[min max] Run(Token token)
+            {
+                switch (token)
+                {
                     case Token.Text(var text):
                         Consume(text);
                     case Token.Empty:
@@ -582,11 +718,13 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            fn i32[min max] Run() {
+            fn i32[min max] Run()
+            {
                 stack Box box;
                 return 1;
             }
@@ -604,11 +742,13 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            fn i32[min max] Run() {
+            fn i32[min max] Run()
+            {
                 stack Box box;
                 return box.Value;
             }
@@ -625,12 +765,14 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Pair {
+            struct Pair
+            {
                 i32[min max] Left;
                 i32[min max] Right;
             }
 
-            fn i32[min max] Run() {
+            fn i32[min max] Run()
+            {
                 stack mut Pair pair;
                 pair.Left = 1;
                 pair.Right = 2;
@@ -650,16 +792,19 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Pair {
+            struct Pair
+            {
                 i32[min max] Left;
                 i32[min max] Right;
             }
 
-            fn void Consume(Pair value) {
+            fn void Consume(Pair value)
+            {
                 return;
             }
 
-            fn i32[min max] Run() {
+            fn i32[min max] Run()
+            {
                 stack mut Pair pair;
                 pair.Left = 1;
                 Consume(pair);
@@ -678,12 +823,14 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Pair {
+            struct Pair
+            {
                 i32[min max] Left;
                 i32[min max] Right;
             }
 
-            fn i32[min max] Run() {
+            fn i32[min max] Run()
+            {
                 stack mut Pair pair;
                 pair.Left = 1;
                 return 0;
@@ -701,21 +848,35 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Payload {
+            struct Payload
+            {
                 ascii Text;
             }
 
-            struct Pair {
+            struct Pair
+            {
                 Payload Left;
                 Payload Right;
             }
 
-            fn void Consume(Pair value) {
+            fn void Consume(Pair value)
+            {
                 return;
             }
 
-            fn i32[min max] Run() {
-                stack mut Pair pair = new Pair() { Left = new Payload() { Text = "a" }, Right = new Payload() { Text = "b" } };
+            fn i32[min max] Run()
+            {
+                stack mut Pair pair = new Pair()
+                {
+                    Left = new Payload()
+                    {
+                        Text = "a"
+                    },
+                    Right = new Payload()
+                    {
+                        Text = "b"
+                    }
+                };
                 stack Payload left = pair.Left;
                 Consume(pair);
                 return 0;
@@ -738,23 +899,40 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Payload {
+            struct Payload
+            {
                 ascii Text;
             }
 
-            struct Pair {
+            struct Pair
+            {
                 Payload Left;
                 Payload Right;
             }
 
-            fn void Consume(Pair value) {
+            fn void Consume(Pair value)
+            {
                 return;
             }
 
-            fn i32[min max] Run() {
-                stack mut Pair pair = new Pair() { Left = new Payload() { Text = "a" }, Right = new Payload() { Text = "b" } };
+            fn i32[min max] Run()
+            {
+                stack mut Pair pair = new Pair()
+                {
+                    Left = new Payload()
+                    {
+                        Text = "a"
+                    },
+                    Right = new Payload()
+                    {
+                        Text = "b"
+                    }
+                };
                 stack Payload left = pair.Left;
-                pair.Left = new Payload() { Text = "c" };
+                pair.Left = new Payload()
+                {
+                    Text = "c"
+                };
                 Consume(pair);
                 return 0;
             }
@@ -772,19 +950,33 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Payload {
+            struct Payload
+            {
                 ascii Text;
             }
 
-            struct Pair {
+            struct Pair
+            {
                 Payload Left;
                 Payload Right;
             }
 
-            fn i32[min max] Run(bool choose) {
-                stack mut Pair pair = new Pair() { Left = new Payload() { Text = "a" }, Right = new Payload() { Text = "b" } };
+            fn i32[min max] Run(bool choose)
+            {
+                stack mut Pair pair = new Pair()
+                {
+                    Left = new Payload()
+                    {
+                        Text = "a"
+                    },
+                    Right = new Payload()
+                    {
+                        Text = "b"
+                    }
+                };
 
-                if (choose) {
+                if (choose)
+                {
                     stack Payload left = pair.Left;
                 }
 
@@ -804,21 +996,38 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Payload {
+            struct Payload
+            {
                 ascii Text;
             }
 
-            struct Pair {
+            struct Pair
+            {
                 Payload Left;
                 Payload Right;
             }
 
-            fn i32[min max] Run(bool choose) {
-                stack mut Pair pair = new Pair() { Left = new Payload() { Text = "a" }, Right = new Payload() { Text = "b" } };
+            fn i32[min max] Run(bool choose)
+            {
+                stack mut Pair pair = new Pair()
+                {
+                    Left = new Payload()
+                    {
+                        Text = "a"
+                    },
+                    Right = new Payload()
+                    {
+                        Text = "b"
+                    }
+                };
 
-                if (choose) {
+                if (choose)
+                {
                     stack Payload left = pair.Left;
-                    pair.Left = new Payload() { Text = "c" };
+                    pair.Left = new Payload()
+                    {
+                        Text = "c"
+                    };
                 }
 
                 stack Payload current = pair.Left;
@@ -838,17 +1047,22 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Pair {
+            struct Pair
+            {
                 i32[min max] Left;
                 i32[min max] Right;
             }
 
-            fn i32[min max] Run(bool choose) {
+            fn i32[min max] Run(bool choose)
+            {
                 stack mut Pair pair;
 
-                if (choose) {
+                if (choose)
+                {
                     pair.Left = 1;
-                } else {
+                }
+                else
+                {
                     pair.Left = 2;
                 }
 
@@ -869,17 +1083,22 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Pair {
+            struct Pair
+            {
                 i32[min max] Left;
                 i32[min max] Right;
             }
 
-            fn i32[min max] Run(bool choose) {
+            fn i32[min max] Run(bool choose)
+            {
                 stack mut Pair pair;
 
-                if (choose) {
+                if (choose)
+                {
                     pair.Left = 1;
-                } else {
+                }
+                else
+                {
                     pair.Right = 2;
                 }
 
@@ -900,7 +1119,8 @@ public sealed class OwnershipRoadmapRegressionTests
 
             fn retborrow i32[min max] Source();
 
-            fn retborrow i32[min max] Leak() {
+            fn retborrow i32[min max] Leak()
+            {
                 return Source();
             }
             """);
@@ -916,13 +1136,16 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Holder {
+            struct Holder
+            {
                 storeborrow closure<fn i32[min max]()> Callback;
             }
 
-            fn Holder Bad() {
+            fn Holder Bad()
+            {
                 stack i32[min max] value = 1;
-                return new Holder() {
+                return new Holder()
+                {
                     Callback = capture(copy value) () => value
                 };
             }
@@ -939,12 +1162,17 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            fn i32[min max] Run() {
-                stack Box box = new Box() { Value = 7 };
+            fn i32[min max] Run()
+            {
+                stack Box box = new Box()
+                {
+                    Value = 7
+                };
                 stack heap closure<fn i32[min max]()> callback = heap capture(move box) () => box.Value;
                 return box.Value;
             }
@@ -961,20 +1189,25 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            inline fn void RunOut(inline closure<mut fn void(bool)> body) {
+            inline fn void RunOut(inline closure<mut fn void(bool)> body)
+            {
                 body(true);
                 return;
             }
 
-            inline fn void RunInit(inline closure<mut fn void(bool)> body) {
+            inline fn void RunInit(inline closure<mut fn void(bool)> body)
+            {
                 body(true);
                 return;
             }
 
-            fn void BadOut(bool choose) {
+            fn void BadOut(bool choose)
+            {
                 stack mut i32[min max] value = 0;
-                RunOut(capture(out value) (bool flag) => {
-                    if (flag) {
+                RunOut(capture(out value) (bool flag) =>
+                {
+                    if (flag)
+                    {
                         value = 1;
                         return;
                     }
@@ -984,10 +1217,13 @@ public sealed class OwnershipRoadmapRegressionTests
                 return;
             }
 
-            fn void BadInit(bool choose) {
+            fn void BadInit(bool choose)
+            {
                 stack mut i32[min max] value = 0;
-                RunInit(capture(init value) (bool flag) => {
-                    if (flag) {
+                RunInit(capture(init value) (bool flag) =>
+                {
+                    if (flag)
+                    {
                         value = 1;
                         return;
                     }
@@ -1010,31 +1246,37 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            inline fn i32[min max] RunInlineTwice(inline closure<once fn i32[min max]()> producer) {
+            inline fn i32[min max] RunInlineTwice(inline closure<once fn i32[min max]()> producer)
+            {
                 stack i32[min max] first = producer();
                 return producer();
             }
 
-            fn i32[min max] RunHeapTwice(heap closure<once fn i32[min max]()> producer) {
+            fn i32[min max] RunHeapTwice(heap closure<once fn i32[min max]()> producer)
+            {
                 stack i32[min max] first = producer();
                 return producer();
             }
 
-            fn i32[min max] RunBorrowTwice(borrow closure<once fn i32[min max]()> producer) {
+            fn i32[min max] RunBorrowTwice(borrow closure<once fn i32[min max]()> producer)
+            {
                 stack i32[min max] first = producer();
                 return producer();
             }
 
-            fn i32[min max] UseInline() {
+            fn i32[min max] UseInline()
+            {
                 return RunInlineTwice(() => 1);
             }
 
-            fn i32[min max] UseHeap() {
+            fn i32[min max] UseHeap()
+            {
                 stack heap closure<once fn i32[min max]()> producer = heap () => 1;
                 return RunHeapTwice(producer);
             }
 
-            fn i32[min max] UseBorrow() {
+            fn i32[min max] UseBorrow()
+            {
                 return RunBorrowTwice(() => 1);
             }
             """);
@@ -1057,8 +1299,10 @@ public sealed class OwnershipRoadmapRegressionTests
             fn retborrow i32[min max] Source();
             fn retborrow i32[min max] Other();
 
-            fn retborrow i32[min max] Leak(bool choose) {
-                if (choose) {
+            fn retborrow i32[min max] Leak(bool choose)
+            {
+                if (choose)
+                {
                     return Source();
                 }
 
@@ -1079,7 +1323,8 @@ public sealed class OwnershipRoadmapRegressionTests
 
             fn retborrow i32[min max] Source();
 
-            fn void Run() {
+            fn void Run()
+            {
                 stack mut retborrow i32[min max] borrowAlias = Source();
                 borrowAlias = Source();
 
@@ -1100,7 +1345,8 @@ public sealed class OwnershipRoadmapRegressionTests
 
             fn retborrow i32[min max] Source();
 
-            fn void Run() {
+            fn void Run()
+            {
                 stack mut retborrow i32[min max] outer;
 
                 {
@@ -1125,7 +1371,8 @@ public sealed class OwnershipRoadmapRegressionTests
 
             fn retborrow i32[min max] Source();
 
-            fn retborrow i32[min max] Run() {
+            fn retborrow i32[min max] Run()
+            {
                 {
                     stack retborrow i32[min max] borrowAlias = Source();
                     return borrowAlias;
@@ -1144,7 +1391,8 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            fn u32[0 2 ** 31 - 1] Run() {
+            fn u32[0 2 ** 31 - 1] Run()
+            {
                 stack mut dynamic u32[0 2 ** 31 - 1] values = new(4);
                 init values[0] = 10;
                 init values[1] = 20;
@@ -1162,7 +1410,8 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            fn void Run() {
+            fn void Run()
+            {
                 stack mut dynamic u32[0 2 ** 31 - 1] values = new(4);
                 init values[1] = 20;
             }
@@ -1179,11 +1428,13 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Buffer {
+            struct Buffer
+            {
                 dynamic u32[0 2 ** 31 - 1] Items;
             }
 
-            fn void Push(mut borrow Buffer self, u32[0 2 ** 31 - 1] value) {
+            fn void Push(mut borrow Buffer self, u32[0 2 ** 31 - 1] value)
+            {
                 init self.Items[self.Items.Length] = value;
             }
             """);
@@ -1198,7 +1449,8 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            fn u32[0 2 ** 31 - 1] Run() {
+            fn u32[0 2 ** 31 - 1] Run()
+            {
                 stack mut dynamic u32[0 2 ** 31 - 1] values = new(4);
                 stack init u32[0 2 ** 31 - 1][] spare = init values[values.Length, 2];
                 init spare[0] = 10;
@@ -1217,10 +1469,12 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            fn u64[0 2 ** 63 - 1] Run(u64[0 2 ** 63 - 1] count) {
+            fn u64[0 2 ** 63 - 1] Run(u64[0 2 ** 63 - 1] count)
+            {
                 stack mut dynamic u64[0 2 ** 63 - 1] values = new(8);
                 stack init u64[0 2 ** 63 - 1][] spare = init values[values.Length, count];
-                for willexit independent (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
+                for willexit independent (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+                {
                     init spare[index] = index;
                 }
 
@@ -1238,10 +1492,12 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            fn void Run(u64[0 2 ** 63 - 1] count) {
+            fn void Run(u64[0 2 ** 63 - 1] count)
+            {
                 stack mut dynamic u64[0 2 ** 63 - 1] values = new(8);
                 stack init u64[0 2 ** 63 - 1][] spare = init values[values.Length, count];
-                for willexit independent (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
+                for willexit independent (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+                {
                     init spare[index] = index;
                     init spare[index] = index;
                 }
@@ -1259,7 +1515,8 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            fn void Run() {
+            fn void Run()
+            {
                 stack mut dynamic u32[0 2 ** 31 - 1] values = new(4);
                 stack init u32[0 2 ** 31 - 1][] spare = init values[values.Length, 2];
                 init spare[1] = 20;
@@ -1277,13 +1534,18 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Token {
+            struct Token
+            {
                 ascii Text;
             }
 
-            fn void Run() {
+            fn void Run()
+            {
                 stack mut dynamic Token values = new(2);
-                init values[0] = new Token() { Text = "a" };
+                init values[0] = new Token()
+                {
+                    Text = "a"
+                };
                 stack Token token = values[0];
             }
             """);
@@ -1299,8 +1561,10 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            fn u32[0 2 ** 31 - 1] Read(dynamic u32[0 2 ** 31 - 1] values, u32[0 2 ** 31 - 1] index) {
-                unsafe {
+            fn u32[0 2 ** 31 - 1] Read(dynamic u32[0 2 ** 31 - 1] values, u32[0 2 ** 31 - 1] index)
+            {
+                unsafe
+                {
                     return values[index];
                 }
             }
@@ -1316,9 +1580,11 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            fn u32[0 2 ** 31 - 1] Run() {
+            fn u32[0 2 ** 31 - 1] Run()
+            {
                 stack mut dynamic u32[0 2 ** 31 - 1] values = new(4);
-                unsafe {
+                unsafe
+                {
                     init values[2] = 30;
                     return values[2];
                 }
@@ -1335,9 +1601,11 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            fn u32[0 2 ** 31 - 1] Run() {
+            fn u32[0 2 ** 31 - 1] Run()
+            {
                 stack mut dynamic u32[0 2 ** 31 - 1] values = new(4);
-                unsafe {
+                unsafe
+                {
                     init values[2] = 30;
                 }
 
@@ -1356,15 +1624,24 @@ public sealed class OwnershipRoadmapRegressionTests
             """
             module Demo
 
-            struct Token {
+            struct Token
+            {
                 ascii Text;
             }
 
-            fn ascii Run() {
+            fn ascii Run()
+            {
                 stack mut dynamic Token values = new(2);
-                init values[0] = new Token() { Text = "a" };
-                init values[1] = new Token() { Text = "b" };
-                unsafe {
+                init values[0] = new Token()
+                {
+                    Text = "a"
+                };
+                init values[1] = new Token()
+                {
+                    Text = "b"
+                };
+                unsafe
+                {
                     stack Token token = values[0];
                     return token.Text;
                 }

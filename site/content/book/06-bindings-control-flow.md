@@ -71,11 +71,13 @@ implicit property setters, reflection, or dynamic dispatch.
 `if` branches are ordinary statement blocks:
 
 ```stark
-if (total == 9) {
+if (total == 9)
+{
     return 0;
 }
 
-if (total < 9) {
+if (total < 9)
+{
     return 1;
 }
 
@@ -96,7 +98,8 @@ function is expected to make progress and return.
 The sample uses:
 
 ```stark
-for willexit (stack mut i32[min max] index = 0; index < count; index += 1) {
+for willexit (stack mut i32[min max] index = 0; index < count; index += 1)
+{
     ...
 }
 ```
@@ -123,9 +126,13 @@ adapter.
 `independent` is an additional loop contract:
 
 ```stark
-stack mut i32[min max][4] values = { 0, 0, 0, 0 };
+stack mut i32[min max][4] values =
+{
+    0, 0, 0, 0
+};
 
-for willexit independent (stack mut u8[0 4] index = 0; index < 4; index += 1) {
+for willexit independent (stack mut u8[0 4] index = 0; index < 4; index += 1)
+{
     values[index] = (i32[min max])index;
 }
 ```
@@ -146,7 +153,8 @@ compiler must reject the contract.
 is part of the program's explicit data model:
 
 ```stark
-switch (value) {
+switch (value)
+{
     case 42:
         return true;
     default:

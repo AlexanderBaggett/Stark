@@ -11,7 +11,8 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Run() {
+            unsafe fn void Run()
+            {
                 stack i32[min max] value = 1
             }
             """);
@@ -27,7 +28,8 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn ascii Run() {
+            unsafe fn ascii Run()
+            {
                 return "\q";
             }
             """);
@@ -43,7 +45,8 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn ascii Run() {
+            unsafe fn ascii Run()
+            {
                 return 'ab';
             }
             """);
@@ -60,7 +63,8 @@ public sealed class DiagnosticRegressionTests
             import Demo
             module Demo
 
-            unsafe fn void Run() {
+            unsafe fn void Run()
+            {
                 return;
             }
             """);
@@ -76,12 +80,17 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            unsafe fn i32[min max] Run() {
-                stack Box box = new Box() { Value = 1 };
+            unsafe fn i32[min max] Run()
+            {
+                stack Box box = new Box()
+                {
+                    Value = 1
+                };
                 return box.Missing;
             }
             """);
@@ -97,7 +106,8 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe law i32[min max] Read(out i32[min max] value) {
+            unsafe law i32[min max] Read(out i32[min max] value)
+            {
                 return 0;
             }
             """);
@@ -113,13 +123,18 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            static Box Current = new Box() { Value = 1 };
+            static Box Current = new Box()
+            {
+                Value = 1
+            };
 
-            unsafe fn Box Take() {
+            unsafe fn Box Take()
+            {
                 return Current;
             }
             """);
@@ -137,7 +152,8 @@ public sealed class DiagnosticRegressionTests
 
             static i32[min max] Answer = 42;
 
-            unsafe fn void Run() {
+            unsafe fn void Run()
+            {
                 Answer = 7;
                 return;
             }
@@ -154,13 +170,18 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            const Box Current = new Box() { Value = 1 };
+            const Box Current = new Box()
+            {
+                Value = 1
+            };
 
-            unsafe fn void Run() {
+            unsafe fn void Run()
+            {
                 Current.Value = 2;
                 return;
             }
@@ -177,11 +198,15 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            struct Holder {
+            struct Holder
+            {
                 rawptr<i8[min max]> Ptr;
             }
 
-            const Holder Current = new Holder() { Ptr = null };
+            const Holder Current = new Holder()
+            {
+                Ptr = null
+            };
             """);
 
         Assert.False(result.Succeeded);
@@ -211,12 +236,15 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            unsafe fn i32[min max] Run(Box box) {
-                switch (box) {
+            unsafe fn i32[min max] Run(Box box)
+            {
+                switch (box)
+                {
                     case Box capture:
                         return 1;
                     default:
@@ -237,8 +265,10 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(i32[min max] value) {
-                switch (value) {
+            unsafe fn i32[min max] Run(i32[min max] value)
+            {
+                switch (value)
+                {
                     case var capture:
                     case 1:
                         return 1;
@@ -259,8 +289,10 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(bool value) {
-                switch (value) {
+            unsafe fn i32[min max] Run(bool value)
+            {
+                switch (value)
+                {
                     case true:
                         return 1;
                     case false:
@@ -283,7 +315,8 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Run() {
+            unsafe fn void Run()
+            {
                 break;
             }
             """);
@@ -299,7 +332,8 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Run() {
+            unsafe fn void Run()
+            {
                 continue;
             }
             """);
@@ -315,12 +349,15 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            unsafe fn void Run(borrow Box left, borrow Box right) {
-                if disjoint(left, right) {
+            unsafe fn void Run(borrow Box left, borrow Box right)
+            {
+                if disjoint(left, right)
+                {
                     return;
                 }
 
@@ -339,8 +376,10 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn bool Run(i32[min max] left, i32[min max] right) {
-                if disjoint(left, right) {
+            unsafe fn bool Run(i32[min max] left, i32[min max] right)
+            {
+                if disjoint(left, right)
+                {
                     return true;
                 }
 
@@ -359,11 +398,13 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
 
-            unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
+            unsafe fn void Run(rawmutptr<i32[min max]> ptr)
+            {
                 Touch(ptr, ptr);
                 return;
             }
@@ -380,11 +421,13 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
 
-            unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
+            unsafe fn void Run(rawmutptr<i32[min max]> ptr)
+            {
                 Touch(ptr, ptr);
                 return;
             }
@@ -402,12 +445,14 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
-                where overlap(left, right) {
-                *left = *right;
+                where overlap(left, right)
+                {
+                    *left = *right;
                 return;
             }
 
-            unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
+            unsafe fn void Run(rawmutptr<i32[min max]> ptr)
+            {
                 Touch(ptr, ptr);
                 return;
             }
@@ -424,11 +469,13 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
-                where same(left, right) {
-                return;
+                where same(left, right)
+                {
+                    return;
             }
 
-            unsafe fn void Run() {
+            unsafe fn void Run()
+            {
                 stack mut i32[min max] left = 1;
                 stack mut i32[min max] right = 2;
                 Touch(&left, &right);
@@ -448,11 +495,13 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
-                where same(left, right) {
-                return;
+                where same(left, right)
+                {
+                    return;
             }
 
-            unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
+            unsafe fn void Run(rawmutptr<i32[min max]> ptr)
+            {
                 Touch(ptr, ptr);
                 return;
             }
@@ -468,11 +517,13 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
 
-            unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
+            unsafe fn void Run(rawmutptr<i32[min max]> ptr)
+            {
                 stack rawmutptr<i32[min max]> mirror = ptr;
                 Touch(ptr, mirror);
                 return;
@@ -490,11 +541,13 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
 
-            unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
+            unsafe fn void Run(rawmutptr<i32[min max]> ptr)
+            {
                 stack mut rawmutptr<i32[min max]> mirror = null;
                 mirror = ptr;
                 Touch(ptr, mirror);
@@ -513,11 +566,13 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
 
-            unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
+            unsafe fn void Run(rawmutptr<i32[min max]> ptr)
+            {
                 stack mut rawmutptr<i32[min max]> mirror = ptr;
                 Touch(ptr, mirror);
                 return;
@@ -537,8 +592,9 @@ public sealed class DiagnosticRegressionTests
 
             unsafe fn void Run(
                 fnptr<fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>)> op,
-                rawmutptr<i32[min max]> ptr) {
-                op(ptr, ptr);
+                rawmutptr<i32[min max]> ptr)
+                {
+                    op(ptr, ptr);
                 return;
             }
             """);
@@ -555,8 +611,9 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             unsafe fn void Run(
-                fnptr<fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>) where disjoint(arg0, arg1)> op) {
-                return;
+                fnptr<fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>) where disjoint(arg0, arg1)> op)
+                {
+                    return;
             }
             """);
 
@@ -572,8 +629,9 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             unsafe fn void Run(
-                fnptr<fn void(i32[min max], rawmutptr<i32[min max]>) where overlap(arg0, arg1)> op) {
-                return;
+                fnptr<fn void(i32[min max], rawmutptr<i32[min max]>) where overlap(arg0, arg1)> op)
+                {
+                    return;
             }
             """);
 
@@ -589,8 +647,9 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             unsafe fn void Run(
-                fnptr<fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>) where same(arg0, arg2)> op) {
-                return;
+                fnptr<fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>) where same(arg0, arg2)> op)
+                {
+                    return;
             }
             """);
 
@@ -605,12 +664,14 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 *left = *right;
                 return;
             }
 
-            unsafe fn void Run() {
+            unsafe fn void Run()
+            {
                 stack mut i32[min max] leftValue = 1;
                 stack mut i32[min max] rightValue = 2;
                 stack mut rawmutptr<i32[min max]> left = &leftValue;
@@ -631,11 +692,13 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
-                where same(left, right) {
-                return;
+                where same(left, right)
+                {
+                    return;
             }
 
-            unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
+            unsafe fn void Run(rawmutptr<i32[min max]> ptr)
+            {
                 stack mut rawmutptr<i32[min max]> mirror = ptr;
                 Touch(ptr, mirror);
                 return;
@@ -652,11 +715,13 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
 
-            unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
+            unsafe fn void Run(rawmutptr<i32[min max]> ptr)
+            {
                 stack rawmutptr<i32[min max]> mirror = (rawmutptr<i32[min max]>)ptr;
                 Touch(ptr, mirror);
                 return;
@@ -674,11 +739,13 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
 
-            unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
+            unsafe fn void Run(rawmutptr<i32[min max]> ptr)
+            {
                 stack u64[min max] bits = (u64[min max])ptr;
                 stack rawmutptr<i32[min max]> mirror = (rawmutptr<i32[min max]>)bits;
                 Touch(ptr, mirror);
@@ -697,14 +764,17 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
 
-            unsafe fn void Run(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right, bool flag) {
+            unsafe fn void Run(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right, bool flag)
+            {
                 stack mut rawmutptr<i32[min max]> mirror = null;
                 mirror = left;
-                if (flag) {
+                if (flag)
+                {
                     mirror = right;
                 }
 
@@ -724,16 +794,21 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
 
-            unsafe fn void Run(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right, bool flag) {
+            unsafe fn void Run(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right, bool flag)
+            {
                 stack mut rawmutptr<i32[min max]> mirror = null;
                 mirror = left;
-                if (flag) {
+                if (flag)
+                {
                     mirror = right;
-                } else {
+                }
+                else
+                {
                     Touch(mirror, right);
                 }
 
@@ -751,7 +826,8 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(disjoint i32[min max] value) {
+            unsafe fn void Touch(disjoint i32[min max] value)
+            {
                 return;
             }
             """);
@@ -767,7 +843,8 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(disjoint rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(disjoint rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
             """);
@@ -784,8 +861,9 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
-                where disjoint(left, right) {
-                return;
+                where disjoint(left, right)
+                {
+                    return;
             }
             """);
 
@@ -814,8 +892,9 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             unsafe fn void Touch(i32[min max] value, rawmutptr<i32[min max]> ptr)
-                where disjoint(value, ptr) {
-                return;
+                where disjoint(value, ptr)
+                {
+                    return;
             }
             """);
 
@@ -831,8 +910,9 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
-                where overlap(left, left) {
-                return;
+                where overlap(left, left)
+                {
+                    return;
             }
             """);
 
@@ -848,8 +928,9 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
-                where same(left, missing) {
-                return;
+                where same(left, missing)
+                {
+                    return;
             }
             """);
 
@@ -865,8 +946,9 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             unsafe fn void Touch(i32[min max] value, rawmutptr<i32[min max]> ptr)
-                where overlap(value, ptr) {
-                return;
+                where overlap(value, ptr)
+                {
+                    return;
             }
             """);
 
@@ -881,11 +963,13 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
 
-            unsafe fn void Run(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight) {
+            unsafe fn void Run(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight)
+            {
                 Touch(maybeLeft, maybeRight);
                 return;
             }
@@ -901,15 +985,18 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn rawmutptr<i32[min max]> Identity(rawmutptr<i32[min max]> ptr) {
+            unsafe fn rawmutptr<i32[min max]> Identity(rawmutptr<i32[min max]> ptr)
+            {
                 return ptr;
             }
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
 
-            unsafe fn void Run(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight) {
+            unsafe fn void Run(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight)
+            {
                 Touch(Identity(maybeLeft), maybeRight);
                 return;
             }
@@ -926,13 +1013,16 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
 
             unsafe fn void Run(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight)
-                where overlap(maybeLeft, maybeRight) {
-                unsafe assume disjoint(maybeLeft, maybeRight) {
+                where overlap(maybeLeft, maybeRight)
+                {
+                    unsafe assume disjoint(maybeLeft, maybeRight)
+                {
                     Touch(maybeLeft, maybeRight);
                 }
 
@@ -950,13 +1040,16 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
 
             unsafe fn void Run(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight)
-                where overlap(maybeLeft, maybeRight) {
-                assume disjoint(maybeLeft, maybeRight) {
+                where overlap(maybeLeft, maybeRight)
+                {
+                    assume disjoint(maybeLeft, maybeRight)
+                {
                     Touch(maybeLeft, maybeRight);
                 }
 
@@ -974,17 +1067,21 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            fn void Touch(borrow mut Box left, borrow mut Box right) {
+            fn void Touch(borrow mut Box left, borrow mut Box right)
+            {
                 return;
             }
 
             fn void Run(borrow mut Box maybeLeft, borrow mut Box maybeRight)
-                where overlap(maybeLeft, maybeRight) {
-                assume disjoint(maybeLeft, maybeRight) {
+                where overlap(maybeLeft, maybeRight)
+                {
+                    assume disjoint(maybeLeft, maybeRight)
+                {
                     Touch(maybeLeft, maybeRight);
                 }
 
@@ -1003,13 +1100,16 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
 
             unsafe fn void Run(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight)
-                where overlap(maybeLeft, maybeRight) {
-                unsafe {
+                where overlap(maybeLeft, maybeRight)
+                {
+                    unsafe
+                {
                     Touch(maybeLeft, maybeRight);
                 }
 
@@ -1028,17 +1128,21 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn rawmutptr<i32[min max]> Identity(rawmutptr<i32[min max]> ptr) {
+            unsafe fn rawmutptr<i32[min max]> Identity(rawmutptr<i32[min max]> ptr)
+            {
                 return ptr;
             }
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
 
             unsafe fn void Run(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight)
-                where overlap(maybeLeft, maybeRight) {
-                unsafe assume disjoint(Identity(maybeLeft), maybeRight) {
+                where overlap(maybeLeft, maybeRight)
+                {
+                    unsafe assume disjoint(Identity(maybeLeft), maybeRight)
+                {
                     Touch(Identity(maybeLeft), maybeRight);
                 }
 
@@ -1058,12 +1162,15 @@ public sealed class DiagnosticRegressionTests
             module Demo
 
             unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
-                where overlap(left, right) {
-                return;
+                where overlap(left, right)
+                {
+                    return;
             }
 
-            unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
-                unsafe assume disjoint(ptr, ptr) {
+            unsafe fn void Run(rawmutptr<i32[min max]> ptr)
+            {
+                unsafe assume disjoint(ptr, ptr)
+                {
                     Touch(ptr, ptr);
                 }
 
@@ -1082,7 +1189,8 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
 
@@ -1103,17 +1211,20 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            unsafe fn void Touch(borrow mut Box left, borrow mut Box right) {
+            unsafe fn void Touch(borrow mut Box left, borrow mut Box right)
+            {
                 left.Value = 1;
                 right.Value = 2;
                 return;
             }
 
-            unsafe fn void Run(borrow mut Box left, borrow mut Box right) {
+            unsafe fn void Run(borrow mut Box left, borrow mut Box right)
+            {
                 Touch(left, right);
                 return;
             }
@@ -1129,17 +1240,26 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            unsafe fn void Touch(out Box left, out Box right) {
-                left = new Box() { Value = 1 };
-                right = new Box() { Value = 2 };
+            unsafe fn void Touch(out Box left, out Box right)
+            {
+                left = new Box()
+                {
+                    Value = 1
+                };
+                right = new Box()
+                {
+                    Value = 2
+                };
                 return;
             }
 
-            unsafe fn void Run(out Box left, out Box right) {
+            unsafe fn void Run(out Box left, out Box right)
+            {
                 Touch(left, right);
                 return;
             }
@@ -1155,17 +1275,26 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            unsafe fn void Touch(out Box left, out Box right) {
-                left = new Box() { Value = 1 };
-                right = new Box() { Value = 2 };
+            unsafe fn void Touch(out Box left, out Box right)
+            {
+                left = new Box()
+                {
+                    Value = 1
+                };
+                right = new Box()
+                {
+                    Value = 2
+                };
                 return;
             }
 
-            unsafe fn void Run(out Box value) {
+            unsafe fn void Run(out Box value)
+            {
                 Touch(value, value);
                 return;
             }
@@ -1182,13 +1311,21 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(borrow i32[min max][] left, borrow i32[min max][] right) {
+            unsafe fn void Touch(borrow i32[min max][] left, borrow i32[min max][] right)
+            {
                 return;
             }
 
-            unsafe fn void Run() {
-                stack i32[min max][2] leftValues = { 1, 2 };
-                stack i32[min max][2] rightValues = { 3, 4 };
+            unsafe fn void Run()
+            {
+                stack i32[min max][2] leftValues =
+                {
+                    1, 2
+                };
+                stack i32[min max][2] rightValues =
+                {
+                    3, 4
+                };
                 stack i32[min max][] leftView = leftValues;
                 stack i32[min max][] rightView = rightValues;
                 Touch(leftView, rightView);
@@ -1206,12 +1343,17 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(borrow i32[min max][] left, borrow i32[min max][] right) {
+            unsafe fn void Touch(borrow i32[min max][] left, borrow i32[min max][] right)
+            {
                 return;
             }
 
-            unsafe fn void Run() {
-                stack i32[min max][2] values = { 1, 2 };
+            unsafe fn void Run()
+            {
+                stack i32[min max][2] values =
+                {
+                    1, 2
+                };
                 stack i32[min max][] view = values;
                 Touch(view, values);
                 return;
@@ -1229,11 +1371,13 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(ascii left, ascii right) {
+            unsafe fn void Touch(ascii left, ascii right)
+            {
                 return;
             }
 
-            unsafe fn void Run(ascii text) {
+            unsafe fn void Run(ascii text)
+            {
                 stack ascii left = text[0, 2];
                 stack ascii right = text[2, 2];
                 Touch(left, right);
@@ -1251,11 +1395,13 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(ascii left, ascii right) {
+            unsafe fn void Touch(ascii left, ascii right)
+            {
                 return;
             }
 
-            unsafe fn void Run(ascii text, u8[0 1] leftStart, u8[4 5] rightStart) {
+            unsafe fn void Run(ascii text, u8[0 1] leftStart, u8[4 5] rightStart)
+            {
                 stack ascii left = text[leftStart, 2];
                 stack ascii right = text[rightStart, 2];
                 Touch(left, right);
@@ -1273,11 +1419,13 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(ascii left, ascii right) {
+            unsafe fn void Touch(ascii left, ascii right)
+            {
                 return;
             }
 
-            unsafe fn void Run(ascii text) {
+            unsafe fn void Run(ascii text)
+            {
                 Touch(text[0, 3], text[2, 1]);
                 return;
             }
@@ -1294,11 +1442,13 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(ascii left, ascii right) {
+            unsafe fn void Touch(ascii left, ascii right)
+            {
                 return;
             }
 
-            unsafe fn void Run(ascii text, u8[0 2] leftStart, u8[4 5] rightStart) {
+            unsafe fn void Run(ascii text, u8[0 2] leftStart, u8[4 5] rightStart)
+            {
                 stack ascii left = text[leftStart, 3];
                 stack ascii right = text[rightStart, 1];
                 Touch(left, right);
@@ -1317,15 +1467,18 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            fn void Touch(borrow Box left, borrow Box right) {
+            fn void Touch(borrow Box left, borrow Box right)
+            {
                 return;
             }
 
-            fn void Run(borrow Box maybeLeft, borrow Box maybeRight) {
+            fn void Run(borrow Box maybeLeft, borrow Box maybeRight)
+            {
                 Touch(maybeLeft, maybeRight);
                 return;
             }
@@ -1341,17 +1494,20 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
 
-                fn void Touch(borrow mut Box self, borrow mut Box other) {
+                fn void Touch(borrow mut Box self, borrow mut Box other)
+                {
                     self.Value = 1;
                     other.Value = 2;
                     return;
                 }
             }
 
-            fn void Run(borrow mut Box left, borrow mut Box right) {
+            fn void Run(borrow mut Box left, borrow mut Box right)
+            {
                 left.Touch(right);
                 return;
             }
@@ -1367,15 +1523,18 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
 
-                fn void Touch(borrow Box self, borrow Box other) {
+                fn void Touch(borrow Box self, borrow Box other)
+                {
                     return;
                 }
             }
 
-            fn void Run(borrow Box maybeLeft, borrow Box maybeRight) {
+            fn void Run(borrow Box maybeLeft, borrow Box maybeRight)
+            {
                 maybeLeft.Touch(maybeRight);
                 return;
             }
@@ -1391,11 +1550,13 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
 
-            unsafe fn void Run() {
+            unsafe fn void Run()
+            {
                 stack mut i32[min max] left = 1;
                 stack mut i32[min max] right = 2;
                 Touch(&left, &right);
@@ -1413,16 +1574,19 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            struct Pair {
+            struct Pair
+            {
                 i32[min max] Left;
                 i32[min max] Right;
             }
 
-            unsafe fn void Touch(rawmutptr<Pair> whole, rawmutptr<i32[min max]> field) {
+            unsafe fn void Touch(rawmutptr<Pair> whole, rawmutptr<i32[min max]> field)
+            {
                 return;
             }
 
-            unsafe fn void Run(borrow mut Pair pair) {
+            unsafe fn void Run(borrow mut Pair pair)
+            {
                 Touch(&pair, &pair.Left);
                 return;
             }
@@ -1439,16 +1603,19 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            struct Pair {
+            struct Pair
+            {
                 i32[min max] Left;
                 i32[min max] Right;
             }
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
 
-            unsafe fn void Run(borrow mut Pair pair) {
+            unsafe fn void Run(borrow mut Pair pair)
+            {
                 Touch(&pair.Left, &pair.Right);
                 return;
             }
@@ -1464,12 +1631,17 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
 
-            unsafe fn void Run(u8[0 2] leftIndex, u8[0 2] rightIndex) {
-                stack mut i32[min max][3] values = { 1, 2, 3 };
+            unsafe fn void Run(u8[0 2] leftIndex, u8[0 2] rightIndex)
+            {
+                stack mut i32[min max][3] values =
+                {
+                    1, 2, 3
+                };
                 Touch(&values[leftIndex], &values[rightIndex]);
                 return;
             }
@@ -1486,12 +1658,17 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
 
-            unsafe fn void Run() {
-                stack mut i32[min max][3] values = { 1, 2, 3 };
+            unsafe fn void Run()
+            {
+                stack mut i32[min max][3] values =
+                {
+                    1, 2, 3
+                };
                 Touch(&values[0], &values[1]);
                 return;
             }
@@ -1507,12 +1684,17 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
 
-            unsafe fn void Run(u8[0 1] leftIndex, u8[2 3] rightIndex) {
-                stack mut i32[min max][4] values = { 1, 2, 3, 4 };
+            unsafe fn void Run(u8[0 1] leftIndex, u8[2 3] rightIndex)
+            {
+                stack mut i32[min max][4] values =
+                {
+                    1, 2, 3, 4
+                };
                 Touch(&values[leftIndex], &values[rightIndex]);
                 return;
             }
@@ -1528,12 +1710,17 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
 
-            unsafe fn void Run(u8[0 2] leftIndex, u8[2 3] rightIndex) {
-                stack mut i32[min max][4] values = { 1, 2, 3, 4 };
+            unsafe fn void Run(u8[0 2] leftIndex, u8[2 3] rightIndex)
+            {
+                stack mut i32[min max][4] values =
+                {
+                    1, 2, 3, 4
+                };
                 Touch(&values[leftIndex], &values[rightIndex]);
                 return;
             }
@@ -1550,13 +1737,19 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
 
-            unsafe fn void Run(u8[0 2] leftIndex, u8[0 2] rightIndex) {
-                stack mut i32[min max][3] values = { 1, 2, 3 };
-                if disjoint(&values[leftIndex], &values[rightIndex]) {
+            unsafe fn void Run(u8[0 2] leftIndex, u8[0 2] rightIndex)
+            {
+                stack mut i32[min max][3] values =
+                {
+                    1, 2, 3
+                };
+                if disjoint(&values[leftIndex], &values[rightIndex])
+                {
                     Touch(&values[leftIndex], &values[rightIndex]);
                 }
 
@@ -1574,14 +1767,17 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(ascii left, ascii right) {
+            unsafe fn void Touch(ascii left, ascii right)
+            {
                 return;
             }
 
-            unsafe fn void Run(ascii text, u8[0 3] leftStart, u8[0 3] rightStart) {
+            unsafe fn void Run(ascii text, u8[0 3] leftStart, u8[0 3] rightStart)
+            {
                 stack ascii left = text[leftStart, 2];
                 stack ascii right = text[rightStart, 2];
-                if disjoint(left, right) {
+                if disjoint(left, right)
+                {
                     Touch(left, right);
                 }
 
@@ -1601,16 +1797,20 @@ public sealed class DiagnosticRegressionTests
 
             unsafe fn void Touch(
                 borrow mut i32[min max][] left,
-                borrow i32[min max][] right) {
-                return;
+                borrow i32[min max][] right)
+                {
+                    return;
             }
 
             unsafe fn void Run(
                 rawmutptr<i32[min max]>[count] left,
                 rawptr<i32[min max]>[count] right,
-                u8[1 10] count) {
-                if disjoint(left[0, count], right[0, count]) {
-                    unsafe {
+                u8[1 10] count)
+                {
+                    if disjoint(left[0, count], right[0, count])
+                {
+                    unsafe
+                    {
                         stack mut mut i32[min max][] leftView = slice(left, count);
                         stack i32[min max][] rightView = slice(right, count);
                         Touch(leftView, rightView);
@@ -1631,21 +1831,35 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            struct Cell {
+            struct Cell
+            {
                 i32[min max] Value;
             }
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
 
-            unsafe fn void Run(u8[0 2] leftIndex, u8[0 2] rightIndex) {
-                stack mut Cell[3] cells = {
-                    new Cell() { Value = 1 },
-                    new Cell() { Value = 2 },
-                    new Cell() { Value = 3 },
+            unsafe fn void Run(u8[0 2] leftIndex, u8[0 2] rightIndex)
+            {
+                stack mut Cell[3] cells =
+                {
+                    new Cell()
+                    {
+                        Value = 1
+                    },
+                    new Cell()
+                    {
+                        Value = 2
+                    },
+                    new Cell()
+                    {
+                        Value = 3
+                    },
                 };
-                if disjoint(&cells[leftIndex], &cells[rightIndex]) {
+                if disjoint(&cells[leftIndex], &cells[rightIndex])
+                {
                     Touch(&cells[leftIndex].Value, &cells[rightIndex].Value);
                 }
 
@@ -1663,15 +1877,23 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+            unsafe fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+            {
                 return;
             }
 
-            unsafe fn void Run(u8[0 2] leftIndex, u8[0 2] rightIndex) {
-                stack mut i32[min max][3] values = { 1, 2, 3 };
-                if disjoint(&values[leftIndex], &values[rightIndex]) {
+            unsafe fn void Run(u8[0 2] leftIndex, u8[0 2] rightIndex)
+            {
+                stack mut i32[min max][3] values =
+                {
+                    1, 2, 3
+                };
+                if disjoint(&values[leftIndex], &values[rightIndex])
+                {
                     return;
-                } else {
+                }
+                else
+                {
                     Touch(&values[leftIndex], &values[rightIndex]);
                 }
 
@@ -1690,12 +1912,15 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn u8[0 10] WhileRun() {
+            unsafe fn u8[0 10] WhileRun()
+            {
                 stack mut u8[0 10] value = 0;
-                while willexit independent (value < 4) {
+                while willexit independent (value < 4)
+                {
                     const bool shouldStep = true;
                     stack mut u8[0 10] next = value;
-                    if (shouldStep) {
+                    if (shouldStep)
+                    {
                         next += 1;
                     }
 
@@ -1705,9 +1930,11 @@ public sealed class DiagnosticRegressionTests
                 return value;
             }
 
-            unsafe fn u8[0 10] ForRun() {
+            unsafe fn u8[0 10] ForRun()
+            {
                 stack mut u8[0 10] value = 0;
-                for willexit independent (stack mut u8[0 10] index = 0; index < 4; index += 1) {
+                for willexit independent (stack mut u8[0 10] index = 0; index < 4; index += 1)
+                {
                     register u8[0 10] copy = index;
                     value += copy;
                 }
@@ -1730,8 +1957,10 @@ public sealed class DiagnosticRegressionTests
                 borrow i32[min max][] left,
                 borrow i32[min max][] right,
                 borrow mut i32[min max][] output,
-                u8[0 10] count) {
-                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
+                u8[0 10] count)
+                {
+                    for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1)
+                {
                     output[index] = left[index] + right[index];
                 }
 
@@ -1753,11 +1982,16 @@ public sealed class DiagnosticRegressionTests
                 borrow i32[min max][] left,
                 borrow i32[min max][] right,
                 borrow mut i32[min max][] output,
-                u8[0 10] count) {
-                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
-                    if (left[index] > 0) {
+                u8[0 10] count)
+                {
+                    for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1)
+                {
+                    if (left[index] > 0)
+                    {
                         output[index] = left[index];
-                    } else {
+                    }
+                    else
+                    {
                         output[index] = right[index];
                     }
                 }
@@ -1776,15 +2010,18 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            struct Cell {
+            struct Cell
+            {
                 i32[min max] Value;
             }
 
             unsafe fn void Copy(
                 borrow Cell[] input,
                 borrow mut Cell[] output,
-                u8[0 10] count) {
-                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
+                u8[0 10] count)
+                {
+                    for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1)
+                {
                     output[index].Value = input[index].Value;
                 }
 
@@ -1806,8 +2043,10 @@ public sealed class DiagnosticRegressionTests
                 rawptr<i32[min max]>[count] input,
                 rawmutptr<i32[min max]>[count] output,
                 u8[0 10] count)
-                where disjoint(input[0, count], output[0, count]) {
-                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
+                where disjoint(input[0, count], output[0, count])
+                {
+                    for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1)
+                {
                     *(&output[index]) = *(&input[index]);
                 }
 
@@ -1829,11 +2068,13 @@ public sealed class DiagnosticRegressionTests
                 rawptr<i32[min max]>[8] source,
                 rawmutptr<i32[min max]>[8] destination)
                 where overlap(source, destination)
-                where disjoint(source[4, 4], destination[0, 4]) {
-                return;
+                where disjoint(source[4, 4], destination[0, 4])
+                {
+                    return;
             }
 
-            unsafe fn void Run(rawmutptr<i32[min max]>[8] buffer) {
+            unsafe fn void Run(rawmutptr<i32[min max]>[8] buffer)
+            {
                 Window(buffer, buffer);
                 return;
             }
@@ -1853,11 +2094,13 @@ public sealed class DiagnosticRegressionTests
                 rawptr<i32[min max]>[8] source,
                 rawmutptr<i32[min max]>[8] destination)
                 where overlap(source, destination)
-                where disjoint(source[2, 4], destination[0, 4]) {
-                return;
+                where disjoint(source[2, 4], destination[0, 4])
+                {
+                    return;
             }
 
-            unsafe fn void Run(rawmutptr<i32[min max]>[8] buffer) {
+            unsafe fn void Run(rawmutptr<i32[min max]>[8] buffer)
+            {
                 Window(buffer, buffer);
                 return;
             }
@@ -1877,9 +2120,12 @@ public sealed class DiagnosticRegressionTests
             unsafe fn void Copy(
                 rawptr<i32[min max]>[count] input,
                 rawmutptr<i32[min max]>[count] output,
-                u8[0 10] count) {
-                if disjoint(input[0, count], output[0, count]) {
-                    for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
+                u8[0 10] count)
+                {
+                    if disjoint(input[0, count], output[0, count])
+                {
+                    for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1)
+                    {
                         *(&output[index]) = *(&input[index]);
                     }
                 }
@@ -1903,8 +2149,10 @@ public sealed class DiagnosticRegressionTests
                 rawmutptr<i32[min max]>[count] output,
                 u8[0 10] count,
                 u8[0 20] limit)
-                where disjoint(input[0, count], output[0, count]) {
-                for willexit independent (stack mut u8[0 20] index = 0; index < limit; index += 1) {
+                where disjoint(input[0, count], output[0, count])
+                {
+                    for willexit independent (stack mut u8[0 20] index = 0; index < limit; index += 1)
+                {
                     *(&output[index]) = *(&input[index]);
                 }
 
@@ -1923,11 +2171,13 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Read(rawptr<i32[min max]>[4] input) {
+            unsafe fn void Read(rawptr<i32[min max]>[4] input)
+            {
                 return;
             }
 
-            unsafe fn void Run() {
+            unsafe fn void Run()
+            {
                 Read(null);
                 return;
             }
@@ -1944,11 +2194,13 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Read(rawptr<i32[min max]>[0] input) {
+            unsafe fn void Read(rawptr<i32[min max]>[0] input)
+            {
                 return;
             }
 
-            unsafe fn void Run() {
+            unsafe fn void Run()
+            {
                 Read(null);
                 return;
             }
@@ -1964,12 +2216,17 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Read(rawptr<i32[min max]>[4] input) {
+            unsafe fn void Read(rawptr<i32[min max]>[4] input)
+            {
                 return;
             }
 
-            unsafe fn void Run() {
-                stack mut i32[min max][5] values = { 1, 2, 3, 4, 5 };
+            unsafe fn void Run()
+            {
+                stack mut i32[min max][5] values =
+                {
+                    1, 2, 3, 4, 5
+                };
                 Read(&values[1]);
                 return;
             }
@@ -1985,11 +2242,13 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Read(rawptr<i32[min max]>[count] input, u8[0 10] count) {
+            unsafe fn void Read(rawptr<i32[min max]>[count] input, u8[0 10] count)
+            {
                 return;
             }
 
-            unsafe fn void Forward(rawptr<i32[min max]>[count] input, u8[0 10] count) {
+            unsafe fn void Forward(rawptr<i32[min max]>[count] input, u8[0 10] count)
+            {
                 Read(input, count);
                 return;
             }
@@ -2005,11 +2264,13 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Read(rawptr<i32[min max]>[count] input, u8[0 10] count) {
+            unsafe fn void Read(rawptr<i32[min max]>[count] input, u8[0 10] count)
+            {
                 return;
             }
 
-            unsafe fn void Forward(rawptr<i32[min max]>[count] input, u8[0 10] count) {
+            unsafe fn void Forward(rawptr<i32[min max]>[count] input, u8[0 10] count)
+            {
                 stack rawptr<i32[min max]> localPointer = input;
                 Read(localPointer, count);
                 return;
@@ -2026,11 +2287,13 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Read(rawptr<i32[min max]>[4] input) {
+            unsafe fn void Read(rawptr<i32[min max]>[4] input)
+            {
                 return;
             }
 
-            unsafe fn void Forward(rawptr<i32[min max]>[count] input, u8[6 10] count) {
+            unsafe fn void Forward(rawptr<i32[min max]>[count] input, u8[6 10] count)
+            {
                 Read(&input[2]);
                 return;
             }
@@ -2046,12 +2309,15 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Read(rawptr<i32[min max]>[4] input) {
+            unsafe fn void Read(rawptr<i32[min max]>[4] input)
+            {
                 return;
             }
 
-            unsafe fn void Forward(rawptr<i32[min max]>[count] input, u8[5 10] count) {
-                unsafe {
+            unsafe fn void Forward(rawptr<i32[min max]>[count] input, u8[5 10] count)
+            {
+                unsafe
+                {
                     stack i32[min max][] view = slice(input, count);
                     Read(&view[1]);
                 }
@@ -2070,12 +2336,17 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Read(rawptr<i32[min max]>[4] input) {
+            unsafe fn void Read(rawptr<i32[min max]>[4] input)
+            {
                 return;
             }
 
-            unsafe fn void Run() {
-                stack mut i32[min max][5] values = { 1, 2, 3, 4, 5 };
+            unsafe fn void Run()
+            {
+                stack mut i32[min max][5] values =
+                {
+                    1, 2, 3, 4, 5
+                };
                 Read(&values[3]);
                 return;
             }
@@ -2092,7 +2363,8 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Run(rawmutptr<i32[min max]>[count] pointer, u8[0 10] count) {
+            unsafe fn void Run(rawmutptr<i32[min max]>[count] pointer, u8[0 10] count)
+            {
                 stack mut mut i32[min max][] view = slice(pointer, count);
                 view[0] = 1;
                 return;
@@ -2109,8 +2381,10 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn i32[min max] Read(rawptr<i32[min max]>[count] pointer, u8[0 10] count) {
-                unsafe {
+            unsafe fn i32[min max] Read(rawptr<i32[min max]>[count] pointer, u8[0 10] count)
+            {
+                unsafe
+                {
                     return slice(pointer, count)[0];
                 }
 
@@ -2128,7 +2402,8 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Run(rawptr<i32[min max]>[count] pointer, i32[-1 10] count) {
+            unsafe fn void Run(rawptr<i32[min max]>[count] pointer, i32[-1 10] count)
+            {
                 return;
             }
             """);
@@ -2148,8 +2423,10 @@ public sealed class DiagnosticRegressionTests
                 rawptr<i32[min max]>[count] left,
                 rawptr<i32[min max]>[count] right,
                 i32[-1 10] start,
-                u8[0 10] count) {
-                if disjoint(left[start, count], right[0, count]) {
+                u8[0 10] count)
+                {
+                    if disjoint(left[start, count], right[0, count])
+                {
                     return true;
                 }
 
@@ -2168,8 +2445,10 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Run(rawptr<i32[min max]> pointer, i32[-1 10] count) {
-                unsafe {
+            unsafe fn void Run(rawptr<i32[min max]> pointer, i32[-1 10] count)
+            {
+                unsafe
+                {
                     stack i32[min max][] view = slice(pointer, count);
                 }
 
@@ -2188,8 +2467,10 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Run() {
-                unsafe {
+            unsafe fn void Run()
+            {
+                unsafe
+                {
                     stack i32[min max][] view = slice((rawptr<i32[min max]>)null, 1);
                 }
 
@@ -2208,8 +2489,10 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Run() {
-                unsafe {
+            unsafe fn void Run()
+            {
+                unsafe
+                {
                     stack i32[min max][] view = slice((rawptr<i32[min max]>)null, 0);
                 }
 
@@ -2227,12 +2510,15 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn rawptr<i32[min max]> Identity(rawptr<i32[min max]> pointer) {
+            unsafe fn rawptr<i32[min max]> Identity(rawptr<i32[min max]> pointer)
+            {
                 return pointer;
             }
 
-            unsafe fn void Run(rawptr<i32[min max]> pointer, u8[0 10] count) {
-                unsafe {
+            unsafe fn void Run(rawptr<i32[min max]> pointer, u8[0 10] count)
+            {
+                unsafe
+                {
                     stack i32[min max][] view = slice(Identity(pointer), count);
                 }
 
@@ -2251,8 +2537,10 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Run(rawptr<i32[min max]>[count] pointer, u8[0 10] count) {
-                unsafe {
+            unsafe fn void Run(rawptr<i32[min max]>[count] pointer, u8[0 10] count)
+            {
+                unsafe
+                {
                     stack mut mut i32[min max][] view = slice(pointer, count);
                 }
 
@@ -2271,15 +2559,18 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe finite law i32[min max] Scale(i32[min max] value) {
+            unsafe finite law i32[min max] Scale(i32[min max] value)
+            {
                 return value * 2;
             }
 
             unsafe fn void ScaleAll(
                 borrow i32[min max][] input,
                 borrow mut i32[min max][] output,
-                u8[0 10] count) {
-                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
+                u8[0 10] count)
+                {
+                    for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1)
+                {
                     output[index] = Scale(input[index]);
                 }
 
@@ -2301,8 +2592,10 @@ public sealed class DiagnosticRegressionTests
                 borrow i32[min max][] input,
                 borrow mut i32[min max][] output,
                 u8[0 10] count)
-                where overlap(input, output) {
-                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
+                where overlap(input, output)
+                {
+                    for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1)
+                {
                     output[index] = input[index];
                 }
 
@@ -2325,8 +2618,10 @@ public sealed class DiagnosticRegressionTests
                 borrow i32[min max][] input,
                 borrow mut i32[min max][] output,
                 u8[0 10] count,
-                u8[0 10] other) {
-                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
+                u8[0 10] other)
+                {
+                    for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1)
+                {
                     output[index] = input[other];
                 }
 
@@ -2348,8 +2643,10 @@ public sealed class DiagnosticRegressionTests
             unsafe fn void Copy(
                 borrow i32[min max][] input,
                 borrow mut i32[min max][] output,
-                u8[0 10] count) {
-                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
+                u8[0 10] count)
+                {
+                    for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1)
+                {
                     index += 1;
                     output[index] = input[index];
                 }
@@ -2369,15 +2666,18 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn i32[min max] Scale(i32[min max] value) {
+            unsafe fn i32[min max] Scale(i32[min max] value)
+            {
                 return value * 2;
             }
 
             unsafe fn void ScaleAll(
                 borrow i32[min max][] input,
                 borrow mut i32[min max][] output,
-                u8[0 10] count) {
-                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
+                u8[0 10] count)
+                {
+                    for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1)
+                {
                     output[index] = Scale(input[index]);
                 }
 
@@ -2396,9 +2696,14 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Run() {
-                while willexit independent (false) {
-                    stack mut i32[min max][2] values = { 1, 2 };
+            unsafe fn void Run()
+            {
+                while willexit independent (false)
+                {
+                    stack mut i32[min max][2] values =
+                    {
+                        1, 2
+                    };
                 }
 
                 return;
@@ -2419,9 +2724,14 @@ public sealed class DiagnosticRegressionTests
             unsafe fn void Copy(
                 borrow i32[min max][] input,
                 borrow mut i32[min max][] output,
-                u8[0 10] count) {
-                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
-                    stack mut i32[min max][2] values = { input[index], 0 };
+                u8[0 10] count)
+                {
+                    for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1)
+                {
+                    stack mut i32[min max][2] values =
+                    {
+                        input[index], 0
+                    };
                     output[index] = values[0];
                 }
 
@@ -2443,9 +2753,12 @@ public sealed class DiagnosticRegressionTests
             unsafe fn void Copy(
                 borrow i32[min max][] input,
                 borrow mut i32[min max][] output,
-                u8[0 10] count) {
-                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
-                    while willexit (false) {
+                u8[0 10] count)
+                {
+                    for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1)
+                {
+                    while willexit (false)
+                    {
                     }
 
                     output[index] = input[index];
@@ -2469,9 +2782,12 @@ public sealed class DiagnosticRegressionTests
             unsafe fn void Copy(
                 borrow i32[min max][] input,
                 borrow mut i32[min max][] output,
-                u8[0 10] count) {
-                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
-                    if (input[index] == 0) {
+                u8[0 10] count)
+                {
+                    for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1)
+                {
+                    if (input[index] == 0)
+                    {
                         return;
                     }
 
@@ -2493,8 +2809,10 @@ public sealed class DiagnosticRegressionTests
             """
             module Demo
 
-            unsafe fn void Run(rawmutptr<i32[min max]> ptr) {
-                while willexit independent (false) {
+            unsafe fn void Run(rawmutptr<i32[min max]> ptr)
+            {
+                while willexit independent (false)
+                {
                     *ptr = 1;
                 }
 

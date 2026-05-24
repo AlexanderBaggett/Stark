@@ -3,7 +3,7 @@ title = "Appendix A: Keywords and Reserved Words"
 weight = 370
 book_part = "Appendices"
 book_status = "draft"
-prev = "/book/37-project-performance-case-study/"
+prev = "/book/40-project-performance-case-study/"
 next = "/book/appendix-b-operators/"
 +++
 
@@ -18,8 +18,9 @@ The sample intentionally uses common keywords from several groups: `module`,
 `case`, `default`, `export`, `ffi`, `stack`, `while`, `willexit`, and `return`.
 
 Not every reserved word should appear in ordinary code. Some words are for
-low-level boundaries, future-facing language surface, or specialized proof
-contexts. Prefer the smallest vocabulary that honestly describes the program.
+low-level boundaries, future-facing language surface, or carefully reviewed
+unsafe contexts. Prefer the smallest vocabulary that honestly describes the
+program.
 
 ## Modules And Visibility
 

@@ -1,12 +1,15 @@
 module Book.GenericOption
 
-enum Option<T> {
+enum Option<T>
+{
     None,
     Some(T),
 }
 
-finite law i32[min max] ValueOrZero(Option<i32[min max]> option) {
-    switch (option) {
+finite law i32[min max] ValueOrZero(Option<i32[min max]> option)
+{
+    switch (option)
+    {
         case Option<i32[min max]>.None:
             return 0;
         case Option<i32[min max]>.Some(var value):
@@ -14,8 +17,10 @@ finite law i32[min max] ValueOrZero(Option<i32[min max]> option) {
     }
 }
 
-finite law bool BoolOrFalse(Option<bool> option) {
-    switch (option) {
+finite law bool BoolOrFalse(Option<bool> option)
+{
+    switch (option)
+    {
         case Option<bool>.None:
             return false;
         case Option<bool>.Some(var value):
@@ -23,15 +28,18 @@ finite law bool BoolOrFalse(Option<bool> option) {
     }
 }
 
-export fn i32[min max] main() {
+export fn i32[min max] main()
+{
     stack Option<i32[min max]> number = Option<i32[min max]>.Some(7);
     stack Option<bool> flag = Option<bool>.Some(true);
 
-    if (ValueOrZero(number) != 7) {
+    if (ValueOrZero(number) != 7)
+    {
         return 1;
     }
 
-    if (!BoolOrFalse(flag)) {
+    if (!BoolOrFalse(flag))
+    {
         return 2;
     }
 

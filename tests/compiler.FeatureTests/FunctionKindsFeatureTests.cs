@@ -9,7 +9,8 @@ public sealed class FunctionKindsFeatureTests : FeatureLlvmTestBase
             """
             module Demo
 
-            law i32[min max] Run() {
+            law i32[min max] Run()
+            {
                 return 1;
             }
             """);

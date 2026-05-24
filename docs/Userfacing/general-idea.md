@@ -1,16 +1,23 @@
 # Stark Lang
-This langauge is intended to be faster than C or Rust.
-This language designed to be brutally fast by specifying all of the LLVM optimizations as built-in language features.
-In many cases this language will restrict most things or require specificity about most things in order to achieve bleeding edge performance.
+This language is intended to compete with C and Rust on performance.
+Stark does that by making ownership, storage, mutability, numeric ranges, and
+boundaries explicit in source.
+In many cases the language is deliberately restrictive so fast code stays easy
+to recognize and review.
 
-This language will be more restrictive than Rust and Haskell and possibly harder to understand. And more restrictive then C99 with restricted mode
-This language will envitably be extrememly verbose in order to convey as much info as possible to the LLVM compiler backend.
+This language will be more restrictive than Rust and Haskell and possibly harder to understand. And more restrictive than C99 with restricted mode
+This language will often be verbose because source code is expected to name the
+choices that affect performance and safety.
 
 Speed, performance and memory usage are priorities. Ease of use, is very low on the list.
 
-Since this langauge will inevitably hard to use, we would like to provide SOME syntactic sugar in scenarios where it saves the developer time, without adding hidden bloat. 
+Since this language will inevitably be harder to use than more permissive
+languages, Stark should provide syntactic sugar where it saves developer time
+without adding hidden work.
 
-And it is designed to be as fast and as optimized as possible and needs to beat C performance on most benchmarks either through restrictions or intense specificity that correlates 1 to 1 with LLVM Compiler options, or by the fact that most unperformant IR can't be generated because of the restrictiveness
+The design goal is clear source code that maps to predictable work: no hidden
+allocation, no hidden nullability, no hidden exceptions, and no hidden dynamic
+call paths.
 
 
 ## Functions
@@ -96,8 +103,8 @@ And it is designed to be as fast and as optimized as possible and needs to beat 
 - no identity
 - cannot be heap-allocated
 - cannot capture environment
-- static dispatch by default
-- specializable when passed as a generic parameter
+- ordinary calls by default
+- usable through generic parameters
 - purity / no side effects / 
 - readonly guarantees
 - Use C# class syntax

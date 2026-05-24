@@ -11,15 +11,18 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right) {
+            unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right)
+            {
                 return left + right;
             }
 
-            unsafe fn void Touch(borrow mut Box box) {
+            unsafe fn void Touch(borrow mut Box box)
+            {
                 box.Value = 1;
                 return;
             }
@@ -47,10 +50,12 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            unsafe fn i32[min max] Count() {
+            unsafe fn i32[min max] Count()
+            {
                 stack mut i32[min max] value = 0;
 
-                while willexit (value < 3) {
+                while willexit (value < 3)
+                {
                     value += 1;
                 }
 
@@ -75,7 +80,8 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            unsafe law i32[min max] Bad(fnptr<fn i32[min max]()> op) {
+            unsafe law i32[min max] Bad(fnptr<fn i32[min max]()> op)
+            {
                 return op();
             }
             """);
@@ -94,7 +100,8 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            unsafe law i32[min max] Bad(borrow closure<fn i32[min max]()> op) {
+            unsafe law i32[min max] Bad(borrow closure<fn i32[min max]()> op)
+            {
                 return op();
             }
             """,
@@ -114,15 +121,18 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            unsafe finite i32[min max] UseFinite(fnptr<finite i32[min max]()> op) {
+            unsafe finite i32[min max] UseFinite(fnptr<finite i32[min max]()> op)
+            {
                 return op();
             }
 
-            unsafe law i32[min max] UseLaw(fnptr<law i32[min max]()> op) {
+            unsafe law i32[min max] UseLaw(fnptr<law i32[min max]()> op)
+            {
                 return op();
             }
 
-            unsafe finite law i32[min max] UseStrict(fnptr<finite law i32[min max]()> op) {
+            unsafe finite law i32[min max] UseStrict(fnptr<finite law i32[min max]()> op)
+            {
                 return op();
             }
             """);
@@ -143,15 +153,18 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            unsafe finite i32[min max] UseFinite(borrow closure<finite i32[min max]()> op) {
+            unsafe finite i32[min max] UseFinite(borrow closure<finite i32[min max]()> op)
+            {
                 return op();
             }
 
-            unsafe law i32[min max] UseLaw(borrow closure<law i32[min max]()> op) {
+            unsafe law i32[min max] UseLaw(borrow closure<law i32[min max]()> op)
+            {
                 return op();
             }
 
-            unsafe finite law i32[min max] UseStrict(borrow closure<finite law i32[min max]()> op) {
+            unsafe finite law i32[min max] UseStrict(borrow closure<finite law i32[min max]()> op)
+            {
                 return op();
             }
             """,
@@ -173,11 +186,13 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            unsafe fn i32[min max] Pure() {
+            unsafe fn i32[min max] Pure()
+            {
                 return 1;
             }
 
-            unsafe fn i32[min max] Run() {
+            unsafe fn i32[min max] Run()
+            {
                 stack fnptr<law i32[min max]()> op = () => Pure();
                 return op();
             }
@@ -201,11 +216,13 @@ public sealed class FunctionSemanticsTests
 
             static i32[min max] Counter = 1;
 
-            unsafe fn i32[min max] Impure() {
+            unsafe fn i32[min max] Impure()
+            {
                 return Counter;
             }
 
-            unsafe fn void Run() {
+            unsafe fn void Run()
+            {
                 stack fnptr<law i32[min max]()> op = () => Impure();
                 return;
             }
@@ -226,11 +243,13 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            unsafe fn retborrow Box Echo(retborrow Box value) {
+            unsafe fn retborrow Box Echo(retborrow Box value)
+            {
                 return value;
             }
             """);
@@ -259,12 +278,14 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            struct Pair {
+            struct Pair
+            {
                 i8[min max] Tag;
                 i32[min max] Value;
             }
 
-            unsafe fn void Inspect(borrow Pair pair) {
+            unsafe fn void Inspect(borrow Pair pair)
+            {
                 return;
             }
             """);
@@ -287,17 +308,20 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            unsafe fn void TouchDefault(borrow mut Box left, borrow mut Box right) {
+            unsafe fn void TouchDefault(borrow mut Box left, borrow mut Box right)
+            {
                 left.Value = 1;
                 right.Value = 2;
                 return;
             }
 
-            unsafe fn void TouchSecondDefault(borrow mut Box left, borrow mut Box right) {
+            unsafe fn void TouchSecondDefault(borrow mut Box left, borrow mut Box right)
+            {
                 left.Value = 1;
                 right.Value = 2;
                 return;
@@ -324,23 +348,27 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            unsafe fn void TouchDefault(borrow mut Box left, borrow mut Box right) {
+            unsafe fn void TouchDefault(borrow mut Box left, borrow mut Box right)
+            {
                 left.Value = 1;
                 right.Value = 2;
                 return;
             }
 
-            unsafe fn void TouchOverlap(borrow mut Box left, borrow mut Box right) where overlap(left, right) {
+            unsafe fn void TouchOverlap(borrow mut Box left, borrow mut Box right) where overlap(left, right)
+            {
                 left.Value = 1;
                 right.Value = 2;
                 return;
             }
 
-            unsafe fn void TouchSame(borrow mut Box left, borrow mut Box right) where same(left, right) {
+            unsafe fn void TouchSame(borrow mut Box left, borrow mut Box right) where same(left, right)
+            {
                 left.Value = 1;
                 right.Value = 2;
                 return;
@@ -371,7 +399,8 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            unsafe fn void Inspect(const rawmutptr<i32[min max]> ptr) {
+            unsafe fn void Inspect(const rawmutptr<i32[min max]> ptr)
+            {
                 return;
             }
             """);
@@ -392,16 +421,19 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            unsafe fn void Touch(borrow mut Box box) {
+            unsafe fn void Touch(borrow mut Box box)
+            {
                 box.Value = 1;
                 return;
             }
 
-            unsafe fn void Outer(borrow mut Box box) {
+            unsafe fn void Outer(borrow mut Box box)
+            {
                 Touch(box);
                 return;
             }
@@ -432,17 +464,20 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
             static mut i32[min max] Counter = 0;
 
-            unsafe fn i32[min max] ReadGlobal() {
+            unsafe fn i32[min max] ReadGlobal()
+            {
                 return Counter;
             }
 
-            unsafe fn void TouchArg(borrow mut Box box) {
+            unsafe fn void TouchArg(borrow mut Box box)
+            {
                 box.Value = 1;
                 return;
             }
@@ -472,11 +507,13 @@ public sealed class FunctionSemanticsTests
             """
             module System.Memory
 
-            public struct Allocator {
+            public struct Allocator
+            {
                 u8[0 127] Kind;
             }
 
-            internal struct Allocation {
+            internal struct Allocation
+            {
                 rawmutptr<i8[min max]> Pointer;
                 u64[0 2 ** 63 - 1] ByteLength;
                 u64[1 2 ** 63 - 1] Alignment;
@@ -508,12 +545,15 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            unsafe fn bool Reserve(mut borrow dynamic u32[0 2 ** 31 - 1] values) {
+            unsafe fn bool Reserve(mut borrow dynamic u32[0 2 ** 31 - 1] values)
+            {
                 return values.TryReserve(8);
             }
 
-            unsafe fn bool Append(mut borrow dynamic u32[0 2 ** 31 - 1] values) {
-                if (!values.TryReserve(1)) {
+            unsafe fn bool Append(mut borrow dynamic u32[0 2 ** 31 - 1] values)
+            {
+                if (!values.TryReserve(1))
+                {
                     return false;
                 }
 
@@ -546,11 +586,13 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right) {
+            unsafe fn i32[min max] Add(i32[min max] left, i32[min max] right)
+            {
                 return left + right;
             }
 
-            unsafe law i32[min max] Use() {
+            unsafe law i32[min max] Use()
+            {
                 return Add(1, 2);
             }
             """);
@@ -565,11 +607,13 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            unsafe fn i32[min max] Step(i32[min max] value) {
+            unsafe fn i32[min max] Step(i32[min max] value)
+            {
                 return value + 1;
             }
 
-            unsafe finite i32[min max] Use(i32[min max] value) {
+            unsafe finite i32[min max] Use(i32[min max] value)
+            {
                 return Step(value);
             }
             """);
@@ -586,7 +630,8 @@ public sealed class FunctionSemanticsTests
             import System.Text
             module Demo
 
-            unsafe finite law System.Memory.MemoryResult<System.Text.OwnedAscii> Bad(System.Memory.MemoryResult<System.Text.OwnedAscii> result) {
+            unsafe finite law System.Memory.MemoryResult<System.Text.OwnedAscii> Bad(System.Memory.MemoryResult<System.Text.OwnedAscii> result)
+            {
                 return "Score: " + result;
             }
             """,
@@ -598,11 +643,13 @@ public sealed class FunctionSemanticsTests
                         """
                         module System.Memory
 
-                        public enum MemoryError {
+                        public enum MemoryError
+                        {
                             OutOfMemory,
                         }
 
-                        public enum MemoryResult<T> {
+                        public enum MemoryResult<T>
+                        {
                             Ok(T),
                             Err(MemoryError),
                         }
@@ -615,7 +662,8 @@ public sealed class FunctionSemanticsTests
                         import System.Memory
                         module System.Text
 
-                        public struct OwnedAscii {
+                        public struct OwnedAscii
+                        {
                             ascii Text;
                         }
 
@@ -637,12 +685,14 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            unsafe law void Touch(mut i32[min max][] view) {
+            unsafe law void Touch(mut i32[min max][] view)
+            {
                 view[0] = 1;
                 return;
             }
 
-            unsafe law void Outer(mut i32[min max][] view) {
+            unsafe law void Outer(mut i32[min max][] view)
+            {
                 Touch(view);
                 return;
             }
@@ -660,17 +710,21 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            struct Allocator {
-                static unsafe finite law Allocator Default() {
+            struct Allocator
+            {
+                static unsafe finite law Allocator Default()
+                {
                     return new();
                 }
 
-                unsafe finite law bool IsDefault(borrow Allocator self) {
+                unsafe finite law bool IsDefault(borrow Allocator self)
+                {
                     return true;
                 }
             }
 
-            unsafe fn Allocator UseDefault() {
+            unsafe fn Allocator UseDefault()
+            {
                 return Allocator.Default();
             }
             """);
@@ -694,15 +748,18 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
 
-                unsafe finite law i32[min max] Read(borrow Box self) {
+                unsafe finite law i32[min max] Read(borrow Box self)
+                {
                     return self.Value;
                 }
             }
 
-            unsafe fn i32[min max] Read(Box box) {
+            unsafe fn i32[min max] Read(Box box)
+            {
                 return Box.Read(box);
             }
             """);
@@ -718,13 +775,16 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            struct Utility {
-                static unsafe finite law i32[min max] Value() {
+            struct Utility
+            {
+                static unsafe finite law i32[min max] Value()
+                {
                     return 1;
                 }
             }
 
-            unsafe fn i32[min max] Read(Utility utility) {
+            unsafe fn i32[min max] Read(Utility utility)
+            {
                 return utility.Value();
             }
             """);
@@ -740,7 +800,8 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            static unsafe fn void Bad() {
+            static unsafe fn void Bad()
+            {
                 return;
             }
             """);
@@ -758,16 +819,19 @@ public sealed class FunctionSemanticsTests
 
             static mut i32[min max] Counter = 0;
 
-            unsafe law i32[min max] ReadGlobal() {
+            unsafe law i32[min max] ReadGlobal()
+            {
                 return Counter;
             }
 
-            unsafe law void Allocate() {
+            unsafe law void Allocate()
+            {
                 heap i32[min max] value = 0;
                 return;
             }
 
-            unsafe law void WriteGlobal() {
+            unsafe law void WriteGlobal()
+            {
                 Counter = 1;
                 return;
             }
@@ -788,13 +852,16 @@ public sealed class FunctionSemanticsTests
 
             static mut i32[min max] Counter = 0;
 
-            struct Resource {
-                drop {
+            struct Resource
+            {
+                drop
+                {
                     Counter = Counter + 1;
                 }
             }
 
-            unsafe law void Bad() {
+            unsafe law void Bad()
+            {
                 stack Resource resource = new Resource();
                 return;
             }
@@ -817,18 +884,22 @@ public sealed class FunctionSemanticsTests
 
             static mut i32[min max] Counter = 0;
 
-            unsafe fn void Bump() {
+            unsafe fn void Bump()
+            {
                 Counter = Counter + 1;
                 return;
             }
 
-            struct Resource {
-                drop {
+            struct Resource
+            {
+                drop
+                {
                     Bump();
                 }
             }
 
-            unsafe law void Bad() {
+            unsafe law void Bad()
+            {
                 stack Resource resource = new Resource();
                 return;
             }
@@ -849,16 +920,22 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            struct Resource {
+            struct Resource
+            {
                 i32[min max] Value;
 
-                mut drop {
+                mut drop
+                {
                     self.Value = 0;
                 }
             }
 
-            unsafe law void Good() {
-                stack Resource resource = new Resource() { Value = 1 };
+            unsafe law void Good()
+            {
+                stack Resource resource = new Resource()
+                {
+                    Value = 1
+                };
                 return;
             }
             """);
@@ -873,16 +950,20 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            export struct Api {
-                unsafe fn void SourceVisible() {
+            export struct Api
+            {
+                unsafe fn void SourceVisible()
+                {
                     return;
                 }
 
-                internal unsafe fn void RuntimeOnly() {
+                internal unsafe fn void RuntimeOnly()
+                {
                     return;
                 }
 
-                export unsafe fn void AbiVisible() {
+                export unsafe fn void AbiVisible()
+                {
                     return;
                 }
             }
@@ -904,8 +985,10 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            internal struct Hidden {
-                public unsafe fn void Leak() {
+            internal struct Hidden
+            {
+                public unsafe fn void Leak()
+                {
                     return;
                 }
             }
@@ -922,8 +1005,10 @@ public sealed class FunctionSemanticsTests
             """
             module Demo
 
-            public struct Api {
-                export unsafe fn void AbiVisible() {
+            public struct Api
+            {
+                export unsafe fn void AbiVisible()
+                {
                     return;
                 }
             }

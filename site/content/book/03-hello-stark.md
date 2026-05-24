@@ -57,7 +57,8 @@ Create `hello.stark`:
 import System.Console
 module Hello
 
-export fn i32[min max] main() {
+export fn i32[min max] main()
+{
     WriteLine("Hello, World!");
     return 0;
 }
@@ -213,14 +214,18 @@ module FfiExample
 
 unsafe ffi fn i32[min max] abs(i32[min max] value);
 
-fn i32[min max] DistanceFromZero(i32[min max] value) {
-    unsafe {
+fn i32[min max] DistanceFromZero(i32[min max] value)
+{
+    unsafe
+    {
         return abs(value);
     }
 }
 
-export fn i32[min max] main() {
-    if (DistanceFromZero(-7) != 7) {
+export fn i32[min max] main()
+{
+    if (DistanceFromZero(-7) != 7)
+    {
         return 1;
     }
 

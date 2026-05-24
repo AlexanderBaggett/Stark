@@ -26,9 +26,19 @@ Status: covered by `ExamplesCompileRunTests.BitTorrentTrackerResponseExampleComp
 - [Handshake.stark](/reference/examples/bit-torrent/Handshake.stark)
 - [Stark.toml](/reference/examples/bit-torrent/Stark.toml)
 
+### TrackerResponse.stark
+
 {{< file-sample "static/reference/examples/bit-torrent/TrackerResponse.stark" "stark" >}}
+
+### Handshake.stark
+
+{{< file-sample "static/reference/examples/bit-torrent/Handshake.stark" "stark" >}}
+
+### Stark.toml
+
+{{< file-sample "static/reference/examples/bit-torrent/Stark.toml" "toml" >}}
 
 ## Related
 
 - [Arrays, Slices, Text, and Views](/book/14-arrays-slices-text/)
-- [Performance Model](/book/26-performance-model/)
+- [Performance Model](/book/29-performance-model/)
