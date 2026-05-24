@@ -1,0 +1,18 @@
+[project]
+name = "http-get"
+version = "0.1.0"
+kind = "executable"
+
+[executable]
+root = "HttpGet.stark"
+output = "http-get"
+
+[dependencies]
+stdlib = { path = "../../stdlib" }
+
+[native]
+sources = ["HttpsNative.c"]
+pkg-config = ["openssl"]
+
+[native.fallback.linux]
+libraries = ["ssl", "crypto"]

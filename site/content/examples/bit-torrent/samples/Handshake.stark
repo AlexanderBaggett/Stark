@@ -1,0 +1,174 @@
+module BitTorrentHandshake
+
+alias Byte = i8[min max];
+
+struct PeerHandshake {
+    Byte[68] Bytes;
+
+    finite void WriteProtocol(borrow mut PeerHandshake self) {
+        self.Bytes[0] = (i8[min max])19;
+        self.Bytes[1] = (i8[min max])66;
+        self.Bytes[2] = (i8[min max])105;
+        self.Bytes[3] = (i8[min max])116;
+        self.Bytes[4] = (i8[min max])84;
+        self.Bytes[5] = (i8[min max])111;
+        self.Bytes[6] = (i8[min max])114;
+        self.Bytes[7] = (i8[min max])114;
+        self.Bytes[8] = (i8[min max])101;
+        self.Bytes[9] = (i8[min max])110;
+        self.Bytes[10] = (i8[min max])116;
+        self.Bytes[11] = (i8[min max])32;
+        self.Bytes[12] = (i8[min max])112;
+        self.Bytes[13] = (i8[min max])114;
+        self.Bytes[14] = (i8[min max])111;
+        self.Bytes[15] = (i8[min max])116;
+        self.Bytes[16] = (i8[min max])111;
+        self.Bytes[17] = (i8[min max])99;
+        self.Bytes[18] = (i8[min max])111;
+        self.Bytes[19] = (i8[min max])108;
+    }
+
+    finite void WriteInfoHash(borrow mut PeerHandshake self, Byte[20] infoHash) {
+        stack mut i32[min max] index = 0;
+
+        while willexit (index < 20) {
+            self.Bytes[index + 28] = infoHash[index];
+            index += 1;
+        }
+    }
+
+    finite void WritePeerId(borrow mut PeerHandshake self, Byte[20] peerId) {
+        stack mut i32[min max] index = 0;
+
+        while willexit (index < 20) {
+            self.Bytes[index + 48] = peerId[index];
+            index += 1;
+        }
+    }
+
+    finite law bool HasProtocol(borrow PeerHandshake self) {
+        return self.Bytes[0] == (i8[min max])19
+            && self.Bytes[1] == (i8[min max])66
+            && self.Bytes[2] == (i8[min max])105
+            && self.Bytes[3] == (i8[min max])116
+            && self.Bytes[4] == (i8[min max])84
+            && self.Bytes[5] == (i8[min max])111
+            && self.Bytes[6] == (i8[min max])114
+            && self.Bytes[7] == (i8[min max])114
+            && self.Bytes[8] == (i8[min max])101
+            && self.Bytes[9] == (i8[min max])110
+            && self.Bytes[10] == (i8[min max])116
+            && self.Bytes[11] == (i8[min max])32
+            && self.Bytes[12] == (i8[min max])112
+            && self.Bytes[13] == (i8[min max])114
+            && self.Bytes[14] == (i8[min max])111
+            && self.Bytes[15] == (i8[min max])116
+            && self.Bytes[16] == (i8[min max])111
+            && self.Bytes[17] == (i8[min max])99
+            && self.Bytes[18] == (i8[min max])111
+            && self.Bytes[19] == (i8[min max])108;
+    }
+
+    finite law bool HasZeroReservedBytes(borrow PeerHandshake self) {
+        stack mut i32[min max] index = 20;
+
+        while willexit (index < 28) {
+            if (self.Bytes[index] != (i8[min max])0) {
+                return false;
+            }
+
+            index += 1;
+        }
+
+        return true;
+    }
+
+    finite law bool HasInfoHash(borrow PeerHandshake self, Byte[20] expected) {
+        stack mut i32[min max] index = 0;
+
+        while willexit (index < 20) {
+            if (self.Bytes[index + 28] != expected[index]) {
+                return false;
+            }
+
+            index += 1;
+        }
+
+        return true;
+    }
+
+    finite law bool HasPeerId(borrow PeerHandshake self, Byte[20] expected) {
+        stack mut i32[min max] index = 0;
+
+        while willexit (index < 20) {
+            if (self.Bytes[index + 48] != expected[index]) {
+                return false;
+            }
+
+            index += 1;
+        }
+
+        return true;
+    }
+
+    finite void Build(borrow mut PeerHandshake self, Byte[20] infoHash, Byte[20] peerId) {
+        self.WriteProtocol();
+        self.WriteInfoHash(infoHash);
+        self.WritePeerId(peerId);
+    }
+}
+
+finite i32[min max] RunProgramStatus() {
+    stack Byte[20] infoHash = {
+        1, 2, 3, 4, 5,
+        6, 7, 8, 9, 10,
+        11, 12, 13, 14, 15,
+        16, 17, 18, 19, 20
+    };
+
+    stack Byte[20] peerId = {
+        45, 83, 84, 65, 82,
+        75, 48, 48, 48, 49,
+        45, 49, 50, 51, 52,
+        53, 54, 55, 56, 57
+    };
+
+    stack mut PeerHandshake handshake = new PeerHandshake();
+    handshake.Build(infoHash, peerId);
+
+    stack Byte[20] expectedInfoHash = {
+        1, 2, 3, 4, 5,
+        6, 7, 8, 9, 10,
+        11, 12, 13, 14, 15,
+        16, 17, 18, 19, 20
+    };
+
+    stack Byte[20] expectedPeerId = {
+        45, 83, 84, 65, 82,
+        75, 48, 48, 48, 49,
+        45, 49, 50, 51, 52,
+        53, 54, 55, 56, 57
+    };
+
+    if (!handshake.HasProtocol()) {
+        return 1;
+    }
+
+    if (!handshake.HasZeroReservedBytes()) {
+        return 2;
+    }
+
+    if (!handshake.HasInfoHash(expectedInfoHash)) {
+        return 3;
+    }
+
+    if (!handshake.HasPeerId(expectedPeerId)) {
+        return 4;
+    }
+
+    return 0;
+}
+
+export unsafe fn i32[min max] main() {
+    return RunProgramStatus();
+}

@@ -21,7 +21,7 @@ enableRobotsTXT = true
 [params]
   description = "Stark is a restrictive, performance-focused language targeting LLVM."
   bookVersion = "v1.35 draft"
-  geekdocSubtitle = "Restrictive systems programming for LLVM."
+  geekdocSubtitle = "Explicit by design, Faster by consequence"
   geekdocToC = 3
   geekdocSearch = true
   geekdocNextPrev = true

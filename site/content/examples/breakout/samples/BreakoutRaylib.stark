@@ -1,0 +1,261 @@
+import Raylib
+import System.Text
+module BreakoutRaylib
+
+const ScreenWidth = 960;
+const ScreenHeight = 720;
+const BrickTotal = 15;
+
+struct BreakoutRaylibGame {
+    f32 BallX;
+    f32 BallY;
+    f32 BallVelocityX;
+    f32 BallVelocityY;
+    f32 PaddleX;
+    f32 PlayTop;
+    f32 PaddleY;
+    f32 PaddleWidth;
+    f32 PaddleHeight;
+    f32 PaddleSpeed;
+    f32 BallRadius;
+    f32 BallSpeedY;
+    f32 BrickWidth;
+    f32 BrickHeight;
+    f32 BrickGap;
+    f32 BrickStartX;
+    f32 BrickStartY;
+    i32[min max] Score;
+    i32[min max] Remaining;
+    bool[15] Bricks;
+
+    fn void Reset(borrow mut BreakoutRaylibGame self) {
+        self.PlayTop = 72.0f;
+        self.PaddleY = 650.0f;
+        self.PaddleWidth = 150.0f;
+        self.PaddleHeight = 18.0f;
+        self.PaddleSpeed = 620.0f;
+        self.BallRadius = 8.0f;
+        self.BallSpeedY = 285.0f;
+        self.BrickWidth = 144.0f;
+        self.BrickHeight = 34.0f;
+        self.BrickGap = 12.0f;
+        self.BrickStartX = 84.0f;
+        self.BrickStartY = 118.0f;
+        self.PaddleX = 480.0f;
+        self.Score = 0;
+        self.Remaining = BrickTotal;
+
+        stack mut i32[min max] index = 0;
+        while willexit (index < BrickTotal) {
+            self.Bricks[index] = true;
+            index += 1;
+        }
+
+        self.ResetBall();
+    }
+
+    fn void ResetBall(borrow mut BreakoutRaylibGame self) {
+        self.BallX = 480.0f;
+        self.BallY = 520.0f;
+        self.BallVelocityX = 180.0f;
+        self.BallVelocityY = -260.0f;
+    }
+
+    unsafe fn void Update(borrow mut BreakoutRaylibGame self, f32 dt) {
+        if (IsKeyPressed(KEY_R) || IsKeyPressed(KEY_SPACE) || IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
+            self.Reset();
+            return;
+        }
+
+        if (self.Remaining == 0) {
+            return;
+        }
+
+        self.UpdatePaddle(dt);
+        self.UpdateBall(dt);
+    }
+
+    unsafe fn void UpdatePaddle(borrow mut BreakoutRaylibGame self, f32 dt) {
+        stack mut f32 nextX = self.PaddleX;
+
+        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            nextX = (f32)GetMouseX();
+        } else {
+            if (IsKeyDown(KEY_LEFT) || IsKeyDown(KEY_A)) {
+                nextX -= self.PaddleSpeed * dt;
+            }
+
+            if (IsKeyDown(KEY_RIGHT) || IsKeyDown(KEY_D)) {
+                nextX += self.PaddleSpeed * dt;
+            }
+        }
+
+        self.PaddleX = ClampF32(nextX, self.PaddleHalfWidth(), (f32)ScreenWidth - self.PaddleHalfWidth());
+    }
+
+    fn void UpdateBall(borrow mut BreakoutRaylibGame self, f32 dt) {
+        self.BallX += self.BallVelocityX * dt;
+        self.BallY += self.BallVelocityY * dt;
+
+        if (self.BallX <= self.BallRadius) {
+            self.BallX = self.BallRadius;
+            self.BallVelocityX = AbsF32(self.BallVelocityX);
+        }
+
+        if (self.BallX >= (f32)ScreenWidth - self.BallRadius) {
+            self.BallX = (f32)ScreenWidth - self.BallRadius;
+            self.BallVelocityX = 0.0f - AbsF32(self.BallVelocityX);
+        }
+
+        if (self.BallY <= self.BallRadius + self.PlayTop) {
+            self.BallY = self.BallRadius + self.PlayTop;
+            self.BallVelocityY = AbsF32(self.BallVelocityY);
+        }
+
+        self.CollideWithPaddle();
+        self.CollideWithBricks();
+
+        if (self.BallY > (f32)ScreenHeight + self.BallRadius) {
+            self.ResetBall();
+        }
+    }
+
+    fn void CollideWithPaddle(borrow mut BreakoutRaylibGame self) {
+        if (self.BallVelocityY <= 0.0f) {
+            return;
+        }
+
+        stack Rectangle paddle = self.PaddleRect();
+        if (!CheckCollisionCircleRec(Vec2(self.BallX, self.BallY), self.BallRadius, paddle)) {
+            return;
+        }
+
+        stack f32 offset = (self.BallX - self.PaddleX) / self.PaddleHalfWidth();
+        self.BallY = self.PaddleY - self.BallRadius;
+        self.BallVelocityX = offset * 320.0f;
+        self.BallVelocityY = 0.0f - self.BallSpeedY;
+    }
+
+    fn void CollideWithBricks(borrow mut BreakoutRaylibGame self) {
+        stack mut i32[min max] index = 0;
+        while willexit (index < BrickTotal) {
+            if (self.Bricks[index]) {
+                stack Rectangle brick = self.BrickRect(index);
+                if (CheckCollisionCircleRec(Vec2(self.BallX, self.BallY), self.BallRadius, brick)) {
+                    self.Bricks[index] = false;
+                    self.Remaining -= 1;
+                    self.Score += 100;
+                    self.BallVelocityY = 0.0f - self.BallVelocityY;
+                    return;
+                }
+            }
+
+            index += 1;
+        }
+    }
+
+    finite law f32 PaddleHalfWidth(borrow BreakoutRaylibGame self) {
+        return self.PaddleWidth / 2.0f;
+    }
+
+    finite law Rectangle PaddleRect(borrow BreakoutRaylibGame self) {
+        return Rect(
+            self.PaddleX - self.PaddleHalfWidth(),
+            self.PaddleY,
+            self.PaddleWidth,
+            self.PaddleHeight);
+    }
+
+    finite law Rectangle BrickRect(borrow BreakoutRaylibGame self, i32[min max] index) {
+        stack i32[min max] row = index / 5;
+        stack i32[min max] column = index % 5;
+        return Rect(
+            self.BrickStartX + (f32)column * (self.BrickWidth + self.BrickGap),
+            self.BrickStartY + (f32)row * (self.BrickHeight + self.BrickGap),
+            self.BrickWidth,
+            self.BrickHeight);
+    }
+}
+
+finite law f32 ClampF32(f32 value, f32 minValue, f32 maxValue) {
+    if (value < minValue) {
+        return minValue;
+    }
+
+    if (value > maxValue) {
+        return maxValue;
+    }
+
+    return value;
+}
+
+finite law f32 AbsF32(f32 value) {
+    if (value < 0.0f) {
+        return 0.0f - value;
+    }
+
+    return value;
+}
+
+finite law Color BrickColor(i32[min max] index) {
+    if (index < 5) {
+        return SKYBLUE();
+    }
+
+    if (index < 10) {
+        return LIME();
+    }
+
+    return ORANGE();
+}
+
+fn void DrawScore(i32[min max] score) {
+    stack Ascii label[24] = $"Score: {score}";
+    DrawText(System.Text.AsciiView(label), 28, 22, 26, DARKBLUE());
+}
+
+fn void DrawBricks(borrow BreakoutRaylibGame game) {
+    stack mut i32[min max] index = 0;
+    while willexit (index < BrickTotal) {
+        if (game.Bricks[index]) {
+            DrawRectangleRec(game.BrickRect(index), BrickColor(index));
+        }
+
+        index += 1;
+    }
+}
+
+fn void DrawGame(borrow BreakoutRaylibGame game) {
+    ClearBackground(RAYWHITE());
+    DrawRectangle(0, 64, ScreenWidth, 2, LIGHTGRAY());
+    DrawScore(game.Score);
+    DrawText("Arrows or A/D move. Hold left mouse to drag. Space, R, or right-click resets.", 250, 26, 18, GRAY());
+
+    DrawBricks(game);
+    DrawRectangleRec(game.PaddleRect(), DARKBLUE());
+    DrawCircle((i32[min max])game.BallX, (i32[min max])game.BallY, game.BallRadius, MAROON());
+
+    if (game.Remaining == 0) {
+        DrawText("All bricks cleared!", 354, 330, 34, DARKGREEN());
+        DrawText("Press Space, R, or right-click to play again.", 275, 374, 22, GRAY());
+    }
+}
+
+export unsafe fn i32[min max] main() {
+    InitWindow(ScreenWidth, ScreenHeight, "Stark Raylib Breakout");
+    SetTargetFPS(60);
+
+    stack mut BreakoutRaylibGame game = new BreakoutRaylibGame();
+    game.Reset();
+
+    while non-deterministic (!WindowShouldClose()) {
+        game.Update(GetFrameTime());
+
+        BeginDrawing();
+        DrawGame(game);
+        EndDrawing();
+    }
+
+    CloseWindow();
+    return 0;
+}

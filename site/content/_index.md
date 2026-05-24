@@ -3,6 +3,4 @@ title = "Stark"
 geekdocNav = false
 +++
 
-Stark is a restrictive, performance-focused language targeting LLVM. It keeps
-ordinary code explicit enough for the compiler to make strong ownership,
-aliasing, allocation, and backend guarantees.
+Stark is a blazing fast memory-safe systems language for LLVM. No hidden allocations. No hidden aliasing. No hidden costs. Just code the compiler can fully reason about and aggressively optimize.

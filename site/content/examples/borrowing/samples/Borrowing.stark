@@ -1,0 +1,46 @@
+module Borrowing
+
+struct Counter {
+    i32[min max] Value;
+
+    finite void Add(mut borrow Counter self, i32[min max] amount) {
+        self.Value += amount;
+        return;
+    }
+
+    finite law i32[min max] Current(borrow Counter self) {
+        return self.Value;
+    }
+
+    finite law i32[min max] ReadTwice(borrow Counter self) {
+        return self.Current() + self.Current();
+    }
+
+    finite retborrow mut i32[min max] Slot(mut borrow Counter self) {
+        return self.Value;
+    }
+}
+
+export fn i32[min max] main() {
+    stack mut Counter counter = new Counter() {
+        Value = 2
+    };
+
+    counter.Add(3);
+
+    if (counter.Current() != 5) {
+        return 1;
+    }
+
+    if (counter.ReadTwice() != 10) {
+        return 2;
+    }
+
+    counter.Slot() = 8;
+
+    if (counter.Current() != 8) {
+        return 3;
+    }
+
+    return 0;
+}

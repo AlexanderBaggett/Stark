@@ -1,0 +1,18 @@
+module ControlFlow
+
+export fn i32[min max] main() {
+    stack mut i32[min max] index = 0;
+    stack mut i32[min max] total = 0;
+
+    while willexit (index < 5) {
+        total += index;
+        index += 1;
+    }
+
+    switch (total) {
+        case 10:
+            return 0;
+        default:
+            return 1;
+    }
+}

@@ -1,0 +1,44 @@
+module BasicSyntax
+
+const ExpectedAnswer = 42;
+
+finite law i32[min max] Add(
+    i32[min max] left,
+    i32[min max] right)
+{
+    return left + right;
+}
+
+finite law i32[min max] SumPrefix(u8[0 10] count) {
+    stack mut u8[0 10] index = 0;
+    stack mut i32[min max] total = 0;
+
+    while willexit (index < count) {
+        total += (i32[min max])index;
+        index += 1;
+    }
+
+    return total;
+}
+
+finite law bool IsExpectedAnswer(i32[min max] value) {
+    switch (value) {
+        case 42:
+            return true;
+        default:
+            return false;
+    }
+}
+
+export fn i32[min max] main() {
+    stack i32[min max] answer = Add(20, 22);
+    if (answer != ExpectedAnswer || !IsExpectedAnswer(answer)) {
+        return 1;
+    }
+
+    if (SumPrefix(4) != 6) {
+        return 2;
+    }
+
+    return 0;
+}

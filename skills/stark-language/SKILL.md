@@ -168,6 +168,11 @@ Scalar integer constants usually omit a type so Stark derives the exact value an
 const PageSize = 2 ** 12;
 const BoardWidth = 80;
 ```
+* signed integer widths: `i8`, `i16`, `i24`, `i32`, `i48`, `i64`, `i96`, `i128`, `i192`, `i256`, `i384`, `i512`, `i768`, `i1024`
+* unsigned integer widths: `u8`, `u16`, `u24`, `u32`, `u48`, `u64`, `u96`, `u128`, `u192`, `u256`, `u384`, `u512`, `u768`, `u1024`
+
+use the smallest integer width you need. If you only return values between 0-4 you can use an `u8` for example.
+
 
 Floating types are `f16`, `f32`, `f64`, `f80`, and `f128`. Unsuffixed decimals are `f64`; suffix with `f` for `f32`.
 

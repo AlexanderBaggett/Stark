@@ -1,0 +1,68 @@
+import System
+import System.Text
+module BuildYourOwnGitObjects
+
+fn bool NameIsDemoCommit(System.Text.OwnedAscii name) {
+    stack mut System.Text.OwnedAscii ownedName = name;
+    if (ownedName.Length() != 11) {
+        return false;
+    }
+
+    stack ascii view = ownedName.View();
+    return view[0] == 'd'
+        && view[1] == 'e'
+        && view[2] == 'm'
+        && view[3] == 'o'
+        && view[4] == '-'
+        && view[5] == 'c'
+        && view[6] == 'o'
+        && view[7] == 'm'
+        && view[8] == 'm'
+        && view[9] == 'i'
+        && view[10] == 't';
+}
+
+fn bool EntryIsDemoCommit(System.FileSystem.FileSystemEntry entry) {
+    return entry.Kind == System.FileSystem.FileSystemEntryKind.File && NameIsDemoCommit(entry.Name);
+}
+
+fn bool ObjectStoreContainsDemoCommit() {
+    stack System.IO.IOResult<System.FileSystem.Directory> opened =
+        System.FileSystem.OpenDirectory("starkgit-demo/.starkgit/objects");
+
+    switch (opened) {
+        case System.IO.IOResult<System.FileSystem.Directory>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.FileSystem.Directory>.Ok(var value):
+            stack mut System.FileSystem.Directory directory = value;
+
+            while non-deterministic (true) {
+                stack System.FileSystem.DirectoryReadResult next = directory.ReadNext();
+                switch (next) {
+                    case System.FileSystem.DirectoryReadResult.End:
+                        directory.Close();
+                        return false;
+                    case System.FileSystem.DirectoryReadResult.Err(var readError):
+                        directory.Close();
+                        return false;
+                    case System.FileSystem.DirectoryReadResult.Entry(var entry):
+                        if (EntryIsDemoCommit(entry)) {
+                            directory.Close();
+                            return true;
+                        }
+                }
+            }
+    }
+}
+
+export unsafe fn i32[min max] main() {
+    if (!ObjectStoreContainsDemoCommit()) {
+        return 1;
+    }
+
+    if (System.Console.WriteLine("Object demo-commit") != System.IO.IOStatus.Ok) {
+        return 2;
+    }
+
+    return 0;
+}

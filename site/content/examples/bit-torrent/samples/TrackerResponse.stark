@@ -1,0 +1,154 @@
+module BitTorrentTracker
+
+enum TrackerParseStatus {
+    Ok,
+    Invalid,
+}
+
+record TrackerStats(
+    i32[min max] Complete,
+    i32[min max] Incomplete,
+    i32[min max] Interval) { }
+
+record TrackerParseResult(
+    TrackerParseStatus Status,
+    TrackerStats Stats) { }
+
+finite law i32[min max] DigitValue(ascii digit) {
+    if (digit == '0') {
+        return 0;
+    }
+
+    if (digit == '1') {
+        return 1;
+    }
+
+    if (digit == '2') {
+        return 2;
+    }
+
+    if (digit == '3') {
+        return 3;
+    }
+
+    if (digit == '4') {
+        return 4;
+    }
+
+    if (digit == '5') {
+        return 5;
+    }
+
+    if (digit == '6') {
+        return 6;
+    }
+
+    if (digit == '7') {
+        return 7;
+    }
+
+    if (digit == '8') {
+        return 8;
+    }
+
+    if (digit == '9') {
+        return 9;
+    }
+
+    return -1;
+}
+
+finite law TrackerParseResult InvalidTrackerResponse() {
+    return new TrackerParseResult(
+        TrackerParseStatus.Invalid,
+        new TrackerStats(0, 0, 0));
+}
+
+finite law TrackerParseResult ParseTrackerResponse(ascii response) {
+    if (response[0] != 'd') {
+        return InvalidTrackerResponse();
+    }
+
+    if (response[1] != '8' || response[2] != ':') {
+        return InvalidTrackerResponse();
+    }
+
+    if (response[3] != 'c' || response[4] != 'o' || response[5] != 'm' || response[6] != 'p' || response[7] != 'l' || response[8] != 'e' || response[9] != 't' || response[10] != 'e') {
+        return InvalidTrackerResponse();
+    }
+
+    if (response[11] != 'i' || response[13] != 'e') {
+        return InvalidTrackerResponse();
+    }
+
+    if (response[14] != '1' || response[15] != '0' || response[16] != ':') {
+        return InvalidTrackerResponse();
+    }
+
+    if (response[17] != 'i' || response[18] != 'n' || response[19] != 'c' || response[20] != 'o' || response[21] != 'm' || response[22] != 'p' || response[23] != 'l' || response[24] != 'e' || response[25] != 't' || response[26] != 'e') {
+        return InvalidTrackerResponse();
+    }
+
+    if (response[27] != 'i' || response[29] != 'e') {
+        return InvalidTrackerResponse();
+    }
+
+    if (response[30] != '8' || response[31] != ':') {
+        return InvalidTrackerResponse();
+    }
+
+    if (response[32] != 'i' || response[33] != 'n' || response[34] != 't' || response[35] != 'e' || response[36] != 'r' || response[37] != 'v' || response[38] != 'a' || response[39] != 'l') {
+        return InvalidTrackerResponse();
+    }
+
+    if (response[40] != 'i' || response[45] != 'e' || response[46] != 'e') {
+        return InvalidTrackerResponse();
+    }
+
+    stack i32[min max] complete = DigitValue(response[12]);
+    stack i32[min max] incomplete = DigitValue(response[28]);
+    stack i32[min max] intervalThousands = DigitValue(response[41]);
+    stack i32[min max] intervalHundreds = DigitValue(response[42]);
+    stack i32[min max] intervalTens = DigitValue(response[43]);
+    stack i32[min max] intervalOnes = DigitValue(response[44]);
+
+    if (complete < 0 || incomplete < 0 || intervalThousands < 0 || intervalHundreds < 0 || intervalTens < 0 || intervalOnes < 0) {
+        return InvalidTrackerResponse();
+    }
+
+    stack i32[min max] interval = (intervalThousands * 1000) + (intervalHundreds * 100) + (intervalTens * 10) + intervalOnes;
+
+    return new TrackerParseResult(
+        TrackerParseStatus.Ok,
+        new TrackerStats(complete, incomplete, interval));
+}
+
+finite law i32[min max] RunProgramStatus() {
+    stack TrackerParseResult parsed = ParseTrackerResponse("d8:completei3e10:incompletei7e8:intervali1800ee");
+    if (parsed.Status != TrackerParseStatus.Ok) {
+        return 1;
+    }
+
+    if (parsed.Stats.Complete != 3) {
+        return 2;
+    }
+
+    if (parsed.Stats.Incomplete != 7) {
+        return 3;
+    }
+
+    if (parsed.Stats.Interval != 1800) {
+        return 4;
+    }
+
+    stack TrackerParseResult invalid = ParseTrackerResponse("d8:completei3e10:incompletei7e8:invalidxi1800ee");
+    if (invalid.Status != TrackerParseStatus.Invalid) {
+        return 5;
+    }
+
+    return 0;
+}
+
+export fn i32[min max] main() {
+    return RunProgramStatus();
+}

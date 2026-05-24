@@ -1,0 +1,8 @@
+[project]
+name = "arithmetic"
+version = "0.1.0"
+kind = "executable"
+
+[executable]
+root = "Arithmetic.stark"
+output = "arithmetic"

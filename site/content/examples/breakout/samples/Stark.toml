@@ -1,0 +1,12 @@
+[project]
+name = "breakout"
+version = "0.1.0"
+kind = "executable"
+
+[executable]
+root = "BreakoutRaylib.stark"
+output = "breakout-raylib"
+
+[dependencies]
+raylib = { path = "../raylib" }
+stdlib = { path = "../../stdlib" }

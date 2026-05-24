@@ -2,7 +2,7 @@
 <article class="stark-home" id="main-content" tabindex="-1">
     <section class="stark-hero">
         <div class="stark-hero__copy">
-            <p class="stark-eyebrow">Systems programming for predictable LLVM output</p>
+            <p class="stark-eyebrow">Systems programming for extreme performance</p>
             <h1>Stark</h1>
             {{ .Content }}
             <div class="stark-actions" aria-label="Primary actions">
@@ -15,13 +15,14 @@
             <div class="stark-code-window">
                 <div class="stark-code-window__bar">
                     <span>hello.stark</span>
-                    <span>no GC · no exceptions · explicit ABI</span>
+                    <span>no GC · no exceptions · visible costs</span>
                 </div>
-                <pre><code>import System
+                <pre><code>import System.Console
 module Hello
 
-export unsafe ffi fn i32 main() {
-    System.Console.WriteLine("Hello");
+export fn u8[0 0] main()
+{
+    WriteLine("Hello");
     return 0;
 }</code></pre>
             </div>

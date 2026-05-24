@@ -1,0 +1,77 @@
+[solution]
+name = "Examples"
+members = [
+  "hello",
+  "basic-syntax",
+  "type-system",
+  "modules",
+  "borrowing",
+  "ffi",
+  "standard-library",
+  "http-get",
+  "build-your-own-git",
+  "neural-network",
+  "simple-database",
+  "bit-torrent",
+  "breakout",
+  "raylib",
+  "arithmetic",
+  "control-flow",
+  "multi-module",
+  "data-model",
+  "static-library",
+  "standard-library-tests",
+]
+
+[defaults]
+build = [
+  "basic-syntax",
+  "type-system",
+  "modules",
+  "borrowing",
+  "ffi",
+  "neural-network",
+  "simple-database",
+  "bit-torrent",
+  "arithmetic",
+  "control-flow",
+  "multi-module",
+  "data-model",
+  "static-library",
+]
+run = "basic-syntax"
+test = [
+  "standard-library-tests",
+]
+
+[aliases]
+hello = "hello"
+basic-syntax = "basic-syntax"
+type-system = "type-system"
+modules = "modules"
+borrowing = "borrowing"
+ffi = "ffi"
+standard-library = "standard-library"
+stdlib-demo = "standard-library"
+http-get = "http-get"
+build-your-own-git = "build-your-own-git"
+git-init = "build-your-own-git"
+neural-network = "neural-network"
+simple-database = "simple-database"
+bit-torrent = "bit-torrent"
+tracker-response = "bit-torrent"
+breakout = "breakout"
+raylib = "raylib"
+arithmetic = "arithmetic"
+control-flow = "control-flow"
+multi-module = "multi-module"
+data-model = "data-model"
+static-library = "static-library"
+standard-library-tests = "standard-library-tests"
+stdlib-tests = "standard-library-tests"
+
+[profiles.dev]
+opt = 0
+
+[profiles.release]
+opt = 3

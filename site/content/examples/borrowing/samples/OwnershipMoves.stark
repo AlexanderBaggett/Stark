@@ -1,0 +1,41 @@
+module Borrowing.OwnershipMoves
+
+struct Box {
+    i32[min max] Value;
+}
+
+fn void Consume(Box value) {
+    return;
+}
+
+finite law i32[min max] ScalarsCopy() {
+    stack i32[min max] left = 10;
+    stack i32[min max] right = left;
+    return left + right;
+}
+
+fn i32[min max] MoveThenReinitialize() {
+    stack mut Box box = new Box() {
+        Value = 1
+    };
+
+    Consume(box);
+
+    box = new Box() {
+        Value = 2
+    };
+
+    return box.Value;
+}
+
+export fn i32[min max] main() {
+    if (ScalarsCopy() != 20) {
+        return 1;
+    }
+
+    if (MoveThenReinitialize() != 2) {
+        return 2;
+    }
+
+    return 0;
+}

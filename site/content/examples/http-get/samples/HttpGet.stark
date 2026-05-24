@@ -1,0 +1,66 @@
+import System.Console
+import System.IO
+import System.Text
+module HttpGetExample
+
+const ReadBufferLength = 4096;
+
+struct ResponseBuffer {
+    i8[min max][4096] Storage;
+}
+
+internal unsafe ffi fn rawptr<i8[min max]> stark_https_client_connect(ascii host, i32[min max] port);
+internal unsafe ffi fn i64[min max] stark_https_client_write(rawptr<i8[min max]> client, ascii source);
+internal unsafe ffi fn i64[min max] stark_https_client_read(
+    rawptr<i8[min max]> client,
+    rawmutptr<i8[min max]> destination,
+    i64[0 max] capacity);
+internal unsafe ffi fn void stark_https_client_close(rawptr<i8[min max]> client);
+
+export unsafe fn i32[min max] main() {
+    stack rawptr<i8[min max]> client = stark_https_client_connect("www.google.com", 443);
+    if (client == null) {
+        WriteErrorLine("failed to establish TLS connection to https://www.google.com/");
+        return 1;
+    }
+
+    stack ascii request = "GET / HTTP/1.0\r\nHost: www.google.com\r\nUser-Agent: Stark-Https-Example\r\nAccept: */*\r\nAccept-Encoding: identity\r\n\r\n";
+    stack i64[min max] expectedWriteCount = AsciiLength(request);
+    stack i64[min max] writeCount = stark_https_client_write(client, request);
+
+    if (writeCount != expectedWriteCount) {
+        stark_https_client_close(client);
+        WriteErrorLine("failed to send HTTPS request");
+        return 2;
+    }
+
+    stack mut ResponseBuffer buffer = new ResponseBuffer();
+    stack mut Ascii responseChunk = new Ascii() {
+        Data = &buffer.Storage[0],
+        Length = 0,
+        Capacity = ReadBufferLength
+    };
+
+    while non-deterministic (true) {
+        stack i64[min max] readCount = stark_https_client_read(client, &buffer.Storage[0], ReadBufferLength);
+        if (readCount < 0) {
+            stark_https_client_close(client);
+            WriteErrorLine("failed to read HTTPS response");
+            return 3;
+        }
+
+        if (readCount == 0) {
+            stark_https_client_close(client);
+            return 0;
+        }
+
+        responseChunk.Length = readCount;
+        if (Write(AsciiView(responseChunk)) != IOStatus.Ok) {
+            stark_https_client_close(client);
+            return 4;
+        }
+    }
+
+    stark_https_client_close(client);
+    return 0;
+}

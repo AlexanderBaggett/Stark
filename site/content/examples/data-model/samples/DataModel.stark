@@ -1,0 +1,14 @@
+module DataModel
+
+struct Box {
+    i32[min max] Width;
+    i32[min max] Height;
+}
+
+record Point(i32[min max] X, i32[min max] Y) { }
+
+export fn i32[min max] main() {
+    stack Box box = new Box() { Width = 3, Height = 4 };
+    stack Point point = new Point(1, 2);
+    return box.Width * box.Height + point.X + point.Y;
+}

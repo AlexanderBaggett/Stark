@@ -1,0 +1,11 @@
+[project]
+name = "standard-library"
+version = "0.1.0"
+kind = "executable"
+
+[executable]
+root = "StandardLibrary.stark"
+output = "standard-library"
+
+[dependencies]
+stdlib = { path = "../../stdlib" }

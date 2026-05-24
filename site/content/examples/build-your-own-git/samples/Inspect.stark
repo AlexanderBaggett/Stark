@@ -1,0 +1,116 @@
+import System
+import System.Text
+module BuildYourOwnGitInspect
+
+finite law bool BoolValue(System.IO.IOResult<bool> result) {
+    switch (result) {
+        case System.IO.IOResult<bool>.Ok(var value):
+            return value;
+        case System.IO.IOResult<bool>.Err(var error):
+            return false;
+    }
+}
+
+fn i32[min max] MetadataNameCode(System.FileSystem.FileSystemEntryKind kind, System.Text.OwnedAscii name) {
+    stack mut System.Text.OwnedAscii ownedName = name;
+    if (ownedName.IsEmpty()) {
+        return 0;
+    }
+
+    stack u64[0 2 ** 63 - 1] length = ownedName.Length();
+    stack ascii view = ownedName.View();
+    if (kind == System.FileSystem.FileSystemEntryKind.File && length == 4) {
+        if (view[0] == 'H'
+            && view[1] == 'E'
+            && view[2] == 'A'
+            && view[3] == 'D') {
+            return 1;
+        }
+    }
+
+    if (kind == System.FileSystem.FileSystemEntryKind.Directory && length == 7) {
+        if (view[0] == 'o'
+            && view[1] == 'b'
+            && view[2] == 'j'
+            && view[3] == 'e'
+            && view[4] == 'c'
+            && view[5] == 't'
+            && view[6] == 's') {
+            return 2;
+        }
+    }
+
+    if (kind == System.FileSystem.FileSystemEntryKind.Directory && length == 4) {
+        if (view[0] == 'r'
+            && view[1] == 'e'
+            && view[2] == 'f'
+            && view[3] == 's') {
+            return 3;
+        }
+    }
+
+    return 0;
+}
+
+fn i32[min max] MetadataEntryCode(System.FileSystem.FileSystemEntry entry) {
+    stack System.FileSystem.FileSystemEntryKind kind = entry.Kind;
+    return MetadataNameCode(kind, entry.Name);
+}
+
+fn bool RepositoryMetadataLooksInitialized() {
+    if (!BoolValue(System.FileSystem.IsDirectory("starkgit-demo/.starkgit"))) {
+        return false;
+    }
+
+    stack System.IO.IOResult<System.FileSystem.Directory> opened =
+        System.FileSystem.OpenDirectory("starkgit-demo/.starkgit");
+
+    switch (opened) {
+        case System.IO.IOResult<System.FileSystem.Directory>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.FileSystem.Directory>.Ok(var value):
+            stack mut System.FileSystem.Directory directory = value;
+            stack mut bool foundHead = false;
+            stack mut bool foundObjects = false;
+            stack mut bool foundRefs = false;
+
+            while non-deterministic (true) {
+                stack System.FileSystem.DirectoryReadResult next = directory.ReadNext();
+                switch (next) {
+                    case System.FileSystem.DirectoryReadResult.End:
+                        directory.Close();
+                        return foundHead && foundObjects && foundRefs;
+                    case System.FileSystem.DirectoryReadResult.Err(var readError):
+                        directory.Close();
+                        return false;
+                    case System.FileSystem.DirectoryReadResult.Entry(var entry):
+                        stack i32[min max] code = MetadataEntryCode(entry);
+                        if (code == 1) {
+                            foundHead = true;
+                        }
+                        else {
+                            if (code == 2) {
+                                foundObjects = true;
+                            }
+                            else {
+                                if (code == 3) {
+                                    foundRefs = true;
+                                }
+                            }
+                        }
+                }
+            }
+    }
+}
+
+export unsafe fn i32[min max] main() {
+    if (!RepositoryMetadataLooksInitialized()) {
+        return 1;
+    }
+
+    if (System.Console.WriteLine("Repository metadata present") != System.IO.IOStatus.Ok) {
+        return 2;
+    }
+
+    return 0;
+}

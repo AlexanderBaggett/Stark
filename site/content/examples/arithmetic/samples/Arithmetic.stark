@@ -1,0 +1,13 @@
+module Arithmetic
+
+export fn i32[min max] main() {
+    stack i32[min max] left = 6;
+    stack i32[min max] right = 7;
+    stack i32[min max] combined = (left + right) * 2 - 5;
+
+    if (combined != 21) {
+        return 1;
+    }
+
+    return 0;
+}

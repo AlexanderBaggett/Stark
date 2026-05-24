@@ -1,0 +1,8 @@
+[project]
+name = "bit-torrent"
+version = "0.1.0"
+kind = "executable"
+
+[executable]
+root = "TrackerResponse.stark"
+output = "tracker-response"

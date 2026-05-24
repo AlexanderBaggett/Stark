@@ -1,0 +1,52 @@
+import System
+module BuildYourOwnGit
+
+finite law bool IsOk(System.IO.IOStatus status) {
+    switch (status) {
+        case System.IO.IOStatus.Ok:
+            return true;
+        case System.IO.IOStatus.Err(var error):
+            return false;
+    }
+}
+
+fn bool CreateDirectory(ascii path) {
+    return IsOk(System.FileSystem.CreateDirectory(path));
+}
+
+fn bool WriteHead(ascii path) {
+    stack System.IO.IOResult<System.IO.File.File> opened = System.IO.File.Open(path, System.IO.File.FileMode.Write);
+    switch (opened) {
+        case System.IO.IOResult<System.IO.File.File>.Err(var error):
+            return false;
+        case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+            stack mut System.IO.File.File file = value;
+            if (!file.IsOpen()) {
+                return false;
+            }
+
+            file.WriteLine("ref: refs/heads/main");
+            return IsOk(file.Close());
+    }
+}
+
+fn bool InitRepository() {
+    return CreateDirectory("starkgit-demo")
+        && CreateDirectory("starkgit-demo/.starkgit")
+        && CreateDirectory("starkgit-demo/.starkgit/objects")
+        && CreateDirectory("starkgit-demo/.starkgit/refs")
+        && CreateDirectory("starkgit-demo/.starkgit/refs/heads")
+        && WriteHead("starkgit-demo/.starkgit/HEAD");
+}
+
+export unsafe fn i32[min max] main() {
+    if (!InitRepository()) {
+        return 1;
+    }
+
+    if (System.Console.WriteLine("Initialized starkgit-demo/.starkgit") != System.IO.IOStatus.Ok) {
+        return 2;
+    }
+
+    return 0;
+}

@@ -281,16 +281,17 @@ STARK_BENCH_LANGUAGES=stark scripts/run-benchmarks.sh
 ```
 
 The benchmark runner compiles each selected program, records executable size,
-performs one warmup run, then writes CSV rows with microsecond timings:
+performs one warmup run, then writes CSV rows with timing, spread, RSS, and
+ratio columns:
 
 ```text
-benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us
+benchmark,language,runs,compile_us,llvm_object_us,link_us,toolchain_us,binary_bytes,min_us,avg_us,max_us,runtime_spread_pct,peak_rss_kib,c_avg_ratio
 ```
 
 Result files and machine metadata are written under `benchmarks/results/` by
 default. Important environment variables:
 
-- `STARK_BENCH_RUNS`: measured runs after warmup, default `20`.
+- `STARK_BENCH_RUNS`: measured runs after warmup, default `100`.
 - `STARK_BENCH_FILTER`: substring filter matched against benchmark paths.
 - `STARK_BENCH_LANGUAGES`: comma-separated list, default `stark,c,rust`.
 - `STARK_BENCH_C_COMPILER`: C compiler, default `clang`.

@@ -1,0 +1,10 @@
+import Math
+module Facade
+
+public finite law i32[min max] Double(i32[min max] value) {
+    return Math.Add(value, value);
+}
+
+public finite law i32[min max] Quadruple(i32[min max] value) {
+    return Double(Double(value));
+}

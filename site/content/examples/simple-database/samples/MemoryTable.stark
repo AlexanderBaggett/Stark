@@ -1,0 +1,126 @@
+module SimpleDatabase
+
+const MaxRows = 4;
+
+record Row(
+    i32[min max] Id,
+    i32[min max] UsernameCode,
+    i32[min max] EmailCode) { }
+
+enum StatementKind {
+    Insert,
+    Select,
+}
+
+record Statement(
+    StatementKind Kind,
+    Row RowToInsert) { }
+
+enum ExecuteResult {
+    Ok,
+    TableFull,
+}
+
+record Execution(
+    ExecuteResult Result,
+    i32[min max] SelectedIdSum) { }
+
+struct Table {
+    i32[min max] Count;
+    Row[4] Rows;
+
+    finite ExecuteResult Insert(mut borrow Table self, Row row) {
+        if (self.Count >= MaxRows) {
+            return ExecuteResult.TableFull;
+        }
+
+        self.Rows[self.Count] = row;
+        self.Count += 1;
+        return ExecuteResult.Ok;
+    }
+
+    finite law i32[min max] SelectIdSum(borrow Table self) {
+        stack mut i32[min max] index = 0;
+        stack mut i32[min max] total = 0;
+
+        while willexit (index < self.Count) {
+            total += self.Rows[index].Id;
+            index += 1;
+        }
+
+        return total;
+    }
+
+    finite Execution Execute(mut borrow Table self, Statement statement) {
+        switch (statement.Kind) {
+            case StatementKind.Insert:
+                return new Execution(self.Insert(statement.RowToInsert), 0);
+            case StatementKind.Select:
+                return new Execution(ExecuteResult.Ok, self.SelectIdSum());
+        }
+    }
+}
+
+finite law Table NewTable() {
+    return new Table() {
+        Count = 0
+    };
+}
+
+finite law Statement Insert(Row row) {
+    return new Statement(StatementKind.Insert, row);
+}
+
+finite law Statement Select() {
+    return new Statement(StatementKind.Select, new Row(0, 0, 0));
+}
+
+finite law bool IsOk(ExecuteResult result) {
+    switch (result) {
+        case ExecuteResult.Ok:
+            return true;
+        case ExecuteResult.TableFull:
+            return false;
+    }
+}
+
+finite i32[min max] RunProgramStatus() {
+    stack mut Table table = NewTable();
+
+    stack Execution firstInsert = table.Execute(Insert(new Row(1, 101, 1001)));
+    if (!IsOk(firstInsert.Result)) {
+        return 1;
+    }
+
+    stack Execution secondInsert = table.Execute(Insert(new Row(2, 102, 1002)));
+    if (!IsOk(secondInsert.Result)) {
+        return 2;
+    }
+
+    stack Execution firstSelect = table.Execute(Select());
+    if (!IsOk(firstSelect.Result)) {
+        return 3;
+    }
+
+    if (firstSelect.SelectedIdSum != 3) {
+        return 4;
+    }
+
+    table.Execute(Insert(new Row(3, 103, 1003)));
+    table.Execute(Insert(new Row(4, 104, 1004)));
+
+    stack Execution overflowInsert = table.Execute(Insert(new Row(5, 105, 1005)));
+    if (IsOk(overflowInsert.Result)) {
+        return 5;
+    }
+
+    if (table.Count != MaxRows) {
+        return 6;
+    }
+
+    return 0;
+}
+
+export fn i32[min max] main() {
+    return RunProgramStatus();
+}

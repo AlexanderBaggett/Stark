@@ -1,0 +1,1089 @@
+// Generated Raylib 5.5 type surface for Stark examples. Keep this file split from function categories so agents can read only the area they need.
+
+module Raylib.Types
+
+public struct RAudioBuffer {
+    i8[min max] Opaque;
+}
+
+public struct RAudioProcessor {
+    i8[min max] Opaque;
+}
+
+public struct Vector2 {
+    f32 X;
+    f32 Y;
+}
+
+public struct Vector3 {
+    f32 X;
+    f32 Y;
+    f32 Z;
+}
+
+public struct Vector4 {
+    f32 X;
+    f32 Y;
+    f32 Z;
+    f32 W;
+}
+
+public struct Matrix {
+    f32 M0;
+    f32 M4;
+    f32 M8;
+    f32 M12;
+    f32 M1;
+    f32 M5;
+    f32 M9;
+    f32 M13;
+    f32 M2;
+    f32 M6;
+    f32 M10;
+    f32 M14;
+    f32 M3;
+    f32 M7;
+    f32 M11;
+    f32 M15;
+}
+
+public struct Color {
+    u8[0 max] R;
+    u8[0 max] G;
+    u8[0 max] B;
+    u8[0 max] A;
+}
+
+public struct Rectangle {
+    f32 X;
+    f32 Y;
+    f32 Width;
+    f32 Height;
+}
+
+public struct Image {
+    rawmutptr<i8[min max]> Data;
+    i32[min max] Width;
+    i32[min max] Height;
+    i32[min max] Mipmaps;
+    i32[min max] Format;
+}
+
+public struct Texture {
+    u32[0 max] Id;
+    i32[min max] Width;
+    i32[min max] Height;
+    i32[min max] Mipmaps;
+    i32[min max] Format;
+}
+
+public struct RenderTexture {
+    u32[0 max] Id;
+    Texture Texture;
+    Texture Depth;
+}
+
+public struct NPatchInfo {
+    Rectangle Source;
+    i32[min max] Left;
+    i32[min max] Top;
+    i32[min max] Right;
+    i32[min max] Bottom;
+    i32[min max] Layout;
+}
+
+public struct GlyphInfo {
+    i32[min max] Value;
+    i32[min max] OffsetX;
+    i32[min max] OffsetY;
+    i32[min max] AdvanceX;
+    Image Image;
+}
+
+public struct Font {
+    i32[min max] BaseSize;
+    i32[min max] GlyphCount;
+    i32[min max] GlyphPadding;
+    Texture2D Texture;
+    rawmutptr<Rectangle> Recs;
+    rawmutptr<GlyphInfo> Glyphs;
+}
+
+public struct Camera3D {
+    Vector3 Position;
+    Vector3 Target;
+    Vector3 Up;
+    f32 Fovy;
+    i32[min max] Projection;
+}
+
+public struct Camera2D {
+    Vector2 Offset;
+    Vector2 Target;
+    f32 Rotation;
+    f32 Zoom;
+}
+
+public struct Mesh {
+    i32[min max] VertexCount;
+    i32[min max] TriangleCount;
+    rawmutptr<f32> Vertices;
+    rawmutptr<f32> Texcoords;
+    rawmutptr<f32> Texcoords2;
+    rawmutptr<f32> Normals;
+    rawmutptr<f32> Tangents;
+    rawmutptr<u8[0 max]> Colors;
+    rawmutptr<u16[0 max]> Indices;
+    rawmutptr<f32> AnimVertices;
+    rawmutptr<f32> AnimNormals;
+    rawmutptr<u8[0 max]> BoneIds;
+    rawmutptr<f32> BoneWeights;
+    rawmutptr<Matrix> BoneMatrices;
+    i32[min max] BoneCount;
+    u32[0 max] VaoId;
+    rawmutptr<u32[0 max]> VboId;
+}
+
+public struct Shader {
+    u32[0 max] Id;
+    rawmutptr<i32[min max]> Locs;
+}
+
+public struct MaterialMap {
+    Texture2D Texture;
+    Color Color;
+    f32 Value;
+}
+
+public struct Material {
+    Shader Shader;
+    rawmutptr<MaterialMap> Maps;
+    f32[4] Params;
+}
+
+public struct Transform {
+    Vector3 Translation;
+    Quaternion Rotation;
+    Vector3 Scale;
+}
+
+public struct BoneInfo {
+    i8[min max][32] Name;
+    i32[min max] Parent;
+}
+
+public struct Model {
+    Matrix Transform;
+    i32[min max] MeshCount;
+    i32[min max] MaterialCount;
+    rawmutptr<Mesh> Meshes;
+    rawmutptr<Material> Materials;
+    rawmutptr<i32[min max]> MeshMaterial;
+    i32[min max] BoneCount;
+    rawmutptr<BoneInfo> Bones;
+    rawmutptr<Transform> BindPose;
+}
+
+[Platform]
+public struct ModelAnimation {
+    i32[min max] BoneCount;
+    i32[min max] FrameCount;
+    rawmutptr<BoneInfo> Bones;
+    rawmutptr<rawptr<Transform>> FramePoses;
+    i8[min max][32] Name;
+}
+
+public struct Ray {
+    Vector3 Position;
+    Vector3 Direction;
+}
+
+public struct RayCollision {
+    bool Hit;
+    f32 Distance;
+    Vector3 Point;
+    Vector3 Normal;
+}
+
+public struct BoundingBox {
+    Vector3 Min;
+    Vector3 Max;
+}
+
+public struct Wave {
+    u32[0 max] FrameCount;
+    u32[0 max] SampleRate;
+    u32[0 max] SampleSize;
+    u32[0 max] Channels;
+    rawmutptr<i8[min max]> Data;
+}
+
+public struct AudioStream {
+    rawmutptr<RAudioBuffer> Buffer;
+    rawmutptr<RAudioProcessor> Processor;
+    u32[0 max] SampleRate;
+    u32[0 max] SampleSize;
+    u32[0 max] Channels;
+}
+
+public struct Sound {
+    AudioStream Stream;
+    u32[0 max] FrameCount;
+}
+
+public struct Music {
+    AudioStream Stream;
+    u32[0 max] FrameCount;
+    bool Looping;
+    i32[min max] CtxType;
+    rawmutptr<i8[min max]> CtxData;
+}
+
+public struct VrDeviceInfo {
+    i32[min max] HResolution;
+    i32[min max] VResolution;
+    f32 HScreenSize;
+    f32 VScreenSize;
+    f32 EyeToScreenDistance;
+    f32 LensSeparationDistance;
+    f32 InterpupillaryDistance;
+    f32[4] LensDistortionValues;
+    f32[4] ChromaAbCorrection;
+}
+
+public struct VrStereoConfig {
+    Matrix[2] Projection;
+    Matrix[2] ViewOffset;
+    f32[2] LeftLensCenter;
+    f32[2] RightLensCenter;
+    f32[2] LeftScreenCenter;
+    f32[2] RightScreenCenter;
+    f32[2] Scale;
+    f32[2] ScaleIn;
+}
+
+[Platform]
+public struct FilePathList {
+    u32[0 max] Capacity;
+    u32[0 max] Count;
+    rawmutptr<rawptr<i8[min max]>> Paths;
+}
+
+public struct AutomationEvent {
+    u32[0 max] Frame;
+    u32[0 max] Type;
+    i32[min max][4] Params;
+}
+
+public struct AutomationEventList {
+    u32[0 max] Capacity;
+    u32[0 max] Count;
+    rawmutptr<AutomationEvent> Events;
+}
+
+public alias Quaternion = Vector4;
+public alias Texture2D = Texture;
+public alias TextureCubemap = Texture;
+public alias RenderTexture2D = RenderTexture;
+public alias Camera = Camera3D;
+
+public alias TraceLogCallback = rawptr<i8[min max]>;
+public alias LoadFileDataCallback = rawptr<i8[min max]>;
+public alias SaveFileDataCallback = rawptr<i8[min max]>;
+public alias LoadFileTextCallback = rawptr<i8[min max]>;
+public alias SaveFileTextCallback = rawptr<i8[min max]>;
+public alias AudioCallback = rawptr<i8[min max]>;
+
+public const RAYLIB_VERSION_MAJOR = 5;
+public const RAYLIB_VERSION_MINOR = 5;
+public const RAYLIB_VERSION_PATCH = 0;
+public const ascii RAYLIB_VERSION = "5.5";
+public const PI = 3.141592653589793;
+public const DEG2RAD = 0.017453292519943295;
+public const RAD2DEG = 57.29577951308232;
+
+// ConfigFlags
+public const FLAG_VSYNC_HINT = 64;
+public const FLAG_FULLSCREEN_MODE = 2;
+public const FLAG_WINDOW_RESIZABLE = 4;
+public const FLAG_WINDOW_UNDECORATED = 8;
+public const FLAG_WINDOW_HIDDEN = 128;
+public const FLAG_WINDOW_MINIMIZED = 512;
+public const FLAG_WINDOW_MAXIMIZED = 1024;
+public const FLAG_WINDOW_UNFOCUSED = 2048;
+public const FLAG_WINDOW_TOPMOST = 4096;
+public const FLAG_WINDOW_ALWAYS_RUN = 256;
+public const FLAG_WINDOW_TRANSPARENT = 16;
+public const FLAG_WINDOW_HIGHDPI = 8192;
+public const FLAG_WINDOW_MOUSE_PASSTHROUGH = 16384;
+public const FLAG_BORDERLESS_WINDOWED_MODE = 32768;
+public const FLAG_MSAA_4X_HINT = 32;
+public const FLAG_INTERLACED_HINT = 65536;
+
+// TraceLogLevel
+public const LOG_ALL = 0;
+public const LOG_TRACE = 1;
+public const LOG_DEBUG = 2;
+public const LOG_INFO = 3;
+public const LOG_WARNING = 4;
+public const LOG_ERROR = 5;
+public const LOG_FATAL = 6;
+public const LOG_NONE = 7;
+
+// KeyboardKey
+public const KEY_NULL = 0;
+public const KEY_APOSTROPHE = 39;
+public const KEY_COMMA = 44;
+public const KEY_MINUS = 45;
+public const KEY_PERIOD = 46;
+public const KEY_SLASH = 47;
+public const KEY_ZERO = 48;
+public const KEY_ONE = 49;
+public const KEY_TWO = 50;
+public const KEY_THREE = 51;
+public const KEY_FOUR = 52;
+public const KEY_FIVE = 53;
+public const KEY_SIX = 54;
+public const KEY_SEVEN = 55;
+public const KEY_EIGHT = 56;
+public const KEY_NINE = 57;
+public const KEY_SEMICOLON = 59;
+public const KEY_EQUAL = 61;
+public const KEY_A = 65;
+public const KEY_B = 66;
+public const KEY_C = 67;
+public const KEY_D = 68;
+public const KEY_E = 69;
+public const KEY_F = 70;
+public const KEY_G = 71;
+public const KEY_H = 72;
+public const KEY_I = 73;
+public const KEY_J = 74;
+public const KEY_K = 75;
+public const KEY_L = 76;
+public const KEY_M = 77;
+public const KEY_N = 78;
+public const KEY_O = 79;
+public const KEY_P = 80;
+public const KEY_Q = 81;
+public const KEY_R = 82;
+public const KEY_S = 83;
+public const KEY_T = 84;
+public const KEY_U = 85;
+public const KEY_V = 86;
+public const KEY_W = 87;
+public const KEY_X = 88;
+public const KEY_Y = 89;
+public const KEY_Z = 90;
+public const KEY_LEFT_BRACKET = 91;
+public const KEY_BACKSLASH = 92;
+public const KEY_RIGHT_BRACKET = 93;
+public const KEY_GRAVE = 96;
+public const KEY_SPACE = 32;
+public const KEY_ESCAPE = 256;
+public const KEY_ENTER = 257;
+public const KEY_TAB = 258;
+public const KEY_BACKSPACE = 259;
+public const KEY_INSERT = 260;
+public const KEY_DELETE = 261;
+public const KEY_RIGHT = 262;
+public const KEY_LEFT = 263;
+public const KEY_DOWN = 264;
+public const KEY_UP = 265;
+public const KEY_PAGE_UP = 266;
+public const KEY_PAGE_DOWN = 267;
+public const KEY_HOME = 268;
+public const KEY_END = 269;
+public const KEY_CAPS_LOCK = 280;
+public const KEY_SCROLL_LOCK = 281;
+public const KEY_NUM_LOCK = 282;
+public const KEY_PRINT_SCREEN = 283;
+public const KEY_PAUSE = 284;
+public const KEY_F1 = 290;
+public const KEY_F2 = 291;
+public const KEY_F3 = 292;
+public const KEY_F4 = 293;
+public const KEY_F5 = 294;
+public const KEY_F6 = 295;
+public const KEY_F7 = 296;
+public const KEY_F8 = 297;
+public const KEY_F9 = 298;
+public const KEY_F10 = 299;
+public const KEY_F11 = 300;
+public const KEY_F12 = 301;
+public const KEY_LEFT_SHIFT = 340;
+public const KEY_LEFT_CONTROL = 341;
+public const KEY_LEFT_ALT = 342;
+public const KEY_LEFT_SUPER = 343;
+public const KEY_RIGHT_SHIFT = 344;
+public const KEY_RIGHT_CONTROL = 345;
+public const KEY_RIGHT_ALT = 346;
+public const KEY_RIGHT_SUPER = 347;
+public const KEY_KB_MENU = 348;
+public const KEY_KP_0 = 320;
+public const KEY_KP_1 = 321;
+public const KEY_KP_2 = 322;
+public const KEY_KP_3 = 323;
+public const KEY_KP_4 = 324;
+public const KEY_KP_5 = 325;
+public const KEY_KP_6 = 326;
+public const KEY_KP_7 = 327;
+public const KEY_KP_8 = 328;
+public const KEY_KP_9 = 329;
+public const KEY_KP_DECIMAL = 330;
+public const KEY_KP_DIVIDE = 331;
+public const KEY_KP_MULTIPLY = 332;
+public const KEY_KP_SUBTRACT = 333;
+public const KEY_KP_ADD = 334;
+public const KEY_KP_ENTER = 335;
+public const KEY_KP_EQUAL = 336;
+public const KEY_BACK = 4;
+public const KEY_MENU = 5;
+public const KEY_VOLUME_UP = 24;
+public const KEY_VOLUME_DOWN = 25;
+
+// MouseButton
+public const MOUSE_BUTTON_LEFT = 0;
+public const MOUSE_BUTTON_RIGHT = 1;
+public const MOUSE_BUTTON_MIDDLE = 2;
+public const MOUSE_BUTTON_SIDE = 3;
+public const MOUSE_BUTTON_EXTRA = 4;
+public const MOUSE_BUTTON_FORWARD = 5;
+public const MOUSE_BUTTON_BACK = 6;
+
+// MouseCursor
+public const MOUSE_CURSOR_DEFAULT = 0;
+public const MOUSE_CURSOR_ARROW = 1;
+public const MOUSE_CURSOR_IBEAM = 2;
+public const MOUSE_CURSOR_CROSSHAIR = 3;
+public const MOUSE_CURSOR_POINTING_HAND = 4;
+public const MOUSE_CURSOR_RESIZE_EW = 5;
+public const MOUSE_CURSOR_RESIZE_NS = 6;
+public const MOUSE_CURSOR_RESIZE_NWSE = 7;
+public const MOUSE_CURSOR_RESIZE_NESW = 8;
+public const MOUSE_CURSOR_RESIZE_ALL = 9;
+public const MOUSE_CURSOR_NOT_ALLOWED = 10;
+
+// GamepadButton
+public const GAMEPAD_BUTTON_UNKNOWN = 0;
+public const GAMEPAD_BUTTON_LEFT_FACE_UP = 1;
+public const GAMEPAD_BUTTON_LEFT_FACE_RIGHT = 2;
+public const GAMEPAD_BUTTON_LEFT_FACE_DOWN = 3;
+public const GAMEPAD_BUTTON_LEFT_FACE_LEFT = 4;
+public const GAMEPAD_BUTTON_RIGHT_FACE_UP = 5;
+public const GAMEPAD_BUTTON_RIGHT_FACE_RIGHT = 6;
+public const GAMEPAD_BUTTON_RIGHT_FACE_DOWN = 7;
+public const GAMEPAD_BUTTON_RIGHT_FACE_LEFT = 8;
+public const GAMEPAD_BUTTON_LEFT_TRIGGER_1 = 9;
+public const GAMEPAD_BUTTON_LEFT_TRIGGER_2 = 10;
+public const GAMEPAD_BUTTON_RIGHT_TRIGGER_1 = 11;
+public const GAMEPAD_BUTTON_RIGHT_TRIGGER_2 = 12;
+public const GAMEPAD_BUTTON_MIDDLE_LEFT = 13;
+public const GAMEPAD_BUTTON_MIDDLE = 14;
+public const GAMEPAD_BUTTON_MIDDLE_RIGHT = 15;
+public const GAMEPAD_BUTTON_LEFT_THUMB = 16;
+public const GAMEPAD_BUTTON_RIGHT_THUMB = 17;
+
+// GamepadAxis
+public const GAMEPAD_AXIS_LEFT_X = 0;
+public const GAMEPAD_AXIS_LEFT_Y = 1;
+public const GAMEPAD_AXIS_RIGHT_X = 2;
+public const GAMEPAD_AXIS_RIGHT_Y = 3;
+public const GAMEPAD_AXIS_LEFT_TRIGGER = 4;
+public const GAMEPAD_AXIS_RIGHT_TRIGGER = 5;
+
+// MaterialMapIndex
+public const MATERIAL_MAP_ALBEDO = 0;
+public const MATERIAL_MAP_METALNESS = 1;
+public const MATERIAL_MAP_NORMAL = 2;
+public const MATERIAL_MAP_ROUGHNESS = 3;
+public const MATERIAL_MAP_OCCLUSION = 4;
+public const MATERIAL_MAP_EMISSION = 5;
+public const MATERIAL_MAP_HEIGHT = 6;
+public const MATERIAL_MAP_CUBEMAP = 7;
+public const MATERIAL_MAP_IRRADIANCE = 8;
+public const MATERIAL_MAP_PREFILTER = 9;
+public const MATERIAL_MAP_BRDF = 10;
+
+// ShaderLocationIndex
+public const SHADER_LOC_VERTEX_POSITION = 0;
+public const SHADER_LOC_VERTEX_TEXCOORD01 = 1;
+public const SHADER_LOC_VERTEX_TEXCOORD02 = 2;
+public const SHADER_LOC_VERTEX_NORMAL = 3;
+public const SHADER_LOC_VERTEX_TANGENT = 4;
+public const SHADER_LOC_VERTEX_COLOR = 5;
+public const SHADER_LOC_MATRIX_MVP = 6;
+public const SHADER_LOC_MATRIX_VIEW = 7;
+public const SHADER_LOC_MATRIX_PROJECTION = 8;
+public const SHADER_LOC_MATRIX_MODEL = 9;
+public const SHADER_LOC_MATRIX_NORMAL = 10;
+public const SHADER_LOC_VECTOR_VIEW = 11;
+public const SHADER_LOC_COLOR_DIFFUSE = 12;
+public const SHADER_LOC_COLOR_SPECULAR = 13;
+public const SHADER_LOC_COLOR_AMBIENT = 14;
+public const SHADER_LOC_MAP_ALBEDO = 15;
+public const SHADER_LOC_MAP_METALNESS = 16;
+public const SHADER_LOC_MAP_NORMAL = 17;
+public const SHADER_LOC_MAP_ROUGHNESS = 18;
+public const SHADER_LOC_MAP_OCCLUSION = 19;
+public const SHADER_LOC_MAP_EMISSION = 20;
+public const SHADER_LOC_MAP_HEIGHT = 21;
+public const SHADER_LOC_MAP_CUBEMAP = 22;
+public const SHADER_LOC_MAP_IRRADIANCE = 23;
+public const SHADER_LOC_MAP_PREFILTER = 24;
+public const SHADER_LOC_MAP_BRDF = 25;
+public const SHADER_LOC_VERTEX_BONEIDS = 26;
+public const SHADER_LOC_VERTEX_BONEWEIGHTS = 27;
+public const SHADER_LOC_BONE_MATRICES = 28;
+
+// ShaderUniformDataType
+public const SHADER_UNIFORM_FLOAT = 0;
+public const SHADER_UNIFORM_VEC2 = 1;
+public const SHADER_UNIFORM_VEC3 = 2;
+public const SHADER_UNIFORM_VEC4 = 3;
+public const SHADER_UNIFORM_INT = 4;
+public const SHADER_UNIFORM_IVEC2 = 5;
+public const SHADER_UNIFORM_IVEC3 = 6;
+public const SHADER_UNIFORM_IVEC4 = 7;
+public const SHADER_UNIFORM_SAMPLER2D = 8;
+
+// ShaderAttributeDataType
+public const SHADER_ATTRIB_FLOAT = 0;
+public const SHADER_ATTRIB_VEC2 = 1;
+public const SHADER_ATTRIB_VEC3 = 2;
+public const SHADER_ATTRIB_VEC4 = 3;
+
+// PixelFormat
+public const PIXELFORMAT_UNCOMPRESSED_GRAYSCALE = 1;
+public const PIXELFORMAT_UNCOMPRESSED_GRAY_ALPHA = 2;
+public const PIXELFORMAT_UNCOMPRESSED_R5G6B5 = 3;
+public const PIXELFORMAT_UNCOMPRESSED_R8G8B8 = 4;
+public const PIXELFORMAT_UNCOMPRESSED_R5G5B5A1 = 5;
+public const PIXELFORMAT_UNCOMPRESSED_R4G4B4A4 = 6;
+public const PIXELFORMAT_UNCOMPRESSED_R8G8B8A8 = 7;
+public const PIXELFORMAT_UNCOMPRESSED_R32 = 8;
+public const PIXELFORMAT_UNCOMPRESSED_R32G32B32 = 9;
+public const PIXELFORMAT_UNCOMPRESSED_R32G32B32A32 = 10;
+public const PIXELFORMAT_UNCOMPRESSED_R16 = 11;
+public const PIXELFORMAT_UNCOMPRESSED_R16G16B16 = 12;
+public const PIXELFORMAT_UNCOMPRESSED_R16G16B16A16 = 13;
+public const PIXELFORMAT_COMPRESSED_DXT1_RGB = 14;
+public const PIXELFORMAT_COMPRESSED_DXT1_RGBA = 15;
+public const PIXELFORMAT_COMPRESSED_DXT3_RGBA = 16;
+public const PIXELFORMAT_COMPRESSED_DXT5_RGBA = 17;
+public const PIXELFORMAT_COMPRESSED_ETC1_RGB = 18;
+public const PIXELFORMAT_COMPRESSED_ETC2_RGB = 19;
+public const PIXELFORMAT_COMPRESSED_ETC2_EAC_RGBA = 20;
+public const PIXELFORMAT_COMPRESSED_PVRT_RGB = 21;
+public const PIXELFORMAT_COMPRESSED_PVRT_RGBA = 22;
+public const PIXELFORMAT_COMPRESSED_ASTC_4x4_RGBA = 23;
+public const PIXELFORMAT_COMPRESSED_ASTC_8x8_RGBA = 24;
+
+// TextureFilter
+public const TEXTURE_FILTER_POINT = 0;
+public const TEXTURE_FILTER_BILINEAR = 1;
+public const TEXTURE_FILTER_TRILINEAR = 2;
+public const TEXTURE_FILTER_ANISOTROPIC_4X = 3;
+public const TEXTURE_FILTER_ANISOTROPIC_8X = 4;
+public const TEXTURE_FILTER_ANISOTROPIC_16X = 5;
+
+// TextureWrap
+public const TEXTURE_WRAP_REPEAT = 0;
+public const TEXTURE_WRAP_CLAMP = 1;
+public const TEXTURE_WRAP_MIRROR_REPEAT = 2;
+public const TEXTURE_WRAP_MIRROR_CLAMP = 3;
+
+// CubemapLayout
+public const CUBEMAP_LAYOUT_AUTO_DETECT = 0;
+public const CUBEMAP_LAYOUT_LINE_VERTICAL = 1;
+public const CUBEMAP_LAYOUT_LINE_HORIZONTAL = 2;
+public const CUBEMAP_LAYOUT_CROSS_THREE_BY_FOUR = 3;
+public const CUBEMAP_LAYOUT_CROSS_FOUR_BY_THREE = 4;
+
+// FontType
+public const FONT_DEFAULT = 0;
+public const FONT_BITMAP = 1;
+public const FONT_SDF = 2;
+
+// BlendMode
+public const BLEND_ALPHA = 0;
+public const BLEND_ADDITIVE = 1;
+public const BLEND_MULTIPLIED = 2;
+public const BLEND_ADD_COLORS = 3;
+public const BLEND_SUBTRACT_COLORS = 4;
+public const BLEND_ALPHA_PREMULTIPLY = 5;
+public const BLEND_CUSTOM = 6;
+public const BLEND_CUSTOM_SEPARATE = 7;
+
+// Gesture
+public const GESTURE_NONE = 0;
+public const GESTURE_TAP = 1;
+public const GESTURE_DOUBLETAP = 2;
+public const GESTURE_HOLD = 4;
+public const GESTURE_DRAG = 8;
+public const GESTURE_SWIPE_RIGHT = 16;
+public const GESTURE_SWIPE_LEFT = 32;
+public const GESTURE_SWIPE_UP = 64;
+public const GESTURE_SWIPE_DOWN = 128;
+public const GESTURE_PINCH_IN = 256;
+public const GESTURE_PINCH_OUT = 512;
+
+// CameraMode
+public const CAMERA_CUSTOM = 0;
+public const CAMERA_FREE = 1;
+public const CAMERA_ORBITAL = 2;
+public const CAMERA_FIRST_PERSON = 3;
+public const CAMERA_THIRD_PERSON = 4;
+
+// CameraProjection
+public const CAMERA_PERSPECTIVE = 0;
+public const CAMERA_ORTHOGRAPHIC = 1;
+
+// NPatchLayout
+public const NPATCH_NINE_PATCH = 0;
+public const NPATCH_THREE_PATCH_VERTICAL = 1;
+public const NPATCH_THREE_PATCH_HORIZONTAL = 2;
+
+public const MOUSE_LEFT_BUTTON = 0;
+public const MOUSE_RIGHT_BUTTON = 1;
+public const MOUSE_MIDDLE_BUTTON = 2;
+public const MATERIAL_MAP_DIFFUSE = 0;
+public const MATERIAL_MAP_SPECULAR = 1;
+public const SHADER_LOC_MAP_DIFFUSE = 15;
+public const SHADER_LOC_MAP_SPECULAR = 16;
+
+public finite law Color LIGHTGRAY() {
+    return Rgba(200, 200, 200, 255);
+}
+public finite law Color GRAY() {
+    return Rgba(130, 130, 130, 255);
+}
+public finite law Color DARKGRAY() {
+    return Rgba(80, 80, 80, 255);
+}
+public finite law Color YELLOW() {
+    return Rgba(253, 249, 0, 255);
+}
+public finite law Color GOLD() {
+    return Rgba(255, 203, 0, 255);
+}
+public finite law Color ORANGE() {
+    return Rgba(255, 161, 0, 255);
+}
+public finite law Color PINK() {
+    return Rgba(255, 109, 194, 255);
+}
+public finite law Color RED() {
+    return Rgba(230, 41, 55, 255);
+}
+public finite law Color MAROON() {
+    return Rgba(190, 33, 55, 255);
+}
+public finite law Color GREEN() {
+    return Rgba(0, 228, 48, 255);
+}
+public finite law Color LIME() {
+    return Rgba(0, 158, 47, 255);
+}
+public finite law Color DARKGREEN() {
+    return Rgba(0, 117, 44, 255);
+}
+public finite law Color SKYBLUE() {
+    return Rgba(102, 191, 255, 255);
+}
+public finite law Color BLUE() {
+    return Rgba(0, 121, 241, 255);
+}
+public finite law Color DARKBLUE() {
+    return Rgba(0, 82, 172, 255);
+}
+public finite law Color PURPLE() {
+    return Rgba(200, 122, 255, 255);
+}
+public finite law Color VIOLET() {
+    return Rgba(135, 60, 190, 255);
+}
+public finite law Color DARKPURPLE() {
+    return Rgba(112, 31, 126, 255);
+}
+public finite law Color BEIGE() {
+    return Rgba(211, 176, 131, 255);
+}
+public finite law Color BROWN() {
+    return Rgba(127, 106, 79, 255);
+}
+public finite law Color DARKBROWN() {
+    return Rgba(76, 63, 47, 255);
+}
+public finite law Color WHITE() {
+    return Rgba(255, 255, 255, 255);
+}
+public finite law Color BLACK() {
+    return Rgba(0, 0, 0, 255);
+}
+public finite law Color BLANK() {
+    return Rgba(0, 0, 0, 0);
+}
+public finite law Color MAGENTA() {
+    return Rgba(255, 0, 255, 255);
+}
+public finite law Color RAYWHITE() {
+    return Rgba(245, 245, 245, 255);
+}
+
+public finite law Vector2 Vec2(f32 x, f32 y) {
+    return new Vector2() { X = x, Y = y };
+}
+
+public finite law Vector3 Vec3(f32 x, f32 y, f32 z) {
+    return new Vector3() { X = x, Y = y, Z = z };
+}
+
+public finite law Vector4 Vec4(f32 x, f32 y, f32 z, f32 w) {
+    return new Vector4() { X = x, Y = y, Z = z, W = w };
+}
+
+public finite law Rectangle Rect(f32 x, f32 y, f32 width, f32 height) {
+    return new Rectangle() { X = x, Y = y, Width = width, Height = height };
+}
+
+public finite law Color Rgba(u8[0 max] r, u8[0 max] g, u8[0 max] b, u8[0 max] a) {
+    return new Color() { R = (u8[0 max])r, G = (u8[0 max])g, B = (u8[0 max])b, A = (u8[0 max])a };
+}
+
+public finite law Vector2 DefaultVector2() {
+    return new Vector2() {
+        X = 0.0f,
+        Y = 0.0f
+    };
+}
+
+public finite law Vector3 DefaultVector3() {
+    return new Vector3() {
+        X = 0.0f,
+        Y = 0.0f,
+        Z = 0.0f
+    };
+}
+
+public finite law Vector4 DefaultVector4() {
+    return new Vector4() {
+        X = 0.0f,
+        Y = 0.0f,
+        Z = 0.0f,
+        W = 0.0f
+    };
+}
+
+public finite law Matrix DefaultMatrix() {
+    return new Matrix() {
+        M0 = 0.0f,
+        M4 = 0.0f,
+        M8 = 0.0f,
+        M12 = 0.0f,
+        M1 = 0.0f,
+        M5 = 0.0f,
+        M9 = 0.0f,
+        M13 = 0.0f,
+        M2 = 0.0f,
+        M6 = 0.0f,
+        M10 = 0.0f,
+        M14 = 0.0f,
+        M3 = 0.0f,
+        M7 = 0.0f,
+        M11 = 0.0f,
+        M15 = 0.0f
+    };
+}
+
+public finite law Color DefaultColor() {
+    return new Color() {
+        R = (u8[0 max])0,
+        G = (u8[0 max])0,
+        B = (u8[0 max])0,
+        A = (u8[0 max])0
+    };
+}
+
+public finite law Rectangle DefaultRectangle() {
+    return new Rectangle() {
+        X = 0.0f,
+        Y = 0.0f,
+        Width = 0.0f,
+        Height = 0.0f
+    };
+}
+
+public finite law Image DefaultImage() {
+    return new Image() {
+        Data = null,
+        Width = 0,
+        Height = 0,
+        Mipmaps = 0,
+        Format = 0
+    };
+}
+
+public finite law Texture DefaultTexture() {
+    return new Texture() {
+        Id = (u32[0 max])0,
+        Width = 0,
+        Height = 0,
+        Mipmaps = 0,
+        Format = 0
+    };
+}
+
+public finite law RenderTexture DefaultRenderTexture() {
+    return new RenderTexture() {
+        Id = (u32[0 max])0,
+        Texture = DefaultTexture(),
+        Depth = DefaultTexture()
+    };
+}
+
+public finite law NPatchInfo DefaultNPatchInfo() {
+    return new NPatchInfo() {
+        Source = DefaultRectangle(),
+        Left = 0,
+        Top = 0,
+        Right = 0,
+        Bottom = 0,
+        Layout = 0
+    };
+}
+
+public finite law GlyphInfo DefaultGlyphInfo() {
+    return new GlyphInfo() {
+        Value = 0,
+        OffsetX = 0,
+        OffsetY = 0,
+        AdvanceX = 0,
+        Image = DefaultImage()
+    };
+}
+
+public finite law Font DefaultFont() {
+    return new Font() {
+        BaseSize = 0,
+        GlyphCount = 0,
+        GlyphPadding = 0,
+        Texture = DefaultTexture(),
+        Recs = null,
+        Glyphs = null
+    };
+}
+
+public finite law Camera3D DefaultCamera3D() {
+    return new Camera3D() {
+        Position = DefaultVector3(),
+        Target = DefaultVector3(),
+        Up = DefaultVector3(),
+        Fovy = 0.0f,
+        Projection = 0
+    };
+}
+
+public finite law Camera2D DefaultCamera2D() {
+    return new Camera2D() {
+        Offset = DefaultVector2(),
+        Target = DefaultVector2(),
+        Rotation = 0.0f,
+        Zoom = 0.0f
+    };
+}
+
+public finite law Mesh DefaultMesh() {
+    return new Mesh() {
+        VertexCount = 0,
+        TriangleCount = 0,
+        Vertices = null,
+        Texcoords = null,
+        Texcoords2 = null,
+        Normals = null,
+        Tangents = null,
+        Colors = null,
+        Indices = null,
+        AnimVertices = null,
+        AnimNormals = null,
+        BoneIds = null,
+        BoneWeights = null,
+        BoneMatrices = null,
+        BoneCount = 0,
+        VaoId = (u32[0 max])0,
+        VboId = null
+    };
+}
+
+public finite law Shader DefaultShader() {
+    return new Shader() {
+        Id = (u32[0 max])0,
+        Locs = null
+    };
+}
+
+public finite law MaterialMap DefaultMaterialMap() {
+    return new MaterialMap() {
+        Texture = DefaultTexture(),
+        Color = DefaultColor(),
+        Value = 0.0f
+    };
+}
+
+public finite law Material DefaultMaterial() {
+    return new Material() {
+        Shader = DefaultShader(),
+        Maps = null,
+        Params = { 0.0f, 0.0f, 0.0f, 0.0f }
+    };
+}
+
+public finite law Transform DefaultTransform() {
+    return new Transform() {
+        Translation = DefaultVector3(),
+        Rotation = DefaultVector4(),
+        Scale = DefaultVector3()
+    };
+}
+
+public finite law BoneInfo DefaultBoneInfo() {
+    return new BoneInfo() {
+        Name = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
+        Parent = 0
+    };
+}
+
+public finite law Model DefaultModel() {
+    return new Model() {
+        Transform = DefaultMatrix(),
+        MeshCount = 0,
+        MaterialCount = 0,
+        Meshes = null,
+        Materials = null,
+        MeshMaterial = null,
+        BoneCount = 0,
+        Bones = null,
+        BindPose = null
+    };
+}
+
+public finite law ModelAnimation DefaultModelAnimation() {
+    return new ModelAnimation() {
+        BoneCount = 0,
+        FrameCount = 0,
+        Bones = null,
+        FramePoses = null,
+        Name = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }
+    };
+}
+
+public finite law Ray DefaultRay() {
+    return new Ray() {
+        Position = DefaultVector3(),
+        Direction = DefaultVector3()
+    };
+}
+
+public finite law RayCollision DefaultRayCollision() {
+    return new RayCollision() {
+        Hit = false,
+        Distance = 0.0f,
+        Point = DefaultVector3(),
+        Normal = DefaultVector3()
+    };
+}
+
+public finite law BoundingBox DefaultBoundingBox() {
+    return new BoundingBox() {
+        Min = DefaultVector3(),
+        Max = DefaultVector3()
+    };
+}
+
+public finite law Wave DefaultWave() {
+    return new Wave() {
+        FrameCount = (u32[0 max])0,
+        SampleRate = (u32[0 max])0,
+        SampleSize = (u32[0 max])0,
+        Channels = (u32[0 max])0,
+        Data = null
+    };
+}
+
+public finite law AudioStream DefaultAudioStream() {
+    return new AudioStream() {
+        Buffer = null,
+        Processor = null,
+        SampleRate = (u32[0 max])0,
+        SampleSize = (u32[0 max])0,
+        Channels = (u32[0 max])0
+    };
+}
+
+public finite law Sound DefaultSound() {
+    return new Sound() {
+        Stream = DefaultAudioStream(),
+        FrameCount = (u32[0 max])0
+    };
+}
+
+public finite law Music DefaultMusic() {
+    return new Music() {
+        Stream = DefaultAudioStream(),
+        FrameCount = (u32[0 max])0,
+        Looping = false,
+        CtxType = 0,
+        CtxData = null
+    };
+}
+
+public finite law VrDeviceInfo DefaultVrDeviceInfo() {
+    return new VrDeviceInfo() {
+        HResolution = 0,
+        VResolution = 0,
+        HScreenSize = 0.0f,
+        VScreenSize = 0.0f,
+        EyeToScreenDistance = 0.0f,
+        LensSeparationDistance = 0.0f,
+        InterpupillaryDistance = 0.0f,
+        LensDistortionValues = { 0.0f, 0.0f, 0.0f, 0.0f },
+        ChromaAbCorrection = { 0.0f, 0.0f, 0.0f, 0.0f }
+    };
+}
+
+public finite law VrStereoConfig DefaultVrStereoConfig() {
+    return new VrStereoConfig() {
+        Projection = { DefaultMatrix(), DefaultMatrix() },
+        ViewOffset = { DefaultMatrix(), DefaultMatrix() },
+        LeftLensCenter = { 0.0f, 0.0f },
+        RightLensCenter = { 0.0f, 0.0f },
+        LeftScreenCenter = { 0.0f, 0.0f },
+        RightScreenCenter = { 0.0f, 0.0f },
+        Scale = { 0.0f, 0.0f },
+        ScaleIn = { 0.0f, 0.0f }
+    };
+}
+
+public finite law FilePathList DefaultFilePathList() {
+    return new FilePathList() {
+        Capacity = (u32[0 max])0,
+        Count = (u32[0 max])0,
+        Paths = null
+    };
+}
+
+public finite law AutomationEvent DefaultAutomationEvent() {
+    return new AutomationEvent() {
+        Frame = (u32[0 max])0,
+        Type = (u32[0 max])0,
+        Params = { 0, 0, 0, 0 }
+    };
+}
+
+public finite law AutomationEventList DefaultAutomationEventList() {
+    return new AutomationEventList() {
+        Capacity = (u32[0 max])0,
+        Count = (u32[0 max])0,
+        Events = null
+    };
+}
