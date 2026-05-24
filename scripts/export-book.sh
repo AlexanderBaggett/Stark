@@ -13,7 +13,15 @@ printf 'Exported from site/content/book for the v1.35 draft.\n\n' >> "${OUTPUT}"
 
 resolve_sample_path() {
     local sample="$1"
-    local path="${REPOSITORY_ROOT}/site/${sample}"
+    local chapter_dir="$2"
+    local path="${chapter_dir}/${sample}"
+
+    if [[ -f "${path}" ]]; then
+        printf '%s\n' "${path}"
+        return 0
+    fi
+
+    path="${REPOSITORY_ROOT}/site/${sample}"
 
     if [[ -f "${path}" ]]; then
         printf '%s\n' "${path}"
@@ -39,11 +47,14 @@ resolve_sample_path() {
 
 append_markdown() {
     local file="$1"
+    local chapter_dir
     local in_frontmatter=0
     local frontmatter_seen=0
     local sample
     local sample_path
     local language
+
+    chapter_dir="$(dirname "${file}")"
 
     while IFS= read -r line; do
         if [[ "${frontmatter_seen}" -eq 0 && "${line}" == "+++" ]]; then
@@ -69,7 +80,7 @@ append_markdown() {
                 language="text"
             fi
 
-            if ! sample_path="$(resolve_sample_path "${sample}")"; then
+            if ! sample_path="$(resolve_sample_path "${sample}" "${chapter_dir}")"; then
                 echo "Missing book sample for export: ${sample}" >&2
                 exit 1
             fi
@@ -84,7 +95,7 @@ append_markdown() {
             sample="${line#*\"}"
             sample="${sample%%\"*}"
 
-            if ! sample_path="$(resolve_sample_path "${sample}")"; then
+            if ! sample_path="$(resolve_sample_path "${sample}" "${chapter_dir}")"; then
                 echo "Missing book sample for export: ${sample}" >&2
                 exit 1
             fi
@@ -109,10 +120,10 @@ fi
 
 while IFS= read -r -d '' chapter; do
     append_markdown "${chapter}"
-done < <(find "${REPOSITORY_ROOT}/site/content/book" -maxdepth 1 -name '[0-9][0-9]-*.md' -print0 | sort -z)
+done < <(find "${REPOSITORY_ROOT}/site/content/book" -mindepth 2 -maxdepth 2 -path '*/[0-9][0-9]-*/index.md' -print0 | sort -z)
 
 while IFS= read -r -d '' appendix; do
     append_markdown "${appendix}"
-done < <(find "${REPOSITORY_ROOT}/site/content/book" -maxdepth 1 -name 'appendix-*.md' -print0 | sort -z)
+done < <(find "${REPOSITORY_ROOT}/site/content/book" -mindepth 2 -maxdepth 2 -path '*/appendix-*/index.md' -print0 | sort -z)
 
 echo "Exported ${OUTPUT#${REPOSITORY_ROOT}/}"

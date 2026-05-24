@@ -2057,7 +2057,7 @@ Completion rules:
           book sample now exercises thin `fnptr`, inline closure
           specialization inputs, borrowed closure views, and heap closure
           values. Verification: `dotnet run -c Release --project
-          src/compiler.csproj -- site/assets/book/samples/callable-values.stark
+          src/compiler.csproj -- site/content/book/19-callable-values/samples/callable-values.stark
           --check` succeeded, and `dotnet test -c Release
           tests/compiler.Tests/compiler.Tests.csproj --no-restore` passed
           1381 tests after the final closure validation slice.

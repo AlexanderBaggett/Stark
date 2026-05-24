@@ -1,0 +1,11 @@
+[project]
+name = "hello"
+version = "0.1.0"
+kind = "executable"
+
+[executable]
+root = "../hello.stark"
+output = "hello"
+
+[dependencies]
+stdlib = { path = "../../stdlib" }

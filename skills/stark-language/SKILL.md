@@ -1,6 +1,6 @@
 ---
 name: stark-language
-description: Stark language development guidance for writing, reviewing, explaining, and editing .stark source files, Stark.toml project manifests, and Stark.solution.toml solution manifests. Use for Stark syntax, ownership and borrowing, modules and visibility, project/test/native-package setup, FFI boundaries, memory contracts, and Stark source style.
+description: Stark language development guidance for writing, reviewing, explaining, and editing .stark source files, Stark.toml project manifests, and Stark.solution.toml solution manifests. Use for Stark syntax, ownership and borrowing, callable values, modules and visibility, project/test/native-package setup, FFI boundaries, memory contracts, and Stark source style.
 ---
 
 # Stark Language
@@ -84,6 +84,70 @@ export fn i32[min max] main()
 ```
 
 Use `unsafe` on `main` only if the body or signature crosses an unsafe/raw/foreign boundary.
+
+## Callable Values
+
+Prefer direct named-function calls unless an API needs a callback value.
+
+Function items are named functions used as callable values:
+
+```stark
+finite law i32[min max] Inc(i32[min max] value)
+{
+    return value + 1;
+}
+
+stack fnptr<finite law i32[min max](i32[min max])> op = Inc;
+```
+
+Use `fnptr<...>` for thin, non-capturing callbacks. The function kind is part of the type:
+
+```stark
+fnptr<fn void()>
+fnptr<finite i32[min max](i32[min max])>
+fnptr<law bool(borrow Item)>
+fnptr<finite law i32[min max](i32[min max])>
+```
+
+`fnptr` values must come from a compatible named function or non-capturing lambda:
+
+```stark
+stack fnptr<fn i32[min max](i32[min max])> square =
+    (i32[min max] value) => value * value;
+```
+
+Capturing lambdas require an explicit capture list and should use a closure type, not `fnptr`:
+
+```stark
+inline fn i32[min max] Apply(
+    i32[min max] value,
+    inline closure<fn i32[min max](i32[min max])> op)
+{
+    return op(value);
+}
+
+fn i32[min max] AddOffset(i32[min max] offset)
+{
+    return Apply(10, capture(copy offset) (i32[min max] value) => value + offset);
+}
+```
+
+Capture modes:
+
+- `copy x`: copy a cheap copyable value
+- `move x`: move ownership into the callable
+- `read x`: capture readonly access to existing storage
+- `mut x`: capture mutable access for the closure lifetime
+- `out x`: capture a write-only destination
+- `init x`: capture uninitialized destination storage
+
+Closure forms:
+
+- `inline closure<...>`: callback is called by the receiving function and cannot be stored or returned
+- `borrow closure<...>`: non-owning callback view; captured storage must outlive the view
+- `mut borrow closure<mut ...>`: needed when calling mutates the closure environment
+- `heap closure<...>`: owned closure for stored, returned, or retained callbacks
+- `heap closure<once ...>`: calling consumes the closure
 
 ## Types
 
@@ -405,6 +469,42 @@ fn Ascii Label(i32[min max] score)
 
 Use explicit `System.Text` APIs when overflow, allocation failure, formatting failure, or encoding conversion should be returned as data instead of trapping.
 
+## Standard Library
+
+Import standard-library modules explicitly when it improves readability. The root `System` module re-exports the common public modules, while `System.Text`, `System.Testing`, and `System.Runtime.Buffer` are usually imported directly when needed.
+
+Public modules:
+
+- `System.BitOperations`: bit counting, zero counts, rotations, byte swaps, powers of two
+- `System.Collections`: `List`, `Stack`, `Queue`, `RingQueue`, `Dictionary`, `LinkedList`
+- `System.Console`: console reads/writes for text, slices, and byte buffers
+- `System.FileSystem`: directories, entry information, existence/type checks, move/delete
+- `System.IO` / `System.IO.File` / `System.IO.Path`: IO result types, owned files, path helpers
+- `System.Math`: float math, `SinCos`, min/max/rounding, `XorShift32`
+- `System.Memory`: dynamic-storage reserve/append/copy/move/fill helpers
+- `System.Net` / `System.Net.Tcp`: network result types, IPv4 endpoints, TCP clients/listeners
+- `System.Process`: process id and exit
+- `System.Runtime.Buffer`: fixed and dynamic byte buffers
+- `System.Testing`: simple assertion/status helpers
+- `System.Text`: owned text, encoding conversion, parsing, formatting
+- `System.Threading`: threads, joins, detach, yield, sleep
+
+For exact public standard-library signatures, read [`references/standard-library-signatures.md`](references/standard-library-signatures.md). It is generated from `stdlib/src/System` and bundled with this skill.
+
+## Bundled References
+
+Use these bundled references when the task needs more detail while staying self-contained:
+
+- [`references/syntax-quick-reference.md`](references/syntax-quick-reference.md): source structure, keywords, operators, ranges, switches, text, and callable syntax.
+- [`references/borrower-recipes.md`](references/borrower-recipes.md): choosing `borrow`, `mut borrow`, `retborrow`, `storeborrow`, `frozen`, `const`, `out`, `init`, raw pointers, and memory contracts.
+- [`references/callables-closures-reference.md`](references/callables-closures-reference.md): function items, `fnptr`, lambdas, inline closures, borrowed closures, heap closures, once closures, and thread entries.
+- [`references/project-manifest-reference.md`](references/project-manifest-reference.md): `Stark.toml`, `Stark.solution.toml`, project kinds, profiles, dependencies, native metadata, and commands.
+- [`references/ffi-native-layout-reference.md`](references/ffi-native-layout-reference.md): FFI declarations, `export`, raw pointer regions, ABI-facing layout, enum tags, safe wrappers, and native package metadata.
+- [`references/performance-cookbook.md`](references/performance-cookbook.md): source-level performance recipes for kernels, non-overlap, independent loops, raw regions, `const`, allocation, numeric policy, and benchmarks.
+- [`references/diagnostics-guide.md`](references/diagnostics-guide.md): common diagnostic categories and source-level fixes.
+- [`references/examples-cookbook.md`](references/examples-cookbook.md): portable embedded examples for common Stark patterns.
+- [`references/standard-library-signatures.md`](references/standard-library-signatures.md): generated public standard-library module summaries and signatures.
+
 ## Projects And Solutions
 
 Use `Stark.toml` for a project:
@@ -495,6 +595,6 @@ Prefer surrounding code style when editing existing files. Defaults for new Star
 - keep unsafe blocks small and audited
 - prefer importing standard-library modules and using short names when unambiguous
 - keep helpers private or `internal`; use `public` for Stark API; use `export` only for ABI
-- Use Allman Brackets
+- Use Allman Braces
 
 When in doubt, inspect nearby `.stark` files and keep edits consistent. Do not add wrappers, allocation, indirection, visibility, dynamic dispatch, or raw pointers for cosmetic reasons.
