@@ -1,0 +1,122 @@
+import System.Net
+import System.Net.Tcp
+import System.Runtime.Buffer
+import System.Threading
+module Book.Stdlib.ThreadingTcp
+
+fn i32[min max] Worker()
+{
+    return 7;
+}
+
+finite law bool JoinResultIs(ThreadJoinResult result, i32[min max] expected)
+{
+    switch (result)
+    {
+        case ThreadJoinResult.Ok(var value):
+            return value == expected;
+        case ThreadJoinResult.Err(var error):
+            return false;
+    }
+}
+
+fn bool ThreadEntryShapeCompiles()
+{
+    stack ThreadEntry entry = Worker;
+    stack mut Thread worker = new(entry);
+    if (!worker.IsJoinable())
+    {
+        return false;
+    }
+
+    stack ThreadJoinResult joined = worker.Join();
+    return JoinResultIs(joined, 7) && !worker.IsJoinable();
+}
+
+fn bool EndpointShapeWorks()
+{
+    stack IPv4Endpoint endpoint = new()
+    {
+        Address = new()
+        {
+            A = 127,
+            B = 0,
+            C = 0,
+            D = 1
+        },
+        Port = 8080
+    };
+
+    stack TcpClient closed = new();
+    return !closed.IsOpen() && endpoint.Port == 8080;
+}
+
+fn bool TcpBufferShapesWorkOnClosedClient()
+{
+    stack mut TcpClient closed = new();
+    stack mut FixedByteBuffer512 fixed = new();
+    stack mut DynamicByteBuffer dynamicBuffer = new();
+    stack mut i8[min max][4] first =
+    {
+        0, 0, 0, 0
+    };
+    stack mut i8[min max][4] second =
+    {
+        0, 0, 0, 0
+    };
+
+    stack NetResult<u64[0 2 ** 63 - 1]> fixedRead = closed.Read(fixed);
+    stack NetResult<u64[0 2 ** 63 - 1]> dynamicRead = closed.Read(dynamicBuffer, 16);
+    stack NetResult<u64[0 2 ** 63 - 1]> vectoredRead =
+        closed.ReadVectored(first, second);
+    stack NetStatus readable = closed.WaitReadable(1);
+
+    switch (fixedRead)
+    {
+        case NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+            return false;
+        case NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
+    }
+
+    switch (dynamicRead)
+    {
+        case NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+            return false;
+        case NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
+    }
+
+    switch (vectoredRead)
+    {
+        case NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+            return false;
+        case NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
+    }
+
+    switch (readable)
+    {
+        case NetStatus.Ok:
+            return false;
+        case NetStatus.Err(var error):
+            return true;
+    }
+}
+
+export fn i32[min max] main()
+{
+    if (!ThreadEntryShapeCompiles())
+    {
+        return 1;
+    }
+
+    if (!EndpointShapeWorks())
+    {
+        return 2;
+    }
+
+    if (!TcpBufferShapesWorkOnClosedClient())
+    {
+        return 3;
+    }
+
+    return 0;
+}

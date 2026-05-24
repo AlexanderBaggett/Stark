@@ -11,8 +11,10 @@ public sealed class SystemPromotedIOFileSystemStandardLibraryTests : StandardLib
         import System.Memory
         module App
 
-        fn bool StatusOk(System.IO.IOStatus status) {
-            switch (status) {
+        fn bool StatusOk(System.IO.IOStatus status)
+        {
+            switch (status)
+            {
                 case System.IO.IOStatus.Ok:
                     return true;
                 case System.IO.IOStatus.Err(var error):
@@ -20,8 +22,10 @@ public sealed class SystemPromotedIOFileSystemStandardLibraryTests : StandardLib
             }
         }
 
-        fn bool MemoryOk(System.Memory.MemoryStatus status) {
-            switch (status) {
+        fn bool MemoryOk(System.Memory.MemoryStatus status)
+        {
+            switch (status)
+            {
                 case System.Memory.MemoryStatus.Ok:
                     return true;
                 case System.Memory.MemoryStatus.Err(var error):
@@ -29,8 +33,10 @@ public sealed class SystemPromotedIOFileSystemStandardLibraryTests : StandardLib
             }
         }
 
-        fn i64[min max] CountOrNegative(System.IO.IOResult<u64[0 2 ** 63 - 1]> result) {
-            switch (result) {
+        fn i64[min max] CountOrNegative(System.IO.IOResult<u64[0 2 ** 63 - 1]> result)
+        {
+            switch (result)
+            {
                 case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Ok(var value):
                     return (i64[min max])value;
                 case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Err(var error):
@@ -38,8 +44,10 @@ public sealed class SystemPromotedIOFileSystemStandardLibraryTests : StandardLib
             }
         }
 
-        fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
-            switch (result) {
+        fn bool BoolOrFalse(System.IO.IOResult<bool> result)
+        {
+            switch (result)
+            {
                 case System.IO.IOResult<bool>.Ok(var value):
                     return value;
                 case System.IO.IOResult<bool>.Err(var error):
@@ -47,8 +55,10 @@ public sealed class SystemPromotedIOFileSystemStandardLibraryTests : StandardLib
             }
         }
 
-        fn bool FileOpenFailed(System.IO.IOResult<System.IO.File.File> result) {
-            switch (result) {
+        fn bool FileOpenFailed(System.IO.IOResult<System.IO.File.File> result)
+        {
+            switch (result)
+            {
                 case System.IO.IOResult<System.IO.File.File>.Ok(var value):
                     return false;
                 case System.IO.IOResult<System.IO.File.File>.Err(var error):
@@ -56,109 +66,138 @@ public sealed class SystemPromotedIOFileSystemStandardLibraryTests : StandardLib
             }
         }
 
-        export fn i32[min max] main() {
-            stack mut i8[min max][3] source = { 65, 66, 67 };
+        export fn i32[min max] main()
+        {
+            stack mut i8[min max][3] source =
+            {
+                65, 66, 67
+            };
             stack System.IO.IOResult<System.IO.File.File> opened =
                 System.IO.File.Open("experimental-file.txt", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.None);
-            switch (opened) {
+            switch (opened)
+            {
                 case System.IO.IOResult<System.IO.File.File>.Err(var error):
                     return 1;
                 case System.IO.IOResult<System.IO.File.File>.Ok(var value):
                     stack mut System.IO.File.File writer = value;
-                    if (CountOrNegative(writer.Write(source)) != 3) {
+                    if (CountOrNegative(writer.Write(source)) != 3)
+                    {
                         return 2;
                     }
 
                     stack mut System.Runtime.Buffer.DynamicByteBuffer extra = new();
-                    if (!MemoryOk(extra.WriteSlice(source, 3))) {
+                    if (!MemoryOk(extra.WriteSlice(source, 3)))
+                    {
                         return 3;
                     }
 
-                    if (CountOrNegative(writer.Write(extra)) != 3) {
+                    if (CountOrNegative(writer.Write(extra)) != 3)
+                    {
                         return 4;
                     }
 
                     stack mut System.Runtime.Buffer.FixedByteBuffer512 fixedSource = new();
-                    if (!MemoryOk(fixedSource.WriteSlice(source, 3))) {
+                    if (!MemoryOk(fixedSource.WriteSlice(source, 3)))
+                    {
                         return 5;
                     }
 
-                    if (CountOrNegative(writer.Write(fixedSource)) != 3) {
+                    if (CountOrNegative(writer.Write(fixedSource)) != 3)
+                    {
                         return 6;
                     }
 
-                    if (!StatusOk(writer.Close())) {
+                    if (!StatusOk(writer.Close()))
+                    {
                         return 7;
                     }
 
-                    if (StatusOk(writer.WriteLine("closed"))) {
+                    if (StatusOk(writer.WriteLine("closed")))
+                    {
                         return 8;
                     }
             }
 
-            if (!BoolOrFalse(System.IO.File.Exists("experimental-file.txt"))) {
+            if (!BoolOrFalse(System.IO.File.Exists("experimental-file.txt")))
+            {
                 return 9;
             }
 
-            if (!FileOpenFailed(System.IO.File.Open("missing-experimental-file.txt", System.IO.File.FileMode.Read))) {
+            if (!FileOpenFailed(System.IO.File.Open("missing-experimental-file.txt", System.IO.File.FileMode.Read)))
+            {
                 return 10;
             }
 
-            stack mut i8[min max][4] destination = { 0, 0, 0, 0 };
+            stack mut i8[min max][4] destination =
+            {
+                0, 0, 0, 0
+            };
             stack System.IO.IOResult<System.IO.File.File> readerResult =
                 System.IO.File.Open("experimental-file.txt", System.IO.File.FileMode.Read);
-            switch (readerResult) {
+            switch (readerResult)
+            {
                 case System.IO.IOResult<System.IO.File.File>.Err(var readError):
                     return 11;
                 case System.IO.IOResult<System.IO.File.File>.Ok(var readValue):
                     stack mut System.IO.File.File reader = readValue;
-                    if (CountOrNegative(reader.Seek(3, System.IO.File.SeekOrigin.Begin)) != 3) {
+                    if (CountOrNegative(reader.Seek(3, System.IO.File.SeekOrigin.Begin)) != 3)
+                    {
                         return 12;
                     }
 
-                    if (CountOrNegative(reader.Read(destination)) != 4) {
+                    if (CountOrNegative(reader.Read(destination)) != 4)
+                    {
                         return 13;
                     }
 
-                    if (CountOrNegative(reader.Seek(0, System.IO.File.SeekOrigin.Begin)) != 0) {
+                    if (CountOrNegative(reader.Seek(0, System.IO.File.SeekOrigin.Begin)) != 0)
+                    {
                         return 14;
                     }
 
                     stack mut System.Runtime.Buffer.FixedByteBuffer512 readBuffer = new();
-                    if (!MemoryOk(readBuffer.WriteFill(0, 0))) {
+                    if (!MemoryOk(readBuffer.WriteFill(0, 0)))
+                    {
                         return 15;
                     }
 
                     stack i64[min max] fixedReadCount = CountOrNegative(reader.Read(readBuffer.WriteSlice()));
-                    if (fixedReadCount != 9) {
+                    if (fixedReadCount != 9)
+                    {
                         return 22;
                     }
                     readBuffer.AdvanceWrite((u64[0 2 ** 63 - 1])fixedReadCount);
 
                     stack i8[min max][] buffered = readBuffer.ReadSlice();
-                    if (readBuffer.Readable() != 9 || buffered[0] != 65 || buffered[8] != 67) {
+                    if (readBuffer.Readable() != 9 || buffered[0] != 65 || buffered[8] != 67)
+                    {
                         return 21;
                     }
 
-                    if (!StatusOk(reader.Close())) {
+                    if (!StatusOk(reader.Close()))
+                    {
                         return 16;
                     }
             }
 
             if (destination[0] != 65 || destination[1] != 66 || destination[2] != 67
-                || destination[3] != 65) {
-                return 17;
+                || destination[3] != 65)
+                {
+                    return 17;
             }
 
-            if (!StatusOk(System.IO.File.Move("experimental-file.txt", "experimental-file-renamed.txt"))) {
+            if (!StatusOk(System.IO.File.Move("experimental-file.txt", "experimental-file-renamed.txt")))
+            {
                 return 18;
             }
 
-            if (!BoolOrFalse(System.IO.File.Exists("experimental-file-renamed.txt"))) {
+            if (!BoolOrFalse(System.IO.File.Exists("experimental-file-renamed.txt")))
+            {
                 return 19;
             }
 
-            if (!StatusOk(System.IO.File.Delete("experimental-file-renamed.txt"))) {
+            if (!StatusOk(System.IO.File.Delete("experimental-file-renamed.txt")))
+            {
                 return 20;
             }
 
@@ -175,8 +214,10 @@ public sealed class SystemPromotedIOFileSystemStandardLibraryTests : StandardLib
         import System.Memory
         module App
 
-        fn bool StatusOk(System.IO.IOStatus status) {
-            switch (status) {
+        fn bool StatusOk(System.IO.IOStatus status)
+        {
+            switch (status)
+            {
                 case System.IO.IOStatus.Ok:
                     return true;
                 case System.IO.IOStatus.Err(var error):
@@ -184,8 +225,10 @@ public sealed class SystemPromotedIOFileSystemStandardLibraryTests : StandardLib
             }
         }
 
-        fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
-            switch (result) {
+        fn bool BoolOrFalse(System.IO.IOResult<bool> result)
+        {
+            switch (result)
+            {
                 case System.IO.IOResult<bool>.Ok(var value):
                     return value;
                 case System.IO.IOResult<bool>.Err(var error):
@@ -193,8 +236,10 @@ public sealed class SystemPromotedIOFileSystemStandardLibraryTests : StandardLib
             }
         }
 
-        fn bool MemoryOk(System.Memory.MemoryStatus status) {
-            switch (status) {
+        fn bool MemoryOk(System.Memory.MemoryStatus status)
+        {
+            switch (status)
+            {
                 case System.Memory.MemoryStatus.Ok:
                     return true;
                 case System.Memory.MemoryStatus.Err(var error):
@@ -202,12 +247,15 @@ public sealed class SystemPromotedIOFileSystemStandardLibraryTests : StandardLib
             }
         }
 
-        fn bool MemoryRejectedHugeInput(System.Memory.MemoryStatus status) {
-            switch (status) {
+        fn bool MemoryRejectedHugeInput(System.Memory.MemoryStatus status)
+        {
+            switch (status)
+            {
                 case System.Memory.MemoryStatus.Ok:
                     return false;
                 case System.Memory.MemoryStatus.Err(var error):
-                    switch (error) {
+                    switch (error)
+                    {
                         case System.Memory.MemoryError.OutOfMemory:
                             return true;
                         case System.Memory.MemoryError.TooLarge:
@@ -220,25 +268,34 @@ public sealed class SystemPromotedIOFileSystemStandardLibraryTests : StandardLib
             }
         }
 
-        fn i32[min max] CheckTooLargeNormalization() {
-            unsafe {
-                stack mut i8[min max][1] storage = { 47 };
-                stack Ascii huge = new Ascii() {
+        fn i32[min max] CheckTooLargeNormalization()
+        {
+            unsafe
+            {
+                stack mut i8[min max][1] storage =
+                {
+                    47
+                };
+                stack Ascii huge = new Ascii()
+                {
                     Data = &storage[0],
                     Length = (i64[min max])(2 ** 63 - 1),
                     Capacity = (i64[min max])(2 ** 63 - 1)
                 };
                 stack mut System.Text.OwnedAscii destination = new();
                 stack ascii hugeView = System.Text.AsciiView(huge);
-                if (System.Text.AsciiLength(hugeView) == 0) {
+                if (System.Text.AsciiLength(hugeView) == 0)
+                {
                     return 1;
                 }
 
-                if (!MemoryRejectedHugeInput(System.IO.Path.TryNormalizeSeparators(destination, hugeView))) {
+                if (!MemoryRejectedHugeInput(System.IO.Path.TryNormalizeSeparators(destination, hugeView)))
+                {
                     return 2;
                 }
 
-                if (destination.Length() != 0) {
+                if (destination.Length() != 0)
+                {
                     return 3;
                 }
 
@@ -246,8 +303,10 @@ public sealed class SystemPromotedIOFileSystemStandardLibraryTests : StandardLib
             }
         }
 
-        fn bool IsChildName(mut borrow System.FileSystem.FileSystemEntry entry) {
-            if (entry.Name.Length() != 9) {
+        fn bool IsChildName(mut borrow System.FileSystem.FileSystemEntry entry)
+        {
+            if (entry.Name.Length() != 9)
+            {
                 return false;
             }
 
@@ -263,8 +322,10 @@ public sealed class SystemPromotedIOFileSystemStandardLibraryTests : StandardLib
                 && view[8] == 116;
         }
 
-        fn bool IsChildEntry(System.FileSystem.DirectoryReadResult result) {
-            switch (result) {
+        fn bool IsChildEntry(System.FileSystem.DirectoryReadResult result)
+        {
+            switch (result)
+            {
                 case System.FileSystem.DirectoryReadResult.End:
                     return false;
                 case System.FileSystem.DirectoryReadResult.Err(var error):
@@ -275,63 +336,76 @@ public sealed class SystemPromotedIOFileSystemStandardLibraryTests : StandardLib
             }
         }
 
-        export unsafe fn i32[min max] main() {
+        export unsafe fn i32[min max] main()
+        {
             stack mut System.Text.OwnedAscii currentDirectory = new();
             if (!MemoryOk(System.IO.Path.CurrentDirectory(currentDirectory))
-                || currentDirectory.Length() == 0) {
-                return 20;
+                || currentDirectory.Length() == 0)
+                {
+                    return 20;
             }
 
             stack i32[min max] tooLarge = CheckTooLargeNormalization();
-            if (tooLarge != 0) {
+            if (tooLarge != 0)
+            {
                 return 30 + tooLarge;
             }
 
-            if (!StatusOk(System.FileSystem.CreateDirectory("experimental-fs-root"))) {
+            if (!StatusOk(System.FileSystem.CreateDirectory("experimental-fs-root")))
+            {
                 return 1;
             }
 
             stack System.IO.IOResult<System.IO.File.File> opened =
                 System.IO.File.Open("experimental-fs-root/child.txt", System.IO.File.FileMode.Write);
-            switch (opened) {
+            switch (opened)
+            {
                 case System.IO.IOResult<System.IO.File.File>.Err(var error):
                     return 2;
                 case System.IO.IOResult<System.IO.File.File>.Ok(var value):
                     stack mut System.IO.File.File writer = value;
-                    if (!StatusOk(writer.WriteLine("child")) || !StatusOk(writer.Close())) {
+                    if (!StatusOk(writer.WriteLine("child")) || !StatusOk(writer.Close()))
+                    {
                         return 3;
                     }
             }
 
-            if (!BoolOrFalse(System.FileSystem.IsDirectory("experimental-fs-root"))) {
+            if (!BoolOrFalse(System.FileSystem.IsDirectory("experimental-fs-root")))
+            {
                 return 4;
             }
 
-            if (!BoolOrFalse(System.FileSystem.IsFile("experimental-fs-root/child.txt"))) {
+            if (!BoolOrFalse(System.FileSystem.IsFile("experimental-fs-root/child.txt")))
+            {
                 return 5;
             }
 
             stack System.IO.IOResult<System.FileSystem.Directory> directoryResult =
                 System.FileSystem.OpenDirectory("experimental-fs-root");
-            switch (directoryResult) {
+            switch (directoryResult)
+            {
                 case System.IO.IOResult<System.FileSystem.Directory>.Err(var directoryError):
                     return 6;
                 case System.IO.IOResult<System.FileSystem.Directory>.Ok(var directoryValue):
                     stack mut System.FileSystem.Directory directory = directoryValue;
-                    if (!IsChildEntry(directory.ReadNext())) {
+                    if (!IsChildEntry(directory.ReadNext()))
+                    {
                         return 7;
                     }
 
-                    if (!StatusOk(directory.Close())) {
+                    if (!StatusOk(directory.Close()))
+                    {
                         return 8;
                     }
             }
 
-            if (!StatusOk(System.IO.File.Delete("experimental-fs-root/child.txt"))) {
+            if (!StatusOk(System.IO.File.Delete("experimental-fs-root/child.txt")))
+            {
                 return 9;
             }
 
-            if (!StatusOk(System.FileSystem.DeleteDirectory("experimental-fs-root"))) {
+            if (!StatusOk(System.FileSystem.DeleteDirectory("experimental-fs-root")))
+            {
                 return 10;
             }
 
@@ -359,31 +433,37 @@ public sealed class SystemPromotedIOFileSystemStandardLibraryTests : StandardLib
 
                 fn System.IO.IOResult<u64[0 2 ** 63 - 1]> WriteBytes(
                     mut borrow System.IO.File.File file,
-                    borrow i8[min max][] source) {
-                    return file.Write(source);
+                    borrow i8[min max][] source)
+                    {
+                        return file.Write(source);
                 }
 
-                fn System.IO.IOStatus SyncFile(mut borrow System.IO.File.File file) {
+                fn System.IO.IOStatus SyncFile(mut borrow System.IO.File.File file)
+                {
                     return file.SyncAll();
                 }
 
-                fn System.IO.IOResult<System.FileSystem.Directory> OpenDir(ascii path) {
+                fn System.IO.IOResult<System.FileSystem.Directory> OpenDir(ascii path)
+                {
                     return System.FileSystem.OpenDirectory(path);
                 }
 
                 fn System.FileSystem.DirectoryReadResult ReadOne(
-                    mut borrow System.FileSystem.Directory directory) {
-                    return directory.ReadNext();
+                    mut borrow System.FileSystem.Directory directory)
+                    {
+                        return directory.ReadNext();
                 }
 
                 fn System.FileSystem.DirectoryReadInfoResult ReadOneInfo(
-                    mut borrow System.FileSystem.Directory directory) {
-                    return directory.ReadNextInfo();
+                    mut borrow System.FileSystem.Directory directory)
+                    {
+                        return directory.ReadNextInfo();
                 }
 
                 fn System.Memory.MemoryStatus CurrentDir(
-                    mut borrow System.Text.OwnedAscii destination) {
-                    return System.IO.Path.CurrentDirectory(destination);
+                    mut borrow System.Text.OwnedAscii destination)
+                    {
+                        return System.IO.Path.CurrentDirectory(destination);
                 }
                 """,
                 appPath),

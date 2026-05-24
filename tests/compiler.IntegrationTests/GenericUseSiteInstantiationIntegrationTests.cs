@@ -18,9 +18,15 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                 """
                 module Facade
 
-                public record Wrapper<T>(T Value) { }
-                public record Envelope<T>(Wrapper<T> Wrapped) { }
-                public record Crate<T>(Envelope<T> Envelope) { }
+                public record Wrapper<T>(T Value)
+                {
+                }
+                public record Envelope<T>(Wrapper<T> Wrapped)
+                {
+                }
+                public record Crate<T>(Envelope<T> Envelope)
+                {
+                }
                 """,
                 facadePath));
 
@@ -38,7 +44,8 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(Facade.Crate<i32[min max]> crate) {
+                    fn i32[min max] Run(Facade.Crate<i32[min max]> crate)
+                    {
                         return 0;
                     }
                     """,
@@ -82,16 +89,21 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                 """
                 module Facade
 
-                public record Pair<T>(T Value) { }
+                public record Pair<T>(T Value)
+                {
+                }
 
-                public record Box(i32[min max] Dummy) {
-                    fn Pair<T> MakePair<T>(borrow Box self, T value) {
+                public record Box(i32[min max] Dummy)
+                {
+                    fn Pair<T> MakePair<T>(borrow Box self, T value)
+                    {
                         stack Pair<T> pair = new Pair<T>(value);
                         return pair;
                     }
                 }
 
-                public fn Pair<T> Relay<T>(Box box, T value) {
+                public fn Pair<T> Relay<T>(Box box, T value)
+                {
                     return box.MakePair(value);
                 }
                 """,
@@ -131,7 +143,8 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(Facade.Box box, i32[min max] value) {
+                    fn i32[min max] Run(Facade.Box box, i32[min max] value)
+                    {
                         stack Facade.Pair<i32[min max]> pair = Facade.Relay(box, value);
                         return value;
                     }
@@ -187,16 +200,21 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                 """
                 module Facade
 
-                public record Pair<T>(T Value) { }
+                public record Pair<T>(T Value)
+                {
+                }
 
-                public record Box(i32[min max] Dummy) {
-                    fn Pair<T> MakePair<T>(borrow Box self, T value) {
+                public record Box(i32[min max] Dummy)
+                {
+                    fn Pair<T> MakePair<T>(borrow Box self, T value)
+                    {
                         stack Pair<T> pair = new Pair<T>(value);
                         return pair;
                     }
                 }
 
-                public fn Pair<T> Relay<T>(Box box, T value) {
+                public fn Pair<T> Relay<T>(Box box, T value)
+                {
                     return box.MakePair(value);
                 }
                 """,
@@ -223,7 +241,8 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(Facade.Box box, i32[min max] value) {
+                    fn i32[min max] Run(Facade.Box box, i32[min max] value)
+                    {
                         stack Facade.Pair<i32[min max]> pair = Facade.Relay(box, value);
                         return value;
                     }
@@ -275,15 +294,19 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                 """
                 module Facade
 
-                public fn i32[min max] SumWhileControl<T>(i32[min max] count, i32[min max] stopAt, T tag) {
+                public fn i32[min max] SumWhileControl<T>(i32[min max] count, i32[min max] stopAt, T tag)
+                {
                     stack mut i32[min max] sum = 0;
                     stack mut i32[min max] index = 0;
-                    while willexit (index < count) {
+                    while willexit (index < count)
+                    {
                         index = index + 1;
-                        if (index < 2) {
+                        if (index < 2)
+                        {
                             continue;
                         }
-                        if (index == stopAt) {
+                        if (index == stopAt)
+                        {
                             break;
                         }
                         sum = sum + index;
@@ -291,13 +314,17 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                     return sum;
                 }
 
-                public fn i32[min max] SumForControl<T>(i32[min max] count, i32[min max] stopAt, T tag) {
+                public fn i32[min max] SumForControl<T>(i32[min max] count, i32[min max] stopAt, T tag)
+                {
                     stack mut i32[min max] sum = 0;
-                    for willexit (stack mut i32[min max] index = 0; index < count; index = index + 1) {
-                        if (index < 2) {
+                    for willexit (stack mut i32[min max] index = 0; index < count; index = index + 1)
+                    {
+                        if (index < 2)
+                        {
                             continue;
                         }
-                        if (index == stopAt) {
+                        if (index == stopAt)
+                        {
                             break;
                         }
                         sum = sum + index;
@@ -328,7 +355,8 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(i32[min max] count, i32[min max] stopAt, i32[min max] tag) {
+                    fn i32[min max] Run(i32[min max] count, i32[min max] stopAt, i32[min max] tag)
+                    {
                         return Facade.SumWhileControl(count, stopAt, tag) + Facade.SumForControl(count, stopAt, tag);
                     }
                     """,
@@ -390,9 +418,11 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                 """
                 module Facade
 
-                public cold noinline fn T Choose<T>(T left, T right, bool takeRight) {
+                public cold noinline fn T Choose<T>(T left, T right, bool takeRight)
+                {
                     stack mut T current = left;
-                    if (takeRight) {
+                    if (takeRight)
+                    {
                         current = right;
                     }
 
@@ -431,7 +461,8 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                 import Facade
                 module Demo
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     stack i32[min max] left = 3;
                     stack i32[min max] right = 7;
                     return Facade.Choose(left, right, true);
@@ -505,7 +536,8 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
 
                 public alias BufferView = i32[min max][];
 
-                public fn BufferView Relay<T>(BufferView view, T tag) {
+                public fn BufferView Relay<T>(BufferView view, T tag)
+                {
                     return view;
                 }
                 """,
@@ -535,7 +567,8 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(i32[min max][] values) {
+                    fn i32[min max] Run(i32[min max][] values)
+                    {
                         stack i32[min max][] copy = Facade.Relay(values, 0);
                         return copy[0];
                     }
@@ -588,15 +621,18 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                 """
                 module Facade
 
-                public fn T Identity<T>(T value) {
+                public fn T Identity<T>(T value)
+                {
                     return value;
                 }
 
-                public fn T Forward<T>(T value) {
+                public fn T Forward<T>(T value)
+                {
                     return Identity(value);
                 }
 
-                public fn T Relay<T>(T value) {
+                public fn T Relay<T>(T value)
+                {
                     return Forward(value);
                 }
                 """,
@@ -628,7 +664,8 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(i32[min max] left, i32[min max] right) {
+                    fn i32[min max] Run(i32[min max] left, i32[min max] right)
+                    {
                         return Facade.Relay(left) + Facade.Relay(right);
                     }
                     """,
@@ -672,14 +709,18 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                 """
                 module Facade
 
-                public record Pair<A, B>(A First, B Second) { }
+                public record Pair<A, B>(A First, B Second)
+                {
+                }
 
-                public fn Pair<T, bool> MakePair<T>(T value, bool flag) {
+                public fn Pair<T, bool> MakePair<T>(T value, bool flag)
+                {
                     stack Pair<T, bool> pair = new Pair<T, bool>(value, flag);
                     return pair;
                 }
 
-                public fn i32[min max] Relay<T>(T value, bool flag) {
+                public fn i32[min max] Relay<T>(T value, bool flag)
+                {
                     stack Pair<T, bool> pair = MakePair(value, flag);
                     return pair.Second ? 1 : 0;
                 }
@@ -709,7 +750,8 @@ public sealed class GenericUseSiteInstantiationIntegrationTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(i32[min max] value, bool flag) {
+                    fn i32[min max] Run(i32[min max] value, bool flag)
+                    {
                         return Facade.Relay(value, flag);
                     }
                     """,

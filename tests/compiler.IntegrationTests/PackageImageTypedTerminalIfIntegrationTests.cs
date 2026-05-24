@@ -26,12 +26,18 @@ public sealed class PackageImageTypedTerminalIfIntegrationTests
                 """
                 module Facade
 
-                public fn i32[min max] ChooseTerminal<T>(bool takeLeft, bool takeMiddle, i32[min max] left, i32[min max] middle, i32[min max] right, T tag) {
-                    if (takeLeft) {
+                public fn i32[min max] ChooseTerminal<T>(bool takeLeft, bool takeMiddle, i32[min max] left, i32[min max] middle, i32[min max] right, T tag)
+                {
+                    if (takeLeft)
+                    {
                         return left;
-                    } else if (takeMiddle) {
+                    }
+                    else if (takeMiddle)
+                    {
                         return middle;
-                    } else {
+                    }
+                    else
+                    {
                         return right;
                     }
                 }
@@ -98,7 +104,8 @@ public sealed class PackageImageTypedTerminalIfIntegrationTests
                 import Facade
                 module Demo
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     stack i32[min max] tag = 0;
                     return Facade.ChooseTerminal(false, true, 3, 7, 9, tag);
                 }

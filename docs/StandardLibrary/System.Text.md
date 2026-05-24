@@ -12,34 +12,40 @@ destination.
 ## Surface
 
 ```stark
-public enum Encoding {
+public enum Encoding
+{
     Binary,
     UTF8,
     UTF16,
     UTF32,
 }
 
-public enum TextError {
+public enum TextError
+{
     InvalidFormat,
     Overflow,
 }
 
-public enum TextResult<T> {
+public enum TextResult<T>
+{
     Ok(T),
     Err(TextError),
 }
 
-public struct OwnedAscii {
+public struct OwnedAscii
+{
     finite ascii View(borrow OwnedAscii self);
     finite law i64 Length(borrow OwnedAscii self);
 }
 
-public struct OwnedUnicode {
+public struct OwnedUnicode
+{
     finite unicode View(borrow OwnedUnicode self);
     finite law i64 Length(borrow OwnedUnicode self);
 }
 
-public struct OwnedUtf16 {
+public struct OwnedUtf16
+{
     finite law i64 Length(borrow OwnedUtf16 self);
     finite i16[] AsSlice(borrow OwnedUtf16 self);
 }
@@ -321,7 +327,8 @@ bits.
 import System.Text
 module App
 
-fn System.Memory.MemoryStatus Build(out System.Text.OwnedUnicode destination) {
+fn System.Memory.MemoryStatus Build(out System.Text.OwnedUnicode destination)
+{
     return System.Text.FromAsciiToUnicode(destination, "caf\u00E9");
 }
 ```

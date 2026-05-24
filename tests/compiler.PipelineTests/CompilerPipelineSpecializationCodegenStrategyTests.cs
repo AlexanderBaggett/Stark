@@ -15,11 +15,13 @@ public sealed class CompilerPipelineSpecializationCodegenStrategyTests
                 """
                 module Demo
 
-                fn T Identity<T>(T value) {
+                fn T Identity<T>(T value)
+                {
                     return value;
                 }
 
-                fn i32[min max] Run(i32[min max] value) {
+                fn i32[min max] Run(i32[min max] value)
+                {
                     return Identity(value);
                 }
                 """),
@@ -49,8 +51,10 @@ public sealed class CompilerPipelineSpecializationCodegenStrategyTests
                 """
                 module Math
 
-                public doctrine Numbers {
-                    finite law T Identity<T>(T value) {
+                public doctrine Numbers
+                {
+                    finite law T Identity<T>(T value)
+                    {
                         return value;
                     }
                 }
@@ -63,7 +67,8 @@ public sealed class CompilerPipelineSpecializationCodegenStrategyTests
                     import Math
                     module Demo
 
-                    finite law i32[min max] Run(i32[min max] value) {
+                    finite law i32[min max] Run(i32[min max] value)
+                    {
                         return Math.Numbers.Identity(value);
                     }
                     """,
@@ -108,8 +113,10 @@ public sealed class CompilerPipelineSpecializationCodegenStrategyTests
                 """
                 module Math
 
-                public doctrine Numbers {
-                    cold finite law T Identity<T>(T value) {
+                public doctrine Numbers
+                {
+                    cold finite law T Identity<T>(T value)
+                    {
                         return value;
                     }
                 }
@@ -122,7 +129,8 @@ public sealed class CompilerPipelineSpecializationCodegenStrategyTests
                     import Math
                     module Demo
 
-                    finite law i32[min max] Run(i32[min max] value) {
+                    finite law i32[min max] Run(i32[min max] value)
+                    {
                         return Math.Numbers.Identity(value);
                     }
                     """,
@@ -183,7 +191,8 @@ public sealed class CompilerPipelineSpecializationCodegenStrategyTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(i32[min max] value) {
+                    fn i32[min max] Run(i32[min max] value)
+                    {
                         return Facade.Identity(value);
                     }
                     """,
@@ -229,7 +238,8 @@ public sealed class CompilerPipelineSpecializationCodegenStrategyTests
                 """
                 module Facade
 
-                public fn T Identity<T>(T value) {
+                public fn T Identity<T>(T value)
+                {
                     return value;
                 }
                 """,
@@ -269,7 +279,8 @@ public sealed class CompilerPipelineSpecializationCodegenStrategyTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(i32[min max] value) {
+                    fn i32[min max] Run(i32[min max] value)
+                    {
                         return Facade.Identity(value);
                     }
                     """,

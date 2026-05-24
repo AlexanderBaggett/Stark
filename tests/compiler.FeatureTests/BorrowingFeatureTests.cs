@@ -9,11 +9,13 @@ public sealed class BorrowingFeatureTests : FeatureLlvmTestBase
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            fn i32[min max] Read(borrow Box box) {
+            fn i32[min max] Read(borrow Box box)
+            {
                 return box.Value;
             }
             """);

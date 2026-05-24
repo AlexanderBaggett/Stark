@@ -18,7 +18,8 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32[min max] Run() {
+                fn i32[min max] Run()
+                {
                     return 1;
                 }
                 """),
@@ -122,7 +123,8 @@ public sealed class CompilerCliTests
                 """
                 module App
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     return 7;
                 }
                 """);
@@ -194,7 +196,8 @@ public sealed class CompilerCliTests
                 """
                 module Facade
 
-                public finite law i32[min max] Double(i32[min max] value) {
+                public finite law i32[min max] Double(i32[min max] value)
+                {
                     return value + value;
                 }
                 """);
@@ -240,7 +243,8 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32[0 10] Run() {
+                fn i32[0 10] Run()
+                {
                     return 0;
                 }
                 """),
@@ -267,7 +271,8 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32[0 10] Run() {
+                fn i32[0 10] Run()
+                {
                     return 0;
                 }
                 """),
@@ -294,7 +299,8 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn bool Run() {
+                fn bool Run()
+                {
                     return 1;
                 }
                 """),
@@ -336,7 +342,8 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn bool Run() {
+                fn bool Run()
+                {
                     return 1;
                 }
                 """),
@@ -347,7 +354,7 @@ public sealed class CompilerCliTests
         Assert.Equal(string.Empty, stdout.ToString());
         var text = stderr.ToString();
         Assert.Contains("error", text, StringComparison.Ordinal);
-        Assert.Contains("4 |     return 1;", text, StringComparison.Ordinal);
+        Assert.Contains("5 |     return 1;", text, StringComparison.Ordinal);
         Assert.Contains("^", text, StringComparison.Ordinal);
         Assert.Contains("Failure summary: 1 error, 0 warnings, 0 infos.", text, StringComparison.Ordinal);
     }
@@ -385,7 +392,8 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn ascii Run(ascii text, i32[min max] first, i32[min max] second, i32[min max] third) {
+                fn ascii Run(ascii text, i32[min max] first, i32[min max] second, i32[min max] third)
+                {
                     return text[
                         first,
                         second,
@@ -400,11 +408,11 @@ public sealed class CompilerCliTests
         Assert.Equal(string.Empty, stdout.ToString());
         var text = stderr.ToString();
         Assert.Contains("STK3008", text, StringComparison.Ordinal);
-        Assert.Contains("4 |     return text[", text, StringComparison.Ordinal);
-        Assert.Contains("5 |         first,", text, StringComparison.Ordinal);
-        Assert.Contains("6 |         second,", text, StringComparison.Ordinal);
-        Assert.Contains("7 |         third", text, StringComparison.Ordinal);
-        Assert.Contains("8 |     ];", text, StringComparison.Ordinal);
+        Assert.Contains("5 |     return text[", text, StringComparison.Ordinal);
+        Assert.Contains("6 |         first,", text, StringComparison.Ordinal);
+        Assert.Contains("7 |         second,", text, StringComparison.Ordinal);
+        Assert.Contains("8 |         third", text, StringComparison.Ordinal);
+        Assert.Contains("9 |     ];", text, StringComparison.Ordinal);
         Assert.Contains("^^^^^^^^^^^^^^", text, StringComparison.Ordinal);
         Assert.Contains("Failure summary: 1 error, 0 warnings, 0 infos.", text, StringComparison.Ordinal);
     }
@@ -421,8 +429,10 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32[min max] Run(bool value) {
-                    switch (value) {
+                fn i32[min max] Run(bool value)
+                {
+                    switch (value)
+                    {
                         case true:
                             return 1;
                         case false:
@@ -441,7 +451,7 @@ public sealed class CompilerCliTests
         Assert.Contains("STK3019", text, StringComparison.Ordinal);
         Assert.Contains("note [type-check]", text, StringComparison.Ordinal);
         Assert.Contains("Switch coverage becomes exhaustive here for 'bool'.", text, StringComparison.Ordinal);
-        Assert.Contains("7 |         case false:", text, StringComparison.Ordinal);
+        Assert.Contains("9 |         case false:", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -456,7 +466,8 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32[min max] Run(bool flag) {
+                fn i32[min max] Run(bool flag)
+                {
                     return flag ? 1 : 2;
                 }
                 """),
@@ -483,7 +494,8 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32[min max] Run(bool left, bool right) {
+                fn i32[min max] Run(bool left, bool right)
+                {
                     return left && right ? 1 : 2;
                 }
                 """),
@@ -510,7 +522,8 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32[min max] Run() {
+                fn i32[min max] Run()
+                {
                     return 7;
                 }
                 """),
@@ -534,7 +547,8 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32[min max] Run() {
+                fn i32[min max] Run()
+                {
                     return 7;
                 }
                 """),
@@ -561,7 +575,8 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn i32[min max] Run() {
+                fn i32[min max] Run()
+                {
                     return 7;
                 }
                 """),
@@ -585,10 +600,12 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                struct Buffer {
+                struct Buffer
+                {
                     i32[min max] Value;
 
-                    mut drop {
+                    mut drop
+                    {
                         ;
                     }
                 }
@@ -615,16 +632,22 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                struct Box {
+                struct Box
+                {
                     i32[min max] Value;
                 }
 
-                fn void Consume(Box value) {
+                fn void Consume(Box value)
+                {
                     return;
                 }
 
-                fn i32[min max] Run() {
-                    stack Box box = new Box() { Value = 1 };
+                fn i32[min max] Run()
+                {
+                    stack Box box = new Box()
+                    {
+                        Value = 1
+                    };
                     Consume(box);
                     return box.Value;
                 }
@@ -636,8 +659,8 @@ public sealed class CompilerCliTests
         Assert.Equal(string.Empty, stdout.ToString());
         var text = stderr.ToString();
         Assert.Contains("Move error", text, StringComparison.Ordinal);
-        Assert.Contains("13 |     Consume(box);", text, StringComparison.Ordinal);
-        Assert.Contains("14 |     return box.Value;", text, StringComparison.Ordinal);
+        Assert.Contains("19 |     Consume(box);", text, StringComparison.Ordinal);
+        Assert.Contains("20 |     return box.Value;", text, StringComparison.Ordinal);
         Assert.Contains("note [ownership-validate]", text, StringComparison.Ordinal);
         Assert.Contains("was moved here", text, StringComparison.Ordinal);
     }
@@ -654,16 +677,22 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                struct Box {
+                struct Box
+                {
                     i32[min max] Value;
                 }
 
-                fn void Consume(Box value) {
+                fn void Consume(Box value)
+                {
                     return;
                 }
 
-                fn i32[min max] Run() {
-                    stack Box box = new Box() { Value = 1 };
+                fn i32[min max] Run()
+                {
+                    stack Box box = new Box()
+                    {
+                        Value = 1
+                    };
                     Consume(box);
                     return box.Value;
                 }
@@ -682,7 +711,7 @@ public sealed class CompilerCliTests
         Assert.Equal(
             1,
             text.Split(
-                "note [ownership-validate] at 13:13: Value 'box' was moved here.",
+                "note [ownership-validate] at 19:13: Value 'box' was moved here.",
                 StringSplitOptions.None).Length - 1);
         Assert.Contains("Failure summary: 1 error, 0 warnings, 1 info.", text, StringComparison.Ordinal);
     }
@@ -699,11 +728,13 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn void A() {
+                fn void A()
+                {
                     return;
                 }
 
-                fn bool Run(bool flag) {
+                fn bool Run(bool flag)
+                {
                     return (flag ? A() : A()) == (flag ? A() : A());
                 }
                 """),
@@ -732,11 +763,13 @@ public sealed class CompilerCliTests
                 """
                 module Demo
 
-                fn void A() {
+                fn void A()
+                {
                     return;
                 }
 
-                fn bool Run(bool flag) {
+                fn bool Run(bool flag)
+                {
                     return (flag ? A() : A()) == (flag ? A() : A());
                 }
                 """),
@@ -767,7 +800,8 @@ public sealed class CompilerCliTests
                     """
                     module Demo
 
-                    fn i32[min max] Run() {
+                    fn i32[min max] Run()
+                    {
                         return 7;
                     }
                     """),
@@ -811,7 +845,8 @@ public sealed class CompilerCliTests
                     """
                     module Demo
 
-                    fn i32[min max] Run() {
+                    fn i32[min max] Run()
+                    {
                         return 7;
                     }
                     """),
@@ -855,7 +890,8 @@ public sealed class CompilerCliTests
                     """
                     module Demo
 
-                    fn i32[min max] Run() {
+                    fn i32[min max] Run()
+                    {
                         return 7;
                     }
                     """),
@@ -911,7 +947,8 @@ public sealed class CompilerCliTests
                     """
                     module Demo
 
-                    fn i32[min max] Run() {
+                    fn i32[min max] Run()
+                    {
                         return 7;
                     }
                     """),
@@ -979,7 +1016,8 @@ public sealed class CompilerCliTests
                     """
                     module Demo
 
-                    fn i32[min max] Run() {
+                    fn i32[min max] Run()
+                    {
                         return 7;
                     }
                     """),
@@ -1041,11 +1079,15 @@ public sealed class CompilerCliTests
                     """
                     module Demo
 
-                    fn i32[min max] Run(bool flag) {
+                    fn i32[min max] Run(bool flag)
+                    {
                         stack mut i32[min max] value = 0;
-                        if (flag) {
+                        if (flag)
+                        {
                             value = 1;
-                        } else {
+                        }
+                        else
+                        {
                             value = 2;
                         }
 
@@ -1110,11 +1152,15 @@ public sealed class CompilerCliTests
                     """
                     module Demo
 
-                    fn i32[min max] Run(bool flag) {
+                    fn i32[min max] Run(bool flag)
+                    {
                         stack mut i32[min max] value = 0;
-                        if (flag) {
+                        if (flag)
+                        {
                             value = 1;
-                        } else {
+                        }
+                        else
+                        {
                             value = 2;
                         }
 
@@ -1173,7 +1219,8 @@ public sealed class CompilerCliTests
                 """
                 module Lib
 
-                public inline finite u8[0 120] SelectOrAdd(u8[0 100] value, bool add) {
+                public inline finite u8[0 120] SelectOrAdd(u8[0 100] value, bool add)
+                {
                     stack u8[0 101] v1 = value + 1;
                     stack u8[0 102] v2 = v1 + 1;
                     stack u8[0 103] v3 = v2 + 1;
@@ -1188,7 +1235,8 @@ public sealed class CompilerCliTests
                     stack u8[0 112] v12 = v11 + 1;
                     stack u8[0 113] v13 = v12 + 1;
 
-                    if (add) {
+                    if (add)
+                    {
                         return v13;
                     }
 
@@ -1201,7 +1249,8 @@ public sealed class CompilerCliTests
                 import Lib
                 module App
 
-                fn u8[0 120] Run(u8[0 100] value, bool add) {
+                fn u8[0 120] Run(u8[0 100] value, bool add)
+                {
                     return Lib.SelectOrAdd(value, add);
                 }
                 """);
@@ -1263,7 +1312,8 @@ public sealed class CompilerCliTests
                 """
                 module Math
 
-                public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
+                public finite law i32[min max] Add(i32[min max] left, i32[min max] right)
+                {
                     return left + right;
                 }
                 """);
@@ -1274,7 +1324,8 @@ public sealed class CompilerCliTests
                 import Math
                 module App
 
-                fn i32[min max] Run() {
+                fn i32[min max] Run()
+                {
                     return Math.Add(3, 4);
                 }
                 """);
@@ -1327,7 +1378,8 @@ public sealed class CompilerCliTests
                 """
                 module Math
 
-                public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
+                public finite law i32[min max] Add(i32[min max] left, i32[min max] right)
+                {
                     return left + right;
                 }
                 """);
@@ -1338,7 +1390,8 @@ public sealed class CompilerCliTests
                 export import Math
                 module Facade
 
-                public finite law i32[min max] Double(i32[min max] value) {
+                public finite law i32[min max] Double(i32[min max] value)
+                {
                     return Math.Add(value, value);
                 }
                 """);
@@ -1417,7 +1470,8 @@ public sealed class CompilerCliTests
                 """
                 module Math
 
-                public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
+                public finite law i32[min max] Add(i32[min max] left, i32[min max] right)
+                {
                     return left + right;
                 }
                 """);
@@ -1428,7 +1482,8 @@ public sealed class CompilerCliTests
                 export import Math
                 module Facade
 
-                public finite law i32[min max] Double(i32[min max] value) {
+                public finite law i32[min max] Double(i32[min max] value)
+                {
                     return Math.Add(value, value);
                 }
                 """);
@@ -1450,7 +1505,8 @@ public sealed class CompilerCliTests
                 """
                 module Facade
 
-                public finite law i32[min max] Double(i32[min max] value) {
+                public finite law i32[min max] Double(i32[min max] value)
+                {
                     return value + value;
                 }
                 """);
@@ -1526,11 +1582,13 @@ public sealed class CompilerCliTests
                 """
                 module Facade
 
-                public finite law i32[min max] Used() {
+                public finite law i32[min max] Used()
+                {
                     return 1;
                 }
 
-                public finite law i32[min max] Unused() {
+                public finite law i32[min max] Unused()
+                {
                     return 2;
                 }
                 """);
@@ -1591,7 +1649,8 @@ public sealed class CompilerCliTests
                 """
                 module Facade
 
-                public finite law i32[min max] Used() {
+                public finite law i32[min max] Used()
+                {
                     return 1;
                 }
                 """);
@@ -1644,15 +1703,21 @@ public sealed class CompilerCliTests
                 """
                 module Geometry
 
-                public struct Box {
+                public struct Box
+                {
                     i32[min max] Value;
                 }
 
-                public fn Box Make() {
-                    return new Box() { Value = 7 };
+                public fn Box Make()
+                {
+                    return new Box()
+                    {
+                        Value = 7
+                    };
                 }
 
-                public fn i32[min max] Read(Box box) {
+                public fn i32[min max] Read(Box box)
+                {
                     return box.Value;
                 }
                 """);
@@ -1663,7 +1728,8 @@ public sealed class CompilerCliTests
                 import Geometry
                 module App
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     return Geometry.Read(Geometry.Make());
                 }
                 """);
@@ -1734,7 +1800,8 @@ public sealed class CompilerCliTests
                 """
                 module App
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     return 0;
                 }
                 """);
@@ -1805,7 +1872,8 @@ public sealed class CompilerCliTests
                 """
                 module App
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     return 0;
                 }
                 """);
@@ -1850,7 +1918,7 @@ public sealed class CompilerCliTests
     }
 
     [Fact]
-    public async Task EmitExecutableModeAllowsSystemMemoryDependencyThinLto()
+    public async Task EmitExecutableModeAllowsSystemTextDependencyThinLto()
     {
         if (OperatingSystem.IsWindows())
         {
@@ -1858,7 +1926,7 @@ public sealed class CompilerCliTests
         }
 
         var repositoryRoot = FindRepositoryRoot();
-        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-exe-lto-system-memory-");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-cli-exe-lto-system-text-");
         var rootPath = Path.Combine(tempDirectory.FullName, "App.stark");
         var outputPath = Path.Combine(tempDirectory.FullName, "app");
         var saveTempsPath = Path.Combine(tempDirectory.FullName, "temps");
@@ -1880,7 +1948,8 @@ public sealed class CompilerCliTests
                 import System.Text
                 module App
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     stack System.Memory.MemoryResult<System.Text.OwnedAscii> text = 0.ToAscii();
                     return 0;
                 }
@@ -1919,17 +1988,15 @@ public sealed class CompilerCliTests
                 static line => line.Contains("System_Text.ll", StringComparison.Ordinal)
                     && line.Contains("-flto=thin", StringComparison.Ordinal)
                     && !line.Contains("-disable-llvm-passes", StringComparison.Ordinal));
-            Assert.Contains(
+            Assert.DoesNotContain(
                 clangLogLines,
-                static line => line.Contains("System_Memory.ll", StringComparison.Ordinal)
-                    && line.Contains("-flto=thin", StringComparison.Ordinal)
-                    && !line.Contains("-disable-llvm-passes", StringComparison.Ordinal));
+                static line => line.Contains("System_Memory.ll", StringComparison.Ordinal));
 
             var metrics = await File.ReadAllTextAsync(metricsPath);
             Assert.Contains("optimization_decision_count=", metrics, StringComparison.Ordinal);
-            Assert.Contains("module=System.Memory", metrics, StringComparison.Ordinal);
+            Assert.Contains("module=System.Text", metrics, StringComparison.Ordinal);
             Assert.Contains("thinlto=true", metrics, StringComparison.Ordinal);
-            Assert.Contains("reason=thinlto-enabled", metrics, StringComparison.Ordinal);
+            Assert.Contains("reason=thinlto-enabled-hot-inline-candidates", metrics, StringComparison.Ordinal);
         }
         finally
         {
@@ -1976,7 +2043,8 @@ public sealed class CompilerCliTests
                 import System.Collections
                 module App
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     stack mut List<u32[0 2 ** 31 - 1]> values = new();
                     values.Push(1);
                     return (i32[min max])values.Count();
@@ -2063,7 +2131,8 @@ public sealed class CompilerCliTests
                 [Backend(Opaque)]
                 module Opaque
 
-                public fn i32[min max] Value() {
+                public fn i32[min max] Value()
+                {
                     return 1;
                 }
                 """);
@@ -2072,7 +2141,8 @@ public sealed class CompilerCliTests
                 """
                 module Inlineable
 
-                public finite law i32[min max] Value() {
+                public finite law i32[min max] Value()
+                {
                     return 2;
                 }
                 """);
@@ -2083,7 +2153,8 @@ public sealed class CompilerCliTests
                 import Inlineable
                 module App
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     return Opaque.Value() + Inlineable.Value();
                 }
                 """);
@@ -2172,7 +2243,8 @@ public sealed class CompilerCliTests
                 """
                 module Math
 
-                public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
+                public finite law i32[min max] Add(i32[min max] left, i32[min max] right)
+                {
                     return left + right;
                 }
                 """);
@@ -2183,7 +2255,8 @@ public sealed class CompilerCliTests
                 export import Math
                 module Facade
 
-                public finite law i32[min max] Double(i32[min max] value) {
+                public finite law i32[min max] Double(i32[min max] value)
+                {
                     return Math.Add(value, value);
                 }
                 """);
@@ -2214,7 +2287,8 @@ public sealed class CompilerCliTests
                 import Facade
                 module App
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     return Math.Add(3, 4);
                 }
                 """);
@@ -2287,7 +2361,8 @@ public sealed class CompilerCliTests
                 """
                 module Text
 
-                public enum Encoding {
+                public enum Encoding
+                {
                     Binary,
                     UTF8,
                 }
@@ -2299,16 +2374,19 @@ public sealed class CompilerCliTests
                 import Text
                 module Math
 
-                public enum FileMode {
+                public enum FileMode
+                {
                     Read,
                     Write,
                 }
 
-                public finite law i32[min max] Open(ascii path, FileMode mode) {
+                public finite law i32[min max] Open(ascii path, FileMode mode)
+                {
                     return 4;
                 }
 
-                public finite law i32[min max] Open(ascii path, FileMode mode, Text.Encoding encoding) {
+                public finite law i32[min max] Open(ascii path, FileMode mode, Text.Encoding encoding)
+                {
                     return 11;
                 }
                 """);
@@ -2320,7 +2398,8 @@ public sealed class CompilerCliTests
                 export import Math
                 module Facade
 
-                public finite law i32[min max] Run() {
+                public finite law i32[min max] Run()
+                {
                     return Math.Open("demo.txt", Math.FileMode.Write)
                         + Math.Open("demo.txt", Math.FileMode.Write, Text.Encoding.UTF8);
                 }
@@ -2347,7 +2426,8 @@ public sealed class CompilerCliTests
                 import Facade
                 module App
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     return Math.Open("demo.txt", Math.FileMode.Write)
                         + Math.Open("demo.txt", Math.FileMode.Write, Text.Encoding.UTF8);
                 }
@@ -2468,8 +2548,10 @@ public sealed class CompilerCliTests
                 import Syscall
                 module App
 
-                export unsafe fn i32[min max] main() {
-                    if (Syscall.Syscall0(39) <= 0) {
+                export unsafe fn i32[min max] main()
+                {
+                    if (Syscall.Syscall0(39) <= 0)
+                    {
                         return 1;
                     }
 
@@ -2548,7 +2630,8 @@ public sealed class CompilerCliTests
                 """
                 module App
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     return 7;
                 }
                 """);
@@ -2623,7 +2706,8 @@ public sealed class CompilerCliTests
                 """
                 module App
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     return 0;
                 }
                 """);
@@ -2684,7 +2768,8 @@ public sealed class CompilerCliTests
                 """
                 module App
 
-                fn i32[min max] Run() {
+                fn i32[min max] Run()
+                {
                     return 7;
                 }
                 """);
@@ -2753,7 +2838,8 @@ public sealed class CompilerCliTests
                 """
                 module App
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     return 7;
                 }
                 """);
@@ -2821,7 +2907,8 @@ public sealed class CompilerCliTests
                 """
                 module Facade
 
-                public finite law i32[min max] Double(i32[min max] value) {
+                public finite law i32[min max] Double(i32[min max] value)
+                {
                     return value + value;
                 }
                 """);

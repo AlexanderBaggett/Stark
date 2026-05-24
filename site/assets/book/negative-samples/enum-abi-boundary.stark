@@ -1,8 +1,0 @@
-module Book.Negative.EnumAbiBoundary
-
-enum Token {
-    End,
-    Integer(i32[min max]),
-}
-
-export fn Token Use(Token token);

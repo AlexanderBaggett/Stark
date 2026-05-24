@@ -22,9 +22,15 @@ Status: covered by `ExamplesCompileRunTests.ArithmeticExampleCompilesAndRuns`.
 - [Arithmetic.stark](/reference/examples/arithmetic/Arithmetic.stark)
 - [Stark.toml](/reference/examples/arithmetic/Stark.toml)
 
+### Arithmetic.stark
+
 {{< file-sample "static/reference/examples/arithmetic/Arithmetic.stark" "stark" >}}
+
+### Stark.toml
+
+{{< file-sample "static/reference/examples/arithmetic/Stark.toml" "toml" >}}
 
 ## Related
 
-- [Integer, Floating-Point, and Overflow Policy](/book/28-integers-floats-overflow/)
+- [Integer, Floating-Point, and Overflow Policy](/book/31-integers-floats-overflow/)
 - [Language reference](/reference/language/LanguageReference/)

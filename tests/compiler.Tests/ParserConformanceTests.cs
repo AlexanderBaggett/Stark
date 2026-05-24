@@ -13,7 +13,8 @@ public sealed class ParserConformanceTests
             export import Core.Text
             module Demo.Api
 
-            public fn i32[min max] Sum(i32[min max] left, i32[min max] right,) {
+            public fn i32[min max] Sum(i32[min max] left, i32[min max] right,)
+            {
                 return left + right;
             }
             """
@@ -27,20 +28,24 @@ public sealed class ParserConformanceTests
             fn void RegisterZero(fnptr<fn u32[0 2 ** 31 - 1]()> callback);
             fn void RegisterOne(fnptr<fn u32[0 2 ** 31 - 1](u32[0 2 ** 31 - 1])> callback);
 
-            fn void Run(u32[0 2 ** 31 - 1] scale, u32[0 2 ** 31 - 1] token, u32[0 2 ** 31 - 1] sharedState) {
+            fn void Run(u32[0 2 ** 31 - 1] scale, u32[0 2 ** 31 - 1] token, u32[0 2 ** 31 - 1] sharedState)
+            {
                 stack fnptr<fn u32[0 2 ** 31 - 1](u32[0 2 ** 31 - 1])> callback = Transform;
                 RegisterZero(() => 0);
-                RegisterOne(capture(copy scale, read token, move sharedState) (u32[0 2 ** 31 - 1] index) => {
+                RegisterOne(capture(copy scale, read token, move sharedState) (u32[0 2 ** 31 - 1] index) =>
+                {
                     return index;
                 });
 
-                unsafe {
+                unsafe
+                {
                     Danger();
                     RegisterZero(capture(unsafe addr token, unsafe shared sharedState) () => 0);
                 }
             }
 
-            fn u32[0 2 ** 31 - 1] Transform(u32[0 2 ** 31 - 1] value) {
+            fn u32[0 2 ** 31 - 1] Transform(u32[0 2 ** 31 - 1] value)
+            {
                 return value;
             }
             """
@@ -50,7 +55,8 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
@@ -66,45 +72,53 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            struct Ui {
+            struct Ui
+            {
                 i32[min max] Frame;
             }
 
-            struct Packet {
+            struct Packet
+            {
                 i32[min max] Code;
             }
 
-            struct Button {
+            struct Button
+            {
                 heap closure<fn void()> OnClick;
                 heap closure<mut fn void(i32[min max])> OnValue;
             }
 
             inline fn void Horizontal(
                 borrow mut Ui ui,
-                inline closure<fn void(borrow mut Ui)> body) {
-                body(ui);
+                inline closure<fn void(borrow mut Ui)> body)
+                {
+                    body(ui);
                 return;
             }
 
             fn void WithPanel(
                 borrow mut Ui ui,
-                borrow closure<fn void(borrow mut Ui)> body) {
-                body(ui);
+                borrow closure<fn void(borrow mut Ui)> body)
+                {
+                    body(ui);
                 return;
             }
 
             fn void PushEvent(
                 mut borrow closure<mut fn void(i32[min max])> sink,
-                i32[min max] value) {
-                sink(value);
+                i32[min max] value)
+                {
+                    sink(value);
                 return;
             }
 
-            fn heap closure<fn i32[min max](i32[min max])> MakeAdder(i32[min max] offset) {
+            fn heap closure<fn i32[min max](i32[min max])> MakeAdder(i32[min max] offset)
+            {
                 return heap capture(copy offset) (i32[min max] value) => value + offset;
             }
 
-            fn Packet BuildWith(inline closure<once fn Packet()> producer) {
+            fn Packet BuildWith(inline closure<once fn Packet()> producer)
+            {
                 return producer();
             }
 
@@ -117,7 +131,8 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            finite law ascii Label() {
+            finite law ascii Label()
+            {
                 return $"Score: {100}";
             }
             """
@@ -127,7 +142,8 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            fn void Join(Ascii left, Ascii right, Unicode wideLeft, Unicode wideRight) {
+            fn void Join(Ascii left, Ascii right, Unicode wideLeft, Unicode wideRight)
+            {
                 stack Ascii combined[4096] = left + right;
                 stack Unicode wideCombined[4096] = wideLeft + wideRight;
             }
@@ -146,34 +162,42 @@ public sealed class ParserConformanceTests
             """
             module Models
 
-            record Pair<T>(T Left, T Right) {
+            record Pair<T>(T Left, T Right)
+            {
                 mut i32[min max] Count;
 
-                Pair(T left, T right) {
+                Pair(T left, T right)
+                {
                     ;
                 }
 
-                fn i32[min max] Width() {
+                fn i32[min max] Width()
+                {
                     return 2;
                 }
 
-                internal fn i32[min max] HiddenWidth() {
+                internal fn i32[min max] HiddenWidth()
+                {
                     return 2;
                 }
 
-                static finite law Pair<T> Empty(T value) {
+                static finite law Pair<T> Empty(T value)
+                {
                     return new Pair<T>(value, value);
                 }
 
-                drop {
+                drop
+                {
                     ;
                 }
             }
 
-            struct Buffer {
+            struct Buffer
+            {
                 rawptr<i8[min max]> Ptr;
 
-                mut drop {
+                mut drop
+                {
                     self.Ptr = null;
                 }
             }
@@ -193,11 +217,13 @@ public sealed class ParserConformanceTests
             """
             module Contracts
 
-            trait Parser<T> {
+            trait Parser<T>
+            {
                 law T Parse(ascii text) where T: Node, Printable;
             }
 
-            doctrine Numbers<T> {
+            doctrine Numbers<T>
+            {
                 finite law T Clamp(T value, T min, T max) where T: Ordered;
             }
             """
@@ -222,18 +248,21 @@ public sealed class ParserConformanceTests
             """
             module Flow
 
-            fn void Run(bool flag) {
+            fn void Run(bool flag)
+            {
                 ;
 
                 while infinite (flag) ;
 
-                while non-deterministic (flag) {
+                while non-deterministic (flag)
+                {
                     break;
                 }
 
                 for non-deterministic (; flag; ) ;
 
-                for willexit (stack mut i32[min max] i = 0; i < 4; i += 1, i += 2) {
+                for willexit (stack mut i32[min max] i = 0; i < 4; i += 1, i += 2)
+                {
                     continue;
                 }
             }
@@ -248,27 +277,33 @@ public sealed class ParserConformanceTests
                 rawptr<i32[min max]> source,
                 rawmutptr<i32[min max]> destination)
                 where disjoint(source[0, 4], destination[0, 4])
-                where overlap(source, destination) {
-                if disjoint(source, destination) {
+                where overlap(source, destination)
+                {
+                    if disjoint(source, destination)
+                {
                     return;
                 }
 
-                assume disjoint(source, destination) {
+                assume disjoint(source, destination)
+                {
                     return;
                 }
 
-                while willexit independent (false) {
+                while willexit independent (false)
+                {
                     break;
                 }
 
-                for willexit independent (stack mut u32[0 2 ** 31 - 1] index = 0; index < 4; index += 1) {
+                for willexit independent (stack mut u32[0 2 ** 31 - 1] index = 0; index < 4; index += 1)
+                {
                     continue;
                 }
             }
 
             unsafe fn void SameMemory(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
-                where same(left, right) {
-                return;
+                where same(left, right)
+                {
+                    return;
             }
             """
         },
@@ -277,8 +312,10 @@ public sealed class ParserConformanceTests
             """
             module Branching
 
-            fn i32[min max] Pick(i32[min max] state) {
-                switch w99 (state) {
+            fn i32[min max] Pick(i32[min max] state)
+            {
+                switch w99 (state)
+                {
                     case 0:
                     case 1:
                         return 1;
@@ -295,19 +332,23 @@ public sealed class ParserConformanceTests
             """
             module Access
 
-            struct Leaf {
+            struct Leaf
+            {
                 i32[min max] Value;
             }
 
-            struct Node {
+            struct Node
+            {
                 Leaf[2] Leaves;
             }
 
-            fn Node GetNode(i32[min max] index, i32[min max] count,) {
+            fn Node GetNode(i32[min max] index, i32[min max] count,)
+            {
                 return new Node();
             }
 
-            fn i32[min max] Read() {
+            fn i32[min max] Read()
+            {
                 return GetNode(1, 2,).Leaves[0].Value;
             }
             """
@@ -317,18 +358,24 @@ public sealed class ParserConformanceTests
             """
             module AllocationSyntax
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
 
-                Box(i32[min max] value) {
+                Box(i32[min max] value)
+                {
                     ;
                 }
             }
 
-            fn Box Make(i32[min max] value) {
+            fn Box Make(i32[min max] value)
+            {
                 stack Box empty = new();
                 stack Box constructed = new(value);
-                stack Box initialized = new() { Value = value };
+                stack Box initialized = new()
+                {
+                    Value = value
+                };
                 return new(value);
             }
             """
@@ -338,7 +385,8 @@ public sealed class ParserConformanceTests
             """
             module Operators
 
-            fn i32[min max] Compute(i32[min max] left, i32[min max] middle, i32[min max] right, bool flag) {
+            fn i32[min max] Compute(i32[min max] left, i32[min max] middle, i32[min max] right, bool flag)
+            {
                 stack mut i32[min max] value = left + middle * right << 1;
                 value &= left ^ middle | right;
                 value = flag ? value : left;
@@ -352,7 +400,8 @@ public sealed class ParserConformanceTests
             import Core.Math
             module Demo
 
-            fn i32[min max] Read() {
+            fn i32[min max] Read()
+            {
                 return Core.Math.Constants.Value;
             }
             """
@@ -362,13 +411,21 @@ public sealed class ParserConformanceTests
             """
             module Init
 
-            struct Item {
+            struct Item
+            {
                 i32[min max] Value;
             }
 
-            fn void Run() {
-                stack Item item = new Item() { Value = 1, };
-                stack i32[min max][3] numbers = { 1, 2, 3, };
+            fn void Run()
+            {
+                stack Item item = new Item()
+                {
+                    Value = 1,
+                };
+                stack i32[min max][3] numbers =
+                {
+                    1, 2, 3,
+                };
             }
             """
         },
@@ -385,7 +442,8 @@ public sealed class ParserConformanceTests
             """
             module Ranges
 
-            fn void Accept(i32[-10 10][4] buckets) {
+            fn void Accept(i32[-10 10][4] buckets)
+            {
                 return;
             }
             """
@@ -486,7 +544,8 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            fn i32[min max] Sum(i32[min max] left = 1, i32[min max] right) {
+            fn i32[min max] Sum(i32[min max] left = 1, i32[min max] right)
+            {
                 return left + right;
             }
             """
@@ -504,7 +563,8 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            fn i32 Run(i32 value) {
+            fn i32 Run(i32 value)
+            {
                 return value;
             }
             """
@@ -522,7 +582,8 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            fn void Run(i40[0 1] count, f256 amount) {
+            fn void Run(i40[0 1] count, f256 amount)
+            {
                 return;
             }
             """
@@ -540,7 +601,8 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            doctrine Numbers {
+            doctrine Numbers
+            {
                 fn i32[min max] Identity(i32[min max] value);
             }
             """
@@ -550,8 +612,10 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            fn i32[min max] Run(i32[min max] value) {
-                switch (value) {
+            fn i32[min max] Run(i32[min max] value)
+            {
+                switch (value)
+                {
                     case var:
                         return 1;
                     default:
@@ -565,7 +629,8 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            fn T Echo<T>(T value) where T: {
+            fn T Echo<T>(T value) where T:
+            {
                 return value;
             }
             """
@@ -575,8 +640,10 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            fn void Run(bool flag) {
-                for willexit (stack i32[min max] i = 0) {
+            fn void Run(bool flag)
+            {
+                for willexit (stack i32[min max] i = 0)
+                {
                     ;
                 }
             }
@@ -587,8 +654,10 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            fn void Run(bool flag) {
-                for nondeterministic (; flag; ) {
+            fn void Run(bool flag)
+            {
+                for nondeterministic (; flag; )
+                {
                     ;
                 }
             }
@@ -599,12 +668,17 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            struct Item {
+            struct Item
+            {
                 i32[min max] Value;
             }
 
-            fn void Run() {
-                stack Item item = new Item() { Value = };
+            fn void Run()
+            {
+                stack Item item = new Item()
+                {
+                    Value =
+                };
             }
             """
         },
@@ -613,7 +687,8 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            unsafe fn void Run(rawptr<i32[min max] value) {
+            unsafe fn void Run(rawptr<i32[min max] value)
+            {
                 return;
             }
             """
@@ -631,8 +706,10 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            fn void Run(bool flag) {
-                while non deterministic (flag) {
+            fn void Run(bool flag)
+            {
+                while non deterministic (flag)
+                {
                     break;
                 }
             }
@@ -643,11 +720,13 @@ public sealed class ParserConformanceTests
             """
             module Demo
 
-            fn void Write(i32[min max] left, i32[min max] right) {
+            fn void Write(i32[min max] left, i32[min max] right)
+            {
                 return;
             }
 
-            fn void Run() {
+            fn void Run()
+            {
                 Write(1 2);
             }
             """

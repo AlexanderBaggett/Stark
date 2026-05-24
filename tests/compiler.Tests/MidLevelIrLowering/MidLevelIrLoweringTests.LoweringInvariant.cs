@@ -13,29 +13,36 @@ public sealed partial class MidLevelIrLoweringTests
             public finite law ascii AsciiView(Ascii source);
             public unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
 
-            enum Status {
+            enum Status
+            {
                 Ok,
                 Err(i32[min max]),
             }
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
 
-                fn i32[min max] Get(borrow Box self) {
+                fn i32[min max] Get(borrow Box self)
+                {
                     return self.Value;
                 }
             }
 
-            fn i32[min max] Inc(i32[min max] value) {
+            fn i32[min max] Inc(i32[min max] value)
+            {
                 return value + 1;
             }
 
-            unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value) {
+            unsafe fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op, i32[min max] value)
+            {
                 return op(value);
             }
 
-            fn i32[min max] Score(Status status) {
-                switch (status) {
+            fn i32[min max] Score(Status status)
+            {
+                switch (status)
+                {
                     case Status.Ok:
                         return 1;
                     case Status.Err(var error):
@@ -43,9 +50,16 @@ public sealed partial class MidLevelIrLoweringTests
                 }
             }
 
-            unsafe fn i32[min max] Run(bool flag) {
-                stack mut Box box = new Box() { Value = 3 };
-                stack mut i32[min max][2] values = { 4, 5 };
+            unsafe fn i32[min max] Run(bool flag)
+            {
+                stack mut Box box = new Box()
+                {
+                    Value = 3
+                };
+                stack mut i32[min max][2] values =
+                {
+                    4, 5
+                };
                 stack fnptr<fn i32[min max](i32[min max])> lambda = (i32[min max] value) => Inc(value);
                 stack closure<finite law i32[min max](i32[min max])> closureOp =
                     (i32[min max] value) => value + 6;
@@ -55,7 +69,8 @@ public sealed partial class MidLevelIrLoweringTests
                 stack Ascii joined[12] = label + "!";
                 values[0] = Inc(box.Get());
                 items.Reserve(1);
-                if (flag) {
+                if (flag)
+                {
                     return values[0] + Apply(Inc, 2) + Apply(lambda, 3) + closureOp(6) + Score(Status.Err(4));
                 }
 

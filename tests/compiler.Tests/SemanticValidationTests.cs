@@ -13,16 +13,19 @@ public sealed class SemanticValidationTests
 
             alias SmallAlias = i32[0 255];
 
-            struct Box {
+            struct Box
+            {
                 i32[0 255] Value;
                 i32[0 127][4] Fixed;
             }
 
-            struct Holder<T> {
+            struct Holder<T>
+            {
                 T Value;
             }
 
-            fn i64[0 max] Run(i32[1 10] parameter, Holder<i32[0 63]> holder) {
+            fn i64[0 max] Run(i32[1 10] parameter, Holder<i32[0 63]> holder)
+            {
                 stack dynamic i32[0 7] values = new();
                 stack i32[0 128] local = parameter;
                 stack i32[0 9] converted = (i32[0 9])local;
@@ -68,7 +71,8 @@ public sealed class SemanticValidationTests
             module Demo
 
             [Platform]
-            unsafe fn i32[0 255] ReadPlatformStatus(i32[0 255] status) {
+            unsafe fn i32[0 255] ReadPlatformStatus(i32[0 255] status)
+            {
                 return status;
             }
             """,
@@ -87,11 +91,13 @@ public sealed class SemanticValidationTests
             module Demo
 
             [Platform]
-            struct HostStatus {
+            struct HostStatus
+            {
                 i32[0 255] Code;
             }
 
-            fn i32[min max] Read(HostStatus status) {
+            fn i32[min max] Read(HostStatus status)
+            {
                 return (i32[min max])status.Code;
             }
             """,
@@ -110,7 +116,8 @@ public sealed class SemanticValidationTests
             module Demo
 
             [Platform]
-            unsafe fn i32[min max] Run() {
+            unsafe fn i32[min max] Run()
+            {
                 stack i32[0 255] status = 0;
                 return status;
             }
@@ -130,7 +137,8 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn u32[0 255] Run(u16[0 15] tag) {
+            fn u32[0 255] Run(u16[0 15] tag)
+            {
                 stack i32[-1 1] delta = -1;
                 return tag;
             }
@@ -152,7 +160,8 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn borrow i32[min max] Echo(borrow i32[min max] value) {
+            fn borrow i32[min max] Echo(borrow i32[min max] value)
+            {
                 return value;
             }
             """);
@@ -168,7 +177,8 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
@@ -187,15 +197,18 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            struct BorrowField {
+            struct BorrowField
+            {
                 borrow i32[min max] Value;
             }
 
-            struct RetBorrowField {
+            struct RetBorrowField
+            {
                 retborrow i32[min max] Value;
             }
 
-            struct BorrowClosureField {
+            struct BorrowClosureField
+            {
                 borrow closure<fn i32[min max]()> Callback;
             }
             """,
@@ -223,7 +236,8 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            struct Holder {
+            struct Holder
+            {
                 storeborrow closure<fn void()> Callback;
             }
             """,
@@ -258,7 +272,8 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            unsafe fn void Run() {
+            unsafe fn void Run()
+            {
                 register mut i32[min max] value = 1;
                 stack rawmutptr<i32[min max]> pointer = &value;
                 return;
@@ -281,16 +296,22 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            fn i32[min max] Read(borrow Box box) {
+            fn i32[min max] Read(borrow Box box)
+            {
                 return box.Value;
             }
 
-            fn i32[min max] Run() {
-                register Box box = new Box() { Value = 1 };
+            fn i32[min max] Run()
+            {
+                register Box box = new Box()
+                {
+                    Value = 1
+                };
                 return Read(box);
             }
             """,
@@ -311,8 +332,12 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Run() {
-                register i32[min max][2] values = { 1, 2 };
+            fn void Run()
+            {
+                register i32[min max][2] values =
+                {
+                    1, 2
+                };
                 stack i32[min max][] view = values;
                 return;
             }
@@ -334,7 +359,8 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn i32[min max] Run() {
+            fn i32[min max] Run()
+            {
                 arena i32[min max] value = 1;
                 return value;
             }
@@ -356,7 +382,8 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn i32[min max] Run() {
+            fn i32[min max] Run()
+            {
                 static mut i32[min max] value = 1;
                 value = value + 1;
                 return value;
@@ -407,7 +434,8 @@ public sealed class SemanticValidationTests
             module Demo
 
             [Platform]
-            struct NativeList {
+            struct NativeList
+            {
                 rawmutptr<rawptr<i8[min max]>> Items;
             }
             """);
@@ -489,11 +517,15 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            struct Holder {
+            struct Holder
+            {
                 rawptr<i8[min max]> Ptr;
             }
 
-            const Holder Current = new Holder() { Ptr = null };
+            const Holder Current = new Holder()
+            {
+                Ptr = null
+            };
             """);
 
         Assert.False(result.Succeeded);
@@ -554,7 +586,8 @@ public sealed class SemanticValidationTests
 
             const Answer = 42;
 
-            law u8[0 max] Read() {
+            law u8[0 max] Read()
+            {
                 return Answer;
             }
             """);
@@ -572,7 +605,8 @@ public sealed class SemanticValidationTests
 
             static mut i32[min max] Counter = 0;
 
-            law void Touch() {
+            law void Touch()
+            {
                 Counter = 1;
                 return;
             }
@@ -589,7 +623,8 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            law dynamic i32[0 max] Make() {
+            law dynamic i32[0 max] Make()
+            {
                 return new(4);
             }
             """);
@@ -605,7 +640,8 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            law void Grow() {
+            law void Grow()
+            {
                 stack mut dynamic i32[0 max] values = new();
                 values.Reserve(4);
             }
@@ -622,7 +658,8 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            law bool Grow() {
+            law bool Grow()
+            {
                 stack mut dynamic i32[0 max] values = new();
                 return values.TryReserve(4);
             }
@@ -639,7 +676,8 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            law i32[0 max] Pop(mut borrow dynamic i32[0 max] values) {
+            law i32[0 max] Pop(mut borrow dynamic i32[0 max] values)
+            {
                 return values.MoveLast();
             }
             """);
@@ -655,7 +693,8 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            law i32[0 max] Remove(mut borrow dynamic i32[0 max] values) {
+            law i32[0 max] Remove(mut borrow dynamic i32[0 max] values)
+            {
                 return values.MoveAt(0);
             }
             """);
@@ -671,15 +710,18 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            struct Token {
+            struct Token
+            {
                 i32[min max] Value;
 
-                drop {
+                drop
+                {
                     ;
                 }
             }
 
-            fn void Run() {
+            fn void Run()
+            {
                 stack mut dynamic Token values = new(4);
             }
             """,
@@ -697,11 +739,13 @@ public sealed class SemanticValidationTests
 
             static i32[min max] Counter = 1;
 
-            fn i32[min max] Impure() {
+            fn i32[min max] Impure()
+            {
                 return Counter;
             }
 
-            law i32[min max] PureWrapper() {
+            law i32[min max] PureWrapper()
+            {
                 return Impure();
             }
             """);
@@ -717,11 +761,13 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn i32[min max] PureAdd(i32[min max] left, i32[min max] right) {
+            fn i32[min max] PureAdd(i32[min max] left, i32[min max] right)
+            {
                 return left + right;
             }
 
-            law i32[min max] Use() {
+            law i32[min max] Use()
+            {
                 return PureAdd(1, 2);
             }
             """);
@@ -736,12 +782,17 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            law i32[min max] Bump() {
-                stack mut Box box = new Box() { Value = 1 };
+            law i32[min max] Bump()
+            {
+                stack mut Box box = new Box()
+                {
+                    Value = 1
+                };
                 box.Value = 2;
                 return box.Value;
             }
@@ -757,18 +808,22 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 u32[0 2147483647] Value;
 
-                law retborrow u32[0 2147483647] Get(borrow Box self) {
+                law retborrow u32[0 2147483647] Get(borrow Box self)
+                {
                     return self.Value;
                 }
             }
 
-            struct Holder {
+            struct Holder
+            {
                 Box Inner;
 
-                law retborrow u32[0 2147483647] Get(borrow Holder self) {
+                law retborrow u32[0 2147483647] Get(borrow Holder self)
+                {
                     return self.Inner.Get();
                 }
             }
@@ -785,11 +840,13 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            law void Touch(mut borrow Box box) {
+            law void Touch(mut borrow Box box)
+            {
                 box.Value = 1;
                 return;
             }
@@ -806,8 +863,10 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            finite void Loop() {
-                while infinite (true) {
+            finite void Loop()
+            {
+                while infinite (true)
+                {
                     break;
                 }
 
@@ -826,8 +885,10 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            finite void Loop(bool flag) {
-                for non-deterministic (; flag; ) {
+            finite void Loop(bool flag)
+            {
+                for non-deterministic (; flag; )
+                {
                     ;
                 }
 
@@ -846,8 +907,10 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Loop(bool flag) {
-                while infinite (flag) {
+            fn void Loop(bool flag)
+            {
+                while infinite (flag)
+                {
                     ;
                 }
             }
@@ -864,8 +927,10 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Loop() {
-                while infinite (true) {
+            fn void Loop()
+            {
+                while infinite (true)
+                {
                     break;
                 }
             }
@@ -882,8 +947,10 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Loop() {
-                while willexit (true) {
+            fn void Loop()
+            {
+                while willexit (true)
+                {
                     ;
                 }
             }
@@ -900,8 +967,10 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Loop() {
-                for willexit (;; ) {
+            fn void Loop()
+            {
+                for willexit (;; )
+                {
                     ;
                 }
             }
@@ -918,8 +987,10 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Loop() {
-                for willexit (;; ) {
+            fn void Loop()
+            {
+                for willexit (;; )
+                {
                     break;
                 }
 
@@ -937,7 +1008,8 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Run() {
+            fn void Run()
+            {
                 break;
             }
             """,
@@ -954,8 +1026,10 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Run(i32[min max] value) {
-                switch (value) {
+            fn void Run(i32[min max] value)
+            {
+                switch (value)
+                {
                     default:
                         continue;
                 }
@@ -974,8 +1048,10 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Run(i32[min max] value) {
-                switch (value) {
+            fn void Run(i32[min max] value)
+            {
+                switch (value)
+                {
                     case 0:
                         break;
                     default:
@@ -997,9 +1073,12 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Run(i32[min max] value) {
-                while willexit (true) {
-                    switch (value) {
+            fn void Run(i32[min max] value)
+            {
+                while willexit (true)
+                {
+                    switch (value)
+                    {
                         default:
                             break;
                     }
@@ -1019,9 +1098,12 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Run(i32[min max] value) {
-                while infinite (true) {
-                    switch (value) {
+            fn void Run(i32[min max] value)
+            {
+                while infinite (true)
+                {
+                    switch (value)
+                    {
                         default:
                             break;
                     }
@@ -1040,7 +1122,8 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            inline noinline fn void Run() {
+            inline noinline fn void Run()
+            {
                 return;
             }
             """);
@@ -1056,7 +1139,8 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            hot cold fn void Run() {
+            hot cold fn void Run()
+            {
                 return;
             }
             """);
@@ -1072,15 +1156,18 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Maybe() {
-                while infinite (true) {
+            fn void Maybe()
+            {
+                while infinite (true)
+                {
                     break;
                 }
 
                 return;
             }
 
-            finite void Outer() {
+            finite void Outer()
+            {
                 Maybe();
                 return;
             }
@@ -1097,11 +1184,13 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn i32[min max] Step(i32[min max] value) {
+            fn i32[min max] Step(i32[min max] value)
+            {
                 return value + 1;
             }
 
-            finite i32[min max] Outer(i32[min max] value) {
+            finite i32[min max] Outer(i32[min max] value)
+            {
                 return Step(value);
             }
             """);
@@ -1116,7 +1205,8 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            finite void Recur() {
+            finite void Recur()
+            {
                 Recur();
                 return;
             }
@@ -1135,7 +1225,8 @@ public sealed class SemanticValidationTests
 
             fn retborrow i32[min max] Bounce(retborrow i32[min max] value);
 
-            fn retborrow i32[min max] Forward(retborrow i32[min max] value) {
+            fn retborrow i32[min max] Forward(retborrow i32[min max] value)
+            {
                 return Bounce(value);
             }
             """);
@@ -1153,7 +1244,8 @@ public sealed class SemanticValidationTests
 
             unsafe ffi fn void Accept(borrow i32[min max] value);
 
-            unsafe fn void Use(borrow i32[min max] value) {
+            unsafe fn void Use(borrow i32[min max] value)
+            {
                 Accept(value);
                 return;
             }
@@ -1170,11 +1262,13 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            fn void Inspect(borrow i32[min max] value) {
+            fn void Inspect(borrow i32[min max] value)
+            {
                 return;
             }
 
-            fn retborrow i32[min max] Echo(retborrow i32[min max] value) {
+            fn retborrow i32[min max] Echo(retborrow i32[min max] value)
+            {
                 Inspect(value);
                 return value;
             }
@@ -1196,8 +1290,10 @@ public sealed class SemanticValidationTests
 
             const Answer = 42;
 
-            doctrine Numbers {
-                law u8[0 max] Read() {
+            doctrine Numbers
+            {
+                law u8[0 max] Read()
+                {
                     return Answer;
                 }
             }
@@ -1214,10 +1310,12 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            struct Buffer {
+            struct Buffer
+            {
                 i32[min max] Value;
 
-                drop {
+                drop
+                {
                     self.Value = 0;
                 }
             }
@@ -1235,10 +1333,12 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            struct Buffer {
+            struct Buffer
+            {
                 i32[min max] Value;
 
-                mut drop {
+                mut drop
+                {
                     ;
                 }
             }
@@ -1258,15 +1358,18 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            struct Buffer {
+            struct Buffer
+            {
                 i32[min max] Value;
 
-                fn void Reset(mut borrow Buffer self) {
+                fn void Reset(mut borrow Buffer self)
+                {
                     self.Value = 0;
                     return;
                 }
 
-                mut drop {
+                mut drop
+                {
                     self.Reset();
                 }
             }
@@ -1285,8 +1388,10 @@ public sealed class SemanticValidationTests
             """
             module Demo
 
-            struct Buffer {
-                drop {
+            struct Buffer
+            {
+                drop
+                {
                     return;
                 }
             }

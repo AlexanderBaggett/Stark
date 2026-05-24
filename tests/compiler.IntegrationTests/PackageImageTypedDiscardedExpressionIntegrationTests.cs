@@ -26,7 +26,8 @@ public sealed class PackageImageTypedDiscardedExpressionIntegrationTests
                 """
                 module Facade
 
-                public fn i32[min max] Observe<T>(i32[min max] value, T tag) {
+                public fn i32[min max] Observe<T>(i32[min max] value, T tag)
+                {
                     value + 1;
                     return value;
                 }
@@ -93,7 +94,8 @@ public sealed class PackageImageTypedDiscardedExpressionIntegrationTests
                 import Facade
                 module Demo
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     stack i32[min max] tag = 0;
                     return Facade.Observe(7, tag);
                 }

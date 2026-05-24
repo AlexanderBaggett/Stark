@@ -25,8 +25,12 @@ public sealed class PackageImageTypedArrayInitializerIntegrationTests
                 """
                 module Facade
 
-                public fn i32[min max] SumArray<T>(i32[min max] left, i32[min max] right, T tag) {
-                    stack i32[min max][2] values = { left, right };
+                public fn i32[min max] SumArray<T>(i32[min max] left, i32[min max] right, T tag)
+                {
+                    stack i32[min max][2] values =
+                    {
+                        left, right
+                    };
                     return values[0] + values[1];
                 }
                 """);
@@ -51,7 +55,8 @@ public sealed class PackageImageTypedArrayInitializerIntegrationTests
                 import Facade
                 module Demo
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     return Facade.SumArray(4, 7, 0);
                 }
                 """);

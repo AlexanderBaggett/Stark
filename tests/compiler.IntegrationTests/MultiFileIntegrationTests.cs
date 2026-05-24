@@ -24,7 +24,8 @@ public sealed class MultiFileIntegrationTests
                 """
                 module Math
 
-                public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
+                public finite law i32[min max] Add(i32[min max] left, i32[min max] right)
+                {
                     return left + right;
                 }
                 """);
@@ -35,7 +36,8 @@ public sealed class MultiFileIntegrationTests
                 import Math
                 module App
 
-                fn i32[min max] Run() {
+                fn i32[min max] Run()
+                {
                     return Math.Add(3, 4);
                 }
                 """);
@@ -79,7 +81,8 @@ public sealed class MultiFileIntegrationTests
                 """
                 module Math
 
-                public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
+                public finite law i32[min max] Add(i32[min max] left, i32[min max] right)
+                {
                     return left + right;
                 }
                 """);
@@ -90,7 +93,8 @@ public sealed class MultiFileIntegrationTests
                 export import Math
                 module Facade
 
-                public fn i32[min max] Double(i32[min max] value) {
+                public fn i32[min max] Double(i32[min max] value)
+                {
                     return Math.Add(value, value);
                 }
                 """);
@@ -101,7 +105,8 @@ public sealed class MultiFileIntegrationTests
                 import Facade
                 module App
 
-                fn i32[min max] Run() {
+                fn i32[min max] Run()
+                {
                     return Math.Add(Facade.Double(2), 3);
                 }
                 """);
@@ -154,7 +159,8 @@ public sealed class MultiFileIntegrationTests
                 """
                 module System.Text
 
-                public enum Encoding {
+                public enum Encoding
+                {
                     Binary,
                     UTF8,
                     UTF16,
@@ -168,7 +174,8 @@ public sealed class MultiFileIntegrationTests
                 import System
                 module App
 
-                fn i32[min max] Run() {
+                fn i32[min max] Run()
+                {
                     stack System.Text.Encoding encoding = System.Text.Encoding.UTF8;
                     return 0;
                 }
@@ -213,11 +220,13 @@ public sealed class MultiFileIntegrationTests
                 """
                 module Math
 
-                fn i32[min max] HiddenAdd(i32[min max] left, i32[min max] right) {
+                fn i32[min max] HiddenAdd(i32[min max] left, i32[min max] right)
+                {
                     return left + right;
                 }
 
-                public fn i32[min max] Add(i32[min max] left, i32[min max] right) {
+                public fn i32[min max] Add(i32[min max] left, i32[min max] right)
+                {
                     return HiddenAdd(left, right);
                 }
                 """);
@@ -228,7 +237,8 @@ public sealed class MultiFileIntegrationTests
                 export import Math
                 module Facade
 
-                public fn i32[min max] Double(i32[min max] value) {
+                public fn i32[min max] Double(i32[min max] value)
+                {
                     return Math.Add(value, value);
                 }
                 """);
@@ -239,7 +249,8 @@ public sealed class MultiFileIntegrationTests
                 import Facade
                 module App
 
-                fn i32[min max] Run() {
+                fn i32[min max] Run()
+                {
                     return Math.HiddenAdd(Facade.Double(2), 3);
                 }
                 """);
@@ -290,7 +301,8 @@ public sealed class MultiFileIntegrationTests
                 """
                 module Math
 
-                public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
+                public finite law i32[min max] Add(i32[min max] left, i32[min max] right)
+                {
                     return left + right;
                 }
                 """);
@@ -301,7 +313,8 @@ public sealed class MultiFileIntegrationTests
                 export import Math
                 module Facade
 
-                public finite law i32[min max] Double(i32[min max] value) {
+                public finite law i32[min max] Double(i32[min max] value)
+                {
                     return Math.Add(value, value);
                 }
                 """);
@@ -349,7 +362,8 @@ public sealed class MultiFileIntegrationTests
                 import Facade
                 module App
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     return Math.Add(3, 4);
                 }
                 """);
@@ -445,7 +459,8 @@ public sealed class MultiFileIntegrationTests
                 import Globals
                 module App
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     return Globals.Answer;
                 }
                 """);
@@ -511,8 +526,10 @@ public sealed class MultiFileIntegrationTests
                 sourceText
                 + """
 
-                fn bool StatusOk(System.Memory.MemoryStatus status) {
-                    switch (status) {
+                fn bool StatusOk(System.Memory.MemoryStatus status)
+                {
+                    switch (status)
+                    {
                         case System.Memory.MemoryStatus.Ok:
                             return true;
                         case System.Memory.MemoryStatus.Err(var error):
@@ -520,27 +537,33 @@ public sealed class MultiFileIntegrationTests
                     }
                 }
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     stack mut OwnedUnicode unicodeText = new();
-                    if (!StatusOk(FromAsciiToUnicode(unicodeText, "caf\u00E9"))) {
+                    if (!StatusOk(FromAsciiToUnicode(unicodeText, "caf\u00E9")))
+                    {
                         return 1;
                     }
 
-                    if (unicodeText.Length() != 4) {
+                    if (unicodeText.Length() != 4)
+                    {
                         return 2;
                     }
 
                     stack i32[min max][] unicodeUnits = unicodeText.AsSlice();
-                    if (unicodeUnits[3] != 233) {
+                    if (unicodeUnits[3] != 233)
+                    {
                         return 4;
                     }
 
                     stack mut OwnedAscii asciiText = new();
-                    if (!StatusOk(FromUnicodeToAscii(asciiText, (unicode)"\u03B1!"))) {
+                    if (!StatusOk(FromUnicodeToAscii(asciiText, (unicode)"\u03B1!")))
+                    {
                         return 5;
                     }
 
-                    if (asciiText.Length() != 3) {
+                    if (asciiText.Length() != 3)
+                    {
                         return 6;
                     }
 
@@ -609,8 +632,10 @@ public sealed class MultiFileIntegrationTests
                 sourceText
                 + """
 
-                fn bool StatusOk(System.Memory.MemoryStatus status) {
-                    switch (status) {
+                fn bool StatusOk(System.Memory.MemoryStatus status)
+                {
+                    switch (status)
+                    {
                         case System.Memory.MemoryStatus.Ok:
                             return true;
                         case System.Memory.MemoryStatus.Err(var error):
@@ -618,46 +643,56 @@ public sealed class MultiFileIntegrationTests
                     }
                 }
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     stack mut OwnedUtf16 utf16Text = new();
-                    if (!StatusOk(FromAsciiToUtf16(utf16Text, "AZ"))) {
+                    if (!StatusOk(FromAsciiToUtf16(utf16Text, "AZ")))
+                    {
                         return 1;
                     }
 
-                    if (utf16Text.Length() != 2) {
+                    if (utf16Text.Length() != 2)
+                    {
                         return 2;
                     }
 
                     stack mut OwnedUnicode unicodeText = new();
-                    if (!StatusOk(FromUtf16ToUnicode(unicodeText, utf16Text))) {
+                    if (!StatusOk(FromUtf16ToUnicode(unicodeText, utf16Text)))
+                    {
                         return 4;
                     }
 
-                    if (unicodeText.Length() != 2) {
+                    if (unicodeText.Length() != 2)
+                    {
                         return 5;
                     }
 
                     stack mut OwnedUnicode gothicText = new();
                     if (!StatusOk(gothicText.AppendCodePoint(65))
-                        || !StatusOk(gothicText.AppendCodePoint(66376))) {
-                        return 17;
+                        || !StatusOk(gothicText.AppendCodePoint(66376)))
+                        {
+                            return 17;
                     }
 
                     stack mut OwnedUtf16 secondUtf16Text = new();
-                    if (!StatusOk(FromUnicodeToUtf16(secondUtf16Text, gothicText.View()))) {
+                    if (!StatusOk(FromUnicodeToUtf16(secondUtf16Text, gothicText.View())))
+                    {
                         return 7;
                     }
 
-                    if (secondUtf16Text.Length() != 3) {
+                    if (secondUtf16Text.Length() != 3)
+                    {
                         return 8;
                     }
 
                     stack mut OwnedAscii asciiText = new();
-                    if (!StatusOk(FromUtf16ToAscii(asciiText, utf16Text))) {
+                    if (!StatusOk(FromUtf16ToAscii(asciiText, utf16Text)))
+                    {
                         return 9;
                     }
 
-                    if (asciiText.Length() != 2) {
+                    if (asciiText.Length() != 2)
+                    {
                         return 10;
                     }
 

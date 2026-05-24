@@ -14,14 +14,16 @@ public sealed class CompilerPipelineEnumLayoutTests
                 """
                 module Facade
 
-                public enum MemoryError {
+                public enum MemoryError
+                {
                     OutOfMemory,
                     InvalidLayout,
                     UnsupportedAlignment,
                     TooLarge,
                 }
 
-                public enum IOError {
+                public enum IOError
+                {
                     NotFound,
                     PermissionDenied,
                     AlreadyExists,
@@ -55,8 +57,9 @@ public sealed class CompilerPipelineEnumLayoutTests
                 $$"""
                 module Facade
 
-                public enum BigStatus {
-                {{manyVariants}}
+                public enum BigStatus
+                {
+                    {{manyVariants}}
                 }
                 """),
             new CompilerOptions(StopAfterPassId: "enum-layout"));
@@ -78,7 +81,8 @@ public sealed class CompilerPipelineEnumLayoutTests
                 """
                 module Facade
 
-                public enum WidePayload {
+                public enum WidePayload
+                {
                     Empty,
                     I24(i24[min max]),
                     I48(i48[min max]),
@@ -123,14 +127,19 @@ public sealed class CompilerPipelineEnumLayoutTests
                 """
                 module Facade
 
-                public struct Padded {
+                public struct Padded
+                {
                     i8[min max] Small;
                     i32[min max] Value;
                 }
 
-                public enum Token {
+                public enum Token
+                {
                     End,
-                    Move { X: i32[min max], Y: i32[min max] },
+                    Move
+                    {
+                        X: i32[min max], Y: i32[min max]
+                    },
                 }
                 """,
                 facadePath));
@@ -180,7 +189,8 @@ public sealed class CompilerPipelineEnumLayoutTests
                     import Facade
                     module Demo
 
-                    fn void Run() {
+                    fn void Run()
+                    {
                         return;
                     }
                     """,
@@ -239,18 +249,21 @@ public sealed class CompilerPipelineEnumLayoutTests
                 """
                 module Facade
 
-                public enum CommonError {
+                public enum CommonError
+                {
                     NotFound,
                     PermissionDenied,
                     Unknown(i32[min max]),
                 }
 
-                public enum CommonStatus {
+                public enum CommonStatus
+                {
                     Ok,
                     Err(CommonError),
                 }
 
-                public enum CommonResult<T> {
+                public enum CommonResult<T>
+                {
                     Ok(T),
                     Err(CommonError),
                 }
@@ -291,8 +304,10 @@ public sealed class CompilerPipelineEnumLayoutTests
                     import Facade
                     module Demo
 
-                    finite law i32[min max] Unwrap(Facade.CommonResult<i32[min max]> result) {
-                        switch (result) {
+                    finite law i32[min max] Unwrap(Facade.CommonResult<i32[min max]> result)
+                    {
+                        switch (result)
+                        {
                             case Facade.CommonResult<i32[min max]>.Ok(var value):
                                 return value;
                             case Facade.CommonResult<i32[min max]>.Err(var error):

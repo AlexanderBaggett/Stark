@@ -25,15 +25,18 @@ public sealed class LargeOwnedAggregateRuntimeTests
                 """
                 static volatile int counter;
 
-                void reset_external_counter(void) {
+                void reset_external_counter(void)
+                {
                     counter = 0;
                 }
 
-                void bump_external_counter(int value) {
+                void bump_external_counter(int value)
+                {
                     counter += value;
                 }
 
-                int read_external_counter(void) {
+                int read_external_counter(void)
+                {
                     return counter;
                 }
                 """);
@@ -47,38 +50,46 @@ public sealed class LargeOwnedAggregateRuntimeTests
                 unsafe ffi fn void bump_external_counter(i32[min max] value);
                 unsafe ffi fn i32[min max] read_external_counter();
 
-                struct LargeResource {
+                struct LargeResource
+                {
                     i8[min max][512] Data;
                     i32[min max] Value;
 
-                    drop {
+                    drop
+                    {
                         bump_external_counter(self.Value);
                     }
                 }
 
-                enum Result {
+                enum Result
+                {
                     Ok(LargeResource),
                     Err(i32[min max])
                 }
 
-                unsafe fn LargeResource MakeResource(i32[min max] value) {
+                unsafe fn LargeResource MakeResource(i32[min max] value)
+                {
                     stack mut LargeResource resource = new LargeResource();
                     resource.Value = value;
                     return resource;
                 }
 
-                unsafe fn Result MakeOk(i32[min max] value) {
+                unsafe fn Result MakeOk(i32[min max] value)
+                {
                     stack LargeResource resource = MakeResource(value);
                     return Result.Ok(resource);
                 }
 
-                unsafe fn Result MakeErr() {
+                unsafe fn Result MakeErr()
+                {
                     return Result.Err(3);
                 }
 
-                unsafe fn void RunSuccessPayloadMove() {
+                unsafe fn void RunSuccessPayloadMove()
+                {
                     stack Result result = MakeOk(7);
-                    switch (result) {
+                    switch (result)
+                    {
                         case Result.Ok(var payload):
                             stack LargeResource value = payload;
                         case Result.Err(var code):
@@ -87,9 +98,11 @@ public sealed class LargeOwnedAggregateRuntimeTests
                     return;
                 }
 
-                unsafe fn void RunErrorPayloadPath() {
+                unsafe fn void RunErrorPayloadPath()
+                {
                     stack Result result = MakeErr();
-                    switch (result) {
+                    switch (result)
+                    {
                         case Result.Ok(var payload):
                             stack LargeResource value = payload;
                         case Result.Err(var code):
@@ -98,9 +111,11 @@ public sealed class LargeOwnedAggregateRuntimeTests
                     return;
                 }
 
-                unsafe fn void RunEarlyReturnPayloadMove() {
+                unsafe fn void RunEarlyReturnPayloadMove()
+                {
                     stack Result result = MakeOk(7);
-                    switch (result) {
+                    switch (result)
+                    {
                         case Result.Ok(var payload):
                             stack LargeResource value = payload;
                             return;
@@ -109,9 +124,11 @@ public sealed class LargeOwnedAggregateRuntimeTests
                     }
                 }
 
-                unsafe fn void RunReassignmentPayloadMove() {
+                unsafe fn void RunReassignmentPayloadMove()
+                {
                     stack Result result = MakeOk(7);
-                    switch (result) {
+                    switch (result)
+                    {
                         case Result.Ok(var payload):
                             stack mut LargeResource value = payload;
                             value = MakeResource(11);
@@ -121,28 +138,33 @@ public sealed class LargeOwnedAggregateRuntimeTests
                     return;
                 }
 
-                export unsafe fn i32[min max] main() {
+                export unsafe fn i32[min max] main()
+                {
                     reset_external_counter();
                     RunSuccessPayloadMove();
-                    if (read_external_counter() != 7) {
+                    if (read_external_counter() != 7)
+                    {
                         return 1;
                     }
 
                     reset_external_counter();
                     RunErrorPayloadPath();
-                    if (read_external_counter() != 0) {
+                    if (read_external_counter() != 0)
+                    {
                         return 2;
                     }
 
                     reset_external_counter();
                     RunEarlyReturnPayloadMove();
-                    if (read_external_counter() != 7) {
+                    if (read_external_counter() != 7)
+                    {
                         return 3;
                     }
 
                     reset_external_counter();
                     RunReassignmentPayloadMove();
-                    if (read_external_counter() != 18) {
+                    if (read_external_counter() != 18)
+                    {
                         return 4;
                     }
 
@@ -197,34 +219,41 @@ public sealed class LargeOwnedAggregateRuntimeTests
 
                 static mut i32[min max] Counter = 0;
 
-                struct LargeResource {
+                struct LargeResource
+                {
                     i8[min max][512] Data;
                     i32[min max] Value;
 
-                    drop {
+                    drop
+                    {
                         Counter = Counter + self.Value;
                     }
                 }
 
-                enum Result {
+                enum Result
+                {
                     Ok(LargeResource),
                     Err(i32[min max])
                 }
 
-                unsafe fn LargeResource MakeResource(i32[min max] value) {
+                unsafe fn LargeResource MakeResource(i32[min max] value)
+                {
                     stack mut LargeResource resource = new LargeResource();
                     resource.Value = value;
                     return resource;
                 }
 
-                unsafe fn Result MakeOk(i32[min max] value) {
+                unsafe fn Result MakeOk(i32[min max] value)
+                {
                     stack LargeResource resource = MakeResource(value);
                     return Result.Ok(resource);
                 }
 
-                unsafe fn void RunSuccessPayloadMove() {
+                unsafe fn void RunSuccessPayloadMove()
+                {
                     stack Result result = MakeOk(7);
-                    switch (result) {
+                    switch (result)
+                    {
                         case Result.Ok(var payload):
                             stack LargeResource value = payload;
                         case Result.Err(var code):
@@ -233,10 +262,12 @@ public sealed class LargeOwnedAggregateRuntimeTests
                     return;
                 }
 
-                export unsafe fn i32[min max] main() {
+                export unsafe fn i32[min max] main()
+                {
                     Counter = 0;
                     RunSuccessPayloadMove();
-                    if (Counter != 7) {
+                    if (Counter != 7)
+                    {
                         return 1;
                     }
 

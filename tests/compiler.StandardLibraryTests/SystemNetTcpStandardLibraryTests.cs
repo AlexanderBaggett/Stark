@@ -16,8 +16,10 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
                 import System.Net.Tcp
                 module Demo
 
-                fn bool StatusOk(System.Net.NetStatus status) {
-                    switch (status) {
+                fn bool StatusOk(System.Net.NetStatus status)
+                {
+                    switch (status)
+                    {
                         case System.Net.NetStatus.Ok:
                             return true;
                         case System.Net.NetStatus.Err(var error):
@@ -25,9 +27,12 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn i32[min max] Run() {
-                    stack System.Net.IPv4Endpoint endpoint = new System.Net.IPv4Endpoint() {
-                        Address = new System.Net.IPv4Address() {
+                fn i32[min max] Run()
+                {
+                    stack System.Net.IPv4Endpoint endpoint = new System.Net.IPv4Endpoint()
+                    {
+                        Address = new System.Net.IPv4Address()
+                        {
                             A = 127,
                             B = 0,
                             C = 0,
@@ -37,9 +42,11 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
                     };
                     stack System.Net.NetResult<System.Net.Tcp.TcpClient> connected =
                         System.Net.Tcp.TcpClient.Connect(endpoint);
-                    switch (connected) {
+                    switch (connected)
+                    {
                         case System.Net.NetResult<System.Net.Tcp.TcpClient>.Ok(var connectedClient):
-                            if (!connectedClient.IsOpen()) {
+                            if (!connectedClient.IsOpen())
+                            {
                                 return 7;
                             }
                         case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var error):
@@ -47,60 +54,74 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
 
                     stack System.Net.NetResult<System.Net.Tcp.TcpListener> listening =
                         System.Net.Tcp.TcpListener.Listen(endpoint);
-                    switch (listening) {
+                    switch (listening)
+                    {
                         case System.Net.NetResult<System.Net.Tcp.TcpListener>.Ok(var listeningSocket):
-                            if (!listeningSocket.IsOpen()) {
+                            if (!listeningSocket.IsOpen())
+                            {
                                 return 9;
                             }
                         case System.Net.NetResult<System.Net.Tcp.TcpListener>.Err(var error):
                     }
 
                     stack mut System.Net.Tcp.TcpClient client = new();
-                    if (client.IsOpen()) {
+                    if (client.IsOpen())
+                    {
                         return 1;
                     }
 
-                    if (StatusOk(client.Shutdown(System.Net.Tcp.TcpShutdown.Both))) {
+                    if (StatusOk(client.Shutdown(System.Net.Tcp.TcpShutdown.Both)))
+                    {
                         return 8;
                     }
 
-                    stack mut i8[min max][4] buffer = { 1, 2, 3, 4 };
+                    stack mut i8[min max][4] buffer =
+                    {
+                        1, 2, 3, 4
+                    };
                     stack System.Net.NetResult<u64[0 2 ** 63 - 1]> readResult = client.Read(buffer);
-                    switch (readResult) {
+                    switch (readResult)
+                    {
                         case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
                             return 10;
                         case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
                     }
 
                     stack System.Net.NetResult<u64[0 2 ** 63 - 1]> writeResult = client.Write(buffer);
-                    switch (writeResult) {
+                    switch (writeResult)
+                    {
                         case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
                             return 11;
                         case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
                     }
 
-                    if (!StatusOk(client.Close())) {
+                    if (!StatusOk(client.Close()))
+                    {
                         return 2;
                     }
 
                     stack mut System.Net.Tcp.TcpListener listener = new();
-                    if (listener.IsOpen()) {
+                    if (listener.IsOpen())
+                    {
                         return 3;
                     }
 
                     stack System.Net.NetResult<System.Net.Tcp.TcpClient> closedAccept = listener.Accept();
-                    switch (closedAccept) {
+                    switch (closedAccept)
+                    {
                         case System.Net.NetResult<System.Net.Tcp.TcpClient>.Ok(var acceptedClient):
                             return 13;
                         case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var error):
                     }
 
-                    if (!StatusOk(listener.Close())) {
+                    if (!StatusOk(listener.Close()))
+                    {
                         return 4;
                     }
 
                     stack System.Net.Tcp.TcpShutdown shutdown = System.Net.Tcp.TcpShutdown.Both;
-                    switch (shutdown) {
+                    switch (shutdown)
+                    {
                         case System.Net.Tcp.TcpShutdown.Receive:
                             return 5;
                         case System.Net.Tcp.TcpShutdown.Send:
@@ -157,8 +178,10 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
                 import System
                 module App
 
-                fn bool StatusOk(System.Net.NetStatus status) {
-                    switch (status) {
+                fn bool StatusOk(System.Net.NetStatus status)
+                {
+                    switch (status)
+                    {
                         case System.Net.NetStatus.Ok:
                             return true;
                         case System.Net.NetStatus.Err(var error):
@@ -166,9 +189,12 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn i32[min max] Run() {
-                    stack System.Net.IPv4Endpoint endpoint = new System.Net.IPv4Endpoint() {
-                        Address = new System.Net.IPv4Address() {
+                fn i32[min max] Run()
+                {
+                    stack System.Net.IPv4Endpoint endpoint = new System.Net.IPv4Endpoint()
+                    {
+                        Address = new System.Net.IPv4Address()
+                        {
                             A = 127,
                             B = 0,
                             C = 0,
@@ -178,9 +204,11 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
                     };
                     stack System.Net.NetResult<System.Net.Tcp.TcpClient> connected =
                         System.Net.Tcp.TcpClient.Connect(endpoint);
-                    switch (connected) {
+                    switch (connected)
+                    {
                         case System.Net.NetResult<System.Net.Tcp.TcpClient>.Ok(var connectedClient):
-                            if (!connectedClient.IsOpen()) {
+                            if (!connectedClient.IsOpen())
+                            {
                                 return 7;
                             }
                         case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var error):
@@ -188,55 +216,68 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
 
                     stack System.Net.NetResult<System.Net.Tcp.TcpListener> listening =
                         System.Net.Tcp.TcpListener.Listen(endpoint);
-                    switch (listening) {
+                    switch (listening)
+                    {
                         case System.Net.NetResult<System.Net.Tcp.TcpListener>.Ok(var listeningSocket):
-                            if (!listeningSocket.IsOpen()) {
+                            if (!listeningSocket.IsOpen())
+                            {
                                 return 9;
                             }
                         case System.Net.NetResult<System.Net.Tcp.TcpListener>.Err(var error):
                     }
 
                     stack mut System.Net.Tcp.TcpClient client = new();
-                    if (client.IsOpen()) {
+                    if (client.IsOpen())
+                    {
                         return 1;
                     }
 
-                    if (StatusOk(client.Shutdown(System.Net.Tcp.TcpShutdown.Both))) {
+                    if (StatusOk(client.Shutdown(System.Net.Tcp.TcpShutdown.Both)))
+                    {
                         return 8;
                     }
 
-                    stack mut i8[min max][4] buffer = { 1, 2, 3, 4 };
+                    stack mut i8[min max][4] buffer =
+                    {
+                        1, 2, 3, 4
+                    };
                     stack System.Net.NetResult<u64[0 2 ** 63 - 1]> readResult = client.Read(buffer);
-                    switch (readResult) {
+                    switch (readResult)
+                    {
                         case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
                             return 10;
                         case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
                     }
 
                     stack System.Net.NetResult<u64[0 2 ** 63 - 1]> writeResult = client.Write(buffer);
-                    switch (writeResult) {
+                    switch (writeResult)
+                    {
                         case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
                             return 11;
                         case System.Net.NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
                     }
 
-                    if (!StatusOk(client.Close())) {
+                    if (!StatusOk(client.Close()))
+                    {
                         return 2;
                     }
 
                     stack mut System.Net.Tcp.TcpListener listener = new();
-                    if (listener.IsOpen()) {
+                    if (listener.IsOpen())
+                    {
                         return 3;
                     }
 
                     stack System.Net.NetResult<System.Net.Tcp.TcpClient> closedAccept = listener.Accept();
-                    switch (closedAccept) {
+                    switch (closedAccept)
+                    {
                         case System.Net.NetResult<System.Net.Tcp.TcpClient>.Ok(var acceptedClient):
                             return 13;
                         case System.Net.NetResult<System.Net.Tcp.TcpClient>.Err(var error):
                     }
 
-                    if (!StatusOk(listener.Close())) {
+                    if (!StatusOk(listener.Close()))
+                    {
                         return 4;
                     }
 
@@ -297,15 +338,16 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("@TcpClient_Connect(", llvm, StringComparison.Ordinal);
         Assert.Contains("@TcpListener_Listen(", llvm, StringComparison.Ordinal);
         Assert.Contains("@TcpListener_Accept(", llvm, StringComparison.Ordinal);
-        Assert.Contains("call fastcc ptr @System_Runtime_Platform_ConnectTcpIPv4(", llvm, StringComparison.Ordinal);
-        Assert.Contains("call fastcc ptr @System_Runtime_Platform_ListenTcpIPv4(", llvm, StringComparison.Ordinal);
-        Assert.Contains("call fastcc ptr @System_Runtime_Platform_AcceptSocket(", llvm, StringComparison.Ordinal);
-        Assert.Contains("call fastcc i64 @System_Runtime_Platform_ReadSocket(", llvm, StringComparison.Ordinal);
-        Assert.Contains("call fastcc i64 @System_Runtime_Platform_WriteSocket(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call fastcc ptr @__stark_inline_clone_System_Runtime_Platform_Linux_ConnectTcpIPv4(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call fastcc ptr @__stark_inline_clone_System_Runtime_Platform_Linux_ListenTcpIPv4(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call fastcc ptr @__stark_inline_clone_System_Runtime_Platform_Linux_AcceptSocket(", llvm, StringComparison.Ordinal);
+        Assert.Contains("@System_Runtime_Platform_Linux_LinuxReadSyscallNumber", llvm, StringComparison.Ordinal);
+        Assert.Contains("@System_Runtime_Platform_Linux_LinuxWriteSyscallNumber", llvm, StringComparison.Ordinal);
+        Assert.Contains("call i64 @LinuxSyscall3HandleBuffer(", llvm, StringComparison.Ordinal);
         Assert.Contains("GetMutableByteSliceParts", llvm, StringComparison.Ordinal);
         Assert.Contains("GetByteSliceParts", llvm, StringComparison.Ordinal);
-        Assert.Contains("call fastcc i32 @System_Runtime_Platform_ShutdownSocket(", llvm, StringComparison.Ordinal);
-        Assert.Contains("call fastcc i32 @System_Runtime_Platform_CloseSocket(", llvm, StringComparison.Ordinal);
+        Assert.Contains("@System_Runtime_Platform_Linux_LinuxShutdownSyscallNumber", llvm, StringComparison.Ordinal);
+        Assert.Contains("@System_Runtime_Platform_Linux_LinuxCloseSyscallNumber", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef %System_Net_NetStatus @StatusFromPlatformResult(", llvm, StringComparison.Ordinal);
         Assert.Contains("@ByteCountFromPlatformResult(", llvm, StringComparison.Ordinal);
         Assert.Contains("call fastcc %System_Net_NetworkError @NetworkErrorFromPlatformResult(", llvm, StringComparison.Ordinal);
@@ -372,7 +414,9 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
             llvm,
             "define fastcc noundef ptr @ConnectTcpIPv4(",
             "Expected Linux ConnectTcpIPv4 definition.");
-        Assert.Contains("call fastcc i32 @CloseFile(", connectBody, StringComparison.Ordinal);
+        Assert.Contains("@LinuxCloseSyscallNumber", connectBody, StringComparison.Ordinal);
+        Assert.Contains("call i64 @LinuxSyscall1Handle(", connectBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i32 @CloseFile(", connectBody, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -419,11 +463,33 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
 
         Assert.Matches(@"define fastcc noundef(?: range\([^)]*\))? i64 @ReadSocket\(", llvm);
         Assert.Matches(@"define fastcc noundef(?: range\([^)]*\))? i64 @WriteSocket\(", llvm);
+        Assert.Matches(@"define fastcc noundef(?: range\([^)]*\))? i64 @ReadSocketVector2\(", llvm);
+        Assert.Matches(@"define fastcc noundef(?: range\([^)]*\))? i64 @WriteSocketVector2\(", llvm);
+        Assert.Contains("%LinuxIovec = type { ptr, i64 }", llvm, StringComparison.Ordinal);
         Assert.Contains("call i64 @LinuxSyscall3HandleBuffer(", llvm, StringComparison.Ordinal);
         Assert.Contains("@LinuxReadSyscallNumber", llvm, StringComparison.Ordinal);
         Assert.Contains("@LinuxWriteSyscallNumber", llvm, StringComparison.Ordinal);
+        Assert.Contains("@LinuxReadvSyscallNumber", llvm, StringComparison.Ordinal);
+        Assert.Contains("@LinuxWritevSyscallNumber", llvm, StringComparison.Ordinal);
+
+        var readVectorBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i64 @ReadSocketVector2(",
+            "Expected Linux ReadSocketVector2 definition.");
+        var writeVectorBody = ExtractDefinedFunctionText(
+            llvm,
+            "define fastcc noundef i64 @WriteSocketVector2(",
+            "Expected Linux WriteSocketVector2 definition.");
+        Assert.Contains("[2 x %LinuxIovec]", readVectorBody, StringComparison.Ordinal);
+        Assert.Contains("@LinuxReadvSyscallNumber", readVectorBody, StringComparison.Ordinal);
+        Assert.Contains("i64 2", readVectorBody, StringComparison.Ordinal);
+        Assert.Contains("[2 x %LinuxIovec]", writeVectorBody, StringComparison.Ordinal);
+        Assert.Contains("@LinuxWritevSyscallNumber", writeVectorBody, StringComparison.Ordinal);
+        Assert.Contains("i64 2", writeVectorBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@recv(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@send(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@readv(", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("@writev(", llvm, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -454,7 +520,9 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
             llvm,
             "define fastcc noundef ptr @ListenTcpIPv4(",
             "Expected Linux ListenTcpIPv4 definition.");
-        Assert.Contains("call fastcc i32 @CloseFile(", listenBody, StringComparison.Ordinal);
+        Assert.Contains("@LinuxCloseSyscallNumber", listenBody, StringComparison.Ordinal);
+        Assert.Contains("call i64 @LinuxSyscall1Handle(", listenBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i32 @CloseFile(", listenBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@bind(", llvm, StringComparison.Ordinal);
         Assert.DoesNotContain("@listen(", llvm, StringComparison.Ordinal);
     }
@@ -555,7 +623,8 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
 
     private static void AssertCloseBodyRoutesOpenHandleThroughPlatformClose(string body)
     {
-        Assert.Contains("call fastcc i32 @System_Runtime_Platform_CloseSocket(", body, StringComparison.Ordinal);
+        Assert.Contains("@System_Runtime_Platform_Linux_LinuxCloseSyscallNumber", body, StringComparison.Ordinal);
+        Assert.Contains("call i64 @LinuxSyscall1Handle(", body, StringComparison.Ordinal);
         Assert.True(
             body.Contains("call fastcc %System_Net_NetStatus @StatusFromPlatformResult(", StringComparison.Ordinal)
             || (body.Contains("icmp slt i32", StringComparison.Ordinal)

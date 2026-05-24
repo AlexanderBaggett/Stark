@@ -1,0 +1,98 @@
+import System.Console
+import System.IO
+import System.Memory
+import System.Process
+import System.Runtime.Buffer
+module Book.Stdlib.ConsoleProcess
+
+finite law bool StatusOk(IOStatus status)
+{
+    switch (status)
+    {
+        case IOStatus.Ok:
+            return true;
+        case IOStatus.Err(var error):
+            return false;
+    }
+}
+
+finite law bool MemoryOk(MemoryStatus status)
+{
+    switch (status)
+    {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+fn bool CurrentProcessLooksValid()
+{
+    return CurrentId() > 0;
+}
+
+fn bool BufferOutputWorks()
+{
+    stack mut FixedByteBuffer512 bytes = new();
+    if (!MemoryOk(bytes.WriteByte(65)))
+    {
+        return false;
+    }
+
+    if (!MemoryOk(bytes.WriteByte(66)))
+    {
+        return false;
+    }
+
+    if (!StatusOk(Write(bytes)))
+    {
+        return false;
+    }
+
+    if (!StatusOk(WriteLine(bytes)))
+    {
+        return false;
+    }
+
+    return StatusOk(WriteErrorLine(bytes));
+}
+
+fn bool ByteSliceOutputWorks()
+{
+    stack i8[min max][3] bytes =
+    {
+        65, 66, 67
+    };
+    if (!StatusOk(Write(bytes)))
+    {
+        return false;
+    }
+
+    return StatusOk(WriteError(bytes));
+}
+
+export fn i32[min max] main()
+{
+    if (!CurrentProcessLooksValid())
+    {
+        return 1;
+    }
+
+    if (!StatusOk(WriteLine("Stark standard library")))
+    {
+        return 2;
+    }
+
+    if (!BufferOutputWorks())
+    {
+        return 3;
+    }
+
+    if (!ByteSliceOutputWorks())
+    {
+        return 4;
+    }
+
+    return 0;
+}

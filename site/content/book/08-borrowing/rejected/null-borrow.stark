@@ -1,0 +1,7 @@
+module Book.Negative.NullBorrow
+
+fn void NullBorrow()
+{
+    stack borrow i32[min max] value = null;
+    return;
+}

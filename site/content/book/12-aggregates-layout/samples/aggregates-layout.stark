@@ -1,0 +1,145 @@
+module Book.StructsRecordsLayout
+
+struct Rectangle
+{
+    i32[min max] Width;
+    i32[min max] Height;
+
+    finite law i32[min max] Area(borrow Rectangle self)
+    {
+        return self.Width * self.Height;
+    }
+}
+
+record Point(i32[min max] X, i32[min max] Y)
+{
+}
+
+struct Pixel
+{
+    u8[0 max] R;
+    u8[0 max] G;
+    u8[0 max] B;
+    u8[0 max] A;
+}
+
+record DrawCommand(Rectangle Bounds, Pixel Tint)
+{
+}
+
+struct ScratchOwner
+{
+    i32[min max] Handle;
+    bool Closed;
+
+    fn void Close(mut borrow ScratchOwner self)
+    {
+        self.Closed = true;
+        return;
+    }
+
+    mut drop
+    {
+        self.Closed = true;
+    }
+}
+
+struct NativeRectangle
+{
+    f32 X;
+    f32 Y;
+    f32 Width;
+    f32 Height;
+}
+
+unsafe ffi fn void native_draw_rectangle(rawptr<NativeRectangle> rectangle);
+
+fn void DrawNativeRectangle(NativeRectangle rectangle)
+{
+    unsafe
+    {
+        native_draw_rectangle(&rectangle);
+    }
+
+    return;
+}
+
+finite law i32[min max] CoordinateScore(Point point)
+{
+    return point.X + point.Y;
+}
+
+fn Rectangle MakeRectangle(i32[min max] width, i32[min max] height)
+{
+    return new()
+    {
+        Width = width,
+        Height = height
+    };
+}
+
+fn NativeRectangle MakeNativeRectangle(f32 x, f32 y, f32 width, f32 height)
+{
+    return new()
+    {
+        X = x,
+        Y = y,
+        Width = width,
+        Height = height
+    };
+}
+
+finite law i32[min max] CommandArea(DrawCommand command)
+{
+    return command.Bounds.Area();
+}
+
+export fn i32[min max] main()
+{
+    stack Rectangle rectangle = MakeRectangle(3, 4);
+    stack Point point = new Point(1, 2);
+    stack Pixel tint = new()
+    {
+        R = 255,
+        G = 0,
+        B = 0,
+        A = 255
+    };
+    stack Rectangle commandBounds = MakeRectangle(3, 4);
+    stack DrawCommand command = new DrawCommand(commandBounds, tint);
+    stack NativeRectangle native = MakeNativeRectangle(0.0f, 0.0f, 3.0f, 4.0f);
+    stack mut ScratchOwner owner = new()
+    {
+        Handle = 7,
+        Closed = false
+    };
+
+    owner.Close();
+
+    if (rectangle.Area() != 12)
+    {
+        return 1;
+    }
+
+    if (CoordinateScore(point) != 3)
+    {
+        return 2;
+    }
+
+    if (CommandArea(command) != 12)
+    {
+        return 3;
+    }
+
+    if (native.Width <= 0.0f)
+    {
+        return 4;
+    }
+
+    if (!owner.Closed)
+    {
+        return 5;
+    }
+
+    return 0;
+}

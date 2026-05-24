@@ -24,15 +24,21 @@ public sealed class ParserEdgeCaseTests
             """
             module Trailing
 
-            struct Node {
+            struct Node
+            {
                 i32[min max] Value;
             }
 
-            fn Node Build(Node node, i32[min max] count,) {
-                return new Node() { Value = count, };
+            fn Node Build(Node node, i32[min max] count,)
+            {
+                return new Node()
+                {
+                    Value = count,
+                };
             }
 
-            fn i32[min max] Read() {
+            fn i32[min max] Read()
+            {
                 return Build(new Node(), 1,).Value;
             }
             """
@@ -42,9 +48,12 @@ public sealed class ParserEdgeCaseTests
             """
             module Flow
 
-            fn void Run(bool flag) {
-                while infinite (flag) {
-                    for non-deterministic (stack i32[min max] i = 0; i < 1; i += 1) {
+            fn void Run(bool flag)
+            {
+                while infinite (flag)
+                {
+                    for non-deterministic (stack i32[min max] i = 0; i < 1; i += 1)
+                    {
                         continue;
                     }
                 }
@@ -56,15 +65,18 @@ public sealed class ParserEdgeCaseTests
             """
             module Access
 
-            struct Leaf {
+            struct Leaf
+            {
                 i32[min max] Value;
             }
 
-            struct Node {
+            struct Node
+            {
                 Leaf[2] Leaves;
             }
 
-            fn i32[min max] Read() {
+            fn i32[min max] Read()
+            {
                 return new Node().Leaves[0].Value;
             }
             """
@@ -90,11 +102,13 @@ public sealed class ParserEdgeCaseTests
             """
             module Demo
 
-            fn void Write(i32[min max] left, i32[min max] right) {
+            fn void Write(i32[min max] left, i32[min max] right)
+            {
                 return;
             }
 
-            fn void Run() {
+            fn void Run()
+            {
                 Write(1, 2,,);
             }
             """
@@ -104,7 +118,8 @@ public sealed class ParserEdgeCaseTests
             """
             module Demo
 
-            unsafe fn void Run(rawptr<rawmutptr<i8[min max]> value) {
+            unsafe fn void Run(rawptr<rawmutptr<i8[min max]> value)
+            {
                 return;
             }
             """
@@ -114,7 +129,8 @@ public sealed class ParserEdgeCaseTests
             """
             module Demo
 
-            fn void Run(i32[min max][-10 10 20] value) {
+            fn void Run(i32[min max][-10 10 20] value)
+            {
                 return;
             }
             """
@@ -124,7 +140,8 @@ public sealed class ParserEdgeCaseTests
             """
             module Demo
 
-            fn void Run() {
+            fn void Run()
+            {
                 return new Node()..Value;
             }
             """
@@ -134,8 +151,10 @@ public sealed class ParserEdgeCaseTests
             """
             module Demo
 
-            fn void Run(bool flag) {
-                while non_deterministic (flag) {
+            fn void Run(bool flag)
+            {
+                while non_deterministic (flag)
+                {
                     break;
                 }
             }
@@ -146,12 +165,17 @@ public sealed class ParserEdgeCaseTests
             """
             module Demo
 
-            struct Item {
+            struct Item
+            {
                 i32[min max] Value;
             }
 
-            fn void Run() {
-                stack Item item = new Item() { Value = 1,, };
+            fn void Run()
+            {
+                stack Item item = new Item()
+                {
+                    Value = 1,,
+                };
             }
             """
         }

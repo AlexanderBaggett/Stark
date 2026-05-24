@@ -26,7 +26,8 @@ public sealed class PackageImageTypedUninitializedLocalDeclarationIntegrationTes
                 """
                 module Facade
 
-                public fn i32[min max] Observe<T>(i32[min max] value, T tag) {
+                public fn i32[min max] Observe<T>(i32[min max] value, T tag)
+                {
                     stack mut i32[min max] current, next = value + 1;
                     current = value;
                     return current + next;
@@ -94,7 +95,8 @@ public sealed class PackageImageTypedUninitializedLocalDeclarationIntegrationTes
                 import Facade
                 module Demo
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     return Facade.Observe(7, 0);
                 }
                 """);

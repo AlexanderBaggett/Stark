@@ -1,9 +1,0 @@
-module Book.Negative.RawptrStrengthenMutability
-
-export unsafe fn i32[min max] main() {
-    stack i32[min max] value = 1;
-    stack rawmutptr<i32[min max]> ptr =
-        (rawmutptr<i32[min max]>)(&value);
-
-    return 0;
-}
