@@ -35,10 +35,36 @@ Status: covered by `ExamplesCompileRunTests.BuildYourOwnGitExamplesInitializeWri
 - [Status.stark](/reference/examples/build-your-own-git/Status.stark)
 - [Stark.toml](/reference/examples/build-your-own-git/Stark.toml)
 
+### Init.stark
+
 {{< file-sample "static/reference/examples/build-your-own-git/Init.stark" "stark" >}}
+
+### Commit.stark
+
+{{< file-sample "static/reference/examples/build-your-own-git/Commit.stark" "stark" >}}
+
+### Ref.stark
+
+{{< file-sample "static/reference/examples/build-your-own-git/Ref.stark" "stark" >}}
+
+### Objects.stark
+
+{{< file-sample "static/reference/examples/build-your-own-git/Objects.stark" "stark" >}}
+
+### Inspect.stark
+
+{{< file-sample "static/reference/examples/build-your-own-git/Inspect.stark" "stark" >}}
+
+### Status.stark
+
+{{< file-sample "static/reference/examples/build-your-own-git/Status.stark" "stark" >}}
+
+### Stark.toml
+
+{{< file-sample "static/reference/examples/build-your-own-git/Stark.toml" "toml" >}}
 
 ## Related
 
-- [File Processing Project](/book/35-project-file-processing/)
+- [File Processing Project](/book/38-project-file-processing/)
 - [`System.FileSystem`](/reference/standard-library/System.FileSystem/)
 - [`System.IO.File`](/reference/standard-library/System.IO.File/)

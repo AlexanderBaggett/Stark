@@ -104,7 +104,8 @@ those details.
 A future source-level Raylib package surface may look like this:
 
 ```stark
-package Raylib {
+package Raylib
+{
     native source "RaylibNative.c";
     native library "raylib";
     native library "GL";

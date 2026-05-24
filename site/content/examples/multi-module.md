@@ -23,9 +23,19 @@ Status: covered by `ExamplesCompileRunTests.MultiModuleExampleCompilesAndRuns`.
 - [Math.stark](/reference/examples/multi-module/Math.stark)
 - [Stark.toml](/reference/examples/multi-module/Stark.toml)
 
+### App.stark
+
 {{< file-sample "static/reference/examples/multi-module/App.stark" "stark" >}}
+
+### Math.stark
+
+{{< file-sample "static/reference/examples/multi-module/Math.stark" "stark" >}}
+
+### Stark.toml
+
+{{< file-sample "static/reference/examples/multi-module/Stark.toml" "toml" >}}
 
 ## Related
 
-- [Multi-Module Package Project](/book/34-project-multi-module-package/)
+- [Multi-Module Package Project](/book/37-project-multi-module-package/)
 - [Modules and visibility](/reference/language/ModulesAndVisibility/)

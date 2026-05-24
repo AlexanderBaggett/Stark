@@ -2,15 +2,18 @@ module Book.MemorySeparationContracts
 
 unsafe fn void AddSeparate(
     rawmutptr<i32[min max]> left,
-    rawmutptr<i32[min max]> right) {
+    rawmutptr<i32[min max]> right)
+{
     *left += 1;
     *right += 1;
     return;
 }
 
 unsafe fn void AddOverlapSafe(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
-    where overlap(left, right) {
-    if (left == right) {
+    where overlap(left, right)
+{
+    if (left == right)
+    {
         *left += 2;
         return;
     }
@@ -21,8 +24,10 @@ unsafe fn void AddOverlapSafe(rawmutptr<i32[min max]> left, rawmutptr<i32[min ma
 }
 
 unsafe fn bool TryAddPairFast(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
-    where overlap(left, right) {
-    if disjoint(left, right) {
+    where overlap(left, right)
+{
+    if disjoint(left, right)
+    {
         AddSeparate(left, right);
         return true;
     }
@@ -31,22 +36,30 @@ unsafe fn bool TryAddPairFast(rawmutptr<i32[min max]> left, rawmutptr<i32[min ma
     return false;
 }
 
-export unsafe fn i32[min max] main() {
-    stack mut i32[min max][2] values = { 1, 10 };
+export unsafe fn i32[min max] main()
+{
+    stack mut i32[min max][2] values =
+    {
+        1, 10
+    };
 
-    if (!TryAddPairFast(&values[0], &values[1])) {
+    if (!TryAddPairFast(&values[0], &values[1]))
+    {
         return 1;
     }
 
-    if (values[0] != 2 || values[1] != 11) {
+    if (values[0] != 2 || values[1] != 11)
+    {
         return 2;
     }
 
-    if (TryAddPairFast(&values[0], &values[0])) {
+    if (TryAddPairFast(&values[0], &values[0]))
+    {
         return 3;
     }
 
-    if (values[0] != 4 || values[1] != 11) {
+    if (values[0] != 4 || values[1] != 11)
+    {
         return 4;
     }
 

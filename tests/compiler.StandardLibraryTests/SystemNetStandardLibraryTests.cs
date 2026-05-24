@@ -16,8 +16,10 @@ public sealed class SystemNetStandardLibraryTests : StandardLibraryTestSuite
                 import System.Net
                 module Demo
 
-                fn bool StatusOk(System.Net.NetStatus status) {
-                    switch (status) {
+                fn bool StatusOk(System.Net.NetStatus status)
+                {
+                    switch (status)
+                    {
                         case System.Net.NetStatus.Ok:
                             return true;
                         case System.Net.NetStatus.Err(var error):
@@ -25,8 +27,10 @@ public sealed class SystemNetStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn i32[min max] ReadResult(System.Net.NetResult<i32[min max]> result) {
-                    switch (result) {
+                fn i32[min max] ReadResult(System.Net.NetResult<i32[min max]> result)
+                {
+                    switch (result)
+                    {
                         case System.Net.NetResult<i32[min max]>.Ok(var value):
                             return value;
                         case System.Net.NetResult<i32[min max]>.Err(var error):
@@ -34,37 +38,45 @@ public sealed class SystemNetStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn u8[0 max] FirstOctet(System.Net.IPv4Endpoint endpoint) {
+                fn u8[0 max] FirstOctet(System.Net.IPv4Endpoint endpoint)
+                {
                     return endpoint.Address.A;
                 }
 
-                fn u16[0 max] EndpointPort(System.Net.IPv4Endpoint endpoint) {
+                fn u16[0 max] EndpointPort(System.Net.IPv4Endpoint endpoint)
+                {
                     return endpoint.Port;
                 }
 
-                fn i32[min max] Run() {
-                    stack System.Net.IPv4Address address = new System.Net.IPv4Address() {
+                fn i32[min max] Run()
+                {
+                    stack System.Net.IPv4Address address = new System.Net.IPv4Address()
+                    {
                         A = 127,
                         B = 0,
                         C = 0,
                         D = 1
                     };
-                    stack System.Net.IPv4Endpoint endpoint = new System.Net.IPv4Endpoint() {
+                    stack System.Net.IPv4Endpoint endpoint = new System.Net.IPv4Endpoint()
+                    {
                         Address = address,
                         Port = 8080
                     };
                     stack System.Net.NetResult<i32[min max]> result =
                         System.Net.NetResult<i32[min max]>.Ok(7);
 
-                    if (!StatusOk(System.Net.NetStatus.Ok)) {
+                    if (!StatusOk(System.Net.NetStatus.Ok))
+                    {
                         return 1;
                     }
 
-                    if (FirstOctet(endpoint) != 127) {
+                    if (FirstOctet(endpoint) != 127)
+                    {
                         return 2;
                     }
 
-                    if (EndpointPort(endpoint) != 8080) {
+                    if (EndpointPort(endpoint) != 8080)
+                    {
                         return 3;
                     }
 
@@ -115,8 +127,10 @@ public sealed class SystemNetStandardLibraryTests : StandardLibraryTestSuite
                 import System
                 module App
 
-                fn bool StatusOk(System.Net.NetStatus status) {
-                    switch (status) {
+                fn bool StatusOk(System.Net.NetStatus status)
+                {
+                    switch (status)
+                    {
                         case System.Net.NetStatus.Ok:
                             return true;
                         case System.Net.NetStatus.Err(var error):
@@ -124,8 +138,10 @@ public sealed class SystemNetStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn i32[min max] ReadResult(System.Net.NetResult<i32[min max]> result) {
-                    switch (result) {
+                fn i32[min max] ReadResult(System.Net.NetResult<i32[min max]> result)
+                {
+                    switch (result)
+                    {
                         case System.Net.NetResult<i32[min max]>.Ok(var value):
                             return value;
                         case System.Net.NetResult<i32[min max]>.Err(var error):
@@ -133,13 +149,17 @@ public sealed class SystemNetStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn u16[0 max] EndpointPort(System.Net.IPv4Endpoint endpoint) {
+                fn u16[0 max] EndpointPort(System.Net.IPv4Endpoint endpoint)
+                {
                     return endpoint.Port;
                 }
 
-                fn i32[min max] Run() {
-                    stack System.Net.IPv4Endpoint endpoint = new System.Net.IPv4Endpoint() {
-                        Address = new System.Net.IPv4Address() {
+                fn i32[min max] Run()
+                {
+                    stack System.Net.IPv4Endpoint endpoint = new System.Net.IPv4Endpoint()
+                    {
+                        Address = new System.Net.IPv4Address()
+                        {
                             A = 127,
                             B = 0,
                             C = 0,
@@ -150,11 +170,13 @@ public sealed class SystemNetStandardLibraryTests : StandardLibraryTestSuite
                     stack System.Net.NetResult<i32[min max]> result =
                         System.Net.NetResult<i32[min max]>.Ok(11);
 
-                    if (!StatusOk(System.Net.NetStatus.Ok)) {
+                    if (!StatusOk(System.Net.NetStatus.Ok))
+                    {
                         return 1;
                     }
 
-                    if (EndpointPort(endpoint) != 8080) {
+                    if (EndpointPort(endpoint) != 8080)
+                    {
                         return 2;
                     }
 

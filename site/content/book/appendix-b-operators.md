@@ -51,12 +51,12 @@ Comparison operators may be chained.
 
 Raw-pointer operations belong at explicit low-level boundaries.
 
-## Calls, Access, And Aggregates
+## Calls, Access, And Structs/Records
 
 - `()` for calls and parameter lists
 - `.` for member access and qualified names
 - `[]` for fixed arrays, slices, indexing, and text views
-- `{}` for blocks, object initializers, enum named-field constructors, and
+- `{}` for blocks, field initializers, enum named-field constructors, and
   array initializers
 - `,` between list items
 - `:` in cases, enum named fields, and named patterns

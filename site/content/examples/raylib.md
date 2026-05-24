@@ -24,13 +24,71 @@ Status: checked by `ExamplesCompileRunTests.RaylibStarkModulesCheckWithoutNative
 
 - [README.md](/reference/examples/raylib/README.md)
 - [Raylib.stark](/reference/examples/raylib/Raylib.stark)
+- [RaylibSmoke.stark](/reference/examples/raylib/RaylibSmoke.stark)
+- [Raylib/Types.stark](/reference/examples/raylib/Raylib/Types.stark)
+- [Raylib/Core.stark](/reference/examples/raylib/Raylib/Core.stark)
+- [Raylib/Shapes.stark](/reference/examples/raylib/Raylib/Shapes.stark)
+- [Raylib/Textures.stark](/reference/examples/raylib/Raylib/Textures.stark)
+- [Raylib/Text.stark](/reference/examples/raylib/Raylib/Text.stark)
+- [Raylib/Models.stark](/reference/examples/raylib/Raylib/Models.stark)
+- [Raylib/Audio.stark](/reference/examples/raylib/Raylib/Audio.stark)
 - [RaylibNative.c](/reference/examples/raylib/RaylibNative.c)
 - [Raylib.package.args](/reference/examples/raylib/Raylib.package.args)
 - [Stark.toml](/reference/examples/raylib/Stark.toml)
 
+### README.md
+
+{{< file-sample "static/reference/examples/raylib/README.md" "markdown" >}}
+
+### Raylib.stark
+
 {{< file-sample "static/reference/examples/raylib/Raylib.stark" "stark" >}}
+
+### RaylibSmoke.stark
+
+{{< file-sample "static/reference/examples/raylib/RaylibSmoke.stark" "stark" >}}
+
+### Raylib/Types.stark
+
+{{< file-sample "static/reference/examples/raylib/Raylib/Types.stark" "stark" >}}
+
+### Raylib/Core.stark
+
+{{< file-sample "static/reference/examples/raylib/Raylib/Core.stark" "stark" >}}
+
+### Raylib/Shapes.stark
+
+{{< file-sample "static/reference/examples/raylib/Raylib/Shapes.stark" "stark" >}}
+
+### Raylib/Textures.stark
+
+{{< file-sample "static/reference/examples/raylib/Raylib/Textures.stark" "stark" >}}
+
+### Raylib/Text.stark
+
+{{< file-sample "static/reference/examples/raylib/Raylib/Text.stark" "stark" >}}
+
+### Raylib/Models.stark
+
+{{< file-sample "static/reference/examples/raylib/Raylib/Models.stark" "stark" >}}
+
+### Raylib/Audio.stark
+
+{{< file-sample "static/reference/examples/raylib/Raylib/Audio.stark" "stark" >}}
+
+### RaylibNative.c
+
+{{< file-sample "static/reference/examples/raylib/RaylibNative.c" "c" >}}
+
+### Raylib.package.args
+
+{{< file-sample "static/reference/examples/raylib/Raylib.package.args" "text" >}}
+
+### Stark.toml
+
+{{< file-sample "static/reference/examples/raylib/Stark.toml" "toml" >}}
 
 ## Related
 
 - [FFI, Raw Pointers, and Native Packages](/book/20-ffi-raw-pointers-native-packages/)
-- [Native Package Project](/book/36-project-native-package/)
+- [Native Package Project](/book/39-project-native-package/)

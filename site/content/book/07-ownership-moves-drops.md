@@ -22,10 +22,10 @@ so the keyword stays distinct.
 
 ## Step 1: Assume Values Are Owned By Default
 
-Every non-borrow, non-raw value has one owner. Aggregates, arrays, records, and
+Every non-borrow, non-raw value has one owner. Structs, records, arrays, and
 owned standard-library values should be read with that rule in mind.
 
-The `Box` value in the sample is an owned aggregate. Passing it to `Consume`
+The `Box` value in the sample is an owned struct value. Passing it to `Consume`
 moves it into the callee:
 
 ```stark
@@ -41,7 +41,8 @@ unless it moves the value somewhere else first.
 A moved mutable binding can become usable again if it is initialized again:
 
 ```stark
-box = new Box() {
+box = new Box()
+{
     Value = 2
 };
 ```
@@ -74,8 +75,8 @@ stack i32[min max] left = 10;
 stack i32[min max] right = left;
 ```
 
-Both `left` and `right` remain usable. Aggregates should be assumed move-only
-unless the language and type rules say otherwise.
+Both `left` and `right` remain usable. Structs and records should be assumed
+move-only unless the language and type rules say otherwise.
 
 ## Step 5: Rely On Deterministic Cleanup For Owners
 
@@ -94,12 +95,15 @@ when it needs custom work. In this sketch, `PlatformClose` stands for a
 non-fallible helper supplied by the type implementation:
 
 ```stark
-struct FileHandle {
+struct FileHandle
+{
     i64[min max] Handle;
     bool Closed;
 
-    drop {
-        if (!self.Closed) {
+    drop
+    {
+        if (!self.Closed)
+        {
             PlatformClose(self.Handle);
         }
     }

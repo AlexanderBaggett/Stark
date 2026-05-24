@@ -35,16 +35,19 @@ internal sealed partial class MidLevelIrLowerer
             StarkParser.LiteralContext? Literal,
             string? CaptureName,
             LowerableAggregatePattern? NestedPattern,
-            ImportedTemplateTypedBodyExpressionSummary? ImportedLiteralExpression);
+            ImportedTemplateTypedBodyExpressionSummary? ImportedLiteralExpression,
+            string? CaptureStorageName = null);
 
         private sealed record LowerableAggregatePattern(
             string TypeName,
             string? EnumVariantName,
             IReadOnlyList<LowerableAggregateFieldPattern> FieldPatterns,
-            string? WholeCaptureName);
+            string? WholeCaptureName,
+            string? WholeCaptureStorageName = null);
 
         private sealed record PendingSwitchBinding(
-            string Name,
+            string SourceName,
+            string StorageName,
             MidLevelIrOperand Source,
             MidLevelIrOperand? RuntimeMoveSource = null);
 
@@ -57,7 +60,8 @@ internal sealed partial class MidLevelIrLowerer
             string? CaptureName,
             LowerableAggregatePattern? AggregatePattern,
             ImportedTemplateTypedBodyExpressionSummary? ImportedLiteralExpression = null,
-            ImportedTemplateTypedBodyExpressionSummary? ImportedGuardExpression = null);
+            ImportedTemplateTypedBodyExpressionSummary? ImportedGuardExpression = null,
+            string? CaptureStorageName = null);
 
         private sealed record LowerableSwitchSection(
             StarkParser.SwitchSectionContext Section,
@@ -8853,9 +8857,9 @@ internal sealed partial class MidLevelIrLowerer
         {
             var line = context.Start.Line;
             var column = context.Start.Column + 1;
-            foreach (var functionName in BoundOperationFunctionNames())
+            foreach (var key in BoundOperationLookupKeys(line, column))
             {
-                if (operations.TryGetValue(new BoundOperationKey(functionName, line, column), out operation!))
+                if (operations.TryGetValue(key, out operation!))
                 {
                     return true;
                 }
@@ -8865,15 +8869,29 @@ internal sealed partial class MidLevelIrLowerer
             return false;
         }
 
-        private IEnumerable<string?> BoundOperationFunctionNames()
+        private IEnumerable<BoundOperationKey> BoundOperationLookupKeys(int line, int column)
+        {
+            foreach (var functionName in BoundOperationFunctionNames())
+            {
+                yield return new BoundOperationKey(functionName, _moduleFilePath, line, column);
+            }
+
+            if (!string.IsNullOrWhiteSpace(_moduleFilePath))
+            {
+                foreach (var functionName in BoundOperationFunctionNames())
+                {
+                    yield return new BoundOperationKey(functionName, null, line, column);
+                }
+            }
+        }
+
+        private IEnumerable<string> BoundOperationFunctionNames()
         {
             yield return _function.Name;
             if (!string.Equals(_function.Signature.Name, _function.Name, StringComparison.Ordinal))
             {
                 yield return _function.Signature.Name;
             }
-
-            yield return null;
         }
 
         private static bool RecordedMemberCallNameMatches(string memberName, TypedFunctionSignature signature)

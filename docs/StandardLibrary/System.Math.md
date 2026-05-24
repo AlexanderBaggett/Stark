@@ -6,15 +6,18 @@ pseudo-random helpers for Stark's standard library.
 ## Surface
 
 ```stark
-public struct SinCosF32 {
+public struct SinCosF32
+{
     f32 Sin;
     f32 Cos;
 }
-public struct SinCosF64 {
+public struct SinCosF64
+{
     f64 Sin;
     f64 Cos;
 }
-public struct XorShift32 {
+public struct XorShift32
+{
     XorShift32();
     static inline fn XorShift32 Seeded(u32[0 max] seed);
     inline fn void Reseed(mut borrow XorShift32 self, u32[0 max] seed);
@@ -110,7 +113,8 @@ best target lowering.
 import System
 module App
 
-export fn i32 main() {
+export fn i32 main()
+{
     stack f64 root = System.Math.Sqrt(9.0);
     stack System.Math.SinCosF64 pair = System.Math.SinCos(0.0);
     return root == 3.0 && pair.Sin == 0.0 && pair.Cos == 1.0 ? 0 : 1;
@@ -121,7 +125,8 @@ export fn i32 main() {
 import System
 module App
 
-export fn i32 main() {
+export fn i32 main()
+{
     stack mut System.Math.XorShift32 rng = System.Math.XorShift32.Seeded(1);
     stack u32[0 max] bits = rng.NextU32();
     stack f32 unit = rng.NextF32();

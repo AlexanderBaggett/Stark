@@ -30,11 +30,11 @@ Rust instincts help, but Stark is not Rust with C#-like syntax.
 
 ## Traits And Dispatch
 
-Stark traits are compile-time contracts, not trait objects. There is no ordinary
-`dyn Trait` equivalent and no standard vtable-style dynamic dispatch model.
+Stark traits are type requirements, not trait objects. There is no ordinary
+`dyn Trait` equivalent.
 
-Use direct calls, generic instantiation, and explicit `fnptr` values when
-indirection is intended.
+Use direct calls, generic functions, and explicit `fnptr` values when a callable
+value is intended.
 
 ## Smart Pointers
 

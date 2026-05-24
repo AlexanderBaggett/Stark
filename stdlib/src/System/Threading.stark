@@ -3,7 +3,8 @@ module System.Threading
 
 public alias ThreadEntry = fnptr<fn i32[min max]()>;
 
-public enum ThreadError {
+public enum ThreadError
+{
     StartFailed,
     JoinFailed,
     AlreadyJoined,
@@ -11,24 +12,29 @@ public enum ThreadError {
     InvalidState,
 }
 
-public enum ThreadStatus {
+public enum ThreadStatus
+{
     Ok,
     Err(ThreadError),
 }
 
-public enum ThreadJoinResult {
+public enum ThreadJoinResult
+{
     Ok(i32[min max]),
     Err(ThreadError),
 }
 
-public struct Thread {
+public struct Thread
+{
     internal rawmutptr<i8[min max]> Handle;
     internal bool Joined;
     internal bool Detached;
     internal bool StartFailed;
 
-    Thread(ThreadEntry entry) {
-        unsafe {
+    Thread(ThreadEntry entry)
+    {
+        unsafe
+        {
             self.Handle = System.Runtime.Platform.StartThread(entry);
         }
 
@@ -37,35 +43,44 @@ public struct Thread {
         self.StartFailed = self.Handle == null;
     }
 
-    finite law bool IsJoinable(borrow Thread self) {
+    finite law bool IsJoinable(borrow Thread self)
+    {
         return self.Handle != null && !self.Joined && !self.Detached && !self.StartFailed;
     }
 
-    fn ThreadJoinResult Join(mut borrow Thread self) {
-        unsafe {
-            if (self.StartFailed) {
+    fn ThreadJoinResult Join(mut borrow Thread self)
+    {
+        unsafe
+        {
+            if (self.StartFailed)
+            {
                 return ThreadJoinResult.Err(ThreadError.StartFailed);
             }
 
-            if (self.Joined) {
+            if (self.Joined)
+            {
                 return ThreadJoinResult.Err(ThreadError.AlreadyJoined);
             }
 
-            if (self.Detached) {
+            if (self.Detached)
+            {
                 return ThreadJoinResult.Err(ThreadError.AlreadyDetached);
             }
 
-            if (self.Handle == null) {
+            if (self.Handle == null)
+            {
                 return ThreadJoinResult.Err(ThreadError.InvalidState);
             }
 
             stack mut i32[min max] exitCode = 0;
             stack mut i32[min max] status = 0;
-            unsafe {
+            unsafe
+            {
                 status = System.Runtime.Platform.JoinThread(self.Handle, &exitCode);
             }
 
-            if (status != 0) {
+            if (status != 0)
+            {
                 return ThreadJoinResult.Err(ThreadError.JoinFailed);
             }
 
@@ -75,31 +90,39 @@ public struct Thread {
         }
     }
 
-    fn ThreadStatus Detach(mut borrow Thread self) {
-        unsafe {
-            if (self.StartFailed) {
+    fn ThreadStatus Detach(mut borrow Thread self)
+    {
+        unsafe
+        {
+            if (self.StartFailed)
+            {
                 return ThreadStatus.Err(ThreadError.StartFailed);
             }
 
-            if (self.Joined) {
+            if (self.Joined)
+            {
                 return ThreadStatus.Err(ThreadError.AlreadyJoined);
             }
 
-            if (self.Detached) {
+            if (self.Detached)
+            {
                 return ThreadStatus.Err(ThreadError.AlreadyDetached);
             }
 
-            if (self.Handle == null) {
+            if (self.Handle == null)
+            {
                 self.Detached = true;
                 return ThreadStatus.Err(ThreadError.InvalidState);
             }
 
             stack mut i32[min max] status = 0;
-            unsafe {
+            unsafe
+            {
                 status = System.Runtime.Platform.DetachThread(self.Handle);
             }
 
-            if (status != 0) {
+            if (status != 0)
+            {
                 return ThreadStatus.Err(ThreadError.InvalidState);
             }
 
@@ -109,18 +132,22 @@ public struct Thread {
         }
     }
 
-    static fn void Yield() {
+    static fn void Yield()
+    {
         System.Runtime.Platform.YieldThread();
         return;
     }
 
-    static fn void SleepMilliseconds(u64[0 2 ** 63 - 1] milliseconds) {
+    static fn void SleepMilliseconds(u64[0 2 ** 63 - 1] milliseconds)
+    {
         System.Runtime.Platform.SleepThreadMilliseconds(milliseconds);
         return;
     }
 
-    mut drop {
-        if (self.IsJoinable()) {
+    mut drop
+    {
+        if (self.IsJoinable())
+        {
             self.Detach();
         }
     }

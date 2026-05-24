@@ -26,19 +26,29 @@ public sealed class PackageImageTypedNestedObjectCreationIntegrationTests
                 """
                 module Facade
 
-                public struct Inner<T> {
+                public struct Inner<T>
+                {
                     T Value;
                 }
 
-                public struct Outer<T> {
+                public struct Outer<T>
+                {
                     Inner<T> Item;
                     i32[min max][2] Values;
                 }
 
-                public fn Outer<T> Wrap<T>(T value, T tag) {
-                    return new Outer<T>() {
-                        Item = { Value = value },
-                        Values = { 7, 9 }
+                public fn Outer<T> Wrap<T>(T value, T tag)
+                {
+                    return new Outer<T>()
+                    {
+                        Item =
+                        {
+                            Value = value
+                        },
+                        Values =
+                        {
+                            7, 9
+                        }
                     };
                 }
                 """);
@@ -104,7 +114,8 @@ public sealed class PackageImageTypedNestedObjectCreationIntegrationTests
                 import Facade
                 module Demo
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     stack i32[min max] value = 4;
                     stack Facade.Outer<i32[min max]> wrapped = Facade.Wrap(value, value);
                     return wrapped.Item.Value * 10 + wrapped.Values[1];

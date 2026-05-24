@@ -13,7 +13,8 @@ module System.Threading
 
 public alias ThreadEntry = fnptr<fn i32[min max]()>;
 
-public enum ThreadError {
+public enum ThreadError
+{
     StartFailed,
     JoinFailed,
     AlreadyJoined,
@@ -21,17 +22,20 @@ public enum ThreadError {
     InvalidState,
 }
 
-public enum ThreadStatus {
+public enum ThreadStatus
+{
     Ok,
     Err(ThreadError),
 }
 
-public enum ThreadJoinResult {
+public enum ThreadJoinResult
+{
     Ok(i32[min max]),
     Err(ThreadError),
 }
 
-public struct Thread {
+public struct Thread
+{
     Thread(ThreadEntry entry);
     finite law bool IsJoinable(borrow Thread self);
     fn ThreadJoinResult Join(mut borrow Thread self);

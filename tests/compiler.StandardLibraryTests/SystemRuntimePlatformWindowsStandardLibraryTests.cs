@@ -246,9 +246,11 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                 import System
                 module App
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     stack System.Memory.Allocator allocator = System.Memory.Allocator.Default();
-                    if (!allocator.IsDefault()) {
+                    if (!allocator.IsDefault())
+                    {
                         return 1;
                     }
 
@@ -314,8 +316,10 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                 import System.Console
                 module App
 
-                fn bool IsOk(System.IO.IOStatus status) {
-                    switch (status) {
+                fn bool IsOk(System.IO.IOStatus status)
+                {
+                    switch (status)
+                    {
                         case System.IO.IOStatus.Ok:
                             return true;
                         case System.IO.IOStatus.Err(var error):
@@ -323,24 +327,30 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                     }
                 }
 
-                export fn i32[min max] main() {
-                    if (!IsOk(System.Console.Write((unicode)"Console"))) {
+                export fn i32[min max] main()
+                {
+                    if (!IsOk(System.Console.Write((unicode)"Console")))
+                    {
                         return 1;
                     }
 
-                    if (!IsOk(System.Console.WriteLine((unicode)" Status"))) {
+                    if (!IsOk(System.Console.WriteLine((unicode)" Status")))
+                    {
                         return 2;
                     }
 
-                    if (!IsOk(System.Console.WriteErrorLine("stderr works"))) {
+                    if (!IsOk(System.Console.WriteErrorLine("stderr works")))
+                    {
                         return 3;
                     }
 
-                    if (!IsOk(System.Console.WriteLine((unicode)"Promoted"))) {
+                    if (!IsOk(System.Console.WriteLine((unicode)"Promoted")))
+                    {
                         return 4;
                     }
 
-                    if (!IsOk(System.Console.WriteErrorLine("promoted stderr"))) {
+                    if (!IsOk(System.Console.WriteErrorLine("promoted stderr")))
+                    {
                         return 5;
                     }
 
@@ -402,8 +412,10 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                 import System.IO
                 module WindowsDirectoryDecodeProbe
 
-                fn bool IOOk(System.IO.IOStatus status) {
-                    switch (status) {
+                fn bool IOOk(System.IO.IOStatus status)
+                {
+                    switch (status)
+                    {
                         case System.IO.IOStatus.Ok:
                             return true;
                         case System.IO.IOStatus.Err(var error):
@@ -411,8 +423,10 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                     }
                 }
 
-                fn bool IsWideName(mut borrow System.FileSystem.FileSystemEntry entry) {
-                    if (entry.Name.Length() != 11) {
+                fn bool IsWideName(mut borrow System.FileSystem.FileSystemEntry entry)
+                {
+                    if (entry.Name.Length() != 11)
+                    {
                         return false;
                     }
 
@@ -430,8 +444,10 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                         && view[10] == 116;
                 }
 
-                fn bool IsLongName(mut borrow System.FileSystem.FileSystemEntry entry) {
-                    if (entry.Name.Length() != 184) {
+                fn bool IsLongName(mut borrow System.FileSystem.FileSystemEntry entry)
+                {
+                    if (entry.Name.Length() != 184)
+                    {
                         return false;
                     }
 
@@ -444,10 +460,12 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                         && view[183] == 116;
                 }
 
-                export unsafe fn i32[min max] main() {
+                export unsafe fn i32[min max] main()
+                {
                     stack System.IO.IOResult<System.FileSystem.Directory> opened =
                         System.FileSystem.OpenDirectory("scan-root");
-                    switch (opened) {
+                    switch (opened)
+                    {
                         case System.IO.IOResult<System.FileSystem.Directory>.Err(var openError):
                             return 1;
                         case System.IO.IOResult<System.FileSystem.Directory>.Ok(var directoryValue):
@@ -455,32 +473,39 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                             stack mut bool foundWide = false;
                             stack mut bool foundLong = false;
 
-                            for willexit (stack mut u8[0 8] index = 0; index < 8; index += 1) {
-                                switch (directory.ReadNext()) {
+                            for willexit (stack mut u8[0 8] index = 0; index < 8; index += 1)
+                            {
+                                switch (directory.ReadNext())
+                                {
                                     case System.FileSystem.DirectoryReadResult.Err(var readError):
                                         directory.Close();
                                         return 2;
                                     case System.FileSystem.DirectoryReadResult.End:
-                                        if (!IOOk(directory.Close())) {
+                                        if (!IOOk(directory.Close()))
+                                        {
                                             return 3;
                                         }
 
-                                        if (!foundWide) {
+                                        if (!foundWide)
+                                        {
                                             return 4;
                                         }
 
-                                        if (!foundLong) {
+                                        if (!foundLong)
+                                        {
                                             return 5;
                                         }
 
                                         return 0;
                                     case System.FileSystem.DirectoryReadResult.Entry(var entry):
                                         stack mut System.FileSystem.FileSystemEntry mutableEntry = entry;
-                                        if (IsWideName(mutableEntry)) {
+                                        if (IsWideName(mutableEntry))
+                                        {
                                             foundWide = true;
                                         }
 
-                                        if (IsLongName(mutableEntry)) {
+                                        if (IsLongName(mutableEntry))
+                                        {
                                             foundLong = true;
                                         }
                                 }
@@ -554,8 +579,10 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                 import System.IO
                 module WindowsDirectoryRuntimeProbe
 
-                fn bool IOOk(System.IO.IOStatus status) {
-                    switch (status) {
+                fn bool IOOk(System.IO.IOStatus status)
+                {
+                    switch (status)
+                    {
                         case System.IO.IOStatus.Ok:
                             return true;
                         case System.IO.IOStatus.Err(var error):
@@ -563,8 +590,10 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                     }
                 }
 
-                fn bool IsEnd(System.FileSystem.DirectoryReadInfoResult result) {
-                    switch (result) {
+                fn bool IsEnd(System.FileSystem.DirectoryReadInfoResult result)
+                {
+                    switch (result)
+                    {
                         case System.FileSystem.DirectoryReadInfoResult.Entry(var entry):
                             return false;
                         case System.FileSystem.DirectoryReadInfoResult.End:
@@ -574,8 +603,10 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                     }
                 }
 
-                fn bool IsErr(System.FileSystem.DirectoryReadInfoResult result) {
-                    switch (result) {
+                fn bool IsErr(System.FileSystem.DirectoryReadInfoResult result)
+                {
+                    switch (result)
+                    {
                         case System.FileSystem.DirectoryReadInfoResult.Entry(var entry):
                             return false;
                         case System.FileSystem.DirectoryReadInfoResult.End:
@@ -585,20 +616,24 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                     }
                 }
 
-                fn i32[min max] CheckEmptyDirectory() {
+                fn i32[min max] CheckEmptyDirectory()
+                {
                     stack System.IO.IOResult<System.FileSystem.Directory> opened =
                         System.FileSystem.OpenDirectory("empty-root");
-                    switch (opened) {
+                    switch (opened)
+                    {
                         case System.IO.IOResult<System.FileSystem.Directory>.Err(var openError):
                             return 1;
                         case System.IO.IOResult<System.FileSystem.Directory>.Ok(var directoryValue):
                             stack mut System.FileSystem.Directory directory = directoryValue;
-                            if (!IsEnd(directory.ReadNextInfo())) {
+                            if (!IsEnd(directory.ReadNextInfo()))
+                            {
                                 directory.Close();
                                 return 2;
                             }
 
-                            if (!IOOk(directory.Close())) {
+                            if (!IOOk(directory.Close()))
+                            {
                                 return 3;
                             }
 
@@ -606,23 +641,28 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                     }
                 }
 
-                fn i32[min max] CheckEarlyClose() {
+                fn i32[min max] CheckEarlyClose()
+                {
                     stack System.IO.IOResult<System.FileSystem.Directory> opened =
                         System.FileSystem.OpenDirectory("scan-root");
-                    switch (opened) {
+                    switch (opened)
+                    {
                         case System.IO.IOResult<System.FileSystem.Directory>.Err(var openError):
                             return 1;
                         case System.IO.IOResult<System.FileSystem.Directory>.Ok(var directoryValue):
                             stack mut System.FileSystem.Directory directory = directoryValue;
-                            if (!IOOk(directory.Close())) {
+                            if (!IOOk(directory.Close()))
+                            {
                                 return 2;
                             }
 
-                            if (!IOOk(directory.Close())) {
+                            if (!IOOk(directory.Close()))
+                            {
                                 return 3;
                             }
 
-                            if (!IsErr(directory.ReadNextInfo())) {
+                            if (!IsErr(directory.ReadNextInfo()))
+                            {
                                 return 4;
                             }
 
@@ -630,10 +670,12 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                     }
                 }
 
-                fn i32[min max] ScanOnce() {
+                fn i32[min max] ScanOnce()
+                {
                     stack System.IO.IOResult<System.FileSystem.Directory> opened =
                         System.FileSystem.OpenDirectory("scan-root");
-                    switch (opened) {
+                    switch (opened)
+                    {
                         case System.IO.IOResult<System.FileSystem.Directory>.Err(var openError):
                             return 1;
                         case System.IO.IOResult<System.FileSystem.Directory>.Ok(var directoryValue):
@@ -644,36 +686,44 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                             stack mut u8[0 3] count = 0;
                             stack mut u8[0 210] checksum = 0;
 
-                            while willexit (true) {
-                                switch (directory.ReadNextInfo()) {
+                            while willexit (true)
+                            {
+                                switch (directory.ReadNextInfo())
+                                {
                                     case System.FileSystem.DirectoryReadInfoResult.Err(var readError):
                                         directory.Close();
                                         return 2;
                                     case System.FileSystem.DirectoryReadInfoResult.End:
-                                        if (!IOOk(directory.Close())) {
+                                        if (!IOOk(directory.Close()))
+                                        {
                                             return 3;
                                         }
 
-                                        if (count != 3 || checksum != 210) {
+                                        if (count != 3 || checksum != 210)
+                                        {
                                             return 4;
                                         }
 
-                                        if (!foundFirst || !foundWide || !foundLong) {
+                                        if (!foundFirst || !foundWide || !foundLong)
+                                        {
                                             return 5;
                                         }
 
                                         return 0;
                                     case System.FileSystem.DirectoryReadInfoResult.Entry(var entry):
                                         stack u8[0 210] length = (u8[0 210])entry.NameLength;
-                                        if (length == 15) {
+                                        if (length == 15)
+                                        {
                                             foundFirst = true;
                                         }
 
-                                        if (length == 11) {
+                                        if (length == 11)
+                                        {
                                             foundWide = true;
                                         }
 
-                                        if (length == 184) {
+                                        if (length == 184)
+                                        {
                                             foundLong = true;
                                         }
 
@@ -684,24 +734,29 @@ public sealed class SystemRuntimePlatformWindowsStandardLibraryTests
                     }
                 }
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     stack i32[min max] emptyStatus = CheckEmptyDirectory();
-                    if (emptyStatus != 0) {
+                    if (emptyStatus != 0)
+                    {
                         return 10 + emptyStatus;
                     }
 
                     stack i32[min max] closeStatus = CheckEarlyClose();
-                    if (closeStatus != 0) {
+                    if (closeStatus != 0)
+                    {
                         return 20 + closeStatus;
                     }
 
                     stack i32[min max] firstScan = ScanOnce();
-                    if (firstScan != 0) {
+                    if (firstScan != 0)
+                    {
                         return 30 + firstScan;
                     }
 
                     stack i32[min max] secondScan = ScanOnce();
-                    if (secondScan != 0) {
+                    if (secondScan != 0)
+                    {
                         return 40 + secondScan;
                     }
 

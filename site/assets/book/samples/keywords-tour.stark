@@ -4,22 +4,27 @@ const u8 Limit = 3;
 
 alias Count = i32[min max];
 
-struct Accumulator {
+struct Accumulator
+{
     Count Value;
 
-    finite void Add(mut borrow Accumulator self, Count amount) {
+    finite void Add(mut borrow Accumulator self, Count amount)
+    {
         self.Value += amount;
         return;
     }
 }
 
-enum Status {
+enum Status
+{
     Done,
     Running(Count),
 }
 
-finite law Status Classify(Count value) {
-    switch (value) {
+finite law Status Classify(Count value)
+{
+    switch (value)
+    {
         case 0:
             return Status.Done;
         default:
@@ -27,22 +32,27 @@ finite law Status Classify(Count value) {
     }
 }
 
-export fn i32[min max] main() {
-    stack mut Accumulator accumulator = new Accumulator() {
+export fn i32[min max] main()
+{
+    stack mut Accumulator accumulator = new Accumulator()
+    {
         Value = 0
     };
 
     stack mut Count index = 0;
-    while willexit (index < Limit) {
+    while willexit (index < Limit)
+    {
         accumulator.Add(index);
         index += 1;
     }
 
-    switch (Classify(accumulator.Value)) {
+    switch (Classify(accumulator.Value))
+    {
         case Status.Done:
             return 1;
         case Status.Running(var value):
-            if (value != 3) {
+            if (value != 3)
+            {
                 return 2;
             }
     }

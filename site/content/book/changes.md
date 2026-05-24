@@ -18,11 +18,13 @@ This page records user-facing changes to the published Stark Book.
   ends with concrete outcomes drawn from its steps.
 - Added generated Lesson Paths to numbered tutorials so readers see the
   chapter route before starting.
+- Added Math Helpers, Bit Operations, and Byte Buffers chapters to the standard
+  library tutorial path, with checked samples for the new code paths.
 - Added a book-structure guard to the site build so numbered chapters keep
   tutorial steps, examples, navigation, and no placeholder prose.
 - Restructured numbered chapters as explicit tutorial steps and inserted the
   missing Performance Tuning and Unsafe Stark chapters before diagnostics.
-- Reworked the standard-library, generated-IR, command-line-tool, and current
+- Reworked the standard-library, output-inspection, command-line-tool, and current
   boundary material so it reads as a buildable tutorial path instead of a
   planning note or reference summary.
 - Reworked the remaining core-language, package/boundary, ABI/numeric,
@@ -32,29 +34,28 @@ This page records user-facing changes to the published Stark Book.
   performance-tuning, and unsafe chapters so their step headings also read as
   tutorial actions instead of topic labels.
 - Added a dedicated closures tutorial after the borrowing comparison and
-  renumbered later core, standard-library, performance, diagnostics, generated
-  IR, and project chapters through chapter 37, with aliases for the shifted
-  draft URLs.
+  renumbered later core, standard-library, performance, diagnostics, output
+  inspection, and project chapters through chapter 40, with aliases for the
+  shifted draft URLs.
 - Added second checked code examples to chapters that only had one sample so
   every numbered chapter now has multiple examples.
 - Created the website book section from the canonical outline.
 - Added draft Part I chapters for installing, compiling, and reading first
   Stark programs.
 - Added draft borrowing chapters, including a Stark-versus-Rust comparison.
-- Added checked book samples so code snippets can stay aligned with the
-  compiler.
-- Added negative sample support for examples that should be rejected by the
-  compiler.
+- Added checked book samples so code snippets can stay aligned with accepted
+  Stark source.
+- Added negative sample support for examples that should be rejected by Stark.
 - Added a single-file Markdown export for indexing, review, and printable
   workflows.
-- Expanded the remaining Part II core-language chapters for aggregates, enums,
+- Expanded the remaining Part II core-language chapters for structs and records, enums,
   fixed arrays, slices, and text views.
 - Expanded the remaining Part III boundary chapters for generics, callable
   values, raw pointers, FFI, and native package metadata.
 - Added draft standard-library chapters for console/process basics, memory and
   collections, files/filesystem/text, and threading/TCP.
 - Added draft performance and systems chapters covering Stark's performance
-  model, ABI boundaries, numeric policy, diagnostics, and generated IR.
+  model, ABI boundaries, numeric policy, diagnostics, and output inspection.
 - Added draft project chapters for command-line text tools, multi-module
   packages, file-processing utilities, native-backed packages, and performance
   case studies.
@@ -72,7 +73,7 @@ This page records user-facing changes to the published Stark Book.
 - Connected the multi-module project chapter to the checked package-surface
   sample as its single-file starting point.
 - Added a checked fixed-array tight-loop sample for the performance model,
-  generated-IR, and performance case-study chapters.
+  output-inspection, and performance case-study chapters.
 - Added checked sample callouts to the storage quick reference and Rust, C#,
   and C migration appendices.
 - Added a checked operators sample and strengthened the integer, function-kind,
@@ -86,7 +87,7 @@ This page records user-facing changes to the published Stark Book.
   callable-value boundary.
 - Added checked positive and negative `frozen` examples to clarify deep
   read-only access.
-- Expanded the memory-layout chapter with the checked aggregate layout sample
+- Expanded the memory-layout chapter with the checked struct and record layout sample
   to separate source-facing field access from C ABI promises.
 - Added real manifest file includes for the installing chapter and manifest
   appendix so TOML examples stay aligned with checked-in examples.
@@ -104,24 +105,24 @@ This page records user-facing changes to the published Stark Book.
 - Added checked switch-pattern samples covering guarded captures, guarded
   discards, and unreachable default arms.
 - Added a checked negative trait-runtime-value sample to clarify that traits
-  are compile-time contracts, not runtime dispatch objects.
+  are type rules, not values you pass around at runtime.
 - Added a checked negative function-pointer kind sample showing that a general
   `fn` is not promoted to a `finite law` callable value.
-- Added a checked doctrine-facts sample showing doctrine members called through
-  the doctrine name without creating a runtime doctrine object.
+- Added a checked doctrine-rules sample showing doctrine members called through
+  the doctrine name without creating a doctrine value.
 - Added a checked negative enum ABI boundary sample to clarify that ordinary
   Stark enums are not automatic `export`/FFI representations.
 - Added a checked negative raw-pointer mutability sample showing that readonly
   raw access cannot be strengthened into mutable raw access.
 - Added a checked memory-separation sample showing an `if disjoint(...)` fast
   path with an overlap-safe fallback.
-- Added const-parameter provenance and current `independent` loop-contract
-  boundary notes to the performance model chapter.
+- Added const-parameter and current `independent` loop notes to the performance
+  model chapter.
 - Added bounded raw pointer region coverage to the FFI/raw-pointer and
   performance chapters, including region expressions, unsafe raw slice
-  construction, and independent raw-pointer loop contracts.
+  construction, and independent raw-pointer loop rules.
 - Added a checked bounded raw pointer sample covering copy, fill, transform,
   and overlap-safe fallback paths.
 - Expanded callable-value coverage so `fnptr<finite ...>`, `fnptr<law ...>`,
-  and `fnptr<finite law ...>` are described as higher-order semantic
-  guarantees, and added a checked `finite law` function-pointer sample.
+  and `fnptr<finite law ...>` are described as higher-order callable
+  requirements, and added a checked `finite law` function-pointer sample.

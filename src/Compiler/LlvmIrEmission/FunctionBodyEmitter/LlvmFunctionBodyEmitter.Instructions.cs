@@ -87,7 +87,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 AppendLine($"  {result} = extractvalue {MapType(extract.Target.Type)} {FormatValue(extract.Target)}, {extract.FieldIndex}");
                 return;
             case SsaInsertFieldRValue insert:
-                AppendLine($"  {result} = insertvalue {MapType(insert.Target.Type)} {FormatValue(insert.Target)}, {MapType(insert.Value.Type)} {FormatValue(insert.Value)}, {insert.FieldIndex}");
+                AppendLine($"  {result} = insertvalue {MapType(insert.Target.Type)} {FormatAggregateValueUse(insert.Target, insert.Target.Type, "insert_field_target")}, {MapType(insert.Value.Type)} {FormatAggregateValueUse(insert.Value, insert.Value.Type, "insert_field_value")}, {insert.FieldIndex}");
                 return;
             case SsaExtractIndexRValue extractIndex:
                 if (TryEmitAggregateElementLoad(result, extractIndex.Target, extractIndex.ElementIndex, extractIndex.Type, "extract_index_load"))
@@ -98,7 +98,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 AppendLine($"  {result} = extractvalue {MapType(extractIndex.Target.Type)} {FormatValue(extractIndex.Target)}, {extractIndex.ElementIndex}");
                 return;
             case SsaInsertIndexRValue insertIndex:
-                AppendLine($"  {result} = insertvalue {MapType(insertIndex.Target.Type)} {FormatValue(insertIndex.Target)}, {MapType(insertIndex.Value.Type)} {FormatValue(insertIndex.Value)}, {insertIndex.ElementIndex}");
+                AppendLine($"  {result} = insertvalue {MapType(insertIndex.Target.Type)} {FormatAggregateValueUse(insertIndex.Target, insertIndex.Target.Type, "insert_index_target")}, {MapType(insertIndex.Value.Type)} {FormatAggregateValueUse(insertIndex.Value, insertIndex.Value.Type, "insert_index_value")}, {insertIndex.ElementIndex}");
                 return;
             case SsaMakeSliceFromLocalRValue makeSlice:
                 EmitMakeSliceFromLocal(result, makeSlice);
@@ -1510,28 +1510,18 @@ internal sealed partial class LlvmFunctionBodyEmitter
         var targetType = NormalizeAggregateType(convert.TargetType);
         if (sourceType.Kind != StarkTypeKind.Integer
             || targetType.Kind != StarkTypeKind.Integer
-            || sourceType.BitWidth is not int sourceBitWidth
-            || targetType.BitWidth is not int targetBitWidth)
+            || sourceType.BitWidth is null
+            || targetType.BitWidth is null)
         {
             return false;
         }
 
-        if (sourceType.IsUnsigned != targetType.IsUnsigned)
+        if (!TryGetIntegerTypeRange(sourceType, out var sourceMin, out var sourceMax)
+            || !TryGetIntegerTypeRange(targetType, out var targetMin, out var targetMax))
         {
             return false;
         }
 
-        if (sourceBitWidth <= targetBitWidth)
-        {
-            return true;
-        }
-
-        if (!TryGetIntegerTypeRange(sourceType, out var sourceMin, out var sourceMax))
-        {
-            return false;
-        }
-
-        GetSignedIntegerBounds(targetBitWidth, out var targetMin, out var targetMax);
         return sourceMin >= targetMin && sourceMax <= targetMax;
     }
 

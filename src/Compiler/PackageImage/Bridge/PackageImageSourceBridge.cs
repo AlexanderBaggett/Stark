@@ -2296,12 +2296,16 @@ internal static partial class PackageImageLoader
             return "0";
         }
 
+        // Package-image source is only a typed surface for parsing/import resolution.
+        // The real constant value remains in typed compiler facts; using neutral
+        // placeholders here avoids reconstructing exact scalar range endpoints from
+        // storage values when the source text is unavailable.
         return initializer.Kind switch
         {
-            "integer" => initializer.IntegerValue ?? "0",
-            "float" => initializer.FloatLiteralText ?? "0.0",
-            "bool" => initializer.BoolValue == true ? "true" : "false",
-            "text" => initializer.TextLiteralText ?? "\"\"",
+            "integer" => "0",
+            "float" => "0",
+            "bool" => "false",
+            "text" => "\"\"",
             "null" => "null",
             "fixedarray" when initializer.Elements is { Count: > 0 } =>
                 $"{{ {string.Join(", ", initializer.Elements.Select(RenderConstantInitializer))} }}",

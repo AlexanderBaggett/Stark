@@ -29,21 +29,25 @@ public sealed class PackageImageTypedComparisonChainIntegrationTests
                 public static mut i32[min max] OrderedCalls = 0;
                 public static mut i32[min max] EqualityCalls = 0;
 
-                public fn i32[min max] NextOrdered() {
+                public fn i32[min max] NextOrdered()
+                {
                     OrderedCalls += 1;
                     return 1;
                 }
 
-                public fn i32[min max] NextEquality() {
+                public fn i32[min max] NextEquality()
+                {
                     EqualityCalls += 1;
                     return 1;
                 }
 
-                public fn bool ObserveOrdered<T>(T tag) {
+                public fn bool ObserveOrdered<T>(T tag)
+                {
                     return 0 < NextOrdered() < 3;
                 }
 
-                public fn bool ObserveEquality<T>(T tag) {
+                public fn bool ObserveEquality<T>(T tag)
+                {
                     return 1 == NextEquality() == 1;
                 }
                 """);
@@ -112,13 +116,16 @@ public sealed class PackageImageTypedComparisonChainIntegrationTests
                 import Facade
                 module Demo
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     stack i32[min max] tag = 0;
-                    if (!Facade.ObserveOrdered(tag)) {
+                    if (!Facade.ObserveOrdered(tag))
+                    {
                         return 21;
                     }
 
-                    if (!Facade.ObserveEquality(tag)) {
+                    if (!Facade.ObserveEquality(tag))
+                    {
                         return 22;
                     }
 

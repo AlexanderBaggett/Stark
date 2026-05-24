@@ -27,7 +27,25 @@ Status: covered by `ExamplesCompileRunTests.BorrowingExamplesCompileAndRun`.
 - [OutParameters.stark](/reference/examples/borrowing/OutParameters.stark)
 - [Stark.toml](/reference/examples/borrowing/Stark.toml)
 
+### Borrowing.stark
+
 {{< file-sample "static/reference/examples/borrowing/Borrowing.stark" "stark" >}}
+
+### OwnershipMoves.stark
+
+{{< file-sample "static/reference/examples/borrowing/OwnershipMoves.stark" "stark" >}}
+
+### BorrowKinds.stark
+
+{{< file-sample "static/reference/examples/borrowing/BorrowKinds.stark" "stark" >}}
+
+### OutParameters.stark
+
+{{< file-sample "static/reference/examples/borrowing/OutParameters.stark" "stark" >}}
+
+### Stark.toml
+
+{{< file-sample "static/reference/examples/borrowing/Stark.toml" "toml" >}}
 
 ## Related
 

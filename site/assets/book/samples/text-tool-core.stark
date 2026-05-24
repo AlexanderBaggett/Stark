@@ -1,20 +1,25 @@
 module Book.TextToolCore
 
-enum ToolStatus {
+enum ToolStatus
+{
     Ok,
     UnknownCommand,
 }
 
-finite law ToolStatus ClassifyCommand(ascii command) {
-    if (command[0] == 'r' && command[1] == 'u' && command[2] == 'n') {
+finite law ToolStatus ClassifyCommand(ascii command)
+{
+    if (command[0] == 'r' && command[1] == 'u' && command[2] == 'n')
+    {
         return ToolStatus.Ok;
     }
 
     return ToolStatus.UnknownCommand;
 }
 
-finite law i32[min max] ExitCode(ToolStatus status) {
-    switch (status) {
+finite law i32[min max] ExitCode(ToolStatus status)
+{
+    switch (status)
+    {
         case ToolStatus.Ok:
             return 0;
         case ToolStatus.UnknownCommand:
@@ -22,6 +27,7 @@ finite law i32[min max] ExitCode(ToolStatus status) {
     }
 }
 
-export fn i32[min max] main() {
+export fn i32[min max] main()
+{
     return ExitCode(ClassifyCommand("run"));
 }

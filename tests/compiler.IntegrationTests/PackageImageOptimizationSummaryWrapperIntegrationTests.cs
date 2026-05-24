@@ -26,29 +26,44 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 """
                 module Facade
 
-                public struct Inner<T> {
+                public struct Inner<T>
+                {
                     T Value;
                 }
 
-                public struct Outer<T> {
+                public struct Outer<T>
+                {
                     Inner<T> Item;
                     i32[min max] Count;
                 }
 
-                public enum Boxed<T> {
+                public enum Boxed<T>
+                {
                     None,
-                    Value { Data: T, Tag: i32[min max] },
+                    Value
+                    {
+                        Data: T, Tag: i32[min max]
+                    },
                 }
 
-                public fn Outer<T> WrapObject<T>(T value, i32[min max] count, T tag) {
-                    return new Outer<T>() {
-                        Item = { Value = value },
+                public fn Outer<T> WrapObject<T>(T value, i32[min max] count, T tag)
+                {
+                    return new Outer<T>()
+                    {
+                        Item =
+                        {
+                            Value = value
+                        },
                         Count = count
                     };
                 }
 
-                public fn Boxed<T> WrapEnum<T>(T value, i32[min max] tag, T marker) {
-                    return Boxed<T>.Value { Data: value, Tag: tag };
+                public fn Boxed<T> WrapEnum<T>(T value, i32[min max] tag, T marker)
+                {
+                    return Boxed<T>.Value
+                    {
+                        Data: value, Tag: tag
+                    };
                 }
                 """);
 
@@ -133,13 +148,18 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 import Facade
                 module Demo
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     stack i32[min max] seed = 40;
                     stack Facade.Outer<i32[min max]> wrapped = Facade.WrapObject(seed, 1, seed);
                     stack Facade.Boxed<i32[min max]> boxed = Facade.WrapEnum(wrapped.Item.Value, wrapped.Count, seed);
 
-                    switch (boxed) {
-                        case Facade.Boxed<i32[min max]>.Value { Data: var data, Tag: var tag }:
+                    switch (boxed)
+                    {
+                        case Facade.Boxed<i32[min max]>.Value
+                        {
+                            Data: var data, Tag: var tag
+                        }:
                             return data + tag;
                         default:
                             return 1;
@@ -220,10 +240,15 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 """
                 module Facade
 
-                public record Inner(i32[min max] Value) { }
-                public record Box(Inner Inner) { }
+                public record Inner(i32[min max] Value)
+                {
+                }
+                public record Box(Inner Inner)
+                {
+                }
 
-                public fn i32[min max] Bump<T>(Box box, i32[min max] delta, T tag) {
+                public fn i32[min max] Bump<T>(Box box, i32[min max] delta, T tag)
+                {
                     stack mut i32[min max] current;
                     current = box.Inner.Value;
                     current += delta;
@@ -303,11 +328,13 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 import Facade
                 module Demo
 
-                fn i32[min max] Run(Facade.Box box, i32[min max] delta, i32[min max] tag) {
+                fn i32[min max] Run(Facade.Box box, i32[min max] delta, i32[min max] tag)
+                {
                     return Facade.Bump(box, delta, tag);
                 }
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     stack Facade.Box box = new Facade.Box(new Facade.Inner(40));
                     stack i32[min max] delta = 2;
                     stack i32[min max] tag = 0;
@@ -388,18 +415,26 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 """
                 module Facade
 
-                public fn i32[min max] ChooseBranch<T>(bool takeLeft, bool takeMiddle, i32[min max] left, i32[min max] middle, i32[min max] right, T tag) {
-                    if (takeLeft) {
+                public fn i32[min max] ChooseBranch<T>(bool takeLeft, bool takeMiddle, i32[min max] left, i32[min max] middle, i32[min max] right, T tag)
+                {
+                    if (takeLeft)
+                    {
                         return left;
-                    } else if (takeMiddle) {
+                    }
+                    else if (takeMiddle)
+                    {
                         return middle;
-                    } else {
+                    }
+                    else
+                    {
                         return right;
                     }
                 }
 
-                public fn i32[min max] ChooseSwitch<T>(i32[min max] selector, i32[min max] left, i32[min max] middle, i32[min max] right, T tag) {
-                    switch (selector) {
+                public fn i32[min max] ChooseSwitch<T>(i32[min max] selector, i32[min max] left, i32[min max] middle, i32[min max] right, T tag)
+                {
+                    switch (selector)
+                    {
                         case 0:
                             return left;
                         case 1:
@@ -492,7 +527,8 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 import Facade
                 module Demo
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     stack i32[min max] tag = 0;
                     stack i32[min max] first = Facade.ChooseBranch(false, true, 1, 40, 9, tag);
                     stack i32[min max] second = Facade.ChooseSwitch(0, 2, 7, 9, tag);
@@ -573,14 +609,20 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 """
                 module Facade
 
-                public record Inner(i32[min max] Value) { }
-                public record Box(Inner Inner) { }
+                public record Inner(i32[min max] Value)
+                {
+                }
+                public record Box(Inner Inner)
+                {
+                }
 
-                public fn i32[min max] AddDelta<T>(Box box, i32[min max] delta, T tag) {
+                public fn i32[min max] AddDelta<T>(Box box, i32[min max] delta, T tag)
+                {
                     return box.Inner.Value + delta;
                 }
 
-                public fn bool IsBelow<T>(Box box, i32[min max] limit, T tag) {
+                public fn bool IsBelow<T>(Box box, i32[min max] limit, T tag)
+                {
                     return box.Inner.Value < limit;
                 }
                 """);
@@ -668,11 +710,13 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 import Facade
                 module Demo
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     stack i32[min max] delta = 2;
                     stack i32[min max] limit = 50;
                     stack i32[min max] result = Facade.AddDelta(new Facade.Box(new Facade.Inner(40)), delta, delta);
-                    if (Facade.IsBelow(new Facade.Box(new Facade.Inner(result - delta)), limit, delta)) {
+                    if (Facade.IsBelow(new Facade.Box(new Facade.Inner(result - delta)), limit, delta))
+                    {
                         return result;
                     }
 
@@ -753,10 +797,15 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 """
                 module Facade
 
-                public record Inner(i32[min max] Value) { }
-                public record Box(Inner Inner) { }
+                public record Inner(i32[min max] Value)
+                {
+                }
+                public record Box(Inner Inner)
+                {
+                }
 
-                public fn i64[min max] Read<T>(Box box, T tag) {
+                public fn i64[min max] Read<T>(Box box, T tag)
+                {
                     return (i64[min max])box.Inner.Value;
                 }
                 """);
@@ -833,7 +882,8 @@ public sealed class PackageImageOptimizationSummaryWrapperIntegrationTests
                 import Facade
                 module Demo
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     stack Facade.Box box = new Facade.Box(new Facade.Inner(41));
                     stack i32[min max] tag = box.Inner.Value;
                     return (i32[min max])Facade.Read(box, tag) + 1;

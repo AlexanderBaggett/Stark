@@ -16,21 +16,25 @@ public sealed class CompilerPipelineLowerAbiTests
                 """
                 module Demo
 
-                struct Big {
+                struct Big
+                {
                     i64[min max] A;
                     i64[min max] B;
                     i64[min max] C;
                 }
 
-                fn T Bounce<T>(T value) {
+                fn T Bounce<T>(T value)
+                {
                     return value;
                 }
 
-                fn i32[min max] Run(i32[min max] value) {
+                fn i32[min max] Run(i32[min max] value)
+                {
                     return Bounce(value);
                 }
 
-                fn Big Make(Big value) {
+                fn Big Make(Big value)
+                {
                     return Bounce(value);
                 }
                 """),
@@ -74,7 +78,8 @@ public sealed class CompilerPipelineLowerAbiTests
                 """
                 module Facade
 
-                public struct Big {
+                public struct Big
+                {
                     i64[min max] A;
                     i64[min max] B;
                     i64[min max] C;
@@ -121,7 +126,8 @@ public sealed class CompilerPipelineLowerAbiTests
                     import Facade
                     module Demo
 
-                    unsafe fn i32[min max] Run() {
+                    unsafe fn i32[min max] Run()
+                    {
                         return 0;
                     }
                     """,
@@ -182,10 +188,12 @@ public sealed class CompilerPipelineLowerAbiTests
                 """
                 module Facade
 
-                public struct Counter {
+                public struct Counter
+                {
                     i32[min max] Value;
 
-                    fn void Reset(borrow mut Counter self) {
+                    fn void Reset(borrow mut Counter self)
+                    {
                         self.Value = 0;
                         return;
                     }
@@ -209,7 +217,8 @@ public sealed class CompilerPipelineLowerAbiTests
                     import Facade
                     module Demo
 
-                    fn void Run() {
+                    fn void Run()
+                    {
                         return;
                     }
                     """,

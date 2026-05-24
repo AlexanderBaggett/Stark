@@ -46,26 +46,37 @@ public sealed class ParserSmokeTests
             """
             module Shapes
 
-            public struct Widget {
+            public struct Widget
+            {
                 i32[min max] Value;
-                Widget() { }
-                fn void Reset() { return; }
-                drop {
+                Widget()
+                {
+                }
+                fn void Reset()
+                {
+                    return;
+                }
+                drop
+                {
                     ;
                 }
             }
 
-            public record Point(i32[min max] X, i32[min max] Y) {
-                mut drop {
+            public record Point(i32[min max] X, i32[min max] Y)
+            {
+                mut drop
+                {
                     self.X = 0;
                 }
             }
 
-            public trait Comparable<T> {
+            public trait Comparable<T>
+            {
                 law i32[min max] Compare(T other);
             }
 
-            public doctrine Numbers<T> {
+            public doctrine Numbers<T>
+            {
                 finite law T Clamp(T value);
             }
             """
@@ -75,28 +86,41 @@ public sealed class ParserSmokeTests
             """
             module Variants
 
-            public enum Result<T, E> {
+            public enum Result<T, E>
+            {
                 Ok(T),
                 Err(E),
             }
 
-            enum Token {
+            enum Token
+            {
                 End,
                 Integer(i32[min max]),
-                Move { X: i32[min max], Y: i32[min max] },
+                Move
+                {
+                    X: i32[min max], Y: i32[min max]
+                },
             }
 
-            finite law i32[min max] Use(Result<i32[min max], ascii> result, Token token) {
+            finite law i32[min max] Use(Result<i32[min max], ascii> result, Token token)
+            {
                 stack Token end = Token.End;
                 stack Token integer = Token.Integer(5);
-                stack Token moveToken = Token.Move { X: 1, Y: 2 };
+                stack Token moveToken = Token.Move
+                {
+                    X: 1, Y: 2
+                };
 
-                switch (token) {
+                switch (token)
+                {
                     case Token.End:
                         return 0;
                     case Token.Integer(var value):
                         return value;
-                    case Token.Move { X: var x, Y: var y }:
+                    case Token.Move
+                    {
+                        X: var x, Y: var y
+                    }:
                         return x + y;
                 }
             }
@@ -127,7 +151,8 @@ public sealed class ParserSmokeTests
             """
             module Escapes
 
-            finite law void Run() {
+            finite law void Run()
+            {
                 stack ascii nul = '\0';
                 stack ascii hex = '\x41';
                 stack unicode greek = '\u03B1';
@@ -142,31 +167,45 @@ public sealed class ParserSmokeTests
             """
             module Flow
 
-            struct Widget {
+            struct Widget
+            {
                 i32[min max] Value;
             }
 
-            finite law i32[min max] Run() {
+            finite law i32[min max] Run()
+            {
                 const i32[min max] start = 0;
                 stack mut i32[min max] counter = start;
-                stack Widget item = new Widget() { Value = 1 };
-                stack i32[min max][3] values = {1, 2, 3};
+                stack Widget item = new Widget()
+                {
+                    Value = 1
+                };
+                stack i32[min max][3] values =
+                {
+                    1, 2, 3
+                };
                 stack f32 power = 2.0 ** 3.0;
 
-                if w9 (counter == 0) {
+                if w9 (counter == 0)
+                {
                     counter += item.Value;
-                } else {
+                }
+                else
+                {
                     counter = counter ? counter : 1;
                 }
 
                 counter ^= 1;
 
-                while willexit (counter < 10) {
+                while willexit (counter < 10)
+                {
                     counter += 1;
                 }
 
-                for willexit (stack mut i32[min max] i = 0; i < 3; i += 1) {
-                    switch w1 (i) {
+                for willexit (stack mut i32[min max] i = 0; i < 3; i += 1)
+                {
+                    switch w1 (i)
+                    {
                         case 0:
                             continue;
                         case var value when value > 0:
@@ -186,10 +225,14 @@ public sealed class ParserSmokeTests
             """
             module Patterns
 
-            record Pair(i32[min max] Left, i32[min max] Right) { }
+            record Pair(i32[min max] Left, i32[min max] Right)
+            {
+            }
 
-            finite law i32[min max] Run(Pair value) {
-                switch (value) {
+            finite law i32[min max] Run(Pair value)
+            {
+                switch (value)
+                {
                     case Pair(1, var right):
                         return right;
                     case Pair(_, _):
@@ -203,11 +246,17 @@ public sealed class ParserSmokeTests
             """
             module Patterns
 
-            record Pair(i32[min max] Left, i32[min max] Right) { }
-            record Outer(Pair Values, i32[min max] Tail) { }
+            record Pair(i32[min max] Left, i32[min max] Right)
+            {
+            }
+            record Outer(Pair Values, i32[min max] Tail)
+            {
+            }
 
-            finite law i32[min max] Run(Outer value) {
-                switch (value) {
+            finite law i32[min max] Run(Outer value)
+            {
+                switch (value)
+                {
                     case Outer(Pair(1, var right), var tail):
                         return right + tail;
                     case Outer(Pair(_, _), _):
@@ -221,23 +270,45 @@ public sealed class ParserSmokeTests
             """
             module Globals
 
-            struct Inner {
+            struct Inner
+            {
                 i32[min max][2] Pair;
             }
 
-            struct Outer {
+            struct Outer
+            {
                 Inner Node;
                 i32[min max][3] View;
             }
 
-            const Outer Frozen = {
-                Node = { Pair = { 4, 7 } },
-                View = { 1, 2, 3 }
+            const Outer Frozen =
+            {
+                Node =
+                {
+                    Pair =
+                    {
+                        4, 7
+                    }
+                },
+                View =
+                {
+                    1, 2, 3
+                }
             };
 
-            static Outer Shared = {
-                Node = { Pair = { 8, 9 } },
-                View = { 5, 6, 7 }
+            static Outer Shared =
+            {
+                Node =
+                {
+                    Pair =
+                    {
+                        8, 9
+                    }
+                },
+                View =
+                {
+                    5, 6, 7
+                }
             };
             """
         },
@@ -246,7 +317,8 @@ public sealed class ParserSmokeTests
             """
             module GenericDemo
 
-            public inlinehint finite T Echo<T>(T value) where T: Cloneable {
+            public inlinehint finite T Echo<T>(T value) where T: Cloneable
+            {
                 return value;
             }
             """
@@ -256,16 +328,19 @@ public sealed class ParserSmokeTests
             """
             module Operators
 
-            strictfp finite law f32 Precise(f32 left, f32 right) {
+            strictfp finite law f32 Precise(f32 left, f32 right)
+            {
                 return left + right;
             }
 
-            finite law i32[min max] Wrap(i32[min max] left, i32[min max] right) {
+            finite law i32[min max] Wrap(i32[min max] left, i32[min max] right)
+            {
                 left +%= right;
                 return -%left +% right *% 2;
             }
 
-            finite law i32[min max] Saturate(i32[min max] left, i32[min max] right) {
+            finite law i32[min max] Saturate(i32[min max] left, i32[min max] right)
+            {
                 left +|= right;
                 return left +| right *| 2;
             }
@@ -276,14 +351,19 @@ public sealed class ParserSmokeTests
             """
             module UnsafeDemo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
             static i32[min max] Counter = 0;
 
-            unsafe fn i32[min max] Run(rawmutptr<i32[min max]> input, i64[min max] bits) {
-                stack mut Box box = new Box() { Value = 1 };
+            unsafe fn i32[min max] Run(rawmutptr<i32[min max]> input, i64[min max] bits)
+            {
+                stack mut Box box = new Box()
+                {
+                    Value = 1
+                };
                 *(&(box.Value)) = (i32[min max])bits;
                 stack rawptr<i32[min max]> ptrAlias = (rawptr<i32[min max]>)input;
                 Counter = *ptrAlias;
@@ -315,8 +395,11 @@ public sealed class ParserSmokeTests
             """
             module Demo
 
-            fn void Run() {
-                while (true) { }
+            fn void Run()
+            {
+                while (true)
+                {
+                }
             }
             """
         },
@@ -331,7 +414,8 @@ public sealed class ParserSmokeTests
             """
             module Demo
 
-            fn void Run() {
+            fn void Run()
+            {
                 i32[min max] value = 0;
             }
             """
@@ -341,7 +425,8 @@ public sealed class ParserSmokeTests
             """
             module Demo
 
-            public doctorine Numbers<T> {
+            public doctorine Numbers<T>
+            {
                 law T Clamp(T value);
             }
             """
@@ -351,7 +436,8 @@ public sealed class ParserSmokeTests
             """
             module Demo
 
-            struct Widget : BaseWidget {
+            struct Widget : BaseWidget
+            {
             }
             """
         },
@@ -360,9 +446,11 @@ public sealed class ParserSmokeTests
             """
             module Demo
 
-            struct Widget {
+            struct Widget
+            {
                 i32[min max] Value;
-                Widget(i32[min max] value) : base(value) {
+                Widget(i32[min max] value) : base(value)
+                {
                     return;
                 }
             }
@@ -373,8 +461,12 @@ public sealed class ParserSmokeTests
             """
             module Demo
 
-            fn void Run() {
-                stack [i32[min max]; 3] values = {1, 2, 3};
+            fn void Run()
+            {
+                stack [i32[min max]; 3] values =
+                {
+                    1, 2, 3
+                };
             }
             """
         },
@@ -383,13 +475,19 @@ public sealed class ParserSmokeTests
             """
             module Demo
 
-            struct Boxed {
+            struct Boxed
+            {
                 i32[min max] Value;
             }
 
-            fn i32[min max] Run(Boxed value) {
-                switch (value) {
-                    case Boxed { Value: 1 }:
+            fn i32[min max] Run(Boxed value)
+            {
+                switch (value)
+                {
+                    case Boxed
+                    {
+                        Value: 1
+                    }:
                         return 1;
                     default:
                         return 0;

@@ -1,12 +1,15 @@
 import System.Runtime.Platform
 module System.Process
 
-public fn i32[min max] CurrentId() {
+public fn i32[min max] CurrentId()
+{
     return System.Runtime.Platform.ProcessId();
 }
 
-public fn void Exit(i32[min max] code) {
-    unsafe {
+public fn void Exit(i32[min max] code)
+{
+    unsafe
+    {
         System.Runtime.Platform.ExitProcess(code);
         return;
     }
