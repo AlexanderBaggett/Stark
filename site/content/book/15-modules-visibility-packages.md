@@ -48,34 +48,41 @@ module App
 file. `export import` deliberately re-exports that module through the package
 surface.
 
-## Step 2: Add Backend Boundaries Only When They Are Real
+One file declares one module. Do not split one module across several source
+files, and do not put several module declarations in one file.
 
-Backend attributes use C#-style square brackets before the declaration they
-control. The backend boundary attribute used in this tutorial is:
+The usual file shape is:
 
 ```stark
-[Backend(Opaque)]
-module System.Memory
+import System.Text
 
-[Backend(Opaque)]
-finite law i32[0 max] Hash(i32[0 max] value) {
-    return value;
+module Tools.Format
+
+public finite law bool IsDash(ascii text) {
+    return AsciiLength(text) == 1 && text[0] == "-";
 }
 ```
 
-`[Backend(Opaque)]` is not a visibility modifier. Importers still see the
-visible `internal`, `public`, and `export` declarations according to the normal
-rules. The attribute only says that backend whole-program optimization must
-treat the marked module, callable, type, or doctrine as a compiled boundary:
-callers should not import the affected bodies for ThinLTO, cross-module
-inlining, backend cloning, or backend specialization.
+Imports are explicit. There is no wildcard import. Importing a module lets you
+use visible top-level declarations from that module by their short names. When
+two imports expose the same final name, use the qualified name at the call site:
 
-Most application modules should omit it. Use it for runtime, platform, and
-interop code when a real backend boundary is part of the implementation
-contract. Prefer the narrowest boundary that preserves correctness and
-performance.
+```stark
+import Geometry
+import Drawing
 
-## Step 3: Widen Visibility Deliberately
+module App
+
+fn i32[min max] UseGeometryRectangle(Geometry.Rectangle rectangle) {
+    return Geometry.Area(rectangle);
+}
+```
+
+Declarations in the current module win over imported names. If that would make
+a file hard to read, choose a more specific local name instead of relying on
+the tie-breaker.
+
+## Step 2: Widen Visibility Deliberately
 
 Stark defaults to module-private declarations. Widen visibility only when there
 is a real reason:
@@ -108,7 +115,149 @@ In a real package, the public API and the entrypoint usually live in different
 projects. The distinction is the same: `public` is for Stark source consumers;
 `export` is for ABI-visible boundaries.
 
-## Step 4: Put Project Shape In `Stark.toml`
+The common patterns are:
+
+```stark
+module Geometry
+
+const DefaultScale = 1;
+
+fn i32[min max] PrivateHelper(i32[min max] value) {
+    return value + 1;
+}
+
+internal fn i32[min max] PackageHelper(i32[min max] value) {
+    return PrivateHelper(value);
+}
+
+public fn i32[min max] Area(i32[min max] width, i32[min max] height) {
+    return width * height;
+}
+
+export fn i32[min max] main() {
+    return Area(3, 4);
+}
+```
+
+Use the narrowest visibility that matches the caller you actually want.
+
+Visibility applies to the ordinary top-level things you write in Stark:
+
+```stark
+public const DefaultWidth = 80;
+
+internal alias Score = i32[min max];
+
+public struct Rectangle {
+    u16[0 1000] Width;
+    u16[0 1000] Height;
+}
+
+public record Point {
+    i32[min max] X;
+    i32[min max] Y;
+}
+
+public enum ShapeKind {
+    Point,
+    Rectangle,
+}
+
+public trait Named {
+    law ascii Name();
+}
+
+public doctrine ScoreRules {
+    finite law bool IsPassing(u8[0 100] score) {
+        return score >= 70;
+    }
+}
+```
+
+Use module-private declarations for helpers that only this file needs. Use
+`internal` for helpers shared across files in one package. Use `public` for the
+Stark API other packages should import.
+
+## Step 3: Narrow Member Visibility When Needed
+
+Member functions inside `struct` and `record` declarations inherit the
+visibility of the enclosing type unless the member writes its own visibility.
+That makes small public types pleasant to write:
+
+```stark
+public struct Counter {
+    u32[0 max] Value;
+
+    finite law u32[0 max] Read(self) {
+        return self.Value;
+    }
+}
+```
+
+`Read` is public because `Counter` is public. Narrow a member when downstream
+code should not call it:
+
+```stark
+public struct PackageClient {
+    finite law bool IsOpen(self) {
+        return true;
+    }
+
+    internal finite law i64[min max] RuntimeHandle(self) {
+        return 0;
+    }
+}
+```
+
+A member cannot be more visible than its enclosing type:
+
+```stark
+internal struct PlatformSocket {
+    finite law bool IsOpen(self) {
+        return true;
+    }
+
+    // Not allowed: a public member cannot sit on an internal type.
+    public finite law i64[min max] Handle(self) {
+        return 0;
+    }
+}
+```
+
+Fields do not have separate visibility keywords in the current language
+surface. Put representation-sensitive helper functions in the same module, and
+publish only the functions that callers should use.
+
+## Step 4: Re-Export Only When It Is Part Of Your API
+
+Use `export import` when your package intentionally republishes another module:
+
+```stark
+export import Geometry.Units
+module Geometry
+
+public struct Rectangle {
+    u16[0 1000] Width;
+    u16[0 1000] Height;
+}
+```
+
+Plain `import` is local to the file. It helps this file resolve names, but it
+does not make the imported module part of your package's public source API.
+
+```stark
+import Geometry.InternalMath
+module Geometry
+
+public finite law i32[min max] Area(Rectangle rectangle) {
+    return Multiply(rectangle.Width, rectangle.Height);
+}
+```
+
+This is the right shape when `Multiply` is a package helper and callers should
+continue to call `Geometry.Area`.
+
+## Step 5: Put Project Shape In `Stark.toml`
 
 A Stark project is described by `Stark.toml`:
 
@@ -126,6 +275,36 @@ output = "modules"
 The manifest says what kind of project this is, which file is the root, and
 what output name to use.
 
+A library uses the library form:
+
+```toml
+[project]
+name = "geometry"
+version = "0.1.0"
+kind = "library"
+
+[library]
+root = "Geometry.stark"
+output = "Geometry"
+```
+
+A test project names a test root:
+
+```toml
+[project]
+name = "geometry-tests"
+version = "0.1.0"
+kind = "test"
+
+[test]
+root = "GeometryTests.stark"
+output = "geometry-tests"
+
+[dependencies]
+geometry = { path = "../geometry" }
+stdlib = { path = "../../stdlib" }
+```
+
 Path dependencies live in the same file:
 
 ```toml
@@ -137,7 +316,7 @@ stdlib = { path = "../../stdlib" }
 This keeps package dependencies in project metadata instead of scattering build
 flags through scripts.
 
-## Step 5: Add A Solution Only For Multi-Project Work
+## Step 6: Add A Solution Only For Multi-Project Work
 
 A multi-project workspace can use `Stark.solution.toml`:
 
@@ -168,7 +347,7 @@ The solution manifest answers workspace-level questions:
 
 Single-project repositories do not need a solution file.
 
-## Step 6: Keep Native Facts With The Wrapping Package
+## Step 7: Keep Native Settings With The Wrapping Package
 
 Native-backed packages should own their native metadata. A downstream Stark
 project should be able to depend on the package without repeating include paths

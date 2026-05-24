@@ -441,24 +441,21 @@ Defaults:
 * shared memory is its own type or capability domain
 * atomics and mutex backed mutation are legal only in that explicit domain
 
-This keeps most code in a non shared world. The compiler can track aliasing more cheaply, speculate more freely, and optimize loops more aggressively.
+This keeps most code in a non shared world. Ordinary code can use simple
+ownership and borrowing rules, while shared state has to be named directly.
 
-## 9. Closed Dispatch by Default
+## 9. Explicit Callable Boundaries
 
-Dispatch defaults:
+Callable defaults:
 
-* static dispatch
-* generic specialization
-* sealed laws and traits
-* no address taken functions unless explicitly requested
-* internal linkage by default
-* dynamic dispatch only through explicit runtime facing constructs
+* named functions are called directly
+* function pointers are written as `fnptr<...>`
+* closures write their storage form: `inline`, `borrow`, `mut borrow`, or `heap`
+* no function becomes address-taken unless the source asks for a callable value
+* runtime-facing callable values are explicit
 
-This supports:
-
-* turning virtual calls into direct calls
-* inlining
-* whole program tracking of what gets called and what side effects happen
+This keeps ordinary calls easy to read and makes callback storage visible at the
+API boundary.
 
 ## 10. Stronger Slice and Array Contracts
 

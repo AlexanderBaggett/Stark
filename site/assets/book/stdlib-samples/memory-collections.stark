@@ -1,17 +1,271 @@
-import System
+import System.Collections
+import System.Memory
 module Book.Stdlib.MemoryCollections
 
-finite law bool MemoryOk(System.Memory.MemoryStatus status) {
+finite law bool MemoryOk(MemoryStatus status) {
     switch (status) {
-        case System.Memory.MemoryStatus.Ok:
+        case MemoryStatus.Ok:
             return true;
-        case System.Memory.MemoryStatus.Err(var error):
+        case MemoryStatus.Err(var error):
             return false;
     }
 }
 
+fn bool ByteHelpersWork() {
+    stack i8[min max][4] source = { 1, 2, 3, 4 };
+    stack mut i8[min max][4] destination = { 0, 0, 0, 0 };
+
+    if (!MemoryOk(CopyBytesDisjoint(source, destination, 4))) {
+        return false;
+    }
+
+    if (destination[0] != 1 || destination[3] != 4) {
+        return false;
+    }
+
+    if (!MemoryOk(FillInitializedBytes(destination, 7, 4))) {
+        return false;
+    }
+
+    return destination[0] == 7 && destination[3] == 7;
+}
+
+fn bool DynamicByteHelpersWork() {
+    stack i8[min max][3] source = { 1, 2, 3 };
+    stack mut dynamic i8[min max] bytes = new();
+
+    if (!MemoryOk(ReserveBytes(bytes, 8))) {
+        return false;
+    }
+
+    if (!MemoryOk(AppendBytesDisjoint(bytes, source, 3))) {
+        return false;
+    }
+
+    if (!MemoryOk(AppendFillBytes(bytes, 9, 2))) {
+        return false;
+    }
+
+    stack i8[min max][] prefix = bytes[0, 2];
+    if (!MemoryOk(AppendBytes(bytes, prefix, 2))) {
+        return false;
+    }
+
+    stack mut dynamic i8[min max] copied = new();
+    if (!copied.TryReserve(3)) {
+        return false;
+    }
+
+    stack init i8[min max][] tail = init copied[copied.Length, 3];
+    if (!MemoryOk(InitializeBytesDisjoint(source, tail, 3))) {
+        return false;
+    }
+
+    stack i8[min max][] byteView = bytes[0, bytes.Length];
+    stack i8[min max][] copiedView = copied[0, copied.Length];
+
+    return bytes.Length == 7
+        && byteView[0] == 1
+        && byteView[3] == 9
+        && copied.Length == 3
+        && copiedView[2] == 3;
+}
+
+fn bool CodePointHelpersWork() {
+    stack i32[min max][3] source = { 65, 66, 67 };
+    stack mut i32[min max][3] destination = { 0, 0, 0 };
+
+    if (!MemoryOk(CopyCodePointsDisjoint(source, destination, 3))) {
+        return false;
+    }
+
+    return destination[0] == 65 && destination[2] == 67;
+}
+
+fn bool DynamicCodePointHelpersWork() {
+    stack i32[min max][2] source = { 65, 66 };
+    stack mut dynamic i32[min max] codePoints = new();
+
+    if (!MemoryOk(ReserveCodePoints(codePoints, 8))) {
+        return false;
+    }
+
+    if (!MemoryOk(AppendCodePointsDisjoint(codePoints, source, 2))) {
+        return false;
+    }
+
+    if (!MemoryOk(AppendFillCodePoints(codePoints, 32, 1))) {
+        return false;
+    }
+
+    stack i32[min max][] prefix = codePoints[0, 2];
+    if (!MemoryOk(AppendCodePoints(codePoints, prefix, 2))) {
+        return false;
+    }
+
+    stack mut dynamic i32[min max] copied = new();
+    if (!copied.TryReserve(2)) {
+        return false;
+    }
+
+    stack init i32[min max][] tail = init copied[copied.Length, 2];
+    if (!MemoryOk(InitializeCodePointsDisjoint(source, tail, 2))) {
+        return false;
+    }
+
+    stack i32[min max][] codePointView = codePoints[0, codePoints.Length];
+    stack i32[min max][] copiedView = copied[0, copied.Length];
+
+    return codePoints.Length == 5
+        && codePointView[0] == 65
+        && codePointView[2] == 32
+        && copied.Length == 2
+        && copiedView[1] == 66;
+}
+
+finite law bool AllocatorStatusWorks() {
+    stack Allocator allocator = Allocator.Default();
+    if (!allocator.IsDefault()) {
+        return false;
+    }
+
+    if (!SupportsDynamicAllocator(allocator)) {
+        return false;
+    }
+
+    stack MemoryError error = MemoryError.TooLarge;
+    switch (error) {
+        case MemoryError.OutOfMemory:
+            return false;
+        case MemoryError.InvalidLayout:
+            return false;
+        case MemoryError.UnsupportedAlignment:
+            return false;
+        case MemoryError.TooLarge:
+            return true;
+    }
+}
+
+fn bool DictionaryRemovalWorks() {
+    stack mut Dictionary<u32[0 max], u32[0 max]> scores = new();
+    stack u32[0 max] firstKey = 7;
+    stack u32[0 max] secondKey = 9;
+
+    if (!MemoryOk(scores.Set(firstKey, 100))) {
+        return false;
+    }
+
+    stack mut u32[0 max] removed = 0;
+    if (!scores.TryRemove(firstKey, removed) || removed != 100) {
+        return false;
+    }
+
+    if (!MemoryOk(scores.Set(secondKey, 200))) {
+        return false;
+    }
+
+    stack DictionaryRemoveResult<u32[0 max]> result = scores.RemoveMove(secondKey);
+    switch (result) {
+        case DictionaryRemoveResult<u32[0 max]>.Missing:
+            return false;
+        case DictionaryRemoveResult<u32[0 max]>.Removed(var value):
+            return value == 200;
+    }
+}
+
+fn bool StackQueueAndListShapesWork() {
+    stack mut Stack<u32[0 max]> lifo = new();
+    if (!MemoryOk(lifo.Reserve(2))) {
+        return false;
+    }
+
+    if (!MemoryOk(lifo.Push(1)) || !MemoryOk(lifo.Push(2))) {
+        return false;
+    }
+
+    if (lifo.Count() != 2 || lifo.Peek() != 2) {
+        return false;
+    }
+
+    stack mut u32[0 max] popped = 0;
+    if (!lifo.TryPop(popped) || popped != 2) {
+        return false;
+    }
+
+    stack mut Queue<u32[0 max]> queue = new();
+    if (!MemoryOk(queue.Reserve(2))) {
+        return false;
+    }
+
+    if (!MemoryOk(queue.Enqueue(10)) || !MemoryOk(queue.Enqueue(20))) {
+        return false;
+    }
+
+    if (queue.Count() != 2 || queue.Peek() != 10) {
+        return false;
+    }
+
+    stack mut u32[0 max] next = 0;
+    if (!queue.TryDequeue(next) || next != 10) {
+        return false;
+    }
+
+    return true;
+}
+
+fn bool RingAndLinkedShapesWork() {
+    stack mut RingQueue<u32[0 max]> ring = new();
+    if (!MemoryOk(ring.Reserve(3))) {
+        return false;
+    }
+
+    if (!MemoryOk(ring.Enqueue(5)) || !MemoryOk(ring.Enqueue(6))) {
+        return false;
+    }
+
+    if (ring.Count() != 2 || ring.Capacity() < 3 || ring.Peek() != 5) {
+        return false;
+    }
+
+    stack mut u32[0 max] ringValue = 0;
+    if (!ring.TryDequeue(ringValue) || ringValue != 5) {
+        return false;
+    }
+
+    stack mut LinkedList<u32[0 max]> list = new();
+    if (!MemoryOk(list.ReserveNodes(2))) {
+        return false;
+    }
+
+    if (!MemoryOk(list.AddFirst(2)) || !MemoryOk(list.AddLast(3))) {
+        return false;
+    }
+
+    if (list.Count() != 2 || list.IsEmpty()) {
+        return false;
+    }
+
+    stack mut u32[0 max] first = 0;
+    stack mut u32[0 max] last = 0;
+    if (!list.TryRemoveFirst(first) || first != 2) {
+        return false;
+    }
+
+    if (!list.TryRemoveLast(last) || last != 3) {
+        return false;
+    }
+
+    return list.IsEmpty();
+}
+
+const i32[min max][3] LookupScores = { 10, 20, 30 };
+
+fn bool LookupWorks() {
+    return Lookup(LookupScores, 1) == 20;
+}
+
 export fn i32[min max] main() {
-    stack mut System.Collections.List<u32[0 max]> values = new();
+    stack mut List<u32[0 max]> values = new();
 
     if (!MemoryOk(values.Push(10))) {
         return 1;
@@ -28,6 +282,42 @@ export fn i32[min max] main() {
     stack mut u32[0 max] popped = 0;
     if (!values.TryPop(popped) || popped != 32) {
         return 4;
+    }
+
+    if (!ByteHelpersWork()) {
+        return 5;
+    }
+
+    if (!DynamicByteHelpersWork()) {
+        return 6;
+    }
+
+    if (!CodePointHelpersWork()) {
+        return 7;
+    }
+
+    if (!DynamicCodePointHelpersWork()) {
+        return 8;
+    }
+
+    if (!AllocatorStatusWorks()) {
+        return 9;
+    }
+
+    if (!DictionaryRemovalWorks()) {
+        return 10;
+    }
+
+    if (!StackQueueAndListShapesWork()) {
+        return 11;
+    }
+
+    if (!RingAndLinkedShapesWork()) {
+        return 12;
+    }
+
+    if (!LookupWorks()) {
+        return 13;
     }
 
     return 0;

@@ -27,9 +27,11 @@ Status: covered by `ExamplesCompileRunTests.HelloExampleCompilesAndRunsWithStdli
 - [hello.stark](/reference/examples/hello.stark)
 - [hello/Stark.toml](/reference/examples/hello/Stark.toml)
 
+### hello.stark
+
 {{< file-sample "static/reference/examples/hello.stark" "stark" >}}
 
-## Manifest
+### hello/Stark.toml
 
 {{< file-sample "static/reference/examples/hello/Stark.toml" "toml" >}}
 

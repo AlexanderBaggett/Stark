@@ -8,15 +8,15 @@ Lower level compiler strategy and optimizer rationale live in [LanguageInternals
 
 ## 1. Design Goals
 
-Stark is a performance first language targeting LLVM.
+Stark is a performance first systems language.
 
 The priorities:
 
 * speed and predictable low level behavior over convenience
 * explicitness over hidden work
-* restrictions that enable stronger optimization
-* ownership and effect rules that give the compiler more information to work with
-* a default preference for static dispatch and minimal visibility
+* restrictions that keep expensive behavior visible
+* ownership and effect rules that make aliasing, mutation, and failure explicit
+* a default preference for direct calls and minimal visibility
 
 Stark is intentionally more restrictive than mainstream systems languages when that restriction produces better code.
 
@@ -237,7 +237,7 @@ fn void Add(
 }
 ```
 
-The relational `where overlap(...)` form opts out for an intentional may-overlap relation. It removes the default non-overlap obligation for only the listed pair or group and suppresses default `noalias` facts between those regions:
+The relational `where overlap(...)` form opts out for an intentional may-overlap relation. It removes the default non-overlap obligation for only the listed pair or group:
 
 ```stark
 fn void MoveBytes(borrow u8[] source, borrow mut u8[] destination)
@@ -344,7 +344,7 @@ unsafe fn void ExternallySeparated(rawmutptr<i32[min max]> left, rawmutptr<i32[m
 }
 ```
 
-`unsafe assume disjoint(...)` introduces a scoped non-overlap fact for the nested statement and lets the backend emit scoped `noalias` metadata without a runtime check. The assertion must name compiler-visible memory roots or representable subregions. It does not silence obvious same-root overlap, hidden call results, or integer-laundered pointers.
+`unsafe assume disjoint(...)` introduces a scoped non-overlap promise for the nested statement without a runtime check. The assertion must name visible memory roots or representable subregions. It does not silence obvious same-root overlap, hidden call results, or integer-laundered pointers.
 
 Inside an `unsafe fn` or an existing `unsafe { ... }` block, the leading `unsafe` is optional:
 
@@ -357,7 +357,7 @@ unsafe fn void AlreadyUnsafe(rawmutptr<i32[min max]> left, rawmutptr<i32[min max
 }
 ```
 
-Distinct projections that the compiler can see do not overlap, non-overlapping index ranges, compiler-visible text slice ranges such as `text[0, 4]` and `text[4, 4]`, bounded raw pointer region expressions, exclusive mutable borrow roots, `out`/`init` destination roots, immutable slice/text views whose backing storage is compiler-visible, separately addressed local storage, declared parameter contracts, and true branches of `if disjoint(...)` may satisfy the contract. Local raw pointers, slice locals, text locals, and borrowed local views are not non-overlapping merely because they are separate declarations; local facts come from provenance. Pointer copies and simple casts preserve same-region identity.
+Distinct visible projections, non-overlapping index ranges, visible text slice ranges such as `text[0, 4]` and `text[4, 4]`, bounded raw pointer region expressions, exclusive mutable borrow roots, `out`/`init` destination roots, immutable slice/text views with visible backing storage, separately addressed local storage, declared parameter contracts, and true branches of `if disjoint(...)` may satisfy the contract. Local raw pointers, slice locals, text locals, and borrowed local views are not non-overlapping merely because they are separate declarations; local facts come from provenance. Pointer copies and simple casts preserve same-region identity.
 
 ```stark
 struct Pair {
@@ -394,7 +394,9 @@ Projections from a `const` parameter remain deeply readonly. Safe code may not d
 
 Stark's first class callable model starts with **function items**.
 
-A function item is the callable value represented by a named function. It is not a raw pointer by default, does not capture state, and can usually be specialized, inlined, or called directly.
+A function item is the callable value represented by a named function. It is not
+a raw pointer by default, does not capture state, and can be called directly
+unless the program explicitly stores it in a callable value.
 
 ```stark
 fn i32[min max] Worker() {
@@ -450,9 +452,8 @@ A weaker function item cannot be promoted to a stronger function pointer. This
 keeps higher-order APIs honest: a `law` function can call a
 `fnptr<law ...>` callback without losing its own law guarantee, and a `finite`
 function can call a `fnptr<finite ...>` callback without accepting a callback
-that may fail to make progress. The compiler preserves these facts for indirect
-calls so optimized builds can keep the same progress, termination, purity, and
-memory-effect guarantees that direct calls expose.
+that may fail to make progress. The function-pointer type carries those
+requirements at every indirect call site.
 
 `fnptr` values are non-null callable pointers. A function pointer must come from
 a compatible function item or non-capturing lambda; `null` is not assignable to a
@@ -543,11 +544,11 @@ heap closure<fn void()>
 heap closure<once fn Packet()>
 ```
 
-`inline closure<...>` is a compile time specialization contract, not runtime
-storage. It may appear directly as a function parameter and the callee is
-specialized for the lambda body and capture facts. It cannot be stored in a
-local or field, returned, placed in an array, nested inside `fnptr` or another
-runtime callable type, or converted to `fnptr`.
+`inline closure<...>` is a call-now parameter form, not runtime storage. It may
+appear directly as a function parameter when the callee invokes the callback
+during that operation. It cannot be stored in a local or field, returned, placed
+in an array, nested inside `fnptr` or another runtime callable type, or
+converted to `fnptr`.
 
 ```stark
 inline fn i32[min max] ApplyInline(
@@ -563,10 +564,9 @@ fn i32[min max] RunInline(i32[min max] offset) {
 }
 ```
 
-`borrow closure<...>` is a non escaping runtime view. It lowers to an invoke
-pointer plus an environment pointer. Captured stack storage must outlive the
-borrowed closure view, and the view cannot be returned or stored unless the API
-uses an explicit stored borrow form.
+`borrow closure<...>` is a non escaping callable view. Captured stack storage
+must outlive the borrowed closure view, and the view cannot be returned or
+stored unless the API uses an explicit stored borrow form.
 
 ```stark
 fn i32[min max] ApplyBorrow(
@@ -694,9 +694,9 @@ fn void Push(mut borrow IntList self, i32[0 max] value) {
 
 `TryReserve(additional)` has the same growth contract, but returns `bool` instead of trapping for capacity overflow, target-size overflow, or allocation failure. It returns `true` when the existing capacity is already sufficient or the grow succeeds, and `false` when the dynamic value is left unchanged. Library APIs that report allocation status use `TryReserve` to keep failure explicit without exposing raw pointers.
 
-An `init` assignment into dynamic storage extends the dense initialized prefix. Direct element initialization targets the current tail, normally with `items.Length`; compile-time constant slots are accepted when the compiler can see the preceding slots were already initialized. Initialization views backed by dynamic storage are initialized in ascending slot order.
+An `init` assignment into dynamic storage extends the dense initialized prefix. Direct element initialization targets the current tail, normally with `items.Length`; compile-time constant slots are accepted when the preceding slots are visibly already initialized. Initialization views backed by dynamic storage are initialized in ascending slot order.
 
-Sparse initialized-slot proofs are explicit unsafe proof boundaries. Inside an `unsafe` block, code may assert that a dynamic slot or initialization-view slot is initialized even when the compiler cannot prove that fact from the visible dense prefix. The proof applies only inside that unsafe boundary; after a sparse proof, later safe code treats the dynamic initialized prefix as unknown until it re-establishes an ordinary dense-prefix proof.
+Sparse initialized-slot proofs are explicit unsafe proof boundaries. Inside an `unsafe` block, code may assert that a dynamic slot or initialization-view slot is initialized even when that fact is not visible from the dense prefix. The proof applies only inside that unsafe boundary; after a sparse proof, later safe code treats the dynamic initialized prefix as unknown until it re-establishes an ordinary dense-prefix proof.
 
 ```stark
 fn i32[0 max] ReadOccupied(dynamic i32[0 max] values, i32[0 max] index) {
@@ -839,7 +839,7 @@ alias BufferView<T> = borrow T[];
 
 A type alias does not by itself create a distinct runtime type or ABI identity. The declaration keyword is `alias`. Like other top level declarations, aliases may be module private, `internal`, `public`, or `export`. `public` and `export` aliases are published as part of the package facing Stark surface.
 
-Internal specialization details are described in [LanguageInternals.md](../Internals/LanguageInternals.md).
+Implementation details are described in [LanguageInternals.md](../Internals/LanguageInternals.md).
 
 ## 7. Ownership, Borrowing, and Lifetimes
 
@@ -905,7 +905,7 @@ For the full borrowing model and design rationale, see [BorrowerSystem.md](./Bor
 `struct` and `record` declarations may declare one destructor block.
 
 Readonly form. `PlatformClose` is a placeholder for a non-fallible platform
-cleanup helper supplied by the type implementation:
+cleanup helper supplied by the type:
 
 ```stark
 drop {
@@ -1019,27 +1019,26 @@ Default enum layout is not a stable FFI contract:
 
 Traits group function requirements for a type or family of types. Traits do not imply class style inheritance.
 
-Trait members are compile time only contracts. They are not directly callable as ordinary runtime functions.
+Trait members are type requirements. They are not directly callable as ordinary runtime functions.
 
-Traits have no runtime representation:
+Traits are not values:
 
 * no trait objects
-* no witness table or vtable style runtime dispatch values
-* trait names are rejected in runtime value positions such as fields, globals, locals, parameters, and returns
+* no hidden callable-table values
+* trait names are rejected in value positions such as fields, globals, locals, parameters, and returns
 
 ### 8.6 Doctrines
 
-`doctrine` declares a compile time only bundle of `law` functions and related constraints.
+`doctrine` declares a named bundle of `law` functions and related constraints.
 
 Doctrines have these properties:
 
-* no owned runtime identity
+* no owned identity
 * no owned data
 * no heap allocation
 * no environment capture
-* no runtime dispatch representation
 * members may be referenced directly through their qualified doctrine name
-* static dispatch by default
+* members are called directly by name
 
 ## 9. Globals and Storage Classes
 
@@ -1172,7 +1171,7 @@ fn i32[0 10] CountFour() {
 }
 ```
 
-Accepted `willexit` loops preserve their progress contract through lowering and emit LLVM loop `mustprogress` metadata. Accepted `independent` loops additionally preserve the no-loop-carried-memory-dependence contract through lowering. Memory operations in the accepted canonical slice, fixed-array, and bounded raw pointer region subset receive LLVM `!llvm.access.group`, and the loop latch receives `!llvm.loop.parallel_accesses`. Raw pointer accesses in this subset may use the normal raw pointer spelling `*(&root[index])` when `root` has a bounded raw pointer region. Unbounded pointer dereferences, address-of expressions that create new unbounded regions, member access that is not rooted at `root[index]`, non-induction indexes, memory-backed local declarations, nested loops, early exits, and calls with unproven memory effects produce `STK3027`.
+Accepted `willexit` loops state that the loop is expected to make progress and finish. Accepted `independent` loops additionally state that iterations have no loop-carried memory dependence. Raw pointer accesses in this subset may use the normal raw pointer spelling `*(&root[index])` when `root` has a bounded raw pointer region. Unbounded pointer dereferences, address-of expressions that create new unbounded regions, member access that is not rooted at `root[index]`, non-induction indexes, memory-backed local declarations, nested loops, early exits, and calls with unproven memory effects produce `STK3027`.
 
 ### 10.3 Disjoint Branch Conditions
 
@@ -1439,7 +1438,7 @@ fn Ascii ScoreLabel(i32[min max] score) {
 }
 ```
 
-The `[64]` is the buffer capacity. Runtime interpolation writes through the `System.Text` formatting and concatenation APIs into the selected `Ascii` or `Unicode` buffer. If the selected capacity is too small, the generated code traps instead of throwing an exception or silently cutting off text. Use the `System.Text` APIs directly when overflow should be handled as a returned value.
+The `[64]` is the buffer capacity. Runtime interpolation writes through the `System.Text` formatting and concatenation APIs into the selected `Ascii` or `Unicode` buffer. If the selected capacity is too small, the operation traps instead of throwing an exception or silently cutting off text. Use the `System.Text` APIs directly when overflow should be handled as a returned value.
 
 The rules:
 
@@ -1475,9 +1474,32 @@ This returns `System.Memory.MemoryResult<System.Text.OwnedAscii>`, so allocation
 Text concatenation is intended for readable, ordinary code. When runtime text must be copied into caller owned storage, put the capacity on the stack text buffer:
 
 ```stark
-stack Ascii left = System.Console.ReadAsciiLine();
-stack Ascii right = System.Console.ReadAsciiLine();
-stack Ascii combined[4096] = left + right;
+fn bool CombineTwoLines() {
+    stack System.Memory.MemoryResult<System.Text.OwnedAscii> leftResult =
+        System.Console.ReadAsciiLine();
+    stack System.Memory.MemoryResult<System.Text.OwnedAscii> rightResult =
+        System.Console.ReadAsciiLine();
+
+    stack mut System.Text.OwnedAscii left = new();
+    stack mut System.Text.OwnedAscii right = new();
+
+    switch (leftResult) {
+        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
+            return false;
+        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
+            left = value;
+    }
+
+    switch (rightResult) {
+        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
+            return false;
+        case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
+            right = value;
+    }
+
+    stack Ascii combined[4096] = left.View() + right.View();
+    return true;
+}
 ```
 
 The `[4096]` is the destination storage. It must be a positive compile time integer, and this narrow syntax is currently only for stack `Ascii` and `Unicode` locals. The declaration uses fixed local storage and the same `System.Text.TryConcatAscii` or `System.Text.TryConcatUnicode` copy behavior available through explicit library code. If the joined text does not fit, execution traps instead of silently truncating.
@@ -1583,9 +1605,9 @@ Stark's unsafe model marks proof boundaries rather than disabling the language's
 
 Unsafe code may perform only operations that are explicitly gated as unsafe. Ownership, initialization, range, type, and ordinary borrow validation still apply inside unsafe code.
 
-Dynamic sparse-slot proofs are one such unsafe operation. The proof asserts that a particular dynamic storage slot is initialized even though the compiler cannot derive that fact from the dense `0..Length` prefix. The compiler does not export that assertion into later safe code.
+Dynamic sparse-slot proofs are one such unsafe operation. The proof asserts that a particular dynamic storage slot is initialized even though safe code cannot show that fact from the dense `0..Length` prefix. That assertion stays inside the unsafe boundary; later safe code must re-establish ordinary dense-prefix proof before relying on it.
 
-Use `unsafe fn` for functions whose contract depends on caller-proven raw memory or ABI invariants. Use an `unsafe { ... }` block when a safe API has a small audited implementation boundary:
+Use `unsafe fn` for functions whose contract depends on caller-proven raw memory or ABI invariants. Use an `unsafe { ... }` block when a safe API has a small audited unsafe step:
 
 ```stark
 unsafe fn rawmutptr<T> FromAddress<T>(i64[0 max] address);
@@ -1618,7 +1640,7 @@ RegisterCallback(capture(unsafe addr token) () => {
 });
 ```
 
-FFI imports and assembly declarations must be declared `unsafe`. Raw pointers should normally be avoided outside FFI, OS/platform, allocator/runtime, and tightly audited implementation code. Prefer borrows, slices, `dynamic` storage, owned handle types, or platform wrappers for ordinary APIs.
+FFI imports and assembly declarations must be declared `unsafe`. Raw pointers should normally be avoided outside FFI, OS/platform, allocator/runtime, and tightly audited low-level code. Prefer borrows, slices, `dynamic` storage, owned handle types, or platform wrappers for ordinary APIs.
 
 Unsafe function items can be promoted to ordinary `fnptr` values only inside an unsafe context. This is intended for ABI callback registration where the platform API stores a plain function pointer. After erasure, the programmer owns the proof that the callback is invoked only under the unsafe function's documented invariants.
 
@@ -1643,7 +1665,7 @@ Stark is designed with a closed by default bias. For ordinary Stark code, that m
 
 The programmer facing consequences:
 
-* static dispatch by default
+* direct calls by default
 * restrictive visibility by default
 * most declarations stay inside module or package boundaries unless deliberately exposed
 * open world and dynamic patterns are explicit choices, not the default style

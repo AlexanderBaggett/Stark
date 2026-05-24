@@ -3,7 +3,7 @@ title = "Data Model"
 weight = 60
 +++
 
-This example shows `struct` and `record` declarations plus object-initializer
+This example shows `struct` and `record` declarations plus field-initializer
 syntax with `new Type() { ... }`.
 
 ## Build And Run
@@ -22,9 +22,15 @@ Status: covered by `ExamplesCompileRunTests.DataModelExampleCompilesAndRuns`.
 - [DataModel.stark](/reference/examples/data-model/DataModel.stark)
 - [Stark.toml](/reference/examples/data-model/Stark.toml)
 
+### DataModel.stark
+
 {{< file-sample "static/reference/examples/data-model/DataModel.stark" "stark" >}}
+
+### Stark.toml
+
+{{< file-sample "static/reference/examples/data-model/Stark.toml" "toml" >}}
 
 ## Related
 
-- [Aggregates and Layout-Aware Design](/book/12-aggregates-layout/)
+- [Structs, Records, and Layout-Aware Design](/book/12-aggregates-layout/)
 - [Language reference](/reference/language/LanguageReference/)

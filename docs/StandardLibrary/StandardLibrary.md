@@ -39,9 +39,9 @@ The standard library provides:
 - explicit test-project assertion helpers
 - text encoding support
 - a small dynamic-memory contract for owned standard-library containers
-- a platform abstraction layer that avoids stdio and exposes direct backend
-  facts: Linux syscall shims, Windows Win32 calls, and macOS libSystem/POSIX
-  calls
+- a platform abstraction layer that avoids stdio and keeps Linux syscall shims,
+  Windows Win32 calls, and macOS libSystem/POSIX calls behind standard-library
+  APIs
 
 User code calls `System.Console` or `System.IO.*` and never touches platform syscalls or Win32 APIs directly. The platform boundary is an internal implementation detail hidden behind the library surface.
 
@@ -64,6 +64,7 @@ The current public module references live here:
 - [System.Net](./System.Net.md)
 - [System.Net.Tcp](./System.Net.Tcp.md)
 - [System.Process](./System.Process.md)
+- [System.Runtime.Buffer](./System.Runtime.Buffer.md)
 - [System.Testing](./System.Testing.md)
 - [System.Threading](./System.Threading.md)
 - [System.Text](./System.Text.md)
@@ -113,6 +114,7 @@ Current public module surface:
 - `System.Net`
 - `System.Net.Tcp`
 - `System.Process`
+- `System.Runtime.Buffer`
 - `System.Testing`
 - `System.Text`
 - `System.Math`
@@ -121,7 +123,6 @@ Current public module surface:
 Internal modules:
 
 - `System.Runtime`
-- `System.Runtime.Buffer`
 - `System.Runtime.Platform`
 - `System.Runtime.Platform.Linux`
 - `System.Runtime.Platform.MacOS`
@@ -525,16 +526,28 @@ module System.Console
 
 public fn IOStatus Write(borrow ascii text);
 public fn IOStatus Write(borrow unicode text);
+public fn IOStatus Write(mut borrow System.Text.OwnedAscii text);
+public fn IOStatus Write(mut borrow System.Text.OwnedUnicode text);
+public fn IOStatus Write(borrow i8[min max][] source);
 public fn IOStatus WriteLine(borrow ascii text);
 public fn IOStatus WriteLine(borrow unicode text);
+public fn IOStatus WriteLine(mut borrow System.Text.OwnedAscii text);
+public fn IOStatus WriteLine(mut borrow System.Text.OwnedUnicode text);
+public fn IOStatus WriteLine(borrow i8[min max][] source);
 public fn IOStatus WriteError(borrow ascii text);
 public fn IOStatus WriteError(borrow unicode text);
+public fn IOStatus WriteError(mut borrow System.Text.OwnedAscii text);
+public fn IOStatus WriteError(mut borrow System.Text.OwnedUnicode text);
+public fn IOStatus WriteError(borrow i8[min max][] source);
 public fn IOStatus WriteErrorLine(borrow ascii text);
 public fn IOStatus WriteErrorLine(borrow unicode text);
-public fn Unicode ReadLine();
-public fn Ascii ReadAsciiLine();
-public fn Unicode ReadUnicodeLine();
-public fn Unicode Read();
+public fn IOStatus WriteErrorLine(mut borrow System.Text.OwnedAscii text);
+public fn IOStatus WriteErrorLine(mut borrow System.Text.OwnedUnicode text);
+public fn IOStatus WriteErrorLine(borrow i8[min max][] source);
+public fn System.Memory.MemoryResult<System.Text.OwnedUnicode> ReadLine();
+public fn System.Memory.MemoryResult<System.Text.OwnedAscii> ReadAsciiLine();
+public fn System.Memory.MemoryResult<System.Text.OwnedUnicode> ReadUnicodeLine();
+public fn System.Memory.MemoryResult<System.Text.OwnedUnicode> Read();
 ```
 
 Internal implementation:
@@ -542,9 +555,9 @@ Internal implementation:
 - On Linux, the current `ascii` output path uses internal syscall-backed write shims on fd `1` and fd `2`.
 - On Windows, `Write` and `WriteLine` call `WriteFile` on the handle from `GetStdHandle(STD_OUTPUT_HANDLE)`. `WriteError` and `WriteErrorLine` use `GetStdHandle(STD_ERROR_HANDLE)`.
 - On Linux, `unicode` overloads convert UTF-32 to UTF-8 in the stdlib and then write through the syscall-backed fd boundary.
-- `ReadLine` returns the next UTF-8 decoded line from stdin as `Unicode` without the trailing newline. `ReadUnicodeLine` is the explicit-name alias for that behavior. `ReadAsciiLine` returns the next line as byte-oriented `Ascii`. `Read` returns the next UTF-8 decoded code point as a one-element `Unicode`.
-- `ReadLine`, `ReadUnicodeLine`, `ReadAsciiLine`, and `Read` currently return empty text on EOF or input failure instead of a richer result type.
-- The current input implementation uses a shared buffered stdin handle plus reusable internal backing buffers rather than allocator-backed per-call ownership. Each new line read overwrites the previous result for that text width, and each new `Read` overwrites the previous `Read` result.
+- `ReadLine` returns the next UTF-8 decoded line from stdin as owned `Unicode` without the trailing newline. `ReadUnicodeLine` is the explicit-name alias for that behavior. `ReadAsciiLine` returns the next line as owned byte-oriented `Ascii`. `Read` returns the next UTF-8 decoded code point as a one-element owned `Unicode`.
+- `ReadLine`, `ReadUnicodeLine`, `ReadAsciiLine`, and `Read` return `System.Memory.MemoryResult<T>` so allocation and layout failures remain visible. End of input returns `Ok` with empty owned text.
+- The current input implementation uses a shared buffered stdin handle. Returned input values own their text storage and can be kept by the caller.
 - `WriteLine` always appends `\n` on both Linux and Windows. The library does not perform CRLF translation.
 - Console output is unbuffered by default. The write goes directly to the OS.
 

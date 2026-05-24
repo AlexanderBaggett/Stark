@@ -1,4 +1,4 @@
-module Book.DoctrineFacts
+module Book.DoctrineRules
 
 doctrine ScoreRules {
     finite law bool IsPassing(u8[0 100] score) {

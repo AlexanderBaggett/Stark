@@ -1,4 +1,4 @@
-module Book.GenericsSpecialization
+module Book.GenericsBasics
 
 fn T Identity<T>(T value) {
     return value;

@@ -1,5 +1,5 @@
 +++
-title = "12. Aggregates and Layout-Aware Design"
+title = "12. Structs, Records, and Layout-Aware Design"
 weight = 120
 book_part = "Part II: Stark's Core Language"
 book_status = "draft"
@@ -8,16 +8,16 @@ next = "/book/13-enums-patterns/"
 aliases = ["/book/11-aggregates-layout/"]
 +++
 
-# Aggregates and Layout-Aware Design
+# Structs, Records, and Layout-Aware Design
 
-Aggregates are how Stark programs make larger values out of smaller ones.
-Because Stark is performance-focused, aggregate design is also layout design:
-choose which fields live together, which fields are owned, which values are
-small enough to pass around directly, and which types are meant to touch a
-foreign ABI.
+Structs and records are how Stark programs make larger values out of smaller
+ones. Because Stark is performance-focused, designing structs and records is
+also layout design: choose which fields live together, which fields are owned,
+which values are small enough to pass around directly, and which types are
+meant to touch a foreign ABI.
 
-This chapter does not claim that every ordinary Stark aggregate has stable C
-struct layout. The source layout is the Stark-facing contract: fields,
+This chapter does not claim that every ordinary Stark struct or record has
+stable C struct layout. The source layout is the Stark-facing contract: fields,
 ownership, and construction are visible in code. If a type is meant to cross an
 FFI boundary, design it as an interop type on purpose and keep that boundary
 narrow.
@@ -48,7 +48,7 @@ the operation that belongs with the data close to the data.
 
 ## Step 2: Use A `record` For Compact Data Results
 
-Use `record` for data-first aggregate shapes:
+Use `record` for data-first shapes:
 
 ```stark
 record Point(i32[min max] X, i32[min max] Y) { }
@@ -63,8 +63,8 @@ stack Point point = new Point(1, 2);
 Records are useful for compact result/status data and other cases where the
 field list is the central point of the type.
 
-A record can also group other aggregates when the shape itself is the useful
-result:
+A record can also group other structs and records when the shape itself is the
+useful result:
 
 ```stark
 struct Pixel {
@@ -82,7 +82,7 @@ runtime object identity or virtual dispatch.
 
 ## Step 3: Initialize By Naming The Fields You Own
 
-Object initializers name each field being initialized:
+Initializers name each field being initialized:
 
 ```stark
 stack Rectangle rectangle = new Rectangle() {
@@ -119,7 +119,8 @@ Field access is ordinary source-visible data access. If a type wants to hide
 representation from downstream packages, keep the type or the members inside an
 appropriate visibility boundary rather than relying on runtime opacity.
 
-When one aggregate contains another, access stays direct and source visible:
+When one struct or record contains another, access stays direct and source
+visible:
 
 ```stark
 finite law i32[min max] CommandArea(DrawCommand command) {
@@ -149,13 +150,13 @@ stack DrawCommand command = new DrawCommand(bounds, tint);
 ```
 
 The `DrawCommand` constructor consumes the two owned values. That is the point:
-the source says which aggregate owns the rectangle and tint after construction.
+the source says which value owns the rectangle and tint after construction.
 
 ## Step 6: Keep Destructors Boring
 
-Owned aggregate values are cleaned up when their owner goes out of scope. A
-`struct` or `record` may define a destructor block for cleanup that must happen
-with the owned value.
+Owned struct and record values are cleaned up when their owner goes out of
+scope. A `struct` or `record` may define a destructor block for cleanup that
+must happen with the owned value.
 
 Keep destructors boring. Fallible cleanup and user-chosen ordering belong in an
 explicit method such as `Close`, not in hidden unwinding behavior. Stark has no
@@ -183,13 +184,13 @@ compiler and reader to understand.
 
 ## Step 7: Design ABI Types Separately
 
-Do not assume an ordinary Stark aggregate is automatically a stable FFI
+Do not assume an ordinary Stark struct or record is automatically a stable FFI
 contract. Use `export` and `ffi` deliberately, and keep binary-facing types
 small, explicit, and documented.
 
-The safe default is to treat ordinary aggregates as Stark values first. When a
-type is meant to cross a C ABI boundary, design that type as an interop type
-from the beginning.
+The safe default is to treat ordinary structs and records as Stark values
+first. When a type is meant to cross a C ABI boundary, design that type as an
+interop type from the beginning.
 
 ```stark
 struct NativeRectangle {
@@ -212,5 +213,5 @@ fn void DrawNativeRectangle(NativeRectangle rectangle) {
 
 This is the layout-aware rule in practice: keep the ordinary Stark type and the
 native-facing type conceptually separate unless the type is deliberately part
-of the boundary. Chapter 19 covers the raw pointer and `ffi` details; the
+of the boundary. Chapter 20 covers the raw pointer and `ffi` details; the
 important habit here is to make ABI layout a conscious design decision.

@@ -53,9 +53,11 @@ Imports first, then `module`, then the rest of the file.
 
 ## Module Attributes
 
-Stark uses C#-style attributes for compiler metadata. The current attribute
-surface is intentionally small. The supported backend optimization boundary
-form is:
+Stark uses C#-style attributes for a small number of advanced package and
+platform cases. Ordinary application and library code usually does not need a
+module attribute.
+
+One reserved boundary attribute is:
 
 ```stark
 [Backend(Opaque)]
@@ -71,24 +73,9 @@ finite law i32[0 max] Hash(i32[0 max] value) {
 the module and use visible declarations according to the normal `internal`,
 `public`, and `export` rules.
 
-On a module, it makes the whole module a backend optimization boundary. On a
-function or method, it marks only that callable. On a `struct` or `record`, the
-type's constructors, destructors, methods, and monomorphized type-owned methods
-inherit the boundary. On a `doctrine`, doctrine methods and generated doctrine
-helper/dispatch symbols inherit it when they can otherwise become backend
-optimization surfaces. In practice, calls across an opaque boundary stay real
-calls instead of being imported into callers for ThinLTO, cross-module inlining,
-backend cloning, or backend specialization.
-
-Use this only for runtime/platform/interop code or for a documented backend
-correctness boundary. Most modules should omit the attribute and let the
-compiler choose the fastest safe optimization mode.
-
-As a rule of thumb, Stark optimizes as much visible safe code as it can in
-optimized executable builds. Reach for `[Backend(Opaque)]` only after a real
-correctness issue or benchmark shows that a boundary helps. Prefer the
-narrowest boundary that solves the problem: function first, then type or
-doctrine, and only then a whole module.
+Use this only for runtime, platform, or interop packages that deliberately need
+a hard implementation boundary. Prefer the narrowest boundary that solves the
+problem: function first, then type or doctrine, and only then a whole module.
 
 ## Imports
 
@@ -260,16 +247,17 @@ Visibility is defined at the top level declaration boundary. Member functions ar
 * fields and locals do not carry visibility
 * everything else is module private
 
-## Optimization Intent
+## Practical Visibility Effects
 
-The source language does not expose linker terms directly. Programmers pick a Stark visibility level:
+Programmers pick a Stark visibility level:
 
 * module private
 * `internal`
 * `public`
 * `export`
 
-The build then preserves the most restrictive correct binary visibility for the selected output. This is why `public` and `export` are separate: a declaration can be part of the Stark source API without becoming an open binary symbol.
+This is why `public` and `export` are separate: a declaration can be part of
+the Stark source API without becoming a native ABI symbol.
 
 ## Executables and Shared Libraries
 
@@ -283,13 +271,14 @@ Only `export` declarations become binary symbols. `public` declarations remain S
 
 ## Generics
 
-Stark generics are zero cost. Generic functions and types are specialized for the concrete types used by a program when a body is available.
+Stark generics are used with concrete type arguments. A generic function or
+type still has the visibility written on the declaration.
 
 * a generic declaration can be `public` or `export` like any other declaration
 * a public generic API can be used by downstream Stark code without the original source files on disk
-* repeated use of the same concrete instantiation behaves as one logical instantiation
+* repeated use of the same concrete type arguments behaves as one logical use
 * `cold`, `noinline`, `inline`, and `inlinehint` apply to generics
-* generic specialization does not introduce dynamic dispatch or runtime lookup
+* generics do not create runtime lookup by default
 
 ```stark
 module Boxes
@@ -309,7 +298,7 @@ public finite law Box<T> MakeBox<T>(T value) {
 
 A downstream module can import `Boxes`, call `MakeBox<i32[0 max]>`, and use `Box<i32[0 max]>` as an ordinary concrete type.
 
-Package and specialization details: [PackageImage.md](../Internals/PackageImage.md), [LanguageInternals.md](../Internals/LanguageInternals.md).
+Package storage details live in [PackageImage.md](../Internals/PackageImage.md).
 
 ## Constants and Globals
 
@@ -319,37 +308,30 @@ These are immutable unless declared otherwise:
 
 * string literals
 * numeric lookup tables
-* sealed dispatch tables when possible
 * type metadata when possible
 * variant tables when possible
 
 Use `const` when the reachable object graph is meant to be deeply readonly. Use `static` or `static mut` for ordinary global state.
 
-This enables:
+This keeps immutable data easy to share safely:
 
-* constant folding of loads
-* constant merging
-* reduced duplicate data
-* better cache behavior
-* the compiler can track values across function boundaries more aggressively
+* callers know the data will not be mutated
+* mutable global state must be named directly
+* package APIs can expose readonly data without exposing mutation authority
 
 ## Closed by Default
 
-The visibility model fits Stark's broader closed by default model.
+The visibility model fits Stark's broader closed-by-default model.
 
 Defaults:
 
 * most declarations are not externally visible
 * most helpers are module private or `internal`
 * most metadata stays local to the package or final binary
-* dynamic linking and runtime replacement are explicit, not default
+* native ABI exposure is explicit, not default
 
-This supports:
-
-* fast internal calling conventions
-* static dispatch
-* sealed laws and traits
-* stronger whole program optimization
+Use `fnptr`, closure types, `export`, and `ffi` when the program really needs
+callable indirection or a native boundary.
 
 ## Practical Guidance
 
@@ -359,17 +341,18 @@ This supports:
 * keep imports explicit
 * keep package boundaries deliberate
 
-These choices do not change the program's meaning. They give the build more room to optimize.
+These choices do not change the program's meaning. They keep the package
+surface clear for readers and downstream callers.
 
 ## What Stark Avoids
 
 * reopenable namespace systems
 * default public top level declarations
 * automatic binary export of source visible API
-* open ended symbol substitution semantics
+* open-ended native symbol replacement as a default source feature
 * the kinds of weak linkage tricks that complicate generics
 * widespread forced retention
-* low level linker terminology in source syntax
+* low-level linker terminology in source syntax
 
 ## Summary
 

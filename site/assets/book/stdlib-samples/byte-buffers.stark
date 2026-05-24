@@ -1,0 +1,167 @@
+import System.Memory
+import System.Runtime.Buffer
+module Book.Stdlib.ByteBuffers
+
+finite law bool MemoryOk(MemoryStatus status) {
+    switch (status) {
+        case MemoryStatus.Ok:
+            return true;
+        case MemoryStatus.Err(var error):
+            return false;
+    }
+}
+
+fn bool FixedBufferWorks() {
+    stack mut FixedByteBuffer512 buffer = new();
+    if (!buffer.IsEmpty() || buffer.Capacity() != 512 || buffer.Readable() != 0) {
+        return false;
+    }
+
+    if (!MemoryOk(buffer.WriteByte(65))) {
+        return false;
+    }
+
+    stack i8[min max][2] more = { 66, 67 };
+    if (!MemoryOk(buffer.WriteSlice(more, 2))) {
+        return false;
+    }
+
+    stack i8[min max][] readable = buffer.ReadSlice();
+    if (buffer.Readable() != 3 || readable[0] != 65 || readable[2] != 67) {
+        return false;
+    }
+
+    buffer.AdvanceRead(1);
+    buffer.Compact();
+    stack i8[min max][] compacted = buffer.ReadSlice();
+    if (buffer.Readable() != 2 || compacted[0] != 66 || compacted[1] != 67) {
+        return false;
+    }
+
+    buffer.Clear();
+    return buffer.IsEmpty();
+}
+
+fn bool FillFirstTwo(mut borrow i8[min max][] writable) {
+    writable[0] = 70;
+    writable[1] = 71;
+    return true;
+}
+
+fn bool FillWritableTail(mut borrow FixedByteBuffer512 buffer) {
+    if (buffer.Writable() < 2) {
+        return false;
+    }
+
+    return FillFirstTwo(buffer.WriteSlice());
+}
+
+fn bool SetFirstReadableByte(mut borrow i8[min max][] readable, i8[min max] value) {
+    readable[0] = value;
+    return readable[0] == value;
+}
+
+fn bool FixedWritableSliceWorks() {
+    stack mut FixedByteBuffer512 buffer = new();
+    if (!FillWritableTail(buffer)) {
+        return false;
+    }
+
+    buffer.AdvanceWrite(2);
+    if (buffer.Readable() != 2) {
+        return false;
+    }
+
+    if (!SetFirstReadableByte(buffer.ReadMutableSlice(), 72)) {
+        return false;
+    }
+
+    stack i8[min max][] readable = buffer.ReadSlice();
+    return readable[0] == 72 && readable[1] == 71;
+}
+
+fn bool FixedSizeChoicesWork() {
+    stack mut FixedByteBuffer4096 page = new();
+    stack mut FixedByteBuffer8192 large = new();
+
+    if (page.Capacity() != 4096 || large.Capacity() != 8192) {
+        return false;
+    }
+
+    if (!MemoryOk(page.WriteByte(1))) {
+        return false;
+    }
+
+    if (!MemoryOk(large.WriteByte(2))) {
+        return false;
+    }
+
+    return page.Readable() == 1 && large.Readable() == 1;
+}
+
+fn bool MutateReadableDynamic(mut borrow DynamicByteBuffer buffer) {
+    if (!SetFirstReadableByte(buffer.ReadMutableSlice(), 11)) {
+        return false;
+    }
+
+    stack i8[min max][] readable = buffer.ReadSlice();
+    return readable[0] == 11 && readable[4] == 40;
+}
+
+fn bool DynamicBufferWorks() {
+    stack mut DynamicByteBuffer buffer = new();
+    if (!MemoryOk(buffer.Reserve(4))) {
+        return false;
+    }
+
+    if (!MemoryOk(buffer.WriteByte(10))) {
+        return false;
+    }
+
+    if (!MemoryOk(buffer.WriteFill(20, 2))) {
+        return false;
+    }
+
+    stack i8[min max][2] more = { 30, 40 };
+    if (!MemoryOk(buffer.WriteSlice(more, 2))) {
+        return false;
+    }
+
+    if (buffer.Readable() != 5 || !MutateReadableDynamic(buffer)) {
+        return false;
+    }
+
+    stack mut i8[min max] value = 0;
+    if (!buffer.TryReadByte(value) || value != 11) {
+        return false;
+    }
+
+    buffer.Compact();
+    stack i8[min max][] compacted = buffer.ReadSlice();
+    if (buffer.Readable() != 4 || compacted[0] != 20 || compacted[3] != 40) {
+        return false;
+    }
+
+    buffer.Clear();
+    return buffer.IsEmpty();
+}
+
+export fn i32[min max] main() {
+    if (!FixedBufferWorks()) {
+        return 1;
+    }
+
+    if (!FixedWritableSliceWorks()) {
+        return 2;
+    }
+
+    if (!FixedSizeChoicesWork()) {
+        return 3;
+    }
+
+    if (!DynamicBufferWorks()) {
+        return 4;
+    }
+
+    return 0;
+}

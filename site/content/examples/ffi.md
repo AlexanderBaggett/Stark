@@ -24,7 +24,13 @@ Status: covered by `ExamplesCompileRunTests.FfiExampleCompilesAndRuns`.
 - [Ffi.stark](/reference/examples/ffi/Ffi.stark)
 - [Stark.toml](/reference/examples/ffi/Stark.toml)
 
+### Ffi.stark
+
 {{< file-sample "static/reference/examples/ffi/Ffi.stark" "stark" >}}
+
+### Stark.toml
+
+{{< file-sample "static/reference/examples/ffi/Stark.toml" "toml" >}}
 
 ## Related
 

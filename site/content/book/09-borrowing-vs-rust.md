@@ -240,7 +240,7 @@ fn bool TryDivide(i32[min max] numerator, i32[min max] denominator, out i32[min 
 }
 ```
 
-For larger values, this can avoid materializing an owned aggregate just to move
+For larger values, this can avoid materializing an owned struct or record just to move
 it into caller storage. It also keeps the write-before-read rule explicit:
 inside the callee, the old destination contents are not input.
 

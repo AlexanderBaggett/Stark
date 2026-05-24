@@ -1,4 +1,4 @@
-module Book.ConstParameterProvenance
+module Book.ConstParameters
 
 struct Table {
     i32[min max] Bias;

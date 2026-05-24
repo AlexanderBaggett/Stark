@@ -21,7 +21,14 @@ public enum FileSystemEntryKind {
 }
 
 public struct FileSystemEntry {
-    Ascii Name;
+    System.Text.OwnedAscii Name;
+    FileSystemEntryKind Kind;
+
+    finite ascii NameView(mut borrow FileSystemEntry self);
+}
+
+public struct FileSystemEntryInfo {
+    u64[0 2 ** 63 - 1] NameLength;
     FileSystemEntryKind Kind;
 }
 
@@ -31,10 +38,17 @@ public enum DirectoryReadResult {
     Err(System.IO.IOError),
 }
 
+public enum DirectoryReadInfoResult {
+    Entry(FileSystemEntryInfo),
+    End,
+    Err(System.IO.IOError),
+}
+
 public struct Directory {
-    finite law bool IsOpen(self);
-    fn DirectoryReadResult ReadNext(mut self);
-    fn System.IO.IOStatus Close(mut self);
+    finite law bool IsOpen(borrow Directory self);
+    fn DirectoryReadInfoResult ReadNextInfo(mut borrow Directory self);
+    fn DirectoryReadResult ReadNext(mut borrow Directory self);
+    fn System.IO.IOStatus Close(mut borrow Directory self);
 }
 
 public fn System.IO.IOStatus CreateDirectory(ascii path);
@@ -74,16 +88,22 @@ fn System.IO.IOStatus PrintEntries(ascii path) {
                         entries.Close();
                         return System.IO.IOStatus.Err(error);
                     case System.FileSystem.DirectoryReadResult.Entry(var entry):
-                        System.Console.WriteLine(System.Text.AsciiView(entry.Name));
+                        stack mut System.FileSystem.FileSystemEntry ownedEntry = entry;
+                        System.Console.WriteLine(ownedEntry.NameView());
                 }
             }
     }
 }
 ```
 
-The example uses owned entry names so users do not have to manage raw directory
-buffers. Implementations may reuse internal buffers, but that reuse must not
-leak into the public safety contract.
+Use `ReadNextInfo` when only the entry kind and name length are needed:
+
+```stark
+stack System.FileSystem.DirectoryReadInfoResult next = entries.ReadNextInfo();
+```
+
+Use `ReadNext` when the caller needs an owned entry name. The returned
+`FileSystemEntry.Name` can be viewed with `NameView()`.
 
 The loop is marked `non-deterministic` because directory iteration depends on
 external filesystem state and therefore should not be used inside a `finite`
@@ -116,10 +136,8 @@ split.
 ## Current Status
 
 - `CreateDirectory`, non-recursive `DeleteDirectory`, `OpenDirectory`,
-  `Directory.ReadNext`, `Exists`, `IsFile`, `IsDirectory`, and `Move` are
-  implemented.
+  `Directory.ReadNextInfo`, `Directory.ReadNext`, `Exists`, `IsFile`,
+  `IsDirectory`, and `Move` are available.
 - `Directory` is an owned handle with best-effort close-on-drop cleanup.
 - `FileSystemEntry.Name` is owned entry-name storage, so callers are not tied to
   the directory iterator's internal buffer.
-- Recursive deletion and filesystem path namespace changes are intentionally
-  left out of this slice.

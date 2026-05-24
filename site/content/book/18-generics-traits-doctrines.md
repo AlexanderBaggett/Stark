@@ -1,23 +1,35 @@
 +++
-title = "18. Generics, Traits, Doctrines, and Specialization"
+title = "18. Generics, Traits, and Doctrines"
 weight = 180
 book_part = "Part III: Packages, Effects, and Boundaries"
 book_status = "draft"
 prev = "/book/17-errors-without-exceptions/"
 next = "/book/19-callable-values/"
 aliases = ["/book/17-generics-traits-doctrines/"]
+
+[[language_refs]]
+title = "Language Reference"
+href = "/reference/language/LanguageReference/"
 +++
 
-# Generics, Traits, Doctrines, and Specialization
+# Generics, Traits, and Doctrines
 
-Stark generics are meant to keep reusable code static and optimizer-friendly.
-This chapter starts with source-backed generic functions and types that are
-instantiated at use sites, then adds the compile-time contracts that keep
-generic code honest.
+Generics let you write one function or type that works with more than one
+concrete type. Traits and doctrines let you name behavior requirements, so
+reusable code can say what it needs instead of pretending every type supports
+every operation.
 
-{{< stark-sample "assets/book/samples/generics-specialization.stark" >}}
+The formal reference points are:
 
-## Step 1: Instantiate Generic Functions At The Call Site
+- generic parameters: Language Reference 6.5
+- traits: Language Reference 8.5
+- doctrines: Language Reference 8.6
+
+This chapter focuses on how to read and write the source code.
+
+{{< stark-sample "assets/book/samples/generics-basics.stark" >}}
+
+## Step 1: Write A Generic Function
 
 Generic parameters are written after the function name:
 
@@ -27,17 +39,25 @@ fn T Identity<T>(T value) {
 }
 ```
 
-The caller usually does not need to write the type argument. Stark can infer
-`T` from the argument and return context:
+Inside the function, `T` is a type name. Here it appears as the return type and
+as the parameter type.
+
+When the generic type appears in an argument, Stark can usually infer it from
+the call:
 
 ```stark
 stack i32[min max] answer = Identity(42);
 stack bool flag = Identity(true);
 ```
 
-These are different concrete uses of the same source function.
+`Identity(42)` uses `T` as `i32[min max]`. `Identity(true)` uses `T` as
+`bool`.
 
-## Step 2: Make Reusable Types Concrete Where They Are Used
+If Stark cannot infer the type argument from the call, rewrite the API so the
+type appears in a parameter or use a less generic function. Do not hide the only
+important type information in the return value.
+
+## Step 2: Write A Generic Type
 
 Structs, records, and enums can also be generic:
 
@@ -46,95 +66,227 @@ struct Box<T> {
     T Value;
 }
 
+record Pair<A, B> {
+    A First;
+    B Second;
+}
+
 enum Option<T> {
     None,
     Some(T),
 }
 ```
 
-When using a generic type in a value position, write the concrete type
-arguments:
+When you declare a value, write the type arguments:
 
 ```stark
-Box<i32[min max]>
-Option<bool>
+stack Box<i32[min max]> box = new Box<i32[min max]>() { Value = 7 };
+stack Pair<i32[min max], bool> pair = new Pair<i32[min max], bool>() {
+    First = 10,
+    Second = true
+};
+stack Option<bool> flag = Option<bool>.Some(true);
 ```
 
-Generic `Option<T>` or `Result<T, E>` shapes are ordinary Stark enums. They are
-not compiler magic.
+`Box<T>` is the reusable type declaration. `Box<i32[min max]>` is the type you
+actually use for this value.
 
 {{< stark-sample "assets/book/samples/generic-option.stark" >}}
 
-Notice the concrete variant constructors:
+Generic enums work like ordinary enums. Write the concrete enum type before the
+variant name:
 
 ```stark
 Option<i32[min max]>.Some(7)
 Option<bool>.Some(true)
 ```
 
-The source generic is reusable, but each value still has a concrete type. That
-is the key distinction to keep in mind when reading Stark generic code.
+Use the same pattern for result-shaped enums:
 
-## Step 3: Let Specialization Stay Static
+```stark
+enum Result<T, E> {
+    Ok(T),
+    Error(E),
+}
+```
 
-Stark's generic model is static. A generic function used with `i32[min max]`
-and the same generic function used with `bool` are compiled as concrete
-instantiations for those types.
+The caller still chooses real types for `T` and `E`.
 
-That fits Stark's performance goals:
+Generic aliases can give a common shape a shorter name:
 
-- no required runtime generic dispatch
-- no hidden boxing for ordinary generic calls
-- no reflection requirement
-- more room for inlining and constant propagation
+```stark
+alias View<T> = borrow T[];
+alias MutableView<T> = mut borrow T[];
+```
 
-The tradeoff is that generic code must be valid for the concrete operations it
-actually performs. A generic function that adds two values needs an explicit
-static contract proving addition is available for those values.
+Use aliases to clarify a repeated type shape, not to hide ownership or mutability
+from readers.
 
-## Step 4: Treat Traits As Compile-Time Contracts
+## Step 3: Keep Generic Bodies Honest
 
-Traits declare behavior contracts. They are compile-time contracts, not runtime
-objects.
+A generic function can only use operations that are valid for its parameters.
+This works because returning a value does not require any behavior from `T`:
 
-Keep these trait rules in mind while building examples:
+```stark
+fn T Forward<T>(T value) {
+    return value;
+}
+```
 
-- no trait objects
-- no vtable-style runtime dispatch values
-- trait names are not ordinary runtime value types
+This is not a good unconstrained generic body:
 
-This is different from languages where a trait or interface value can hold an
-unknown implementation behind a pointer. Stark keeps ordinary dispatch static
-unless a feature explicitly asks for indirection.
+```stark
+fn T Add<T>(T left, T right) {
+    return left + right;
+}
+```
 
-This rejected example shows the boundary: `Comparable` can describe a contract,
-but it cannot be stored as a field, allocated, or used as a local runtime
-object.
+Not every type has `+`. If you want reusable addition, use a contract that says
+which operation is available, or write concrete overloads for the types you
+support.
+
+That habit matters in Stark: generic code should say what it needs.
+
+## Step 4: Use Traits To Name Required Behavior
+
+A trait declares a behavior contract:
+
+```stark
+trait Reader<T> {
+    finite law T Read();
+}
+```
+
+The member ends with `;` because the trait states a requirement. It does not
+provide the body.
+
+Traits are useful when an API needs to name a required operation:
+
+```stark
+trait Parser<T> {
+    law T Parse(ascii text);
+}
+```
+
+A trait may use the type parameter in parameters, returns, or both:
+
+```stark
+trait Comparator<T> {
+    finite law i32[min max] Compare(borrow T left, borrow T right);
+}
+```
+
+Traits are not runtime values. Do not put a trait in a field, local, parameter,
+or return type. Do not construct one with `new`. If you need a callable runtime
+value, use the callable forms from Chapter 19 instead.
+
+This rejected example shows the boundary:
 
 {{< stark-sample "assets/book/negative-samples/trait-runtime-value.stark" >}}
 
-## Step 5: Put Proof-Oriented Rules In Doctrines
+## Step 5: Use Doctrines For Named Law Helpers
 
-Doctrines are compile-time bundles of law-like behavior and constraints. They
-are intended for proof-oriented APIs rather than runtime object modeling.
+Doctrines group `law` and `finite law` functions under one name.
 
-Like traits, doctrines have no ordinary runtime identity. They are a way to
-organize static facts, not a way to allocate objects or dispatch dynamically.
+Use a doctrine when the grouped functions have bodies and callers should call
+them by name:
 
-Call doctrine members through the doctrine name:
+```stark
+doctrine ScoreRules {
+    finite law bool IsPassing(u8[0 100] score) {
+        return score >= 70;
+    }
+}
 
-{{< stark-sample "assets/book/samples/doctrine-facts.stark" >}}
+fn bool CheckPassing() {
+    return ScoreRules.IsPassing(85);
+}
+```
 
-The sample groups score-related laws without creating a `ScoreRules` value.
-That is the current doctrine model in miniature: organize static facts, keep the
-runtime value model concrete.
+The full sample adds a second law and checks both paths:
 
-## Step 6: Preserve Constraints Across Package Boundaries
+{{< stark-sample "assets/book/samples/doctrine-rules.stark" >}}
 
-Generic package APIs should preserve the same story across package boundaries:
-the API is reusable, but each concrete use still has a concrete type. That lets
-package-backed code remain compatible with Stark's static dispatch bias.
+Doctrines can be generic too:
 
-When documenting a package API, write the constraints in the API and examples.
-Do not imply that unconstrained generic code can perform arbitrary operations on
-`T`.
+```stark
+struct Box<T> {
+    T Value;
+}
+
+doctrine Inspect<T> {
+    finite law T Read(borrow Box<T> box) {
+        return box.Value;
+    }
+}
+
+finite law i32[min max] ReadInt(borrow Box<i32[min max]> box) {
+    return Inspect<i32[min max]>.Read(box);
+}
+```
+
+As with generic types, write the concrete type arguments when you call a generic
+doctrine member.
+
+Doctrines can return status values like any other `law` or `finite law`
+function:
+
+```stark
+doctrine PercentRules {
+    finite law bool IsValid(u8[0 max] value) {
+        return value <= 100;
+    }
+
+    finite law u8[0 100] Clamp(u8[0 max] value) {
+        if (value > 100) {
+            return 100;
+        }
+
+        return (u8[0 100])value;
+    }
+}
+```
+
+Like traits, doctrines are not runtime objects. You call their members through
+the doctrine name; you do not allocate or store the doctrine itself.
+
+## Step 6: Choose The Right Tool
+
+Use a generic function when the same body truly works for multiple types:
+
+```stark
+fn T First<T>(T left, T right) {
+    return left;
+}
+```
+
+Use a generic type when the shape is the same but the stored value changes:
+
+```stark
+struct Pair<A, B> {
+    A First;
+    B Second;
+}
+```
+
+Use a trait when you need to name a required behavior:
+
+```stark
+trait Hashable {
+    law u32[0 max] Hash();
+}
+```
+
+Use a doctrine when you want a named group of law functions with bodies:
+
+```stark
+doctrine ScoreRules {
+    finite law bool IsPassing(u8[0 100] score) {
+        return score >= 70;
+    }
+}
+```
+
+The practical rule is simple: make the type parameter visible, state required
+behavior explicitly, and keep traits and doctrines out of ordinary runtime value
+positions.

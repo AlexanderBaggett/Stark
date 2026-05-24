@@ -192,7 +192,7 @@ Stark separates the common cases:
 `const` is stronger than `frozen` because it requires permanent const
 provenance:
 
-{{< stark-sample "assets/book/samples/const-parameter-provenance.stark" >}}
+{{< stark-sample "assets/book/samples/const-parameters.stark" >}}
 
 Readonly and non-overlap are separate facts. Two immutable views may refer to
 the same memory. Function parameters still use the memory-contract rules in the

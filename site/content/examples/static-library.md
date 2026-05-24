@@ -24,7 +24,17 @@ Status: covered by `ExamplesCompileRunTests.StaticLibraryExampleBuildsAndRunsFro
 - [Math.stark](/reference/examples/static-library/Math.stark)
 - [Stark.toml](/reference/examples/static-library/Stark.toml)
 
+### Facade.stark
+
 {{< file-sample "static/reference/examples/static-library/Facade.stark" "stark" >}}
+
+### Math.stark
+
+{{< file-sample "static/reference/examples/static-library/Math.stark" "stark" >}}
+
+### Stark.toml
+
+{{< file-sample "static/reference/examples/static-library/Stark.toml" "toml" >}}
 
 ## Related
 

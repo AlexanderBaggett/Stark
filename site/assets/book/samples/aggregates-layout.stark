@@ -1,4 +1,4 @@
-module Book.AggregatesLayout
+module Book.StructsRecordsLayout
 
 struct Rectangle {
     i32[min max] Width;

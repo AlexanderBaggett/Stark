@@ -23,16 +23,16 @@ href = "/book/stark-book.md#10-closures-and-explicit-capture"
 
 Closures let you pass behavior with captured state. Stark keeps that power
 explicit: the capture list says what crosses into the closure, and the closure
-type says whether the callback is specialized immediately, borrowed for the
-current call graph, or owned for later use.
+type says whether the callback is called during the current operation, borrowed
+for the current call graph, or owned for later use.
 
 There are two independent decisions in a closure type:
 
 - the closure form: `inline closure`, `borrow closure`, or `heap closure`
 - the function kind: `fn`, `finite`, `law`, or `finite law`
 
-The form controls storage and escape. The function kind controls the semantic
-promise the callback makes to the caller and to LLVM lowering.
+The form controls storage and escape. The function kind controls the promise
+the callback makes to callers.
 
 {{< stark-sample "assets/book/samples/closures.stark" >}}
 
@@ -113,8 +113,8 @@ the narrowest kind the callback body can honestly satisfy.
 ## Step 3: Use Inline Closures For Call-Now Helpers
 
 Use `inline closure<...>` when the receiving function calls the callback during
-the current operation. The closure is not a runtime object. It is a
-specialization input.
+the current operation. The closure is not a runtime object and cannot escape the
+call that receives it.
 
 ```stark
 inline fn i32[min max] ApplyInline(
@@ -130,7 +130,8 @@ fn i32[min max] AddOffsetInline(i32[min max] offset) {
 }
 ```
 
-After specialization, the optimized code has the same shape as a direct block:
+You can read the example as though the callback body were written directly at
+the call site:
 
 ```stark
 fn i32[min max] AddOffsetInline(i32[min max] offset) {
