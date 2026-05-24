@@ -23,9 +23,15 @@ Status: covered by `ExamplesCompileRunTests.NeuralNetworkExampleCompilesAndRuns`
 - [Inference.stark](/reference/examples/neural-network/Inference.stark)
 - [Stark.toml](/reference/examples/neural-network/Stark.toml)
 
+### Inference.stark
+
 {{< file-sample "static/reference/examples/neural-network/Inference.stark" "stark" >}}
+
+### Stark.toml
+
+{{< file-sample "static/reference/examples/neural-network/Stark.toml" "toml" >}}
 
 ## Related
 
-- [Performance Model](/book/26-performance-model/)
-- [Memory Layout and ABI](/book/27-memory-layout-abi/)
+- [Performance Model](/book/29-performance-model/)
+- [Memory Layout and ABI](/book/30-memory-layout-abi/)

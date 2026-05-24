@@ -26,7 +26,8 @@ make APIs easier to reason about, but they are promises, not decoration.
 The keyword order is fixed:
 
 ```stark
-finite law i32[min max] Clamp(i32[min max] value) {
+finite law i32[min max] Clamp(i32[min max] value)
+{
     return value;
 }
 ```

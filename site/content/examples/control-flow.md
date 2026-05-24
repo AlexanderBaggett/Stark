@@ -22,7 +22,13 @@ Status: covered by `ExamplesCompileRunTests.ControlFlowExampleCompilesAndRuns`.
 - [ControlFlow.stark](/reference/examples/control-flow/ControlFlow.stark)
 - [Stark.toml](/reference/examples/control-flow/Stark.toml)
 
+### ControlFlow.stark
+
 {{< file-sample "static/reference/examples/control-flow/ControlFlow.stark" "stark" >}}
+
+### Stark.toml
+
+{{< file-sample "static/reference/examples/control-flow/Stark.toml" "toml" >}}
 
 ## Related
 

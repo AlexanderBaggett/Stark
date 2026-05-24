@@ -18,7 +18,8 @@ public sealed class PackageImageCallableValueTests
                 """
                 module Facade
 
-                public struct Token {
+                public struct Token
+                {
                     i32[min max] Value;
                 }
 
@@ -113,7 +114,8 @@ public sealed class PackageImageCallableValueTests
                 """
                 module Facade
 
-                public struct Token {
+                public struct Token
+                {
                     i32[min max] Value;
                 }
 
@@ -204,10 +206,12 @@ public sealed class PackageImageCallableValueTests
 
                 public alias Factory = fnptr<fn i32[min max]()>;
 
-                public struct Box {
+                public struct Box
+                {
                     internal i32[min max] Value;
 
-                    Box(Factory factory) {
+                    Box(Factory factory)
+                    {
                         self.Value = factory();
                     }
                 }
@@ -227,11 +231,13 @@ public sealed class PackageImageCallableValueTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Make() {
+                    fn i32[min max] Make()
+                    {
                         return 11;
                     }
 
-                    fn i32[min max] Run() {
+                    fn i32[min max] Run()
+                    {
                         stack Facade.Box box = new(Make);
                         return 0;
                     }
@@ -273,10 +279,12 @@ public sealed class PackageImageCallableValueTests
 
                 public alias StrictFactory = fnptr<finite law u32[0 2 ** 31 - 1]()>;
 
-                public struct Box {
+                public struct Box
+                {
                     internal u32[0 2 ** 31 - 1] Value;
 
-                    Box(StrictFactory factory) {
+                    Box(StrictFactory factory)
+                    {
                         self.Value = factory();
                     }
                 }
@@ -301,11 +309,13 @@ public sealed class PackageImageCallableValueTests
                     import Facade
                     module Demo
 
-                    finite law u32[0 2 ** 31 - 1] Make() {
+                    finite law u32[0 2 ** 31 - 1] Make()
+                    {
                         return 11;
                     }
 
-                    fn u32[0 2 ** 31 - 1] Run() {
+                    fn u32[0 2 ** 31 - 1] Run()
+                    {
                         stack Facade.Box box = new(Make);
                         return 0;
                     }
@@ -362,7 +372,8 @@ public sealed class PackageImageCallableValueTests
                     import Facade
                     module Demo
 
-                    finite law i32[min max] Apply(Facade.StrictTransform transform, i32[min max] value) {
+                    finite law i32[min max] Apply(Facade.StrictTransform transform, i32[min max] value)
+                    {
                         return transform(value);
                     }
                     """,
@@ -415,7 +426,8 @@ public sealed class PackageImageCallableValueTests
                 """
                 module Facade
 
-                public finite law T Apply<T>(fnptr<finite law T(T)> transform, T value) {
+                public finite law T Apply<T>(fnptr<finite law T(T)> transform, T value)
+                {
                     return transform(value);
                 }
                 """,
@@ -434,11 +446,13 @@ public sealed class PackageImageCallableValueTests
                     import Facade
                     module Demo
 
-                    finite law i32[min max] Double(i32[min max] value) {
+                    finite law i32[min max] Double(i32[min max] value)
+                    {
                         return value * 2;
                     }
 
-                    fn i32[min max] Run(i32[min max] value) {
+                    fn i32[min max] Run(i32[min max] value)
+                    {
                         stack fnptr<finite law i32[min max](i32[min max])> transform = Double;
                         return Facade.Apply(transform, value);
                     }
@@ -511,7 +525,8 @@ public sealed class PackageImageCallableValueTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run() {
+                    fn i32[min max] Run()
+                    {
                         return Facade.Apply((i32[min max] value) => value + 1, 41);
                     }
                     """,
@@ -591,11 +606,13 @@ public sealed class PackageImageCallableValueTests
 
                     static i32[min max] Counter = 1;
 
-                    fn i32[min max] Impure() {
+                    fn i32[min max] Impure()
+                    {
                         return Counter;
                     }
 
-                    fn void Run() {
+                    fn void Run()
+                    {
                         Facade.Register(() => Impure());
                         return;
                     }
@@ -660,7 +677,8 @@ public sealed class PackageImageCallableValueTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run() {
+                    fn i32[min max] Run()
+                    {
                         stack fnptr<fn i32[min max]()> callback = Facade.Make;
                         return callback();
                     }
@@ -726,7 +744,8 @@ public sealed class PackageImageCallableValueTests
                     import Facade
                     module Demo
 
-                    fn void Run() {
+                    fn void Run()
+                    {
                         stack fnptr<fn i32[min max]()> plain = Facade.Plain;
                         stack fnptr<finite i32[min max]()> finiteOnly = Facade.FiniteOnly;
                         stack fnptr<law i32[min max]()> lawOnly = Facade.LawOnly;
@@ -801,7 +820,8 @@ public sealed class PackageImageCallableValueTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run() {
+                    fn i32[min max] Run()
+                    {
                         stack fnptr<fn i32[min max]()> first = Facade.Pick;
                         stack fnptr<fn i32[min max](i32[min max])> second = Facade.Pick;
                         return first() + second(2);
@@ -874,7 +894,8 @@ public sealed class PackageImageCallableValueTests
                     import Facade
                     module Demo
 
-                    fn void Run() {
+                    fn void Run()
+                    {
                         stack fnptr<finite i32[min max]()> needsFinite = Facade.Plain;
                         stack fnptr<law i32[min max]()> needsLaw = Facade.Plain;
                         stack fnptr<finite law i32[min max]()> needsBothFromFinite = Facade.FiniteOnly;
@@ -956,7 +977,8 @@ public sealed class PackageImageCallableValueTests
                     import Facade
                     module Demo
 
-                    fn void Run() {
+                    fn void Run()
+                    {
                         stack fnptr<fn i32[min max]()> callback = Facade.Touch;
                         return;
                     }
@@ -1016,7 +1038,8 @@ public sealed class PackageImageCallableValueTests
                     import Facade
                     module Demo
 
-                    fn void Run() {
+                    fn void Run()
+                    {
                         Facade.Touch();
                         return;
                     }
@@ -1038,8 +1061,10 @@ public sealed class PackageImageCallableValueTests
                     import Facade
                     module Demo
 
-                    fn void Run() {
-                        unsafe {
+                    fn void Run()
+                    {
+                        unsafe
+                        {
                             Facade.Touch();
                         }
 
@@ -1081,16 +1106,19 @@ public sealed class PackageImageCallableValueTests
                 """
                 module Facade
 
-                public fn T Choose<T>(T left, T right, bool takeRight) {
+                public fn T Choose<T>(T left, T right, bool takeRight)
+                {
                     stack mut T current = left;
-                    if (takeRight) {
+                    if (takeRight)
+                    {
                         current = right;
                     }
 
                     return current;
                 }
 
-                public fn i32[min max] Twice(i32[min max] value) {
+                public fn i32[min max] Twice(i32[min max] value)
+                {
                     return value + value;
                 }
                 """,
@@ -1112,7 +1140,8 @@ public sealed class PackageImageCallableValueTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(i32[min max] left, i32[min max] right, bool takeRight) {
+                    fn i32[min max] Run(i32[min max] left, i32[min max] right, bool takeRight)
+                    {
                         return Facade.Choose(left, right, takeRight) + Facade.Twice(5);
                     }
                     """,

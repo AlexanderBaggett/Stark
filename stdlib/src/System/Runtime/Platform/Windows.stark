@@ -9,11 +9,13 @@ internal finite law i64[min max] UnicodeLength(unicode source);
 internal unsafe finite bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right)
     where overlap(left, right);
 
-internal struct WinInitOnce {
+internal struct WinInitOnce
+{
     rawptr<i8[min max]> State;
 }
 
-internal struct WinSocketBuffer {
+internal struct WinSocketBuffer
+{
     i32[min max] Length;
     rawptr<i8[min max]> Data;
 }
@@ -161,7 +163,10 @@ const WinSocketNoHandleInheritFlag = 128;
 const WinSockaddrInLength = 16;
 const WinDefaultTcpListenBacklog = 128;
 
-static mut WinInitOnce WinSockInitOnce = new WinInitOnce() { State = null };
+static mut WinInitOnce WinSockInitOnce = new WinInitOnce()
+{
+    State = null
+};
 static mut i32[min max] WinSockStartupStatus = 0;
 static mut rawptr<i8[min max]> CachedStdoutHandle = null;
 static mut rawptr<i8[min max]> CachedStderrHandle = null;
@@ -174,19 +179,24 @@ static mut bool CachedStderrTerminalInitialized = false;
 static mut bool CachedStdoutTerminal = false;
 static mut bool CachedStderrTerminal = false;
 
-internal struct WinIoStatusBlock {
+internal struct WinIoStatusBlock
+{
     i32[min max] Status;
     i32[min max] Padding;
     i64[min max] Information;
 }
 
-internal unsafe fn rawptr<i8[min max]> CachedStdout() {
-    if (!CachedStdoutHandleInitialized) {
+internal unsafe fn rawptr<i8[min max]> CachedStdout()
+{
+    if (!CachedStdoutHandleInitialized)
+    {
         stack rawmutptr<i8[min max]> handle = GetStdHandle(WinStdOutputHandle);
-        if (IsInvalidHandle(handle)) {
+        if (IsInvalidHandle(handle))
+        {
             CachedStdoutHandle = null;
         }
-        else {
+        else
+        {
             CachedStdoutHandle = (rawptr<i8[min max]>)handle;
         }
 
@@ -196,13 +206,17 @@ internal unsafe fn rawptr<i8[min max]> CachedStdout() {
     return CachedStdoutHandle;
 }
 
-internal unsafe fn rawptr<i8[min max]> CachedStderr() {
-    if (!CachedStderrHandleInitialized) {
+internal unsafe fn rawptr<i8[min max]> CachedStderr()
+{
+    if (!CachedStderrHandleInitialized)
+    {
         stack rawmutptr<i8[min max]> handle = GetStdHandle(WinStdErrorHandle);
-        if (IsInvalidHandle(handle)) {
+        if (IsInvalidHandle(handle))
+        {
             CachedStderrHandle = null;
         }
-        else {
+        else
+        {
             CachedStderrHandle = (rawptr<i8[min max]>)handle;
         }
 
@@ -212,13 +226,17 @@ internal unsafe fn rawptr<i8[min max]> CachedStderr() {
     return CachedStderrHandle;
 }
 
-internal unsafe fn rawptr<i8[min max]> CachedStdin() {
-    if (!CachedStdinHandleInitialized) {
+internal unsafe fn rawptr<i8[min max]> CachedStdin()
+{
+    if (!CachedStdinHandleInitialized)
+    {
         stack rawmutptr<i8[min max]> handle = GetStdHandle(WinStdInputHandle);
-        if (IsInvalidHandle(handle)) {
+        if (IsInvalidHandle(handle))
+        {
             CachedStdinHandle = null;
         }
-        else {
+        else
+        {
             CachedStdinHandle = (rawptr<i8[min max]>)handle;
         }
 
@@ -228,9 +246,12 @@ internal unsafe fn rawptr<i8[min max]> CachedStdin() {
     return CachedStdinHandle;
 }
 
-internal fn bool CachedStdoutIsTerminal() {
-    unsafe {
-        if (!CachedStdoutTerminalInitialized) {
+internal fn bool CachedStdoutIsTerminal()
+{
+    unsafe
+    {
+        if (!CachedStdoutTerminalInitialized)
+        {
             stack rawptr<i8[min max]> handle = CachedStdout();
             CachedStdoutTerminal = handle != null && IsTerminal(handle);
             CachedStdoutTerminalInitialized = true;
@@ -240,9 +261,12 @@ internal fn bool CachedStdoutIsTerminal() {
     }
 }
 
-internal fn bool CachedStderrIsTerminal() {
-    unsafe {
-        if (!CachedStderrTerminalInitialized) {
+internal fn bool CachedStderrIsTerminal()
+{
+    unsafe
+    {
+        if (!CachedStderrTerminalInitialized)
+        {
             stack rawptr<i8[min max]> handle = CachedStderr();
             CachedStderrTerminal = handle != null && IsTerminal(handle);
             CachedStderrTerminalInitialized = true;
@@ -252,61 +276,77 @@ internal fn bool CachedStderrIsTerminal() {
     }
 }
 
-internal fn i32[min max] ProcessId() {
-    unsafe {
+internal fn i32[min max] ProcessId()
+{
+    unsafe
+    {
         return GetCurrentProcessId();
     }
 }
 
-internal unsafe ffi fn i32[min max] ThreadEntryThunk(fnptr<fn i32[min max]()> entry) {
+internal unsafe ffi fn i32[min max] ThreadEntryThunk(fnptr<fn i32[min max]()> entry)
+{
     return entry();
 }
 
-internal unsafe fn rawmutptr<i8[min max]> StartThread(fnptr<fn i32[min max]()> entry) {
+internal unsafe fn rawmutptr<i8[min max]> StartThread(fnptr<fn i32[min max]()> entry)
+{
     stack rawmutptr<i8[min max]> handle = CreateThread(null, 0, ThreadEntryThunk, entry, 0, null);
-    if (IsInvalidHandle(handle)) {
+    if (IsInvalidHandle(handle))
+    {
         return null;
     }
 
     return handle;
 }
 
-internal unsafe fn i32[min max] JoinThread(rawmutptr<i8[min max]> handle, rawmutptr<i32[min max]> exitCode) {
-    if (handle == null || exitCode == null) {
+internal unsafe fn i32[min max] JoinThread(rawmutptr<i8[min max]> handle, rawmutptr<i32[min max]> exitCode)
+{
+    if (handle == null || exitCode == null)
+    {
         return -1;
     }
 
-    if (WaitForSingleObject(handle, WinInfinite) != WinWaitObject0) {
+    if (WaitForSingleObject(handle, WinInfinite) != WinWaitObject0)
+    {
         return NegativeLastError();
     }
 
-    if (GetExitCodeThread(handle, exitCode) == 0) {
+    if (GetExitCodeThread(handle, exitCode) == 0)
+    {
         return NegativeLastError();
     }
 
-    if (CloseHandle(handle) == 0) {
+    if (CloseHandle(handle) == 0)
+    {
         return NegativeLastError();
     }
 
     return 0;
 }
 
-internal unsafe fn i32[min max] DetachThread(rawmutptr<i8[min max]> handle) {
-    if (handle == null) {
+internal unsafe fn i32[min max] DetachThread(rawmutptr<i8[min max]> handle)
+{
+    if (handle == null)
+    {
         return -1;
     }
 
-    if (CloseHandle(handle) == 0) {
+    if (CloseHandle(handle) == 0)
+    {
         return NegativeLastError();
     }
 
     return 0;
 }
 
-internal fn i32[min max] NegativeSocketError() {
-    unsafe {
+internal fn i32[min max] NegativeSocketError()
+{
+    unsafe
+    {
         stack i32[min max] error = WSAGetLastError();
-        if (error <= 0) {
+        if (error <= 0)
+        {
             return -1;
         }
 
@@ -322,7 +362,8 @@ internal unsafe ffi fn i32[min max] WinSockStartupOnce(
 {
     stack mut i8[min max][512] data;
     stack i32[min max] result = WSAStartup(WinSockVersion2_2, &data[0]);
-    if (result != 0) {
+    if (result != 0)
+    {
         WinSockStartupStatus = -result;
         return 0;
     }
@@ -331,16 +372,20 @@ internal unsafe ffi fn i32[min max] WinSockStartupOnce(
     return 1;
 }
 
-internal fn i32[min max] EnsureWinSockStarted() {
-    unsafe {
+internal fn i32[min max] EnsureWinSockStarted()
+{
+    unsafe
+    {
         stack mut rawptr<i8[min max]> context = null;
         stack i32[min max] initialized = InitOnceExecuteOnce(
             &WinSockInitOnce,
             WinSockStartupOnce,
             null,
             &context);
-        if (initialized == 0) {
-            if (WinSockStartupStatus < 0) {
+        if (initialized == 0)
+        {
+            if (WinSockStartupStatus < 0)
+            {
                 return WinSockStartupStatus;
             }
 
@@ -351,18 +396,23 @@ internal fn i32[min max] EnsureWinSockStarted() {
     }
 }
 
-internal unsafe finite law bool IsInvalidSocket(rawmutptr<i8[min max]> handle) {
-    if (handle == null) {
+internal unsafe finite law bool IsInvalidSocket(rawmutptr<i8[min max]> handle)
+{
+    if (handle == null)
+    {
         return true;
     }
 
     return (i64[min max])handle == -1;
 }
 
-internal unsafe fn rawptr<i8[min max]> OpenTcpSocket(rawmutptr<i32[min max]> status) {
+internal unsafe fn rawptr<i8[min max]> OpenTcpSocket(rawmutptr<i32[min max]> status)
+{
     stack i32[min max] startup = EnsureWinSockStarted();
-    if (startup < 0) {
-        if (status != null) {
+    if (startup < 0)
+    {
+        if (status != null)
+        {
             *status = startup;
         }
 
@@ -376,8 +426,10 @@ internal unsafe fn rawptr<i8[min max]> OpenTcpSocket(rawmutptr<i32[min max]> sta
         null,
         0,
         WinSocketNoHandleInheritFlag);
-    if (IsInvalidSocket(socketHandle)) {
-        if (status != null) {
+    if (IsInvalidSocket(socketHandle))
+    {
+        if (status != null)
+        {
             *status = NegativeSocketError();
         }
 
@@ -395,12 +447,14 @@ internal unsafe fn void WriteTcpIPv4Sockaddr(
     u8[0 max] d,
     u16[0 max] port)
 {
-    if (destination == null) {
+    if (destination == null)
+    {
         return;
     }
 
     stack mut i64[min max] index = 0;
-    while willexit (index < WinSockaddrInLength) {
+    while willexit (index < WinSockaddrInLength)
+    {
         *(&destination[index]) = (i8[min max])0;
         index += 1;
     }
@@ -416,7 +470,7 @@ internal unsafe fn void WriteTcpIPv4Sockaddr(
     *(&destination[7]) = (i8[min max])d;
 }
 
-internal unsafe fn rawptr<i8[min max]> ConnectTcpIPv4(
+internal unsafe inline fn rawptr<i8[min max]> ConnectTcpIPv4(
     u8[0 max] a,
     u8[0 max] b,
     u8[0 max] c,
@@ -424,22 +478,26 @@ internal unsafe fn rawptr<i8[min max]> ConnectTcpIPv4(
     u16[0 max] port,
     rawmutptr<i32[min max]> status)
 {
-    if (status != null) {
+    if (status != null)
+    {
         *status = 0;
     }
 
     stack rawptr<i8[min max]> handle = OpenTcpSocket(status);
-    if (handle == null) {
+    if (handle == null)
+    {
         return null;
     }
 
     stack mut i8[min max][16] address;
     WriteTcpIPv4Sockaddr(&address[0], a, b, c, d, port);
 
-    if (connect(handle, (rawptr<i8[min max]>)(&address[0]), (i32[min max])WinSockaddrInLength) != 0) {
+    if (connect(handle, (rawptr<i8[min max]>)(&address[0]), (i32[min max])WinSockaddrInLength) != 0)
+    {
         stack i32[min max] error = NegativeSocketError();
         CloseSocket(handle);
-        if (status != null) {
+        if (status != null)
+        {
             *status = error;
         }
 
@@ -449,7 +507,7 @@ internal unsafe fn rawptr<i8[min max]> ConnectTcpIPv4(
     return handle;
 }
 
-internal unsafe fn rawptr<i8[min max]> ListenTcpIPv4(
+internal unsafe inline fn rawptr<i8[min max]> ListenTcpIPv4(
     u8[0 max] a,
     u8[0 max] b,
     u8[0 max] c,
@@ -457,32 +515,38 @@ internal unsafe fn rawptr<i8[min max]> ListenTcpIPv4(
     u16[0 max] port,
     rawmutptr<i32[min max]> status)
 {
-    if (status != null) {
+    if (status != null)
+    {
         *status = 0;
     }
 
     stack rawptr<i8[min max]> handle = OpenTcpSocket(status);
-    if (handle == null) {
+    if (handle == null)
+    {
         return null;
     }
 
     stack mut i8[min max][16] address;
     WriteTcpIPv4Sockaddr(&address[0], a, b, c, d, port);
 
-    if (bind(handle, (rawptr<i8[min max]>)(&address[0]), (i32[min max])WinSockaddrInLength) != 0) {
+    if (bind(handle, (rawptr<i8[min max]>)(&address[0]), (i32[min max])WinSockaddrInLength) != 0)
+    {
         stack i32[min max] error = NegativeSocketError();
         CloseSocket(handle);
-        if (status != null) {
+        if (status != null)
+        {
             *status = error;
         }
 
         return null;
     }
 
-    if (listen(handle, WinDefaultTcpListenBacklog) != 0) {
+    if (listen(handle, WinDefaultTcpListenBacklog) != 0)
+    {
         stack i32[min max] error = NegativeSocketError();
         CloseSocket(handle);
-        if (status != null) {
+        if (status != null)
+        {
             *status = error;
         }
 
@@ -492,61 +556,69 @@ internal unsafe fn rawptr<i8[min max]> ListenTcpIPv4(
     return handle;
 }
 
-internal unsafe fn i64[min max] ReadSocket(
+internal unsafe inline fn i64[min max] ReadSocket(
     rawptr<i8[min max]> handle,
     rawmutptr<i8[min max]>[capacity] buffer,
     u64[0 2 ** 63 - 1] capacity)
     where overlap(handle, buffer)
 {
-    if (handle == null) {
+    if (handle == null)
+    {
         return -10057;
     }
 
-    if (capacity == 0) {
+    if (capacity == 0)
+    {
         return 0;
     }
 
-    if (buffer == null) {
+    if (buffer == null)
+    {
         return -10014;
     }
 
     stack i32[min max] request = RequestedChunkLength((i64[min max])capacity);
     stack i32[min max] result = recv(handle, buffer, request, 0);
-    if (result < 0) {
+    if (result < 0)
+    {
         return NegativeSocketError();
     }
 
     return (i64[min max])result;
 }
 
-internal unsafe fn i64[min max] WriteSocket(
+internal unsafe inline fn i64[min max] WriteSocket(
     rawptr<i8[min max]> handle,
     rawptr<i8[min max]>[length] buffer,
     u64[0 2 ** 63 - 1] length)
     where overlap(handle, buffer)
 {
-    if (handle == null) {
+    if (handle == null)
+    {
         return -10057;
     }
 
-    if (length == 0) {
+    if (length == 0)
+    {
         return 0;
     }
 
-    if (buffer == null) {
+    if (buffer == null)
+    {
         return -10014;
     }
 
     stack i32[min max] request = RequestedChunkLength((i64[min max])length);
     stack i32[min max] result = send(handle, buffer, request, 0);
-    if (result < 0) {
+    if (result < 0)
+    {
         return NegativeSocketError();
     }
 
     return (i64[min max])result;
 }
 
-internal unsafe fn i64[min max] ReadSocketVector2(
+internal unsafe inline fn i64[min max] ReadSocketVector2(
     rawptr<i8[min max]> handle,
     rawmutptr<i8[min max]>[firstCapacity] firstBuffer,
     u64[0 2 ** 63 - 1] firstCapacity,
@@ -555,30 +627,37 @@ internal unsafe fn i64[min max] ReadSocketVector2(
     where overlap(handle, firstBuffer),
           overlap(handle, secondBuffer)
 {
-    if (handle == null) {
+    if (handle == null)
+    {
         return -10057;
     }
 
-    if (firstCapacity == 0 && secondCapacity == 0) {
+    if (firstCapacity == 0 && secondCapacity == 0)
+    {
         return 0;
     }
 
-    if ((firstCapacity > 0 && firstBuffer == null) || (secondCapacity > 0 && secondBuffer == null)) {
+    if ((firstCapacity > 0 && firstBuffer == null) || (secondCapacity > 0 && secondBuffer == null))
+    {
         return -10014;
     }
 
     stack mut WinSocketBuffer[2] buffers;
     stack mut u8[0 2] bufferIndex = 0;
-    if (firstCapacity > 0) {
-        init buffers[bufferIndex] = new WinSocketBuffer() {
+    if (firstCapacity > 0)
+    {
+        init buffers[bufferIndex] = new WinSocketBuffer()
+        {
             Length = RequestedChunkLength((i64[min max])firstCapacity),
             Data = firstBuffer
         };
         bufferIndex += 1;
     }
 
-    if (secondCapacity > 0) {
-        init buffers[bufferIndex] = new WinSocketBuffer() {
+    if (secondCapacity > 0)
+    {
+        init buffers[bufferIndex] = new WinSocketBuffer()
+        {
             Length = RequestedChunkLength((i64[min max])secondCapacity),
             Data = secondBuffer
         };
@@ -595,14 +674,15 @@ internal unsafe fn i64[min max] ReadSocketVector2(
         &flags,
         null,
         null);
-    if (result != 0) {
+    if (result != 0)
+    {
         return NegativeSocketError();
     }
 
     return (i64[min max])bytesReceived;
 }
 
-internal unsafe fn i64[min max] WriteSocketVector2(
+internal unsafe inline fn i64[min max] WriteSocketVector2(
     rawptr<i8[min max]> handle,
     rawptr<i8[min max]>[firstLength] firstBuffer,
     u64[0 2 ** 63 - 1] firstLength,
@@ -611,30 +691,37 @@ internal unsafe fn i64[min max] WriteSocketVector2(
     where overlap(handle, firstBuffer),
           overlap(handle, secondBuffer)
 {
-    if (handle == null) {
+    if (handle == null)
+    {
         return -10057;
     }
 
-    if (firstLength == 0 && secondLength == 0) {
+    if (firstLength == 0 && secondLength == 0)
+    {
         return 0;
     }
 
-    if ((firstLength > 0 && firstBuffer == null) || (secondLength > 0 && secondBuffer == null)) {
+    if ((firstLength > 0 && firstBuffer == null) || (secondLength > 0 && secondBuffer == null))
+    {
         return -10014;
     }
 
     stack mut WinSocketBuffer[2] buffers;
     stack mut u8[0 2] bufferIndex = 0;
-    if (firstLength > 0) {
-        init buffers[bufferIndex] = new WinSocketBuffer() {
+    if (firstLength > 0)
+    {
+        init buffers[bufferIndex] = new WinSocketBuffer()
+        {
             Length = RequestedChunkLength((i64[min max])firstLength),
             Data = firstBuffer
         };
         bufferIndex += 1;
     }
 
-    if (secondLength > 0) {
-        init buffers[bufferIndex] = new WinSocketBuffer() {
+    if (secondLength > 0)
+    {
+        init buffers[bufferIndex] = new WinSocketBuffer()
+        {
             Length = RequestedChunkLength((i64[min max])secondLength),
             Data = secondBuffer
         };
@@ -650,19 +737,22 @@ internal unsafe fn i64[min max] WriteSocketVector2(
         0,
         null,
         null);
-    if (result != 0) {
+    if (result != 0)
+    {
         return NegativeSocketError();
     }
 
     return (i64[min max])bytesSent;
 }
 
-internal unsafe fn rawptr<i8[min max]> AcceptSocket(
+internal unsafe inline fn rawptr<i8[min max]> AcceptSocket(
     rawptr<i8[min max]> handle,
     rawmutptr<i32[min max]> status)
 {
-    if (handle == null) {
-        if (status != null) {
+    if (handle == null)
+    {
+        if (status != null)
+        {
             *status = -10057;
         }
 
@@ -670,8 +760,10 @@ internal unsafe fn rawptr<i8[min max]> AcceptSocket(
     }
 
     stack i32[min max] startup = EnsureWinSockStarted();
-    if (startup < 0) {
-        if (status != null) {
+    if (startup < 0)
+    {
+        if (status != null)
+        {
             *status = startup;
         }
 
@@ -679,62 +771,78 @@ internal unsafe fn rawptr<i8[min max]> AcceptSocket(
     }
 
     stack rawmutptr<i8[min max]> acceptedHandle = accept(handle, null, null);
-    if (IsInvalidSocket(acceptedHandle)) {
-        if (status != null) {
+    if (IsInvalidSocket(acceptedHandle))
+    {
+        if (status != null)
+        {
             *status = NegativeSocketError();
         }
 
         return null;
     }
 
-    if (status != null) {
+    if (status != null)
+    {
         *status = 0;
     }
 
     return (rawptr<i8[min max]>)acceptedHandle;
 }
 
-internal unsafe fn i32[min max] ShutdownSocket(rawptr<i8[min max]> handle, i32[min max] how) {
-    if (handle == null) {
+internal unsafe inline fn i32[min max] ShutdownSocket(rawptr<i8[min max]> handle, i32[min max] how)
+{
+    if (handle == null)
+    {
         return -10057;
     }
 
-    if (how < 0 || how > 2) {
+    if (how < 0 || how > 2)
+    {
         return -10045;
     }
 
-    if (shutdown(handle, how) != 0) {
+    if (shutdown(handle, how) != 0)
+    {
         return NegativeSocketError();
     }
 
     return 0;
 }
 
-internal unsafe fn i32[min max] CloseSocket(rawptr<i8[min max]> handle) {
-    if (handle == null) {
+internal unsafe inline fn i32[min max] CloseSocket(rawptr<i8[min max]> handle)
+{
+    if (handle == null)
+    {
         return 0;
     }
 
-    if (closesocket(handle) != 0) {
+    if (closesocket(handle) != 0)
+    {
         return NegativeSocketError();
     }
 
     return 0;
 }
 
-internal fn void YieldThread() {
-    unsafe {
+internal fn void YieldThread()
+{
+    unsafe
+    {
         SwitchToThread();
         return;
     }
 }
 
-internal fn void SleepThreadMilliseconds(u64[0 2 ** 63 - 1] milliseconds) {
-    unsafe {
+internal fn void SleepThreadMilliseconds(u64[0 2 ** 63 - 1] milliseconds)
+{
+    unsafe
+    {
         stack mut u64[0 2 ** 63 - 1] remaining = milliseconds;
-        while willexit (remaining > 0) {
+        while willexit (remaining > 0)
+        {
             stack mut u64[0 2 ** 63 - 1] chunk = remaining;
-            if (chunk > WinMaxSleepMilliseconds) {
+            if (chunk > WinMaxSleepMilliseconds)
+            {
                 chunk = (u64[0 2 ** 63 - 1])WinMaxSleepMilliseconds;
             }
 
@@ -746,41 +854,51 @@ internal fn void SleepThreadMilliseconds(u64[0 2 ** 63 - 1] milliseconds) {
     }
 }
 
-internal unsafe fn i32[min max] WaitReadable(rawptr<i8[min max]> handle, i32[min max] timeoutMilliseconds) {
+internal unsafe inline fn i32[min max] WaitReadable(rawptr<i8[min max]> handle, i32[min max] timeoutMilliseconds)
+{
     return -10045;
 }
 
-internal unsafe fn i32[min max] WaitWritable(rawptr<i8[min max]> handle, i32[min max] timeoutMilliseconds) {
+internal unsafe inline fn i32[min max] WaitWritable(rawptr<i8[min max]> handle, i32[min max] timeoutMilliseconds)
+{
     return -10045;
 }
 
-internal unsafe fn i32[min max] FutexWait(rawmutptr<i32[min max]> address, i32[min max] expected) {
-    if (address == null) {
+internal unsafe fn i32[min max] FutexWait(rawmutptr<i32[min max]> address, i32[min max] expected)
+{
+    if (address == null)
+    {
         return -14;
     }
 
-    if (*address != expected) {
+    if (*address != expected)
+    {
         return -11;
     }
 
     stack i32[min max] compare = expected;
-    if (WaitOnAddress(address, &compare, WinI32AddressBytes, WinInfinite) != 0) {
+    if (WaitOnAddress(address, &compare, WinI32AddressBytes, WinInfinite) != 0)
+    {
         return 0;
     }
 
     return NegativeLastError();
 }
 
-internal unsafe fn i32[min max] FutexWake(rawmutptr<i32[min max]> address, i32[min max] count) {
-    if (address == null) {
+internal unsafe fn i32[min max] FutexWake(rawmutptr<i32[min max]> address, i32[min max] count)
+{
+    if (address == null)
+    {
         return -14;
     }
 
-    if (count <= 0) {
+    if (count <= 0)
+    {
         return 0;
     }
 
-    if (count == 1) {
+    if (count == 1)
+    {
         WakeByAddressSingle(address);
         return 0;
     }
@@ -789,24 +907,30 @@ internal unsafe fn i32[min max] FutexWake(rawmutptr<i32[min max]> address, i32[m
     return 0;
 }
 
-internal unsafe fn void ResetAsciiDestination(rawmutptr<Ascii> destination) {
-    if (destination == null) {
+internal unsafe fn void ResetAsciiDestination(rawmutptr<Ascii> destination)
+{
+    if (destination == null)
+    {
         return;
     }
 
     stack rawmutptr<i8[min max]> data = (*destination).Data;
     stack i64[min max] capacity = (*destination).Capacity;
-    *destination = new Ascii() {
+    *destination = new Ascii()
+    {
         Data = data,
         Length = 0,
         Capacity = capacity
     };
 }
 
-internal fn i32[min max] NegativeLastError() {
-    unsafe {
+internal fn i32[min max] NegativeLastError()
+{
+    unsafe
+    {
         stack i32[min max] error = GetLastError();
-        if (error <= 0) {
+        if (error <= 0)
+        {
             return -1;
         }
 
@@ -814,63 +938,79 @@ internal fn i32[min max] NegativeLastError() {
     }
 }
 
-internal unsafe fn bool IsInvalidHandle(rawmutptr<i8[min max]> handle) {
-    if (handle == null) {
+internal unsafe fn bool IsInvalidHandle(rawmutptr<i8[min max]> handle)
+{
+    if (handle == null)
+    {
         return true;
     }
 
     return (i64[min max])handle == -1;
 }
 
-internal inline fn i32[min max] RequestedChunkLength(i64[min max] totalBytes) {
-    if (totalBytes > (i64[min max])(2 ** 31 - 1)) {
+internal inline fn i32[min max] RequestedChunkLength(i64[min max] totalBytes)
+{
+    if (totalBytes > (i64[min max])(2 ** 31 - 1))
+    {
         return (i32[min max])(2 ** 31 - 1);
     }
 
     return (i32[min max])totalBytes;
 }
 
-internal fn i32[min max] UnsignedByte(i8[min max] value) {
-    if (value < 0) {
+internal fn i32[min max] UnsignedByte(i8[min max] value)
+{
+    if (value < 0)
+    {
         return ((i32[min max])value) + 256;
     }
 
     return (i32[min max])value;
 }
 
-internal fn i32[min max] UnsignedWide(i16[min max] value) {
-    if (value < 0) {
+internal fn i32[min max] UnsignedWide(i16[min max] value)
+{
+    if (value < 0)
+    {
         return ((i32[min max])value) + (i32[min max])(2 ** 16);
     }
 
     return (i32[min max])value;
 }
 
-internal fn bool IsWideDirectorySeparatorUnit(i32[min max] value) {
+internal fn bool IsWideDirectorySeparatorUnit(i32[min max] value)
+{
     return value == 47 || value == 92;
 }
 
-internal fn bool IsWideDriveLetter(i32[min max] value) {
-    unsafe {
+internal fn bool IsWideDriveLetter(i32[min max] value)
+{
+    unsafe
+    {
         return (65 <= value && value <= 90)
             || (97 <= value && value <= 122);
     }
 }
 
-internal fn bool IsUtf8ContinuationByte(i8[min max] value) {
-    unsafe {
+internal fn bool IsUtf8ContinuationByte(i8[min max] value)
+{
+    unsafe
+    {
         stack i32[min max] unit = UnsignedByte(value);
         return 128 <= unit && unit <= 191;
     }
 }
 
-internal unsafe fn bool TryAppendWideCodeUnit(rawmutptr<i16[min max]> destination, i64[min max] capacity, rawmutptr<i64[min max]> writeIndex, i16[min max] value) {
-    if (destination == null || writeIndex == null) {
+internal unsafe fn bool TryAppendWideCodeUnit(rawmutptr<i16[min max]> destination, i64[min max] capacity, rawmutptr<i64[min max]> writeIndex, i16[min max] value)
+{
+    if (destination == null || writeIndex == null)
+    {
         return false;
     }
 
     stack i64[min max] index = *writeIndex;
-    if (index >= capacity) {
+    if (index >= capacity)
+    {
         return false;
     }
 
@@ -931,12 +1071,14 @@ internal unsafe fn bool TryCopyWideRange(
     rawptr<i16[min max]> source,
     i64[min max] sourceLength)
 {
-    if (destination == null || writeIndex == null || source == null || sourceLength < 0) {
+    if (destination == null || writeIndex == null || source == null || sourceLength < 0)
+    {
         return false;
     }
 
     stack i64[min max] index = *writeIndex;
-    if (index < 0 || index > capacity || sourceLength > capacity - index) {
+    if (index < 0 || index > capacity || sourceLength > capacity - index)
+    {
         return false;
     }
 
@@ -945,8 +1087,10 @@ internal unsafe fn bool TryCopyWideRange(
     return true;
 }
 
-internal unsafe fn bool HasLongPathPrefix(rawptr<i16[min max]> source, i64[min max] sourceLength) {
-    if (source == null || sourceLength < 4) {
+internal unsafe fn bool HasLongPathPrefix(rawptr<i16[min max]> source, i64[min max] sourceLength)
+{
+    if (source == null || sourceLength < 4)
+    {
         return false;
     }
 
@@ -956,8 +1100,10 @@ internal unsafe fn bool HasLongPathPrefix(rawptr<i16[min max]> source, i64[min m
         && UnsignedWide(*(&source[3])) == 92;
 }
 
-internal unsafe fn bool IsDriveAbsoluteWidePath(rawptr<i16[min max]> source, i64[min max] sourceLength) {
-    if (source == null || sourceLength < 3) {
+internal unsafe fn bool IsDriveAbsoluteWidePath(rawptr<i16[min max]> source, i64[min max] sourceLength)
+{
+    if (source == null || sourceLength < 3)
+    {
         return false;
     }
 
@@ -966,8 +1112,10 @@ internal unsafe fn bool IsDriveAbsoluteWidePath(rawptr<i16[min max]> source, i64
         && IsWideDirectorySeparatorUnit(UnsignedWide(*(&source[2])));
 }
 
-internal unsafe fn bool IsUncWidePath(rawptr<i16[min max]> source, i64[min max] sourceLength) {
-    if (source == null || sourceLength < 2) {
+internal unsafe fn bool IsUncWidePath(rawptr<i16[min max]> source, i64[min max] sourceLength)
+{
+    if (source == null || sourceLength < 2)
+    {
         return false;
     }
 
@@ -981,29 +1129,35 @@ internal unsafe fn bool TryDecodeUtf8CodePoint(
     rawmutptr<i64[min max]> index,
     rawmutptr<i32[min max]> codePoint)
 {
-    if (data == null || index == null || codePoint == null) {
+    if (data == null || index == null || codePoint == null)
+    {
         return false;
     }
 
     stack i64[min max] readIndex = *index;
-    if (readIndex < 0 || readIndex >= length) {
+    if (readIndex < 0 || readIndex >= length)
+    {
         return false;
     }
 
     stack i32[min max] first = UnsignedByte(*(&data[readIndex]));
-    if (first <= 127) {
+    if (first <= 127)
+    {
         *index = readIndex + 1;
         *codePoint = first;
         return true;
     }
 
-    if (194 <= first && first <= 223) {
-        if (readIndex + 1 >= length) {
+    if (194 <= first && first <= 223)
+    {
+        if (readIndex + 1 >= length)
+        {
             return false;
         }
 
         stack i8[min max] secondRaw = *(&data[readIndex + 1]);
-        if (!IsUtf8ContinuationByte(secondRaw)) {
+        if (!IsUtf8ContinuationByte(secondRaw))
+        {
             return false;
         }
 
@@ -1013,24 +1167,29 @@ internal unsafe fn bool TryDecodeUtf8CodePoint(
         return true;
     }
 
-    if (224 <= first && first <= 239) {
-        if (readIndex + 2 >= length) {
+    if (224 <= first && first <= 239)
+    {
+        if (readIndex + 2 >= length)
+        {
             return false;
         }
 
         stack i8[min max] secondRaw = *(&data[readIndex + 1]);
         stack i8[min max] thirdRaw = *(&data[readIndex + 2]);
-        if (!IsUtf8ContinuationByte(secondRaw) || !IsUtf8ContinuationByte(thirdRaw)) {
+        if (!IsUtf8ContinuationByte(secondRaw) || !IsUtf8ContinuationByte(thirdRaw))
+        {
             return false;
         }
 
         stack i32[min max] second = UnsignedByte(secondRaw);
         stack i32[min max] third = UnsignedByte(thirdRaw);
-        if (first == 224 && second < 160) {
+        if (first == 224 && second < 160)
+        {
             return false;
         }
 
-        if (first == 237 && second >= 160) {
+        if (first == 237 && second >= 160)
+        {
             return false;
         }
 
@@ -1041,8 +1200,10 @@ internal unsafe fn bool TryDecodeUtf8CodePoint(
         return true;
     }
 
-    if (240 <= first && first <= 244) {
-        if (readIndex + 3 >= length) {
+    if (240 <= first && first <= 244)
+    {
+        if (readIndex + 3 >= length)
+        {
             return false;
         }
 
@@ -1051,18 +1212,21 @@ internal unsafe fn bool TryDecodeUtf8CodePoint(
         stack i8[min max] fourthRaw = *(&data[readIndex + 3]);
         if (!IsUtf8ContinuationByte(secondRaw)
             || !IsUtf8ContinuationByte(thirdRaw)
-            || !IsUtf8ContinuationByte(fourthRaw)) {
+            || !IsUtf8ContinuationByte(fourthRaw))
+            {
             return false;
         }
 
         stack i32[min max] second = UnsignedByte(secondRaw);
         stack i32[min max] third = UnsignedByte(thirdRaw);
         stack i32[min max] fourth = UnsignedByte(fourthRaw);
-        if (first == 240 && second < 144) {
+        if (first == 240 && second < 144)
+        {
             return false;
         }
 
-        if (first == 244 && second > 143) {
+        if (first == 244 && second > 143)
+        {
             return false;
         }
 
@@ -1084,16 +1248,19 @@ internal unsafe fn bool TryAppendWideCodePoint(
     i32[min max] codePoint)
 {
     stack i32[min max] scalar = NormalizeUnicodeCodePoint(codePoint);
-    if (scalar == 0) {
+    if (scalar == 0)
+    {
         return false;
     }
 
-    if (scalar <= (i32[min max])(2 ** 16 - 1)) {
+    if (scalar <= (i32[min max])(2 ** 16 - 1))
+    {
         return TryAppendWideCodeUnit(destination, capacity, writeIndex, (i16[min max])scalar);
     }
 
     stack i32[min max] adjusted = scalar - (i32[min max])(2 ** 16);
-    if (!TryAppendWideCodeUnit(destination, capacity, writeIndex, (i16[min max])((adjusted >> 10) + 55296))) {
+    if (!TryAppendWideCodeUnit(destination, capacity, writeIndex, (i16[min max])((adjusted >> 10) + 55296)))
+    {
         return false;
     }
 
@@ -1106,31 +1273,37 @@ internal unsafe fn bool TryDecodeUtf8PathToWide(
     ascii path,
     rawmutptr<i64[min max]> writtenLength)
 {
-    if (destination == null || writtenLength == null || capacity <= 0) {
+    if (destination == null || writtenLength == null || capacity <= 0)
+    {
         return false;
     }
 
     stack i64[min max] length = AsciiLength(path);
     stack ascii fullPath = path[0, length];
     stack rawptr<i8[min max]> data = AsciiData(fullPath);
-    if (length > 0 && data == null) {
+    if (length > 0 && data == null)
+    {
         return false;
     }
 
     stack mut i64[min max] readIndex = 0;
     stack mut i64[min max] writeIndex = 0;
 
-    while willexit (readIndex < length) {
+    while willexit (readIndex < length)
+    {
         stack mut i32[min max] codePoint = 0;
-        if (!TryDecodeUtf8CodePoint(data, length, &readIndex, &codePoint)) {
+        if (!TryDecodeUtf8CodePoint(data, length, &readIndex, &codePoint))
+        {
             return false;
         }
 
-        if (codePoint == 47) {
+        if (codePoint == 47)
+        {
             codePoint = 92;
         }
 
-        if (!TryAppendWideCodePoint(destination, capacity, &writeIndex, codePoint)) {
+        if (!TryAppendWideCodePoint(destination, capacity, &writeIndex, codePoint))
+        {
             return false;
         }
     }
@@ -1146,15 +1319,18 @@ internal unsafe fn bool TryBuildAbsoluteWindowsWidePath(
     i64[min max] sourceLength,
     rawmutptr<i64[min max]> writtenLength)
 {
-    if (destination == null || writtenLength == null || source == null) {
+    if (destination == null || writtenLength == null || source == null)
+    {
         return false;
     }
 
     if (IsDriveAbsoluteWidePath(source, sourceLength)
         || IsUncWidePath(source, sourceLength)
-        || HasLongPathPrefix(source, sourceLength)) {
+        || HasLongPathPrefix(source, sourceLength))
+        {
         stack mut i64[min max] directLength = 0;
-        if (!TryCopyWideRange(destination, capacity, &directLength, source, sourceLength)) {
+        if (!TryCopyWideRange(destination, capacity, &directLength, source, sourceLength))
+        {
             return false;
         }
 
@@ -1164,36 +1340,45 @@ internal unsafe fn bool TryBuildAbsoluteWindowsWidePath(
 
     stack mut i16[min max][4096] currentDirectory;
     stack i32[min max] currentDirectoryLength = GetCurrentDirectoryW(4096, &currentDirectory[0]);
-    if (currentDirectoryLength <= 0 || currentDirectoryLength >= 4096) {
+    if (currentDirectoryLength <= 0 || currentDirectoryLength >= 4096)
+    {
         return false;
     }
 
     stack mut i64[min max] writeIndex = 0;
-    if (sourceLength > 0 && IsWideDirectorySeparatorUnit(UnsignedWide(*(&source[0])))) {
-        if (HasLongPathPrefix(&currentDirectory[0], currentDirectoryLength)) {
+    if (sourceLength > 0 && IsWideDirectorySeparatorUnit(UnsignedWide(*(&source[0]))))
+    {
+        if (HasLongPathPrefix(&currentDirectory[0], currentDirectoryLength))
+        {
             if (currentDirectoryLength < 6
                 || !IsWideDriveLetter(UnsignedWide(*(&currentDirectory[4])))
-                || UnsignedWide(*(&currentDirectory[5])) != 58) {
+                || UnsignedWide(*(&currentDirectory[5])) != 58)
+                {
                 return false;
             }
 
-            if (!TryCopyWideRange(destination, capacity, &writeIndex, &currentDirectory[0], 6)) {
+            if (!TryCopyWideRange(destination, capacity, &writeIndex, &currentDirectory[0], 6))
+            {
                 return false;
             }
         }
-        else {
+        else
+        {
             if (currentDirectoryLength < 2
                 || !IsWideDriveLetter(UnsignedWide(*(&currentDirectory[0])))
-                || UnsignedWide(*(&currentDirectory[1])) != 58) {
+                || UnsignedWide(*(&currentDirectory[1])) != 58)
+                {
                 return false;
             }
 
-            if (!TryCopyWideRange(destination, capacity, &writeIndex, &currentDirectory[0], 2)) {
+            if (!TryCopyWideRange(destination, capacity, &writeIndex, &currentDirectory[0], 2))
+            {
                 return false;
             }
         }
 
-        if (!TryCopyWideRange(destination, capacity, &writeIndex, source, sourceLength)) {
+        if (!TryCopyWideRange(destination, capacity, &writeIndex, source, sourceLength))
+        {
             return false;
         }
 
@@ -1201,17 +1386,21 @@ internal unsafe fn bool TryBuildAbsoluteWindowsWidePath(
         return true;
     }
 
-    if (!TryCopyWideRange(destination, capacity, &writeIndex, &currentDirectory[0], currentDirectoryLength)) {
+    if (!TryCopyWideRange(destination, capacity, &writeIndex, &currentDirectory[0], currentDirectoryLength))
+    {
         return false;
     }
 
-    if (writeIndex > 0 && !IsWideDirectorySeparatorUnit(UnsignedWide(*(&destination[writeIndex - 1])))) {
-        if (!TryAppendWideCodeUnit(destination, capacity, &writeIndex, (i16[min max])92)) {
+    if (writeIndex > 0 && !IsWideDirectorySeparatorUnit(UnsignedWide(*(&destination[writeIndex - 1]))))
+    {
+        if (!TryAppendWideCodeUnit(destination, capacity, &writeIndex, (i16[min max])92))
+        {
             return false;
         }
     }
 
-    if (!TryCopyWideRange(destination, capacity, &writeIndex, source, sourceLength)) {
+    if (!TryCopyWideRange(destination, capacity, &writeIndex, source, sourceLength))
+    {
         return false;
     }
 
@@ -1219,8 +1408,10 @@ internal unsafe fn bool TryBuildAbsoluteWindowsWidePath(
     return true;
 }
 
-internal unsafe fn bool TryBuildLongWindowsWidePath(rawmutptr<i16[min max]> destination, i64[min max] capacity, rawptr<i16[min max]> source, i64[min max] sourceLength) {
-    if (destination == null || capacity <= 0 || source == null) {
+internal unsafe fn bool TryBuildLongWindowsWidePath(rawmutptr<i16[min max]> destination, i64[min max] capacity, rawptr<i16[min max]> source, i64[min max] sourceLength)
+{
+    if (destination == null || capacity <= 0 || source == null)
+    {
         return false;
     }
 
@@ -1230,8 +1421,10 @@ internal unsafe fn bool TryBuildLongWindowsWidePath(rawmutptr<i16[min max]> dest
 
     if (!HasLongPathPrefix(source, sourceLength)
         && !IsDriveAbsoluteWidePath(source, sourceLength)
-        && !IsUncWidePath(source, sourceLength)) {
-        if (!TryBuildAbsoluteWindowsWidePath(&absolutePath[0], 4096, source, sourceLength, &absoluteLength)) {
+        && !IsUncWidePath(source, sourceLength))
+        {
+        if (!TryBuildAbsoluteWindowsWidePath(&absolutePath[0], 4096, source, sourceLength, &absoluteLength))
+        {
             return false;
         }
 
@@ -1239,13 +1432,17 @@ internal unsafe fn bool TryBuildLongWindowsWidePath(rawmutptr<i16[min max]> dest
     }
 
     stack mut i64[min max] writeIndex = 0;
-    assume disjoint(destination, absoluteSource) {
-        if (HasLongPathPrefix(absoluteSource, absoluteLength)) {
-            if (!TryCopyWideRange(destination, capacity - 1, &writeIndex, absoluteSource, absoluteLength)) {
+    assume disjoint(destination, absoluteSource)
+    {
+        if (HasLongPathPrefix(absoluteSource, absoluteLength))
+        {
+            if (!TryCopyWideRange(destination, capacity - 1, &writeIndex, absoluteSource, absoluteLength))
+            {
                 return false;
             }
         }
-        else if (IsUncWidePath(absoluteSource, absoluteLength)) {
+        else if (IsUncWidePath(absoluteSource, absoluteLength))
+        {
             if (!TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[min max])92)
                 || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[min max])92)
                 || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[min max])63)
@@ -1253,27 +1450,33 @@ internal unsafe fn bool TryBuildLongWindowsWidePath(rawmutptr<i16[min max]> dest
                 || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[min max])85)
                 || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[min max])78)
                 || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[min max])67)
-                || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[min max])92)) {
+                || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[min max])92))
+                {
                 return false;
             }
 
-            if (!TryCopyWideRange(destination, capacity - 1, &writeIndex, &absoluteSource[2], absoluteLength - 2)) {
+            if (!TryCopyWideRange(destination, capacity - 1, &writeIndex, &absoluteSource[2], absoluteLength - 2))
+            {
                 return false;
             }
         }
-        else if (IsDriveAbsoluteWidePath(absoluteSource, absoluteLength)) {
+        else if (IsDriveAbsoluteWidePath(absoluteSource, absoluteLength))
+        {
             if (!TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[min max])92)
                 || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[min max])92)
                 || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[min max])63)
-                || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[min max])92)) {
+                || !TryAppendWideCodeUnit(destination, capacity - 1, &writeIndex, (i16[min max])92))
+                {
                 return false;
             }
 
-            if (!TryCopyWideRange(destination, capacity - 1, &writeIndex, absoluteSource, absoluteLength)) {
+            if (!TryCopyWideRange(destination, capacity - 1, &writeIndex, absoluteSource, absoluteLength))
+            {
                 return false;
             }
         }
-        else {
+        else
+        {
             return false;
         }
     }
@@ -1282,28 +1485,34 @@ internal unsafe fn bool TryBuildLongWindowsWidePath(rawmutptr<i16[min max]> dest
     return true;
 }
 
-internal unsafe fn bool TryBuildWindowsWidePath(rawmutptr<i16[min max]> destination, i64[min max] capacity, ascii path) {
-    if (destination == null || capacity <= 0) {
+internal unsafe fn bool TryBuildWindowsWidePath(rawmutptr<i16[min max]> destination, i64[min max] capacity, ascii path)
+{
+    if (destination == null || capacity <= 0)
+    {
         return false;
     }
 
     stack mut i16[min max][4096] normalizedPath;
     stack mut i64[min max] normalizedLength = 0;
-    if (!TryDecodeUtf8PathToWide(&normalizedPath[0], 4096, path, &normalizedLength)) {
+    if (!TryDecodeUtf8PathToWide(&normalizedPath[0], 4096, path, &normalizedLength))
+    {
         return false;
     }
 
     if (normalizedLength >= WinLongPathThreshold
-        && !HasLongPathPrefix(&normalizedPath[0], normalizedLength)) {
+        && !HasLongPathPrefix(&normalizedPath[0], normalizedLength))
+        {
         return TryBuildLongWindowsWidePath(destination, capacity, &normalizedPath[0], normalizedLength);
     }
 
-    if (normalizedLength + 1 > capacity) {
+    if (normalizedLength + 1 > capacity)
+    {
         return false;
     }
 
     stack mut i64[min max] writeIndex = 0;
-    if (!TryCopyWideRange(destination, capacity - 1, &writeIndex, &normalizedPath[0], normalizedLength)) {
+    if (!TryCopyWideRange(destination, capacity - 1, &writeIndex, &normalizedPath[0], normalizedLength))
+    {
         return false;
     }
 
@@ -1311,24 +1520,28 @@ internal unsafe fn bool TryBuildWindowsWidePath(rawmutptr<i16[min max]> destinat
     return true;
 }
 
-internal unsafe fn void WriteUtf8CodePointToPointer(rawmutptr<i8[min max]> destination, rawmutptr<i64[min max]> writeIndex, i32[min max] codePoint) {
+internal unsafe fn void WriteUtf8CodePointToPointer(rawmutptr<i8[min max]> destination, rawmutptr<i64[min max]> writeIndex, i32[min max] codePoint)
+{
     stack i32[min max] scalar = NormalizeUnicodeCodePoint(codePoint);
     stack i64[min max] index = *writeIndex;
 
-    if (scalar <= 127) {
+    if (scalar <= 127)
+    {
         *(&destination[index]) = (i8[min max])scalar;
         *writeIndex = index + 1;
         return;
     }
 
-    if (scalar <= 2047) {
+    if (scalar <= 2047)
+    {
         *(&destination[index]) = (i8[min max])((scalar >> 6) | 192);
         *(&destination[index + 1]) = (i8[min max])((scalar & 63) | 128);
         *writeIndex = index + 2;
         return;
     }
 
-    if (scalar <= (i32[min max])(2 ** 16 - 1)) {
+    if (scalar <= (i32[min max])(2 ** 16 - 1))
+    {
         *(&destination[index]) = (i8[min max])((scalar >> 12) | 224);
         *(&destination[index + 1]) = (i8[min max])(((scalar >> 6) & 63) | 128);
         *(&destination[index + 2]) = (i8[min max])((scalar & 63) | 128);
@@ -1343,8 +1556,10 @@ internal unsafe fn void WriteUtf8CodePointToPointer(rawmutptr<i8[min max]> desti
     *writeIndex = index + 4;
 }
 
-internal unsafe fn bool TryCopyWideUtf8(rawmutptr<Ascii> destination, rawptr<i16[min max]> source, i32[min max] length) {
-    if (destination == null || source == null || length < 0) {
+internal unsafe fn bool TryCopyWideUtf8(rawmutptr<Ascii> destination, rawptr<i16[min max]> source, i32[min max] length)
+{
+    if (destination == null || source == null || length < 0)
+    {
         ResetAsciiDestination(destination);
         return false;
     }
@@ -1352,44 +1567,54 @@ internal unsafe fn bool TryCopyWideUtf8(rawmutptr<Ascii> destination, rawptr<i16
     stack rawmutptr<i8[min max]> data = (*destination).Data;
     stack i64[min max] capacity = (*destination).Capacity;
     stack i64[min max] required = (i64[min max])length;
-    if (required > capacity) {
+    if (required > capacity)
+    {
         ResetAsciiDestination(destination);
         return false;
     }
 
-    if (required > 0 && data == null) {
+    if (required > 0 && data == null)
+    {
         ResetAsciiDestination(destination);
         return false;
     }
 
     stack mut i64[min max] readIndex = 0;
     stack mut i64[min max] writeIndex = 0;
-    while willexit (readIndex < required) {
+    while willexit (readIndex < required)
+    {
         stack i32[min max] first = UnsignedWide(*(&source[readIndex]));
         stack mut i32[min max] codePoint = first;
         readIndex += 1;
 
-        if (55296 <= first && first <= 56319) {
-            if (readIndex < required) {
+        if (55296 <= first && first <= 56319)
+        {
+            if (readIndex < required)
+            {
                 stack i32[min max] second = UnsignedWide(*(&source[readIndex]));
-                if (56320 <= second && second <= 57343) {
+                if (56320 <= second && second <= 57343)
+                {
                     readIndex += 1;
                     codePoint = (((first - 55296) << 10) | (second - 56320)) + (i32[min max])(2 ** 16);
                 }
-                else {
+                else
+                {
                     codePoint = 65533;
                 }
             }
-            else {
+            else
+            {
                 codePoint = 65533;
             }
         }
-        else if (56320 <= first && first <= 57343) {
+        else if (56320 <= first && first <= 57343)
+        {
             codePoint = 65533;
         }
 
         stack i64[min max] encodedLength = Utf8EncodedLength(codePoint);
-        if (writeIndex + encodedLength > capacity) {
+        if (writeIndex + encodedLength > capacity)
+        {
             ResetAsciiDestination(destination);
             return false;
         }
@@ -1397,7 +1622,8 @@ internal unsafe fn bool TryCopyWideUtf8(rawmutptr<Ascii> destination, rawptr<i16
         WriteUtf8CodePointToPointer(data, &writeIndex, codePoint);
     }
 
-    *destination = new Ascii() {
+    *destination = new Ascii()
+    {
         Data = data,
         Length = writeIndex,
         Capacity = capacity
@@ -1405,8 +1631,10 @@ internal unsafe fn bool TryCopyWideUtf8(rawmutptr<Ascii> destination, rawptr<i16
     return true;
 }
 
-internal unsafe fn i32[min max] TryCopyWideAscii(rawmutptr<Ascii> destination, rawptr<i16[min max]> source, i32[min max] length) {
-    if (destination == null || source == null || length < 0) {
+internal unsafe fn i32[min max] TryCopyWideAscii(rawmutptr<Ascii> destination, rawptr<i16[min max]> source, i32[min max] length)
+{
+    if (destination == null || source == null || length < 0)
+    {
         ResetAsciiDestination(destination);
         return -1;
     }
@@ -1414,20 +1642,24 @@ internal unsafe fn i32[min max] TryCopyWideAscii(rawmutptr<Ascii> destination, r
     stack rawmutptr<i8[min max]> data = (*destination).Data;
     stack i64[min max] capacity = (*destination).Capacity;
     stack i64[min max] required = (i64[min max])length;
-    if (required > capacity) {
+    if (required > capacity)
+    {
         ResetAsciiDestination(destination);
         return -1;
     }
 
-    if (required > 0 && data == null) {
+    if (required > 0 && data == null)
+    {
         ResetAsciiDestination(destination);
         return -1;
     }
 
     stack mut i64[min max] index = 0;
-    while willexit (index < required) {
+    while willexit (index < required)
+    {
         stack i32[min max] value = UnsignedWide(*(&source[index]));
-        if (value > 127) {
+        if (value > 127)
+        {
             return 0;
         }
 
@@ -1435,7 +1667,8 @@ internal unsafe fn i32[min max] TryCopyWideAscii(rawmutptr<Ascii> destination, r
         index += 1;
     }
 
-    *destination = new Ascii() {
+    *destination = new Ascii()
+    {
         Data = data,
         Length = required,
         Capacity = capacity
@@ -1443,17 +1676,21 @@ internal unsafe fn i32[min max] TryCopyWideAscii(rawmutptr<Ascii> destination, r
     return 1;
 }
 
-internal unsafe fn i64[min max] WideUtf8Length(rawptr<i16[min max]> source, i32[min max] length) {
-    if (source == null || length < 0) {
+internal unsafe fn i64[min max] WideUtf8Length(rawptr<i16[min max]> source, i32[min max] length)
+{
+    if (source == null || length < 0)
+    {
         return -1;
     }
 
     stack i64[min max] required = (i64[min max])length;
     stack mut i64[min max] readIndex = 0;
     stack mut i64[min max] encodedLength = 0;
-    while willexit (readIndex < required) {
+    while willexit (readIndex < required)
+    {
         stack i32[min max] first = UnsignedWide(*(&source[readIndex]));
-        if (first <= 127) {
+        if (first <= 127)
+        {
             readIndex += 1;
             encodedLength += 1;
             continue;
@@ -1462,22 +1699,28 @@ internal unsafe fn i64[min max] WideUtf8Length(rawptr<i16[min max]> source, i32[
         stack mut i32[min max] codePoint = first;
         readIndex += 1;
 
-        if (55296 <= first && first <= 56319) {
-            if (readIndex < required) {
+        if (55296 <= first && first <= 56319)
+        {
+            if (readIndex < required)
+            {
                 stack i32[min max] second = UnsignedWide(*(&source[readIndex]));
-                if (56320 <= second && second <= 57343) {
+                if (56320 <= second && second <= 57343)
+                {
                     readIndex += 1;
                     codePoint = (((first - 55296) << 10) | (second - 56320)) + (i32[min max])(2 ** 16);
                 }
-                else {
+                else
+                {
                     codePoint = 65533;
                 }
             }
-            else {
+            else
+            {
                 codePoint = 65533;
             }
         }
-        else if (56320 <= first && first <= 57343) {
+        else if (56320 <= first && first <= 57343)
+        {
             codePoint = 65533;
         }
 
@@ -1488,32 +1731,39 @@ internal unsafe fn i64[min max] WideUtf8Length(rawptr<i16[min max]> source, i32[
 }
 
 internal unsafe fn i32[min max] WriteBufferToHandle(rawptr<i8[min max]> handle, rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length)
-    where overlap(handle, buffer) {
-    if (handle == null) {
+    where overlap(handle, buffer)
+{
+    if (handle == null)
+    {
         return -1;
     }
 
-    if (length == 0) {
+    if (length == 0)
+    {
         return 0;
     }
 
-    if (buffer == null) {
+    if (buffer == null)
+    {
         return -1;
     }
 
     stack mut u64[0 2 ** 63 - 1] remaining = length;
     stack mut u64[0 2 ** 63 - 1] written = 0;
 
-    while willexit (remaining > 0) {
+    while willexit (remaining > 0)
+    {
         stack i32[min max] request = RequestedChunkLength(remaining);
         stack mut i32[min max] chunkWritten = 0;
         stack rawptr<i8[min max]> chunk = &buffer[written];
         stack i32[min max] result = WriteFile(handle, chunk, request, &chunkWritten, null);
-        if (result == 0) {
+        if (result == 0)
+        {
             return NegativeLastError();
         }
 
-        if (chunkWritten <= 0) {
+        if (chunkWritten <= 0)
+        {
             return -1;
         }
 
@@ -1529,16 +1779,20 @@ internal unsafe noinline fn i32[min max] WriteBufferLineToHandleLarge(
     rawptr<i8[min max]> handle,
     rawptr<i8[min max]>[length] buffer,
     u64[0 2 ** 63 - 1] length)
-    where overlap(handle, buffer) {
-    if (length < 8192) {
+    where overlap(handle, buffer)
+{
+    if (length < 8192)
+    {
         stack mut System.Runtime.Buffer.FixedByteBuffer8192 lineBuffer = new System.Runtime.Buffer.FixedByteBuffer8192();
-        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < length; index += 1) {
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < length; index += 1)
+        {
             lineBuffer.Storage[index] = *(&buffer[index]);
         }
 
         lineBuffer.Storage[length] = (i8[min max])10;
         stack mut i32[min max] lineStatus = 0;
-        unsafe {
+        unsafe
+        {
             lineStatus = WriteBufferToHandle(
                 handle,
                 &lineBuffer.Storage[0],
@@ -1549,13 +1803,18 @@ internal unsafe noinline fn i32[min max] WriteBufferLineToHandleLarge(
     }
 
     stack i32[min max] status = WriteBufferToHandle(handle, buffer, length);
-    if (status != 0) {
+    if (status != 0)
+    {
         return status;
     }
 
-    stack mut i8[min max][1] newline = { 10 };
+    stack mut i8[min max][1] newline =
+    {
+        10
+    };
     stack mut i32[min max] newlineStatus = 0;
-    unsafe {
+    unsafe
+    {
         newlineStatus = WriteBufferToHandle(handle, &newline[0], 1);
     }
 
@@ -1566,34 +1825,45 @@ internal unsafe fn i32[min max] WriteBufferLineToHandle(
     rawptr<i8[min max]> handle,
     rawptr<i8[min max]>[length] buffer,
     u64[0 2 ** 63 - 1] length)
-    where overlap(handle, buffer) {
-    if (handle == null) {
+    where overlap(handle, buffer)
+{
+    if (handle == null)
+    {
         return -1;
     }
 
-    if (length > 0 && buffer == null) {
+    if (length > 0 && buffer == null)
+    {
         return -1;
     }
 
-    if (length == 0) {
-        stack mut i8[min max][1] newline = { 10 };
+    if (length == 0)
+    {
+        stack mut i8[min max][1] newline =
+        {
+            10
+        };
         stack mut i32[min max] newlineStatus = 0;
-        unsafe {
+        unsafe
+        {
             newlineStatus = WriteBufferToHandle(handle, &newline[0], 1);
         }
 
         return newlineStatus;
     }
 
-    if (length < 512) {
+    if (length < 512)
+    {
         stack mut System.Runtime.Buffer.FixedByteBuffer512 lineBuffer = new System.Runtime.Buffer.FixedByteBuffer512();
-        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < length; index += 1) {
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < length; index += 1)
+        {
             lineBuffer.Storage[index] = *(&buffer[index]);
         }
 
         lineBuffer.Storage[length] = (i8[min max])10;
         stack mut i32[min max] lineStatus = 0;
-        unsafe {
+        unsafe
+        {
             lineStatus = WriteBufferToHandle(
                 handle,
                 &lineBuffer.Storage[0],
@@ -1606,17 +1876,22 @@ internal unsafe fn i32[min max] WriteBufferLineToHandle(
     return WriteBufferLineToHandleLarge(handle, buffer, length);
 }
 
-internal fn i32[min max] NormalizeUnicodeCodePoint(i32[min max] codePoint) {
-    unsafe {
-        if (codePoint < 0) {
+internal fn i32[min max] NormalizeUnicodeCodePoint(i32[min max] codePoint)
+{
+    unsafe
+    {
+        if (codePoint < 0)
+        {
             return 65533;
         }
 
-        if (55296 <= codePoint && codePoint <= 57343) {
+        if (55296 <= codePoint && codePoint <= 57343)
+        {
             return 65533;
         }
 
-        if (codePoint > 1114111) {
+        if (codePoint > 1114111)
+        {
             return 65533;
         }
 
@@ -1624,42 +1899,50 @@ internal fn i32[min max] NormalizeUnicodeCodePoint(i32[min max] codePoint) {
     }
 }
 
-internal fn i64[min max] Utf8EncodedLength(i32[min max] codePoint) {
+internal fn i64[min max] Utf8EncodedLength(i32[min max] codePoint)
+{
     stack i32[min max] scalar = NormalizeUnicodeCodePoint(codePoint);
 
-    if (scalar <= 127) {
+    if (scalar <= 127)
+    {
         return 1;
     }
 
-    if (scalar <= 2047) {
+    if (scalar <= 2047)
+    {
         return 2;
     }
 
-    if (scalar <= (i32[min max])(2 ** 16 - 1)) {
+    if (scalar <= (i32[min max])(2 ** 16 - 1))
+    {
         return 3;
     }
 
     return 4;
 }
 
-internal fn void AppendUtf8CodePoint(mut borrow System.Runtime.Buffer.FixedByteBuffer4096 buffer, i32[min max] codePoint) {
+internal fn void AppendUtf8CodePoint(mut borrow System.Runtime.Buffer.FixedByteBuffer4096 buffer, i32[min max] codePoint)
+{
     stack i32[min max] scalar = NormalizeUnicodeCodePoint(codePoint);
     stack u64[0 2 ** 63 - 1] writePosition = buffer.WritePosition;
 
-    if (scalar <= 127) {
+    if (scalar <= 127)
+    {
         buffer.Storage[writePosition] = (i8[min max])scalar;
         buffer.WritePosition = (u64[0 2 ** 63 - 1])(writePosition + 1);
         return;
     }
 
-    if (scalar <= 2047) {
+    if (scalar <= 2047)
+    {
         buffer.Storage[writePosition] = (i8[min max])((scalar >> 6) | 192);
         buffer.Storage[writePosition + 1] = (i8[min max])((scalar & 63) | 128);
         buffer.WritePosition = (u64[0 2 ** 63 - 1])(writePosition + 2);
         return;
     }
 
-    if (scalar <= (i32[min max])(2 ** 16 - 1)) {
+    if (scalar <= (i32[min max])(2 ** 16 - 1))
+    {
         buffer.Storage[writePosition] = (i8[min max])((scalar >> 12) | 224);
         buffer.Storage[writePosition + 1] = (i8[min max])(((scalar >> 6) & 63) | 128);
         buffer.Storage[writePosition + 2] = (i8[min max])((scalar & 63) | 128);
@@ -1675,19 +1958,23 @@ internal fn void AppendUtf8CodePoint(mut borrow System.Runtime.Buffer.FixedByteB
 }
 
 internal unsafe fn i32[min max] FlushEncodedWriteBuffer(rawptr<i8[min max]> handle, mut borrow System.Runtime.Buffer.FixedByteBuffer4096 buffer)
-    where overlap(handle, buffer) {
+    where overlap(handle, buffer)
+{
     stack u64[0 2 ** 63 - 1] length = buffer.WritePosition;
-    if (length <= 0) {
+    if (length <= 0)
+    {
         return 0;
     }
 
     stack u64[0 2 ** 63 - 1] byteLength = (u64[0 2 ** 63 - 1])length;
     stack mut i32[min max] status = 0;
-    unsafe {
+    unsafe
+    {
         status = WriteBufferToHandle(handle, &buffer.Storage[0], byteLength);
     }
 
-    if (status == 0) {
+    if (status == 0)
+    {
         buffer.Clear();
     }
 
@@ -1695,16 +1982,19 @@ internal unsafe fn i32[min max] FlushEncodedWriteBuffer(rawptr<i8[min max]> hand
 }
 
 internal unsafe fn i32[min max] WriteAsciiToHandle(rawptr<i8[min max]> handle, ascii text)
-    where overlap(handle, text) {
+    where overlap(handle, text)
+{
     stack i64[min max] length = AsciiLength(text);
-    if (length <= 0) {
+    if (length <= 0)
+    {
         return 0;
     }
 
     stack u64[0 2 ** 63 - 1] byteLength = (u64[0 2 ** 63 - 1])length;
     stack ascii view = text[0, length];
     stack mut i32[min max] status = 0;
-    unsafe {
+    unsafe
+    {
         status = WriteBufferToHandle(handle, AsciiData(view), byteLength);
     }
 
@@ -1712,28 +2002,34 @@ internal unsafe fn i32[min max] WriteAsciiToHandle(rawptr<i8[min max]> handle, a
 }
 
 internal unsafe fn i32[min max] WriteUnicodeToHandle(rawptr<i8[min max]> handle, unicode text)
-    where overlap(handle, text) {
-    if (handle == null) {
+    where overlap(handle, text)
+{
+    if (handle == null)
+    {
         return -1;
     }
 
     stack i64[min max] length = UnicodeLength(text);
-    if (length <= 0) {
+    if (length <= 0)
+    {
         return 0;
     }
 
     stack mut System.Runtime.Buffer.FixedByteBuffer4096 utf8Buffer = new System.Runtime.Buffer.FixedByteBuffer4096();
     stack mut i64[min max] index = 0;
 
-    while willexit (index < length) {
+    while willexit (index < length)
+    {
         stack unicode unit = text[index, 1];
         stack rawptr<i32[min max]> data = UnicodeData(unit);
         stack i32[min max] codePoint = *data;
         stack i64[min max] required = Utf8EncodedLength(codePoint);
 
-        if (utf8Buffer.Writable() < required) {
+        if (utf8Buffer.Writable() < required)
+        {
             stack i32[min max] flushStatus = FlushEncodedWriteBuffer(handle, utf8Buffer);
-            if (flushStatus != 0) {
+            if (flushStatus != 0)
+            {
                 return flushStatus;
             }
         }
@@ -1746,19 +2042,23 @@ internal unsafe fn i32[min max] WriteUnicodeToHandle(rawptr<i8[min max]> handle,
 }
 
 internal unsafe fn i32[min max] WriteAsciiLineToHandle(rawptr<i8[min max]> handle, ascii text)
-    where overlap(handle, text) {
+    where overlap(handle, text)
+{
     stack i64[min max] length = AsciiLength(text);
-    if (length < 0) {
+    if (length < 0)
+    {
         return -1;
     }
 
-    if (length == 0) {
+    if (length == 0)
+    {
         return WriteBufferLineToHandle(handle, null, 0);
     }
 
     stack ascii view = text[0, length];
     stack mut i32[min max] status = 0;
-    unsafe {
+    unsafe
+    {
         status = WriteBufferLineToHandle(handle, AsciiData(view), (u64[0 2 ** 63 - 1])length);
     }
 
@@ -1766,28 +2066,34 @@ internal unsafe fn i32[min max] WriteAsciiLineToHandle(rawptr<i8[min max]> handl
 }
 
 internal unsafe fn i32[min max] WriteUnicodeLineToHandle(rawptr<i8[min max]> handle, unicode text)
-    where overlap(handle, text) {
-    if (handle == null) {
+    where overlap(handle, text)
+{
+    if (handle == null)
+    {
         return -1;
     }
 
     stack i64[min max] length = UnicodeLength(text);
-    if (length < 0) {
+    if (length < 0)
+    {
         return -1;
     }
 
     stack mut System.Runtime.Buffer.FixedByteBuffer4096 utf8Buffer = new System.Runtime.Buffer.FixedByteBuffer4096();
     stack mut i64[min max] index = 0;
 
-    while willexit (index < length) {
+    while willexit (index < length)
+    {
         stack unicode unit = text[index, 1];
         stack rawptr<i32[min max]> data = UnicodeData(unit);
         stack i32[min max] codePoint = *data;
         stack i64[min max] required = Utf8EncodedLength(codePoint);
 
-        if (utf8Buffer.Writable() < required) {
+        if (utf8Buffer.Writable() < required)
+        {
             stack i32[min max] flushStatus = FlushEncodedWriteBuffer(handle, utf8Buffer);
-            if (flushStatus != 0) {
+            if (flushStatus != 0)
+            {
                 return flushStatus;
             }
         }
@@ -1796,9 +2102,11 @@ internal unsafe fn i32[min max] WriteUnicodeLineToHandle(rawptr<i8[min max]> han
         index += 1;
     }
 
-    if (utf8Buffer.Writable() < 1) {
+    if (utf8Buffer.Writable() < 1)
+    {
         stack i32[min max] flushStatus = FlushEncodedWriteBuffer(handle, utf8Buffer);
-        if (flushStatus != 0) {
+        if (flushStatus != 0)
+        {
             return flushStatus;
         }
     }
@@ -1814,12 +2122,14 @@ internal unsafe fn bool TryAppendConsoleWideCodePoint(
     i32[min max] codePoint)
 {
     stack i32[min max] scalar = NormalizeUnicodeCodePoint(codePoint);
-    if (scalar <= (i32[min max])(2 ** 16 - 1)) {
+    if (scalar <= (i32[min max])(2 ** 16 - 1))
+    {
         return TryAppendWideCodeUnit(destination, capacity, writeIndex, (i16[min max])scalar);
     }
 
     stack i32[min max] adjusted = scalar - (i32[min max])(2 ** 16);
-    if (!TryAppendWideCodeUnit(destination, capacity, writeIndex, (i16[min max])((adjusted >> 10) + 55296))) {
+    if (!TryAppendWideCodeUnit(destination, capacity, writeIndex, (i16[min max])((adjusted >> 10) + 55296)))
+    {
         return false;
     }
 
@@ -1829,30 +2139,37 @@ internal unsafe fn bool TryAppendConsoleWideCodePoint(
 internal unsafe fn i32[min max] WriteWideConsoleBuffer(
     rawptr<i8[min max]> handle,
     rawptr<i16[min max]>[length] buffer,
-    u64[0 2 ** 63 - 1] length) {
-    if (handle == null) {
+    u64[0 2 ** 63 - 1] length)
+{
+    if (handle == null)
+    {
         return -1;
     }
 
-    if (length == 0) {
+    if (length == 0)
+    {
         return 0;
     }
 
-    if (buffer == null) {
+    if (buffer == null)
+    {
         return -1;
     }
 
     stack mut u64[0 2 ** 63 - 1] remaining = length;
     stack mut u64[0 2 ** 63 - 1] written = 0;
-    while willexit (remaining > 0) {
+    while willexit (remaining > 0)
+    {
         stack i32[min max] request = RequestedChunkLength((i64[min max])remaining);
         stack mut i32[min max] chunkWritten = 0;
         stack rawptr<i16[min max]> chunk = &buffer[written];
-        if (WriteConsoleW(handle, chunk, request, &chunkWritten, null) == 0) {
+        if (WriteConsoleW(handle, chunk, request, &chunkWritten, null) == 0)
+        {
             return NegativeLastError();
         }
 
-        if (chunkWritten <= 0) {
+        if (chunkWritten <= 0)
+        {
             return -1;
         }
 
@@ -1867,18 +2184,22 @@ internal unsafe fn i32[min max] WriteWideConsoleBuffer(
 internal unsafe fn i32[min max] FlushWideConsoleBuffer(
     rawptr<i8[min max]> handle,
     rawmutptr<i16[min max]> buffer,
-    rawmutptr<i64[min max]> writeIndex) {
+    rawmutptr<i64[min max]> writeIndex)
+{
     stack i64[min max] length = *writeIndex;
-    if (length <= 0) {
+    if (length <= 0)
+    {
         return 0;
     }
 
     stack mut i32[min max] status = 0;
-    unsafe {
+    unsafe
+    {
         status = WriteWideConsoleBuffer(handle, buffer, (u64[0 2 ** 63 - 1])length);
     }
 
-    if (status == 0) {
+    if (status == 0)
+    {
         *writeIndex = 0;
     }
 
@@ -1886,17 +2207,21 @@ internal unsafe fn i32[min max] FlushWideConsoleBuffer(
 }
 
 internal unsafe fn i32[min max] WriteUnicodeConsoleToHandle(rawptr<i8[min max]> handle, unicode text, bool trailingNewline)
-    where overlap(handle, text) {
-    if (handle == null) {
+    where overlap(handle, text)
+{
+    if (handle == null)
+    {
         return -1;
     }
 
     stack i64[min max] length = UnicodeLength(text);
-    if (length < 0) {
+    if (length < 0)
+    {
         return -1;
     }
 
-    if (length == 0 && !trailingNewline) {
+    if (length == 0 && !trailingNewline)
+    {
         return 0;
     }
 
@@ -1904,23 +2229,29 @@ internal unsafe fn i32[min max] WriteUnicodeConsoleToHandle(rawptr<i8[min max]> 
     stack mut i64[min max] writeIndex = 0;
     stack mut i64[min max] index = 0;
 
-    while willexit (index < length) {
-        if (writeIndex > 4094) {
+    while willexit (index < length)
+    {
+        if (writeIndex > 4094)
+        {
             stack i32[min max] flushStatus = FlushWideConsoleBuffer(handle, &wideBuffer[0], &writeIndex);
-            if (flushStatus != 0) {
+            if (flushStatus != 0)
+            {
                 return flushStatus;
             }
         }
 
         stack unicode unit = text[index, 1];
         stack rawptr<i32[min max]> data = UnicodeData(unit);
-        if (!TryAppendConsoleWideCodePoint(&wideBuffer[0], 4096, &writeIndex, *data)) {
+        if (!TryAppendConsoleWideCodePoint(&wideBuffer[0], 4096, &writeIndex, *data))
+        {
             stack i32[min max] retryFlushStatus = FlushWideConsoleBuffer(handle, &wideBuffer[0], &writeIndex);
-            if (retryFlushStatus != 0) {
+            if (retryFlushStatus != 0)
+            {
                 return retryFlushStatus;
             }
 
-            if (!TryAppendConsoleWideCodePoint(&wideBuffer[0], 4096, &writeIndex, *data)) {
+            if (!TryAppendConsoleWideCodePoint(&wideBuffer[0], 4096, &writeIndex, *data))
+            {
                 return -1;
             }
         }
@@ -1928,10 +2259,13 @@ internal unsafe fn i32[min max] WriteUnicodeConsoleToHandle(rawptr<i8[min max]> 
         index += 1;
     }
 
-    if (trailingNewline) {
-        if (writeIndex >= 4096) {
+    if (trailingNewline)
+    {
+        if (writeIndex >= 4096)
+        {
             stack i32[min max] flushStatus = FlushWideConsoleBuffer(handle, &wideBuffer[0], &writeIndex);
-            if (flushStatus != 0) {
+            if (flushStatus != 0)
+            {
                 return flushStatus;
             }
         }
@@ -1942,9 +2276,11 @@ internal unsafe fn i32[min max] WriteUnicodeConsoleToHandle(rawptr<i8[min max]> 
     return FlushWideConsoleBuffer(handle, &wideBuffer[0], &writeIndex);
 }
 
-internal unsafe fn rawptr<i8[min max]> OpenFileWithDisposition(ascii path, i32[min max] desiredAccess, i32[min max] creationDisposition) {
+internal unsafe fn rawptr<i8[min max]> OpenFileWithDisposition(ascii path, i32[min max] desiredAccess, i32[min max] creationDisposition)
+{
     stack mut i16[min max][4096] pathBuffer;
-    if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path)) {
+    if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path))
+    {
         return null;
     }
 
@@ -1957,17 +2293,21 @@ internal unsafe fn rawptr<i8[min max]> OpenFileWithDisposition(ascii path, i32[m
         WinFileAttributeNormal,
         null);
 
-    if (IsInvalidHandle(handle)) {
+    if (IsInvalidHandle(handle))
+    {
         return null;
     }
 
     return (rawptr<i8[min max]>)handle;
 }
 
-internal fn i32[min max] WriteStdoutAscii(ascii text) {
-    unsafe {
+internal fn i32[min max] WriteStdoutAscii(ascii text)
+{
+    unsafe
+    {
         stack rawptr<i8[min max]> handle = CachedStdout();
-        if (handle == null) {
+        if (handle == null)
+        {
             return -1;
         }
 
@@ -1975,14 +2315,18 @@ internal fn i32[min max] WriteStdoutAscii(ascii text) {
     }
 }
 
-internal fn i32[min max] WriteStdoutUnicode(unicode text) {
-    unsafe {
+internal fn i32[min max] WriteStdoutUnicode(unicode text)
+{
+    unsafe
+    {
         stack rawptr<i8[min max]> handle = CachedStdout();
-        if (handle == null) {
+        if (handle == null)
+        {
             return -1;
         }
 
-        if (CachedStdoutIsTerminal()) {
+        if (CachedStdoutIsTerminal())
+        {
             return WriteUnicodeConsoleToHandle(handle, text, false);
         }
 
@@ -1990,19 +2334,24 @@ internal fn i32[min max] WriteStdoutUnicode(unicode text) {
     }
 }
 
-internal unsafe fn i32[min max] WriteStdoutBytes(rawptr<i8[min max]>[length] data, u64[0 2 ** 63 - 1] length) {
+internal unsafe fn i32[min max] WriteStdoutBytes(rawptr<i8[min max]>[length] data, u64[0 2 ** 63 - 1] length)
+{
     stack rawptr<i8[min max]> handle = CachedStdout();
-    if (handle == null) {
+    if (handle == null)
+    {
         return -1;
     }
 
     return WriteBufferToHandle(handle, data, length);
 }
 
-internal fn i32[min max] WriteStdoutAsciiLine(ascii text) {
-    unsafe {
+internal fn i32[min max] WriteStdoutAsciiLine(ascii text)
+{
+    unsafe
+    {
         stack rawptr<i8[min max]> handle = CachedStdout();
-        if (handle == null) {
+        if (handle == null)
+        {
             return -1;
         }
 
@@ -2010,14 +2359,18 @@ internal fn i32[min max] WriteStdoutAsciiLine(ascii text) {
     }
 }
 
-internal fn i32[min max] WriteStdoutUnicodeLine(unicode text) {
-    unsafe {
+internal fn i32[min max] WriteStdoutUnicodeLine(unicode text)
+{
+    unsafe
+    {
         stack rawptr<i8[min max]> handle = CachedStdout();
-        if (handle == null) {
+        if (handle == null)
+        {
             return -1;
         }
 
-        if (CachedStdoutIsTerminal()) {
+        if (CachedStdoutIsTerminal())
+        {
             return WriteUnicodeConsoleToHandle(handle, text, true);
         }
 
@@ -2025,19 +2378,24 @@ internal fn i32[min max] WriteStdoutUnicodeLine(unicode text) {
     }
 }
 
-internal unsafe fn i32[min max] WriteStdoutBytesLine(rawptr<i8[min max]>[length] data, u64[0 2 ** 63 - 1] length) {
+internal unsafe fn i32[min max] WriteStdoutBytesLine(rawptr<i8[min max]>[length] data, u64[0 2 ** 63 - 1] length)
+{
     stack rawptr<i8[min max]> handle = CachedStdout();
-    if (handle == null) {
+    if (handle == null)
+    {
         return -1;
     }
 
     return WriteBufferLineToHandle(handle, data, length);
 }
 
-internal fn i32[min max] WriteStderrAscii(ascii text) {
-    unsafe {
+internal fn i32[min max] WriteStderrAscii(ascii text)
+{
+    unsafe
+    {
         stack rawptr<i8[min max]> handle = CachedStderr();
-        if (handle == null) {
+        if (handle == null)
+        {
             return -1;
         }
 
@@ -2045,14 +2403,18 @@ internal fn i32[min max] WriteStderrAscii(ascii text) {
     }
 }
 
-internal fn i32[min max] WriteStderrUnicode(unicode text) {
-    unsafe {
+internal fn i32[min max] WriteStderrUnicode(unicode text)
+{
+    unsafe
+    {
         stack rawptr<i8[min max]> handle = CachedStderr();
-        if (handle == null) {
+        if (handle == null)
+        {
             return -1;
         }
 
-        if (CachedStderrIsTerminal()) {
+        if (CachedStderrIsTerminal())
+        {
             return WriteUnicodeConsoleToHandle(handle, text, false);
         }
 
@@ -2060,19 +2422,24 @@ internal fn i32[min max] WriteStderrUnicode(unicode text) {
     }
 }
 
-internal unsafe fn i32[min max] WriteStderrBytes(rawptr<i8[min max]>[length] data, u64[0 2 ** 63 - 1] length) {
+internal unsafe fn i32[min max] WriteStderrBytes(rawptr<i8[min max]>[length] data, u64[0 2 ** 63 - 1] length)
+{
     stack rawptr<i8[min max]> handle = CachedStderr();
-    if (handle == null) {
+    if (handle == null)
+    {
         return -1;
     }
 
     return WriteBufferToHandle(handle, data, length);
 }
 
-internal fn i32[min max] WriteStderrAsciiLine(ascii text) {
-    unsafe {
+internal fn i32[min max] WriteStderrAsciiLine(ascii text)
+{
+    unsafe
+    {
         stack rawptr<i8[min max]> handle = CachedStderr();
-        if (handle == null) {
+        if (handle == null)
+        {
             return -1;
         }
 
@@ -2080,14 +2447,18 @@ internal fn i32[min max] WriteStderrAsciiLine(ascii text) {
     }
 }
 
-internal fn i32[min max] WriteStderrUnicodeLine(unicode text) {
-    unsafe {
+internal fn i32[min max] WriteStderrUnicodeLine(unicode text)
+{
+    unsafe
+    {
         stack rawptr<i8[min max]> handle = CachedStderr();
-        if (handle == null) {
+        if (handle == null)
+        {
             return -1;
         }
 
-        if (CachedStderrIsTerminal()) {
+        if (CachedStderrIsTerminal())
+        {
             return WriteUnicodeConsoleToHandle(handle, text, true);
         }
 
@@ -2095,36 +2466,44 @@ internal fn i32[min max] WriteStderrUnicodeLine(unicode text) {
     }
 }
 
-internal unsafe fn i32[min max] WriteStderrBytesLine(rawptr<i8[min max]>[length] data, u64[0 2 ** 63 - 1] length) {
+internal unsafe fn i32[min max] WriteStderrBytesLine(rawptr<i8[min max]>[length] data, u64[0 2 ** 63 - 1] length)
+{
     stack rawptr<i8[min max]> handle = CachedStderr();
-    if (handle == null) {
+    if (handle == null)
+    {
         return -1;
     }
 
     return WriteBufferLineToHandle(handle, data, length);
 }
 
-internal unsafe fn rawptr<i8[min max]> OpenStdin() {
+internal unsafe fn rawptr<i8[min max]> OpenStdin()
+{
     return CachedStdin();
 }
 
-internal unsafe fn void CloseStdin(rawptr<i8[min max]> handle) {
+internal unsafe fn void CloseStdin(rawptr<i8[min max]> handle)
+{
     return;
 }
 
-internal unsafe fn i64[min max] ReadStdin(rawmutptr<i8[min max]>[capacity] buffer, u64[0 2 ** 63 - 1] capacity) {
+internal unsafe fn i64[min max] ReadStdin(rawmutptr<i8[min max]>[capacity] buffer, u64[0 2 ** 63 - 1] capacity)
+{
     stack rawptr<i8[min max]> handle = CachedStdin();
-    if (handle == null || buffer == null || capacity == 0) {
+    if (handle == null || buffer == null || capacity == 0)
+    {
         return 0;
     }
 
     stack mut i32[min max] bytesRead = 0;
     stack i32[min max] request = RequestedChunkLength((i64[min max])capacity);
-    if (request <= 0) {
+    if (request <= 0)
+    {
         return 0;
     }
 
-    if (ReadFile(handle, buffer, request, &bytesRead, null) == 0 || bytesRead <= 0) {
+    if (ReadFile(handle, buffer, request, &bytesRead, null) == 0 || bytesRead <= 0)
+    {
         return 0;
     }
 
@@ -2132,31 +2511,39 @@ internal unsafe fn i64[min max] ReadStdin(rawmutptr<i8[min max]>[capacity] buffe
 }
 
 internal unsafe inline fn i32[min max] WriteAscii(rawptr<i8[min max]> handle, ascii text)
-    where overlap(handle, text) {
+    where overlap(handle, text)
+{
     return WriteAsciiToHandle(handle, text);
 }
 
-internal inline finite law ascii DirectorySeparator() {
+internal inline finite law ascii DirectorySeparator()
+{
     return "\\";
 }
 
-internal inline finite law ascii AlternateDirectorySeparator() {
+internal inline finite law ascii AlternateDirectorySeparator()
+{
     return "/";
 }
 
-internal inline finite law ascii PathSeparator() {
+internal inline finite law ascii PathSeparator()
+{
     return ";";
 }
 
-internal inline finite law bool IsDirectorySeparator(ascii value) {
-    unsafe {
+internal inline finite law bool IsDirectorySeparator(ascii value)
+{
+    unsafe
+    {
         stack i8[min max] unit = *AsciiData(value);
         return unit == (i8[min max])47 || unit == (i8[min max])92;
     }
 }
 
-internal unsafe fn bool IsTerminal(rawptr<i8[min max]> handle) {
-    if (handle == null) {
+internal unsafe fn bool IsTerminal(rawptr<i8[min max]> handle)
+{
+    if (handle == null)
+    {
         return false;
     }
 
@@ -2165,48 +2552,60 @@ internal unsafe fn bool IsTerminal(rawptr<i8[min max]> handle) {
 }
 
 internal unsafe inline fn i32[min max] WriteUnicode(rawptr<i8[min max]> handle, unicode text)
-    where overlap(handle, text) {
-    if (IsTerminal(handle)) {
+    where overlap(handle, text)
+{
+    if (IsTerminal(handle))
+    {
         return WriteUnicodeConsoleToHandle(handle, text, false);
     }
 
     return WriteUnicodeToHandle(handle, text);
 }
 
-internal unsafe fn rawptr<i8[min max]> OpenFileRead(ascii path) {
+internal unsafe fn rawptr<i8[min max]> OpenFileRead(ascii path)
+{
     return OpenFileWithDisposition(path, WinGenericRead, WinOpenExisting);
 }
 
-internal unsafe fn rawptr<i8[min max]> OpenFileWrite(ascii path) {
+internal unsafe fn rawptr<i8[min max]> OpenFileWrite(ascii path)
+{
     return OpenFileWithDisposition(path, WinGenericWrite, WinCreateAlways);
 }
 
-internal unsafe fn rawptr<i8[min max]> OpenFileAppend(ascii path) {
+internal unsafe fn rawptr<i8[min max]> OpenFileAppend(ascii path)
+{
     return OpenFileWithDisposition(path, WinFileAppendData, WinOpenAlways);
 }
 
-internal unsafe fn rawptr<i8[min max]> OpenFileReadWrite(ascii path) {
+internal unsafe fn rawptr<i8[min max]> OpenFileReadWrite(ascii path)
+{
     return OpenFileWithDisposition(path, WinGenericRead | WinGenericWrite, WinOpenExisting);
 }
 
-internal unsafe inline fn i32[min max] CloseFile(rawptr<i8[min max]> handle) {
-    if (handle == null) {
+internal unsafe inline fn i32[min max] CloseFile(rawptr<i8[min max]> handle)
+{
+    if (handle == null)
+    {
         return 0;
     }
 
-    if (CloseHandle(handle) == 0) {
+    if (CloseHandle(handle) == 0)
+    {
         return NegativeLastError();
     }
 
     return 0;
 }
 
-internal unsafe fn i32[min max] FlushFile(rawptr<i8[min max]> handle) {
-    if (handle == null) {
+internal unsafe fn i32[min max] FlushFile(rawptr<i8[min max]> handle)
+{
+    if (handle == null)
+    {
         return 0;
     }
 
-    if (FlushFileBuffers(handle) == 0) {
+    if (FlushFileBuffers(handle) == 0)
+    {
         return NegativeLastError();
     }
 
@@ -2214,19 +2613,23 @@ internal unsafe fn i32[min max] FlushFile(rawptr<i8[min max]> handle) {
 }
 
 internal unsafe fn i64[min max] ReadFile(rawmutptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle)
-    where overlap(buffer, handle) {
-    if (handle == null || buffer == null || size <= 0 || count <= 0) {
+    where overlap(buffer, handle)
+{
+    if (handle == null || buffer == null || size <= 0 || count <= 0)
+    {
         return 0;
     }
 
     stack i64[min max] bytesRequested = size * count;
     stack i32[min max] request = RequestedChunkLength(bytesRequested);
     stack mut i32[min max] bytesRead = 0;
-    if (ReadFile(handle, buffer, request, &bytesRead, null) == 0) {
+    if (ReadFile(handle, buffer, request, &bytesRead, null) == 0)
+    {
         return 0;
     }
 
-    if (bytesRead <= 0) {
+    if (bytesRead <= 0)
+    {
         return 0;
     }
 
@@ -2234,19 +2637,23 @@ internal unsafe fn i64[min max] ReadFile(rawmutptr<i8[min max]> buffer, i64[min 
 }
 
 internal unsafe fn i64[min max] WriteFile(rawptr<i8[min max]> buffer, i64[min max] size, i64[min max] count, rawptr<i8[min max]> handle)
-    where overlap(buffer, handle) {
-    if (handle == null || buffer == null || size <= 0 || count <= 0) {
+    where overlap(buffer, handle)
+{
+    if (handle == null || buffer == null || size <= 0 || count <= 0)
+    {
         return 0;
     }
 
     stack i64[min max] bytesRequested = size * count;
     stack i32[min max] request = RequestedChunkLength(bytesRequested);
     stack mut i32[min max] bytesWritten = 0;
-    if (WriteFile(handle, buffer, request, &bytesWritten, null) == 0) {
+    if (WriteFile(handle, buffer, request, &bytesWritten, null) == 0)
+    {
         return 0;
     }
 
-    if (bytesWritten <= 0) {
+    if (bytesWritten <= 0)
+    {
         return 0;
     }
 
@@ -2254,18 +2661,22 @@ internal unsafe fn i64[min max] WriteFile(rawptr<i8[min max]> buffer, i64[min ma
 }
 
 internal unsafe inline fn i64[min max] ReadFileBytes(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle)
-    where overlap(buffer, handle) {
-    if (handle == null || buffer == null || length == 0) {
+    where overlap(buffer, handle)
+{
+    if (handle == null || buffer == null || length == 0)
+    {
         return 0;
     }
 
     stack i32[min max] request = RequestedChunkLength((i64[min max])length);
     stack mut i32[min max] bytesRead = 0;
-    if (ReadFile(handle, buffer, request, &bytesRead, null) == 0) {
+    if (ReadFile(handle, buffer, request, &bytesRead, null) == 0)
+    {
         return 0;
     }
 
-    if (bytesRead <= 0) {
+    if (bytesRead <= 0)
+    {
         return 0;
     }
 
@@ -2273,18 +2684,22 @@ internal unsafe inline fn i64[min max] ReadFileBytes(rawmutptr<i8[min max]>[leng
 }
 
 internal unsafe inline fn i64[min max] WriteFileBytes(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle)
-    where overlap(buffer, handle) {
-    if (handle == null || buffer == null || length == 0) {
+    where overlap(buffer, handle)
+{
+    if (handle == null || buffer == null || length == 0)
+    {
         return 0;
     }
 
     stack i32[min max] request = RequestedChunkLength((i64[min max])length);
     stack mut i32[min max] bytesWritten = 0;
-    if (WriteFile(handle, buffer, request, &bytesWritten, null) == 0) {
+    if (WriteFile(handle, buffer, request, &bytesWritten, null) == 0)
+    {
         return 0;
     }
 
-    if (bytesWritten <= 0) {
+    if (bytesWritten <= 0)
+    {
         return 0;
     }
 
@@ -2295,25 +2710,31 @@ internal unsafe inline fn i64[min max] CompleteNtFileByteTransfer(
     i32[min max] status,
     rawmutptr<WinIoStatusBlock> ioStatus,
     rawptr<i8[min max]> handle)
-    where overlap(ioStatus, handle) {
+    where overlap(ioStatus, handle)
+{
     stack mut i32[min max] finalStatus = status;
-    if (finalStatus == WinNtStatusPending) {
-        if (WaitForSingleObject(handle, WinInfinite) != WinWaitObject0) {
+    if (finalStatus == WinNtStatusPending)
+    {
+        if (WaitForSingleObject(handle, WinInfinite) != WinWaitObject0)
+        {
             return (i64[min max])NegativeLastError();
         }
 
         finalStatus = (*ioStatus).Status;
     }
 
-    if (finalStatus == WinNtStatusEndOfFile) {
+    if (finalStatus == WinNtStatusEndOfFile)
+    {
         return 0;
     }
 
-    if (finalStatus != WinNtStatusSuccess) {
+    if (finalStatus != WinNtStatusSuccess)
+    {
         return (i64[min max])finalStatus;
     }
 
-    if ((*ioStatus).Information <= 0) {
+    if ((*ioStatus).Information <= 0)
+    {
         return 0;
     }
 
@@ -2321,13 +2742,16 @@ internal unsafe inline fn i64[min max] CompleteNtFileByteTransfer(
 }
 
 internal unsafe inline fn i64[min max] ReadFileBytesFast(rawmutptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle)
-    where overlap(buffer, handle) {
-    if (handle == null || buffer == null || length == 0) {
+    where overlap(buffer, handle)
+{
+    if (handle == null || buffer == null || length == 0)
+    {
         return 0;
     }
 
     stack i32[min max] request = RequestedChunkLength((i64[min max])length);
-    stack mut WinIoStatusBlock ioStatus = new WinIoStatusBlock() {
+    stack mut WinIoStatusBlock ioStatus = new WinIoStatusBlock()
+    {
         Status = 0,
         Padding = 0,
         Information = 0
@@ -2347,13 +2771,16 @@ internal unsafe inline fn i64[min max] ReadFileBytesFast(rawmutptr<i8[min max]>[
 }
 
 internal unsafe inline fn i64[min max] WriteFileBytesFast(rawptr<i8[min max]>[length] buffer, u64[0 2 ** 63 - 1] length, rawptr<i8[min max]> handle)
-    where overlap(buffer, handle) {
-    if (handle == null || buffer == null || length == 0) {
+    where overlap(buffer, handle)
+{
+    if (handle == null || buffer == null || length == 0)
+    {
         return 0;
     }
 
     stack i32[min max] request = RequestedChunkLength((i64[min max])length);
-    stack mut WinIoStatusBlock ioStatus = new WinIoStatusBlock() {
+    stack mut WinIoStatusBlock ioStatus = new WinIoStatusBlock()
+    {
         Status = 0,
         Padding = 0,
         Information = 0
@@ -2372,27 +2799,34 @@ internal unsafe inline fn i64[min max] WriteFileBytesFast(rawptr<i8[min max]>[le
     return CompleteNtFileByteTransfer(status, &ioStatus, handle);
 }
 
-internal unsafe inline fn i64[min max] SeekFile(rawptr<i8[min max]> handle, i64[min max] offset, i32[min max] origin) {
-    if (handle == null) {
+internal unsafe inline fn i64[min max] SeekFile(rawptr<i8[min max]> handle, i64[min max] offset, i32[min max] origin)
+{
+    if (handle == null)
+    {
         return -1;
     }
 
     stack mut i64[min max] newPosition = 0;
-    if (SetFilePointerEx(handle, offset, &newPosition, origin) == 0) {
+    if (SetFilePointerEx(handle, offset, &newPosition, origin) == 0)
+    {
         return (i64[min max])NegativeLastError();
     }
 
     return newPosition;
 }
 
-internal fn i32[min max] DeleteFile(ascii path) {
-    unsafe {
+internal fn i32[min max] DeleteFile(ascii path)
+{
+    unsafe
+    {
         stack mut i16[min max][4096] pathBuffer;
-        if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path)) {
+        if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path))
+        {
             return -1;
         }
 
-        if (DeleteFileW(&pathBuffer[0]) == 0) {
+        if (DeleteFileW(&pathBuffer[0]) == 0)
+        {
             return NegativeLastError();
         }
 
@@ -2400,16 +2834,20 @@ internal fn i32[min max] DeleteFile(ascii path) {
     }
 }
 
-internal fn i32[min max] MoveFile(ascii oldPath, ascii newPath) {
-    unsafe {
+internal fn i32[min max] MoveFile(ascii oldPath, ascii newPath)
+{
+    unsafe
+    {
         stack mut i16[min max][4096] oldPathBuffer;
         stack mut i16[min max][4096] newPathBuffer;
         if (!TryBuildWindowsWidePath(&oldPathBuffer[0], 4096, oldPath)
-            || !TryBuildWindowsWidePath(&newPathBuffer[0], 4096, newPath)) {
+            || !TryBuildWindowsWidePath(&newPathBuffer[0], 4096, newPath))
+            {
             return -1;
         }
 
-        if (MoveFileExW(&oldPathBuffer[0], &newPathBuffer[0], WinMoveFileReplaceExisting) == 0) {
+        if (MoveFileExW(&oldPathBuffer[0], &newPathBuffer[0], WinMoveFileReplaceExisting) == 0)
+        {
             return NegativeLastError();
         }
 
@@ -2417,14 +2855,18 @@ internal fn i32[min max] MoveFile(ascii oldPath, ascii newPath) {
     }
 }
 
-internal fn bool FileExists(ascii path) {
+internal fn bool FileExists(ascii path)
+{
     return PathExists(path);
 }
 
-internal fn bool PathExists(ascii path) {
-    unsafe {
+internal fn bool PathExists(ascii path)
+{
+    unsafe
+    {
         stack mut i16[min max][4096] pathBuffer;
-        if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path)) {
+        if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path))
+        {
             return false;
         }
 
@@ -2432,15 +2874,19 @@ internal fn bool PathExists(ascii path) {
     }
 }
 
-internal fn bool IsFile(ascii path) {
-    unsafe {
+internal fn bool IsFile(ascii path)
+{
+    unsafe
+    {
         stack mut i16[min max][4096] pathBuffer;
-        if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path)) {
+        if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path))
+        {
             return false;
         }
 
         stack i32[min max] attributes = GetFileAttributesW(&pathBuffer[0]);
-        if (attributes == WinInvalidFileAttributes) {
+        if (attributes == WinInvalidFileAttributes)
+        {
             return false;
         }
 
@@ -2448,15 +2894,19 @@ internal fn bool IsFile(ascii path) {
     }
 }
 
-internal fn bool IsDirectory(ascii path) {
-    unsafe {
+internal fn bool IsDirectory(ascii path)
+{
+    unsafe
+    {
         stack mut i16[min max][4096] pathBuffer;
-        if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path)) {
+        if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path))
+        {
             return false;
         }
 
         stack i32[min max] attributes = GetFileAttributesW(&pathBuffer[0]);
-        if (attributes == WinInvalidFileAttributes) {
+        if (attributes == WinInvalidFileAttributes)
+        {
             return false;
         }
 
@@ -2464,14 +2914,18 @@ internal fn bool IsDirectory(ascii path) {
     }
 }
 
-internal fn i32[min max] CreateDirectory(ascii path) {
-    unsafe {
+internal fn i32[min max] CreateDirectory(ascii path)
+{
+    unsafe
+    {
         stack mut i16[min max][4096] pathBuffer;
-        if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path)) {
+        if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path))
+        {
             return -1;
         }
 
-        if (CreateDirectoryW(&pathBuffer[0], null) == 0) {
+        if (CreateDirectoryW(&pathBuffer[0], null) == 0)
+        {
             return NegativeLastError();
         }
 
@@ -2479,14 +2933,18 @@ internal fn i32[min max] CreateDirectory(ascii path) {
     }
 }
 
-internal fn i32[min max] DeleteDirectory(ascii path) {
-    unsafe {
+internal fn i32[min max] DeleteDirectory(ascii path)
+{
+    unsafe
+    {
         stack mut i16[min max][4096] pathBuffer;
-        if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path)) {
+        if (!TryBuildWindowsWidePath(&pathBuffer[0], 4096, path))
+        {
             return -1;
         }
 
-        if (RemoveDirectoryW(&pathBuffer[0]) == 0) {
+        if (RemoveDirectoryW(&pathBuffer[0]) == 0)
+        {
             return NegativeLastError();
         }
 
@@ -2494,7 +2952,8 @@ internal fn i32[min max] DeleteDirectory(ascii path) {
     }
 }
 
-internal unsafe fn bool TryBuildWindowsDirectorySearchPath(rawmutptr<i16[min max]> destination, i64[min max] capacity, ascii path) {
+internal unsafe fn bool TryBuildWindowsDirectorySearchPath(rawmutptr<i16[min max]> destination, i64[min max] capacity, ascii path)
+{
     stack mut System.Runtime.Buffer.FixedByteBuffer4096 pathBuffer = new System.Runtime.Buffer.FixedByteBuffer4096();
     stack mut Ascii searchPath = new Ascii();
     searchPath.Data = pathBuffer.WritePointer();
@@ -2503,18 +2962,21 @@ internal unsafe fn bool TryBuildWindowsDirectorySearchPath(rawmutptr<i16[min max
     stack i64[min max] length = AsciiLength(path);
     stack ascii fullPath = path[0, length];
     stack mut ascii suffix = "\\*";
-    if (length > 0 && IsDirectorySeparator(path[length - 1, 1])) {
+    if (length > 0 && IsDirectorySeparator(path[length - 1, 1]))
+    {
         suffix = "*";
     }
 
-    if (!TryConcatAscii(&searchPath, fullPath, suffix)) {
+    if (!TryConcatAscii(&searchPath, fullPath, suffix))
+    {
         return false;
     }
 
     return TryBuildWindowsWidePath(destination, capacity, AsciiView(searchPath));
 }
 
-internal unsafe fn rawptr<i8[min max]> OpenDirectoryWithFlags(ascii path, i32[min max] additionalFlags) {
+internal unsafe fn rawptr<i8[min max]> OpenDirectoryWithFlags(ascii path, i32[min max] additionalFlags)
+{
     stack mut i8[min max][592] findData;
     stack mut i64[min max] initialLength = 0;
     return OpenDirectoryWithFlagsInto(path, &findData[0], 592, &initialLength, additionalFlags);
@@ -2527,12 +2989,14 @@ internal unsafe fn rawptr<i8[min max]> OpenDirectoryWithFlagsInto(
     rawmutptr<i64[min max]> initialLength,
     i32[min max] additionalFlags)
 {
-    if (buffer == null || capacity < (u64[0 2 ** 63 - 1])WinFindDataMinBytes || initialLength == null) {
+    if (buffer == null || capacity < (u64[0 2 ** 63 - 1])WinFindDataMinBytes || initialLength == null)
+    {
         return null;
     }
 
     stack mut i16[min max][4096] searchPath;
-    if (!TryBuildWindowsDirectorySearchPath(&searchPath[0], 4096, path)) {
+    if (!TryBuildWindowsDirectorySearchPath(&searchPath[0], 4096, path))
+    {
         return null;
     }
 
@@ -2543,7 +3007,8 @@ internal unsafe fn rawptr<i8[min max]> OpenDirectoryWithFlagsInto(
         WinFindExSearchNameMatch,
         null,
         additionalFlags);
-    if (IsInvalidHandle(findHandle)) {
+    if (IsInvalidHandle(findHandle))
+    {
         *initialLength = 0;
         return null;
     }
@@ -2552,11 +3017,13 @@ internal unsafe fn rawptr<i8[min max]> OpenDirectoryWithFlagsInto(
     return (rawptr<i8[min max]>)findHandle;
 }
 
-internal unsafe fn rawptr<i8[min max]> OpenDirectory(ascii path) {
+internal unsafe fn rawptr<i8[min max]> OpenDirectory(ascii path)
+{
     return OpenDirectoryWithFlags(path, 0);
 }
 
-internal unsafe fn rawptr<i8[min max]> OpenDirectoryFast(ascii path) {
+internal unsafe fn rawptr<i8[min max]> OpenDirectoryFast(ascii path)
+{
     return OpenDirectoryWithFlags(path, WinFindFirstExLargeFetch);
 }
 
@@ -2569,30 +3036,38 @@ internal unsafe fn rawptr<i8[min max]> OpenDirectoryFastInto(
     return OpenDirectoryWithFlagsInto(path, buffer, capacity, initialLength, WinFindFirstExLargeFetch);
 }
 
-internal inline fn u64[0 2 ** 63 - 1] DirectoryBufferCapacity() {
+internal inline fn u64[0 2 ** 63 - 1] DirectoryBufferCapacity()
+{
     return (u64[0 2 ** 63 - 1])WinFindDataMinBytes;
 }
 
-internal unsafe inline fn i32[min max] CloseDirectory(rawptr<i8[min max]> handle) {
-    if (handle == null) {
+internal unsafe inline fn i32[min max] CloseDirectory(rawptr<i8[min max]> handle)
+{
+    if (handle == null)
+    {
         return 0;
     }
 
-    if (FindClose(handle) == 0) {
+    if (FindClose(handle) == 0)
+    {
         return NegativeLastError();
     }
 
     return 0;
 }
 
-internal unsafe fn i64[min max] WindowsWideNullTerminatedLength(rawptr<i16[min max]> data, i64[min max] maxLength) {
-    if (data == null || maxLength <= 0) {
+internal unsafe fn i64[min max] WindowsWideNullTerminatedLength(rawptr<i16[min max]> data, i64[min max] maxLength)
+{
+    if (data == null || maxLength <= 0)
+    {
         return 0;
     }
 
     stack mut i64[min max] length = 0;
-    while willexit (length < maxLength) {
-        if (*(&data[length]) == (i16[min max])0) {
+    while willexit (length < maxLength)
+    {
+        if (*(&data[length]) == (i16[min max])0)
+        {
             return length;
         }
 
@@ -2602,29 +3077,37 @@ internal unsafe fn i64[min max] WindowsWideNullTerminatedLength(rawptr<i16[min m
     return maxLength;
 }
 
-internal unsafe finite law bool IsDotWideDirectoryEntry(rawptr<i16[min max]> data, i64[min max] length) {
-    if (data == null) {
+internal unsafe finite law bool IsDotWideDirectoryEntry(rawptr<i16[min max]> data, i64[min max] length)
+{
+    if (data == null)
+    {
         return false;
     }
 
-    if (length == 1) {
+    if (length == 1)
+    {
         return UnsignedWide(*(&data[0])) == 46;
     }
 
-    if (length == 2) {
+    if (length == 2)
+    {
         return UnsignedWide(*(&data[0])) == 46 && UnsignedWide(*(&data[1])) == 46;
     }
 
     return false;
 }
 
-internal inline fn i32[min max] DirectoryEntryKindFromWindowsAttributes(i32[min max] attributes) {
-    unsafe {
-        if ((attributes & WinFileAttributeReparsePoint) != 0) {
+internal inline fn i32[min max] DirectoryEntryKindFromWindowsAttributes(i32[min max] attributes)
+{
+    unsafe
+    {
+        if ((attributes & WinFileAttributeReparsePoint) != 0)
+        {
             return 3;
         }
 
-        if ((attributes & WinFileAttributeDirectory) != 0) {
+        if ((attributes & WinFileAttributeDirectory) != 0)
+        {
             return 2;
         }
 
@@ -2646,22 +3129,28 @@ internal unsafe fn i32[min max] ReadDirectoryEntry(
           overlap(handle, name),
           overlap(handle, kind)
 {
-    if (handle == null || buffer == null || capacity < (u64[0 2 ** 63 - 1])WinFindDataMinBytes || readPos == null || readLength == null || name == null || kind == null) {
+    if (handle == null || buffer == null || capacity < (u64[0 2 ** 63 - 1])WinFindDataMinBytes || readPos == null || readLength == null || name == null || kind == null)
+    {
         return -1;
     }
 
     stack rawmutptr<i8[min max]> nameData = (*name).Data;
     stack i64[min max] nameCapacity = (*name).Capacity;
 
-    while willexit (true) {
-        if (*readLength > 0) {
+    while willexit (true)
+    {
+        if (*readLength > 0)
+        {
             *readLength = 0;
         }
-        else if (FindNextFileW(handle, buffer) == 0) {
+        else if (FindNextFileW(handle, buffer) == 0)
+        {
             stack i32[min max] error = GetLastError();
-            if (error == WinErrorNoMoreFiles) {
+            if (error == WinErrorNoMoreFiles)
+            {
                 *kind = 0;
-                *name = new Ascii() {
+                *name = new Ascii()
+                {
                     Data = nameData,
                     Length = -1,
                     Capacity = nameCapacity
@@ -2669,9 +3158,11 @@ internal unsafe fn i32[min max] ReadDirectoryEntry(
                 return 0;
             }
 
-            if (error <= 0) {
+            if (error <= 0)
+            {
                 *kind = -1;
-                *name = new Ascii() {
+                *name = new Ascii()
+                {
                     Data = nameData,
                     Length = -2,
                     Capacity = nameCapacity
@@ -2680,7 +3171,8 @@ internal unsafe fn i32[min max] ReadDirectoryEntry(
             }
 
             *kind = -error;
-            *name = new Ascii() {
+            *name = new Ascii()
+            {
                 Data = nameData,
                 Length = -2,
                 Capacity = nameCapacity
@@ -2692,14 +3184,17 @@ internal unsafe fn i32[min max] ReadDirectoryEntry(
         stack i32[min max] attributes = *attributesPointer;
         stack rawptr<i16[min max]> nameSource = (rawptr<i16[min max]>)(&buffer[WinFindDataFileNameOffset]);
         stack i64[min max] nameLength = WindowsWideNullTerminatedLength(nameSource, WinFindDataMaxFileNameLength);
-        if (IsDotWideDirectoryEntry(nameSource, nameLength)) {
+        if (IsDotWideDirectoryEntry(nameSource, nameLength))
+        {
             continue;
         }
 
         stack i32[min max] asciiCopyStatus = TryCopyWideAscii(name, nameSource, (i32[min max])nameLength);
-        if (asciiCopyStatus < 0 || (asciiCopyStatus == 0 && !TryCopyWideUtf8(name, nameSource, (i32[min max])nameLength))) {
+        if (asciiCopyStatus < 0 || (asciiCopyStatus == 0 && !TryCopyWideUtf8(name, nameSource, (i32[min max])nameLength)))
+        {
             *kind = -1;
-            *name = new Ascii() {
+            *name = new Ascii()
+            {
                 Data = nameData,
                 Length = -2,
                 Capacity = nameCapacity
@@ -2726,23 +3221,29 @@ internal unsafe inline fn i32[min max] ReadDirectoryEntryInfo(
           overlap(handle, nameLength),
           overlap(handle, kind)
 {
-    if (handle == null || buffer == null || capacity < (u64[0 2 ** 63 - 1])WinFindDataMinBytes || readPos == null || readLength == null || nameLength == null || kind == null) {
+    if (handle == null || buffer == null || capacity < (u64[0 2 ** 63 - 1])WinFindDataMinBytes || readPos == null || readLength == null || nameLength == null || kind == null)
+    {
         return -1;
     }
 
-    while willexit (true) {
-        if (*readLength > 0) {
+    while willexit (true)
+    {
+        if (*readLength > 0)
+        {
             *readLength = 0;
         }
-        else if (FindNextFileW(handle, buffer) == 0) {
+        else if (FindNextFileW(handle, buffer) == 0)
+        {
             stack i32[min max] error = GetLastError();
-            if (error == WinErrorNoMoreFiles) {
+            if (error == WinErrorNoMoreFiles)
+            {
                 *kind = 0;
                 *nameLength = -1;
                 return 0;
             }
 
-            if (error <= 0) {
+            if (error <= 0)
+            {
                 *kind = -1;
                 *nameLength = -2;
                 return -1;
@@ -2757,14 +3258,16 @@ internal unsafe inline fn i32[min max] ReadDirectoryEntryInfo(
         stack i32[min max] attributes = *attributesPointer;
         stack rawptr<i16[min max]> nameSource = (rawptr<i16[min max]>)(&buffer[WinFindDataFileNameOffset]);
         stack i64[min max] wideLength = WindowsWideNullTerminatedLength(nameSource, WinFindDataMaxFileNameLength);
-        if (IsDotWideDirectoryEntry(nameSource, wideLength)) {
+        if (IsDotWideDirectoryEntry(nameSource, wideLength))
+        {
             continue;
         }
 
         stack i64[min max] encodedLength = WideUtf8Length(
             nameSource,
             (i32[min max])wideLength);
-        if (encodedLength < 0) {
+        if (encodedLength < 0)
+        {
             *kind = -1;
             *nameLength = -2;
             return -1;
@@ -2787,51 +3290,61 @@ internal unsafe inline fn i64[min max] ReadDirectoryNameLengthChecksum(
           overlap(handle, readPos),
           overlap(handle, readLength)
 {
-    if (expectedCount < 0) {
+    if (expectedCount < 0)
+    {
         return -1;
     }
 
     stack mut i64[min max] checksum = 0;
     stack mut i64[min max] count = 0;
-    while willexit (true) {
+    while willexit (true)
+    {
         stack mut i64[min max] nameLength = 0;
         stack mut i32[min max] kind = 0;
         stack i32[min max] status = ReadDirectoryEntryInfo(handle, buffer, capacity, readPos, readLength, &nameLength, &kind);
-        if (status == 0) {
-            if (count == expectedCount) {
+        if (status == 0)
+        {
+            if (count == expectedCount)
+            {
                 return checksum;
             }
 
             return -1;
         }
 
-        if (status != 1 || nameLength < 0) {
+        if (status != 1 || nameLength < 0)
+        {
             return -1;
         }
 
         checksum += nameLength;
         count += 1;
-        if (count > expectedCount) {
+        if (count > expectedCount)
+        {
             return -1;
         }
     }
 }
 
-internal unsafe fn bool TryCurrentDirectory(rawmutptr<Ascii> destination) {
-    if (destination == null) {
+internal unsafe fn bool TryCurrentDirectory(rawmutptr<Ascii> destination)
+{
+    if (destination == null)
+    {
         return false;
     }
 
     stack rawmutptr<i8[min max]> data = (*destination).Data;
     stack i64[min max] capacity = (*destination).Capacity;
-    if (data == null || capacity <= 0) {
+    if (data == null || capacity <= 0)
+    {
         ResetAsciiDestination(destination);
         return false;
     }
 
     stack mut i16[min max][4096] pathBuffer;
     stack i32[min max] written = GetCurrentDirectoryW(4096, &pathBuffer[0]);
-    if (written <= 0 || written >= 4096) {
+    if (written <= 0 || written >= 4096)
+    {
         ResetAsciiDestination(destination);
         return false;
     }

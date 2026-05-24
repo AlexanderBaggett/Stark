@@ -780,7 +780,8 @@ public sealed class ExamplesCompileRunTests
                 import Facade
                 module App
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     return Facade.Quadruple(5);
                 }
                 """);

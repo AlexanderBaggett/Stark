@@ -9,8 +9,10 @@ public sealed class SystemPromotedRuntimeBufferStandardLibraryTests : StandardLi
         import System.Memory
         module App
 
-        fn bool Ok(MemoryStatus status) {
-            switch (status) {
+        fn bool Ok(MemoryStatus status)
+        {
+            switch (status)
+            {
                 case MemoryStatus.Ok:
                     return true;
                 case MemoryStatus.Err(var error):
@@ -18,8 +20,10 @@ public sealed class SystemPromotedRuntimeBufferStandardLibraryTests : StandardLi
             }
         }
 
-        fn bool TooLarge(MemoryStatus status) {
-            switch (status) {
+        fn bool TooLarge(MemoryStatus status)
+        {
+            switch (status)
+            {
                 case MemoryStatus.Ok:
                     return false;
                 case MemoryStatus.Err(var error):
@@ -27,9 +31,11 @@ public sealed class SystemPromotedRuntimeBufferStandardLibraryTests : StandardLi
             }
         }
 
-        fn i64[min max] SumBytes(borrow i8[min max][] values, u64[0 2 ** 63 - 1] count) {
+        fn i64[min max] SumBytes(borrow i8[min max][] values, u64[0 2 ** 63 - 1] count)
+        {
             stack mut i64[min max] checksum = 0;
-            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
+            for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+            {
                 checksum += (i64[min max])values[index];
             }
 
@@ -39,8 +45,10 @@ public sealed class SystemPromotedRuntimeBufferStandardLibraryTests : StandardLi
         fn bool WriteFirstWritable(
             mut borrow System.Runtime.Buffer.FixedByteBuffer512 buffer,
             i8[min max] value,
-            u64[0 2 ** 63 - 1] expectedWritable) {
-            if (buffer.Writable() != expectedWritable) {
+            u64[0 2 ** 63 - 1] expectedWritable)
+            {
+                if (buffer.Writable() != expectedWritable)
+            {
                 return false;
             }
 
@@ -48,8 +56,10 @@ public sealed class SystemPromotedRuntimeBufferStandardLibraryTests : StandardLi
             return true;
         }
 
-        fn bool IncrementFirstReadable(mut borrow System.Runtime.Buffer.FixedByteBuffer512 buffer) {
-            if (buffer.Readable() == 0) {
+        fn bool IncrementFirstReadable(mut borrow System.Runtime.Buffer.FixedByteBuffer512 buffer)
+        {
+            if (buffer.Readable() == 0)
+            {
                 return false;
             }
 
@@ -57,169 +67,207 @@ public sealed class SystemPromotedRuntimeBufferStandardLibraryTests : StandardLi
             return true;
         }
 
-        export fn i32[min max] main() {
+        export fn i32[min max] main()
+        {
             stack mut System.Runtime.Buffer.FixedByteBuffer512 fixedBuffer = new();
-            stack mut i8[min max][8] source = { 1, 2, 3, 4, 5, 6, 7, 8 };
+            stack mut i8[min max][8] source =
+            {
+                1, 2, 3, 4, 5, 6, 7, 8
+            };
 
-            if (fixedBuffer.Capacity() != 512 || !fixedBuffer.IsEmpty() || fixedBuffer.Writable() != 512) {
+            if (fixedBuffer.Capacity() != 512 || !fixedBuffer.IsEmpty() || fixedBuffer.Writable() != 512)
+            {
                 return 1;
             }
 
-            if (!Ok(fixedBuffer.WriteSlice(source, 8))) {
+            if (!Ok(fixedBuffer.WriteSlice(source, 8)))
+            {
                 return 2;
             }
 
-            if (fixedBuffer.Readable() != 8 || fixedBuffer.Writable() != 504) {
+            if (fixedBuffer.Readable() != 8 || fixedBuffer.Writable() != 504)
+            {
                 return 3;
             }
 
             stack i8[min max][] initial = fixedBuffer.ReadSlice();
-            if (SumBytes(initial, 8) != 36) {
+            if (SumBytes(initial, 8) != 36)
+            {
                 return 4;
             }
 
             fixedBuffer.AdvanceRead(3);
-            if (fixedBuffer.Readable() != 5) {
+            if (fixedBuffer.Readable() != 5)
+            {
                 return 5;
             }
 
             fixedBuffer.Compact();
-            if (fixedBuffer.Readable() != 5 || fixedBuffer.Writable() != 507) {
+            if (fixedBuffer.Readable() != 5 || fixedBuffer.Writable() != 507)
+            {
                 return 6;
             }
 
             stack i8[min max][] compacted = fixedBuffer.ReadSlice();
-            if (compacted[0] != 4 || compacted[4] != 8) {
+            if (compacted[0] != 4 || compacted[4] != 8)
+            {
                 return 7;
             }
 
-            if (!Ok(fixedBuffer.WriteFill(9, 507)) || !fixedBuffer.IsFull()) {
+            if (!Ok(fixedBuffer.WriteFill(9, 507)) || !fixedBuffer.IsFull())
+            {
                 return 8;
             }
 
-            if (!TooLarge(fixedBuffer.WriteByte(1))) {
+            if (!TooLarge(fixedBuffer.WriteByte(1)))
+            {
                 return 9;
             }
 
             fixedBuffer.AdvanceRead(512);
-            if (!fixedBuffer.IsEmpty() || fixedBuffer.Writable() != 512) {
+            if (!fixedBuffer.IsEmpty() || fixedBuffer.Writable() != 512)
+            {
                 return 10;
             }
 
-            if (!Ok(fixedBuffer.WriteFill(5, 4))) {
+            if (!Ok(fixedBuffer.WriteFill(5, 4)))
+            {
                 return 11;
             }
 
-            if (!WriteFirstWritable(fixedBuffer, 6, 508)) {
+            if (!WriteFirstWritable(fixedBuffer, 6, 508))
+            {
                 return 12;
             }
 
             fixedBuffer.AdvanceWrite(1);
-            if (!IncrementFirstReadable(fixedBuffer)) {
+            if (!IncrementFirstReadable(fixedBuffer))
+            {
                 return 13;
             }
 
             stack i8[min max][] manual = fixedBuffer.ReadSlice();
-            if (fixedBuffer.Readable() != 5 || manual[0] != 6 || manual[4] != 6) {
+            if (fixedBuffer.Readable() != 5 || manual[0] != 6 || manual[4] != 6)
+            {
                 return 14;
             }
 
             stack u64[0 2 ** 63 - 1] aliasedFixedCount = fixedBuffer.Readable();
             stack i8[min max][] aliasedFixedSource = fixedBuffer.ReadSlice();
-            if (!Ok(fixedBuffer.WriteSlice(aliasedFixedSource, aliasedFixedCount))) {
+            if (!Ok(fixedBuffer.WriteSlice(aliasedFixedSource, aliasedFixedCount)))
+            {
                 return 32;
             }
 
             stack i8[min max][] duplicatedFixed = fixedBuffer.ReadSlice();
-            if (fixedBuffer.Readable() != 10 || duplicatedFixed[5] != duplicatedFixed[0] || duplicatedFixed[9] != duplicatedFixed[4]) {
+            if (fixedBuffer.Readable() != 10 || duplicatedFixed[5] != duplicatedFixed[0] || duplicatedFixed[9] != duplicatedFixed[4])
+            {
                 return 33;
             }
 
             fixedBuffer.Clear();
-            if (!fixedBuffer.IsEmpty() || fixedBuffer.Readable() != 0 || fixedBuffer.Writable() != 512) {
+            if (!fixedBuffer.IsEmpty() || fixedBuffer.Readable() != 0 || fixedBuffer.Writable() != 512)
+            {
                 return 15;
             }
 
             fixedBuffer.Compact();
-            if (!fixedBuffer.IsEmpty() || fixedBuffer.Readable() != 0 || fixedBuffer.Writable() != 512) {
+            if (!fixedBuffer.IsEmpty() || fixedBuffer.Readable() != 0 || fixedBuffer.Writable() != 512)
+            {
                 return 34;
             }
 
             stack mut System.Runtime.Buffer.DynamicByteBuffer dynamicBuffer = new();
-            if (!Ok(dynamicBuffer.Reserve(16)) || dynamicBuffer.Capacity() < 16) {
+            if (!Ok(dynamicBuffer.Reserve(16)) || dynamicBuffer.Capacity() < 16)
+            {
                 return 16;
             }
 
-            if (!Ok(dynamicBuffer.WriteByte(10))) {
+            if (!Ok(dynamicBuffer.WriteByte(10)))
+            {
                 return 17;
             }
 
-            if (!Ok(dynamicBuffer.WriteSlice(source, 8))) {
+            if (!Ok(dynamicBuffer.WriteSlice(source, 8)))
+            {
                 return 18;
             }
 
-            if (!Ok(dynamicBuffer.WriteFill(2, 4))) {
+            if (!Ok(dynamicBuffer.WriteFill(2, 4)))
+            {
                 return 19;
             }
 
-            if (dynamicBuffer.Length() != 13 || dynamicBuffer.Readable() != 13) {
+            if (dynamicBuffer.Length() != 13 || dynamicBuffer.Readable() != 13)
+            {
                 return 20;
             }
 
             stack mut i8[min max] popped = 0;
-            if (!dynamicBuffer.TryReadByte(popped) || popped != 10) {
+            if (!dynamicBuffer.TryReadByte(popped) || popped != 10)
+            {
                 return 21;
             }
 
             dynamicBuffer.AdvanceRead(4);
             dynamicBuffer.Compact();
 
-            if (dynamicBuffer.Length() != 8 || dynamicBuffer.Readable() != 8) {
+            if (dynamicBuffer.Length() != 8 || dynamicBuffer.Readable() != 8)
+            {
                 return 22;
             }
 
             stack i8[min max][] remaining = dynamicBuffer.ReadSlice();
-            if (remaining[0] != 5 || remaining[3] != 8 || remaining[7] != 2) {
+            if (remaining[0] != 5 || remaining[3] != 8 || remaining[7] != 2)
+            {
                 return 23;
             }
 
             stack u64[0 2 ** 63 - 1] aliasedDynamicCount = dynamicBuffer.Readable();
             stack i8[min max][] aliasedDynamicSource = dynamicBuffer.ReadSlice();
-            if (!Ok(dynamicBuffer.WriteSlice(aliasedDynamicSource, aliasedDynamicCount))) {
+            if (!Ok(dynamicBuffer.WriteSlice(aliasedDynamicSource, aliasedDynamicCount)))
+            {
                 return 30;
             }
 
             stack i8[min max][] duplicatedDynamic = dynamicBuffer.ReadSlice();
-            if (dynamicBuffer.Readable() != 16 || duplicatedDynamic[8] != duplicatedDynamic[0] || duplicatedDynamic[15] != duplicatedDynamic[7]) {
+            if (dynamicBuffer.Readable() != 16 || duplicatedDynamic[8] != duplicatedDynamic[0] || duplicatedDynamic[15] != duplicatedDynamic[7])
+            {
                 return 31;
             }
 
-            if (!TooLarge(dynamicBuffer.Reserve((u64[0 2 ** 63 - 1])(2 ** 63 - 1)))) {
+            if (!TooLarge(dynamicBuffer.Reserve((u64[0 2 ** 63 - 1])(2 ** 63 - 1))))
+            {
                 return 24;
             }
 
             dynamicBuffer.Clear();
-            if (!dynamicBuffer.IsEmpty() || dynamicBuffer.Length() != 0) {
+            if (!dynamicBuffer.IsEmpty() || dynamicBuffer.Length() != 0)
+            {
                 return 25;
             }
 
             dynamicBuffer.Compact();
-            if (!dynamicBuffer.IsEmpty() || dynamicBuffer.Length() != 0) {
+            if (!dynamicBuffer.IsEmpty() || dynamicBuffer.Length() != 0)
+            {
                 return 36;
             }
 
             stack mut System.Runtime.Buffer.FixedByteBuffer4096 fixed4096 = new();
-            if (!Ok(fixed4096.WriteFill(3, 4096)) || !fixed4096.IsFull()) {
+            if (!Ok(fixed4096.WriteFill(3, 4096)) || !fixed4096.IsFull())
+            {
                 return 26;
             }
 
             fixed4096.Compact();
-            if (!fixed4096.IsFull() || fixed4096.Readable() != 4096) {
+            if (!fixed4096.IsFull() || fixed4096.Readable() != 4096)
+            {
                 return 35;
             }
 
             stack mut System.Runtime.Buffer.FixedByteBuffer8192 fixed8192 = new();
-            if (!Ok(fixed8192.WriteByte(4)) || fixed8192.Readable() != 1) {
+            if (!Ok(fixed8192.WriteByte(4)) || fixed8192.Readable() != 1)
+            {
                 return 27;
             }
 
@@ -244,15 +292,17 @@ public sealed class SystemPromotedRuntimeBufferStandardLibraryTests : StandardLi
                 fn System.Memory.MemoryStatus FillFixed(
                     mut borrow System.Runtime.Buffer.FixedByteBuffer512 buffer,
                     i8[min max] value,
-                    u64[0 2 ** 63 - 1] count) {
-                    return buffer.WriteFill(value, count);
+                    u64[0 2 ** 63 - 1] count)
+                    {
+                        return buffer.WriteFill(value, count);
                 }
 
                 fn System.Memory.MemoryStatus AppendDynamic(
                     mut borrow System.Runtime.Buffer.DynamicByteBuffer buffer,
                     borrow i8[min max][] source,
-                    u64[0 2 ** 63 - 1] count) {
-                    return buffer.WriteSlice(source, count);
+                    u64[0 2 ** 63 - 1] count)
+                    {
+                        return buffer.WriteSlice(source, count);
                 }
                 """,
                 appPath),

@@ -105,7 +105,7 @@ Use `camelCase` for:
 Examples:
 
 ```stark
-fn i32 Add(i32 left, i32 right) 
+fn i32 Add(i32 left, i32 right)
 {
     stack i32 total = left + right;
     return total;
@@ -121,13 +121,15 @@ Use `PascalCase` for fields and record members.
 Examples:
 
 ```stark
-struct Box 
+struct Box
 {
     i32[min max] Width;
     i32[min max] Height;
 }
 
-record Point(i32[min max] X, i32[min max] Y) { }
+record Point(i32[min max] X, i32[min max] Y)
+{
+}
 ```
 
 This matches Stark's C#-like surface and keeps type shapes visually consistent with constructors and object initializers.
@@ -189,6 +191,12 @@ and use `where same(a, b)` only when the API requires identical storage. Keep
 `where disjoint(a[start, count], b[start, count])` for subregion facts the
 default cannot express. For hot overlap-safe APIs, prefer a public overlap-safe
 wrapper plus an internal default-disjoint fast path.
+
+
+## Standard Library Imports
+
+Prefer to import modules from the standard library rather than directly referencing their functions directly through their module namespace.
+
 
 ## FFI and ABI Boundary Rules
 
@@ -285,7 +293,8 @@ const rawptr<i8[min max]> stdout = null;
 
 public fn void WriteLine(ascii text)
 {
-    unsafe {
+    unsafe
+    {
         fputs(text, stdout);
         fputs("\n", stdout);
     }
@@ -344,10 +353,10 @@ Do not use tabs in Stark source.
 
 ### Braces
 
-Use K&R-style braces as in the existing examples:
+Use Allman-style braces as in the existing examples:
 
 ```stark
-fn i32 Add(i32 left, i32 right) 
+fn i32 Add(i32 left, i32 right)
 {
     return left + right;
 }
@@ -355,7 +364,7 @@ fn i32 Add(i32 left, i32 right)
 
 ### Spacing
 
-- put one space before `{`
+- put the opening brace on the next line for blocks
 - put one space after commas
 - do not add extra interior spaces just to line things up vertically
 - keep unary and postfix expressions tight
@@ -389,13 +398,13 @@ export fn i32[min max] main()
 ```stark
 module Geometry
 
-struct Box 
+struct Box
 {
     i32 Width;
     i32 Height;
 }
 
-public finite law i32 Area(Box box) 
+public finite law i32 Area(Box box)
 {
     return box.Width * box.Height;
 }
@@ -411,7 +420,8 @@ const rawptr<i8[min max]> stdout = null;
 
 public fn void Write(ascii text)
 {
-    unsafe {
+    unsafe
+    {
         fputs(text, stdout);
     }
 

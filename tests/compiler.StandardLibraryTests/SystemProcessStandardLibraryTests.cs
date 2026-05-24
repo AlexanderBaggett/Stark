@@ -16,11 +16,13 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
                 import System.Process
                 module Demo
 
-                fn i32[min max] ReadCurrentProcess() {
+                fn i32[min max] ReadCurrentProcess()
+                {
                     return System.Process.CurrentId();
                 }
 
-                fn void Stop(i32[min max] code) {
+                fn void Stop(i32[min max] code)
+                {
                     System.Process.Exit(code);
                     return;
                 }
@@ -67,8 +69,10 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
                 import System.Process
                 module App
 
-                export fn i32[min max] main() {
-                    if (System.Process.CurrentId() <= 0) {
+                export fn i32[min max] main()
+                {
+                    if (System.Process.CurrentId() <= 0)
+                    {
                         return 3;
                     }
 
@@ -141,15 +145,18 @@ public sealed class SystemProcessStandardLibraryTests : StandardLibraryTestSuite
                 import System
                 module App
 
-                fn i32[min max] Run() {
-                    if (System.Process.CurrentId() < 0) {
+                fn i32[min max] Run()
+                {
+                    if (System.Process.CurrentId() < 0)
+                    {
                         return 1;
                     }
 
                     return 0;
                 }
 
-                fn void Stop() {
+                fn void Stop()
+                {
                     System.Process.Exit(5);
                     return;
                 }

@@ -4,55 +4,69 @@ module System.Runtime.ConsoleInput
 const ConsoleInputUnicodeCapacity = 8192;
 const ConsoleInputByteCapacity = 8192;
 
-internal struct ConsoleByteStorage {
+internal struct ConsoleByteStorage
+{
     i8[min max][8192] Storage;
 }
 
-internal struct ConsoleCodePointByteStorage {
+internal struct ConsoleCodePointByteStorage
+{
     i8[min max][4] Storage;
 }
 
-internal struct ConsoleSingleByteStorage {
+internal struct ConsoleSingleByteStorage
+{
     i8[min max][1] Storage;
 }
 
-internal struct UnicodeConsoleLineStorage {
+internal struct UnicodeConsoleLineStorage
+{
     i32[min max][8192] Storage;
 }
 
-internal struct UnicodeConsoleUnitStorage {
+internal struct UnicodeConsoleUnitStorage
+{
     i32[min max][1] Storage;
 }
 
 static mut UnicodeConsoleLineStorage ConsoleReadLineStorage = new UnicodeConsoleLineStorage();
 static mut UnicodeConsoleUnitStorage ConsoleReadUnitStorage = new UnicodeConsoleUnitStorage();
 
-fn i32[min max] UnsignedByte(i8[min max] value) {
-    if (value < 0) {
+fn i32[min max] UnsignedByte(i8[min max] value)
+{
+    if (value < 0)
+    {
         return ((i32[min max])value) + 256;
     }
 
     return (i32[min max])value;
 }
 
-fn bool IsUtf8ContinuationByte(i8[min max] value) {
-    unsafe {
+fn bool IsUtf8ContinuationByte(i8[min max] value)
+{
+    unsafe
+    {
         stack i32[min max] unit = UnsignedByte(value);
         return 128 <= unit && unit <= 191;
     }
 }
 
-fn i32[min max] NormalizeUnicodeCodePoint(i32[min max] codePoint) {
-    unsafe {
-        if (codePoint < 0) {
+fn i32[min max] NormalizeUnicodeCodePoint(i32[min max] codePoint)
+{
+    unsafe
+    {
+        if (codePoint < 0)
+        {
             return 65533;
         }
 
-        if (55296 <= codePoint && codePoint <= 57343) {
+        if (55296 <= codePoint && codePoint <= 57343)
+        {
             return 65533;
         }
 
-        if (codePoint > 1114111) {
+        if (codePoint > 1114111)
+        {
             return 65533;
         }
 
@@ -60,30 +74,37 @@ fn i32[min max] NormalizeUnicodeCodePoint(i32[min max] codePoint) {
     }
 }
 
-unsafe fn bool TryDecodeUtf8CodePoint(rawptr<i8[min max]> data, i64[min max] length, rawmutptr<i64[min max]> index, rawmutptr<i32[min max]> codePoint) {
-    if (data == null || index == null || codePoint == null) {
+unsafe fn bool TryDecodeUtf8CodePoint(rawptr<i8[min max]> data, i64[min max] length, rawmutptr<i64[min max]> index, rawmutptr<i32[min max]> codePoint)
+{
+    if (data == null || index == null || codePoint == null)
+    {
         return false;
     }
 
     stack i64[min max] readIndex = *index;
-    if (readIndex < 0 || readIndex >= length) {
+    if (readIndex < 0 || readIndex >= length)
+    {
         return false;
     }
 
     stack i32[min max] first = UnsignedByte(*(&data[readIndex]));
-    if (first <= 127) {
+    if (first <= 127)
+    {
         *index = readIndex + 1;
         *codePoint = first;
         return true;
     }
 
-    if (194 <= first && first <= 223) {
-        if (readIndex + 1 >= length) {
+    if (194 <= first && first <= 223)
+    {
+        if (readIndex + 1 >= length)
+        {
             return false;
         }
 
         stack i8[min max] secondRaw = *(&data[readIndex + 1]);
-        if (!IsUtf8ContinuationByte(secondRaw)) {
+        if (!IsUtf8ContinuationByte(secondRaw))
+        {
             return false;
         }
 
@@ -93,24 +114,29 @@ unsafe fn bool TryDecodeUtf8CodePoint(rawptr<i8[min max]> data, i64[min max] len
         return true;
     }
 
-    if (224 <= first && first <= 239) {
-        if (readIndex + 2 >= length) {
+    if (224 <= first && first <= 239)
+    {
+        if (readIndex + 2 >= length)
+        {
             return false;
         }
 
         stack i8[min max] secondRaw = *(&data[readIndex + 1]);
         stack i8[min max] thirdRaw = *(&data[readIndex + 2]);
-        if (!IsUtf8ContinuationByte(secondRaw) || !IsUtf8ContinuationByte(thirdRaw)) {
+        if (!IsUtf8ContinuationByte(secondRaw) || !IsUtf8ContinuationByte(thirdRaw))
+        {
             return false;
         }
 
         stack i32[min max] second = UnsignedByte(secondRaw);
         stack i32[min max] third = UnsignedByte(thirdRaw);
-        if (first == 224 && second < 160) {
+        if (first == 224 && second < 160)
+        {
             return false;
         }
 
-        if (first == 237 && second >= 160) {
+        if (first == 237 && second >= 160)
+        {
             return false;
         }
 
@@ -121,8 +147,10 @@ unsafe fn bool TryDecodeUtf8CodePoint(rawptr<i8[min max]> data, i64[min max] len
         return true;
     }
 
-    if (240 <= first && first <= 244) {
-        if (readIndex + 3 >= length) {
+    if (240 <= first && first <= 244)
+    {
+        if (readIndex + 3 >= length)
+        {
             return false;
         }
 
@@ -131,18 +159,21 @@ unsafe fn bool TryDecodeUtf8CodePoint(rawptr<i8[min max]> data, i64[min max] len
         stack i8[min max] fourthRaw = *(&data[readIndex + 3]);
         if (!IsUtf8ContinuationByte(secondRaw)
             || !IsUtf8ContinuationByte(thirdRaw)
-            || !IsUtf8ContinuationByte(fourthRaw)) {
+            || !IsUtf8ContinuationByte(fourthRaw))
+            {
             return false;
         }
 
         stack i32[min max] second = UnsignedByte(secondRaw);
         stack i32[min max] third = UnsignedByte(thirdRaw);
         stack i32[min max] fourth = UnsignedByte(fourthRaw);
-        if (first == 240 && second < 144) {
+        if (first == 240 && second < 144)
+        {
             return false;
         }
 
-        if (first == 244 && second > 143) {
+        if (first == 244 && second > 143)
+        {
             return false;
         }
 
@@ -157,22 +188,28 @@ unsafe fn bool TryDecodeUtf8CodePoint(rawptr<i8[min max]> data, i64[min max] len
     return false;
 }
 
-fn i64[min max] Utf8ExpectedByteCount(i8[min max] firstByte) {
-    unsafe {
+fn i64[min max] Utf8ExpectedByteCount(i8[min max] firstByte)
+{
+    unsafe
+    {
         stack i32[min max] first = UnsignedByte(firstByte);
-        if (first <= 127) {
+        if (first <= 127)
+        {
             return 1;
         }
 
-        if (194 <= first && first <= 223) {
+        if (194 <= first && first <= 223)
+        {
             return 2;
         }
 
-        if (224 <= first && first <= 239) {
+        if (224 <= first && first <= 239)
+        {
             return 3;
         }
 
-        if (240 <= first && first <= 244) {
+        if (240 <= first && first <= 244)
+        {
             return 4;
         }
 
@@ -180,13 +217,16 @@ fn i64[min max] Utf8ExpectedByteCount(i8[min max] firstByte) {
     }
 }
 
-unsafe fn bool TryReadInputByte(rawmutptr<i8[min max]> destination) {
-    if (destination == null) {
+unsafe fn bool TryReadInputByte(rawmutptr<i8[min max]> destination)
+{
+    if (destination == null)
+    {
         return false;
     }
 
     stack rawptr<i8[min max]> handle = System.IO.File.OpenRead("/dev/stdin");
-    if (handle == null) {
+    if (handle == null)
+    {
         return false;
     }
 
@@ -195,17 +235,21 @@ unsafe fn bool TryReadInputByte(rawmutptr<i8[min max]> destination) {
     return readCount == 1;
 }
 
-unsafe fn i64[min max] DecodeUtf8BytesToUnicode(rawptr<i8[min max]> data, i64[min max] length, rawmutptr<i32[min max]> destination, i64[min max] capacity) {
-    if (destination == null || capacity <= 0 || length <= 0) {
+unsafe fn i64[min max] DecodeUtf8BytesToUnicode(rawptr<i8[min max]> data, i64[min max] length, rawmutptr<i32[min max]> destination, i64[min max] capacity)
+{
+    if (destination == null || capacity <= 0 || length <= 0)
+    {
         return 0;
     }
 
     stack mut i64[min max] readIndex = 0;
     stack mut i64[min max] writeIndex = 0;
-    while willexit (readIndex < length && writeIndex < capacity) {
+    while willexit (readIndex < length && writeIndex < capacity)
+    {
         stack i64[min max] start = readIndex;
         stack mut i32[min max] codePoint = 65533;
-        if (!TryDecodeUtf8CodePoint(data, length, &readIndex, &codePoint)) {
+        if (!TryDecodeUtf8CodePoint(data, length, &readIndex, &codePoint))
+        {
             readIndex = start + 1;
         }
 
@@ -216,9 +260,12 @@ unsafe fn i64[min max] DecodeUtf8BytesToUnicode(rawptr<i8[min max]> data, i64[mi
     return writeIndex;
 }
 
-fn Unicode BuildConsoleReadLineResult(i64[min max] length) {
-    unsafe {
-        return new Unicode() {
+fn Unicode BuildConsoleReadLineResult(i64[min max] length)
+{
+    unsafe
+    {
+        return new Unicode()
+        {
             Data = &ConsoleReadLineStorage.Storage[0],
             Length = length,
             Capacity = ConsoleInputUnicodeCapacity
@@ -226,13 +273,17 @@ fn Unicode BuildConsoleReadLineResult(i64[min max] length) {
     }
 }
 
-fn Unicode BuildConsoleReadUnitResult(i32[min max] codePoint, i64[min max] length) {
-    unsafe {
-        if (length > 0) {
+fn Unicode BuildConsoleReadUnitResult(i32[min max] codePoint, i64[min max] length)
+{
+    unsafe
+    {
+        if (length > 0)
+        {
             ConsoleReadUnitStorage.Storage[0] = NormalizeUnicodeCodePoint(codePoint);
         }
 
-        return new Unicode() {
+        return new Unicode()
+        {
             Data = &ConsoleReadUnitStorage.Storage[0],
             Length = length,
             Capacity = 1
@@ -240,19 +291,25 @@ fn Unicode BuildConsoleReadUnitResult(i32[min max] codePoint, i64[min max] lengt
     }
 }
 
-internal fn Unicode ReadLineUnicode() {
-    unsafe {
+internal fn Unicode ReadLineUnicode()
+{
+    unsafe
+    {
         stack mut ConsoleByteStorage lineBytes = new ConsoleByteStorage();
         stack mut ConsoleSingleByteStorage nextByte = new ConsoleSingleByteStorage();
         stack mut i64[min max] byteLength = 0;
 
-        while willexit (byteLength < ConsoleInputByteCapacity) {
-            if (!TryReadInputByte(&nextByte.Storage[0])) {
+        while willexit (byteLength < ConsoleInputByteCapacity)
+        {
+            if (!TryReadInputByte(&nextByte.Storage[0]))
+            {
                 break;
             }
 
-            if (nextByte.Storage[0] == (i8[min max])10) {
-                if (byteLength > 0 && lineBytes.Storage[byteLength - 1] == (i8[min max])13) {
+            if (nextByte.Storage[0] == (i8[min max])10)
+            {
+                if (byteLength > 0 && lineBytes.Storage[byteLength - 1] == (i8[min max])13)
+                {
                     byteLength -= 1;
                 }
 
@@ -264,7 +321,8 @@ internal fn Unicode ReadLineUnicode() {
         }
 
         stack mut rawptr<i8[min max]> lineData = null;
-        if (byteLength > 0) {
+        if (byteLength > 0)
+        {
             lineData = &lineBytes.Storage[0];
         }
 
@@ -277,25 +335,32 @@ internal fn Unicode ReadLineUnicode() {
     }
 }
 
-internal fn Unicode ReadUnicode() {
-    unsafe {
+internal fn Unicode ReadUnicode()
+{
+    unsafe
+    {
         stack mut ConsoleCodePointByteStorage utf8Bytes = new ConsoleCodePointByteStorage();
-        if (!TryReadInputByte(&utf8Bytes.Storage[0])) {
+        if (!TryReadInputByte(&utf8Bytes.Storage[0]))
+        {
             return BuildConsoleReadUnitResult(0, 0);
         }
 
         stack i64[min max] expectedLength = Utf8ExpectedByteCount(utf8Bytes.Storage[0]);
-        if (expectedLength <= 0) {
+        if (expectedLength <= 0)
+        {
             return BuildConsoleReadUnitResult(65533, 1);
         }
 
-        if (expectedLength == 1) {
+        if (expectedLength == 1)
+        {
             return BuildConsoleReadUnitResult(UnsignedByte(utf8Bytes.Storage[0]), 1);
         }
 
         stack mut i64[min max] index = 1;
-        while willexit (index < expectedLength) {
-            if (!TryReadInputByte(&utf8Bytes.Storage[index])) {
+        while willexit (index < expectedLength)
+        {
+            if (!TryReadInputByte(&utf8Bytes.Storage[index]))
+            {
                 return BuildConsoleReadUnitResult(65533, 1);
             }
 
@@ -305,7 +370,8 @@ internal fn Unicode ReadUnicode() {
         stack mut i64[min max] consumed = 0;
         stack mut i32[min max] codePoint = 65533;
         if (TryDecodeUtf8CodePoint(&utf8Bytes.Storage[0], expectedLength, &consumed, &codePoint)
-            && consumed == expectedLength) {
+            && consumed == expectedLength)
+            {
             return BuildConsoleReadUnitResult(codePoint, 1);
         }
 

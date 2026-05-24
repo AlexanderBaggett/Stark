@@ -72,12 +72,14 @@ backend boundary:
 module System.Memory
 
 [Backend(Opaque)]
-finite law i32[0 max] Hash(i32[0 max] value) {
+finite law i32[0 max] Hash(i32[0 max] value)
+{
     return value;
 }
 
 [Backend(Opaque)]
-struct RuntimeHandle {
+struct RuntimeHandle
+{
     rawptr<void> Value;
 }
 ```

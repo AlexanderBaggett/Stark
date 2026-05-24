@@ -293,7 +293,7 @@ dotnet run --project src -- examples/multi-module/App.stark --emit-exe -o exampl
 
 ## `data-model/DataModel.stark`
 
-Shows `struct` and `record` declarations plus object-initializer syntax with `new Type() { ... }`.
+Shows `struct` and `record` declarations plus field-initializer syntax with `new Type() { ... }`.
 
 You can validate or build it directly:
 
@@ -314,3 +314,15 @@ dotnet run --project src -- examples/static-library/Facade.stark --emit-lib -o e
 ```
 
 That command produces the archive and a sidecar `libFacade.starkpkg.json` manifest in the same directory.
+
+## `standard-library-tests/`
+
+Small `kind = "test"` project that uses `System.Testing` facts and the project
+driver's `test` command.
+
+Run it from the examples solution:
+
+```bash
+cd examples
+dotnet run --project ../src -- test standard-library-tests
+```

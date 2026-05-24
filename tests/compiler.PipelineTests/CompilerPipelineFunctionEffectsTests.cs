@@ -70,7 +70,8 @@ public sealed class CompilerPipelineFunctionEffectsTests
                     import Facade
                     module Demo
 
-                    fn f32 Run(f32 value) {
+                    fn f32 Run(f32 value)
+                    {
                         return value;
                     }
                     """,

@@ -1,59 +1,433 @@
-import System
+import System.FileSystem
+import System.IO
+import System.IO.File
+import System.IO.Path
+import System.Memory
+import System.Runtime.Buffer
+import System.Text
 module Book.Stdlib.FilesDirectoriesPathsText
 
-finite law bool BoolValue(System.IO.IOResult<bool> result) {
-    switch (result) {
-        case System.IO.IOResult<bool>.Ok(var value):
+finite law bool BoolValue(IOResult<bool> result)
+{
+    switch (result)
+    {
+        case IOResult<bool>.Ok(var value):
             return value;
-        case System.IO.IOResult<bool>.Err(var error):
+        case IOResult<bool>.Err(var error):
             return false;
     }
 }
 
-fn bool StatusOk(System.IO.IOStatus status) {
-    switch (status) {
-        case System.IO.IOStatus.Ok:
+fn bool StatusOk(IOStatus status)
+{
+    switch (status)
+    {
+        case IOStatus.Ok:
             return true;
-        case System.IO.IOStatus.Err(var error):
+        case IOStatus.Err(var error):
             return false;
     }
 }
 
-fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
-    switch (result) {
-        case System.IO.IOResult<System.IO.File.File>.Ok(var value):
+finite law bool ByteCountIs(
+    IOResult<u64[0 2 ** 63 - 1]> result,
+    u64[0 2 ** 63 - 1] expected)
+{
+    switch (result)
+    {
+        case IOResult<u64[0 2 ** 63 - 1]>.Ok(var count):
+                return count == expected;
+            case IOResult<u64[0 2 ** 63 - 1]>.Err(var error):
+                return false;
+        }
+}
+
+fn File OpenOrEmpty(IOResult<File> result)
+{
+    switch (result)
+    {
+        case IOResult<File>.Ok(var value):
             return value;
-        case System.IO.IOResult<System.IO.File.File>.Err(var error):
+        case IOResult<File>.Err(var error):
             return new();
     }
 }
 
-fn bool WriteMarker(ascii path) {
-    stack mut System.IO.File.File file =
-        OpenOrEmpty(System.IO.File.Open(path, System.IO.File.FileMode.Write));
+fn bool WriteMarker(ascii path)
+{
+    stack mut File file = OpenOrEmpty(Open(path, FileMode.Write));
 
-    if (!file.IsOpen()) {
+    if (!file.IsOpen())
+    {
         return false;
     }
 
-    if (!StatusOk(file.WriteLine("marker"))) {
+    if (!StatusOk(file.WriteLine("marker")))
+    {
         return false;
     }
 
     return StatusOk(file.Close());
 }
 
-export fn i32[min max] main() {
-    if (!WriteMarker("stark-book-file.txt")) {
+fn bool ByteFileRoundTripWorks()
+{
+    stack i8[min max][4] source =
+    {
+        1, 2, 3, 4
+    };
+    stack mut File output =
+        OpenOrEmpty(Open(
+            "stark-book-bytes.bin",
+            FileMode.Write,
+            FileBuffering.None));
+
+    if (!output.IsOpen())
+    {
+        return false;
+    }
+
+    if (!ByteCountIs(output.Write(source), 4))
+    {
+        output.Close();
+        Delete("stark-book-bytes.bin");
+        return false;
+    }
+
+    if (!StatusOk(output.Close()))
+    {
+        Delete("stark-book-bytes.bin");
+        return false;
+    }
+
+    stack mut File input =
+        OpenOrEmpty(Open("stark-book-bytes.bin", FileMode.Read));
+
+    if (!input.IsOpen())
+    {
+        Delete("stark-book-bytes.bin");
+        return false;
+    }
+
+    stack mut i8[min max][4] destination =
+    {
+        0, 0, 0, 0
+    };
+    if (!ByteCountIs(input.Seek(0, SeekOrigin.Begin), 0))
+    {
+        input.Close();
+        Delete("stark-book-bytes.bin");
+        return false;
+    }
+
+    if (!ByteCountIs(input.Read(destination), 4))
+    {
+        input.Close();
+        Delete("stark-book-bytes.bin");
+        return false;
+    }
+
+    stack bool dataMatched = destination[0] == 1
+        && destination[1] == 2
+        && destination[2] == 3
+        && destination[3] == 4;
+
+    input.Close();
+    Delete("stark-book-bytes.bin");
+    return dataMatched;
+}
+
+fn bool BufferedTextFileWorks()
+{
+    stack mut File file =
+        OpenOrEmpty(Open(
+            "stark-book-text.txt",
+            FileMode.Write,
+            Encoding.UTF8,
+            FileBuffering.Line));
+
+    if (!file.IsOpen())
+    {
+        return false;
+    }
+
+    if (!StatusOk(file.WriteText("alpha")))
+    {
+        file.Close();
+        Delete("stark-book-text.txt");
+        return false;
+    }
+
+    if (!StatusOk(file.WriteLine((unicode)"beta")))
+    {
+        file.Close();
+        Delete("stark-book-text.txt");
+        return false;
+    }
+
+    if (!StatusOk(file.Flush()))
+    {
+        file.Close();
+        Delete("stark-book-text.txt");
+        return false;
+    }
+
+    if (!StatusOk(file.SyncAll()))
+    {
+        file.Close();
+        Delete("stark-book-text.txt");
+        return false;
+    }
+
+    if (!StatusOk(file.Close()))
+    {
+        Delete("stark-book-text.txt");
+        return false;
+    }
+
+    return StatusOk(Delete("stark-book-text.txt"));
+}
+
+fn bool BufferFileWriteWorks()
+{
+    stack mut FixedByteBuffer512 bytes = new();
+    if (bytes.WriteByte(65) != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    stack mut File file =
+        OpenOrEmpty(Open("stark-book-buffer.bin", FileMode.Write));
+
+    if (!file.IsOpen())
+    {
+        return false;
+    }
+
+    stack bool wrote = ByteCountIs(file.Write(bytes), 1);
+    file.Close();
+    Delete("stark-book-buffer.bin");
+    return wrote;
+}
+
+fn bool FileMoveWorks()
+{
+    Delete("stark-book-moved.txt");
+
+    if (!WriteMarker("stark-book-move-source.txt"))
+    {
+        return false;
+    }
+
+    if (!StatusOk(System.IO.File.Move("stark-book-move-source.txt", "stark-book-moved.txt")))
+    {
+        Delete("stark-book-move-source.txt");
+        return false;
+    }
+
+    stack bool moved = BoolValue(System.IO.File.Exists("stark-book-moved.txt"));
+    Delete("stark-book-moved.txt");
+    return moved;
+}
+
+finite law bool ConstPathFactsWork()
+{
+    stack PathFacts facts = GetConstFacts("samples/main.stark");
+
+    return facts.DirectoryName() == "samples"
+        && facts.BaseName() == "main"
+        && facts.Extension() == ".stark";
+}
+
+fn bool NormalizePathWorks()
+{
+    stack MemoryResult<OwnedAscii> normalized =
+        NormalizeSeparators("samples/main.stark");
+
+    switch (normalized)
+    {
+        case MemoryResult<OwnedAscii>.Err(var error):
+            return false;
+        case MemoryResult<OwnedAscii>.Ok(var value):
+            stack mut OwnedAscii path = value;
+            return path.View() == "samples/main.stark";
+    }
+}
+
+fn bool PathUtilityShapesWork()
+{
+    if (DirectorySeparator() == "")
+    {
+        return false;
+    }
+
+    if (PathSeparator() == "")
+    {
+        return false;
+    }
+
+    if (ParentDirectory() != "..")
+    {
+        return false;
+    }
+
+    stack mut OwnedAscii joined = new();
+    if (TryJoinConst(joined, "samples", "main.stark") != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    if (BaseName(joined.View()) != "main")
+    {
+        return false;
+    }
+
+    stack MemoryResult<OwnedAscii> constJoined =
+        JoinConst("samples", "main.stark");
+    switch (constJoined)
+    {
+        case MemoryResult<OwnedAscii>.Err(var error):
+            return false;
+        case MemoryResult<OwnedAscii>.Ok(var value):
+            stack mut OwnedAscii path = value;
+            if (Extension(path.View()) != ".stark")
+            {
+                return false;
+            }
+    }
+
+    stack mut OwnedAscii normalized = new();
+    if (TryNormalizeSeparatorsConst(normalized, "samples/main.stark") != MemoryStatus.Ok)
+    {
+        return false;
+    }
+
+    stack MemoryResult<OwnedAscii> current = CurrentDirectory();
+    switch (current)
+    {
+        case MemoryResult<OwnedAscii>.Err(var error):
+            return false;
+        case MemoryResult<OwnedAscii>.Ok(var value):
+            stack mut OwnedAscii directory = value;
+            return directory.View() != "";
+    }
+}
+
+fn bool DirectoryInfoReadShapeWorks()
+{
+    stack IOResult<Directory> opened = OpenDirectory(".");
+
+    switch (opened)
+    {
+        case IOResult<Directory>.Err(var error):
+            return false;
+        case IOResult<Directory>.Ok(var value):
+            stack mut Directory directory = value;
+            stack DirectoryReadInfoResult next = directory.ReadNextInfo();
+            directory.Close();
+            switch (next)
+            {
+                case DirectoryReadInfoResult.Err(var readError):
+                    return false;
+                case DirectoryReadInfoResult.End:
+                    return true;
+                case DirectoryReadInfoResult.Entry(var info):
+                    return info.NameLength >= 0;
+            }
+    }
+}
+
+fn bool DirectoryNameReadShapeWorks()
+{
+    stack IOResult<Directory> opened = OpenDirectory(".");
+
+    switch (opened)
+    {
+        case IOResult<Directory>.Err(var error):
+            return false;
+        case IOResult<Directory>.Ok(var value):
+            stack mut Directory directory = value;
+            stack DirectoryReadResult next = directory.ReadNext();
+            switch (next)
+            {
+                case DirectoryReadResult.Err(var readError):
+                    directory.Close();
+                    return false;
+                case DirectoryReadResult.End:
+                    return StatusOk(directory.Close());
+                case DirectoryReadResult.Entry(var entry):
+                    stack mut FileSystemEntry ownedEntry = entry;
+                    stack ascii name = ownedEntry.NameView();
+                    stack bool knownKind = ownedEntry.Kind == FileSystemEntryKind.File
+                        || ownedEntry.Kind == FileSystemEntryKind.Directory
+                        || ownedEntry.Kind == FileSystemEntryKind.Symlink
+                        || ownedEntry.Kind == FileSystemEntryKind.Other;
+                    directory.Close();
+                    return name == name && knownKind;
+            }
+    }
+}
+
+export fn i32[min max] main()
+{
+    if (!WriteMarker("stark-book-file.txt"))
+    {
         return 1;
     }
 
-    if (!BoolValue(System.FileSystem.Exists("stark-book-file.txt"))) {
+    if (!BoolValue(System.FileSystem.Exists("stark-book-file.txt")))
+    {
         return 2;
     }
 
-    if (!StatusOk(System.IO.File.Delete("stark-book-file.txt"))) {
+    if (!StatusOk(Delete("stark-book-file.txt")))
+    {
         return 3;
+    }
+
+    if (!ByteFileRoundTripWorks())
+    {
+        return 4;
+    }
+
+    if (!BufferedTextFileWorks())
+    {
+        return 5;
+    }
+
+    if (!BufferFileWriteWorks())
+    {
+        return 6;
+    }
+
+    if (!FileMoveWorks())
+    {
+        return 7;
+    }
+
+    if (!ConstPathFactsWork())
+    {
+        return 8;
+    }
+
+    if (!NormalizePathWorks())
+    {
+        return 9;
+    }
+
+    if (!PathUtilityShapesWork())
+    {
+        return 10;
+    }
+
+    if (!DirectoryInfoReadShapeWorks())
+    {
+        return 11;
+    }
+
+    if (!DirectoryNameReadShapeWorks())
+    {
+        return 12;
     }
 
     return 0;

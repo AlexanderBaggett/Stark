@@ -15,11 +15,13 @@ public sealed class CompilerPipelineSpecializationPlanTests
                 """
                 module Demo
 
-                fn T Identity<T>(T value) {
+                fn T Identity<T>(T value)
+                {
                     return value;
                 }
 
-                fn i32[min max] Run(i32[min max] value) {
+                fn i32[min max] Run(i32[min max] value)
+                {
                     return Identity(value);
                 }
                 """),
@@ -50,8 +52,10 @@ public sealed class CompilerPipelineSpecializationPlanTests
                 """
                 module Math
 
-                public doctrine Numbers {
-                    finite law T Identity<T>(T value) {
+                public doctrine Numbers
+                {
+                    finite law T Identity<T>(T value)
+                    {
                         return value;
                     }
                 }
@@ -64,7 +68,8 @@ public sealed class CompilerPipelineSpecializationPlanTests
                     import Math
                     module Demo
 
-                    finite law i32[min max] Run(i32[min max] value) {
+                    finite law i32[min max] Run(i32[min max] value)
+                    {
                         return Math.Numbers.Identity(value);
                     }
                     """,
@@ -115,7 +120,8 @@ public sealed class CompilerPipelineSpecializationPlanTests
                 """
                 module Math
 
-                public finite law T Identity<T>(T value) {
+                public finite law T Identity<T>(T value)
+                {
                     return value;
                 }
                 """);
@@ -127,7 +133,8 @@ public sealed class CompilerPipelineSpecializationPlanTests
                     import Math
                     module Demo
 
-                    finite law i32[min max] Run(i32[min max] value) {
+                    finite law i32[min max] Run(i32[min max] value)
+                    {
                         return Math.Identity(value);
                     }
                     """,
@@ -178,8 +185,10 @@ public sealed class CompilerPipelineSpecializationPlanTests
                 """
                 module Math
 
-                public doctrine Numbers {
-                    cold finite law T Identity<T>(T value) {
+                public doctrine Numbers
+                {
+                    cold finite law T Identity<T>(T value)
+                    {
                         return value;
                     }
                 }
@@ -192,7 +201,8 @@ public sealed class CompilerPipelineSpecializationPlanTests
                     import Math
                     module Demo
 
-                    finite law i32[min max] Run(i32[min max] value) {
+                    finite law i32[min max] Run(i32[min max] value)
+                    {
                         return Math.Numbers.Identity(value);
                     }
                     """,
@@ -242,8 +252,10 @@ public sealed class CompilerPipelineSpecializationPlanTests
                 """
                 module Math
 
-                public doctrine Numbers {
-                    law i32[min max] AddTag<T>(i32[min max] left, i32[min max] right, T tag) {
+                public doctrine Numbers
+                {
+                    law i32[min max] AddTag<T>(i32[min max] left, i32[min max] right, T tag)
+                    {
                         return left + right;
                     }
                 }
@@ -283,7 +295,8 @@ public sealed class CompilerPipelineSpecializationPlanTests
                     import Math
                     module Demo
 
-                    law i32[min max] Run(i32[min max] left, i32[min max] right) {
+                    law i32[min max] Run(i32[min max] left, i32[min max] right)
+                    {
                         return Math.Numbers.AddTag(left, right, left);
                     }
                     """,
@@ -343,7 +356,8 @@ public sealed class CompilerPipelineSpecializationPlanTests
                 """
                 module Math
 
-                public fn i32[min max] AddTag<T>(i32[min max] left, i32[min max] right, T tag) {
+                public fn i32[min max] AddTag<T>(i32[min max] left, i32[min max] right, T tag)
+                {
                     return left + right;
                 }
                 """,
@@ -381,7 +395,8 @@ public sealed class CompilerPipelineSpecializationPlanTests
                     import Math
                     module Demo
 
-                    law i32[min max] Run(i32[min max] left, i32[min max] right) {
+                    law i32[min max] Run(i32[min max] left, i32[min max] right)
+                    {
                         return Math.AddTag(left, right, left);
                     }
                     """,
@@ -451,9 +466,12 @@ public sealed class CompilerPipelineSpecializationPlanTests
                 """
                 module Math
 
-                public doctrine Numbers {
-                    law i32[min max] CountDown<T>(i32[min max] value, T tag) {
-                        if (value == 0) {
+                public doctrine Numbers
+                {
+                    law i32[min max] CountDown<T>(i32[min max] value, T tag)
+                    {
+                        if (value == 0)
+                        {
                             return 0;
                         }
 
@@ -495,7 +513,8 @@ public sealed class CompilerPipelineSpecializationPlanTests
                     import Math
                     module Demo
 
-                    law i32[min max] Run(i32[min max] value) {
+                    law i32[min max] Run(i32[min max] value)
+                    {
                         return Math.Numbers.CountDown(value, value);
                     }
                     """,
@@ -564,7 +583,8 @@ public sealed class CompilerPipelineSpecializationPlanTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(i32[min max] value) {
+                    fn i32[min max] Run(i32[min max] value)
+                    {
                         return Facade.Identity(value);
                     }
                     """,
@@ -610,7 +630,8 @@ public sealed class CompilerPipelineSpecializationPlanTests
                 """
                 module Facade
 
-                public fn T Identity<T>(T value) {
+                public fn T Identity<T>(T value)
+                {
                     return value;
                 }
                 """,
@@ -650,7 +671,8 @@ public sealed class CompilerPipelineSpecializationPlanTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(i32[min max] value) {
+                    fn i32[min max] Run(i32[min max] value)
+                    {
                         return Facade.Identity(value);
                     }
                     """,
@@ -695,13 +717,16 @@ public sealed class CompilerPipelineSpecializationPlanTests
                 """
                 module Math
 
-                public doctrine Numbers {
-                    finite law T Identity<T>(T value) {
+                public doctrine Numbers
+                {
+                    finite law T Identity<T>(T value)
+                    {
                         return value;
                     }
                 }
 
-                public finite law T Numbers_Identity<T>(T value) {
+                public finite law T Numbers_Identity<T>(T value)
+                {
                     return value;
                 }
                 """);
@@ -713,7 +738,8 @@ public sealed class CompilerPipelineSpecializationPlanTests
                     import Math
                     module Demo
 
-                    finite law i32[min max] Run(i32[min max] value) {
+                    finite law i32[min max] Run(i32[min max] value)
+                    {
                         stack i32[min max] left = Math.Numbers_Identity(value);
                         return Math.Numbers.Identity(left);
                     }

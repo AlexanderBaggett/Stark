@@ -148,7 +148,8 @@ public sealed class SystemRuntimePlatformMacOSStandardLibraryTests
                 import System.Runtime.Platform
                 module Demo
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     return System.Runtime.Platform.ProcessId();
                 }
                 """,
@@ -185,7 +186,8 @@ public sealed class SystemRuntimePlatformMacOSStandardLibraryTests
                 import System.Memory
                 module Demo
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     stack System.Memory.Allocator allocator = System.Memory.Allocator.Default();
                     stack mut System.Memory.Allocation allocation = System.Memory.Allocate(allocator, 16, 8);
                     allocation = System.Memory.Reallocate(allocation, 32, 8);

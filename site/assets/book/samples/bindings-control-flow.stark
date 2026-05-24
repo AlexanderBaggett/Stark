@@ -1,14 +1,18 @@
 module Book.BindingsControlFlow
 
-fn i32[min max] SumFromTwoUntil(i32[min max] count, i32[min max] stopAt) {
+fn i32[min max] SumFromTwoUntil(i32[min max] count, i32[min max] stopAt)
+{
     stack mut i32[min max] total = 0;
 
-    for willexit (stack mut i32[min max] index = 0; index < count; index += 1) {
-        if (index < 2) {
+    for willexit (stack mut i32[min max] index = 0; index < count; index += 1)
+    {
+        if (index < 2)
+        {
             continue;
         }
 
-        if (index == stopAt) {
+        if (index == stopAt)
+        {
             break;
         }
 
@@ -18,32 +22,42 @@ fn i32[min max] SumFromTwoUntil(i32[min max] count, i32[min max] stopAt) {
     return total;
 }
 
-fn i32[min max] CheckExpectedTotal(i32[min max] count, i32[min max] stopAt) {
+fn i32[min max] CheckExpectedTotal(i32[min max] count, i32[min max] stopAt)
+{
     stack i32[min max] total = SumFromTwoUntil(count, stopAt);
 
-    if (total == 9) {
+    if (total == 9)
+    {
         return 0;
     }
 
-    if (total < 9) {
+    if (total < 9)
+    {
         return 1;
     }
 
     return 2;
 }
 
-fn i32[min max] FillIndependentSlots() {
-    stack mut i32[min max][4] values = { 0, 0, 0, 0 };
+fn i32[min max] FillIndependentSlots()
+{
+    stack mut i32[min max][4] values =
+    {
+        0, 0, 0, 0
+    };
 
-    for willexit independent (stack mut u8[0 4] index = 0; index < 4; index += 1) {
+    for willexit independent (stack mut u8[0 4] index = 0; index < 4; index += 1)
+    {
         values[index] = (i32[min max])index;
     }
 
     return values[0] + values[1] + values[2] + values[3];
 }
 
-finite law i32[min max] Classify(i32[min max] value) {
-    switch (value) {
+finite law i32[min max] Classify(i32[min max] value)
+{
+    switch (value)
+    {
         case 0:
             return 10;
         case 1:
@@ -53,20 +67,25 @@ finite law i32[min max] Classify(i32[min max] value) {
     }
 }
 
-export fn i32[min max] main() {
-    if (CheckExpectedTotal(6, 5) != 0) {
+export fn i32[min max] main()
+{
+    if (CheckExpectedTotal(6, 5) != 0)
+    {
         return 1;
     }
 
-    if (FillIndependentSlots() != 6) {
+    if (FillIndependentSlots() != 6)
+    {
         return 2;
     }
 
-    if (Classify(0) != 10) {
+    if (Classify(0) != 10)
+    {
         return 3;
     }
 
-    if (Classify(7) != -1) {
+    if (Classify(7) != -1)
+    {
         return 4;
     }
 

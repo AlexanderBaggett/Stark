@@ -1,0 +1,63 @@
+import System.BitOperations
+module Book.Stdlib.BitOperations
+
+finite law bool CountOperationsWork()
+{
+    stack i32[min max] leading32 = LeadingZeroCount(1);
+    stack i32[min max] trailing32 = TrailingZeroCount(16);
+    stack i32[min max] pop32 = PopCount(7);
+    stack i32[min max] zeroLeading32 = LeadingZeroCount(0);
+    stack i32[min max] zeroTrailing32 = TrailingZeroCount(0);
+
+    stack i64[min max] leading64 = LeadingZeroCount((i64[min max])1);
+    stack i64[min max] trailing64 = TrailingZeroCount((i64[min max])16);
+    stack i64[min max] pop64 = PopCount((i64[min max])7);
+
+    return leading32 == 31
+        && trailing32 == 4
+        && pop32 == 3
+        && zeroLeading32 == 32
+        && zeroTrailing32 == 32
+        && leading64 == 63
+        && trailing64 == 4
+        && pop64 == 3;
+}
+
+finite law bool RotateOperationsWork()
+{
+    stack i32[min max] left32 = RotateLeft(1, 1);
+    stack i32[min max] right32 = RotateRight(2, 1);
+
+    stack i64[min max] left64 = RotateLeft((i64[min max])1, (i64[min max])1);
+    stack i64[min max] right64 = RotateRight((i64[min max])2, (i64[min max])1);
+
+    return left32 == 2
+        && right32 == 1
+        && left64 == 2
+        && right64 == 1;
+}
+
+finite law bool HasExactlyOneFlag(i32[min max] flags)
+{
+    return PopCount(flags) == 1;
+}
+
+export fn i32[min max] main()
+{
+    if (!CountOperationsWork())
+    {
+        return 1;
+    }
+
+    if (!RotateOperationsWork())
+    {
+        return 2;
+    }
+
+    if (!HasExactlyOneFlag(8))
+    {
+        return 3;
+    }
+
+    return 0;
+}

@@ -26,7 +26,8 @@ public ffi asm(aarch64) fn i64 Syscall3(i64 number, i64 arg1, i64 arg2, i64 arg3
     clobber("x8")
 {
     "svc #0"
-}```
+}
+```
 
 
 Given Stark's current pipeline, `asm(arch)` resolution should happen during `syntax-model` or in a small dedicated pass immediately after it. At that point the compiler already knows the active build target, so it can normalize the target architecture and select the matching `asm(arch)` declaration while discarding the rest. Non-matching asm declarations never enter the declaration index, never become symbols, and never appear in package surfaces or downstream HIR/MIR/SSA artifacts. The selected asm declaration then flows through the rest of the pipeline like any other top-level function, except that its asm template, operand bindings, and clobbers are preserved as compiler-owned metadata. `function-effects` derives a conservative effect profile from the function kind together with asm-specific memory/clobber rules, `type-check` and `semantic-validate` validate operand bindings, register names, and allowed parameter/return types, and `emit-llvm` lowers the preserved asm metadata into LLVM inline-asm call syntax instead of generating a normal Stark body.

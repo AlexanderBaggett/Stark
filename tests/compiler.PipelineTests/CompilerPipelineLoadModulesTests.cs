@@ -16,7 +16,8 @@ public sealed class CompilerPipelineLoadModulesTests
                 import Bits
                 module Facade
 
-                public fn void Touch() {
+                public fn void Touch()
+                {
                     return;
                 }
                 """),
@@ -25,7 +26,8 @@ public sealed class CompilerPipelineLoadModulesTests
                 """
                 module Bits
 
-                public fn void Mark() {
+                public fn void Mark()
+                {
                     return;
                 }
                 """));
@@ -37,7 +39,8 @@ public sealed class CompilerPipelineLoadModulesTests
                 import Facade
                 module Demo
 
-                fn void Run() {
+                fn void Run()
+                {
                     return;
                 }
                 """),
@@ -80,15 +83,18 @@ public sealed class CompilerPipelineLoadModulesTests
                 """
                 module Facade
 
-                public struct Box {
+                public struct Box
+                {
                     i32[min max] Value;
                 }
 
-                public fn retborrow Box Echo(retborrow Box value) {
+                public fn retborrow Box Echo(retborrow Box value)
+                {
                     return value;
                 }
 
-                public fn void Reset(borrow mut Box value) {
+                public fn void Reset(borrow mut Box value)
+                {
                     value.Value = 0;
                     return;
                 }
@@ -140,7 +146,8 @@ public sealed class CompilerPipelineLoadModulesTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(Facade.Box value) {
+                    fn i32[min max] Run(Facade.Box value)
+                    {
                         return value.Value;
                     }
                     """,
@@ -194,16 +201,19 @@ public sealed class CompilerPipelineLoadModulesTests
                 """
                 module Facade
 
-                public struct Box {
+                public struct Box
+                {
                     i32[min max] Value;
                 }
 
-                public fn void Touch(borrow mut Box box) {
+                public fn void Touch(borrow mut Box box)
+                {
                     box.Value = 1;
                     return;
                 }
 
-                public fn void Outer(borrow mut Box box) {
+                public fn void Outer(borrow mut Box box)
+                {
                     Touch(box);
                     return;
                 }
@@ -243,7 +253,8 @@ public sealed class CompilerPipelineLoadModulesTests
                     import Facade
                     module Demo
 
-                    fn void Run(borrow mut Facade.Box box) {
+                    fn void Run(borrow mut Facade.Box box)
+                    {
                         Facade.Outer(box);
                         return;
                     }
@@ -300,20 +311,32 @@ public sealed class CompilerPipelineLoadModulesTests
                 """
                 module Facade
 
-                public struct Box {
+                public struct Box
+                {
                     i32[min max] Value;
                 }
 
-                public fn void Consume(Box value) {
+                public fn void Consume(Box value)
+                {
                     return;
                 }
 
-                public unsafe fn i32[min max] Run() {
-                    stack mut Box box = new Box() { Value = 1 };
+                public unsafe fn i32[min max] Run()
+                {
+                    stack mut Box box = new Box()
+                    {
+                        Value = 1
+                    };
                     stack rawptr<Box> pointer = &box;
-                    box = new Box() { Value = 2 };
+                    box = new Box()
+                    {
+                        Value = 2
+                    };
                     Consume(box);
-                    box = new Box() { Value = 3 };
+                    box = new Box()
+                    {
+                        Value = 3
+                    };
                     return box.Value;
                 }
                 """,
@@ -376,7 +399,8 @@ public sealed class CompilerPipelineLoadModulesTests
                     import Facade
                     module Demo
 
-                    fn void Run() {
+                    fn void Run()
+                    {
                         return;
                     }
                     """,
@@ -439,16 +463,19 @@ public sealed class CompilerPipelineLoadModulesTests
                 """
                 module Facade
 
-                public struct Box {
+                public struct Box
+                {
                     i32[min max] Value;
                 }
 
-                public fn void Reset(borrow mut Box box) {
+                public fn void Reset(borrow mut Box box)
+                {
                     box.Value = 0;
                     return;
                 }
 
-                public fn void Touch<T>(borrow mut Box box, T tag) {
+                public fn void Touch<T>(borrow mut Box box, T tag)
+                {
                     Reset(box);
                     return;
                 }
@@ -500,7 +527,8 @@ public sealed class CompilerPipelineLoadModulesTests
                     import Facade
                     module Demo
 
-                    fn void Run() {
+                    fn void Run()
+                    {
                         return;
                     }
                     """,
@@ -629,7 +657,8 @@ public sealed class CompilerPipelineLoadModulesTests
                 import Facade
                 module Demo
 
-                fn void Run() {
+                fn void Run()
+                {
                     return;
                 }
                 """),
@@ -748,7 +777,8 @@ public sealed class CompilerPipelineLoadModulesTests
                 import Facade
                 module Demo
 
-                fn void Run() {
+                fn void Run()
+                {
                     return;
                 }
                 """),
@@ -785,20 +815,27 @@ public sealed class CompilerPipelineLoadModulesTests
                 """
                 module Facade
 
-                public struct Box<T> {
+                public struct Box<T>
+                {
                     T Value;
                 }
 
-                public fn Box<T> Wrap<T>(T value) {
+                public fn Box<T> Wrap<T>(T value)
+                {
                     stack T copy = value;
-                    return new Box<T>() { Value = copy };
+                    return new Box<T>()
+                    {
+                        Value = copy
+                    };
                 }
 
-                public fn T Read<T>(borrow Box<T> box) {
+                public fn T Read<T>(borrow Box<T> box)
+                {
                     return box.Value;
                 }
 
-                public fn T Forward<T>(borrow Box<T> box) {
+                public fn T Forward<T>(borrow Box<T> box)
+                {
                     return Read(box);
                 }
                 """,
@@ -849,7 +886,8 @@ public sealed class CompilerPipelineLoadModulesTests
                     import Facade
                     module Demo
 
-                    fn void Run() {
+                    fn void Run()
+                    {
                         return;
                     }
                     """,

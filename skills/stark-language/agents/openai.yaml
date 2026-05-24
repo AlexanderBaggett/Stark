@@ -1,0 +1,4 @@
+interface:
+  display_name: "Stark Language"
+  short_description: "Write and review Stark language code."
+  default_prompt: "Use this skill when writing, reviewing, or explaining Stark code."

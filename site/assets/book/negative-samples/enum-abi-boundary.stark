@@ -1,6 +1,7 @@
 module Book.Negative.EnumAbiBoundary
 
-enum Token {
+enum Token
+{
     End,
     Integer(i32[min max]),
 }

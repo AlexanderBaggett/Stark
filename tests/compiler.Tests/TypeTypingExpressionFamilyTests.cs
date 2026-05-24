@@ -11,7 +11,8 @@ public sealed class TypeTypingExpressionFamilyTests
             """
             module Demo
 
-            fn i32[min max] Run(i32[min max] left, i32[min max] right) {
+            fn i32[min max] Run(i32[min max] left, i32[min max] right)
+            {
                 stack mut i32[min max] value = left;
                 value = right;
                 value += 1;
@@ -31,7 +32,8 @@ public sealed class TypeTypingExpressionFamilyTests
             """
             module Demo
 
-            fn i32[min max] Run(i32[min max] value) {
+            fn i32[min max] Run(i32[min max] value)
+            {
                 stack i32[min max] negated = -value;
                 stack i32[min max] complemented = ~value;
                 stack f32 powered = 2.0 ** 3.0;
@@ -50,7 +52,8 @@ public sealed class TypeTypingExpressionFamilyTests
             """
             module Demo
 
-            fn i32[min max] Run(i32[min max] left, i32[min max] right) {
+            fn i32[min max] Run(i32[min max] left, i32[min max] right)
+            {
                 stack i32[min max] mixed = left + right * 2 - 1;
                 stack i32[min max] shifted = mixed << 1 >> 1;
                 return shifted;
@@ -68,7 +71,8 @@ public sealed class TypeTypingExpressionFamilyTests
             """
             module Demo
 
-            fn bool Run(i32[min max] left, i32[min max] right, bool flag) {
+            fn bool Run(i32[min max] left, i32[min max] right, bool flag)
+            {
                 return ((left & right) == 0 && (left ^ right) != 1) || flag ? true : false;
             }
             """,
@@ -84,7 +88,8 @@ public sealed class TypeTypingExpressionFamilyTests
             """
             module Demo
 
-            fn bool Run(i32[min max] min, i32[min max] value, i32[min max] max, f32 low, f32 current, f32 high, i32[min max] left, i32[min max] middle, i32[min max] right) {
+            fn bool Run(i32[min max] min, i32[min max] value, i32[min max] max, f32 low, f32 current, f32 high, i32[min max] left, i32[min max] middle, i32[min max] right)
+            {
                 return min <= value < max
                     && low < current <= high
                     && left == middle != right;
@@ -102,16 +107,22 @@ public sealed class TypeTypingExpressionFamilyTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            fn i32[min max] Echo(i32[min max] value) {
+            fn i32[min max] Echo(i32[min max] value)
+            {
                 return value;
             }
 
-            fn i32[min max] Run(Box box, i32[min max][2] values, bool flag) {
-                stack Box created = new Box() { Value = 1 };
+            fn i32[min max] Run(Box box, i32[min max][2] values, bool flag)
+            {
+                stack Box created = new Box()
+                {
+                    Value = 1
+                };
                 return flag ? Echo(box.Value + created.Value) : values[0];
             }
             """,

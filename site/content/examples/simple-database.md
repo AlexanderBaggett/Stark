@@ -22,7 +22,13 @@ Status: covered by `ExamplesCompileRunTests.SimpleDatabaseExampleCompilesAndRuns
 - [MemoryTable.stark](/reference/examples/simple-database/MemoryTable.stark)
 - [Stark.toml](/reference/examples/simple-database/Stark.toml)
 
+### MemoryTable.stark
+
 {{< file-sample "static/reference/examples/simple-database/MemoryTable.stark" "stark" >}}
+
+### Stark.toml
+
+{{< file-sample "static/reference/examples/simple-database/Stark.toml" "toml" >}}
 
 ## Related
 

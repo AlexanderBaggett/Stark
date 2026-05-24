@@ -18,8 +18,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 import System.Memory
                 module Demo
 
-                fn bool Ok(System.Memory.MemoryStatus status) {
-                    switch (status) {
+                fn bool Ok(System.Memory.MemoryStatus status)
+                {
+                    switch (status)
+                    {
                         case System.Memory.MemoryStatus.Ok:
                             return true;
                         case System.Memory.MemoryStatus.Err(var error):
@@ -27,9 +29,11 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn u64[0 2 ** 63 - 1] BuildAndInspect() {
+                fn u64[0 2 ** 63 - 1] BuildAndInspect()
+                {
                     stack mut System.Text.OwnedAscii path = new();
-                    if (!Ok(System.IO.Path.TryJoin(path, "alpha/", "/beta.txt"))) {
+                    if (!Ok(System.IO.Path.TryJoin(path, "alpha/", "/beta.txt")))
+                    {
                         return 0;
                     }
 
@@ -131,8 +135,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 const ascii ConstRight = "beta.txt";
                 const ascii ConstNormalizedSource = "alpha//beta///gamma.txt";
 
-                fn bool Ok(System.Memory.MemoryStatus status) {
-                    switch (status) {
+                fn bool Ok(System.Memory.MemoryStatus status)
+                {
+                    switch (status)
+                    {
                         case System.Memory.MemoryStatus.Ok:
                             return true;
                         case System.Memory.MemoryStatus.Err(var error):
@@ -140,8 +146,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool IsJoinedPath(ascii value) {
-                    switch (value) {
+                fn bool IsJoinedPath(ascii value)
+                {
+                    switch (value)
+                    {
                         case "alpha/beta.txt":
                             return true;
                         default:
@@ -149,8 +157,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool IsNormalizedPath(ascii value) {
-                    switch (value) {
+                fn bool IsNormalizedPath(ascii value)
+                {
+                    switch (value)
+                    {
                         case "alpha/beta/gamma.txt":
                             return true;
                         default:
@@ -158,8 +168,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool IsTextExtension(ascii value) {
-                    switch (value) {
+                fn bool IsTextExtension(ascii value)
+                {
+                    switch (value)
+                    {
                         case ".txt":
                             return true;
                         default:
@@ -167,8 +179,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool IsBetaBaseName(ascii value) {
-                    switch (value) {
+                fn bool IsBetaBaseName(ascii value)
+                {
+                    switch (value)
+                    {
                         case "beta":
                             return true;
                         default:
@@ -176,8 +190,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool IsAlphaDirectory(ascii value) {
-                    switch (value) {
+                fn bool IsAlphaDirectory(ascii value)
+                {
+                    switch (value)
+                    {
                         case "alpha":
                             return true;
                         default:
@@ -185,8 +201,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool IsOwnedJoinedPath(System.Memory.MemoryResult<System.Text.OwnedAscii> result) {
-                    switch (result) {
+                fn bool IsOwnedJoinedPath(System.Memory.MemoryResult<System.Text.OwnedAscii> result)
+                {
+                    switch (result)
+                    {
                         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
                             return value.Length() == 14 && IsJoinedPath(value.View());
                         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
@@ -194,8 +212,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool IsOwnedNormalizedPath(System.Memory.MemoryResult<System.Text.OwnedAscii> result) {
-                    switch (result) {
+                fn bool IsOwnedNormalizedPath(System.Memory.MemoryResult<System.Text.OwnedAscii> result)
+                {
+                    switch (result)
+                    {
                         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
                             return value.Length() == 20 && IsNormalizedPath(value.View());
                         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
@@ -203,45 +223,54 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool Probe() {
+                fn bool Probe()
+                {
                     stack mut System.Text.OwnedAscii joined = new();
-                    if (!Ok(System.IO.Path.TryJoin(joined, "alpha/", "/beta.txt"))) {
+                    if (!Ok(System.IO.Path.TryJoin(joined, "alpha/", "/beta.txt")))
+                    {
                         return false;
                     }
 
                     stack ascii joinedView = joined.View();
-                    if (!IsJoinedPath(joinedView)) {
+                    if (!IsJoinedPath(joinedView))
+                    {
                         return false;
                     }
 
                     stack System.IO.Path.PathFacts facts = System.IO.Path.GetFacts(joinedView);
-                    if (!IsTextExtension(facts.Extension()) || !IsBetaBaseName(facts.BaseName()) || !IsAlphaDirectory(facts.DirectoryName())) {
+                    if (!IsTextExtension(facts.Extension()) || !IsBetaBaseName(facts.BaseName()) || !IsAlphaDirectory(facts.DirectoryName()))
+                    {
                         return false;
                     }
 
-                    if (facts.PathLength() != 14 || facts.ExtensionLength() != 4 || facts.BaseNameLength() != 4 || facts.DirectoryNameLength() != 5) {
+                    if (facts.PathLength() != 14 || facts.ExtensionLength() != 4 || facts.BaseNameLength() != 4 || facts.DirectoryNameLength() != 5)
+                    {
                         return false;
                     }
 
                     stack mut System.Text.OwnedAscii normalized = new();
-                    if (!Ok(System.IO.Path.TryNormalizeSeparators(normalized, "alpha//beta///gamma.txt"))) {
+                    if (!Ok(System.IO.Path.TryNormalizeSeparators(normalized, "alpha//beta///gamma.txt")))
+                    {
                         return false;
                     }
 
                     stack System.IO.Path.PathFacts constFacts = System.IO.Path.GetConstFacts("alpha/beta.txt");
                     if (!IsTextExtension(constFacts.Extension())
                         || !IsBetaBaseName(System.IO.Path.BaseNameConst("alpha/beta.txt"))
-                        || !IsAlphaDirectory(System.IO.Path.DirectoryNameConst("alpha/beta.txt"))) {
-                        return false;
+                        || !IsAlphaDirectory(System.IO.Path.DirectoryNameConst("alpha/beta.txt")))
+                        {
+                            return false;
                     }
 
                     stack mut System.Text.OwnedAscii constJoined = new();
-                    if (!Ok(System.IO.Path.TryJoinConst(constJoined, ConstLeft, ConstRight)) || !IsJoinedPath(constJoined.View())) {
+                    if (!Ok(System.IO.Path.TryJoinConst(constJoined, ConstLeft, ConstRight)) || !IsJoinedPath(constJoined.View()))
+                    {
                         return false;
                     }
 
                     stack mut System.Text.OwnedAscii constNormalized = new();
-                    if (!Ok(System.IO.Path.TryNormalizeSeparatorsConst(constNormalized, ConstNormalizedSource)) || !IsNormalizedPath(constNormalized.View())) {
+                    if (!Ok(System.IO.Path.TryNormalizeSeparatorsConst(constNormalized, ConstNormalizedSource)) || !IsNormalizedPath(constNormalized.View()))
+                    {
                         return false;
                     }
 
@@ -293,8 +322,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 const ascii ConstRight = "beta.txt";
                 const ascii ConstNormalizedSource = "alpha//beta///gamma.txt";
 
-                fn bool Ok(System.Memory.MemoryStatus status) {
-                    switch (status) {
+                fn bool Ok(System.Memory.MemoryStatus status)
+                {
+                    switch (status)
+                    {
                         case System.Memory.MemoryStatus.Ok:
                             return true;
                         case System.Memory.MemoryStatus.Err(var error):
@@ -302,8 +333,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool IsJoinedPath(ascii value) {
-                    switch (value) {
+                fn bool IsJoinedPath(ascii value)
+                {
+                    switch (value)
+                    {
                         case "alpha/beta.txt":
                             return true;
                         case "alpha\\beta.txt":
@@ -313,8 +346,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool IsNormalizedPath(ascii value) {
-                    switch (value) {
+                fn bool IsNormalizedPath(ascii value)
+                {
+                    switch (value)
+                    {
                         case "alpha/beta/gamma.txt":
                             return true;
                         case "alpha\\beta\\gamma.txt":
@@ -324,8 +359,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool IsSelfJoinedPath(ascii value) {
-                    switch (value) {
+                fn bool IsSelfJoinedPath(ascii value)
+                {
+                    switch (value)
+                    {
                         case "alpha/alpha":
                             return true;
                         case "alpha\\alpha":
@@ -335,8 +372,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool IsTextExtension(ascii value) {
-                    switch (value) {
+                fn bool IsTextExtension(ascii value)
+                {
+                    switch (value)
+                    {
                         case ".txt":
                             return true;
                         default:
@@ -344,8 +383,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool IsGzExtension(ascii value) {
-                    switch (value) {
+                fn bool IsGzExtension(ascii value)
+                {
+                    switch (value)
+                    {
                         case ".gz":
                             return true;
                         default:
@@ -353,8 +394,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool IsBetaBaseName(ascii value) {
-                    switch (value) {
+                fn bool IsBetaBaseName(ascii value)
+                {
+                    switch (value)
+                    {
                         case "beta":
                             return true;
                         default:
@@ -362,8 +405,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool IsArchiveBaseName(ascii value) {
-                    switch (value) {
+                fn bool IsArchiveBaseName(ascii value)
+                {
+                    switch (value)
+                    {
                         case "archive.tar":
                             return true;
                         default:
@@ -371,8 +416,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool IsHiddenBaseName(ascii value) {
-                    switch (value) {
+                fn bool IsHiddenBaseName(ascii value)
+                {
+                    switch (value)
+                    {
                         case ".hidden":
                             return true;
                         default:
@@ -380,8 +427,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool IsAlphaDirectory(ascii value) {
-                    switch (value) {
+                fn bool IsAlphaDirectory(ascii value)
+                {
+                    switch (value)
+                    {
                         case "alpha":
                             return true;
                         default:
@@ -389,11 +438,13 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool IsEmpty(ascii value) {
+                fn bool IsEmpty(ascii value)
+                {
                     return System.Text.AsciiLength(value) == 0;
                 }
 
-                fn bool CheckFacts() {
+                fn bool CheckFacts()
+                {
                     stack System.IO.Path.PathFacts facts = System.IO.Path.GetFacts("alpha/beta.txt");
                     if (facts.PathLength() != 14
                         || facts.ExtensionLength() != 4
@@ -401,8 +452,9 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         || facts.DirectoryNameLength() != 5
                         || !IsTextExtension(facts.Extension())
                         || !IsBetaBaseName(facts.BaseName())
-                        || !IsAlphaDirectory(facts.DirectoryName())) {
-                        return false;
+                        || !IsAlphaDirectory(facts.DirectoryName()))
+                        {
+                            return false;
                     }
 
                     stack System.IO.Path.PathFacts constFacts = System.IO.Path.GetConstFacts("alpha/beta.txt");
@@ -412,17 +464,20 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         || constFacts.DirectoryNameLength() != 5
                         || !IsTextExtension(System.IO.Path.ExtensionConst("alpha/beta.txt"))
                         || !IsBetaBaseName(System.IO.Path.BaseNameConst("alpha/beta.txt"))
-                        || !IsAlphaDirectory(System.IO.Path.DirectoryNameConst("alpha/beta.txt"))) {
-                        return false;
+                        || !IsAlphaDirectory(System.IO.Path.DirectoryNameConst("alpha/beta.txt")))
+                        {
+                            return false;
                     }
 
                     stack System.IO.Path.PathFacts archive = System.IO.Path.GetFacts("archive.tar.gz");
-                    if (!IsGzExtension(archive.Extension()) || !IsArchiveBaseName(archive.BaseName()) || archive.DirectoryNameLength() != 0) {
+                    if (!IsGzExtension(archive.Extension()) || !IsArchiveBaseName(archive.BaseName()) || archive.DirectoryNameLength() != 0)
+                    {
                         return false;
                     }
 
                     stack System.IO.Path.PathFacts hidden = System.IO.Path.GetFacts("alpha/.hidden");
-                    if (!IsEmpty(hidden.Extension()) || !IsHiddenBaseName(hidden.BaseName()) || !IsAlphaDirectory(hidden.DirectoryName())) {
+                    if (!IsEmpty(hidden.Extension()) || !IsHiddenBaseName(hidden.BaseName()) || !IsAlphaDirectory(hidden.DirectoryName()))
+                    {
                         return false;
                     }
 
@@ -435,39 +490,48 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         && IsHiddenBaseName(System.IO.Path.BaseName("alpha/.hidden"));
                 }
 
-                fn i32[min max] CheckJoinAndNormalize() {
+                fn i32[min max] CheckJoinAndNormalize()
+                {
                     stack mut System.Text.OwnedAscii joined = new();
-                    if (!Ok(System.IO.Path.TryJoin(joined, "alpha/", "/beta.txt"))) {
+                    if (!Ok(System.IO.Path.TryJoin(joined, "alpha/", "/beta.txt")))
+                    {
                         return 1;
                     }
 
-                    if (System.Text.AsciiLength(joined.View()) != 14) {
+                    if (System.Text.AsciiLength(joined.View()) != 14)
+                    {
                         return 7;
                     }
 
-                    if (!IsJoinedPath(joined.View())) {
+                    if (!IsJoinedPath(joined.View()))
+                    {
                         return 9;
                     }
 
                     stack mut System.Text.OwnedAscii normalized = new();
-                    if (!Ok(System.IO.Path.TryNormalizeSeparators(normalized, "alpha//beta///gamma.txt")) || !IsNormalizedPath(normalized.View())) {
+                    if (!Ok(System.IO.Path.TryNormalizeSeparators(normalized, "alpha//beta///gamma.txt")) || !IsNormalizedPath(normalized.View()))
+                    {
                         return 2;
                     }
 
                     stack mut System.Text.OwnedAscii constJoined = new();
-                    if (!Ok(System.IO.Path.TryJoinConst(constJoined, ConstLeft, ConstRight)) || !IsJoinedPath(constJoined.View())) {
+                    if (!Ok(System.IO.Path.TryJoinConst(constJoined, ConstLeft, ConstRight)) || !IsJoinedPath(constJoined.View()))
+                    {
                         return 10;
                     }
 
                     stack mut System.Text.OwnedAscii constNormalized = new();
-                    if (!Ok(System.IO.Path.TryNormalizeSeparatorsConst(constNormalized, ConstNormalizedSource)) || !IsNormalizedPath(constNormalized.View())) {
+                    if (!Ok(System.IO.Path.TryNormalizeSeparatorsConst(constNormalized, ConstNormalizedSource)) || !IsNormalizedPath(constNormalized.View()))
+                    {
                         return 11;
                     }
 
                     stack System.Memory.MemoryResult<System.Text.OwnedAscii> ownedJoin = System.IO.Path.Join("alpha", "beta.txt");
-                    switch (ownedJoin) {
+                    switch (ownedJoin)
+                    {
                         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var ownedJoinValue):
-                            if (!IsJoinedPath(ownedJoinValue.View())) {
+                            if (!IsJoinedPath(ownedJoinValue.View()))
+                            {
                                 return 3;
                             }
                         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var ownedJoinError):
@@ -475,9 +539,11 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
 
                     stack System.Memory.MemoryResult<System.Text.OwnedAscii> ownedConstJoin = System.IO.Path.JoinConst(ConstLeft, ConstRight);
-                    switch (ownedConstJoin) {
+                    switch (ownedConstJoin)
+                    {
                         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var ownedConstJoinValue):
-                            if (!IsJoinedPath(ownedConstJoinValue.View())) {
+                            if (!IsJoinedPath(ownedConstJoinValue.View()))
+                            {
                                 return 12;
                             }
                         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var ownedConstJoinError):
@@ -485,9 +551,11 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
 
                     stack System.Memory.MemoryResult<System.Text.OwnedAscii> ownedNormalize = System.IO.Path.NormalizeSeparators("alpha//beta///gamma.txt");
-                    switch (ownedNormalize) {
+                    switch (ownedNormalize)
+                    {
                         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var ownedNormalizeValue):
-                            if (!IsNormalizedPath(ownedNormalizeValue.View())) {
+                            if (!IsNormalizedPath(ownedNormalizeValue.View()))
+                            {
                                 return 5;
                             }
                         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var ownedNormalizeError):
@@ -495,9 +563,11 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
 
                     stack System.Memory.MemoryResult<System.Text.OwnedAscii> ownedConstNormalize = System.IO.Path.NormalizeSeparatorsConst(ConstNormalizedSource);
-                    switch (ownedConstNormalize) {
+                    switch (ownedConstNormalize)
+                    {
                         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var ownedConstNormalizeValue):
-                            if (!IsNormalizedPath(ownedConstNormalizeValue.View())) {
+                            if (!IsNormalizedPath(ownedConstNormalizeValue.View()))
+                            {
                                 return 14;
                             }
                         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var ownedConstNormalizeError):
@@ -507,34 +577,41 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     return 0;
                 }
 
-                fn bool CheckSelfViewAliases() {
+                fn bool CheckSelfViewAliases()
+                {
                     stack mut System.Text.OwnedAscii selfJoin = new();
-                    if (!Ok(selfJoin.AppendAscii("alpha"))) {
+                    if (!Ok(selfJoin.AppendAscii("alpha")))
+                    {
                         return false;
                     }
 
                     stack ascii sameView = selfJoin.View();
-                    if (!Ok(System.IO.Path.TryJoin(selfJoin, sameView, sameView))) {
+                    if (!Ok(System.IO.Path.TryJoin(selfJoin, sameView, sameView)))
+                    {
                         return false;
                     }
 
                     if (System.Text.AsciiLength(selfJoin.View()) != 11
-                        || !IsSelfJoinedPath(selfJoin.View())) {
-                        return false;
+                        || !IsSelfJoinedPath(selfJoin.View()))
+                        {
+                            return false;
                     }
 
                     stack mut System.Text.OwnedAscii rightAlias = new();
-                    if (!Ok(rightAlias.AppendAscii("beta.txt"))) {
+                    if (!Ok(rightAlias.AppendAscii("beta.txt")))
+                    {
                         return false;
                     }
 
                     stack ascii rightView = rightAlias.View();
-                    if (!Ok(System.IO.Path.TryJoin(rightAlias, "alpha", rightView)) || !IsJoinedPath(rightAlias.View())) {
+                    if (!Ok(System.IO.Path.TryJoin(rightAlias, "alpha", rightView)) || !IsJoinedPath(rightAlias.View()))
+                    {
                         return false;
                     }
 
                     stack mut System.Text.OwnedAscii normalizeAlias = new();
-                    if (!Ok(normalizeAlias.AppendAscii("alpha//beta///gamma.txt"))) {
+                    if (!Ok(normalizeAlias.AppendAscii("alpha//beta///gamma.txt")))
+                    {
                         return false;
                     }
 
@@ -543,47 +620,60 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                         && IsNormalizedPath(normalizeAlias.View());
                 }
 
-                unsafe fn i32[min max] CheckTooLargeNormalization() {
-                    stack mut i8[min max][1] storage = { 47 };
-                    stack Ascii huge = new Ascii() {
+                unsafe fn i32[min max] CheckTooLargeNormalization()
+                {
+                    stack mut i8[min max][1] storage =
+                    {
+                        47
+                    };
+                    stack Ascii huge = new Ascii()
+                    {
                         Data = &storage[0],
                         Length = (i64[min max])(2 ** 63 - 1),
                         Capacity = (i64[min max])(2 ** 63 - 1)
                     };
                     stack mut System.Text.OwnedAscii destination = new();
                     stack ascii hugeView = System.Text.AsciiView(huge);
-                    if (System.Text.AsciiLength(hugeView) == 0) {
+                    if (System.Text.AsciiLength(hugeView) == 0)
+                    {
                         return 1;
                     }
 
                     stack System.Memory.MemoryStatus status = System.IO.Path.TryNormalizeSeparators(destination, hugeView);
-                    if (Ok(status)) {
+                    if (Ok(status))
+                    {
                         return 2;
                     }
 
-                    if (destination.Length() != 0) {
+                    if (destination.Length() != 0)
+                    {
                         return 3;
                     }
 
                     return 0;
                 }
 
-                export unsafe fn i32[min max] main() {
-                    if (!CheckFacts()) {
+                export unsafe fn i32[min max] main()
+                {
+                    if (!CheckFacts())
+                    {
                         return 1;
                     }
 
                     stack i32[min max] joinAndNormalize = CheckJoinAndNormalize();
-                    if (joinAndNormalize != 0) {
+                    if (joinAndNormalize != 0)
+                    {
                         return 20 + joinAndNormalize;
                     }
 
-                    if (!CheckSelfViewAliases()) {
+                    if (!CheckSelfViewAliases())
+                    {
                         return 3;
                     }
 
                     stack i32[min max] tooLarge = CheckTooLargeNormalization();
-                    if (tooLarge != 0) {
+                    if (tooLarge != 0)
+                    {
                         return 40 + tooLarge;
                     }
 
@@ -664,8 +754,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 import System.Text
                 module App
 
-                fn bool StatusOk(System.IO.IOStatus status) {
-                    switch (status) {
+                fn bool StatusOk(System.IO.IOStatus status)
+                {
+                    switch (status)
+                    {
                         case System.IO.IOStatus.Ok:
                             return true;
                         case System.IO.IOStatus.Err(var error):
@@ -673,8 +765,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
-                    switch (result) {
+                fn bool BoolOrFalse(System.IO.IOResult<bool> result)
+                {
+                    switch (result)
+                    {
                         case System.IO.IOResult<bool>.Ok(var value):
                             return value;
                         case System.IO.IOResult<bool>.Err(var error):
@@ -682,8 +776,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool MemoryOk(System.Memory.MemoryStatus status) {
-                    switch (status) {
+                fn bool MemoryOk(System.Memory.MemoryStatus status)
+                {
+                    switch (status)
+                    {
                         case System.Memory.MemoryStatus.Ok:
                             return true;
                         case System.Memory.MemoryStatus.Err(var error):
@@ -691,8 +787,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
-                    switch (result) {
+                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result)
+                {
+                    switch (result)
+                    {
                         case System.IO.IOResult<System.IO.File.File>.Ok(var value):
                             return value;
                         case System.IO.IOResult<System.IO.File.File>.Err(var error):
@@ -700,19 +798,23 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     stack mut System.Text.OwnedAscii owned = new();
 
-                    if (!MemoryOk(System.IO.Path.CurrentDirectory(owned))) {
+                    if (!MemoryOk(System.IO.Path.CurrentDirectory(owned)))
+                    {
                         return 1;
                     }
 
-                    if (owned.Length() <= 0) {
+                    if (owned.Length() <= 0)
+                    {
                         return 2;
                     }
 
                     stack System.IO.IOStatus status = System.Console.WriteLine(owned.View());
-                    switch (status) {
+                    switch (status)
+                    {
                         case System.IO.IOStatus.Ok:
                             return 0;
                         case System.IO.IOStatus.Err(var error):
@@ -812,8 +914,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 import System.Text
                 module App
 
-                fn bool MemoryOk(System.Memory.MemoryStatus status) {
-                    switch (status) {
+                fn bool MemoryOk(System.Memory.MemoryStatus status)
+                {
+                    switch (status)
+                    {
                         case System.Memory.MemoryStatus.Ok:
                             return true;
                         case System.Memory.MemoryStatus.Err(var error):
@@ -821,8 +925,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool IsJoinedPath(ascii value) {
-                    switch (value) {
+                fn bool IsJoinedPath(ascii value)
+                {
+                    switch (value)
+                    {
                         case "alpha/beta.txt":
                             return true;
                         default:
@@ -830,8 +936,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool IsTextExtension(ascii value) {
-                    switch (value) {
+                fn bool IsTextExtension(ascii value)
+                {
+                    switch (value)
+                    {
                         case ".txt":
                             return true;
                         default:
@@ -839,8 +947,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool IsBetaBaseName(ascii value) {
-                    switch (value) {
+                fn bool IsBetaBaseName(ascii value)
+                {
+                    switch (value)
+                    {
                         case "beta":
                             return true;
                         default:
@@ -848,8 +958,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool IsAlphaDirectory(ascii value) {
-                    switch (value) {
+                fn bool IsAlphaDirectory(ascii value)
+                {
+                    switch (value)
+                    {
                         case "alpha":
                             return true;
                         default:
@@ -857,8 +969,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool IsOwnedJoinedPath(System.Memory.MemoryResult<System.Text.OwnedAscii> result) {
-                    switch (result) {
+                fn bool IsOwnedJoinedPath(System.Memory.MemoryResult<System.Text.OwnedAscii> result)
+                {
+                    switch (result)
+                    {
                         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
                             return value.Length() == 14 && IsJoinedPath(value.View());
                         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
@@ -866,59 +980,73 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                export unsafe fn i32[min max] main() {
+                export unsafe fn i32[min max] main()
+                {
                     stack mut System.Text.OwnedAscii joined = new();
 
-                    if (!MemoryOk(System.IO.Path.TryJoin(joined, "alpha", "beta.txt"))) {
+                    if (!MemoryOk(System.IO.Path.TryJoin(joined, "alpha", "beta.txt")))
+                    {
                         return 1;
                     }
 
-                    if (!IsJoinedPath(joined.View())) {
+                    if (!IsJoinedPath(joined.View()))
+                    {
                         return 2;
                     }
 
-                    if (!IsTextExtension(System.IO.Path.Extension(joined.View()))) {
+                    if (!IsTextExtension(System.IO.Path.Extension(joined.View())))
+                    {
                         return 3;
                     }
 
-                    if (!IsBetaBaseName(System.IO.Path.BaseName(joined.View()))) {
+                    if (!IsBetaBaseName(System.IO.Path.BaseName(joined.View())))
+                    {
                         return 4;
                     }
 
-                    if (!IsAlphaDirectory(System.IO.Path.DirectoryName(joined.View()))) {
+                    if (!IsAlphaDirectory(System.IO.Path.DirectoryName(joined.View())))
+                    {
                         return 5;
                     }
 
                     stack System.IO.Path.PathFacts facts = System.IO.Path.GetFacts(joined.View());
-                    if (!IsTextExtension(facts.Extension())) {
+                    if (!IsTextExtension(facts.Extension()))
+                    {
                         return 10;
                     }
 
-                    if (!IsBetaBaseName(facts.BaseName())) {
+                    if (!IsBetaBaseName(facts.BaseName()))
+                    {
                         return 11;
                     }
 
-                    if (!IsAlphaDirectory(facts.DirectoryName())) {
+                    if (!IsAlphaDirectory(facts.DirectoryName()))
+                    {
                         return 12;
                     }
 
-                    if (facts.PathLength() != 14 || facts.ExtensionLength() != 4 || facts.BaseNameLength() != 4 || facts.DirectoryNameLength() != 5) {
+                    if (facts.PathLength() != 14 || facts.ExtensionLength() != 4 || facts.BaseNameLength() != 4 || facts.DirectoryNameLength() != 5)
+                    {
                         return 13;
                     }
 
-                    if (!MemoryOk(System.IO.Path.TryJoin(joined, "alpha/", "/beta.txt"))) {
+                    if (!MemoryOk(System.IO.Path.TryJoin(joined, "alpha/", "/beta.txt")))
+                    {
                         return 6;
                     }
 
-                    if (!IsJoinedPath(joined.View())) {
+                    if (!IsJoinedPath(joined.View()))
+                    {
                         return 7;
                     }
 
-                    if (!IsOwnedJoinedPath(System.IO.Path.Join("alpha", "beta.txt"))) {
+                    if (!IsOwnedJoinedPath(System.IO.Path.Join("alpha", "beta.txt")))
+                    {
                         return 8;
                     }
 
-                    if (!IsOwnedJoinedPath(System.IO.Path.Join("alpha/", "/beta.txt"))) {
+                    if (!IsOwnedJoinedPath(System.IO.Path.Join("alpha/", "/beta.txt")))
+                    {
                         return 9;
                     }
 
@@ -1017,8 +1145,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                 import System.Text
                 module App
 
-                fn bool StatusOk(System.IO.IOStatus status) {
-                    switch (status) {
+                fn bool StatusOk(System.IO.IOStatus status)
+                {
+                    switch (status)
+                    {
                         case System.IO.IOStatus.Ok:
                             return true;
                         case System.IO.IOStatus.Err(var error):
@@ -1026,8 +1156,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
-                    switch (result) {
+                fn bool BoolOrFalse(System.IO.IOResult<bool> result)
+                {
+                    switch (result)
+                    {
                         case System.IO.IOResult<bool>.Ok(var value):
                             return value;
                         case System.IO.IOResult<bool>.Err(var error):
@@ -1035,8 +1167,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool MemoryOk(System.Memory.MemoryStatus status) {
-                    switch (status) {
+                fn bool MemoryOk(System.Memory.MemoryStatus status)
+                {
+                    switch (status)
+                    {
                         case System.Memory.MemoryStatus.Ok:
                             return true;
                         case System.Memory.MemoryStatus.Err(var error):
@@ -1044,8 +1178,10 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
-                    switch (result) {
+                fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result)
+                {
+                    switch (result)
+                    {
                         case System.IO.IOResult<System.IO.File.File>.Ok(var value):
                             return value;
                         case System.IO.IOResult<System.IO.File.File>.Err(var error):
@@ -1053,96 +1189,124 @@ public sealed class SystemIOPathStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                export unsafe fn i32[min max] main() {
+                export unsafe fn i32[min max] main()
+                {
                     stack mut System.Text.OwnedAscii cwd = new();
-                    stack mut i8[min max][12] ownedNameBytes = { 111, 119, 110, 101, 100, 45, -50, -79, 46, 116, 120, 116 };
-                    stack mut Ascii ownedName = new Ascii() {
+                    stack mut i8[min max][12] ownedNameBytes =
+                    {
+                        111, 119, 110, 101, 100, 45, -50, -79, 46, 116, 120, 116
+                    };
+                    stack mut Ascii ownedName = new Ascii()
+                    {
                         Data = &ownedNameBytes[0],
                         Length = 12,
                         Capacity = 12
                     };
-                    stack mut i8[min max][14] renamedNameBytes = { 114, 101, 110, 97, 109, 101, 100, 45, -50, -78, 46, 116, 120, 116 };
-                    stack mut Ascii renamedName = new Ascii() {
+                    stack mut i8[min max][14] renamedNameBytes =
+                    {
+                        114, 101, 110, 97, 109, 101, 100, 45, -50, -78, 46, 116, 120, 116
+                    };
+                    stack mut Ascii renamedName = new Ascii()
+                    {
                         Data = &renamedNameBytes[0],
                         Length = 14,
                         Capacity = 14
                     };
-                    stack mut i8[min max][13] deleteNameBytes = { 100, 101, 108, 101, 116, 101, 45, -50, -77, 46, 116, 120, 116 };
-                    stack mut Ascii deleteName = new Ascii() {
+                    stack mut i8[min max][13] deleteNameBytes =
+                    {
+                        100, 101, 108, 101, 116, 101, 45, -50, -77, 46, 116, 120, 116
+                    };
+                    stack mut Ascii deleteName = new Ascii()
+                    {
                         Data = &deleteNameBytes[0],
                         Length = 13,
                         Capacity = 13
                     };
 
-                    if (!MemoryOk(System.IO.Path.CurrentDirectory(cwd))) {
+                    if (!MemoryOk(System.IO.Path.CurrentDirectory(cwd)))
+                    {
                         return 1;
                     }
 
                     stack mut System.IO.File.File cwdFile = OpenOrEmpty(System.IO.File.Open("cwd.txt", System.IO.File.FileMode.Write, System.IO.File.FileBuffering.Line));
                     cwdFile.WriteLine(cwd.View());
-                    if (!StatusOk(cwdFile.Close())) {
+                    if (!StatusOk(cwdFile.Close()))
+                    {
                         return 3;
                     }
 
                     stack mut System.IO.File.File file = OpenOrEmpty(System.IO.File.Open(System.Text.AsciiView(ownedName), System.IO.File.FileMode.Write, System.IO.File.FileBuffering.Line));
                     file.WriteLine((unicode)"Owned");
-                    if (!StatusOk(file.Close())) {
+                    if (!StatusOk(file.Close()))
+                    {
                         return 4;
                     }
 
-                    ownedName = new Ascii() {
+                    ownedName = new Ascii()
+                    {
                         Data = &ownedNameBytes[0],
                         Length = 12,
                         Capacity = 12
                     };
-                    if (!BoolOrFalse(System.IO.File.Exists(System.Text.AsciiView(ownedName)))) {
+                    if (!BoolOrFalse(System.IO.File.Exists(System.Text.AsciiView(ownedName))))
+                    {
                         return 5;
                     }
 
-                    ownedName = new Ascii() {
+                    ownedName = new Ascii()
+                    {
                         Data = &ownedNameBytes[0],
                         Length = 12,
                         Capacity = 12
                     };
-                    renamedName = new Ascii() {
+                    renamedName = new Ascii()
+                    {
                         Data = &renamedNameBytes[0],
                         Length = 14,
                         Capacity = 14
                     };
-                    if (!StatusOk(System.IO.File.Move(System.Text.AsciiView(ownedName), System.Text.AsciiView(renamedName)))) {
+                    if (!StatusOk(System.IO.File.Move(System.Text.AsciiView(ownedName), System.Text.AsciiView(renamedName))))
+                    {
                         return 6;
                     }
 
-                    renamedName = new Ascii() {
+                    renamedName = new Ascii()
+                    {
                         Data = &renamedNameBytes[0],
                         Length = 14,
                         Capacity = 14
                     };
-                    if (!BoolOrFalse(System.IO.File.Exists(System.Text.AsciiView(renamedName)))) {
+                    if (!BoolOrFalse(System.IO.File.Exists(System.Text.AsciiView(renamedName))))
+                    {
                         return 7;
                     }
 
                     stack mut System.IO.File.File deleteFile = OpenOrEmpty(System.IO.File.Open(System.Text.AsciiView(deleteName), System.IO.File.FileMode.Write, System.IO.File.FileBuffering.Line));
                     deleteFile.WriteLine("Delete");
-                    if (!StatusOk(deleteFile.Close())) {
+                    if (!StatusOk(deleteFile.Close()))
+                    {
                         return 9;
                     }
 
-                    deleteName = new Ascii() {
+                    deleteName = new Ascii()
+                    {
                         Data = &deleteNameBytes[0],
                         Length = 13,
                         Capacity = 13
                     };
-                    if (!StatusOk(System.IO.File.Delete(System.Text.AsciiView(deleteName)))) {
+                    if (!StatusOk(System.IO.File.Delete(System.Text.AsciiView(deleteName))))
+                    {
                         return 10;
                     }
 
-                    deleteName = new Ascii() {
+                    deleteName = new Ascii()
+                    {
                         Data = &deleteNameBytes[0],
                         Length = 13,
                         Capacity = 13
                     };
-                    if (BoolOrFalse(System.IO.File.Exists(System.Text.AsciiView(deleteName)))) {
+                    if (BoolOrFalse(System.IO.File.Exists(System.Text.AsciiView(deleteName))))
+                    {
                         return 11;
                     }
 

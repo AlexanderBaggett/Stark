@@ -1,15 +1,19 @@
 module Book.Negative.UseAfterMove
 
-struct Box {
+struct Box
+{
     i32[min max] Value;
 }
 
-fn void Consume(Box value) {
+fn void Consume(Box value)
+{
     return;
 }
 
-fn i32[min max] UseAfterMove() {
-    stack Box box = new Box() {
+fn i32[min max] UseAfterMove()
+{
+    stack Box box = new Box()
+    {
         Value = 1
     };
 

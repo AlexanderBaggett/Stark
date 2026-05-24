@@ -11,17 +11,21 @@ public sealed class TraitsAndDoctrinesFeatureTests : FeatureLlvmTestBase
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            doctrine Inspect {
-                law i32[min max] Read(borrow Box box) {
+            doctrine Inspect
+            {
+                law i32[min max] Read(borrow Box box)
+                {
                     return box.Value;
                 }
             }
 
-            law i32[min max] Run(borrow Box box) {
+            law i32[min max] Run(borrow Box box)
+            {
                 return Inspect.Read(box);
             }
             """,
@@ -54,17 +58,21 @@ public sealed class TraitsAndDoctrinesFeatureTests : FeatureLlvmTestBase
             """
             module Demo
 
-            struct Box<T> {
+            struct Box<T>
+            {
                 T Value;
             }
 
-            doctrine Inspect<T> {
-                finite law T Read(borrow Box<T> box) {
+            doctrine Inspect<T>
+            {
+                finite law T Read(borrow Box<T> box)
+                {
                     return box.Value;
                 }
             }
 
-            finite law i32[min max] Run(borrow Box<i32[min max]> box) {
+            finite law i32[min max] Run(borrow Box<i32[min max]> box)
+            {
                 return Inspect<i32[min max]>.Read(box);
             }
             """,
@@ -103,15 +111,18 @@ public sealed class TraitsAndDoctrinesFeatureTests : FeatureLlvmTestBase
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            trait Reader<T> {
+            trait Reader<T>
+            {
                 finite law T Read(borrow Box box);
             }
 
-            finite law i32[min max] Run(i32[min max] value) {
+            finite law i32[min max] Run(i32[min max] value)
+            {
                 return value;
             }
             """);

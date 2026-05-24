@@ -90,7 +90,8 @@ public sealed class ProjectCliTests
                 """
                 module App
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     return 0;
                 }
                 """);
@@ -213,7 +214,8 @@ public sealed class ProjectCliTests
                 """
                 module Tests
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     return 0;
                 }
                 """);
@@ -272,7 +274,8 @@ public sealed class ProjectCliTests
                 """
                 module Tests
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     return 7;
                 }
                 """);
@@ -377,7 +380,8 @@ public sealed class ProjectCliTests
             """
             module Math
 
-            public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
+            public finite law i32[min max] Add(i32[min max] left, i32[min max] right)
+            {
                 return left + right;
             }
             """);
@@ -407,7 +411,8 @@ public sealed class ProjectCliTests
             import Math
             module App
 
-            export fn i32[min max] main() {
+            export fn i32[min max] main()
+            {
                 return Math.Add(3, 4);
             }
             """);
@@ -460,7 +465,8 @@ public sealed class ProjectCliTests
             """
             module Math
 
-            public finite law i32[min max] Add(i32[min max] left, i32[min max] right) {
+            public finite law i32[min max] Add(i32[min max] left, i32[min max] right)
+            {
                 return left + right;
             }
             """);
@@ -490,8 +496,10 @@ public sealed class ProjectCliTests
             import Math
             module MathTests
 
-            export fn i32[min max] main() {
-                if (Math.Add(3, 4) == 7) {
+            export fn i32[min max] main()
+            {
+                if (Math.Add(3, 4) == 7)
+                {
                     return 0;
                 }
 

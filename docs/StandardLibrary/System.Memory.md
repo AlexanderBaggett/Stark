@@ -27,24 +27,28 @@ runtime checks can prove separation.
 ```stark
 module System.Memory
 
-public enum MemoryError {
+public enum MemoryError
+{
     OutOfMemory,
     InvalidLayout,
     UnsupportedAlignment,
     TooLarge,
 }
 
-public enum MemoryStatus {
+public enum MemoryStatus
+{
     Ok,
     Err(MemoryError),
 }
 
-public enum MemoryResult<T> {
+public enum MemoryResult<T>
+{
     Ok(T),
     Err(MemoryError),
 }
 
-public struct Allocator {
+public struct Allocator
+{
     u8[0 127] Kind;
 
     static finite law Allocator Default();
@@ -84,7 +88,8 @@ surface stays consistent with Stark's C#-style type members.
 standard library:
 
 ```stark
-internal struct Allocation {
+internal struct Allocation
+{
     rawmutptr<i8[min max]> Pointer;
     i64[0 max] ByteLength;
     i64[1 max] Alignment;

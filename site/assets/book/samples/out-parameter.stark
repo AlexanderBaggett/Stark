@@ -1,7 +1,9 @@
 module Book.OutParameter
 
-fn bool TryDivide(i32[min max] numerator, i32[min max] denominator, out i32[min max] result) {
-    if (denominator == 0) {
+fn bool TryDivide(i32[min max] numerator, i32[min max] denominator, out i32[min max] result)
+{
+    if (denominator == 0)
+    {
         result = 0;
         return false;
     }
@@ -10,14 +12,17 @@ fn bool TryDivide(i32[min max] numerator, i32[min max] denominator, out i32[min 
     return true;
 }
 
-export fn i32[min max] main() {
+export fn i32[min max] main()
+{
     stack mut i32[min max] result = 0;
 
-    if (!TryDivide(21, 3, result)) {
+    if (!TryDivide(21, 3, result))
+    {
         return 1;
     }
 
-    if (result != 7) {
+    if (result != 7)
+    {
         return 2;
     }
 

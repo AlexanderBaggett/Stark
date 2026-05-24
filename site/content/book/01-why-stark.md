@@ -10,10 +10,10 @@ next = "/book/02-installing-stark/"
 
 Stark is a performance-first systems language. Its design starts from a blunt
 premise: the fastest code is easier to produce when the source language refuses
-to hide expensive or hard-to-prove behavior.
+to hide expensive behavior.
 
 That means Stark is not trying to be the most permissive language. It is trying
-to make ordinary safe code friendly to static proof, predictable layout,
+to make ordinary safe code friendly to visible guarantees, predictable layout,
 deterministic cleanup, and aggressive optimization.
 
 ## Step 1: Start From Stark's Bet
@@ -25,17 +25,17 @@ Stark's bet is that restrictions can be a feature:
 - borrows are non-null and non-escaping by default
 - allocation is visible in the API shape
 - failure is expressed with values or traps, not hidden unwinding
-- dispatch and visibility are closed-world by default
+- direct calls and narrow visibility are the default
 - native interop boundaries are explicit
 
-The goal is not merely to generate LLVM IR. The goal is to give the compiler
-facts that are strong enough to matter.
+The goal is to make the source clear enough that the fast path is usually the
+obvious path.
 
 {{< stark-sample "assets/book/samples/performance-tight-loop.stark" >}}
 
 This small program is a Stark-shaped example of that bet. The fixed array,
 explicit stack locals, ranged integer index, `finite law` helpers, and ordinary
-exit code all expose facts that another language might leave implicit.
+exit code all make cost and behavior visible in the program.
 
 ## Step 2: Notice What Stark Refuses To Hide
 

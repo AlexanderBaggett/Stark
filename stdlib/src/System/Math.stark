@@ -1,37 +1,46 @@
 module System.Math
 
-public struct SinCosF32 {
+public struct SinCosF32
+{
     f32 Sin;
     f32 Cos;
 }
 
-public struct SinCosF64 {
+public struct SinCosF64
+{
     f64 Sin;
     f64 Cos;
 }
 
-public struct XorShift32 {
+public struct XorShift32
+{
     internal u32[0 max] State;
 
-    XorShift32() {
+    XorShift32()
+    {
         self.State = XorShift32Seed(2463534242);
     }
 
-    static inline fn XorShift32 Seeded(u32[0 max] seed) {
-        return new XorShift32() {
+    static inline fn XorShift32 Seeded(u32[0 max] seed)
+    {
+        return new XorShift32()
+        {
             State = XorShift32Seed(seed)
         };
     }
 
-    inline fn void Reseed(mut borrow XorShift32 self, u32[0 max] seed) {
+    inline fn void Reseed(mut borrow XorShift32 self, u32[0 max] seed)
+    {
         self.State = XorShift32Seed(seed);
     }
 
-    inline finite law u32[0 max] CurrentState(borrow XorShift32 self) {
+    inline finite law u32[0 max] CurrentState(borrow XorShift32 self)
+    {
         return self.State;
     }
 
-    inline fn u32[0 max] NextU32(mut borrow XorShift32 self) {
+    inline fn u32[0 max] NextU32(mut borrow XorShift32 self)
+    {
         stack mut u32[0 max] value = self.State;
         value = value ^ (value << 13);
         value = value ^ (value >> 17);
@@ -40,19 +49,23 @@ public struct XorShift32 {
         return value;
     }
 
-    inline fn i32[min max] NextI32(mut borrow XorShift32 self) {
+    inline fn i32[min max] NextI32(mut borrow XorShift32 self)
+    {
         return (i32[min max])self.NextU32();
     }
 
-    inline fn f32 NextF32(mut borrow XorShift32 self) {
+    inline fn f32 NextF32(mut borrow XorShift32 self)
+    {
         stack u32[0 max] value = self.NextU32();
         stack u32[0 max] mantissa = value >> 8;
         return (f32)mantissa * 0.000000059604644775390625;
     }
 }
 
-internal inline finite law u32[0 max] XorShift32Seed(u32[0 max] seed) {
-    if (seed == 0) {
+internal inline finite law u32[0 max] XorShift32Seed(u32[0 max] seed)
+{
+    if (seed == 0)
+    {
         return 2463534242;
     }
 

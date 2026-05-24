@@ -15,13 +15,17 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 """
                 module Demo
 
-                record Pair<T>(T Value) { }
+                record Pair<T>(T Value)
+                {
+                }
 
-                fn T Identity<T>(T value) {
+                fn T Identity<T>(T value)
+                {
                     return value;
                 }
 
-                fn i32[min max] Run(Pair<i32[min max]> pair) {
+                fn i32[min max] Run(Pair<i32[min max]> pair)
+                {
                     return Identity(pair.Value);
                 }
                 """),
@@ -52,15 +56,18 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 """
                 module Demo
 
-                fn T Identity<T>(T value) {
+                fn T Identity<T>(T value)
+                {
                     return value;
                 }
 
-                fn T Forward<T>(T value) {
+                fn T Forward<T>(T value)
+                {
                     return Identity(value);
                 }
 
-                fn i32[min max] Run(i32[min max] value) {
+                fn i32[min max] Run(i32[min max] value)
+                {
                     return Forward(value);
                 }
                 """),
@@ -85,17 +92,21 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 """
                 module Demo
 
-                record Box(i32[min max] Value) {
-                    fn i32[min max] Bump(borrow Box self, i32[min max] delta) {
+                record Box(i32[min max] Value)
+                {
+                    fn i32[min max] Bump(borrow Box self, i32[min max] delta)
+                    {
                         return self.Value + delta;
                     }
                 }
 
-                fn i32[min max] Forward<T>(borrow Box box, i32[min max] delta, T tag) {
+                fn i32[min max] Forward<T>(borrow Box box, i32[min max] delta, T tag)
+                {
                     return box.Bump(delta);
                 }
 
-                fn i32[min max] Run(borrow Box box, i32[min max] delta) {
+                fn i32[min max] Run(borrow Box box, i32[min max] delta)
+                {
                     return Forward(box, delta, delta);
                 }
                 """),
@@ -120,14 +131,20 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 """
                 module Demo
 
-                record Inner(i32[min max] Value) { }
-                record Box(Inner Inner) { }
+                record Inner(i32[min max] Value)
+                {
+                }
+                record Box(Inner Inner)
+                {
+                }
 
-                fn i32[min max] Read<T>(borrow Box box, T tag) {
+                fn i32[min max] Read<T>(borrow Box box, T tag)
+                {
                     return box.Inner.Value;
                 }
 
-                fn i32[min max] Run(borrow Box box) {
+                fn i32[min max] Run(borrow Box box)
+                {
                     return Read(box, 0);
                 }
                 """),
@@ -152,13 +169,17 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 """
                 module Demo
 
-                record Box(i32[min max] Value) { }
+                record Box(i32[min max] Value)
+                {
+                }
 
-                fn i32[min max] Read<T>(Box[2] boxes, i32[min max] index, T tag) {
+                fn i32[min max] Read<T>(Box[2] boxes, i32[min max] index, T tag)
+                {
                     return boxes[index].Value;
                 }
 
-                fn i32[min max] Run(Box[2] boxes, i32[min max] index) {
+                fn i32[min max] Run(Box[2] boxes, i32[min max] index)
+                {
                     return Read(boxes, index, index);
                 }
                 """),
@@ -183,14 +204,20 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 """
                 module Demo
 
-                record Inner(i32[min max] Value) { }
-                record Box(Inner Inner) { }
+                record Inner(i32[min max] Value)
+                {
+                }
+                record Box(Inner Inner)
+                {
+                }
 
-                fn i64[min max] Read<T>(borrow Box box, T tag) {
+                fn i64[min max] Read<T>(borrow Box box, T tag)
+                {
                     return (i64[min max])box.Inner.Value;
                 }
 
-                fn i64[min max] Run(borrow Box box) {
+                fn i64[min max] Run(borrow Box box)
+                {
                     return Read(box, box.Inner.Value);
                 }
                 """),
@@ -215,13 +242,17 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 """
                 module Demo
 
-                record Buffer(i32[min max][2] Values) { }
+                record Buffer(i32[min max][2] Values)
+                {
+                }
 
-                unsafe fn rawptr<i32[min max]> Pin<T>(borrow Buffer buffer, i32[min max] index, T tag) {
+                unsafe fn rawptr<i32[min max]> Pin<T>(borrow Buffer buffer, i32[min max] index, T tag)
+                {
                     return &buffer.Values[index];
                 }
 
-                unsafe fn rawptr<i32[min max]> Run(borrow Buffer buffer, i32[min max] index) {
+                unsafe fn rawptr<i32[min max]> Run(borrow Buffer buffer, i32[min max] index)
+                {
                     return Pin(buffer, index, index);
                 }
                 """),
@@ -246,14 +277,20 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 """
                 module Demo
 
-                record Inner(i32[min max] Value) { }
-                record Box(Inner Inner) { }
+                record Inner(i32[min max] Value)
+                {
+                }
+                record Box(Inner Inner)
+                {
+                }
 
-                fn i32[min max] AddDelta<T>(borrow Box box, i32[min max] delta, T tag) {
+                fn i32[min max] AddDelta<T>(borrow Box box, i32[min max] delta, T tag)
+                {
                     return box.Inner.Value + delta;
                 }
 
-                fn i32[min max] Run(borrow Box box, i32[min max] delta) {
+                fn i32[min max] Run(borrow Box box, i32[min max] delta)
+                {
                     return AddDelta(box, delta, delta);
                 }
                 """),
@@ -278,14 +315,20 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 """
                 module Demo
 
-                record Inner(i32[min max] Value) { }
-                record Box(Inner Inner) { }
+                record Inner(i32[min max] Value)
+                {
+                }
+                record Box(Inner Inner)
+                {
+                }
 
-                fn bool IsBelow<T>(borrow Box box, i32[min max] limit, T tag) {
+                fn bool IsBelow<T>(borrow Box box, i32[min max] limit, T tag)
+                {
                     return box.Inner.Value < limit;
                 }
 
-                fn bool Run(borrow Box box, i32[min max] limit) {
+                fn bool Run(borrow Box box, i32[min max] limit)
+                {
                     return IsBelow(box, limit, limit);
                 }
                 """),
@@ -309,17 +352,24 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 """
                 module Demo
 
-                fn i32[min max] ChooseBranch<T>(bool takeLeft, bool takeMiddle, i32[min max] left, i32[min max] middle, i32[min max] right, T tag) {
-                    if (takeLeft) {
+                fn i32[min max] ChooseBranch<T>(bool takeLeft, bool takeMiddle, i32[min max] left, i32[min max] middle, i32[min max] right, T tag)
+                {
+                    if (takeLeft)
+                    {
                         return left;
-                    } else if (takeMiddle) {
+                    }
+                    else if (takeMiddle)
+                    {
                         return middle;
-                    } else {
+                    }
+                    else
+                    {
                         return right;
                     }
                 }
 
-                fn i32[min max] Run(bool takeLeft, bool takeMiddle, i32[min max] left, i32[min max] middle, i32[min max] right) {
+                fn i32[min max] Run(bool takeLeft, bool takeMiddle, i32[min max] left, i32[min max] middle, i32[min max] right)
+                {
                     return ChooseBranch(takeLeft, takeMiddle, left, middle, right, right);
                 }
                 """),
@@ -343,8 +393,10 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 """
                 module Demo
 
-                fn i32[min max] ChooseSwitch<T>(i32[min max] selector, i32[min max] left, i32[min max] middle, i32[min max] right, T tag) {
-                    switch (selector) {
+                fn i32[min max] ChooseSwitch<T>(i32[min max] selector, i32[min max] left, i32[min max] middle, i32[min max] right, T tag)
+                {
+                    switch (selector)
+                    {
                         case 0:
                             return left;
                         case 1:
@@ -354,7 +406,8 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                     }
                 }
 
-                fn i32[min max] Run(i32[min max] selector, i32[min max] left, i32[min max] middle, i32[min max] right) {
+                fn i32[min max] Run(i32[min max] selector, i32[min max] left, i32[min max] middle, i32[min max] right)
+                {
                     return ChooseSwitch(selector, left, middle, right, right);
                 }
                 """),
@@ -378,23 +431,31 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 """
                 module Demo
 
-                struct Inner<T> {
+                struct Inner<T>
+                {
                     T Value;
                 }
 
-                struct Outer<T> {
+                struct Outer<T>
+                {
                     Inner<T> Item;
                     i32[min max] Count;
                 }
 
-                fn Outer<T> Wrap<T>(T value, i32[min max] count, T tag) {
-                    return new Outer<T>() {
-                        Item = { Value = value },
+                fn Outer<T> Wrap<T>(T value, i32[min max] count, T tag)
+                {
+                    return new Outer<T>()
+                    {
+                        Item =
+                        {
+                            Value = value
+                        },
                         Count = count
                     };
                 }
 
-                fn Outer<i32[min max]> Run(i32[min max] value, i32[min max] count) {
+                fn Outer<i32[min max]> Run(i32[min max] value, i32[min max] count)
+                {
                     return Wrap(value, count, value);
                 }
                 """),
@@ -418,16 +479,25 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 """
                 module Demo
 
-                enum Boxed<T> {
+                enum Boxed<T>
+                {
                     None,
-                    Value { Data: T, Tag: i32[min max] },
+                    Value
+                    {
+                        Data: T, Tag: i32[min max]
+                    },
                 }
 
-                fn Boxed<T> Wrap<T>(T value, i32[min max] tag, T marker) {
-                    return Boxed<T>.Value { Data: value, Tag: tag };
+                fn Boxed<T> Wrap<T>(T value, i32[min max] tag, T marker)
+                {
+                    return Boxed<T>.Value
+                    {
+                        Data: value, Tag: tag
+                    };
                 }
 
-                fn Boxed<i32[min max]> Run(i32[min max] value, i32[min max] tag) {
+                fn Boxed<i32[min max]> Run(i32[min max] value, i32[min max] tag)
+                {
                     return Wrap(value, tag, value);
                 }
                 """),
@@ -451,16 +521,22 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 """
                 module Demo
 
-                record Inner(i32[min max] Value) { }
-                record Box(Inner Inner) { }
+                record Inner(i32[min max] Value)
+                {
+                }
+                record Box(Inner Inner)
+                {
+                }
 
-                fn i32[min max] Bump<T>(borrow Box box, i32[min max] delta, T tag) {
+                fn i32[min max] Bump<T>(borrow Box box, i32[min max] delta, T tag)
+                {
                     stack mut i32[min max] current = box.Inner.Value;
                     current += delta;
                     return current;
                 }
 
-                fn i32[min max] Run(borrow Box box, i32[min max] delta) {
+                fn i32[min max] Run(borrow Box box, i32[min max] delta)
+                {
                     return Bump(box, delta, delta);
                 }
                 """),
@@ -488,9 +564,12 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 """
                 module Facade
 
-                public record Pair<T>(T Value) { }
+                public record Pair<T>(T Value)
+                {
+                }
 
-                public fn T Identity<T>(T value) {
+                public fn T Identity<T>(T value)
+                {
                     return value;
                 }
                 """);
@@ -502,7 +581,8 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(Facade.Pair<i32[min max]> pair) {
+                    fn i32[min max] Run(Facade.Pair<i32[min max]> pair)
+                    {
                         return Facade.Identity(pair.Value);
                     }
                     """,
@@ -552,7 +632,9 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 """
                 module Facade
 
-                public record Pair<T>(T Value) { }
+                public record Pair<T>(T Value)
+                {
+                }
 
                 public fn T Identity<T>(T value);
                 """,
@@ -571,7 +653,8 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(Facade.Pair<i32[min max]> pair) {
+                    fn i32[min max] Run(Facade.Pair<i32[min max]> pair)
+                    {
                         return Facade.Identity(pair.Value);
                     }
                     """,
@@ -622,9 +705,11 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 """
                 module Facade
 
-                public cold fn T Choose<T>(T left, T right, bool takeRight) {
+                public cold fn T Choose<T>(T left, T right, bool takeRight)
+                {
                     stack mut T current = left;
-                    if (takeRight) {
+                    if (takeRight)
+                    {
                         current = right;
                     }
 
@@ -667,7 +752,8 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(i32[min max] left, i32[min max] right, bool takeRight) {
+                    fn i32[min max] Run(i32[min max] left, i32[min max] right, bool takeRight)
+                    {
                         return Facade.Choose(left, right, takeRight);
                     }
                     """,
@@ -722,8 +808,10 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 """
                 module Facade
 
-                public fn i32[min max] Classify<T>(i32[min max] value, T tag) {
-                    switch (value) {
+                public fn i32[min max] Classify<T>(i32[min max] value, T tag)
+                {
+                    switch (value)
+                    {
                         case 0:
                             return 10;
                         case 1:
@@ -751,7 +839,8 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(i32[min max] value) {
+                    fn i32[min max] Run(i32[min max] value)
+                    {
                         return Facade.Classify(value, value);
                     }
                     """,
@@ -806,8 +895,10 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 """
                 module Facade
 
-                public fn i32[min max] Classify<T>(i32[min max] value, T tag) {
-                    switch (value) {
+                public fn i32[min max] Classify<T>(i32[min max] value, T tag)
+                {
+                    switch (value)
+                    {
                         case 0:
                             return 10;
                         case 1:
@@ -843,7 +934,8 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
             var corruptedSourceText = importedDocument.ParseResult.SourceText.Replace(
                 StrictIntegerSource("public fn i32 Classify<T>(i32 value, T tag);"),
                 """
-                public fn i32[min max] Classify<T>(i32[min max] value, T tag) {
+                public fn i32[min max] Classify<T>(i32[min max] value, T tag)
+                {
                     stack mut i32[min max] total = value;
                     total = total + 1;
                     total = total + 2;
@@ -864,7 +956,8 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(i32[min max] value) {
+                    fn i32[min max] Run(i32[min max] value)
+                    {
                         return Facade.Classify(value, value);
                     }
                     """,
@@ -911,11 +1004,13 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 """
                 module Facade
 
-                public fn T Identity<T>(T value) {
+                public fn T Identity<T>(T value)
+                {
                     return value;
                 }
 
-                public fn T Forward<T>(T value) {
+                public fn T Forward<T>(T value)
+                {
                     return Identity(value);
                 }
                 """,
@@ -963,7 +1058,8 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(i32[min max] value) {
+                    fn i32[min max] Run(i32[min max] value)
+                    {
                         return Facade.Forward(value);
                     }
                     """,
@@ -1019,9 +1115,12 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 """
                 module Facade
 
-                public record Big(i64[min max] A, i64[min max] B, i64[min max] C) { }
+                public record Big(i64[min max] A, i64[min max] B, i64[min max] C)
+                {
+                }
 
-                public fn T Bounce<T>(T value) {
+                public fn T Bounce<T>(T value)
+                {
                     return value;
                 }
                 """,
@@ -1041,7 +1140,8 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                     import Facade
                     module Demo
 
-                    fn Facade.Big Run(Facade.Big value) {
+                    fn Facade.Big Run(Facade.Big value)
+                    {
                         return Facade.Bounce(value);
                     }
                     """,
@@ -1095,11 +1195,13 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 """
                 module Facade
 
-                public fn T Identity<T>(T value) {
+                public fn T Identity<T>(T value)
+                {
                     return value;
                 }
 
-                public fn T Forward<T>(T value) {
+                public fn T Forward<T>(T value)
+                {
                     return Identity(value);
                 }
                 """,
@@ -1139,7 +1241,8 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(i32[min max] left, i32[min max] right) {
+                    fn i32[min max] Run(i32[min max] left, i32[min max] right)
+                    {
                         return Facade.Forward(left) + Facade.Forward(right);
                     }
                     """,
@@ -1189,11 +1292,13 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 """
                 module Facade
 
-                public fn T Identity<T>(T value) {
+                public fn T Identity<T>(T value)
+                {
                     return value;
                 }
 
-                public fn T Forward<T>(T value) {
+                public fn T Forward<T>(T value)
+                {
                     return Identity(value);
                 }
                 """,
@@ -1240,7 +1345,8 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(i32[min max] left, i32[min max] right) {
+                    fn i32[min max] Run(i32[min max] left, i32[min max] right)
+                    {
                         return Facade.Forward(left) + Facade.Forward(right);
                     }
                     """,
@@ -1285,9 +1391,12 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 """
                 module Facade
 
-                public record Pair<A, B>(A First, B Second) { }
+                public record Pair<A, B>(A First, B Second)
+                {
+                }
 
-                public fn i32[min max] Forward<T>(T value, bool flag) {
+                public fn i32[min max] Forward<T>(T value, bool flag)
+                {
                     stack Pair<T, bool> pair = new Pair<T, bool>(value, flag);
                     return pair.Second ? 1 : 0;
                 }
@@ -1335,7 +1444,8 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(i32[min max] value, bool flag) {
+                    fn i32[min max] Run(i32[min max] value, bool flag)
+                    {
                         return Facade.Forward(value, flag);
                     }
                     """,
@@ -1379,16 +1489,19 @@ public sealed class CompilerPipelineMonomorphizationPlanTests
                 """
                 module Demo
 
-                cold fn T Choose<T>(T left, T right, bool takeRight) {
+                cold fn T Choose<T>(T left, T right, bool takeRight)
+                {
                     stack mut T current = left;
-                    if (takeRight) {
+                    if (takeRight)
+                    {
                         current = right;
                     }
 
                     return current;
                 }
 
-                fn i32[min max] Run(i32[min max] left, i32[min max] right, bool takeRight) {
+                fn i32[min max] Run(i32[min max] left, i32[min max] right, bool takeRight)
+                {
                     return Choose(left, right, takeRight);
                 }
                 """),

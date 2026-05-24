@@ -210,8 +210,10 @@ public sealed class PackageImageCliToolingTests
 
             unsafe ffi fn i32[min max] stark_native_value();
 
-            public fn i32[min max] GetValue() {
-                unsafe {
+            public fn i32[min max] GetValue()
+            {
+                unsafe
+                {
                     return stark_native_value();
                 }
             }
@@ -229,7 +231,8 @@ public sealed class PackageImageCliToolingTests
             import NativeDemo
             module App
 
-            export fn i32[min max] main() {
+            export fn i32[min max] main()
+            {
                 return GetValue();
             }
             """);
@@ -319,8 +322,10 @@ public sealed class PackageImageCliToolingTests
 
             unsafe ffi fn i32[min max] stark_native_value();
 
-            public fn i32[min max] GetValue() {
-                unsafe {
+            public fn i32[min max] GetValue()
+            {
+                unsafe
+                {
                     return stark_native_value();
                 }
             }
@@ -343,7 +348,8 @@ public sealed class PackageImageCliToolingTests
                 import NativePkgDemo
                 module App
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     return GetValue();
                 }
                 """);
@@ -482,18 +488,18 @@ public sealed class PackageImageCliToolingTests
             packagePath,
             """
             {
-              "RootModule": "Demo",
+                "RootModule": "Demo",
               "LibraryFileName": "libDemo.a",
               "Modules": [
                 {
-                  "ModuleName": "Demo",
+                    "ModuleName": "Demo",
                   "ReExports": [],
                   "Functions": [],
                   "Types": [],
                   "Globals": []
                 },
                 {
-                  "ModuleName": "Demo",
+                    "ModuleName": "Demo",
                   "ReExports": [],
                   "Functions": [],
                   "Types": [],
@@ -538,7 +544,8 @@ public sealed class PackageImageCliToolingTests
         """
         module Demo
 
-        public fn i32[min max] Run() {
+        public fn i32[min max] Run()
+        {
             return 7;
         }
         """;
