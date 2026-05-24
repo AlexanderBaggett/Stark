@@ -30,11 +30,13 @@ behavior comes first. Output inspection is a debugging and performance tool.
 Start from a tiny source question:
 
 ```stark
-inline finite law i32[min max] Double(i32[min max] value) {
+inline finite law i32[min max] Double(i32[min max] value)
+{
     return value * 2;
 }
 
-finite law i32[min max] UseDouble(i32[min max] value) {
+finite law i32[min max] UseDouble(i32[min max] value)
+{
     return Double(value) + 1;
 }
 ```
@@ -45,7 +47,8 @@ helper stay out of the way of the arithmetic I care about?"
 For storage, write the question just as narrowly:
 
 ```stark
-finite law i32[min max] First(i32[min max][4] values) {
+finite law i32[min max] First(i32[min max][4] values)
+{
     return values[0];
 }
 ```
@@ -108,7 +111,8 @@ Generated output is noisy. Inspect one thing at a time:
 Match each question to a small source pattern:
 
 ```stark
-fn bool TryWrite(out i32[min max] result) {
+fn bool TryWrite(out i32[min max] result)
+{
     result = 42;
     return true;
 }
@@ -122,7 +126,8 @@ For FFI, keep the wrapper equally small:
 ```stark
 unsafe ffi fn i32[min max] native_value();
 
-unsafe fn i32[min max] ReadValue() {
+unsafe fn i32[min max] ReadValue()
+{
     return native_value();
 }
 ```

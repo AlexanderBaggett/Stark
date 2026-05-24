@@ -26,9 +26,11 @@ public sealed class PackageImageTypedGroupedLocalDeclarationIntegrationTests
                 """
                 module Facade
 
-                public fn i32[min max] SumTo<T>(i32[min max] limit, T tag) {
+                public fn i32[min max] SumTo<T>(i32[min max] limit, T tag)
+                {
                     stack mut i32[min max] total = 0, stop = limit;
-                    for willexit (stack mut i32[min max] index = 0, max = stop; index < max; index += 1) {
+                    for willexit (stack mut i32[min max] index = 0, max = stop; index < max; index += 1)
+                    {
                         total += index;
                     }
 
@@ -97,7 +99,8 @@ public sealed class PackageImageTypedGroupedLocalDeclarationIntegrationTests
                 import Facade
                 module Demo
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     return Facade.SumTo(5, 0);
                 }
                 """);

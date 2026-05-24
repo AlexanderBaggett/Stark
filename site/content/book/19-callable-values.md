@@ -33,7 +33,8 @@ value.
 A named function can be used as a function item:
 
 ```stark
-fn i32[min max] Add(i32[min max] left, i32[min max] right) {
+fn i32[min max] Add(i32[min max] left, i32[min max] right)
+{
     return left + right;
 }
 ```
@@ -75,15 +76,18 @@ Use a helper when the callback is part of the API:
 ```stark
 fn i32[min max] Apply(
     fnptr<finite law i32[min max](i32[min max])> op,
-    i32[min max] value) {
+    i32[min max] value)
+{
     return op(value);
 }
 
-finite law i32[min max] Double(i32[min max] value) {
+finite law i32[min max] Double(i32[min max] value)
+{
     return value * 2;
 }
 
-fn i32[min max] UseApply() {
+fn i32[min max] UseApply()
+{
     return Apply(Double, 21);
 }
 ```
@@ -96,16 +100,22 @@ zero-fill.
 If a type stores a function pointer, initialize that field explicitly:
 
 ```stark
-struct Operation {
+struct Operation
+{
     fnptr<fn i32[min max](i32[min max])> Apply;
 }
 
-fn i32[min max] Increment(i32[min max] value) {
+fn i32[min max] Increment(i32[min max] value)
+{
     return value + 1;
 }
 
-fn Operation MakeOperation() {
-    return new Operation() { Apply = Increment };
+fn Operation MakeOperation()
+{
+    return new Operation()
+    {
+        Apply = Increment
+    };
 }
 ```
 
@@ -156,7 +166,8 @@ and can behave like a plain callable value.
 Capturing lambdas use an explicit capture list:
 
 ```stark
-capture(copy scale, read table) (i32[0 max] index) => {
+capture(copy scale, read table) (i32[0 max] index) =>
+{
     return table[index] * scale;
 }
 ```
@@ -170,9 +181,18 @@ The safe capture modes are:
 capture(copy scale) (i32[min max] value) => value * scale;
 capture(move packet) () => packet.Length;
 capture(read table) (i32[0 max] index) => table[index];
-capture(mut total) (i32[min max] value) => { total += value; return total; };
-capture(out destination) () => { destination = 1; return true; };
-capture(init destination) () => { destination = new Item(); return true; };
+capture(mut total) (i32[min max] value) =>
+{
+    total += value; return total;
+};
+capture(out destination) () =>
+{
+    destination = 1; return true;
+};
+capture(init destination) () =>
+{
+    destination = new Item(); return true;
+};
 ```
 
 Two capture modes require an unsafe context because they cross ordinary safe
@@ -202,11 +222,13 @@ chapter uses `fn` examples unless the callable kind itself is the topic.
 ```stark
 inline fn i32[min max] ApplyInline(
     i32[min max] value,
-    inline closure<fn i32[min max](i32[min max])> op) {
+    inline closure<fn i32[min max](i32[min max])> op)
+{
     return op(value);
 }
 
-fn i32[min max] AddOne() {
+fn i32[min max] AddOne()
+{
     return ApplyInline(41, (i32[min max] value) => value + 1);
 }
 ```
@@ -224,11 +246,13 @@ storage, but the view cannot outlive the storage it points at.
 ```stark
 fn i32[min max] ApplyBorrow(
     borrow closure<fn i32[min max](i32[min max])> op,
-    i32[min max] value) {
+    i32[min max] value)
+{
     return op(value);
 }
 
-fn i32[min max] AddOffset(i32[min max] offset) {
+fn i32[min max] AddOffset(i32[min max] offset)
+{
     return ApplyBorrow(
         capture(copy offset) (i32[min max] value) => value + offset,
         41);
@@ -242,7 +266,8 @@ requires the closure body to assign them on every successful return path.
 ```stark
 fn i32[min max] ApplyMut(
     mut borrow closure<mut fn i32[min max](i32[min max])> op,
-    i32[min max] value) {
+    i32[min max] value)
+{
     return op(value);
 }
 ```
@@ -253,11 +278,13 @@ A `heap closure<...>` owns its environment. It is the form for callbacks that
 are stored, returned, queued, or retained by another object.
 
 ```stark
-fn heap closure<fn i32[min max](i32[min max])> MakeAdder(i32[min max] offset) {
+fn heap closure<fn i32[min max](i32[min max])> MakeAdder(i32[min max] offset)
+{
     return heap capture(copy offset) (i32[min max] value) => value + offset;
 }
 
-fn i32[min max] RunAdder() {
+fn i32[min max] RunAdder()
+{
     stack heap closure<fn i32[min max](i32[min max])> addTwo = MakeAdder(2);
     return addTwo(40);
 }
@@ -268,7 +295,8 @@ retain ordinary stack borrows by default. A `heap closure<once ...>` is consumed
 when called, so a second call is rejected as a use after move.
 
 ```stark
-fn heap closure<once fn i32[min max]()> MakeOneShot(i32[min max] value) {
+fn heap closure<once fn i32[min max]()> MakeOneShot(i32[min max] value)
+{
     return heap capture(copy value) () => value;
 }
 ```
@@ -286,16 +314,19 @@ through an unmarked closure.
 ```stark
 import System.Threading
 
-fn i32[min max] Worker() {
+fn i32[min max] Worker()
+{
     return 7;
 }
 
-fn i32[min max] RunThread() {
+fn i32[min max] RunThread()
+{
     stack ThreadEntry entry = Worker;
     stack mut Thread worker = new(entry);
     stack ThreadJoinResult joined = worker.Join();
 
-    switch (joined) {
+    switch (joined)
+    {
         case ThreadJoinResult.Ok(var value):
             return value;
         case ThreadJoinResult.Err(var error):

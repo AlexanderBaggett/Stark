@@ -12,7 +12,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            finite law i32[min max] Run() {
+            finite law i32[min max] Run()
+            {
                 return 2 ** 3;
             }
             """);
@@ -27,11 +28,13 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[min max] Add(i32[min max] left, i32[min max] right) {
+            fn i32[min max] Add(i32[min max] left, i32[min max] right)
+            {
                 return left + right;
             }
 
-            fn i32[min max] Run() {
+            fn i32[min max] Run()
+            {
                 stack fnptr<fn i32[min max](i32[min max], i32[min max])> op = Add;
                 return op(40, 2);
             }
@@ -58,15 +61,18 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            fn void Touch(borrow mut Box left, borrow mut Box right) where overlap(left, right) {
+            fn void Touch(borrow mut Box left, borrow mut Box right) where overlap(left, right)
+            {
                 return;
             }
 
-            fn void Run(borrow mut Box box) {
+            fn void Run(borrow mut Box box)
+            {
                 stack fnptr<fn void(borrow mut Box, borrow mut Box) where overlap(arg0, arg1)> op = Touch;
                 op(box, box);
                 return;
@@ -91,15 +97,18 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            fn void Touch(borrow mut Box left, borrow mut Box right) {
+            fn void Touch(borrow mut Box left, borrow mut Box right)
+            {
                 return;
             }
 
-            fn void Run() {
+            fn void Run()
+            {
                 stack fnptr<fn void(borrow mut Box, borrow mut Box) where overlap(arg0, arg1)> op = Touch;
                 return;
             }
@@ -121,15 +130,18 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            fn void Touch(borrow mut Box left, borrow mut Box right) where overlap(left, right) {
+            fn void Touch(borrow mut Box left, borrow mut Box right) where overlap(left, right)
+            {
                 return;
             }
 
-            fn void Run(borrow mut Box box) {
+            fn void Run(borrow mut Box box)
+            {
                 stack fnptr<fn void(borrow mut Box, borrow mut Box) where same(arg0, arg1)> op = Touch;
                 op(box, box);
                 return;
@@ -152,11 +164,13 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            struct Ui {
+            struct Ui
+            {
                 i32[min max] Frame;
             }
 
-            struct Packet {
+            struct Packet
+            {
                 i32[min max] Code;
             }
 
@@ -233,11 +247,13 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            finite law i32[min max] Always() {
+            finite law i32[min max] Always()
+            {
                 return 7;
             }
 
-            fn void Run() {
+            fn void Run()
+            {
                 stack fnptr<fn i32[min max]()> plain = Always;
                 stack fnptr<finite i32[min max]()> finiteOnly = Always;
                 stack fnptr<law i32[min max]()> lawOnly = Always;
@@ -264,23 +280,28 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[min max] Plain() {
+            fn i32[min max] Plain()
+            {
                 return 1;
             }
 
-            finite i32[min max] FiniteOnly() {
+            finite i32[min max] FiniteOnly()
+            {
                 return 2;
             }
 
-            law i32[min max] LawOnly() {
+            law i32[min max] LawOnly()
+            {
                 return 3;
             }
 
-            finite law i32[min max] Strict() {
+            finite law i32[min max] Strict()
+            {
                 return 4;
             }
 
-            fn void Run() {
+            fn void Run()
+            {
                 stack fnptr<fn i32[min max]()> plain = Plain;
                 stack fnptr<finite i32[min max]()> finiteOnly = FiniteOnly;
                 stack fnptr<law i32[min max]()> lawOnly = LawOnly;
@@ -309,19 +330,23 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[min max] Plain() {
+            fn i32[min max] Plain()
+            {
                 return 1;
             }
 
-            finite i32[min max] FiniteOnly() {
+            finite i32[min max] FiniteOnly()
+            {
                 return 2;
             }
 
-            law i32[min max] LawOnly() {
+            law i32[min max] LawOnly()
+            {
                 return 3;
             }
 
-            fn void Run() {
+            fn void Run()
+            {
                 stack fnptr<finite i32[min max]()> needsFinite = Plain;
                 stack fnptr<law i32[min max]()> needsLaw = Plain;
                 stack fnptr<finite law i32[min max]()> needsBothFromFinite = FiniteOnly;
@@ -364,19 +389,23 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[min max] Target() {
+            fn i32[min max] Target()
+            {
                 return 41;
             }
 
-            fn fnptr<fn i32[min max]()> Factory() {
+            fn fnptr<fn i32[min max]()> Factory()
+            {
                 return Target;
             }
 
-            fn i32[min max] Apply(fnptr<fn i32[min max]()> callback) {
+            fn i32[min max] Apply(fnptr<fn i32[min max]()> callback)
+            {
                 return callback() + 1;
             }
 
-            fn i32[min max] Run() {
+            fn i32[min max] Run()
+            {
                 return Apply(Target);
             }
             """,
@@ -401,15 +430,18 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[min max] Pick() {
+            fn i32[min max] Pick()
+            {
                 return 1;
             }
 
-            fn i32[min max] Pick(i32[min max] value) {
+            fn i32[min max] Pick(i32[min max] value)
+            {
                 return value;
             }
 
-            fn i32[min max] Run() {
+            fn i32[min max] Run()
+            {
                 stack fnptr<fn i32[min max]()> first = Pick;
                 stack fnptr<fn i32[min max](i32[min max])> second = Pick;
                 return first() + second(2);
@@ -439,11 +471,13 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i64[min max] Wide(i64[min max] value) {
+            fn i64[min max] Wide(i64[min max] value)
+            {
                 return value;
             }
 
-            fn void Run() {
+            fn void Run()
+            {
                 stack fnptr<fn i32[min max](i32[min max])> op = Wide;
                 return;
             }
@@ -464,11 +498,13 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op) {
+            fn i32[min max] Apply(fnptr<fn i32[min max](i32[min max])> op)
+            {
                 return op(41);
             }
 
-            fn i32[min max] Run() {
+            fn i32[min max] Run()
+            {
                 stack fnptr<fn i32[min max](i32[min max])> increment = (i32[min max] value) => value + 1;
                 return Apply((i32[min max] value) => value + 1);
             }
@@ -489,21 +525,26 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[min max] ApplyBorrow(borrow closure<fn i32[min max](i32[min max])> op) {
+            fn i32[min max] ApplyBorrow(borrow closure<fn i32[min max](i32[min max])> op)
+            {
                 return 0;
             }
 
-            fn void ApplyInline(inline closure<fn void(i32[min max])> op) {
+            fn void ApplyInline(inline closure<fn void(i32[min max])> op)
+            {
                 return;
             }
 
-            fn heap closure<fn i32[min max](i32[min max])> MakeHeap(i32[min max] offset) {
+            fn heap closure<fn i32[min max](i32[min max])> MakeHeap(i32[min max] offset)
+            {
                 return heap capture(copy offset) (i32[min max] value) => value + offset;
             }
 
-            fn i32[min max] Run() {
+            fn i32[min max] Run()
+            {
                 stack i32[min max] offset = 1;
-                ApplyInline((i32[min max] value) => {
+                ApplyInline((i32[min max] value) =>
+                {
                     return;
                 });
                 return ApplyBorrow(capture(copy offset) (i32[min max] value) => value + offset);
@@ -529,23 +570,28 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[min max] AddOne(i32[min max] value) {
+            fn i32[min max] AddOne(i32[min max] value)
+            {
                 return value + 1;
             }
 
-            fn i32[min max] ApplyBorrow(borrow closure<fn i32[min max](i32[min max])> op, i32[min max] value) {
+            fn i32[min max] ApplyBorrow(borrow closure<fn i32[min max](i32[min max])> op, i32[min max] value)
+            {
                 return op(value);
             }
 
-            inline fn i32[min max] ApplyInline(inline closure<fn i32[min max](i32[min max])> op, i32[min max] value) {
+            inline fn i32[min max] ApplyInline(inline closure<fn i32[min max](i32[min max])> op, i32[min max] value)
+            {
                 return op(value);
             }
 
-            fn heap closure<fn i32[min max](i32[min max])> Make() {
+            fn heap closure<fn i32[min max](i32[min max])> Make()
+            {
                 return AddOne;
             }
 
-            fn i32[min max] Run() {
+            fn i32[min max] Run()
+            {
                 stack heap closure<fn i32[min max](i32[min max])> op = Make();
                 return ApplyBorrow(AddOne, 20) + ApplyInline(AddOne, 20) + op(0);
             }
@@ -569,11 +615,13 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[min max] Apply(borrow closure<finite i32[min max](i32[min max])> op, i32[min max] value) {
+            fn i32[min max] Apply(borrow closure<finite i32[min max](i32[min max])> op, i32[min max] value)
+            {
                 return op(value);
             }
 
-            fn void Push(mut borrow closure<mut fn void(i32[min max])> sink) {
+            fn void Push(mut borrow closure<mut fn void(i32[min max])> sink)
+            {
                 sink(7);
                 return;
             }
@@ -596,7 +644,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Run(borrow closure<mut fn void()> op) {
+            fn void Run(borrow closure<mut fn void()> op)
+            {
                 op();
                 return;
             }
@@ -617,7 +666,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn heap closure<fn i32[min max](i32[min max])> Bad(i32[min max] offset) {
+            fn heap closure<fn i32[min max](i32[min max])> Bad(i32[min max] offset)
+            {
                 return capture(copy offset) (i32[min max] value) => value + offset;
             }
             """,
@@ -633,7 +683,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn heap closure<fn i32[min max]()> Bad(i32[min max] value) {
+            fn heap closure<fn i32[min max]()> Bad(i32[min max] value)
+            {
                 return heap capture(read value) () => value;
             }
             """,
@@ -649,7 +700,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn heap closure<fn i32[min max]()> Bad(borrow closure<fn i32[min max]()> op) {
+            fn heap closure<fn i32[min max]()> Bad(borrow closure<fn i32[min max]()> op)
+            {
                 return heap capture(copy op) () => op();
             }
             """,
@@ -669,24 +721,30 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn inline closure<fn void()> BadReturn() {
-                return () => {
+            fn inline closure<fn void()> BadReturn()
+            {
+                return () =>
+                {
                     return;
                 };
             }
 
-            fn void BadLocal() {
-                stack inline closure<fn void()> local = () => {
+            fn void BadLocal()
+            {
+                stack inline closure<fn void()> local = () =>
+                {
                     return;
                 };
                 return;
             }
 
-            struct BadField {
+            struct BadField
+            {
                 inline closure<fn void()> Callback;
             }
 
-            fn void BadNestedParameter(fnptr<fn void(inline closure<fn void()>)> callback) {
+            fn void BadNestedParameter(fnptr<fn void(inline closure<fn void()>)> callback)
+            {
                 return;
             }
             """,
@@ -707,7 +765,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Run() {
+            fn void Run()
+            {
                 stack i32[min max] offset = 1;
                 stack fnptr<fn i32[min max](i32[min max])> increment = (i32[min max] value) => value + offset;
                 return;
@@ -729,7 +788,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Run() {
+            fn void Run()
+            {
                 stack i32[min max] offset = 1;
                 stack fnptr<fn i32[min max](i32[min max])> increment = capture(copy offset) (i32[min max] value) => value + offset;
                 return;
@@ -750,7 +810,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Run() {
+            fn void Run()
+            {
                 stack i32[min max] offset = 1;
                 stack i32[min max] secret = 2;
                 stack fnptr<fn i32[min max](i32[min max])> increment = capture(copy offset) (i32[min max] value) => value + secret;
@@ -773,7 +834,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Run() {
+            fn void Run()
+            {
                 stack i32[min max] value = 1;
                 stack fnptr<fn i32[min max]()> callback = capture(copy value, read value) () => value;
                 return;
@@ -797,11 +859,13 @@ public sealed class TypeCheckingTests
 
             fn i32[min max] Apply(
                 borrow closure<fn i32[min max](i32[min max])> op,
-                i32[min max] value) {
-                return op(value);
+                i32[min max] value)
+                {
+                    return op(value);
             }
 
-            fn i32[min max] Run() {
+            fn i32[min max] Run()
+            {
                 stack i32[min max] value = 1;
                 return Apply(
                     capture(copy value) (i32[min max] value) => value + 1,
@@ -824,7 +888,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Run() {
+            fn void Run()
+            {
                 stack i32[min max] value = 1;
                 stack fnptr<fn i32[min max]()> wrongClause = captures(copy value) () => value;
                 stack fnptr<fn i32[min max]()> wrongMode = capture(clone value) () => value;
@@ -851,7 +916,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Run(i32[min max] token) {
+            fn void Run(i32[min max] token)
+            {
                 stack fnptr<fn i32[min max]()> callback = capture(unsafe addr token) () => 1;
                 return;
             }
@@ -868,8 +934,10 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Run(i32[min max] token, i32[min max] sharedState) {
-                unsafe {
+            fn void Run(i32[min max] token, i32[min max] sharedState)
+            {
+                unsafe
+                {
                     stack fnptr<fn i32[min max]()> callback = capture(unsafe addr token, unsafe shared sharedState) () => 1;
                 }
 
@@ -897,8 +965,10 @@ public sealed class TypeCheckingTests
             fn void Run(
                 i32[min max] token,
                 i32[min max] sharedState,
-                i32[min max] copyValue) {
-                unsafe {
+                i32[min max] copyValue)
+                {
+                    unsafe
+                {
                     stack fnptr<fn i32[min max]()> byAddress = capture(addr token) () => 1;
                     stack fnptr<fn i32[min max]()> sharedCallback = capture(shared sharedState) () => 2;
                     stack fnptr<fn i32[min max]()> copied = capture(unsafe copy copyValue) () => 3;
@@ -936,8 +1006,10 @@ public sealed class TypeCheckingTests
                 i32[min max] readValue,
                 i32[min max] moveValue,
                 i32[min max] addrValue,
-                i32[min max] sharedValue) {
-                unsafe {
+                i32[min max] sharedValue)
+                {
+                    unsafe
+                {
                     stack fnptr<fn i32[min max]()> callback =
                         capture(copy copyValue, read readValue, move moveValue, unsafe addr addrValue, unsafe shared sharedValue) () => copyValue + readValue;
                 }
@@ -970,12 +1042,17 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            struct Token {
+            struct Token
+            {
                 i32[min max] Value;
             }
 
-            fn void Run() {
-                stack Token token = new Token() { Value = 1 };
+            fn void Run()
+            {
+                stack Token token = new Token()
+                {
+                    Value = 1
+                };
                 stack fnptr<fn i32[min max]()> callback =
                     capture(copy token) () => token.Value;
                 return;
@@ -998,7 +1075,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Run() {
+            fn void Run()
+            {
                 stack ascii label = "Score: ";
                 stack unicode word = "Ready";
                 stack fnptr<fn i32[min max]()> callback =
@@ -1025,14 +1103,17 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Run() {
+            fn void Run()
+            {
                 stack mut i32[min max] readValue = 1;
                 stack mut i32[min max] copyValue = 2;
-                stack fnptr<fn void()> readCallback = capture(read readValue) () => {
+                stack fnptr<fn void()> readCallback = capture(read readValue) () =>
+                {
                     readValue = 3;
                     return;
                 };
-                stack fnptr<fn void()> copyCallback = capture(copy copyValue) () => {
+                stack fnptr<fn void()> copyCallback = capture(copy copyValue) () =>
+                {
                     copyValue = 4;
                     return;
                 };
@@ -1059,9 +1140,11 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Run() {
+            fn void Run()
+            {
                 stack mut i32[min max] value = 1;
-                stack fnptr<fn void()> callback = capture(mut value) () => {
+                stack fnptr<fn void()> callback = capture(mut value) () =>
+                {
                     value = 2;
                     return;
                 };
@@ -1086,14 +1169,17 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Run() {
+            fn void Run()
+            {
                 stack mut i32[min max] outValue = 1;
                 stack mut i32[min max] initValue = 2;
-                stack fnptr<fn void()> outCallback = capture(out outValue) () => {
+                stack fnptr<fn void()> outCallback = capture(out outValue) () =>
+                {
                     stack i32[min max] readOut = outValue;
                     return;
                 };
-                stack fnptr<fn void()> initCallback = capture(init initValue) () => {
+                stack fnptr<fn void()> initCallback = capture(init initValue) () =>
+                {
                     stack i32[min max] readInit = initValue;
                     return;
                 };
@@ -1122,10 +1208,12 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Run() {
+            fn void Run()
+            {
                 stack mut i32[min max] outValue = 1;
                 stack mut i32[min max] initValue = 2;
-                stack fnptr<fn void()> callback = capture(out outValue, init initValue) () => {
+                stack fnptr<fn void()> callback = capture(out outValue, init initValue) () =>
+                {
                     outValue = 3;
                     initValue = 4;
                     return;
@@ -1151,14 +1239,18 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Run(i32[min max] token) {
-                unsafe {
-                    stack fnptr<fn void()> badRead = capture(unsafe addr token) () => {
+            fn void Run(i32[min max] token)
+            {
+                unsafe
+                {
+                    stack fnptr<fn void()> badRead = capture(unsafe addr token) () =>
+                    {
                         stack i32[min max] value = token;
                         return;
                     };
 
-                    stack fnptr<fn void()> goodAddress = capture(unsafe addr token) () => {
+                    stack fnptr<fn void()> goodAddress = capture(unsafe addr token) () =>
+                    {
                         stack rawptr<frozen i32[min max]> address = token;
                         return;
                     };
@@ -1188,9 +1280,12 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Run(i32[min max] sharedValue) {
-                unsafe {
-                    stack fnptr<fn void()> callback = capture(unsafe shared sharedValue) () => {
+            fn void Run(i32[min max] sharedValue)
+            {
+                unsafe
+                {
+                    stack fnptr<fn void()> callback = capture(unsafe shared sharedValue) () =>
+                    {
                         stack shared i32[min max] value = sharedValue;
                         sharedValue = 3;
                         return;
@@ -1223,8 +1318,9 @@ public sealed class TypeCheckingTests
             fn void Run(
                 i32[min max] mutValue,
                 i32[min max] outValue,
-                i32[min max] initValue) {
-                stack fnptr<fn i32[min max]()> callback =
+                i32[min max] initValue)
+                {
+                    stack fnptr<fn i32[min max]()> callback =
                     capture(mut mutValue, out outValue, init initValue) () => 1;
                 return;
             }
@@ -1249,7 +1345,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Run() {
+            fn void Run()
+            {
                 stack mut i32[min max] mutValue = 1;
                 stack mut i32[min max] outValue = 2;
                 stack mut i32[min max] initValue = 3;
@@ -1278,7 +1375,8 @@ public sealed class TypeCheckingTests
 
             unsafe fn void Touch();
 
-            fn void Run() {
+            fn void Run()
+            {
                 Touch();
                 return;
             }
@@ -1297,8 +1395,10 @@ public sealed class TypeCheckingTests
 
             unsafe fn void Touch();
 
-            fn void Run() {
-                unsafe {
+            fn void Run()
+            {
+                unsafe
+                {
                     Touch();
                 }
 
@@ -1335,7 +1435,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Run() {
+            fn void Run()
+            {
                 stack mut i32[min max] value = 1;
                 stack rawmutptr<i32[min max]> pointer = &value;
                 *pointer = 2;
@@ -1366,9 +1467,11 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[min max] Run() {
+            fn i32[min max] Run()
+            {
                 stack mut i32[min max] value = 1;
-                unsafe {
+                unsafe
+                {
                     stack rawmutptr<i32[min max]> pointer = &value;
                     *pointer = 2;
                 }
@@ -1406,11 +1509,13 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            unsafe fn i32[min max] Touch() {
+            unsafe fn i32[min max] Touch()
+            {
                 return 1;
             }
 
-            fn void Run() {
+            fn void Run()
+            {
                 stack fnptr<fn i32[min max]()> callback = Touch;
                 return;
             }
@@ -1430,12 +1535,15 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            unsafe fn i32[min max] Touch() {
+            unsafe fn i32[min max] Touch()
+            {
                 return 1;
             }
 
-            fn void Run() {
-                unsafe {
+            fn void Run()
+            {
+                unsafe
+                {
                     stack fnptr<fn i32[min max]()> callback = Touch;
                 }
 
@@ -1457,19 +1565,23 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            unsafe fn i32[min max] Touch() {
+            unsafe fn i32[min max] Touch()
+            {
                 return 1;
             }
 
-            fn fnptr<fn i32[min max]()> Factory() {
+            fn fnptr<fn i32[min max]()> Factory()
+            {
                 return Touch;
             }
 
-            fn void Register(fnptr<fn i32[min max]()> callback) {
+            fn void Register(fnptr<fn i32[min max]()> callback)
+            {
                 return;
             }
 
-            fn void Run() {
+            fn void Run()
+            {
                 Register(Touch);
                 return;
             }
@@ -1496,15 +1608,18 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[min max] Signed(i32[min max] value) {
+            fn i32[min max] Signed(i32[min max] value)
+            {
                 return value;
             }
 
-            fn i64[0 max] NonNegative(i64[0 max] value) {
+            fn i64[0 max] NonNegative(i64[0 max] value)
+            {
                 return value;
             }
 
-            fn u8[min 127] BytePrefix(u8[min 127] value) {
+            fn u8[min 127] BytePrefix(u8[min 127] value)
+            {
                 return value;
             }
             """,
@@ -1536,10 +1651,15 @@ public sealed class TypeCheckingTests
             import Lib.Foundation
             module Demo
 
-            fn u32[0 2147483647] Use() {
-                stack Box box = new() { Value = Identity(Answer) };
+            fn u32[0 2147483647] Use()
+            {
+                stack Box box = new()
+                {
+                    Value = Identity(Answer)
+                };
                 stack Status status = Status.Ok;
-                switch (status) {
+                switch (status)
+                {
                     case Status.Ok:
                         return box.Value;
                     case Status.Err:
@@ -1557,22 +1677,27 @@ public sealed class TypeCheckingTests
 
                         public const Answer = 41;
 
-                        public struct Box {
+                        public struct Box
+                        {
                             u32[0 2147483647] Value;
                         }
 
-                        public enum Status {
+                        public enum Status
+                        {
                             Ok,
                             Err
                         }
 
-                        public struct Worker {
-                            static finite law u32[0 2147483647] Value() {
+                        public struct Worker
+                        {
+                            static finite law u32[0 2147483647] Value()
+                            {
                                 return 7;
                             }
                         }
 
-                        public fn u32[0 2147483647] Identity(u32[0 2147483647] value) {
+                        public fn u32[0 2147483647] Identity(u32[0 2147483647] value)
+                        {
                             return value;
                         }
                         """,
@@ -1601,7 +1726,8 @@ public sealed class TypeCheckingTests
             const f32 ExplicitFloat = 3.5;
             const f64 ExplicitSmallFloat = 3.5f;
 
-            finite law u8[0 max] UseBoardWidth() {
+            finite law u8[0 max] UseBoardWidth()
+            {
                 return BoardWidth;
             }
             """,
@@ -1728,7 +1854,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            unsafe finite law i1024[min max] Run() {
+            unsafe finite law i1024[min max] Run()
+            {
                 return (i1024[min max])(2 ** 1024);
             }
             """,
@@ -1752,11 +1879,13 @@ public sealed class TypeCheckingTests
             const MinI32 = -(2 ** 31);
             const MinusOne = ~0;
 
-            fn i32[min max] ReadMin() {
+            fn i32[min max] ReadMin()
+            {
                 return MinI32;
             }
 
-            fn i8[min max] ReadMinusOne() {
+            fn i8[min max] ReadMinusOne()
+            {
                 return MinusOne;
             }
             """,
@@ -1773,7 +1902,8 @@ public sealed class TypeCheckingTests
             import System.Collections
             module Demo
 
-            fn void Use(Dictionary<i32[0 max], bool> integers, Dictionary<bool, i32[0 max]> flags) {
+            fn void Use(Dictionary<i32[0 max], bool> integers, Dictionary<bool, i32[0 max]> flags)
+            {
                 return;
             }
             """,
@@ -1786,7 +1916,8 @@ public sealed class TypeCheckingTests
                         """
                         module System.Collections
 
-                        public struct Dictionary<K, V> {
+                        public struct Dictionary<K, V>
+                        {
                             K Key;
                             V Value;
                         }
@@ -1806,11 +1937,13 @@ public sealed class TypeCheckingTests
             import System.Collections
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[0 max] Value;
             }
 
-            fn void Use(Dictionary<Box, i32[0 max]> boxes) {
+            fn void Use(Dictionary<Box, i32[0 max]> boxes)
+            {
                 return;
             }
             """,
@@ -1823,7 +1956,8 @@ public sealed class TypeCheckingTests
                         """
                         module System.Collections
 
-                        public struct Dictionary<K, V> {
+                        public struct Dictionary<K, V>
+                        {
                             K Key;
                             V Value;
                         }
@@ -1847,16 +1981,19 @@ public sealed class TypeCheckingTests
             import System.Collections
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[0 max] Value;
             }
 
-            fn void Use<K>(K key) {
+            fn void Use<K>(K key)
+            {
                 stack Dictionary<K, i32[0 max]> values = new();
                 return;
             }
 
-            fn void Bad(Box key) {
+            fn void Bad(Box key)
+            {
                 Use(key);
                 return;
             }
@@ -1870,7 +2007,8 @@ public sealed class TypeCheckingTests
                         """
                         module System.Collections
 
-                        public struct Dictionary<K, V> {
+                        public struct Dictionary<K, V>
+                        {
                             K Key;
                             V Value;
                         }
@@ -1891,8 +2029,12 @@ public sealed class TypeCheckingTests
             import Right
             module Demo
 
-            fn i32[0 max] Use() {
-                stack Value value = new() { X = 1 };
+            fn i32[0 max] Use()
+            {
+                stack Value value = new()
+                {
+                    X = 1
+                };
                 return value.X;
             }
             """,
@@ -1905,7 +2047,8 @@ public sealed class TypeCheckingTests
                         """
                         module Left
 
-                        public struct Value {
+                        public struct Value
+                        {
                             i32[0 max] X;
                         }
                         """,
@@ -1915,7 +2058,8 @@ public sealed class TypeCheckingTests
                         """
                         module Right
 
-                        public struct Value {
+                        public struct Value
+                        {
                             i32[0 max] X;
                         }
                         """,
@@ -1938,19 +2082,23 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn u48[10 ** 2 10 ** 10] DecimalPowers(u48[10 ** 2 10 ** 10] value) {
+            fn u48[10 ** 2 10 ** 10] DecimalPowers(u48[10 ** 2 10 ** 10] value)
+            {
                 return value;
             }
 
-            fn u24[2 ** 4 2 ** 16] BinaryPowers(u24[2 ** 4 2 ** 16] value) {
+            fn u24[2 ** 4 2 ** 16] BinaryPowers(u24[2 ** 4 2 ** 16] value)
+            {
                 return value;
             }
 
-            fn u32[1024 * 1024 1024 * 1024 * 1024] Sizes(u32[1024 * 1024 1024 * 1024 * 1024] value) {
+            fn u32[1024 * 1024 1024 * 1024 * 1024] Sizes(u32[1024 * 1024 1024 * 1024 * 1024] value)
+            {
                 return value;
             }
 
-            fn u8[(1 + 2) * 3 20 / 2 + 1] MixedArithmetic(u8[(1 + 2) * 3 20 / 2 + 1] value) {
+            fn u8[(1 + 2) * 3 20 / 2 + 1] MixedArithmetic(u8[(1 + 2) * 3 20 / 2 + 1] value)
+            {
                 return value;
             }
             """,
@@ -1984,7 +2132,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[10**2 10**10] TooWide(i8[-200 0] value) {
+            fn i32[10**2 10**10] TooWide(i8[-200 0] value)
+            {
                 return 0;
             }
             """,
@@ -2014,7 +2163,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[foo max] Bad() {
+            fn i32[foo max] Bad()
+            {
                 return 0;
             }
             """,
@@ -2034,11 +2184,13 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[-2147483648 2147483647] BadSigned() {
+            fn i32[-2147483648 2147483647] BadSigned()
+            {
                 return 0;
             }
 
-            fn u8[0 255] BadUnsignedMax(u8[0 255] value) {
+            fn u8[0 255] BadUnsignedMax(u8[0 255] value)
+            {
                 return value;
             }
             """,
@@ -2069,7 +2221,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn u8[0 max] Good(u8[0 max] value) {
+            fn u8[0 max] Good(u8[0 max] value)
+            {
                 return value;
             }
             """,
@@ -2085,7 +2238,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[0 2 ** 2048] Bad() {
+            fn i32[0 2 ** 2048] Bad()
+            {
                 return 0;
             }
             """,
@@ -2105,7 +2259,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[0 10 / 0] Bad() {
+            fn i32[0 10 / 0] Bad()
+            {
                 return 0;
             }
             """,
@@ -2125,7 +2280,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[max min] Bad() {
+            fn i32[max min] Bad()
+            {
                 return 0;
             }
             """,
@@ -2146,7 +2302,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn u8[-1 10] Bad(u8[-1 10] value) {
+            fn u8[-1 10] Bad(u8[-1 10] value)
+            {
                 return value;
             }
             """,
@@ -2168,7 +2325,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[2 ** 8 2 ** 4] Bad() {
+            fn i32[2 ** 8 2 ** 4] Bad()
+            {
                 return 0;
             }
             """,
@@ -2189,7 +2347,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[min max] Bad() {
+            fn i32[min max] Bad()
+            {
                 return min;
             }
             """,
@@ -2209,7 +2368,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            finite law f32 Run() {
+            finite law f32 Run()
+            {
                 return 1.0 ^ 2.0;
             }
             """);
@@ -2228,7 +2388,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            finite law i32[min max] Run(i32[min max] left, i32[min max] right) {
+            finite law i32[min max] Run(i32[min max] left, i32[min max] right)
+            {
                 stack mut i32[min max] value = left;
                 value +%= right;
                 stack i32[min max] product = left *| right;
@@ -2250,7 +2411,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            strictfp finite law f32 Run(f32 left, f32 right) {
+            strictfp finite law f32 Run(f32 left, f32 right)
+            {
                 return left + right;
             }
             """);
@@ -2266,7 +2428,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            strictfp finite law f64 Run(f32 left, i32[min max] middle, f64 right, f32 divisor) {
+            strictfp finite law f64 Run(f32 left, i32[min max] middle, f64 right, f32 divisor)
+            {
                 return left + middle * right / divisor - 1.0;
             }
             """,
@@ -2284,14 +2447,18 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            unsafe finite law i32[min max] Run(i64[min max] bits, ascii text) {
+            unsafe finite law i32[min max] Run(i64[min max] bits, ascii text)
+            {
                 stack mut i32[min max] value = 7;
                 stack rawmutptr<i32[min max]> ptr = &value;
                 stack rawptr<i32[min max]> readonlyPtr = (rawptr<i32[min max]>)ptr;
                 *ptr = (i32[min max])bits;
                 stack i64[min max] address = (i64[min max])ptr;
                 stack rawmutptr<i32[min max]> roundTrip = (rawmutptr<i32[min max]>)address;
-                stack i32[min max][2] values = { 1, 2 };
+                stack i32[min max][2] values =
+                {
+                    1, 2
+                };
                 stack i32[min max][] view = (i32[min max][])values;
                 return *roundTrip + view[0];
             }
@@ -2310,19 +2477,23 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            finite law ascii AsciiString() {
+            finite law ascii AsciiString()
+            {
                 return "\0\b\t\n\f\r\\\"\'";
             }
 
-            finite law ascii AsciiChar() {
+            finite law ascii AsciiChar()
+            {
                 return '\x41';
             }
 
-            finite law unicode UnicodeString() {
+            finite law unicode UnicodeString()
+            {
                 return (unicode)"\xC9";
             }
 
-            finite law unicode UnicodeChar() {
+            finite law unicode UnicodeChar()
+            {
                 return (unicode)'\u03B1';
             }
             """,
@@ -2340,21 +2511,31 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            struct Holder {
+            struct Holder
+            {
                 Box Item;
             }
 
-            const Holder Current = new Holder() { Item = new Box() { Value = 7 } };
+            const Holder Current = new Holder()
+            {
+                Item = new Box()
+                {
+                    Value = 7
+                }
+            };
 
-            fn i32[min max] Read(frozen Box box) {
+            fn i32[min max] Read(frozen Box box)
+            {
                 return 7;
             }
 
-            fn i32[min max] Run() {
+            fn i32[min max] Run()
+            {
                 return Read(Current.Item);
             }
             """,
@@ -2370,7 +2551,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            finite law unicode Widen() {
+            finite law unicode Widen()
+            {
                 return (unicode)"Hello";
             }
             """,
@@ -2388,15 +2570,18 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            finite law ascii Label() {
+            finite law ascii Label()
+            {
                 return "Score: " + "100";
             }
 
-            finite law unicode WideLabel() {
+            finite law unicode WideLabel()
+            {
                 return "Score: " + "100";
             }
 
-            finite law unicode ExplicitWideLabel() {
+            finite law unicode ExplicitWideLabel()
+            {
                 return (unicode)"Score: " + (unicode)"100";
             }
             """,
@@ -2414,12 +2599,14 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            finite law ascii Label() {
+            finite law ascii Label()
+            {
                 const score = 100;
                 return $"Score: {score}, ready: {true}";
             }
 
-            finite law unicode WideLabel() {
+            finite law unicode WideLabel()
+            {
                 return $"Score: {100}";
             }
             """,
@@ -2441,7 +2628,8 @@ public sealed class TypeCheckingTests
             public unsafe fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
             public unsafe fn bool TryFormatI32Ascii(rawmutptr<Ascii> destination, i32[min max] value);
 
-            fn Ascii Label(i32[min max] score) {
+            fn Ascii Label(i32[min max] score)
+            {
                 stack Ascii label[64] = $"Score: {score}";
                 return label;
             }
@@ -2463,12 +2651,14 @@ public sealed class TypeCheckingTests
             public unsafe fn bool TryConcatAscii(rawmutptr<Ascii> destination, ascii left, ascii right);
             public unsafe fn bool TryConcatUnicode(rawmutptr<Unicode> destination, unicode left, unicode right);
 
-            fn Ascii JoinAscii(Ascii left, ascii right) {
+            fn Ascii JoinAscii(Ascii left, ascii right)
+            {
                 stack Ascii combined[64] = left + right;
                 return combined;
             }
 
-            fn Unicode JoinUnicode(Unicode left, unicode right) {
+            fn Unicode JoinUnicode(Unicode left, unicode right)
+            {
                 stack Unicode combined[64] = left + right;
                 return combined;
             }
@@ -2485,11 +2675,13 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn ascii SliceAscii(ascii text) {
+            fn ascii SliceAscii(ascii text)
+            {
                 return text[];
             }
 
-            fn unicode SliceUnicode(unicode text) {
+            fn unicode SliceUnicode(unicode text)
+            {
                 return text[];
             }
             """,
@@ -2507,7 +2699,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[min max] Run(i32[min max][1 + 2] values) {
+            fn i32[min max] Run(i32[min max][1 + 2] values)
+            {
                 return values[2];
             }
             """,
@@ -2525,8 +2718,12 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[min max] Run() {
-                stack i32[min max][3] values = { 1, 2 };
+            fn i32[min max] Run()
+            {
+                stack i32[min max][3] values =
+                {
+                    1, 2
+                };
                 return values[0] + values[1] + values[2];
             }
             """,
@@ -2544,9 +2741,12 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            record Many(i32[min max] A, i32[min max] B, i32[min max] C, i32[min max] D, i32[min max] E) { }
+            record Many(i32[min max] A, i32[min max] B, i32[min max] C, i32[min max] D, i32[min max] E)
+            {
+            }
 
-            fn bool Less(Many left, Many right) {
+            fn bool Less(Many left, Many right)
+            {
                 return left < right;
             }
             """,
@@ -2564,12 +2764,14 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            enum Token {
+            enum Token
+            {
                 None,
                 Many(i32[min max], i32[min max], i32[min max], i32[min max], i32[min max]),
             }
 
-            fn bool Less(Token left, Token right) {
+            fn bool Less(Token left, Token right)
+            {
                 return left < right;
             }
             """,
@@ -2587,7 +2789,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            finite law ascii Run() {
+            finite law ascii Run()
+            {
                 return (ascii)"\u03B1";
             }
             """,
@@ -2605,15 +2808,18 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            struct PtrBox {
+            struct PtrBox
+            {
                 rawmutptr<i32[min max]> Ptr;
             }
 
-            unsafe finite law void Run(frozen Box box, frozen PtrBox ptrBox) {
+            unsafe finite law void Run(frozen Box box, frozen PtrBox ptrBox)
+            {
                 stack rawptr<frozen i32[min max]> valuePtr = &box.Value;
                 stack rawptr<frozen i32[min max]> readonlyPtr = ptrBox.Ptr;
                 stack bool valuesEqual = *valuePtr == *readonlyPtr;
@@ -2633,11 +2839,13 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            struct PtrBox {
+            struct PtrBox
+            {
                 rawmutptr<i32[min max]> Ptr;
             }
 
-            unsafe fn void Inspect(const PtrBox box, const rawmutptr<i32[min max]> ptr) {
+            unsafe fn void Inspect(const PtrBox box, const rawmutptr<i32[min max]> ptr)
+            {
                 stack rawptr<frozen i32[min max]> fieldPtr = box.Ptr;
                 stack rawptr<frozen i32[min max]> directPtr = ptr;
                 stack i32[min max] value = *ptr;
@@ -2659,15 +2867,18 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            fn void Inspect(const Box box) {
+            fn void Inspect(const Box box)
+            {
                 return;
             }
 
-            fn void Forward(const Box box) {
+            fn void Forward(const Box box)
+            {
                 Inspect(box);
                 return;
             }
@@ -2684,11 +2895,13 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            unsafe fn void Inspect(const rawmutptr<i32[min max]> ptr) {
+            unsafe fn void Inspect(const rawmutptr<i32[min max]> ptr)
+            {
                 return;
             }
 
-            unsafe fn void Forward(const rawmutptr<i32[min max]> ptr) {
+            unsafe fn void Forward(const rawmutptr<i32[min max]> ptr)
+            {
                 stack rawptr<frozen i32[min max]> local = ptr;
                 Inspect(local);
                 return;
@@ -2706,11 +2919,13 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            unsafe fn rawptr<frozen i32[min max]> Forward<T>(const rawmutptr<i32[min max]> ptr, T tag) {
+            unsafe fn rawptr<frozen i32[min max]> Forward<T>(const rawmutptr<i32[min max]> ptr, T tag)
+            {
                 return ptr;
             }
 
-            unsafe fn rawptr<frozen i32[min max]> Run(const rawmutptr<i32[min max]> ptr) {
+            unsafe fn rawptr<frozen i32[min max]> Run(const rawmutptr<i32[min max]> ptr)
+            {
                 stack i32[min max] tag = 0;
                 return Forward(ptr, tag);
             }
@@ -2727,14 +2942,17 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Inspect(const i32[min max][] view) {
+            fn void Inspect(const i32[min max][] view)
+            {
                 return;
             }
 
             unsafe fn void Forward(
                 const rawmutptr<i32[min max]>[count] pointer,
-                i32[1 10] count) {
-                unsafe {
+                i32[1 10] count)
+                {
+                    unsafe
+                {
                     stack frozen i32[min max][] view = slice(pointer, count);
                     Inspect(view);
                 }
@@ -2754,10 +2972,14 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            record Pair(i32[min max] Left, i32[min max] Right) { }
+            record Pair(i32[min max] Left, i32[min max] Right)
+            {
+            }
 
-            finite law i32[min max] Run(Pair value) {
-                switch (value) {
+            finite law i32[min max] Run(Pair value)
+            {
+                switch (value)
+                {
                     case Pair(1, var right):
                         return right;
                     case Pair(_, _):
@@ -2779,10 +3001,14 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            record Pair(i32[min max] Left, i32[min max] Right) { }
+            record Pair(i32[min max] Left, i32[min max] Right)
+            {
+            }
 
-            finite law i32[min max] Run(Pair value) {
-                switch (value) {
+            finite law i32[min max] Run(Pair value)
+            {
+                switch (value)
+                {
                     case var whole:
                         return whole.Left;
                 }
@@ -2802,11 +3028,17 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            record Pair(i32[min max] Left, i32[min max] Right) { }
-            record Outer(Pair Values, i32[min max] Tail) { }
+            record Pair(i32[min max] Left, i32[min max] Right)
+            {
+            }
+            record Outer(Pair Values, i32[min max] Tail)
+            {
+            }
 
-            finite law i32[min max] Run(Outer value) {
-                switch (value) {
+            finite law i32[min max] Run(Outer value)
+            {
+                switch (value)
+                {
                     case Outer(Pair capture, var tail):
                         return capture.Right + tail;
                 }
@@ -2826,15 +3058,19 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            enum Token {
+            enum Token
+            {
                 Empty,
                 Pair(i32[min max], i32[min max]),
             }
 
-            finite law i32[min max] Run(Token value) {
-                switch (value) {
+            finite law i32[min max] Run(Token value)
+            {
+                switch (value)
+                {
                     case Token.Pair capture:
-                        switch (capture) {
+                        switch (capture)
+                        {
                             case Token.Pair(var left, var right):
                                 return left + right;
                             default:
@@ -2859,8 +3095,10 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            finite law i32[min max] Run(bool value, bool allow) {
-                switch (value) {
+            finite law i32[min max] Run(bool value, bool allow)
+            {
+                switch (value)
+                {
                     case true when allow:
                         return 1;
                     case true:
@@ -2885,11 +3123,17 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            record Pair(i32[min max] Left, i32[min max] Right) { }
-            record Outer(Pair Values, i32[min max] Tail) { }
+            record Pair(i32[min max] Left, i32[min max] Right)
+            {
+            }
+            record Outer(Pair Values, i32[min max] Tail)
+            {
+            }
 
-            finite law i32[min max] Run(Outer value) {
-                switch (value) {
+            finite law i32[min max] Run(Outer value)
+            {
+                switch (value)
+                {
                     case Outer(Pair(1, var right), var tail):
                         return right + tail;
                     default:
@@ -2911,19 +3155,28 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            enum Token {
+            enum Token
+            {
                 End,
                 Integer(i32[min max]),
-                Move { X: i32[min max], Y: i32[min max] },
+                Move
+                {
+                    X: i32[min max], Y: i32[min max]
+                },
             }
 
-            finite law i32[min max] Run(Token token) {
-                switch (token) {
+            finite law i32[min max] Run(Token token)
+            {
+                switch (token)
+                {
                     case Token.End:
                         return 0;
                     case Token.Integer(var value):
                         return value;
-                    case Token.Move { X: var x, Y: var y }:
+                    case Token.Move
+                    {
+                        X: var x, Y: var y
+                    }:
                         return x + y;
                 }
             }
@@ -2944,13 +3197,16 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            enum Option<T> {
+            enum Option<T>
+            {
                 None,
                 Some(T),
             }
 
-            finite law bool HasValue(Option<i32[min max]> opt) {
-                switch (opt) {
+            finite law bool HasValue(Option<i32[min max]> opt)
+            {
+                switch (opt)
+                {
                     case Option<i32[min max]>.None:
                         return false;
                     case Option<i32[min max]>.Some(var value):
@@ -2978,9 +3234,12 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            record Pair<A, B>(A First, B Second) { }
+            record Pair<A, B>(A First, B Second)
+            {
+            }
 
-            finite law i32[min max] Sum(Pair<i32[min max], i32[min max]> pair) {
+            finite law i32[min max] Sum(Pair<i32[min max], i32[min max]> pair)
+            {
                 return pair.First + pair.Second;
             }
             """,
@@ -3003,9 +3262,12 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            record Pair<A, B>(A First, B Second) { }
+            record Pair<A, B>(A First, B Second)
+            {
+            }
 
-            finite law i32[min max] Sum() {
+            finite law i32[min max] Sum()
+            {
                 stack Pair<i32[min max], i32[min max]> pair = new Pair<i32[min max], i32[min max]>(3, 4);
                 return pair.First + pair.Second;
             }
@@ -3021,9 +3283,12 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            record Pair<A, B>(A First, B Second) { }
+            record Pair<A, B>(A First, B Second)
+            {
+            }
 
-            fn bool Accept(Pair<i32[min max], bool> pair) {
+            fn bool Accept(Pair<i32[min max], bool> pair)
+            {
                 return pair.Second;
             }
             """,
@@ -3045,10 +3310,14 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            record Pair<A, B>(A First, B Second) { }
+            record Pair<A, B>(A First, B Second)
+            {
+            }
 
-            unsafe fn i32[min max] Read(rawptr<Pair<i32[min max], bool>> ptr) {
-                if ((*ptr).Second) {
+            unsafe fn i32[min max] Read(rawptr<Pair<i32[min max], bool>> ptr)
+            {
+                if ((*ptr).Second)
+                {
                     return (*ptr).First;
                 }
 
@@ -3071,7 +3340,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn T Identity<T>(T value) {
+            fn T Identity<T>(T value)
+            {
                 stack T copy = value;
                 return copy;
             }
@@ -3095,8 +3365,10 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            struct Box {
-                fn T Echo<T>(T value) {
+            struct Box
+            {
+                fn T Echo<T>(T value)
+                {
                     stack T copy = value;
                     return copy;
                 }
@@ -3121,11 +3393,13 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn T Identity<T>(T value) {
+            fn T Identity<T>(T value)
+            {
                 return value;
             }
 
-            fn i32[min max] Run() {
+            fn i32[min max] Run()
+            {
                 stack i32[min max] value = 42;
                 return Identity(value);
             }
@@ -3151,13 +3425,16 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            struct Box {
-                fn T Echo<T>(borrow Box self, T value) {
+            struct Box
+            {
+                fn T Echo<T>(borrow Box self, T value)
+                {
                     return value;
                 }
             }
 
-            fn i32[min max] Run() {
+            fn i32[min max] Run()
+            {
                 stack Box box = new Box();
                 stack i32[min max] value = 42;
                 return box.Echo(value);
@@ -3186,16 +3463,22 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            struct Box<T> {
+            struct Box<T>
+            {
                 T Value;
 
-                fn T Echo(borrow Box<T> self, T value) {
+                fn T Echo(borrow Box<T> self, T value)
+                {
                     return value;
                 }
             }
 
-            fn i32[min max] Run() {
-                stack Box<i32[min max]> box = new Box<i32[min max]>() { Value = 1 };
+            fn i32[min max] Run()
+            {
+                stack Box<i32[min max]> box = new Box<i32[min max]>()
+                {
+                    Value = 1
+                };
                 stack i32[min max] value = 42;
                 return box.Echo(value);
             }
@@ -3223,24 +3506,29 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            struct Cell<T> {
+            struct Cell<T>
+            {
                 T Value;
 
-                fn bool TryTake(mut borrow Cell<T> self, out T value) {
+                fn bool TryTake(mut borrow Cell<T> self, out T value)
+                {
                     value = self.Value;
                     return true;
                 }
             }
 
-            struct Owner<T> {
+            struct Owner<T>
+            {
                 Cell<T> Inner;
 
-                fn bool TryTake(mut borrow Owner<T> self, out T value) {
+                fn bool TryTake(mut borrow Owner<T> self, out T value)
+                {
                     return self.Inner.TryTake(value);
                 }
             }
 
-            fn bool Run(mut borrow Owner<i32[0 max]> owner, out i32[0 max] value) {
+            fn bool Run(mut borrow Owner<i32[0 max]> owner, out i32[0 max] value)
+            {
                 return owner.TryTake(value);
             }
             """,
@@ -3256,11 +3544,13 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn T Identity<T>(T value) {
+            fn T Identity<T>(T value)
+            {
                 return value;
             }
 
-            fn i32[min max] Run(i32[min max] left, i32[min max] right) {
+            fn i32[min max] Run(i32[min max] left, i32[min max] right)
+            {
                 return Identity(left) + Identity(right);
             }
             """,
@@ -3282,9 +3572,12 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            record Pair<T>(T Value) { }
+            record Pair<T>(T Value)
+            {
+            }
 
-            fn i32[min max] Add(Pair<i32[min max]> left, Pair<i32[min max]> right) {
+            fn i32[min max] Add(Pair<i32[min max]> left, Pair<i32[min max]> right)
+            {
                 return left.Value + right.Value;
             }
             """,
@@ -3306,15 +3599,18 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[min max] Parse(i32[min max] value) {
+            fn i32[min max] Parse(i32[min max] value)
+            {
                 return value;
             }
 
-            fn T Parse<T>(T value) {
+            fn T Parse<T>(T value)
+            {
                 return value;
             }
 
-            fn i32[min max] Run() {
+            fn i32[min max] Run()
+            {
                 stack i32[min max] value = 42;
                 return Parse(value);
             }
@@ -3336,7 +3632,8 @@ public sealed class TypeCheckingTests
 
             alias Byte = i8[min max];
 
-            fn Byte Inc(Byte value) {
+            fn Byte Inc(Byte value)
+            {
                 return value + 1;
             }
             """,
@@ -3360,7 +3657,8 @@ public sealed class TypeCheckingTests
 
             alias Ptr<T> = rawptr<T>;
 
-            unsafe fn i32[min max] Read(Ptr<i32[min max]> value) {
+            unsafe fn i32[min max] Read(Ptr<i32[min max]> value)
+            {
                 return *value;
             }
             """,
@@ -3385,7 +3683,8 @@ public sealed class TypeCheckingTests
 
             alias Mapper<T> = heap closure<fn T(T)>;
 
-            fn Mapper<i32[min max]> Factory(Mapper<i32[min max]> mapper) {
+            fn Mapper<i32[min max]> Factory(Mapper<i32[min max]> mapper)
+            {
                 return mapper;
             }
             """,
@@ -3409,12 +3708,14 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            enum Option<T> {
+            enum Option<T>
+            {
                 None,
                 Some(T),
             }
 
-            finite law void Bad(Option<i32[min max], bool> opt) {
+            finite law void Bad(Option<i32[min max], bool> opt)
+            {
                 return;
             }
             """,
@@ -3431,17 +3732,21 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            enum Result<T, E> {
+            enum Result<T, E>
+            {
                 Ok(T),
                 Err(E),
             }
 
-            finite law i32[min max] Unwrap(Result<i32[min max], bool> res) {
-                switch (res) {
+            finite law i32[min max] Unwrap(Result<i32[min max], bool> res)
+            {
+                switch (res)
+                {
                     case Result<i32[min max], bool>.Ok(var value):
                         return value;
                     case Result<i32[min max], bool>.Err(var err):
-                        if (err) {
+                        if (err)
+                        {
                             return -1;
                         }
                         return -1;
@@ -3468,9 +3773,12 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            record Point(i32[min max] X, i32[min max] Y) { }
+            record Point(i32[min max] X, i32[min max] Y)
+            {
+            }
 
-            finite law void Bad(Point<i32[min max]> p) {
+            finite law void Bad(Point<i32[min max]> p)
+            {
                 return;
             }
             """,
@@ -3487,19 +3795,23 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[min max] Parse(i32[min max] value) {
+            fn i32[min max] Parse(i32[min max] value)
+            {
                 return value;
             }
 
-            fn bool Parse(bool value) {
+            fn bool Parse(bool value)
+            {
                 return value;
             }
 
-            fn i32[min max] Run() {
+            fn i32[min max] Run()
+            {
                 return Parse(42);
             }
 
-            fn bool RunBool() {
+            fn bool RunBool()
+            {
                 return Parse(true);
             }
             """,
@@ -3522,36 +3834,44 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn bool PickFloat(f64 value) {
+            fn bool PickFloat(f64 value)
+            {
                 return true;
             }
 
-            fn i32[min max] PickFloat(f32 value) {
+            fn i32[min max] PickFloat(f32 value)
+            {
                 return 1;
             }
 
-            fn bool PickInteger(u32[0 max] value) {
+            fn bool PickInteger(u32[0 max] value)
+            {
                 return true;
             }
 
-            fn i32[min max] PickInteger(i48[min max] value) {
+            fn i32[min max] PickInteger(i48[min max] value)
+            {
                 return 2;
             }
 
-            fn i32[min max] PickInteger(i64[min max] value) {
+            fn i32[min max] PickInteger(i64[min max] value)
+            {
                 return 3;
             }
 
-            fn i32[min max] PickInteger(f64 value) {
+            fn i32[min max] PickInteger(f64 value)
+            {
                 return 4;
             }
 
-            fn bool RunFloat() {
+            fn bool RunFloat()
+            {
                 stack f64 value = 3.5;
                 return PickFloat(value);
             }
 
-            fn bool RunInteger() {
+            fn bool RunInteger()
+            {
                 stack u32[0 max] value = (u32[0 max])42;
                 return PickInteger(value);
             }
@@ -3568,15 +3888,19 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            struct Counter {
+            struct Counter
+            {
                 i32[min max] Value;
 
-                fn i32[min max] Scale(borrow Counter self, i32[min max] factor) {
+                fn i32[min max] Scale(borrow Counter self, i32[min max] factor)
+                {
                     return self.Value * factor;
                 }
 
-                fn i32[min max] Scale(borrow Counter self, bool doubleIt) {
-                    if (doubleIt) {
+                fn i32[min max] Scale(borrow Counter self, bool doubleIt)
+                {
+                    if (doubleIt)
+                    {
                         return self.Value * 2;
                     }
 
@@ -3584,13 +3908,21 @@ public sealed class TypeCheckingTests
                 }
             }
 
-            fn i32[min max] Run() {
-                stack Counter counter = new Counter() { Value = 3 };
+            fn i32[min max] Run()
+            {
+                stack Counter counter = new Counter()
+                {
+                    Value = 3
+                };
                 return counter.Scale(4);
             }
 
-            fn i32[min max] RunBool() {
-                stack Counter counter = new Counter() { Value = 3 };
+            fn i32[min max] RunBool()
+            {
+                stack Counter counter = new Counter()
+                {
+                    Value = 3
+                };
                 return counter.Scale(true);
             }
             """,
@@ -3613,25 +3945,33 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
 
-                Box() {
+                Box()
+                {
                     self.Value = 0;
                 }
 
-                Box(i32[min max] value) {
+                Box(i32[min max] value)
+                {
                     self.Value = value;
                 }
             }
 
-            fn Box Make(i32[min max] value) {
+            fn Box Make(i32[min max] value)
+            {
                 return new(value);
             }
 
-            fn i32[min max] Run(i32[min max] value) {
+            fn i32[min max] Run(i32[min max] value)
+            {
                 stack Box empty = new();
-                stack Box initialized = new() { Value = value };
+                stack Box initialized = new()
+                {
+                    Value = value
+                };
                 stack mut Box assigned = new(value);
                 assigned = new(value);
                 return assigned.Value + empty.Value + initialized.Value;
@@ -3657,27 +3997,33 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            struct Allocator {
+            struct Allocator
+            {
                 i32[0 255] Tag;
             }
 
-            struct List {
+            struct List
+            {
                 i32[0 max] Capacity;
 
-                List() {
+                List()
+                {
                     self.Capacity = 0;
                 }
 
-                List(Allocator allocator) {
+                List(Allocator allocator)
+                {
                     self.Capacity = allocator.Tag;
                 }
             }
 
-            fn List MakeDefault() {
+            fn List MakeDefault()
+            {
                 return new();
             }
 
-            fn List MakeCustom(Allocator allocator) {
+            fn List MakeCustom(Allocator allocator)
+            {
                 return new(allocator);
             }
             """,
@@ -3704,11 +4050,13 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void MissingTarget() {
+            fn void MissingTarget()
+            {
                 new();
             }
 
-            fn void NonNamedTarget() {
+            fn void NonNamedTarget()
+            {
                 stack i32[min max] value = new();
             }
             """,
@@ -3733,7 +4081,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i64[0 max] Run() {
+            fn i64[0 max] Run()
+            {
                 stack mut dynamic i32[0 max] values = new(4);
                 values.Reserve(8);
                 init values[0] = 7;
@@ -3752,7 +4101,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn bool Run() {
+            fn bool Run()
+            {
                 stack mut dynamic i32[0 max] values = new(4);
                 stack bool grew = values.TryReserve(8);
                 return grew;
@@ -3770,7 +4120,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn bool Run() {
+            fn bool Run()
+            {
                 stack mut dynamic i32[0 max] values = new(4);
                 stack bool grew = values.TryReserveCapacity(8);
                 return grew;
@@ -3788,12 +4139,14 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void ImmutableOwner() {
+            fn void ImmutableOwner()
+            {
                 stack dynamic i32[0 max] values = new(4);
                 values.Reserve(8);
             }
 
-            fn void NegativeAdditionalCapacity() {
+            fn void NegativeAdditionalCapacity()
+            {
                 stack mut dynamic i32[0 max] values = new(4);
                 values.Reserve(-1);
             }
@@ -3818,7 +4171,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[0 max] Run() {
+            fn i32[0 max] Run()
+            {
                 stack mut dynamic i32[0 max] values = new(1);
                 init values[0] = 42;
                 stack i32[0 max] moved = values.MoveLast();
@@ -3837,7 +4191,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[0 max] Run() {
+            fn i32[0 max] Run()
+            {
                 stack mut dynamic i32[0 max] values = new(2);
                 init values[0] = 10;
                 init values[1] = 20;
@@ -3857,12 +4212,14 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void ImmutableOwner() {
+            fn void ImmutableOwner()
+            {
                 stack dynamic i32[0 max] values = new(1);
                 values.MoveLast();
             }
 
-            fn void ExtraArgument() {
+            fn void ExtraArgument()
+            {
                 stack mut dynamic i32[0 max] values = new(1);
                 values.MoveLast(1);
             }
@@ -3887,27 +4244,32 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void ImmutableOwner() {
+            fn void ImmutableOwner()
+            {
                 stack dynamic i32[0 max] values = new(1);
                 values.MoveAt(0);
             }
 
-            fn void MissingArgument() {
+            fn void MissingArgument()
+            {
                 stack mut dynamic i32[0 max] values = new(1);
                 values.MoveAt();
             }
 
-            fn void ExtraArgument() {
+            fn void ExtraArgument()
+            {
                 stack mut dynamic i32[0 max] values = new(1);
                 values.MoveAt(0, 1);
             }
 
-            fn void NonIntegerIndex(bool flag) {
+            fn void NonIntegerIndex(bool flag)
+            {
                 stack mut dynamic i32[0 max] values = new(1);
                 values.MoveAt(flag);
             }
 
-            fn void NegativeIndex() {
+            fn void NegativeIndex()
+            {
                 stack mut dynamic i32[0 max] values = new(1);
                 values.MoveAt(-1);
             }
@@ -3945,22 +4307,26 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void ReserveImmutableOwner() {
+            fn void ReserveImmutableOwner()
+            {
                 stack dynamic i32[0 max] values = new(1);
                 values.Reserve(1);
             }
 
-            fn void ReserveMissingArgument() {
+            fn void ReserveMissingArgument()
+            {
                 stack mut dynamic i32[0 max] values = new(1);
                 values.Reserve();
             }
 
-            fn void TryReserveExtraArgument() {
+            fn void TryReserveExtraArgument()
+            {
                 stack mut dynamic i32[0 max] values = new(1);
                 values.TryReserve(1, 2);
             }
 
-            fn void TryReserveCapacityNonInteger(bool flag) {
+            fn void TryReserveCapacityNonInteger(bool flag)
+            {
                 stack mut dynamic i32[0 max] values = new(1);
                 values.TryReserveCapacity(flag);
             }
@@ -3994,11 +4360,13 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn dynamic i32[0 max] Make() {
+            fn dynamic i32[0 max] Make()
+            {
                 return new(1);
             }
 
-            fn void Run() {
+            fn void Run()
+            {
                 Make().MoveLast();
             }
             """,
@@ -4019,7 +4387,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Run() {
+            fn void Run()
+            {
                 stack mut dynamic i32[0 max] values = new(4);
                 stack init i32[0 max][] spare = init values[0, 4];
                 init spare[0] = 1;
@@ -4037,7 +4406,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn void Fill(init i32[0 max][] destination, i32[0 max] value) {
+            fn void Fill(init i32[0 max][] destination, i32[0 max] value)
+            {
                 init destination[0] = value;
             }
             """,
@@ -4049,7 +4419,8 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn i32[0 max] Read(init i32[0 max][] destination) {
+            fn i32[0 max] Read(init i32[0 max][] destination)
+            {
                 return destination[0];
             }
             """,
@@ -4069,15 +4440,18 @@ public sealed class TypeCheckingTests
             """
             module Demo
 
-            fn bool AcceptAscii(const ascii value) {
+            fn bool AcceptAscii(const ascii value)
+            {
                 return true;
             }
 
-            fn bool AcceptUnicode(const unicode value) {
+            fn bool AcceptUnicode(const unicode value)
+            {
                 return true;
             }
 
-            fn bool Run() {
+            fn bool Run()
+            {
                 return AcceptAscii("alpha")
                     && AcceptAscii("al" + "pha")
                     && AcceptAscii((ascii)"alpha")

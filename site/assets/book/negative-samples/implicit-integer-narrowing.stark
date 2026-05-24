@@ -1,9 +1,11 @@
 module Book.Negative.ImplicitIntegerNarrowing
 
-finite law i32[0 10] Narrow(i32[min max] value) {
+finite law i32[0 10] Narrow(i32[min max] value)
+{
     return value;
 }
 
-export fn i32[min max] main() {
+export fn i32[min max] main()
+{
     return Narrow(3);
 }

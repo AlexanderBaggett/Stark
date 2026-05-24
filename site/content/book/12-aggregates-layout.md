@@ -29,11 +29,13 @@ narrow.
 Use `struct` for ordinary named data with associated behavior:
 
 ```stark
-struct Rectangle {
+struct Rectangle
+{
     i32[min max] Width;
     i32[min max] Height;
 
-    finite law i32[min max] Area(borrow Rectangle self) {
+    finite law i32[min max] Area(borrow Rectangle self)
+    {
         return self.Width * self.Height;
     }
 }
@@ -51,7 +53,9 @@ the operation that belongs with the data close to the data.
 Use `record` for data-first shapes:
 
 ```stark
-record Point(i32[min max] X, i32[min max] Y) { }
+record Point(i32[min max] X, i32[min max] Y)
+{
+}
 ```
 
 The positional constructor is visible at the call site:
@@ -67,14 +71,17 @@ A record can also group other structs and records when the shape itself is the
 useful result:
 
 ```stark
-struct Pixel {
+struct Pixel
+{
     u8[0 max] R;
     u8[0 max] G;
     u8[0 max] B;
     u8[0 max] A;
 }
 
-record DrawCommand(Rectangle Bounds, Pixel Tint) { }
+record DrawCommand(Rectangle Bounds, Pixel Tint)
+{
+}
 ```
 
 That design keeps the draw command as data. It does not hide work behind a
@@ -85,7 +92,8 @@ runtime object identity or virtual dispatch.
 Initializers name each field being initialized:
 
 ```stark
-stack Rectangle rectangle = new Rectangle() {
+stack Rectangle rectangle = new Rectangle()
+{
     Width = 3,
     Height = 4
 };
@@ -99,8 +107,10 @@ Target-typed initialization keeps the same explicit field writes when the
 destination already says the type:
 
 ```stark
-fn Rectangle MakeRectangle(i32[min max] width, i32[min max] height) {
-    return new() {
+fn Rectangle MakeRectangle(i32[min max] width, i32[min max] height)
+{
+    return new()
+    {
         Width = width,
         Height = height
     };
@@ -123,7 +133,8 @@ When one struct or record contains another, access stays direct and source
 visible:
 
 ```stark
-finite law i32[min max] CommandArea(DrawCommand command) {
+finite law i32[min max] CommandArea(DrawCommand command)
+{
     return command.Bounds.Area();
 }
 ```
@@ -138,7 +149,8 @@ Prefer explicit construction when it helps the reader see ownership and storage
 clearly. That is especially true at package boundaries.
 
 ```stark
-stack Pixel tint = new() {
+stack Pixel tint = new()
+{
     R = 255,
     G = 0,
     B = 0,
@@ -163,16 +175,19 @@ explicit method such as `Close`, not in hidden unwinding behavior. Stark has no
 general exception unwinding model for destructors to participate in.
 
 ```stark
-struct ScratchOwner {
+struct ScratchOwner
+{
     i32[min max] Handle;
     bool Closed;
 
-    fn void Close(mut borrow ScratchOwner self) {
+    fn void Close(mut borrow ScratchOwner self)
+    {
         self.Closed = true;
         return;
     }
 
-    mut drop {
+    mut drop
+    {
         self.Closed = true;
     }
 }
@@ -193,7 +208,8 @@ first. When a type is meant to cross a C ABI boundary, design that type as an
 interop type from the beginning.
 
 ```stark
-struct NativeRectangle {
+struct NativeRectangle
+{
     f32 X;
     f32 Y;
     f32 Width;
@@ -202,8 +218,10 @@ struct NativeRectangle {
 
 unsafe ffi fn void native_draw_rectangle(rawptr<NativeRectangle> rectangle);
 
-fn void DrawNativeRectangle(NativeRectangle rectangle) {
-    unsafe {
+fn void DrawNativeRectangle(NativeRectangle rectangle)
+{
+    unsafe
+    {
         native_draw_rectangle(&rectangle);
     }
 

@@ -64,7 +64,8 @@ One reserved boundary attribute is:
 module System.Memory
 
 [Backend(Opaque)]
-finite law i32[0 max] Hash(i32[0 max] value) {
+finite law i32[0 max] Hash(i32[0 max] value)
+{
     return value;
 }
 ```
@@ -211,12 +212,14 @@ Visibility also applies to member functions inside `struct` and `record` bodies.
 * `export` is never inherited; an `export` member must be written explicitly and must still satisfy the enclosing type's visibility cap
 
 ```stark
-public struct TcpClient {
+public struct TcpClient
+{
     fn bool IsOpen(self);                 // public, inherited
     internal fn i64 RuntimeHandle(self);  // internal, narrowed
 }
 
-internal struct PlatformSocket {
+internal struct PlatformSocket
+{
     fn bool IsOpen(self);                 // internal, inherited
     public fn i64 Handle(self);           // error: more visible than the type
 }
@@ -283,16 +286,22 @@ type still has the visibility written on the declaration.
 ```stark
 module Boxes
 
-public struct Box<T> {
+public struct Box<T>
+{
     T Value;
 
-    finite law T Get(borrow Box<T> self) {
+    finite law T Get(borrow Box<T> self)
+    {
         return self.Value;
     }
 }
 
-public finite law Box<T> MakeBox<T>(T value) {
-    return new Box<T>() { Value = value };
+public finite law Box<T> MakeBox<T>(T value)
+{
+    return new Box<T>()
+    {
+        Value = value
+    };
 }
 ```
 

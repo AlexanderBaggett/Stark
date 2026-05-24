@@ -20,11 +20,13 @@ public sealed class CompilerPipelineSemanticValidateTests
                 """
                 module Facade
 
-                public struct Box {
+                public struct Box
+                {
                     i32[min max] Value;
                 }
 
-                public fn void Touch(borrow mut Box value) {
+                public fn void Touch(borrow mut Box value)
+                {
                     value.Value = 0;
                     return;
                 }
@@ -75,7 +77,8 @@ public sealed class CompilerPipelineSemanticValidateTests
                     import Facade
                     module Demo
 
-                    fn void Outer(borrow mut Facade.Box value) {
+                    fn void Outer(borrow mut Facade.Box value)
+                    {
                         Facade.Touch(value);
                         return;
                     }

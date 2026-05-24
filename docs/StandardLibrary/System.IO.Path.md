@@ -53,16 +53,19 @@ import System
 import System.Text
 module App
 
-fn i32 ShowCurrentDirectory() {
+fn i32 ShowCurrentDirectory()
+{
     stack mut System.Text.OwnedAscii owned = new();
 
-    if (System.IO.Path.CurrentDirectory(owned) != System.Memory.MemoryStatus.Ok) {
+    if (System.IO.Path.CurrentDirectory(owned) != System.Memory.MemoryStatus.Ok)
+    {
         return 1;
     }
 
     stack mut System.Text.OwnedAscii joined = new();
 
-    if (System.IO.Path.TryJoin(joined, owned.View(), "demo.txt") != System.Memory.MemoryStatus.Ok) {
+    if (System.IO.Path.TryJoin(joined, owned.View(), "demo.txt") != System.Memory.MemoryStatus.Ok)
+    {
         return 2;
     }
 

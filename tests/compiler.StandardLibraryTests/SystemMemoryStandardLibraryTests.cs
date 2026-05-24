@@ -16,13 +16,16 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
                 import System
                 module Demo
 
-                fn bool UseDefaultAllocator() {
+                fn bool UseDefaultAllocator()
+                {
                     stack System.Memory.Allocator allocator = System.Memory.Allocator.Default();
                     return allocator.IsDefault();
                 }
 
-                fn bool MemoryOk(System.Memory.MemoryStatus status) {
-                    switch (status) {
+                fn bool MemoryOk(System.Memory.MemoryStatus status)
+                {
+                    switch (status)
+                    {
                         case System.Memory.MemoryStatus.Ok:
                             return true;
                         case System.Memory.MemoryStatus.Err(var error):
@@ -30,23 +33,31 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
                     }
                 }
 
-                fn bool UsePromotedDynamicMemory() {
+                fn bool UsePromotedDynamicMemory()
+                {
                     stack mut dynamic i8[min max] bytes = new();
-                    stack mut i8[min max][4] source = { 1, 2, 3, 4 };
+                    stack mut i8[min max][4] source =
+                    {
+                        1, 2, 3, 4
+                    };
                     stack u64[0 2 ** 63 - 1] four = 4;
-                    if (!MemoryOk(System.Memory.ReserveBytes(bytes, four))) {
+                    if (!MemoryOk(System.Memory.ReserveBytes(bytes, four)))
+                    {
                         return false;
                     }
 
-                    if (!MemoryOk(System.Memory.AppendBytes(bytes, source, four))) {
+                    if (!MemoryOk(System.Memory.AppendBytes(bytes, source, four)))
+                    {
                         return false;
                     }
 
-                    if (!MemoryOk(System.Memory.AppendFillBytes(bytes, 9, four))) {
+                    if (!MemoryOk(System.Memory.AppendFillBytes(bytes, 9, four)))
+                    {
                         return false;
                     }
 
-                    if (!MemoryOk(System.Memory.MoveBytes(bytes[2, four], bytes[0, four], four))) {
+                    if (!MemoryOk(System.Memory.MoveBytes(bytes[2, four], bytes[0, four], four)))
+                    {
                         return false;
                     }
 
@@ -72,10 +83,12 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
                 import System.Memory
                 module Demo
 
-                unsafe fn bool ExerciseAllocatorBoundary() {
+                unsafe fn bool ExerciseAllocatorBoundary()
+                {
                     stack System.Memory.Allocator allocator = System.Memory.Allocator.Default();
                     stack mut System.Memory.Allocation allocation = System.Memory.Allocate(allocator, 32, 8);
-                    if (allocation.Pointer == null) {
+                    if (allocation.Pointer == null)
+                    {
                         return false;
                     }
 
@@ -160,17 +173,21 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
                 """
                 module System.Memory
 
-                public struct Allocator {
+                public struct Allocator
+                {
                     u8[0 2 ** 7 - 1] Kind;
 
-                    static finite law Allocator Default() {
-                        return new Allocator() {
+                    static finite law Allocator Default()
+                    {
+                        return new Allocator()
+                        {
                             Kind = 0
                         };
                     }
                 }
 
-                internal struct Allocation {
+                internal struct Allocation
+                {
                     rawmutptr<i8[min max]> Pointer;
                     u64[0 2 ** 63 - 1] ByteLength;
                     u64[1 2 ** 63 - 1] Alignment;
@@ -181,17 +198,22 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
                 internal fn Allocation Reallocate(Allocation allocation, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
                 internal fn void Free(Allocation allocation);
 
-                unsafe fn void Fill(borrow Allocation allocation, u64[0 2 ** 63 - 1] count, i8[min max] value) {
+                unsafe fn void Fill(borrow Allocation allocation, u64[0 2 ** 63 - 1] count, i8[min max] value)
+                {
                     stack rawmutptr<i8[min max]> data = allocation.Pointer;
-                    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
+                    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+                    {
                         *(&data[index]) = value;
                     }
                 }
 
-                unsafe fn bool AllEqual(borrow Allocation allocation, u64[0 2 ** 63 - 1] count, i8[min max] value) {
+                unsafe fn bool AllEqual(borrow Allocation allocation, u64[0 2 ** 63 - 1] count, i8[min max] value)
+                {
                     stack rawmutptr<i8[min max]> data = allocation.Pointer;
-                    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
-                        if (*(&data[index]) != value) {
+                    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+                    {
+                        if (*(&data[index]) != value)
+                        {
                             return false;
                         }
                     }
@@ -199,69 +221,81 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
                     return true;
                 }
 
-                export unsafe fn i32[min max] main() {
+                export unsafe fn i32[min max] main()
+                {
                     stack mut Allocation large = Allocate(Allocator.Default(), 5000, 8);
-                    if (large.Pointer == null) {
+                    if (large.Pointer == null)
+                    {
                         return 1;
                     }
 
                     Fill(large, 5000, 3);
                     large = Reallocate(large, 9000, 8);
-                    if (large.Pointer == null || !AllEqual(large, 5000, 3)) {
+                    if (large.Pointer == null || !AllEqual(large, 5000, 3))
+                    {
                         return 2;
                     }
 
                     large = Reallocate(large, 4097, 8);
-                    if (large.Pointer == null || !AllEqual(large, 4097, 3)) {
+                    if (large.Pointer == null || !AllEqual(large, 4097, 3))
+                    {
                         return 3;
                     }
 
                     large = Reallocate(large, 4097, 8);
-                    if (large.Pointer == null || !AllEqual(large, 4097, 3)) {
+                    if (large.Pointer == null || !AllEqual(large, 4097, 3))
+                    {
                         return 4;
                     }
 
                     Free(large);
 
                     stack mut Allocation bucket = Allocate(Allocator.Default(), 16, 8);
-                    if (bucket.Pointer == null) {
+                    if (bucket.Pointer == null)
+                    {
                         return 5;
                     }
 
                     Fill(bucket, 16, 11);
                     bucket = Reallocate(bucket, 12, 8);
-                    if (bucket.Pointer == null || !AllEqual(bucket, 12, 11)) {
+                    if (bucket.Pointer == null || !AllEqual(bucket, 12, 11))
+                    {
                         return 6;
                     }
 
                     bucket = Reallocate(bucket, 8, 8);
-                    if (bucket.Pointer == null || !AllEqual(bucket, 8, 11)) {
+                    if (bucket.Pointer == null || !AllEqual(bucket, 8, 11))
+                    {
                         return 7;
                     }
 
                     Free(bucket);
 
                     stack mut Allocation bucketFallback = Allocate(Allocator.Default(), 16, 8);
-                    if (bucketFallback.Pointer == null) {
+                    if (bucketFallback.Pointer == null)
+                    {
                         return 8;
                     }
 
                     Fill(bucketFallback, 16, 21);
                     bucketFallback = Reallocate(bucketFallback, 5000, 8);
-                    if (bucketFallback.Pointer == null || !AllEqual(bucketFallback, 16, 21)) {
+                    if (bucketFallback.Pointer == null || !AllEqual(bucketFallback, 16, 21))
+                    {
                         return 9;
                     }
 
                     Free(bucketFallback);
 
                     stack mut Allocation overAligned = Allocate(Allocator.Default(), 512, 64);
-                    if (overAligned.Pointer == null) {
+                    if (overAligned.Pointer == null)
+                    {
                         return 10;
                     }
 
                     Fill(overAligned, 512, 31);
                     overAligned = Reallocate(overAligned, 1024, 64);
-                    if (overAligned.Pointer == null || !AllEqual(overAligned, 512, 31)) {
+                    if (overAligned.Pointer == null || !AllEqual(overAligned, 512, 31))
+                    {
                         return 11;
                     }
 
@@ -557,7 +591,8 @@ public sealed class SystemMemoryStandardLibraryTests : StandardLibraryTestSuite
             import System
             module App
 
-            export fn i32[min max] main() {
+            export fn i32[min max] main()
+            {
                 System.Console.WriteLine("allocator stays unused");
                 return 0;
             }

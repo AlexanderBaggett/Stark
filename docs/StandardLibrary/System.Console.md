@@ -75,8 +75,10 @@ public fn System.Memory.MemoryResult<System.Text.OwnedUnicode> Read();
 import System
 module App
 
-export fn i32 main() {
-    switch (System.Console.WriteLine("Hello")) {
+export fn i32 main()
+{
+    switch (System.Console.WriteLine("Hello"))
+    {
         case System.IO.IOStatus.Ok:
             return 0;
         case System.IO.IOStatus.Err(var error):

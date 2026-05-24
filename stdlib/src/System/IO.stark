@@ -1,6 +1,7 @@
 module System.IO
 
-public enum IOError {
+public enum IOError
+{
     NotFound,
     PermissionDenied,
     AlreadyExists,
@@ -10,12 +11,14 @@ public enum IOError {
     Unknown(i32[min max]),
 }
 
-public enum IOResult<T> {
+public enum IOResult<T>
+{
     Ok(T),
     Err(IOError),
 }
 
-public enum IOStatus {
+public enum IOStatus
+{
     Ok,
     Err(IOError),
 }

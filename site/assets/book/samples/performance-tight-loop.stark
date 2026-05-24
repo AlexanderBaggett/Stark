@@ -1,10 +1,12 @@
 module Book.PerformanceTightLoop
 
-finite law i32[min max] SumFixed(i32[min max][4] values) {
+finite law i32[min max] SumFixed(i32[min max][4] values)
+{
     stack mut u8[0 4] index = 0;
     stack mut i32[min max] total = 0;
 
-    while willexit (index < 4) {
+    while willexit (index < 4)
+    {
         total += values[index];
         index += 1;
     }
@@ -12,14 +14,20 @@ finite law i32[min max] SumFixed(i32[min max][4] values) {
     return total;
 }
 
-finite law bool HasExpectedTotal(i32[min max][4] values) {
+finite law bool HasExpectedTotal(i32[min max][4] values)
+{
     return SumFixed(values) == 10;
 }
 
-export fn i32[min max] main() {
-    stack i32[min max][4] values = { 1, 2, 3, 4 };
+export fn i32[min max] main()
+{
+    stack i32[min max][4] values =
+    {
+        1, 2, 3, 4
+    };
 
-    if (!HasExpectedTotal(values)) {
+    if (!HasExpectedTotal(values))
+    {
         return 1;
     }
 

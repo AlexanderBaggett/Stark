@@ -10,7 +10,8 @@ It re-exports:
 ## Shared Types
 
 ```stark
-public enum IOError {
+public enum IOError
+{
     NotFound,
     PermissionDenied,
     AlreadyExists,
@@ -20,12 +21,14 @@ public enum IOError {
     Unknown(i32),
 }
 
-public enum IOResult<T> {
+public enum IOResult<T>
+{
     Ok(T),
     Err(IOError),
 }
 
-public enum IOStatus {
+public enum IOStatus
+{
     Ok,
     Err(IOError),
 }
@@ -64,8 +67,10 @@ they always return and do not observe mutable external state.
 import System
 module App
 
-finite law bool IsOk(System.IO.IOStatus status) {
-    switch (status) {
+finite law bool IsOk(System.IO.IOStatus status)
+{
+    switch (status)
+    {
         case System.IO.IOStatus.Ok:
             return true;
         case System.IO.IOStatus.Err(var error):

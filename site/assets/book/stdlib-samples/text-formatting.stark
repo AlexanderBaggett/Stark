@@ -2,8 +2,10 @@ import System.Memory
 import System.Text
 module Book.Stdlib.TextFormatting
 
-fn bool MemoryOk(MemoryStatus status) {
-    switch (status) {
+fn bool MemoryOk(MemoryStatus status)
+{
+    switch (status)
+    {
         case MemoryStatus.Ok:
             return true;
         case MemoryStatus.Err(var error):
@@ -11,7 +13,8 @@ fn bool MemoryOk(MemoryStatus status) {
     }
 }
 
-fn bool FixedInterpolationHasExpectedLength() {
+fn bool FixedInterpolationHasExpectedLength()
+{
     stack i64[min max] score = 42;
 
     stack Ascii label[32] = $"Score: {score}";
@@ -21,27 +24,36 @@ fn bool FixedInterpolationHasExpectedLength() {
         && UnicodeLength(UnicodeView(wideLabel)) == 9;
 }
 
-fn bool OwnedAsciiBuilderWorks() {
+fn bool OwnedAsciiBuilderWorks()
+{
     stack mut OwnedAscii text = new();
-    stack i8[min max][3] suffix = { 88, 89, 90 };
+    stack i8[min max][3] suffix =
+    {
+        88, 89, 90
+    };
 
-    if (!MemoryOk(text.Reserve(32))) {
+    if (!MemoryOk(text.Reserve(32)))
+    {
         return false;
     }
 
-    if (!MemoryOk(text.AppendConstAscii("score="))) {
+    if (!MemoryOk(text.AppendConstAscii("score=")))
+    {
         return false;
     }
 
-    if (!MemoryOk(text.AppendU64(42))) {
+    if (!MemoryOk(text.AppendU64(42)))
+    {
         return false;
     }
 
-    if (!MemoryOk(text.AppendByte(33))) {
+    if (!MemoryOk(text.AppendByte(33)))
+    {
         return false;
     }
 
-    if (text.View() != "score=42!") {
+    if (text.View() != "score=42!")
+    {
         return false;
     }
 
@@ -56,73 +68,93 @@ fn bool OwnedAsciiBuilderWorks() {
         && !text.IsEmpty();
 }
 
-fn bool OwnedUnicodeBuilderWorks() {
+fn bool OwnedUnicodeBuilderWorks()
+{
     stack mut OwnedUnicode text = new();
-    stack i32[min max][2] marks = { 33, 63 };
+    stack i32[min max][2] marks =
+    {
+        33, 63
+    };
 
-    if (!MemoryOk(text.Reserve(32))) {
+    if (!MemoryOk(text.Reserve(32)))
+    {
         return false;
     }
 
-    if (!MemoryOk(text.AppendUnicode((unicode)"score="))) {
+    if (!MemoryOk(text.AppendUnicode((unicode)"score=")))
+    {
         return false;
     }
 
-    if (!MemoryOk(text.AppendU64(42))) {
+    if (!MemoryOk(text.AppendU64(42)))
+    {
         return false;
     }
 
-    if (!MemoryOk(text.AppendSlice(marks, 2))) {
+    if (!MemoryOk(text.AppendSlice(marks, 2)))
+    {
         return false;
     }
 
-    if (!MemoryOk(text.AppendAscii(" ok"))) {
+    if (!MemoryOk(text.AppendAscii(" ok")))
+    {
         return false;
     }
 
-    if (!MemoryOk(text.AppendConstAscii(" done"))) {
+    if (!MemoryOk(text.AppendConstAscii(" done")))
+    {
         return false;
     }
 
-    if (!MemoryOk(text.AppendBool(false))) {
+    if (!MemoryOk(text.AppendBool(false)))
+    {
         return false;
     }
 
-    if (!MemoryOk(text.AppendI64(-3))) {
+    if (!MemoryOk(text.AppendI64(-3)))
+    {
         return false;
     }
 
     return text.Length() > 0 && !text.IsEmpty();
 }
 
-fn bool OwnedUtf16BuilderWorks() {
+fn bool OwnedUtf16BuilderWorks()
+{
     stack mut OwnedUtf16 text = new();
 
-    if (!MemoryOk(text.Reserve(8))) {
+    if (!MemoryOk(text.Reserve(8)))
+    {
         return false;
     }
 
-    if (!MemoryOk(text.AppendCodeUnit(65))) {
+    if (!MemoryOk(text.AppendCodeUnit(65)))
+    {
         return false;
     }
 
-    if (!MemoryOk(text.AppendCodePoint(66))) {
+    if (!MemoryOk(text.AppendCodePoint(66)))
+    {
         return false;
     }
 
-    if (!MemoryOk(text.AppendAscii("C"))) {
+    if (!MemoryOk(text.AppendAscii("C")))
+    {
         return false;
     }
 
-    if (!MemoryOk(text.AppendConstAscii("D"))) {
+    if (!MemoryOk(text.AppendConstAscii("D")))
+    {
         return false;
     }
 
-    if (!MemoryOk(text.AppendUnicode((unicode)"E"))) {
+    if (!MemoryOk(text.AppendUnicode((unicode)"E")))
+    {
         return false;
     }
 
-    if (text.Length() == 0) {
+    if (text.Length() == 0)
+    {
         return false;
     }
 
@@ -130,43 +162,53 @@ fn bool OwnedUtf16BuilderWorks() {
     return text.IsEmpty();
 }
 
-fn bool Utf16ConversionsWork() {
+fn bool Utf16ConversionsWork()
+{
     stack mut OwnedUtf16 utf16 = new();
-    if (!MemoryOk(FromAsciiToUtf16(utf16, "abc"))) {
+    if (!MemoryOk(FromAsciiToUtf16(utf16, "abc")))
+    {
         return false;
     }
 
     stack mut OwnedUnicode unicodeText = new();
-    if (!MemoryOk(FromUtf16ToUnicode(unicodeText, utf16))) {
+    if (!MemoryOk(FromUtf16ToUnicode(unicodeText, utf16)))
+    {
         return false;
     }
 
     stack mut OwnedAscii asciiText = new();
-    if (!MemoryOk(FromUtf16ToAscii(asciiText, utf16))) {
+    if (!MemoryOk(FromUtf16ToAscii(asciiText, utf16)))
+    {
         return false;
     }
 
     return unicodeText.Length() == 3 && asciiText.View() == "abc";
 }
 
-export fn i32[min max] main() {
-    if (!FixedInterpolationHasExpectedLength()) {
+export fn i32[min max] main()
+{
+    if (!FixedInterpolationHasExpectedLength())
+    {
         return 1;
     }
 
-    if (!OwnedAsciiBuilderWorks()) {
+    if (!OwnedAsciiBuilderWorks())
+    {
         return 2;
     }
 
-    if (!OwnedUnicodeBuilderWorks()) {
+    if (!OwnedUnicodeBuilderWorks())
+    {
         return 3;
     }
 
-    if (!OwnedUtf16BuilderWorks()) {
+    if (!OwnedUtf16BuilderWorks())
+    {
         return 4;
     }
 
-    if (!Utf16ConversionsWork()) {
+    if (!Utf16ConversionsWork())
+    {
         return 5;
     }
 

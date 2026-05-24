@@ -43,7 +43,8 @@ with their own receiver type.
 ## Dynamic Buffer
 
 ```stark
-public struct DynamicByteBuffer {
+public struct DynamicByteBuffer
+{
     DynamicByteBuffer();
     inline finite law u64[0 2 ** 63 - 1] Length(borrow DynamicByteBuffer self);
     inline finite law u64[0 2 ** 63 - 1] Capacity(borrow DynamicByteBuffer self);

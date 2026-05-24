@@ -1,6 +1,7 @@
 module Book.OperatorsBasics
 
-finite law bool ArithmeticWorks() {
+finite law bool ArithmeticWorks()
+{
     stack mut i32[min max] value = 6;
 
     value += 2;
@@ -11,26 +12,32 @@ finite law bool ArithmeticWorks() {
         && value % 5 == 4;
 }
 
-finite law bool ComparisonsWork(i32[min max] value) {
+finite law bool ComparisonsWork(i32[min max] value)
+{
     return value >= 0
         && value <= 100
         && value != 42;
 }
 
-finite law i32[min max] ChooseSign(i32[min max] value) {
+finite law i32[min max] ChooseSign(i32[min max] value)
+{
     return value < 0 ? -1 : 1;
 }
 
-export fn i32[min max] main() {
-    if (!ArithmeticWorks()) {
+export fn i32[min max] main()
+{
+    if (!ArithmeticWorks())
+    {
         return 1;
     }
 
-    if (!ComparisonsWork(50)) {
+    if (!ComparisonsWork(50))
+    {
         return 2;
     }
 
-    if (ChooseSign(-5) != -1) {
+    if (ChooseSign(-5) != -1)
+    {
         return 3;
     }
 

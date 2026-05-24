@@ -75,7 +75,8 @@ Open a file through `Open`:
 stack IOResult<File> opened =
     Open("output.txt", FileMode.Write);
 
-switch (opened) {
+switch (opened)
+{
     case IOResult<File>.Err(var error):
         return false;
     case IOResult<File>.Ok(var value):
@@ -90,18 +91,21 @@ needs the close status.
 For a utility, wrap that pattern in a helper that returns `IOStatus`:
 
 ```stark
-fn IOStatus WriteMarker(ascii path, ascii text) {
+fn IOStatus WriteMarker(ascii path, ascii text)
+{
     stack IOResult<File> opened =
         Open(path, FileMode.Write);
 
-    switch (opened) {
+    switch (opened)
+    {
         case IOResult<File>.Err(var error):
             return IOStatus.Err(error);
         case IOResult<File>.Ok(var value):
             stack mut File file = value;
             stack IOStatus written = file.WriteLine(text);
 
-            switch (written) {
+            switch (written)
+            {
                 case IOStatus.Err(var error):
                     file.Close();
                     return IOStatus.Err(error);
@@ -148,10 +152,12 @@ Path-level operations return result values too. Switch on them before deciding
 whether to delete, move, or create:
 
 ```stark
-fn bool PathExists(ascii path) {
+fn bool PathExists(ascii path)
+{
     stack IOResult<bool> exists = System.FileSystem.Exists(path);
 
-    switch (exists) {
+    switch (exists)
+    {
         case IOResult<bool>.Err(var error):
             return false;
         case IOResult<bool>.Ok(var value):
@@ -164,14 +170,17 @@ When an operation can fail for a reason callers should see, return `IOStatus`
 instead of collapsing it to `bool`:
 
 ```stark
-fn IOStatus DeleteIfPresent(ascii path) {
+fn IOStatus DeleteIfPresent(ascii path)
+{
     stack IOResult<bool> exists = System.FileSystem.Exists(path);
 
-    switch (exists) {
+    switch (exists)
+    {
         case IOResult<bool>.Err(var error):
             return IOStatus.Err(error);
         case IOResult<bool>.Ok(var value):
-            if (!value) {
+            if (!value)
+            {
                 return IOStatus.Ok;
             }
 
@@ -185,9 +194,11 @@ Use the more specific path queries when the workflow cares about the entry
 kind:
 
 ```stark
-fn bool IsRegularFile(ascii path) {
+fn bool IsRegularFile(ascii path)
+{
     stack IOResult<bool> result = IsFile(path);
-    switch (result) {
+    switch (result)
+    {
         case IOResult<bool>.Err(var error):
             return false;
         case IOResult<bool>.Ok(var value):
@@ -199,9 +210,11 @@ fn bool IsRegularFile(ascii path) {
 For directory setup, keep create/delete failures visible:
 
 ```stark
-fn IOStatus RecreateDirectory(ascii path) {
+fn IOStatus RecreateDirectory(ascii path)
+{
     stack IOStatus deleted = DeleteDirectory(path);
-    switch (deleted) {
+    switch (deleted)
+    {
         case IOStatus.Err(var error):
             return IOStatus.Err(error);
         case IOStatus.Ok:
@@ -215,7 +228,8 @@ fn IOStatus RecreateDirectory(ascii path) {
 Directory reads return enum-shaped data:
 
 ```stark
-switch (next) {
+switch (next)
+{
     case DirectoryReadResult.End:
         return true;
     case DirectoryReadResult.Err(var error):
@@ -231,18 +245,22 @@ state.
 The complete loop opens the directory, reads until `End`, and closes the handle:
 
 ```stark
-fn IOStatus VisitDirectory(ascii path) {
+fn IOStatus VisitDirectory(ascii path)
+{
     stack IOResult<Directory> opened =
         OpenDirectory(path);
 
-    switch (opened) {
+    switch (opened)
+    {
         case IOResult<Directory>.Err(var error):
             return IOStatus.Err(error);
         case IOResult<Directory>.Ok(var value):
             stack mut Directory directory = value;
-            while non-deterministic (true) {
+            while non-deterministic (true)
+            {
                 stack DirectoryReadResult next = directory.ReadNext();
-                switch (next) {
+                switch (next)
+                {
                     case DirectoryReadResult.End:
                         return directory.Close();
                     case DirectoryReadResult.Err(var error):
@@ -265,7 +283,8 @@ allocation-aware result.
 
 ```stark
 stack mut OwnedAscii path = new();
-if (TryJoin(path, "logs", "today.txt") != MemoryStatus.Ok) {
+if (TryJoin(path, "logs", "today.txt") != MemoryStatus.Ok)
+{
     return 2;
 }
 
@@ -276,7 +295,8 @@ stack ascii extension = Extension(path.View());
 When the utility needs several path details, ask for them together:
 
 ```stark
-finite law bool IsStarkSource(ascii path) {
+finite law bool IsStarkSource(ascii path)
+{
     stack PathFacts facts = GetFacts(path);
     return facts.Extension() == ".stark" && facts.BaseNameLength() > 0;
 }
@@ -290,7 +310,8 @@ Use the allocation-returning join helper when the path should be owned by the
 caller:
 
 ```stark
-fn MemoryResult<OwnedAscii> MarkerPath(ascii directory) {
+fn MemoryResult<OwnedAscii> MarkerPath(ascii directory)
+{
     return Join(directory, "marker.txt");
 }
 ```
@@ -300,7 +321,8 @@ Use caller-owned storage when the utility already owns a reusable buffer:
 ```stark
 fn MemoryStatus BuildMarkerPath(
     mut borrow OwnedAscii destination,
-    ascii directory) {
+    ascii directory)
+{
     return TryJoin(destination, directory, "marker.txt");
 }
 ```
@@ -309,7 +331,8 @@ Current-directory lookup follows the same pattern:
 
 ```stark
 fn MemoryStatus WriteCurrentDirectory(
-    mut borrow OwnedAscii destination) {
+    mut borrow OwnedAscii destination)
+{
     return CurrentDirectory(destination);
 }
 ```
@@ -325,8 +348,10 @@ Owned handles clean up at scope exit, but explicit close still matters when:
 A complete project driver should keep that ordering easy to read:
 
 ```stark
-finite law bool IsOk(IOStatus status) {
-    switch (status) {
+finite law bool IsOk(IOStatus status)
+{
+    switch (status)
+    {
         case IOStatus.Ok:
             return true;
         case IOStatus.Err(var error):
@@ -334,18 +359,22 @@ finite law bool IsOk(IOStatus status) {
     }
 }
 
-export fn i32[min max] main() {
+export fn i32[min max] main()
+{
     stack IOStatus wrote = WriteMarker("marker.txt", "ready");
-    if (!IsOk(wrote)) {
+    if (!IsOk(wrote))
+    {
         return 1;
     }
 
-    if (!PathExists("marker.txt")) {
+    if (!PathExists("marker.txt"))
+    {
         return 2;
     }
 
     stack IOStatus deleted = DeleteIfPresent("marker.txt");
-    if (!IsOk(deleted)) {
+    if (!IsOk(deleted))
+    {
         return 3;
     }
 

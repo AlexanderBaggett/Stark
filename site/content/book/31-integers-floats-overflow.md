@@ -43,7 +43,8 @@ leaves one range and enters another.
 Use the narrowest honest range at API boundaries:
 
 ```stark
-finite law u8[0 100] Percent(u8[0 100] value) {
+finite law u8[0 100] Percent(u8[0 100] value)
+{
     return value;
 }
 ```
@@ -51,7 +52,8 @@ finite law u8[0 100] Percent(u8[0 100] value) {
 Use `min max` when the whole storage range is allowed:
 
 ```stark
-finite law i32[min max] KeepWholeI32(i32[min max] value) {
+finite law i32[min max] KeepWholeI32(i32[min max] value)
+{
     return value;
 }
 ```
@@ -140,7 +142,8 @@ fact in the type:
 finite law u32[0 max] Average(
     u32[0 max] total,
     u32[1 max] count
-) {
+)
+{
     return total / count;
 }
 ```
@@ -150,7 +153,8 @@ For exponentiation, use `**`:
 ```stark
 const PageSize = 2 ** 12;
 
-finite law u32[0 max] Square(u32[0 max] value) {
+finite law u32[0 max] Square(u32[0 max] value)
+{
     return value ** 2;
 }
 ```
@@ -180,7 +184,8 @@ Use wrapping for counters, hashes, checksums, and other APIs where wraparound
 is the intended result:
 
 ```stark
-finite law u32[0 max] RotateCounter(u32[0 max] value) {
+finite law u32[0 max] RotateCounter(u32[0 max] value)
+{
     return value +% 1;
 }
 ```
@@ -188,7 +193,8 @@ finite law u32[0 max] RotateCounter(u32[0 max] value) {
 Use wrapping only where the wrap is meaningful to the caller:
 
 ```stark
-finite law u32[0 max] Mix(u32[0 max] hash, u32[0 max] value) {
+finite law u32[0 max] Mix(u32[0 max] hash, u32[0 max] value)
+{
     return (hash *% 16777619) +% value;
 }
 ```
@@ -196,7 +202,8 @@ finite law u32[0 max] Mix(u32[0 max] hash, u32[0 max] value) {
 Wrapping negation has its own unary form:
 
 ```stark
-finite law i32[min max] NegateWrapping(i32[min max] value) {
+finite law i32[min max] NegateWrapping(i32[min max] value)
+{
     return -%value;
 }
 ```
@@ -224,7 +231,8 @@ value *|= factor;
 Use saturating arithmetic when the API is about bounded quantities:
 
 ```stark
-finite law u8[0 100] AddProgress(u8[0 100] current, u8[0 100] step) {
+finite law u8[0 100] AddProgress(u8[0 100] current, u8[0 100] step)
+{
     return current +| step;
 }
 ```
@@ -232,7 +240,8 @@ finite law u8[0 100] AddProgress(u8[0 100] current, u8[0 100] step) {
 Saturating subtraction is useful for counters that should stop at zero:
 
 ```stark
-finite law u8[0 100] SpendEnergy(u8[0 100] current, u8[0 100] amount) {
+finite law u8[0 100] SpendEnergy(u8[0 100] current, u8[0 100] amount)
+{
     return current -| amount;
 }
 ```
@@ -264,7 +273,8 @@ flags |= option;
 Use bitwise operators when the value is meant to be treated as bits:
 
 ```stark
-finite law u32[0 max] SetLowByte(u32[0 max] value, u32[0 255] low) {
+finite law u32[0 max] SetLowByte(u32[0 max] value, u32[0 255] low)
+{
     return (value & 0xFFFFFF00) | low;
 }
 ```
@@ -272,7 +282,8 @@ finite law u32[0 max] SetLowByte(u32[0 max] value, u32[0 255] low) {
 Use parentheses when mixing arithmetic and bitwise operations:
 
 ```stark
-finite law u32[0 max] PackBytes(u32[0 255] high, u32[0 255] low) {
+finite law u32[0 max] PackBytes(u32[0 255] high, u32[0 255] low)
+{
     return (high << 8) | low;
 }
 ```
@@ -281,7 +292,8 @@ Shift counts must make sense for the width being shifted. When an API accepts
 a shift count, give that count a range:
 
 ```stark
-finite law u32[0 max] ShiftLeft(u32[0 max] value, u8[0 31] amount) {
+finite law u32[0 max] ShiftLeft(u32[0 max] value, u8[0 31] amount)
+{
     return value << amount;
 }
 ```
@@ -307,7 +319,8 @@ Integer-to-integer casts should be paired with a source range that makes the
 conversion valid:
 
 ```stark
-finite law i32[0 10] NarrowKnownSmall(i64[0 10] value) {
+finite law i32[0 10] NarrowKnownSmall(i64[0 10] value)
+{
     return (i32[0 10])value;
 }
 ```
@@ -330,11 +343,13 @@ Fixed arrays can be converted to slice views explicitly when a callee expects
 a view:
 
 ```stark
-finite law u32[0 max] First(u32[0 max][] values) {
+finite law u32[0 max] First(u32[0 max][] values)
+{
     return values[0];
 }
 
-fn u32[0 max] UseArray() {
+fn u32[0 max] UseArray()
+{
     stack u32[0 max][3] values = [10, 20, 30];
     return First((u32[0 max][])values);
 }
@@ -349,7 +364,8 @@ the conversion valid.
 If the API only accepts `0..10`, put that range on the input too:
 
 ```stark
-finite law i32[0 10] KeepSmall(i32[0 10] value) {
+finite law i32[0 10] KeepSmall(i32[0 10] value)
+{
     return value;
 }
 ```
@@ -370,7 +386,8 @@ value != other
 Comparison chains read the way they are usually spoken:
 
 ```stark
-finite law bool InPercentRange(u8[0 100] value) {
+finite law bool InPercentRange(u8[0 100] value)
+{
     return 0 <= value <= 100;
 }
 ```
@@ -379,7 +396,8 @@ Use the conditional operator when both branches are expressions of the same
 result kind:
 
 ```stark
-finite law u8[0 100] ClampPercent(u8[0 max] value) {
+finite law u8[0 100] ClampPercent(u8[0 max] value)
+{
     return value > 100 ? 100 : value;
 }
 ```
@@ -387,8 +405,10 @@ finite law u8[0 100] ClampPercent(u8[0 max] value) {
 Use `if`/`else` when the operation is easier to read as statements:
 
 ```stark
-finite law u8[0 100] ClampPercentWithIf(u8[0 max] value) {
-    if (value > 100) {
+finite law u8[0 100] ClampPercentWithIf(u8[0 max] value)
+{
+    if (value > 100)
+    {
         return 100;
     }
 
@@ -402,7 +422,8 @@ By default, floating-point code uses Stark's fast math rules. Use `strictfp`
 when a function needs strict IEEE-style floating-point behavior:
 
 ```stark
-strictfp finite law f32 StrictAdd(f32 left, f32 right) {
+strictfp finite law f32 StrictAdd(f32 left, f32 right)
+{
     return left + right;
 }
 ```
@@ -414,7 +435,8 @@ boundary.
 Use the default for ordinary numeric work:
 
 ```stark
-finite law f32 FastAdd(f32 left, f32 right) {
+finite law f32 FastAdd(f32 left, f32 right)
+{
     return left + right;
 }
 ```
@@ -422,7 +444,8 @@ finite law f32 FastAdd(f32 left, f32 right) {
 Use `strictfp` when bit-for-bit floating-point behavior is part of the API:
 
 ```stark
-strictfp finite law f32 StrictAverage(f32 left, f32 right) {
+strictfp finite law f32 StrictAverage(f32 left, f32 right)
+{
     return (left + right) / 2.0f;
 }
 ```
@@ -433,11 +456,13 @@ not mix strict and fast floating-point expectations inside one helper.
 Floating-point arithmetic uses the ordinary arithmetic operators:
 
 ```stark
-finite law f64 Ratio(f64 used, f64 total) {
+finite law f64 Ratio(f64 used, f64 total)
+{
     return used / total;
 }
 
-finite law f32 Scale(f32 value, f32 factor) {
+finite law f32 Scale(f32 value, f32 factor)
+{
     return value * factor;
 }
 ```
@@ -445,7 +470,8 @@ finite law f32 Scale(f32 value, f32 factor) {
 Use `strictfp` for code where the caller expects strict floating-point rules:
 
 ```stark
-strictfp finite law f64 StrictRatio(f64 used, f64 total) {
+strictfp finite law f64 StrictRatio(f64 used, f64 total)
+{
     return used / total;
 }
 ```

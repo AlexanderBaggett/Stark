@@ -13,21 +13,28 @@ public sealed partial class MidLevelIrLoweringTests
 
             static mut i32[min max] Counter = 0;
 
-            unsafe fn void Bump(i32[min max] value) {
+            unsafe fn void Bump(i32[min max] value)
+            {
                 Counter = Counter + value;
                 return;
             }
 
-            struct Buffer {
+            struct Buffer
+            {
                 i32[min max] Value;
 
-                drop {
+                drop
+                {
                     Bump(self.Value);
                 }
             }
 
-            unsafe fn void Run() {
-                stack Buffer box = new Buffer() { Value = 4 };
+            unsafe fn void Run()
+            {
+                stack Buffer box = new Buffer()
+                {
+                    Value = 4
+                };
                 return;
             }
             """);
@@ -54,21 +61,25 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn void Bump(i32[min max] value) {
+            unsafe fn void Bump(i32[min max] value)
+            {
                 return;
             }
 
-            struct Buffer {
+            struct Buffer
+            {
                 i8[min max][512] Data;
                 i32[min max] Value;
 
-                mut drop {
+                mut drop
+                {
                     self.Value = 0;
                     Bump(1);
                 }
             }
 
-            unsafe fn void Run() {
+            unsafe fn void Run()
+            {
                 stack mut Buffer buffer = new Buffer();
                 return;
             }
@@ -98,22 +109,30 @@ public sealed partial class MidLevelIrLoweringTests
 
             static mut i32[min max] Counter = 0;
 
-            unsafe fn void Bump(i32[min max] value) {
+            unsafe fn void Bump(i32[min max] value)
+            {
                 Counter = Counter + value;
                 return;
             }
 
-            struct Buffer {
+            struct Buffer
+            {
                 i32[min max] Value;
 
-                drop {
+                drop
+                {
                     Bump(self.Value);
                 }
             }
 
-            unsafe fn void Run(bool fail) {
-                stack Buffer box = new Buffer() { Value = 4 };
-                if (fail) {
+            unsafe fn void Run(bool fail)
+            {
+                stack Buffer box = new Buffer()
+                {
+                    Value = 4
+                };
+                if (fail)
+                {
                     return;
                 }
 
@@ -140,22 +159,32 @@ public sealed partial class MidLevelIrLoweringTests
 
             static mut i32[min max] Counter = 0;
 
-            unsafe fn void Bump(i32[min max] value) {
+            unsafe fn void Bump(i32[min max] value)
+            {
                 Counter = Counter + value;
                 return;
             }
 
-            struct Buffer {
+            struct Buffer
+            {
                 i32[min max] Value;
 
-                drop {
+                drop
+                {
                     Bump(self.Value);
                 }
             }
 
-            unsafe fn void Run() {
-                stack mut Buffer box = new Buffer() { Value = 1 };
-                box = new Buffer() { Value = 7 };
+            unsafe fn void Run()
+            {
+                stack mut Buffer box = new Buffer()
+                {
+                    Value = 1
+                };
+                box = new Buffer()
+                {
+                    Value = 7
+                };
                 return;
             }
             """);
@@ -188,23 +217,33 @@ public sealed partial class MidLevelIrLoweringTests
 
             static mut i32[min max] Counter = 0;
 
-            unsafe fn void Bump(i32[min max] value) {
+            unsafe fn void Bump(i32[min max] value)
+            {
                 Counter = Counter + value;
                 return;
             }
 
-            struct Token {
+            struct Token
+            {
                 i32[min max] Value;
 
-                drop {
+                drop
+                {
                     Bump(self.Value);
                 }
             }
 
-            unsafe fn void Run() {
+            unsafe fn void Run()
+            {
                 stack mut dynamic Token values = new(2);
-                init values[0] = new Token() { Value = 1 };
-                init values[1] = new Token() { Value = 2 };
+                init values[0] = new Token()
+                {
+                    Value = 1
+                };
+                init values[1] = new Token()
+                {
+                    Value = 2
+                };
                 return;
             }
             """);
@@ -229,27 +268,36 @@ public sealed partial class MidLevelIrLoweringTests
 
             static mut i32[min max] Counter = 0;
 
-            unsafe fn void Bump(i32[min max] value) {
+            unsafe fn void Bump(i32[min max] value)
+            {
                 Counter = Counter + value;
                 return;
             }
 
-            struct Resource {
+            struct Resource
+            {
                 i32[min max] Value;
 
-                drop {
+                drop
+                {
                     Bump(self.Value);
                 }
             }
 
-            enum Slot {
+            enum Slot
+            {
                 Free,
                 Occupied(Resource),
             }
 
-            unsafe fn void Run() {
-                stack Slot slot = Slot.Occupied(new Resource() { Value = 7 });
-                switch (slot) {
+            unsafe fn void Run()
+            {
+                stack Slot slot = Slot.Occupied(new Resource()
+                {
+                    Value = 7
+                });
+                switch (slot)
+                {
                     case Slot.Occupied(var payload):
                         stack Resource value = payload;
                     case Slot.Free:
@@ -276,33 +324,40 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn void Bump(i32[min max] value) {
+            unsafe fn void Bump(i32[min max] value)
+            {
                 return;
             }
 
-            struct LargeResource {
+            struct LargeResource
+            {
                 i8[min max][512] Data;
                 i32[min max] Value;
 
-                drop {
+                drop
+                {
                     Bump(self.Value);
                 }
             }
 
-            enum Result {
+            enum Result
+            {
                 Ok(LargeResource),
                 Err(i32[min max])
             }
 
-            unsafe fn Result MakeOk() {
+            unsafe fn Result MakeOk()
+            {
                 stack mut LargeResource resource = new LargeResource();
                 resource.Value = 7;
                 return Result.Ok(resource);
             }
 
-            unsafe fn void Run() {
+            unsafe fn void Run()
+            {
                 stack Result result = MakeOk();
-                switch (result) {
+                switch (result)
+                {
                     case Result.Ok(var payload):
                         stack LargeResource value = payload;
                     case Result.Err(var code):
@@ -329,33 +384,40 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn void Bump(i32[min max] value) {
+            unsafe fn void Bump(i32[min max] value)
+            {
                 return;
             }
 
-            struct LargeResource {
+            struct LargeResource
+            {
                 i8[min max][512] Data;
                 i32[min max] Value;
 
-                drop {
+                drop
+                {
                     Bump(self.Value);
                 }
             }
 
-            enum Result {
+            enum Result
+            {
                 Ok(LargeResource),
                 Err(i32[min max])
             }
 
-            unsafe fn Result MakeOk() {
+            unsafe fn Result MakeOk()
+            {
                 stack mut LargeResource resource = new LargeResource();
                 resource.Value = 7;
                 return Result.Ok(resource);
             }
 
-            unsafe fn void Run() {
+            unsafe fn void Run()
+            {
                 stack Result result = MakeOk();
-                switch (result) {
+                switch (result)
+                {
                     case Result.Ok(var payload):
                         stack LargeResource value = payload;
                         return;
@@ -382,38 +444,46 @@ public sealed partial class MidLevelIrLoweringTests
             """
             module Demo
 
-            unsafe fn void Bump(i32[min max] value) {
+            unsafe fn void Bump(i32[min max] value)
+            {
                 return;
             }
 
-            struct LargeResource {
+            struct LargeResource
+            {
                 i8[min max][512] Data;
                 i32[min max] Value;
 
-                drop {
+                drop
+                {
                     Bump(self.Value);
                 }
             }
 
-            enum Result {
+            enum Result
+            {
                 Ok(LargeResource),
                 Err(i32[min max])
             }
 
-            unsafe fn LargeResource MakeResource(i32[min max] value) {
+            unsafe fn LargeResource MakeResource(i32[min max] value)
+            {
                 stack mut LargeResource resource = new LargeResource();
                 resource.Value = value;
                 return resource;
             }
 
-            unsafe fn Result MakeOk() {
+            unsafe fn Result MakeOk()
+            {
                 stack LargeResource resource = MakeResource(7);
                 return Result.Ok(resource);
             }
 
-            unsafe fn void Run() {
+            unsafe fn void Run()
+            {
                 stack Result result = MakeOk();
-                switch (result) {
+                switch (result)
+                {
                     case Result.Ok(var payload):
                         stack mut LargeResource value = payload;
                         value = MakeResource(11);
@@ -443,24 +513,32 @@ public sealed partial class MidLevelIrLoweringTests
 
             static mut i32[min max] Counter = 0;
 
-            unsafe fn void Bump(i32[min max] value) {
+            unsafe fn void Bump(i32[min max] value)
+            {
                 Counter = Counter + value;
                 return;
             }
 
-            struct Resource {
+            struct Resource
+            {
                 i32[min max] Value;
 
-                drop {
+                drop
+                {
                     Bump(self.Value);
                 }
             }
 
-            record Box(Resource Item) {
+            record Box(Resource Item)
+            {
             }
 
-            unsafe fn void Run() {
-                stack Resource owned = new Resource() { Value = 5 };
+            unsafe fn void Run()
+            {
+                stack Resource owned = new Resource()
+                {
+                    Value = 5
+                };
                 stack Box box = new Box(owned);
                 return;
             }
@@ -485,29 +563,38 @@ public sealed partial class MidLevelIrLoweringTests
 
             static mut i32[min max] Counter = 0;
 
-            unsafe fn void Bump(i32[min max] value) {
+            unsafe fn void Bump(i32[min max] value)
+            {
                 Counter = Counter + value;
                 return;
             }
 
-            struct Resource {
+            struct Resource
+            {
                 i32[min max] Value;
 
-                drop {
+                drop
+                {
                     Bump(self.Value);
                 }
             }
 
-            struct Box {
+            struct Box
+            {
                 Resource Item;
 
-                Box(Resource item) {
+                Box(Resource item)
+                {
                     self.Item = item;
                 }
             }
 
-            unsafe fn void Run() {
-                stack Resource owned = new Resource() { Value = 5 };
+            unsafe fn void Run()
+            {
+                stack Resource owned = new Resource()
+                {
+                    Value = 5
+                };
                 stack Box box = new Box(owned);
                 return;
             }
@@ -532,23 +619,36 @@ public sealed partial class MidLevelIrLoweringTests
 
             static mut i32[min max] Counter = 0;
 
-            unsafe fn void Bump(i32[min max] value) {
+            unsafe fn void Bump(i32[min max] value)
+            {
                 Counter = Counter + value;
                 return;
             }
 
-            struct Resource {
+            struct Resource
+            {
                 i32[min max] Value;
 
-                drop {
+                drop
+                {
                     Bump(self.Value);
                 }
             }
 
-            unsafe fn void Run() {
-                stack Resource first = new Resource() { Value = 1 };
-                stack Resource second = new Resource() { Value = 2 };
-                stack Resource[2] resources = { first, second };
+            unsafe fn void Run()
+            {
+                stack Resource first = new Resource()
+                {
+                    Value = 1
+                };
+                stack Resource second = new Resource()
+                {
+                    Value = 2
+                };
+                stack Resource[2] resources =
+                {
+                    first, second
+                };
                 return;
             }
             """);
@@ -572,23 +672,36 @@ public sealed partial class MidLevelIrLoweringTests
 
             static mut i32[min max] Counter = 0;
 
-            unsafe fn void Bump(i32[min max] value) {
+            unsafe fn void Bump(i32[min max] value)
+            {
                 Counter = Counter + value;
                 return;
             }
 
-            struct Resource {
+            struct Resource
+            {
                 i32[min max] Value;
 
-                drop {
+                drop
+                {
                     Bump(self.Value);
                 }
             }
 
-            unsafe fn void Run() {
-                stack Resource first = new Resource() { Value = 1 };
-                stack Resource second = new Resource() { Value = 2 };
-                heap Resource[2] resources = { first, second };
+            unsafe fn void Run()
+            {
+                stack Resource first = new Resource()
+                {
+                    Value = 1
+                };
+                stack Resource second = new Resource()
+                {
+                    Value = 2
+                };
+                heap Resource[2] resources =
+                {
+                    first, second
+                };
                 return;
             }
             """);
@@ -618,8 +731,12 @@ public sealed partial class MidLevelIrLoweringTests
             import Lib
             module Demo
 
-            unsafe fn void Run() {
-                stack Lib.Buffer box = new Lib.Buffer() { Value = 4 };
+            unsafe fn void Run()
+            {
+                stack Lib.Buffer box = new Lib.Buffer()
+                {
+                    Value = 4
+                };
                 return;
             }
             """,
@@ -631,14 +748,17 @@ public sealed partial class MidLevelIrLoweringTests
                         """
                         module Lib
 
-                        unsafe fn void Bump(i32[min max] value) {
+                        unsafe fn void Bump(i32[min max] value)
+                        {
                             return;
                         }
 
-                        public struct Buffer {
+                        public struct Buffer
+                        {
                             i32[min max] Value;
 
-                            drop {
+                            drop
+                            {
                                 Bump(self.Value);
                             }
                         }
@@ -665,26 +785,34 @@ public sealed partial class MidLevelIrLoweringTests
 
             static mut i32[min max] Counter = 0;
 
-            unsafe fn void Bump(i32[min max] value) {
+            unsafe fn void Bump(i32[min max] value)
+            {
                 Counter = Counter + value;
                 return;
             }
 
-            struct Resource {
+            struct Resource
+            {
                 i32[min max] Value;
 
-                drop {
+                drop
+                {
                     Bump(self.Value);
                 }
             }
 
-            enum Token {
+            enum Token
+            {
                 End,
                 Text(Resource),
             }
 
-            unsafe fn void Run() {
-                stack Token token = Token.Text(new Resource() { Value = 4 });
+            unsafe fn void Run()
+            {
+                stack Token token = Token.Text(new Resource()
+                {
+                    Value = 4
+                });
                 return;
             }
             """);

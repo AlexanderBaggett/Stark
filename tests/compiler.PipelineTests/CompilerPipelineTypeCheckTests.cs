@@ -19,7 +19,8 @@ public sealed class CompilerPipelineTypeCheckTests
                 """
                 module Facade
 
-                public enum IOResult<T> {
+                public enum IOResult<T>
+                {
                     Ok(T),
                     Err(i32[min max]),
                 }
@@ -39,8 +40,10 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    finite law i32[min max] Unwrap(Facade.IOResult<i32[min max]> result) {
-                        switch (result) {
+                    finite law i32[min max] Unwrap(Facade.IOResult<i32[min max]> result)
+                    {
+                        switch (result)
+                        {
                             case Facade.IOResult<i32[min max]>.Ok(var value):
                                 return value;
                             case Facade.IOResult<i32[min max]>.Err(var code):
@@ -102,7 +105,8 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    unsafe fn i32[min max] Run() {
+                    unsafe fn i32[min max] Run()
+                    {
                         stack i32[min max] value = 4;
                         return Facade.Identity(value);
                     }
@@ -148,14 +152,20 @@ public sealed class CompilerPipelineTypeCheckTests
                 """
                 module Facade
 
-                public struct Allocator {
+                public struct Allocator
+                {
                     u8[0 max] Tag;
 
-                    static finite law Allocator Default() {
-                        return new() { Tag = 0 };
+                    static finite law Allocator Default()
+                    {
+                        return new()
+                        {
+                            Tag = 0
+                        };
                     }
 
-                    finite law bool IsDefault(borrow Allocator self) {
+                    finite law bool IsDefault(borrow Allocator self)
+                    {
                         return self.Tag == 0;
                     }
                 }
@@ -180,7 +190,8 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    fn Facade.Allocator Run() {
+                    fn Facade.Allocator Run()
+                    {
                         return Facade.Allocator.Default();
                     }
                     """,
@@ -221,14 +232,17 @@ public sealed class CompilerPipelineTypeCheckTests
                 """
                 module Facade
 
-                public struct Box {
+                public struct Box
+                {
                     i32[min max] Value;
 
-                    public fn i32[min max] Visible(Box self) {
+                    public fn i32[min max] Visible(Box self)
+                    {
                         return self.Value;
                     }
 
-                    internal fn i32[min max] Hidden(Box self) {
+                    internal fn i32[min max] Hidden(Box self)
+                    {
                         return self.Value;
                     }
                 }
@@ -256,8 +270,12 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run() {
-                        stack Facade.Box box = new Facade.Box() { Value = 1 };
+                    fn i32[min max] Run()
+                    {
+                        stack Facade.Box box = new Facade.Box()
+                        {
+                            Value = 1
+                        };
                         return box.Hidden();
                     }
                     """,
@@ -337,7 +355,8 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    unsafe fn i32[min max] Run() {
+                    unsafe fn i32[min max] Run()
+                    {
                         return Facade.Answer;
                     }
                     """,
@@ -381,7 +400,8 @@ public sealed class CompilerPipelineTypeCheckTests
                 """
                 module Facade
 
-                public struct Box {
+                public struct Box
+                {
                     i32[min max] Value;
                 }
                 """,
@@ -422,8 +442,12 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    unsafe fn i32[min max] Run() {
-                        stack Facade.Box box = new Facade.Box() { Value = 3 };
+                    unsafe fn i32[min max] Run()
+                    {
+                        stack Facade.Box box = new Facade.Box()
+                        {
+                            Value = 3
+                        };
                         return box.Value;
                     }
                     """,
@@ -465,7 +489,8 @@ public sealed class CompilerPipelineTypeCheckTests
                 """
                 module Facade
 
-                public record Counter(i32[min max] Value) {
+                public record Counter(i32[min max] Value)
+                {
                     i32[min max] Count;
                 }
                 """,
@@ -507,7 +532,8 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(i32[min max] value) {
+                    fn i32[min max] Run(i32[min max] value)
+                    {
                         stack Facade.Counter counter = new Facade.Counter(value);
                         return counter.Value;
                     }
@@ -553,10 +579,12 @@ public sealed class CompilerPipelineTypeCheckTests
                 """
                 module Facade
 
-                public struct Box {
+                public struct Box
+                {
                     i32[min max] Value;
 
-                    Box(i32[min max] value) {
+                    Box(i32[min max] value)
+                    {
                     }
                 }
                 """,
@@ -591,7 +619,8 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    fn void Run(i32[min max] value) {
+                    fn void Run(i32[min max] value)
+                    {
                         stack Facade.Box box = new Facade.Box(value);
                     }
                     """,
@@ -636,10 +665,12 @@ public sealed class CompilerPipelineTypeCheckTests
                 """
                 module Facade
 
-                public record Counter(i32[min max] Value) {
+                public record Counter(i32[min max] Value)
+                {
                     i32[min max] Count;
 
-                    Counter(i32[min max] value, i32[min max] count) {
+                    Counter(i32[min max] value, i32[min max] count)
+                    {
                     }
                 }
                 """,
@@ -684,7 +715,8 @@ public sealed class CompilerPipelineTypeCheckTests
                     import Facade
                     module Demo
 
-                    fn i32[min max] Run(i32[min max] value) {
+                    fn i32[min max] Run(i32[min max] value)
+                    {
                         stack Facade.Counter counter = new Facade.Counter(value, 7);
                         return counter.Value;
                     }

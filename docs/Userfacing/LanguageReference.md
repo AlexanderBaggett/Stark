@@ -60,7 +60,8 @@ Block comments do not nest.
 module Demo
 
 /// <summary>Returns the fixed answer.</summary>
-finite law i32[0 max] Run() {
+finite law i32[0 max] Run()
+{
     // stack i32[0 max] ignored = 99;
     /*
     return ignored;
@@ -185,11 +186,13 @@ Rules:
 Static member functions belong to the type rather than to a value. They are called through the type name and do not receive a `self` argument:
 
 ```stark
-struct Thread {
+struct Thread
+{
     static fn void Yield();
 }
 
-fn void Run() {
+fn void Run()
+{
     Thread.Yield();
 }
 ```
@@ -197,10 +200,12 @@ fn void Run() {
 Instance member functions are called through a value and use an explicit receiver parameter:
 
 ```stark
-struct Counter {
+struct Counter
+{
     i32[0 max] Value;
 
-    finite law i32[0 max] Get(borrow Counter self) {
+    finite law i32[0 max] Get(borrow Counter self)
+    {
         return self.Value;
     }
 }
@@ -232,7 +237,8 @@ The default makes this common shape a non-overlap contract without extra syntax:
 fn void Add(
     borrow f32[] left,
     borrow f32[] right,
-    borrow mut f32[] output) {
+    borrow mut f32[] output)
+{
     return;
 }
 ```
@@ -241,7 +247,8 @@ The relational `where overlap(...)` form opts out for an intentional may-overlap
 
 ```stark
 fn void MoveBytes(borrow u8[] source, borrow mut u8[] destination)
-    where overlap(source, destination) {
+    where overlap(source, destination)
+{
     return;
 }
 ```
@@ -250,7 +257,8 @@ The relational `where same(...)` form requires the listed parameters to identify
 
 ```stark
 fn void CompareViewWithBacking(borrow u8[] view, borrow u8[] backing)
-    where same(view, backing) {
+    where same(view, backing)
+{
     return;
 }
 ```
@@ -263,7 +271,8 @@ fn void CopyWindow(
     rawmutptr<i8[min max]> destination,
     i64[0 max] sourceStart,
     i64[0 max] length)
-    where disjoint(source[sourceStart, length], destination[0, length]) {
+    where disjoint(source[sourceStart, length], destination[0, length])
+{
     return;
 }
 ```
@@ -276,7 +285,8 @@ fn void ProcessPairs(
     borrow u8[] b,
     borrow u8[] c,
     borrow mut u8[] d)
-    where overlap(a, b), same(c, d) {
+    where overlap(a, b), same(c, d)
+{
     return;
 }
 ```
@@ -291,7 +301,8 @@ Raw pointer parameters may expose their bounded element region directly. The for
 fn void CopyBytes(
     i64[0 max] length,
     rawptr<i8[min max]>[length] source,
-    rawmutptr<i8[min max]>[length] destination) {
+    rawmutptr<i8[min max]>[length] destination)
+{
     return;
 }
 ```
@@ -305,30 +316,39 @@ The expression `pointer[start, count]` is a memory-region expression, not an own
 At a safe call site, the compiler must prove each memory relation. Default parameter pairs require non-overlap. `where same(...)` pairs require same-region identity. `where overlap(...)` pairs impose no non-overlap obligation for that relation. Passing the same memory region twice to default parameters, passing a whole object together with one of its fields, passing two indexed regions whose indexes are not proven separate, passing a call result or other expression whose memory root is not visible, or passing two raw pointer or slice variables whose regions have not been proven separate violates the default contract:
 
 ```stark
-fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+fn void Touch(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+{
     return;
 }
 
-fn void Bad(rawmutptr<i32[min max]> ptr) {
+fn void Bad(rawmutptr<i32[min max]> ptr)
+{
     Touch(ptr, ptr); // STK3030: overlapping disjoint arguments
 }
 
-fn void MaybeBad(i32[0 2] i, i32[0 2] j) {
-    stack mut i32[min max][3] values = { 1, 2, 3 };
+fn void MaybeBad(i32[0 2] i, i32[0 2] j)
+{
+    stack mut i32[min max][3] values =
+    {
+        1, 2, 3
+    };
     Touch(&values[i], &values[j]); // STK3030 unless the indexes are proven separate
 }
 
 fn void Unknown(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight)
-    where overlap(maybeLeft, maybeRight) {
+    where overlap(maybeLeft, maybeRight)
+{
     Touch(maybeLeft, maybeRight); // STK3030: different pointer names are not a proof
 }
 
-fn rawmutptr<i32[min max]> Identity(rawmutptr<i32[min max]> ptr) {
+fn rawmutptr<i32[min max]> Identity(rawmutptr<i32[min max]> ptr)
+{
     return ptr;
 }
 
 fn void HiddenRoot(rawmutptr<i32[min max]> maybeLeft, rawmutptr<i32[min max]> maybeRight)
-    where overlap(maybeLeft, maybeRight) {
+    where overlap(maybeLeft, maybeRight)
+{
     Touch(Identity(maybeLeft), maybeRight); // STK3030: the left root is hidden behind a call
 }
 ```
@@ -337,8 +357,10 @@ An ordinary `unsafe` block does not bypass parameter non-overlap. Trusted extern
 
 ```stark
 unsafe fn void ExternallySeparated(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
-    where overlap(left, right) {
-    unsafe assume disjoint(left, right) {
+    where overlap(left, right)
+{
+    unsafe assume disjoint(left, right)
+    {
         Touch(left, right);
     }
 }
@@ -350,8 +372,10 @@ Inside an `unsafe fn` or an existing `unsafe { ... }` block, the leading `unsafe
 
 ```stark
 unsafe fn void AlreadyUnsafe(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
-    where overlap(left, right) {
-    assume disjoint(left, right) {
+    where overlap(left, right)
+{
+    assume disjoint(left, right)
+    {
         Touch(left, right);
     }
 }
@@ -360,20 +384,24 @@ unsafe fn void AlreadyUnsafe(rawmutptr<i32[min max]> left, rawmutptr<i32[min max
 Distinct visible projections, non-overlapping index ranges, visible text slice ranges such as `text[0, 4]` and `text[4, 4]`, bounded raw pointer region expressions, exclusive mutable borrow roots, `out`/`init` destination roots, immutable slice/text views with visible backing storage, separately addressed local storage, declared parameter contracts, and true branches of `if disjoint(...)` may satisfy the contract. Local raw pointers, slice locals, text locals, and borrowed local views are not non-overlapping merely because they are separate declarations; local facts come from provenance. Pointer copies and simple casts preserve same-region identity.
 
 ```stark
-struct Pair {
+struct Pair
+{
     i32[min max] Left;
     i32[min max] Right;
 }
 
-fn void Fields(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+fn void Fields(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+{
     return;
 }
 
-fn void Good(borrow mut Pair pair) {
+fn void Good(borrow mut Pair pair)
+{
     Fields(&pair.Left, &pair.Right);
 }
 
-fn void Forward(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
+fn void Forward(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right)
+{
     Fields(left, right);
 }
 ```
@@ -381,7 +409,8 @@ fn void Forward(rawmutptr<i32[min max]> left, rawmutptr<i32[min max]> right) {
 A `const` parameter is a parameter whose reachable object graph is deeply immutable. It is stronger than ordinary readonly access and stronger than `frozen` borrow access because it requires permanent const provenance rather than only a call-scoped readonly view:
 
 ```stark
-fn i32[0 max] Lookup(const Table table, i32[0 max] key) {
+fn i32[0 max] Lookup(const Table table, i32[0 max] key)
+{
     return table.Find(key);
 }
 ```
@@ -399,11 +428,13 @@ a raw pointer by default, does not capture state, and can be called directly
 unless the program explicitly stores it in a callable value.
 
 ```stark
-fn i32[min max] Worker() {
+fn i32[min max] Worker()
+{
     return 0;
 }
 
-fn void Start() {
+fn void Start()
+{
     stack mut System.Threading.Thread worker = new(Worker);
 }
 ```
@@ -435,11 +466,13 @@ guarantees.
 Stronger function items can be used where a weaker function pointer is expected:
 
 ```stark
-finite law i32[min max] Clamp(i32[min max] value) {
+finite law i32[min max] Clamp(i32[min max] value)
+{
     return value;
 }
 
-fn void Register() {
+fn void Register()
+{
     stack fnptr<fn i32[min max](i32[min max])> general = Clamp;
     stack fnptr<finite i32[min max](i32[min max])> bounded = Clamp;
     stack fnptr<law i32[min max](i32[min max])> pure = Clamp;
@@ -490,7 +523,8 @@ stack fnptr<fn i32[min max](i32[min max])> square =
     (i32[min max] value) => value * value;
 
 stack fnptr<fn i32[min max](rawmutptr<State>)> worker =
-    (rawmutptr<State> state) => {
+    (rawmutptr<State> state) =>
+    {
         return Worker(state);
     };
 ```
@@ -503,7 +537,8 @@ local state because a function pointer does not carry closure storage. Use a
 named function item or pass captured state explicitly.
 
 ```stark
-UseTransform(capture(copy scale, read table) (i32[0 max] index) => {
+UseTransform(capture(copy scale, read table) (i32[0 max] index) =>
+{
     return table[index] * scale;
 });
 ```
@@ -553,11 +588,13 @@ converted to `fnptr`.
 ```stark
 inline fn i32[min max] ApplyInline(
     i32[min max] value,
-    inline closure<fn i32[min max](i32[min max])> op) {
+    inline closure<fn i32[min max](i32[min max])> op)
+{
     return op(value);
 }
 
-fn i32[min max] RunInline(i32[min max] offset) {
+fn i32[min max] RunInline(i32[min max] offset)
+{
     return ApplyInline(
         41,
         capture(copy offset) (i32[min max] value) => value + offset);
@@ -571,7 +608,8 @@ stored unless the API uses an explicit stored borrow form.
 ```stark
 fn i32[min max] ApplyBorrow(
     borrow closure<fn i32[min max](i32[min max])> op,
-    i32[min max] value) {
+    i32[min max] value)
+{
     return op(value);
 }
 ```
@@ -582,7 +620,8 @@ and moved owned values; they reject ordinary stack borrows unless the program
 uses an explicit safe stored-borrow or unsafe shared capability.
 
 ```stark
-fn heap closure<fn i32[min max](i32[min max])> MakeAdder(i32[min max] offset) {
+fn heap closure<fn i32[min max](i32[min max])> MakeAdder(i32[min max] offset)
+{
     return heap capture(copy offset) (i32[min max] value) => value + offset;
 }
 ```
@@ -677,12 +716,15 @@ Slices are non owning views. A slice does not materialize or own backing storage
 Dynamic storage is a value type, not a local storage class. The local or field that owns the dynamic header still uses ordinary placement such as `stack`, `heap`, or a struct field. The dynamic backing storage is managed by the dynamic value.
 
 ```stark
-struct IntList {
+struct IntList
+{
     dynamic i32[0 max] Items;
 }
 
-fn void Push(mut borrow IntList self, i32[0 max] value) {
-    if (self.Items.Length == self.Items.Capacity) {
+fn void Push(mut borrow IntList self, i32[0 max] value)
+{
+    if (self.Items.Length == self.Items.Capacity)
+    {
         self.Items.Reserve(1);
     }
 
@@ -699,8 +741,10 @@ An `init` assignment into dynamic storage extends the dense initialized prefix. 
 Sparse initialized-slot proofs are explicit unsafe proof boundaries. Inside an `unsafe` block, code may assert that a dynamic slot or initialization-view slot is initialized even when that fact is not visible from the dense prefix. The proof applies only inside that unsafe boundary; after a sparse proof, later safe code treats the dynamic initialized prefix as unknown until it re-establishes an ordinary dense-prefix proof.
 
 ```stark
-fn i32[0 max] ReadOccupied(dynamic i32[0 max] values, i32[0 max] index) {
-    unsafe {
+fn i32[0 max] ReadOccupied(dynamic i32[0 max] values, i32[0 max] index)
+{
+    unsafe
+    {
         return values[index];
     }
 }
@@ -711,11 +755,13 @@ fn i32[0 max] ReadOccupied(dynamic i32[0 max] values, i32[0 max] index) {
 `MoveAt(index)` moves the initialized element at `index`, shifts later initialized elements left by one slot, decrements `Length`, and leaves the old tail slot spare. It traps when `index >= Length`. This is the safe dense-prefix removal operation for queues, ordered buffers, and collection internals that need front or middle removal without spelling raw pointers.
 
 ```stark
-fn i32[0 max] Pop(mut borrow IntList self) {
+fn i32[0 max] Pop(mut borrow IntList self)
+{
     return self.Items.MoveLast();
 }
 
-fn i32[0 max] RemoveFirst(mut borrow IntList self) {
+fn i32[0 max] RemoveFirst(mut borrow IntList self)
+{
     return self.Items.MoveAt(0);
 }
 ```
@@ -723,7 +769,8 @@ fn i32[0 max] RemoveFirst(mut borrow IntList self) {
 The initialized part of dynamic storage can be viewed as a normal slice:
 
 ```stark
-fn retborrow i32[0 max][] AsSlice(borrow IntList self) {
+fn retborrow i32[0 max][] AsSlice(borrow IntList self)
+{
     return self.Items[0, self.Items.Length];
 }
 ```
@@ -731,12 +778,15 @@ fn retborrow i32[0 max][] AsSlice(borrow IntList self) {
 The spare part can be viewed as an initialization destination:
 
 ```stark
-fn bool AppendDefaults(mut borrow IntList self, i64[0 max] count) {
-    if (!self.Items.TryReserve(count)) {
+fn bool AppendDefaults(mut borrow IntList self, i64[0 max] count)
+{
+    if (!self.Items.TryReserve(count))
+    {
         return false;
     }
 
-    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1) {
+    for willexit (stack mut i64[0 max] index = 0; index < count; index += 1)
+    {
         init self.Items[self.Items.Length] = 0;
     }
 
@@ -769,8 +819,10 @@ These are part of the type model, not local syntax sugar.
 `init T` is a write-only initialization destination for a single `T`. `init T[]` is a write-only initialization destination for a contiguous region of `T` slots. Code may write to an `init` destination, but may not read its previous contents. Assigning with `init` constructs the value in that slot and marks it initialized for the surrounding control-flow proof.
 
 ```stark
-fn void Fill(init i32[0 max][] destination, i32[0 max] value) {
-    for willexit independent (stack mut i64[0 max] index = 0; index < destination.Length; index += 1) {
+fn void Fill(init i32[0 max][] destination, i32[0 max] value)
+{
+    for willexit independent (stack mut i64[0 max] index = 0; index < destination.Length; index += 1)
+    {
         init destination[index] = value;
     }
 }
@@ -797,7 +849,8 @@ Raw pointers may carry an explicit element bound in parameter positions and memo
 fn bool Fill(
     i64[0 max] length,
     rawmutptr<i32[min max]>[length] destination,
-    i32[min max] value) {
+    i32[min max] value)
+{
     return true;
 }
 ```
@@ -811,11 +864,14 @@ fn void Copy(
     i64[0 max] length,
     rawptr<i8[min max]>[length] source,
     rawmutptr<i8[min max]>[length] destination)
-    where disjoint(source[0, length], destination[0, length]) {
-    unsafe {
+    where disjoint(source[0, length], destination[0, length])
+{
+    unsafe
+    {
         stack i8[min max][] sourceView = slice(source, length);
         stack mut i8[min max][] destinationView = slice(destination, length);
-        for willexit independent (stack mut i64[0 max] index = 0; index < length; index += 1) {
+        for willexit independent (stack mut i64[0 max] index = 0; index < length; index += 1)
+        {
             destinationView[index] = sourceView[index];
         }
     }
@@ -908,8 +964,10 @@ Readonly form. `PlatformClose` is a placeholder for a non-fallible platform
 cleanup helper supplied by the type:
 
 ```stark
-drop {
-    if (!self.Closed) {
+drop
+{
+    if (!self.Closed)
+    {
         PlatformClose(self.Handle);
     }
 }
@@ -918,7 +976,8 @@ drop {
 Mutable form:
 
 ```stark
-mut drop {
+mut drop
+{
     self.Ptr = null;
     self.Closed = true;
 }
@@ -963,10 +1022,14 @@ Enum cases may be:
 Example:
 
 ```stark
-enum Token {
+enum Token
+{
     End,
     Integer(i32),
-    Move { X: i32, Y: i32 },
+    Move
+    {
+        X: i32, Y: i32
+    },
 }
 ```
 
@@ -975,7 +1038,10 @@ Value level enum construction uses `.` qualification from the enum type:
 ```stark
 stack Token a = Token.End;
 stack Token b = Token.Integer(5);
-stack Token c = Token.Move { X: 1, Y: 2 };
+stack Token c = Token.Move
+{
+    X: 1, Y: 2
+};
 ```
 
 Standard library types such as `Option<T>` or `Result<T, E>`, when provided, are ordinary enums rather than compiler privileged forms.
@@ -983,12 +1049,16 @@ Standard library types such as `Option<T>` or `Result<T, E>`, when provided, are
 Pattern matching uses the same case qualification:
 
 ```stark
-switch (token) {
+switch (token)
+{
     case Token.End:
         return 0;
     case Token.Integer(var value):
         return value;
-    case Token.Move { X: var x, Y: var y }:
+    case Token.Move
+    {
+        X: var x, Y: var y
+    }:
         return x + y;
 }
 ```
@@ -1151,7 +1221,8 @@ Loop behavior rules:
 Loops may also carry the `independent` memory contract:
 
 ```stark
-for willexit independent (stack i32[0 max] i = 0; i < count; i += 1) {
+for willexit independent (stack i32[0 max] i = 0; i < count; i += 1)
+{
     output[i] = left[i] + right[i];
 }
 ```
@@ -1161,9 +1232,11 @@ for willexit independent (stack i32[0 max] i = 0; i < count; i += 1) {
 Scalar-only `while` and `for` loops may use scalar local values directly, and their bodies may declare stack or register scalar locals with pure scalar initializers. Canonical `for` loops may also use slice, fixed-array, and bounded raw pointer region element accesses when the element index is the loop induction variable, the induction variable is incremented by exactly one, and every write/read root pair is either the same indexed root or proven disjoint by parameter contracts, borrow exclusivity, raw pointer region facts, or an enclosing `if disjoint(...)` fact. The accepted memory-backed form includes structured `if` statements whose conditions and branches satisfy the same subset, and it includes field projections rooted at the per-iteration element, such as `root[index].field`. Calls inside that memory-backed subset are accepted when they resolve to law functions with scalar returns, so the call itself introduces no unproven memory effect.
 
 ```stark
-fn i32[0 10] CountFour() {
+fn i32[0 10] CountFour()
+{
     stack mut i32[0 10] value = 0;
-    while willexit independent (value < 4) {
+    while willexit independent (value < 4)
+    {
         value += 1;
     }
 
@@ -1178,9 +1251,12 @@ Accepted `willexit` loops state that the loop is expected to make progress and f
 `if disjoint(...)` tests memory-region overlap and introduces a branch-scoped fact:
 
 ```stark
-if disjoint(source, destination) {
+if disjoint(source, destination)
+{
     CopyDisjoint(source, destination);
-} else {
+}
+ else
+{
     CopyOverlapSafe(source, destination);
 }
 ```
@@ -1225,7 +1301,10 @@ Object creation supports both explicit and target typed forms:
 stack Box explicitBox = new Box();        // calls Box's default constructor
 stack Box defaultBox = new();             // calls the target type's default constructor
 stack Box constructedBox = new(value);    // calls the corresponding constructor
-stack Box initializedBox = new() { Value = value };
+stack Box initializedBox = new()
+{
+    Value = value
+};
 ```
 
 Target typed `new()` and `new(args)` require the surrounding code to already say which `struct` or `record` type is being created. That target type can come from a local declaration, assignment target, return type, object initializer field type, or fixed array element type. If Stark cannot tell which `struct` or `record` you mean, use the explicit form such as `new Box(...)`.
@@ -1249,7 +1328,10 @@ An array initializer may materialize a fixed array value or participate in neste
 This is invalid:
 
 ```stark
-stack i32[] view = { 1, 2, 3 };
+stack i32[] view =
+{
+    1, 2, 3
+};
 ```
 
 because `i32[]` is a view type and Stark does not silently create hidden backing storage for slice targets.
@@ -1257,7 +1339,10 @@ because `i32[]` is a view type and Stark does not silently create hidden backing
 Instead, the backing storage must be made explicit:
 
 ```stark
-stack i32[3] values = { 1, 2, 3 };
+stack i32[3] values =
+{
+    1, 2, 3
+};
 stack i32[] view = values;
 ```
 
@@ -1421,7 +1506,8 @@ The text runtime contract:
 Stark supports C# style interpolated text literals. If every `{...}` hole can be folded at compile time, the whole interpolation behaves like one ordinary text constant:
 
 ```stark
-finite law ascii ScoreLabel() {
+finite law ascii ScoreLabel()
+{
     const score = 100;
     return $"Score: {score}";
 }
@@ -1432,7 +1518,8 @@ Each `{...}` hole is parsed and checked as an ordinary Stark expression. Compile
 Runtime holes need caller selected storage:
 
 ```stark
-fn Ascii ScoreLabel(i32[min max] score) {
+fn Ascii ScoreLabel(i32[min max] score)
+{
     stack Ascii label[64] = $"Score: {score}";
     return label;
 }
@@ -1454,7 +1541,8 @@ The rules:
 Stark supports `+` for compile time text constants:
 
 ```stark
-finite law ascii ScoreLabel() {
+finite law ascii ScoreLabel()
+{
     return "Score: " + "100";
 }
 ```
@@ -1464,7 +1552,8 @@ This is one ordinary text constant, so it does not allocate or copy at runtime.
 Stark also supports the common literal prefix runtime form when the right side returns an explicit owned text result:
 
 ```stark
-fn System.Memory.MemoryResult<System.Text.OwnedAscii> ScoreLabel(i64[min max] score) {
+fn System.Memory.MemoryResult<System.Text.OwnedAscii> ScoreLabel(i64[min max] score)
+{
     return "Score: " + score.ToAscii();
 }
 ```
@@ -1474,7 +1563,8 @@ This returns `System.Memory.MemoryResult<System.Text.OwnedAscii>`, so allocation
 Text concatenation is intended for readable, ordinary code. When runtime text must be copied into caller owned storage, put the capacity on the stack text buffer:
 
 ```stark
-fn bool CombineTwoLines() {
+fn bool CombineTwoLines()
+{
     stack System.Memory.MemoryResult<System.Text.OwnedAscii> leftResult =
         System.Console.ReadAsciiLine();
     stack System.Memory.MemoryResult<System.Text.OwnedAscii> rightResult =
@@ -1483,14 +1573,16 @@ fn bool CombineTwoLines() {
     stack mut System.Text.OwnedAscii left = new();
     stack mut System.Text.OwnedAscii right = new();
 
-    switch (leftResult) {
+    switch (leftResult)
+    {
         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
             return false;
         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
             left = value;
     }
 
-    switch (rightResult) {
+    switch (rightResult)
+    {
         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Err(var error):
             return false;
         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
@@ -1594,7 +1686,8 @@ Stark does not hide C's default argument promotions. If a C variadic function ex
 ```stark
 public unsafe ffi varargs fn i32 printf(ascii format);
 
-unsafe fn i32 PrintScore(i32[min max] score) {
+unsafe fn i32 PrintScore(i32[min max] score)
+{
     return printf("Score: %d\n", score);
 }
 ```
@@ -1612,8 +1705,10 @@ Use `unsafe fn` for functions whose contract depends on caller-proven raw memory
 ```stark
 unsafe fn rawmutptr<T> FromAddress<T>(i64[0 max] address);
 
-fn void UseAddress(i64[0 max] address) {
-    unsafe {
+fn void UseAddress(i64[0 max] address)
+{
+    unsafe
+    {
         stack rawmutptr<State> state = FromAddress<State>(address);
     }
 }
@@ -1635,7 +1730,8 @@ The following require an unsafe context:
 Unsafe operation markers may also appear at the operation that crosses the proof boundary:
 
 ```stark
-RegisterCallback(capture(unsafe addr token) () => {
+RegisterCallback(capture(unsafe addr token) () =>
+{
     return 0;
 });
 ```

@@ -80,8 +80,9 @@ Use `finite` when the caller is allowed to rely on the callback returning:
 ```stark
 finite i32[min max] ApplyFinite(
     borrow closure<finite i32[min max](i32[min max])> op,
-    i32[min max] value) {
-    return op(value);
+    i32[min max] value)
+    {
+        return op(value);
 }
 ```
 
@@ -91,7 +92,8 @@ function:
 ```stark
 law bool ApplyLaw(
     borrow closure<law bool(i32[min max])> predicate,
-    i32[min max] value) {
+    i32[min max] value)
+{
     return predicate(value);
 }
 ```
@@ -101,8 +103,9 @@ Use `finite law` for deterministic value-style callback APIs:
 ```stark
 inline finite law i32[min max] ApplyInlineFiniteLaw(
     i32[min max] value,
-    inline closure<finite law i32[min max](i32[min max])> op) {
-    return op(value);
+    inline closure<finite law i32[min max](i32[min max])> op)
+    {
+        return op(value);
 }
 ```
 
@@ -119,11 +122,13 @@ call that receives it.
 ```stark
 inline fn i32[min max] ApplyInline(
     i32[min max] value,
-    inline closure<fn i32[min max](i32[min max])> op) {
+    inline closure<fn i32[min max](i32[min max])> op)
+{
     return op(value);
 }
 
-fn i32[min max] AddOffsetInline(i32[min max] offset) {
+fn i32[min max] AddOffsetInline(i32[min max] offset)
+{
     return ApplyInline(
         32,
         capture(copy offset) (i32[min max] value) => value + offset);
@@ -134,7 +139,8 @@ You can read the example as though the callback body were written directly at
 the call site:
 
 ```stark
-fn i32[min max] AddOffsetInline(i32[min max] offset) {
+fn i32[min max] AddOffsetInline(i32[min max] offset)
+{
     return 32 + offset;
 }
 ```
@@ -156,11 +162,13 @@ current call graph, but the callee must not retain it.
 ```stark
 fn i32[min max] ApplyBorrow(
     borrow closure<fn i32[min max](i32[min max])> op,
-    i32[min max] value) {
+    i32[min max] value)
+{
     return op(value);
 }
 
-fn i32[min max] AddOffsetBorrow(i32[min max] offset) {
+fn i32[min max] AddOffsetBorrow(i32[min max] offset)
+{
     return ApplyBorrow(
         capture(copy offset) (i32[min max] value) => value + offset,
         32);
@@ -191,16 +199,19 @@ consumes its environment.
 ```stark
 fn void PushEvent(
     mut borrow closure<mut fn void(i32[min max])> sink,
-    i32[min max] value) {
+    i32[min max] value)
+{
     sink(value);
     return;
 }
 
-fn i32[min max] CountEvents() {
+fn i32[min max] CountEvents()
+{
     stack mut i32[min max] total = 0;
 
     stack mut closure<mut fn void(i32[min max])> add =
-        capture(mut total) (i32[min max] value) => {
+        capture(mut total) (i32[min max] value) =>
+        {
             total += value;
             return;
         };
@@ -218,7 +229,8 @@ call may mutate captured state. Passing it as an ordinary immutable
 Use `once` when a call consumes the closure:
 
 ```stark
-fn i32[min max] RunOnce(heap closure<once fn i32[min max]()> producer) {
+fn i32[min max] RunOnce(heap closure<once fn i32[min max]()> producer)
+{
     return producer();
 }
 ```
@@ -236,11 +248,13 @@ retained past the current call.
 
 ```stark
 fn heap closure<finite law i32[min max](i32[min max])> MakePureAdder(
-    i32[min max] offset) {
+    i32[min max] offset)
+{
     return heap capture(copy offset) (i32[min max] value) => value + offset;
 }
 
-fn i32[min max] UseAdder() {
+fn i32[min max] UseAdder()
+{
     stack heap closure<finite law i32[min max](i32[min max])> addTwo =
         MakePureAdder(2);
 
@@ -256,7 +270,8 @@ environment and any owned captured values.
 Heap closures cannot retain ordinary stack borrows:
 
 ```stark
-fn heap closure<fn i32[min max]()> Bad() {
+fn heap closure<fn i32[min max]()> Bad()
+{
     stack i32[min max] value = 7;
 
     return heap capture(read value) () => value;
@@ -266,7 +281,8 @@ fn heap closure<fn i32[min max]()> Bad() {
 The valid version copies or moves data into the heap environment:
 
 ```stark
-fn heap closure<fn i32[min max]()> Good() {
+fn heap closure<fn i32[min max]()> Good()
+{
     stack i32[min max] value = 7;
 
     return heap capture(copy value) () => value;
@@ -296,15 +312,17 @@ For a call-now helper, write the fast shape directly:
 ```stark
 inline finite law i32[min max] ApplyInlineFiniteLaw(
     i32[min max] value,
-    inline closure<finite law i32[min max](i32[min max])> op) {
-    return op(value);
+    inline closure<finite law i32[min max](i32[min max])> op)
+    {
+        return op(value);
 }
 ```
 
 For a stored callback, make ownership visible:
 
 ```stark
-struct Handler {
+struct Handler
+{
     heap closure<finite law i32[min max](i32[min max])> Score;
 }
 ```

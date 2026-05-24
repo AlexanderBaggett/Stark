@@ -69,17 +69,20 @@ import System.Testing
 module MathTests
 
 [Fact]
-fn bool AddsNumbers() {
+fn bool AddsNumbers()
+{
     return Equal(4, 2 + 2);
 }
 
 [Fact]
-fn bool RejectsBadState() {
+fn bool RejectsBadState()
+{
     return False(false);
 }
 
 [Fact]
-fn bool NamesAreStable() {
+fn bool NamesAreStable()
+{
     return Equal("Stark", "Stark");
 }
 ```
@@ -98,7 +101,8 @@ The `Equal` helper covers the first scalar and text cases: `bool`,
 `unicode`.
 
 ```stark
-fn bool ChecksSeveralKinds() {
+fn bool ChecksSeveralKinds()
+{
     return Equal(true, true)
         && Equal((i32[min max])42, (i32[min max])42)
         && Equal((i64[min max])42, (i64[min max])42)
@@ -113,7 +117,8 @@ Use `Status(assertion)` when a helper should return the `TestStatus` enum
 instead of a plain boolean:
 
 ```stark
-fn TestStatus ParseStatus(bool parsed) {
+fn TestStatus ParseStatus(bool parsed)
+{
     return Status(parsed);
 }
 ```
@@ -122,8 +127,10 @@ Switch on `TestStatus` when a caller wants to count or report passed and failed
 checks separately:
 
 ```stark
-fn u32[0 1] FailureCount(TestStatus status) {
-    switch (status) {
+fn u32[0 1] FailureCount(TestStatus status)
+{
+    switch (status)
+    {
         case TestStatus.Passed:
             return 0;
         case TestStatus.Failed:
@@ -135,8 +142,10 @@ fn u32[0 1] FailureCount(TestStatus status) {
 Use `Fail` when a branch should not be reached:
 
 ```stark
-fn bool DivideByZeroIsRejected(DivideResult result) {
-    switch (result) {
+fn bool DivideByZeroIsRejected(DivideResult result)
+{
+    switch (result)
+    {
         case DivideResult.DivideByZero:
             return True(true);
         case DivideResult.Ok(var value):
@@ -148,13 +157,16 @@ fn bool DivideByZeroIsRejected(DivideResult result) {
 For result enums, test the branch the caller is supposed to handle:
 
 ```stark
-enum FirstResult {
+enum FirstResult
+{
     Ok(i32[min max]),
     Empty,
 }
 
-fn bool TryFirstRejectsEmpty(FirstResult result) {
-    switch (result) {
+fn bool TryFirstRejectsEmpty(FirstResult result)
+{
+    switch (result)
+    {
         case FirstResult.Empty:
             return True(true);
         case FirstResult.Ok(var value):
@@ -167,8 +179,10 @@ For `out` APIs, initialize the destination, call the function, then assert both
 the status and the written value:
 
 ```stark
-fn bool TryDivide(i32[min max] numerator, i32[min max] denominator, out i32[min max] result) {
-    if (denominator == 0) {
+fn bool TryDivide(i32[min max] numerator, i32[min max] denominator, out i32[min max] result)
+{
+    if (denominator == 0)
+    {
         result = 0;
         return false;
     }
@@ -177,9 +191,11 @@ fn bool TryDivide(i32[min max] numerator, i32[min max] denominator, out i32[min 
     return true;
 }
 
-fn bool TryDivideWritesQuotient() {
+fn bool TryDivideWritesQuotient()
+{
     stack mut i32[min max] quotient = 0;
-    if (!TryDivide(21, 3, quotient)) {
+    if (!TryDivide(21, 3, quotient))
+    {
         return Fail("divide should succeed");
     }
 
@@ -200,7 +216,8 @@ contract.
 For several tests, accumulate a failure count and return once:
 
 ```stark
-export fn i32[min max] main() {
+export fn i32[min max] main()
+{
     stack mut u32[0 2 ** 31 - 1] failed = 0;
 
     failed += RunFact("AddsNumbers", AddsNumbers());

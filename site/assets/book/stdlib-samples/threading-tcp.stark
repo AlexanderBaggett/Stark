@@ -4,12 +4,15 @@ import System.Runtime.Buffer
 import System.Threading
 module Book.Stdlib.ThreadingTcp
 
-fn i32[min max] Worker() {
+fn i32[min max] Worker()
+{
     return 7;
 }
 
-finite law bool JoinResultIs(ThreadJoinResult result, i32[min max] expected) {
-    switch (result) {
+finite law bool JoinResultIs(ThreadJoinResult result, i32[min max] expected)
+{
+    switch (result)
+    {
         case ThreadJoinResult.Ok(var value):
             return value == expected;
         case ThreadJoinResult.Err(var error):
@@ -17,10 +20,12 @@ finite law bool JoinResultIs(ThreadJoinResult result, i32[min max] expected) {
     }
 }
 
-fn bool ThreadEntryShapeCompiles() {
+fn bool ThreadEntryShapeCompiles()
+{
     stack ThreadEntry entry = Worker;
     stack mut Thread worker = new(entry);
-    if (!worker.IsJoinable()) {
+    if (!worker.IsJoinable())
+    {
         return false;
     }
 
@@ -28,9 +33,12 @@ fn bool ThreadEntryShapeCompiles() {
     return JoinResultIs(joined, 7) && !worker.IsJoinable();
 }
 
-fn bool EndpointShapeWorks() {
-    stack IPv4Endpoint endpoint = new() {
-        Address = new() {
+fn bool EndpointShapeWorks()
+{
+    stack IPv4Endpoint endpoint = new()
+    {
+        Address = new()
+        {
             A = 127,
             B = 0,
             C = 0,
@@ -43,12 +51,19 @@ fn bool EndpointShapeWorks() {
     return !closed.IsOpen() && endpoint.Port == 8080;
 }
 
-fn bool TcpBufferShapesWorkOnClosedClient() {
+fn bool TcpBufferShapesWorkOnClosedClient()
+{
     stack mut TcpClient closed = new();
     stack mut FixedByteBuffer512 fixed = new();
     stack mut DynamicByteBuffer dynamicBuffer = new();
-    stack mut i8[min max][4] first = { 0, 0, 0, 0 };
-    stack mut i8[min max][4] second = { 0, 0, 0, 0 };
+    stack mut i8[min max][4] first =
+    {
+        0, 0, 0, 0
+    };
+    stack mut i8[min max][4] second =
+    {
+        0, 0, 0, 0
+    };
 
     stack NetResult<u64[0 2 ** 63 - 1]> fixedRead = closed.Read(fixed);
     stack NetResult<u64[0 2 ** 63 - 1]> dynamicRead = closed.Read(dynamicBuffer, 16);
@@ -56,25 +71,29 @@ fn bool TcpBufferShapesWorkOnClosedClient() {
         closed.ReadVectored(first, second);
     stack NetStatus readable = closed.WaitReadable(1);
 
-    switch (fixedRead) {
+    switch (fixedRead)
+    {
         case NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
             return false;
         case NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
     }
 
-    switch (dynamicRead) {
+    switch (dynamicRead)
+    {
         case NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
             return false;
         case NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
     }
 
-    switch (vectoredRead) {
+    switch (vectoredRead)
+    {
         case NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
             return false;
         case NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
     }
 
-    switch (readable) {
+    switch (readable)
+    {
         case NetStatus.Ok:
             return false;
         case NetStatus.Err(var error):
@@ -82,16 +101,20 @@ fn bool TcpBufferShapesWorkOnClosedClient() {
     }
 }
 
-export fn i32[min max] main() {
-    if (!ThreadEntryShapeCompiles()) {
+export fn i32[min max] main()
+{
+    if (!ThreadEntryShapeCompiles())
+    {
         return 1;
     }
 
-    if (!EndpointShapeWorks()) {
+    if (!EndpointShapeWorks())
+    {
         return 2;
     }
 
-    if (!TcpBufferShapesWorkOnClosedClient()) {
+    if (!TcpBufferShapesWorkOnClosedClient())
+    {
         return 3;
     }
 

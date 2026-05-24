@@ -35,7 +35,8 @@ public finite law i64[min max] RotateRight(i64[min max] value, i64[min max] amou
 import System
 module App
 
-export fn i32 main() {
+export fn i32 main()
+{
     stack i32[min max] value = 1;
     stack i32[min max] leading = System.BitOperations.LeadingZeroCount(value);
     stack i32[min max] rotated = System.BitOperations.RotateLeft(value, 31);

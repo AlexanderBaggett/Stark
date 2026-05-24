@@ -46,11 +46,13 @@ The functions return the same width they receive. That makes it easy to keep
 index arithmetic and masks in one integer family:
 
 ```stark
-fn i32[min max] UsedBits32(i32[min max] value) {
+fn i32[min max] UsedBits32(i32[min max] value)
+{
     return 32 - LeadingZeroCount(value);
 }
 
-fn i64[min max] UsedBits64(i64[min max] value) {
+fn i64[min max] UsedBits64(i64[min max] value)
+{
     return 64 - LeadingZeroCount(value);
 }
 ```
@@ -91,7 +93,8 @@ the corresponding value is `64`.
 Use these helpers when the bit pattern itself is the data:
 
 ```stark
-fn bool HasExactlyOneFlag(i32[min max] flags) {
+fn bool HasExactlyOneFlag(i32[min max] flags)
+{
     return PopCount(flags) == 1;
 }
 ```
@@ -102,7 +105,8 @@ Shifts discard bits. Rotates move the shifted-out bits around to the other end.
 Use `RotateLeft` and `RotateRight` when the wraparound is part of the algorithm:
 
 ```stark
-fn i32[min max] Mix32(i32[min max] value) {
+fn i32[min max] Mix32(i32[min max] value)
+{
     return RotateLeft(value, 5) ^ value;
 }
 ```
@@ -125,7 +129,8 @@ Bit operations are most readable when wrapped in a small domain helper.
 For flags:
 
 ```stark
-finite law bool HasReadAndWrite(i32[min max] flags) {
+finite law bool HasReadAndWrite(i32[min max] flags)
+{
     stack i32[min max] read = 1;
     stack i32[min max] write = 2;
     return (flags & (read | write)) == (read | write);
@@ -135,7 +140,8 @@ finite law bool HasReadAndWrite(i32[min max] flags) {
 For power-of-two capacity checks:
 
 ```stark
-finite law bool IsPowerOfTwo(i32[min max] value) {
+finite law bool IsPowerOfTwo(i32[min max] value)
+{
     return value > 0 && PopCount(value) == 1;
 }
 ```
@@ -143,7 +149,8 @@ finite law bool IsPowerOfTwo(i32[min max] value) {
 For choosing a compact bucket number from a nonzero capacity:
 
 ```stark
-finite law i32[min max] HighestBitIndex(i32[min max] value) {
+finite law i32[min max] HighestBitIndex(i32[min max] value)
+{
     return 31 - LeadingZeroCount(value);
 }
 ```
@@ -151,7 +158,8 @@ finite law i32[min max] HighestBitIndex(i32[min max] value) {
 For ring-buffer indexes with power-of-two capacity:
 
 ```stark
-finite law i32[min max] NextIndex(i32[min max] index, i32[min max] capacityMask) {
+finite law i32[min max] NextIndex(i32[min max] index, i32[min max] capacityMask)
+{
     return (index + 1) & capacityMask;
 }
 ```

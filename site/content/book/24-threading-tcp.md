@@ -48,7 +48,8 @@ integer exit code. Named functions and non-capturing lambdas are the ordinary
 entry forms:
 
 ```stark
-fn i32[min max] Worker() {
+fn i32[min max] Worker()
+{
     return 7;
 }
 
@@ -69,7 +70,8 @@ stay visible.
 Keep the worker result small and explicit:
 
 ```stark
-fn i32[min max] Worker() {
+fn i32[min max] Worker()
+{
     // Return a process-style status code from the thread.
     return 0;
 }
@@ -92,13 +94,16 @@ Use `IsJoinable()` when a helper receives a thread handle and needs to decide
 whether `Join` or `Detach` still makes sense:
 
 ```stark
-fn bool JoinIfReady(mut borrow Thread worker) {
-    if (!worker.IsJoinable()) {
+fn bool JoinIfReady(mut borrow Thread worker)
+{
+    if (!worker.IsJoinable())
+    {
         return false;
     }
 
     stack ThreadJoinResult joined = worker.Join();
-    switch (joined) {
+    switch (joined)
+    {
         case ThreadJoinResult.Ok(var code):
             return code == 0;
         case ThreadJoinResult.Err(var error):
@@ -117,7 +122,8 @@ Thread.SleepMilliseconds(1);
 Handle the join result with a normal `switch`:
 
 ```stark
-switch (joined) {
+switch (joined)
+{
     case ThreadJoinResult.Ok(var code):
         return code == 7;
     case ThreadJoinResult.Err(var error):
@@ -130,7 +136,8 @@ status:
 
 ```stark
 stack ThreadStatus status = worker.Detach();
-switch (status) {
+switch (status)
+{
     case ThreadStatus.Ok:
         return true;
     case ThreadStatus.Err(var error):
@@ -141,8 +148,10 @@ switch (status) {
 Use a helper when several thread operations return `ThreadStatus`:
 
 ```stark
-finite law bool ThreadOk(ThreadStatus status) {
-    switch (status) {
+finite law bool ThreadOk(ThreadStatus status)
+{
+    switch (status)
+    {
         case ThreadStatus.Ok:
             return true;
         case ThreadStatus.Err(var error):
@@ -159,12 +168,14 @@ case when they are checking handle state.
 A complete no-capture thread example is:
 
 ```stark
-fn bool RunWorker() {
+fn bool RunWorker()
+{
     stack ThreadEntry entry = Worker;
     stack mut Thread worker = new(entry);
     stack ThreadJoinResult joined = worker.Join();
 
-    switch (joined) {
+    switch (joined)
+    {
         case ThreadJoinResult.Err(var error):
             return false;
         case ThreadJoinResult.Ok(var code):
@@ -191,8 +202,10 @@ Both return `NetResult<T>` so network failure stays explicit.
 Use helpers for shared network status shapes:
 
 ```stark
-finite law bool NetOk(NetStatus status) {
-    switch (status) {
+finite law bool NetOk(NetStatus status)
+{
+    switch (status)
+    {
         case NetStatus.Ok:
             return true;
         case NetStatus.Err(var error):
@@ -205,8 +218,10 @@ Switch on `NetworkError` when the program can recover differently from different
 failures:
 
 ```stark
-finite law bool ShouldRetry(NetworkError error) {
-    switch (error) {
+finite law bool ShouldRetry(NetworkError error)
+{
+    switch (error)
+    {
         case NetworkError.AddressInvalid:
             return false;
         case NetworkError.AddressInUse:
@@ -230,8 +245,10 @@ finite law bool ShouldRetry(NetworkError error) {
 ```
 
 ```stark
-stack IPv4Endpoint endpoint = new() {
-    Address = new() {
+stack IPv4Endpoint endpoint = new()
+{
+    Address = new()
+    {
         A = 127,
         B = 0,
         C = 0,
@@ -243,7 +260,8 @@ stack IPv4Endpoint endpoint = new() {
 stack NetResult<TcpClient> connected =
     TcpClient.Connect(endpoint);
 
-switch (connected) {
+switch (connected)
+{
     case NetResult<TcpClient>.Err(var error):
         return false;
     case NetResult<TcpClient>.Ok(var value):
@@ -258,14 +276,16 @@ Listeners follow the same result shape:
 stack NetResult<TcpListener> listening =
     TcpListener.Listen(endpoint);
 
-switch (listening) {
+switch (listening)
+{
     case NetResult<TcpListener>.Err(var error):
         return false;
     case NetResult<TcpListener>.Ok(var value):
         stack mut TcpListener listener = value;
         stack NetResult<TcpClient> accepted =
             listener.Accept();
-        switch (accepted) {
+        switch (accepted)
+        {
             case NetResult<TcpClient>.Err(var error):
                 listener.Close();
                 return false;
@@ -283,7 +303,10 @@ switch (listening) {
 TCP read/write uses safe Stark slices:
 
 ```stark
-stack mut i8[min max][4] buffer = { 0, 0, 0, 0 };
+stack mut i8[min max][4] buffer =
+{
+    0, 0, 0, 0
+};
 stack NetResult<u64[0 2 ** 63 - 1]> read = client.Read(buffer);
 stack NetResult<u64[0 2 ** 63 - 1]> written = client.Write(buffer);
 ```
@@ -294,7 +317,8 @@ ordinary code.
 Switch on the byte count:
 
 ```stark
-switch (written) {
+switch (written)
+{
     case NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
         return false;
     case NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
@@ -321,7 +345,8 @@ client.Shutdown(TcpShutdown.Both);
 Always close when ordering or returned status matters:
 
 ```stark
-if (!NetOk(client.Close())) {
+if (!NetOk(client.Close()))
+{
     return false;
 }
 
@@ -332,7 +357,8 @@ Closed default handles are useful as empty values:
 
 ```stark
 stack TcpClient closed = new();
-if (closed.IsOpen()) {
+if (closed.IsOpen())
+{
     return false;
 }
 ```
@@ -357,7 +383,8 @@ stack NetResult<u64[0 2 ** 63 - 1]> read = client.Read(buffer);
 On success, the buffer's write cursor advances by the number of bytes read:
 
 ```stark
-switch (read) {
+switch (read)
+{
     case NetResult<u64[0 2 ** 63 - 1]>.Err(var error):
         return false;
     case NetResult<u64[0 2 ** 63 - 1]>.Ok(var count):
@@ -377,7 +404,10 @@ stack NetResult<u64[0 2 ** 63 - 1]> read =
 Write accepts slices and buffers:
 
 ```stark
-stack i8[min max][4] header = { 1, 2, 3, 4 };
+stack i8[min max][4] header =
+{
+    1, 2, 3, 4
+};
 client.Write(header);
 client.Write(buffer);
 ```
@@ -386,16 +416,28 @@ Use vectored IO when a protocol naturally has two adjacent pieces, such as a
 header and a payload:
 
 ```stark
-stack i8[min max][4] header = { 1, 2, 3, 4 };
-stack i8[min max][8] body = { 0, 0, 0, 0, 0, 0, 0, 0 };
+stack i8[min max][4] header =
+{
+    1, 2, 3, 4
+};
+stack i8[min max][8] body =
+{
+    0, 0, 0, 0, 0, 0, 0, 0
+};
 client.WriteVectored(header, body);
 ```
 
 For vectored reads, the two destination slices must be separate mutable storage:
 
 ```stark
-stack mut i8[min max][4] header = { 0, 0, 0, 0 };
-stack mut i8[min max][8] body = { 0, 0, 0, 0, 0, 0, 0, 0 };
+stack mut i8[min max][4] header =
+{
+    0, 0, 0, 0
+};
+stack mut i8[min max][8] body =
+{
+    0, 0, 0, 0, 0, 0, 0, 0
+};
 client.ReadVectored(header, body);
 ```
 
@@ -403,7 +445,8 @@ Use `WaitReadable` or `WaitWritable` when a blocking program wants an explicit
 timeout before attempting the IO operation:
 
 ```stark
-if (!NetOk(client.WaitReadable(1000))) {
+if (!NetOk(client.WaitReadable(1000)))
+{
     return false;
 }
 
@@ -414,7 +457,8 @@ The listener also has `WaitReadable(timeoutMilliseconds)` for waiting before
 `Accept()`:
 
 ```stark
-if (NetOk(listener.WaitReadable(1000))) {
+if (NetOk(listener.WaitReadable(1000)))
+{
     stack NetResult<TcpClient> accepted = listener.Accept();
 }
 ```

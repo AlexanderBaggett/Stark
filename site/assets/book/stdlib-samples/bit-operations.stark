@@ -1,7 +1,8 @@
 import System.BitOperations
 module Book.Stdlib.BitOperations
 
-finite law bool CountOperationsWork() {
+finite law bool CountOperationsWork()
+{
     stack i32[min max] leading32 = LeadingZeroCount(1);
     stack i32[min max] trailing32 = TrailingZeroCount(16);
     stack i32[min max] pop32 = PopCount(7);
@@ -22,7 +23,8 @@ finite law bool CountOperationsWork() {
         && pop64 == 3;
 }
 
-finite law bool RotateOperationsWork() {
+finite law bool RotateOperationsWork()
+{
     stack i32[min max] left32 = RotateLeft(1, 1);
     stack i32[min max] right32 = RotateRight(2, 1);
 
@@ -35,20 +37,25 @@ finite law bool RotateOperationsWork() {
         && right64 == 1;
 }
 
-finite law bool HasExactlyOneFlag(i32[min max] flags) {
+finite law bool HasExactlyOneFlag(i32[min max] flags)
+{
     return PopCount(flags) == 1;
 }
 
-export fn i32[min max] main() {
-    if (!CountOperationsWork()) {
+export fn i32[min max] main()
+{
+    if (!CountOperationsWork())
+    {
         return 1;
     }
 
-    if (!RotateOperationsWork()) {
+    if (!RotateOperationsWork())
+    {
         return 2;
     }
 
-    if (!HasExactlyOneFlag(8)) {
+    if (!HasExactlyOneFlag(8))
+    {
         return 3;
     }
 

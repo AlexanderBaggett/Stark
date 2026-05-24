@@ -5,26 +5,30 @@
 ## Public Types
 
 ```stark
-public enum FileMode {
+public enum FileMode
+{
     Read,
     Write,
     Append,
     ReadWrite,
 }
 
-public enum FileBuffering {
+public enum FileBuffering
+{
     None,
     Line,
     Full,
 }
 
-public enum SeekOrigin {
+public enum SeekOrigin
+{
     Begin,
     Current,
     End,
 }
 
-public struct File {
+public struct File
+{
     finite law bool IsOpen(File self);
     fn System.IO.IOStatus Close(mut borrow File self);
     fn System.IO.IOStatus Flush(mut borrow File self);
@@ -63,8 +67,10 @@ public fn System.IO.IOResult<bool> Exists(ascii path);
 import System
 module App
 
-fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result) {
-    switch (result) {
+fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> result)
+{
+    switch (result)
+    {
         case System.IO.IOResult<System.IO.File.File>.Ok(var value):
             return value;
         case System.IO.IOResult<System.IO.File.File>.Err(var error):
@@ -72,7 +78,8 @@ fn System.IO.File.File OpenOrEmpty(System.IO.IOResult<System.IO.File.File> resul
     }
 }
 
-fn void WriteOwned() {
+fn void WriteOwned()
+{
     stack mut System.IO.File.File file =
         OpenOrEmpty(System.IO.File.Open("owned-test.txt", System.IO.File.FileMode.Write));
     file.WriteLine("Owned");

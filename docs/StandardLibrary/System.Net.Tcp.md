@@ -10,13 +10,15 @@ import System.Net
 import System.Runtime.Buffer
 module System.Net.Tcp
 
-public enum TcpShutdown {
+public enum TcpShutdown
+{
     Receive,
     Send,
     Both,
 }
 
-public struct TcpClient {
+public struct TcpClient
+{
     TcpClient();
     static fn System.Net.NetResult<TcpClient> Connect(System.Net.IPv4Endpoint endpoint);
     finite law bool IsOpen(borrow TcpClient self);
@@ -38,7 +40,8 @@ public struct TcpClient {
     fn System.Net.NetStatus Close(mut borrow TcpClient self);
 }
 
-public struct TcpListener {
+public struct TcpListener
+{
     TcpListener();
     static fn System.Net.NetResult<TcpListener> Listen(System.Net.IPv4Endpoint endpoint);
     finite law bool IsOpen(borrow TcpListener self);
@@ -54,8 +57,12 @@ The constructors create closed handles. Use `TcpClient.Connect` and
 ## Client And Listener Construction
 
 ```stark
-stack System.Net.IPv4Endpoint endpoint = new() {
-    Address = new() { A = 127, B = 0, C = 0, D = 1 },
+stack System.Net.IPv4Endpoint endpoint = new()
+{
+    Address = new()
+    {
+        A = 127, B = 0, C = 0, D = 1
+    },
     Port = 8080
 };
 
@@ -74,7 +81,10 @@ is visible to the caller.
 The base read/write methods use safe byte slices:
 
 ```stark
-stack mut i8[min max][4] buffer = { 0, 0, 0, 0 };
+stack mut i8[min max][4] buffer =
+{
+    0, 0, 0, 0
+};
 stack System.Net.NetResult<u64[0 2 ** 63 - 1]> read = client.Read(buffer);
 stack System.Net.NetResult<u64[0 2 ** 63 - 1]> written = client.Write(buffer);
 ```
@@ -109,16 +119,28 @@ Use vectored IO when a protocol naturally has two adjacent byte ranges, such as
 a header and body:
 
 ```stark
-stack i8[min max][4] header = { 1, 2, 3, 4 };
-stack i8[min max][8] body = { 0, 0, 0, 0, 0, 0, 0, 0 };
+stack i8[min max][4] header =
+{
+    1, 2, 3, 4
+};
+stack i8[min max][8] body =
+{
+    0, 0, 0, 0, 0, 0, 0, 0
+};
 client.WriteVectored(header, body);
 ```
 
 For `ReadVectored`, pass two separate mutable destinations:
 
 ```stark
-stack mut i8[min max][4] header = { 0, 0, 0, 0 };
-stack mut i8[min max][8] body = { 0, 0, 0, 0, 0, 0, 0, 0 };
+stack mut i8[min max][4] header =
+{
+    0, 0, 0, 0
+};
+stack mut i8[min max][8] body =
+{
+    0, 0, 0, 0, 0, 0, 0, 0
+};
 client.ReadVectored(header, body);
 ```
 

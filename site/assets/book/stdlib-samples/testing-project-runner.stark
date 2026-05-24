@@ -2,18 +2,21 @@ import System.Testing
 module Book.TestingProjectRunner
 
 [Fact]
-fn bool ArithmeticStillWorks() {
+fn bool ArithmeticStillWorks()
+{
     return Equal(42, 2 * 21);
 }
 
 [Fact]
-fn bool BooleanHelpersWork() {
+fn bool BooleanHelpersWork()
+{
     return True(2 + 2 == 4)
         && False(2 + 2 == 5);
 }
 
 [Fact]
-fn bool EqualOverloadsWork() {
+fn bool EqualOverloadsWork()
+{
     return Equal(true, true)
         && Equal((i32[min max])42, (i32[min max])42)
         && Equal((i64[min max])42, (i64[min max])42)
@@ -24,13 +27,16 @@ fn bool EqualOverloadsWork() {
 }
 
 [Fact]
-fn bool TextStillMatches() {
+fn bool TextStillMatches()
+{
     return Equal("Stark", "Stark");
 }
 
 [Fact]
-fn bool FailDocumentsUnexpectedBranches() {
-    if (false) {
+fn bool FailDocumentsUnexpectedBranches()
+{
+    if (false)
+    {
         return Fail("unreachable branch ran");
     }
 
@@ -38,17 +44,20 @@ fn bool FailDocumentsUnexpectedBranches() {
 }
 
 [Fact]
-fn bool StatusMapsAssertions() {
+fn bool StatusMapsAssertions()
+{
     stack TestStatus passed = Status(true);
     stack TestStatus failed = Status(false);
 
-    switch (passed) {
+    switch (passed)
+    {
         case TestStatus.Failed:
             return false;
         case TestStatus.Passed:
     }
 
-    switch (failed) {
+    switch (failed)
+    {
         case TestStatus.Passed:
             return false;
         case TestStatus.Failed:
@@ -56,34 +65,42 @@ fn bool StatusMapsAssertions() {
     }
 }
 
-export fn i32[min max] main() {
+export fn i32[min max] main()
+{
     stack mut u8[0 1] failed = 0;
 
-    if (RunFact("ArithmeticStillWorks", ArithmeticStillWorks()) != 0) {
+    if (RunFact("ArithmeticStillWorks", ArithmeticStillWorks()) != 0)
+    {
         failed = 1;
     }
 
-    if (RunFact("BooleanHelpersWork", BooleanHelpersWork()) != 0) {
+    if (RunFact("BooleanHelpersWork", BooleanHelpersWork()) != 0)
+    {
         failed = 1;
     }
 
-    if (RunFact("EqualOverloadsWork", EqualOverloadsWork()) != 0) {
+    if (RunFact("EqualOverloadsWork", EqualOverloadsWork()) != 0)
+    {
         failed = 1;
     }
 
-    if (RunFact("TextStillMatches", TextStillMatches()) != 0) {
+    if (RunFact("TextStillMatches", TextStillMatches()) != 0)
+    {
         failed = 1;
     }
 
-    if (RunFact("FailDocumentsUnexpectedBranches", FailDocumentsUnexpectedBranches()) != 0) {
+    if (RunFact("FailDocumentsUnexpectedBranches", FailDocumentsUnexpectedBranches()) != 0)
+    {
         failed = 1;
     }
 
-    if (RunFact("StatusMapsAssertions", StatusMapsAssertions()) != 0) {
+    if (RunFact("StatusMapsAssertions", StatusMapsAssertions()) != 0)
+    {
         failed = 1;
     }
 
-    if (RunFact((unicode)"UnicodeFactName", TextStillMatches()) != 0) {
+    if (RunFact((unicode)"UnicodeFactName", TextStillMatches()) != 0)
+    {
         failed = 1;
     }
 

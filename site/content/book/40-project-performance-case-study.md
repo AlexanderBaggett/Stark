@@ -58,13 +58,19 @@ the normal Stark performance model.
 Keep the benchmark kernel separate from setup:
 
 ```stark
-finite law i32[min max] Kernel(i32[min max][4] values) {
+finite law i32[min max] Kernel(i32[min max][4] values)
+{
     return values[0] + values[1] + values[2] + values[3];
 }
 
-export fn i32[min max] main() {
-    stack i32[min max][4] values = { 1, 2, 3, 4 };
-    if (Kernel(values) != 10) {
+export fn i32[min max] main()
+{
+    stack i32[min max][4] values =
+    {
+        1, 2, 3, 4
+    };
+    if (Kernel(values) != 10)
+    {
         return 1;
     }
 
@@ -78,12 +84,17 @@ also allocation, file IO, text formatting, parsing, and cleanup.
 Write that decision beside the code:
 
 ```stark
-finite law i32[min max] Kernel(i32[min max][4] values) {
+finite law i32[min max] Kernel(i32[min max][4] values)
+{
     return values[0] + values[1] + values[2] + values[3];
 }
 
-fn i32[min max] RunMeasuredIteration() {
-    stack i32[min max][4] values = { 1, 2, 3, 4 };
+fn i32[min max] RunMeasuredIteration()
+{
+    stack i32[min max][4] values =
+    {
+        1, 2, 3, 4
+    };
     return Kernel(values);
 }
 ```
@@ -100,8 +111,10 @@ fn void AddDisjoint(
     borrow i32[min max][] left,
     borrow i32[min max][] right,
     borrow mut i32[min max][] output,
-    u8[0 10] count) {
-    for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
+    u8[0 10] count)
+{
+    for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1)
+    {
         output[index] = left[index] + right[index];
     }
 
@@ -116,8 +129,10 @@ fn void CopyOverlapSafe(
     borrow i32[min max][] source,
     borrow mut i32[min max][] destination,
     u8[0 10] count)
-    where overlap(source, destination) {
-    for willexit (stack mut u8[0 10] index = 0; index < count; index += 1) {
+    where overlap(source, destination)
+{
+    for willexit (stack mut u8[0 10] index = 0; index < count; index += 1)
+    {
         destination[index] = source[index];
     }
 

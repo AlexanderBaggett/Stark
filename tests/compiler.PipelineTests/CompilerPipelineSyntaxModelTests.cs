@@ -83,7 +83,8 @@ public sealed class CompilerPipelineSyntaxModelTests
 
                 [Backend(Opaque)]
                 [Backend(Opaque)]
-                fn void Run() {
+                fn void Run()
+                {
                     ;
                 }
                 """),
@@ -104,12 +105,14 @@ public sealed class CompilerPipelineSyntaxModelTests
                 module Demo
 
                 [Fact]
-                fn bool AdditionWorks() {
+                fn bool AdditionWorks()
+                {
                     return true;
                 }
 
                 [Theory]
-                fn bool AdditionTheory() {
+                fn bool AdditionTheory()
+                {
                     return true;
                 }
                 """),
@@ -130,7 +133,8 @@ public sealed class CompilerPipelineSyntaxModelTests
         """
         [Backend(Opaque)]
         [Backend(Opaque)]
-        struct Box {
+        struct Box
+        {
         }
         """,
         "STK2111")]
@@ -138,7 +142,8 @@ public sealed class CompilerPipelineSyntaxModelTests
         """
         [Backend(Opaque)]
         [Backend(Opaque)]
-        record Cursor(i32[min max] Position) {
+        record Cursor(i32[min max] Position)
+        {
         }
         """,
         "STK2111")]
@@ -146,14 +151,16 @@ public sealed class CompilerPipelineSyntaxModelTests
         """
         [Backend(Opaque)]
         [Backend(Opaque)]
-        doctrine Numbers {
+        doctrine Numbers
+        {
             finite law bool Equals(i32[min max] left, i32[min max] right);
         }
         """,
         "STK2111")]
     [InlineData(
         """
-        struct Box {
+        struct Box
+        {
             [Backend(Opaque)]
             i32[min max] Value;
         }
@@ -187,28 +194,34 @@ public sealed class CompilerPipelineSyntaxModelTests
                 module Demo
 
                 [Backend(Opaque)]
-                fn void Run() {
+                fn void Run()
+                {
                     ;
                 }
 
                 [Backend(Opaque)]
-                struct Box {
+                struct Box
+                {
                     i32[min max] Value;
 
-                    fn i32[min max] Read() {
+                    fn i32[min max] Read()
+                    {
                         return self.Value;
                     }
                 }
 
                 [Backend(Opaque)]
-                record Cursor(i32[min max] Position) {
-                    fn i32[min max] Read() {
+                record Cursor(i32[min max] Position)
+                {
+                    fn i32[min max] Read()
+                    {
                         return self.Position;
                     }
                 }
 
                 [Backend(Opaque)]
-                doctrine Numbers<T> {
+                doctrine Numbers<T>
+                {
                     finite law bool Equals(borrow T left, borrow T right);
                 }
                 """),
@@ -252,7 +265,8 @@ public sealed class CompilerPipelineSyntaxModelTests
                 module Demo
 
                 [Backend(Opaque)]
-                finite law i32[min max] Read() {
+                finite law i32[min max] Read()
+                {
                     return 1;
                 }
                 """),
@@ -278,15 +292,18 @@ public sealed class CompilerPipelineSyntaxModelTests
                 module Demo
 
                 [Backend(Opaque)]
-                finite law i32[min max] Read() {
+                finite law i32[min max] Read()
+                {
                     return 1;
                 }
 
-                finite law i32[min max] Fast() {
+                finite law i32[min max] Fast()
+                {
                     return 2;
                 }
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     return Read() + Fast();
                 }
                 """),
@@ -311,16 +328,20 @@ public sealed class CompilerPipelineSyntaxModelTests
                 """
                 module Demo
 
-                struct Buffer {
+                struct Buffer
+                {
                     i32[min max] Value;
 
-                    drop {
+                    drop
+                    {
                         ;
                     }
                 }
 
-                record Cursor(i32[min max] Position) {
-                    mut drop {
+                record Cursor(i32[min max] Position)
+                {
+                    mut drop
+                    {
                         self.Position = 0;
                     }
                 }
@@ -384,21 +405,26 @@ public sealed class CompilerPipelineSyntaxModelTests
                 """
                 module Demo
 
-                public fn T Identity<T>(T value) {
+                public fn T Identity<T>(T value)
+                {
                     return value;
                 }
 
-                struct Box {
-                    fn T Echo<T>(T value) {
+                struct Box
+                {
+                    fn T Echo<T>(T value)
+                    {
                         return value;
                     }
                 }
 
-                trait Reader {
+                trait Reader
+                {
                     law T Read<T>(T value);
                 }
 
-                doctrine Projector {
+                doctrine Projector
+                {
                     law T Project<T>(T value);
                 }
                 """),

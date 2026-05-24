@@ -37,12 +37,17 @@ separate setup, allocation, IO, and parsing from the hot path before tuning.
 That separation should be visible in source:
 
 ```stark
-finite law i32[min max] SumKernel(i32[min max][4] values) {
+finite law i32[min max] SumKernel(i32[min max][4] values)
+{
     return values[0] + values[1] + values[2] + values[3];
 }
 
-fn i32[min max] RunOnce() {
-    stack i32[min max][4] values = { 1, 2, 3, 4 };
+fn i32[min max] RunOnce()
+{
+    stack i32[min max][4] values =
+    {
+        1, 2, 3, 4
+    };
     return SumKernel(values);
 }
 ```
@@ -53,12 +58,17 @@ operations are the workload you intend to measure.
 Write one function for the measured work and another function for setup:
 
 ```stark
-finite law i32[min max] SumFour(i32[min max][4] values) {
+finite law i32[min max] SumFour(i32[min max][4] values)
+{
     return values[0] + values[1] + values[2] + values[3];
 }
 
-fn i32[min max] BuildAndRun() {
-    stack i32[min max][4] values = { 1, 2, 3, 4 };
+fn i32[min max] BuildAndRun()
+{
+    stack i32[min max][4] values =
+    {
+        1, 2, 3, 4
+    };
     return SumFour(values);
 }
 ```
@@ -69,7 +79,8 @@ intentionally and say so in the benchmark name:
 ```stark
 import System.Text
 
-fn i32[min max] FormatOneInteger() {
+fn i32[min max] FormatOneInteger()
+{
     stack Ascii label[32] = $"Score: {1234}";
     return (i32[min max])AsciiLength(AsciiView(label));
 }
@@ -96,22 +107,26 @@ The three useful shapes are different APIs, not interchangeable decoration:
 ```stark
 fn void AddSeparate(
     borrow i32[min max][] left,
-    borrow mut i32[min max][] output) {
+    borrow mut i32[min max][] output)
+{
     return;
 }
 
 fn void MoveOverlapSafe(
     borrow i32[min max][] source,
     borrow mut i32[min max][] output)
-    where overlap(source, output) {
+    where overlap(source, output)
+{
     return;
 }
 
 fn bool TryMoveFast(
     borrow i32[min max][] source,
     borrow mut i32[min max][] output)
-    where overlap(source, output) {
-    if disjoint(source, output) {
+    where overlap(source, output)
+{
+    if disjoint(source, output)
+    {
         AddSeparate(source, output);
         return true;
     }
@@ -131,7 +146,8 @@ Use `where same(...)` when the API requires two names for the same region:
 fn bool IsSameBuffer(
     borrow i32[min max][] left,
     borrow i32[min max][] right)
-    where same(left, right) {
+    where same(left, right)
+{
     return true;
 }
 ```
@@ -157,8 +173,10 @@ fn void AddInto(
     borrow i32[min max][] left,
     borrow i32[min max][] right,
     borrow mut i32[min max][] output,
-    u8[0 10] count) {
-    for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
+    u8[0 10] count)
+{
+    for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1)
+    {
         output[index] = left[index] + right[index];
     }
 
@@ -172,9 +190,11 @@ reads data written by another iteration, use an ordinary loop.
 Keep loop bounds in small ranged integers when the benchmark domain is small:
 
 ```stark
-finite law i32[min max] SumTen(i32[min max][10] values) {
+finite law i32[min max] SumTen(i32[min max][10] values)
+{
     stack mut i32[min max] total = 0;
-    for willexit independent (stack mut u8[0 10] index = 0; index < 10; index += 1) {
+    for willexit independent (stack mut u8[0 10] index = 0; index < 10; index += 1)
+    {
         total += values[index];
     }
 
@@ -198,19 +218,23 @@ storage, and memory relations are already visible.
 Use attributes to explain the role of the function:
 
 ```stark
-inline finite law i32[min max] ClampToZero(i32[min max] value) {
-    if (value < 0) {
+inline finite law i32[min max] ClampToZero(i32[min max] value)
+{
+    if (value < 0)
+    {
         return 0;
     }
 
     return value;
 }
 
-hot fn i32[min max] ScoreHotPath(i32[min max] value) {
+hot fn i32[min max] ScoreHotPath(i32[min max] value)
+{
     return ClampToZero(value) + 1;
 }
 
-noinline cold fn i32[min max] ReportUnexpected(i32[min max] value) {
+noinline cold fn i32[min max] ReportUnexpected(i32[min max] value)
+{
     return value;
 }
 ```
@@ -222,12 +246,15 @@ Use `cold` for uncommon failure paths and `hot` for the function that actually
 runs in the tight path:
 
 ```stark
-cold fn i32[min max] BadInput() {
+cold fn i32[min max] BadInput()
+{
     return -1;
 }
 
-hot fn i32[min max] ParseFastPath(bool ok) {
-    if (!ok) {
+hot fn i32[min max] ParseFastPath(bool ok)
+{
+    if (!ok)
+    {
         return BadInput();
     }
 
@@ -243,11 +270,13 @@ describes the program.
 Write the timed function so the work is visible:
 
 ```stark
-finite law i32[min max] Kernel(i32[min max][4] values) {
+finite law i32[min max] Kernel(i32[min max][4] values)
+{
     return values[0] + values[1] + values[2] + values[3];
 }
 
-fn i32[min max] TimedIteration(i32[min max][4] values) {
+fn i32[min max] TimedIteration(i32[min max][4] values)
+{
     return Kernel(values);
 }
 ```
@@ -256,8 +285,12 @@ If allocation is part of the benchmark, put it in the timed function. If it is
 setup, put it outside:
 
 ```stark
-fn i32[min max] TimedWithSetup() {
-    stack i32[min max][4] values = { 1, 2, 3, 4 };
+fn i32[min max] TimedWithSetup()
+{
+    stack i32[min max][4] values =
+    {
+        1, 2, 3, 4
+    };
     return Kernel(values);
 }
 ```

@@ -58,7 +58,8 @@ import System.Text
 
 module Tools.Format
 
-public finite law bool IsDash(ascii text) {
+public finite law bool IsDash(ascii text)
+{
     return AsciiLength(text) == 1 && text[0] == "-";
 }
 ```
@@ -73,7 +74,8 @@ import Drawing
 
 module App
 
-fn i32[min max] UseGeometryRectangle(Geometry.Rectangle rectangle) {
+fn i32[min max] UseGeometryRectangle(Geometry.Rectangle rectangle)
+{
     return Geometry.Area(rectangle);
 }
 ```
@@ -122,19 +124,23 @@ module Geometry
 
 const DefaultScale = 1;
 
-fn i32[min max] PrivateHelper(i32[min max] value) {
+fn i32[min max] PrivateHelper(i32[min max] value)
+{
     return value + 1;
 }
 
-internal fn i32[min max] PackageHelper(i32[min max] value) {
+internal fn i32[min max] PackageHelper(i32[min max] value)
+{
     return PrivateHelper(value);
 }
 
-public fn i32[min max] Area(i32[min max] width, i32[min max] height) {
+public fn i32[min max] Area(i32[min max] width, i32[min max] height)
+{
     return width * height;
 }
 
-export fn i32[min max] main() {
+export fn i32[min max] main()
+{
     return Area(3, 4);
 }
 ```
@@ -148,27 +154,33 @@ public const DefaultWidth = 80;
 
 internal alias Score = i32[min max];
 
-public struct Rectangle {
+public struct Rectangle
+{
     u16[0 1000] Width;
     u16[0 1000] Height;
 }
 
-public record Point {
+public record Point
+{
     i32[min max] X;
     i32[min max] Y;
 }
 
-public enum ShapeKind {
+public enum ShapeKind
+{
     Point,
     Rectangle,
 }
 
-public trait Named {
+public trait Named
+{
     law ascii Name();
 }
 
-public doctrine ScoreRules {
-    finite law bool IsPassing(u8[0 100] score) {
+public doctrine ScoreRules
+{
+    finite law bool IsPassing(u8[0 100] score)
+    {
         return score >= 70;
     }
 }
@@ -185,10 +197,12 @@ visibility of the enclosing type unless the member writes its own visibility.
 That makes small public types pleasant to write:
 
 ```stark
-public struct Counter {
+public struct Counter
+{
     u32[0 max] Value;
 
-    finite law u32[0 max] Read(self) {
+    finite law u32[0 max] Read(self)
+    {
         return self.Value;
     }
 }
@@ -198,12 +212,15 @@ public struct Counter {
 code should not call it:
 
 ```stark
-public struct PackageClient {
-    finite law bool IsOpen(self) {
+public struct PackageClient
+{
+    finite law bool IsOpen(self)
+    {
         return true;
     }
 
-    internal finite law i64[min max] RuntimeHandle(self) {
+    internal finite law i64[min max] RuntimeHandle(self)
+    {
         return 0;
     }
 }
@@ -212,13 +229,16 @@ public struct PackageClient {
 A member cannot be more visible than its enclosing type:
 
 ```stark
-internal struct PlatformSocket {
-    finite law bool IsOpen(self) {
+internal struct PlatformSocket
+{
+    finite law bool IsOpen(self)
+    {
         return true;
     }
 
     // Not allowed: a public member cannot sit on an internal type.
-    public finite law i64[min max] Handle(self) {
+    public finite law i64[min max] Handle(self)
+    {
         return 0;
     }
 }
@@ -236,7 +256,8 @@ Use `export import` when your package intentionally republishes another module:
 export import Geometry.Units
 module Geometry
 
-public struct Rectangle {
+public struct Rectangle
+{
     u16[0 1000] Width;
     u16[0 1000] Height;
 }
@@ -249,7 +270,8 @@ does not make the imported module part of your package's public source API.
 import Geometry.InternalMath
 module Geometry
 
-public finite law i32[min max] Area(Rectangle rectangle) {
+public finite law i32[min max] Area(Rectangle rectangle)
+{
     return Multiply(rectangle.Width, rectangle.Height);
 }
 ```

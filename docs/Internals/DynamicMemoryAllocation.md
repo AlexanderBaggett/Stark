@@ -33,7 +33,8 @@ This keeps simple code simple:
 import System
 module App
 
-fn void Build() {
+fn void Build()
+{
     stack mut System.Collections.List<i32[0 max]> values = new();
     values.Push(10);
     values.Push(20);
@@ -47,7 +48,8 @@ API shape:
 import System
 module App
 
-fn void BuildWithAllocator(System.Memory.Allocator myCustomAllocator) {
+fn void BuildWithAllocator(System.Memory.Allocator myCustomAllocator)
+{
     stack mut System.Collections.List<i32[0 max]> values = new(myCustomAllocator);
     values.Push(10);
 }
@@ -139,24 +141,28 @@ The first public surface should be small:
 ```stark
 module System.Memory
 
-public enum MemoryError {
+public enum MemoryError
+{
     OutOfMemory,
     InvalidLayout,
     UnsupportedAlignment,
     TooLarge,
 }
 
-public enum MemoryStatus {
+public enum MemoryStatus
+{
     Ok,
     Err(MemoryError),
 }
 
-public enum MemoryResult<T> {
+public enum MemoryResult<T>
+{
     Ok(T),
     Err(MemoryError),
 }
 
-public struct Allocator {
+public struct Allocator
+{
     u8[0 2 ** 7 - 1] Kind;
 
     static finite law Allocator Default();
@@ -265,7 +271,8 @@ Arena-backed construction is valuable for:
 Example target shape:
 
 ```stark
-fn void Parse(System.Memory.Arena arena) {
+fn void Parse(System.Memory.Arena arena)
+{
     stack mut System.Collections.List<Token> tokens = new(arena);
 }
 ```
@@ -291,9 +298,11 @@ The collection APIs built on this model must:
 Example:
 
 ```stark
-fn i32 Sum(System.Collections.List<i32[0 max]> values) {
+fn i32 Sum(System.Collections.List<i32[0 max]> values)
+{
     stack mut i32[0 max] total = 0;
-    for willexit (stack mut i64[0 max] i = 0; i < values.Count(); i += 1) {
+    for willexit (stack mut i64[0 max] i = 0; i < values.Count(); i += 1)
+    {
         total += values.Get(i);
     }
 

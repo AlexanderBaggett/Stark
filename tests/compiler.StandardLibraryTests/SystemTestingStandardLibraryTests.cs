@@ -18,13 +18,16 @@ public sealed class SystemTestingStandardLibraryTests : StandardLibraryTestSuite
                 module DemoTests
 
                 [Fact]
-                fn bool AdditionWorks() {
+                fn bool AdditionWorks()
+                {
                     return System.Testing.Equal(4, 2 + 2);
                 }
 
-                export fn i32[min max] main() {
+                export fn i32[min max] main()
+                {
                     stack mut u8[0 1] failed = 0;
-                    if (System.Testing.RunFact("AdditionWorks", AdditionWorks()) != 0) {
+                    if (System.Testing.RunFact("AdditionWorks", AdditionWorks()) != 0)
+                    {
                         failed = 1;
                     }
 

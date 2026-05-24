@@ -1,25 +1,30 @@
 import System.Math
 module Book.Stdlib.MathHelpers
 
-finite law bool NearF64(f64 left, f64 right, f64 tolerance) {
+finite law bool NearF64(f64 left, f64 right, f64 tolerance)
+{
     stack mut f64 difference = left - right;
-    if (difference < 0.0) {
+    if (difference < 0.0)
+    {
         difference = 0.0 - difference;
     }
 
     return difference <= tolerance;
 }
 
-finite law bool NearF32(f32 left, f32 right, f32 tolerance) {
+finite law bool NearF32(f32 left, f32 right, f32 tolerance)
+{
     stack mut f32 difference = left - right;
-    if (difference < (f32)0.0) {
+    if (difference < (f32)0.0)
+    {
         difference = (f32)0.0 - difference;
     }
 
     return difference <= tolerance;
 }
 
-fn bool BasicMathWorks() {
+fn bool BasicMathWorks()
+{
     stack f64 root = Sqrt(9.0);
     stack f64 power = Pow(2.0, 3.0);
     stack f64 clamped = Max(0.0, Min(1.25, 1.0));
@@ -33,7 +38,8 @@ fn bool BasicMathWorks() {
         && fused == 10.0;
 }
 
-fn bool TrigWorks() {
+fn bool TrigWorks()
+{
     stack f64 sine = Sin(0.0);
     stack f64 cosine = Cos(0.0);
     stack SinCosF64 pair = SinCos((f64)0.0);
@@ -44,7 +50,8 @@ fn bool TrigWorks() {
         && NearF64(pair.Cos, 1.0, 0.000001);
 }
 
-fn bool AdvancedMathWorks() {
+fn bool AdvancedMathWorks()
+{
     return NearF64(Tan(0.0), 0.0, 0.000001)
         && NearF64(Exp(0.0), 1.0, 0.000001)
         && NearF64(Exp2(0.0), 1.0, 0.000001)
@@ -62,23 +69,27 @@ fn bool AdvancedMathWorks() {
         && NearF32(ReciprocalSqrtEstimate((f32)4.0), (f32)0.5, (f32)0.02);
 }
 
-fn bool RandomWorks() {
+fn bool RandomWorks()
+{
     stack mut XorShift32 first = XorShift32.Seeded(12345);
     stack mut XorShift32 second = XorShift32.Seeded(12345);
 
     stack u32[0 max] firstBits = first.NextU32();
     stack u32[0 max] secondBits = second.NextU32();
-    if (firstBits != secondBits) {
+    if (firstBits != secondBits)
+    {
         return false;
     }
 
     stack mut XorShift32 zeroSeed = XorShift32.Seeded(0);
-    if (zeroSeed.CurrentState() == 0) {
+    if (zeroSeed.CurrentState() == 0)
+    {
         return false;
     }
 
     first.Reseed(777);
-    if (first.CurrentState() != 777) {
+    if (first.CurrentState() != 777)
+    {
         return false;
     }
 
@@ -86,20 +97,25 @@ fn bool RandomWorks() {
     return unit >= (f32)0.0 && unit < (f32)1.0;
 }
 
-export fn i32[min max] main() {
-    if (!BasicMathWorks()) {
+export fn i32[min max] main()
+{
+    if (!BasicMathWorks())
+    {
         return 1;
     }
 
-    if (!TrigWorks()) {
+    if (!TrigWorks())
+    {
         return 2;
     }
 
-    if (!AdvancedMathWorks()) {
+    if (!AdvancedMathWorks())
+    {
         return 3;
     }
 
-    if (!RandomWorks()) {
+    if (!RandomWorks())
+    {
         return 4;
     }
 

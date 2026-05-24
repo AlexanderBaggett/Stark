@@ -36,7 +36,10 @@ they do not have the same ownership story. Stark keeps that distinction visible.
 `T[N]` is a fixed array with `N` elements:
 
 ```stark
-stack i32[min max][3] values = { 1, 2, 3 };
+stack i32[min max][3] values =
+{
+    1, 2, 3
+};
 ```
 
 The backing storage is real storage owned by the array value. Indexing uses the
@@ -54,8 +57,12 @@ array size is known.
 You can read and write elements when the array binding is mutable:
 
 ```stark
-fn i32[min max] UpdateSecond() {
-    stack mut i32[min max][3] values = { 1, 2, 3 };
+fn i32[min max] UpdateSecond()
+{
+    stack mut i32[min max][3] values =
+    {
+        1, 2, 3
+    };
     values[1] = 20;
     return values[0] + values[1] + values[2];
 }
@@ -65,8 +72,14 @@ Use a fixed array when the owner and element count are part of the local
 design:
 
 ```stark
-stack u8[0 max][4] rgba = { 255, 128, 64, 255 };
-stack bool[3] flags = { true, false, true };
+stack u8[0 max][4] rgba =
+{
+    255, 128, 64, 255
+};
+stack bool[3] flags =
+{
+    true, false, true
+};
 ```
 
 ## Step 2: Borrow Views Instead Of Inventing Backing Storage
@@ -81,7 +94,10 @@ That means this intentionally invalid example is rejected:
 The fix is to write the backing storage first, then form a view:
 
 ```stark
-stack i32[min max][3] values = { 1, 2, 3 };
+stack i32[min max][3] values =
+{
+    1, 2, 3
+};
 stack i32[min max][] view = values;
 ```
 
@@ -90,12 +106,17 @@ That is the Stark rule in miniature: if storage exists, make it visible.
 Use a full slice when the callee needs all initialized elements:
 
 ```stark
-fn i32[min max] First(i32[min max][] values) {
+fn i32[min max] First(i32[min max][] values)
+{
     return values[0];
 }
 
-fn i32[min max] UseFirst() {
-    stack i32[min max][3] values = { 10, 20, 30 };
+fn i32[min max] UseFirst()
+{
+    stack i32[min max][3] values =
+    {
+        10, 20, 30
+    };
     return First(values);
 }
 ```
@@ -103,8 +124,12 @@ fn i32[min max] UseFirst() {
 Use a range slice when the callee should see only part of the backing storage:
 
 ```stark
-fn i32[min max] ReadMiddle() {
-    stack i32[min max][4] values = { 1, 2, 3, 4 };
+fn i32[min max] ReadMiddle()
+{
+    stack i32[min max][4] values =
+    {
+        1, 2, 3, 4
+    };
     stack i32[min max][] middle = values[1, 2];
     return middle[0] + middle[1];
 }
@@ -113,7 +138,8 @@ fn i32[min max] ReadMiddle() {
 Use `mut` on the view only when the callee should write through it:
 
 ```stark
-fn void SetFirst(mut borrow i32[min max][] values, i32[min max] value) {
+fn void SetFirst(mut borrow i32[min max][] values, i32[min max] value)
+{
     values[0] = value;
     return;
 }
@@ -144,8 +170,10 @@ spare-capacity writes, and element type are all visible in the source.
 The smallest manual push operation looks like this:
 
 ```stark
-fn bool Push(mut borrow dynamic i32[min max] items, i32[min max] value) {
-    if (!items.TryReserve(1)) {
+fn bool Push(mut borrow dynamic i32[min max] items, i32[min max] value)
+{
+    if (!items.TryReserve(1))
+    {
         return false;
     }
 
@@ -157,8 +185,10 @@ fn bool Push(mut borrow dynamic i32[min max] items, i32[min max] value) {
 Use `MoveLast()` when the last initialized element should be removed:
 
 ```stark
-fn bool TryPop(mut borrow dynamic i32[min max] items, out i32[min max] value) {
-    if (items.Length == 0) {
+fn bool TryPop(mut borrow dynamic i32[min max] items, out i32[min max] value)
+{
+    if (items.Length == 0)
+    {
         value = 0;
         return false;
     }
@@ -172,7 +202,8 @@ Use `MoveAt(index)` when the element is not at the tail and the remaining
 initialized suffix should close the gap:
 
 ```stark
-fn i32[min max] RemoveFirst(mut borrow dynamic i32[min max] items) {
+fn i32[min max] RemoveFirst(mut borrow dynamic i32[min max] items)
+{
     return items.MoveAt(0);
 }
 ```
@@ -212,7 +243,8 @@ import System.Text
 Use the full view form when an API should receive the whole text:
 
 ```stark
-fn i64[min max] LengthOf(ascii text) {
+fn i64[min max] LengthOf(ascii text)
+{
     stack ascii whole = text[];
     return AsciiLength(whole);
 }
@@ -221,7 +253,8 @@ fn i64[min max] LengthOf(ascii text) {
 Use the indexed form when you need one text element as a view:
 
 ```stark
-fn ascii FirstAscii(ascii text) {
+fn ascii FirstAscii(ascii text)
+{
     return text[0];
 }
 ```
@@ -230,7 +263,8 @@ Use the range form when the caller should receive a view into existing text,
 not an owned copy:
 
 ```stark
-fn ascii Prefix(ascii text) {
+fn ascii Prefix(ascii text)
+{
     return text[0, 4];
 }
 ```
@@ -238,11 +272,13 @@ fn ascii Prefix(ascii text) {
 Use the Unicode equivalents when the source text is `unicode`:
 
 ```stark
-fn i64[min max] UnicodeLength(unicode text) {
+fn i64[min max] UnicodeLength(unicode text)
+{
     return UnicodeLength(text);
 }
 
-fn unicode FirstCodePoint(unicode text) {
+fn unicode FirstCodePoint(unicode text)
+{
     return text[0];
 }
 ```
@@ -271,7 +307,8 @@ Unicode buffers:
 The fixed-capacity interpolation form is for destination-owned text:
 
 ```stark
-fn Ascii ScoreLabel(i32[min max] score) {
+fn Ascii ScoreLabel(i32[min max] score)
+{
     stack Ascii label[64] = $"Score: {score}";
     return label;
 }
@@ -285,7 +322,8 @@ text the function is allowed to produce.
 Compile-time text concatenation is just an ordinary text constant:
 
 ```stark
-finite law ascii ScorePrefix() {
+finite law ascii ScorePrefix()
+{
     return "Score: " + " ";
 }
 ```
@@ -293,7 +331,8 @@ finite law ascii ScorePrefix() {
 Runtime concatenation into fixed storage names the destination capacity:
 
 ```stark
-fn Ascii JoinLabels(ascii left, ascii right) {
+fn Ascii JoinLabels(ascii left, ascii right)
+{
     stack Ascii combined[128] = left + right;
     return combined;
 }
@@ -302,7 +341,8 @@ fn Ascii JoinLabels(ascii left, ascii right) {
 When owned formatting allocates, return the allocation-aware result:
 
 ```stark
-fn MemoryResult<OwnedAscii> ScoreOwned(i64[min max] score) {
+fn MemoryResult<OwnedAscii> ScoreOwned(i64[min max] score)
+{
     return ToAscii(score);
 }
 ```
@@ -327,7 +367,8 @@ capacity, and recoverable failure are visible in the API.
 Fixed-buffer formatting returns `bool`:
 
 ```stark
-unsafe fn bool WriteCount(rawmutptr<Ascii> destination, i32[min max] count) {
+unsafe fn bool WriteCount(rawmutptr<Ascii> destination, i32[min max] count)
+{
     return TryFormatI32Ascii(destination, count);
 }
 ```
@@ -342,11 +383,13 @@ stack MemoryResult<OwnedAscii> valueText =
 Parsing returns `TextResult<T>`:
 
 ```stark
-fn i32[min max] ParseOrZero(ascii source) {
+fn i32[min max] ParseOrZero(ascii source)
+{
     stack TextResult<i32[min max]> parsed =
         ParseI32Ascii(source);
 
-    switch (parsed) {
+    switch (parsed)
+    {
         case TextResult<i32[min max]>.Err(var error):
             return 0;
         case TextResult<i32[min max]>.Ok(var value):
@@ -384,7 +427,8 @@ Use `View()` on owned ASCII or Unicode when an API accepts `ascii` or
 `unicode`:
 
 ```stark
-fn bool HasOwnedAsciiText(mut borrow OwnedAscii text) {
+fn bool HasOwnedAsciiText(mut borrow OwnedAscii text)
+{
     stack ascii view = text.View();
     return AsciiLength(view) > 0;
 }
@@ -403,12 +447,14 @@ Conversion helpers write through an `out` destination and return
 `MemoryStatus`:
 
 ```stark
-fn bool MakeUtf16FromAscii() {
+fn bool MakeUtf16FromAscii()
+{
     stack mut OwnedUtf16 text = new();
     stack MemoryStatus status =
         FromAsciiToUtf16(text, "hello");
 
-    switch (status) {
+    switch (status)
+    {
         case MemoryStatus.Err(var error):
             return false;
         case MemoryStatus.Ok:
@@ -420,7 +466,8 @@ fn bool MakeUtf16FromAscii() {
 The `const` forms are for constant text inputs:
 
 ```stark
-fn bool MakeOwnedAsciiFromLiteral() {
+fn bool MakeOwnedAsciiFromLiteral()
+{
     stack mut OwnedAscii text = new();
     return FromConstAscii(text, "literal") == MemoryStatus.Ok;
 }
@@ -452,20 +499,25 @@ piece, then pass a view or clear the builder for reuse.
 For ASCII output, use `OwnedAscii`:
 
 ```stark
-fn bool BuildAsciiLabel(mut borrow OwnedAscii text) {
-    if (text.Reserve(32) != MemoryStatus.Ok) {
+fn bool BuildAsciiLabel(mut borrow OwnedAscii text)
+{
+    if (text.Reserve(32) != MemoryStatus.Ok)
+    {
         return false;
     }
 
-    if (text.AppendConstAscii("score=") != MemoryStatus.Ok) {
+    if (text.AppendConstAscii("score=") != MemoryStatus.Ok)
+    {
         return false;
     }
 
-    if (text.AppendU64(42) != MemoryStatus.Ok) {
+    if (text.AppendU64(42) != MemoryStatus.Ok)
+    {
         return false;
     }
 
-    if (text.AppendByte(33) != MemoryStatus.Ok) {
+    if (text.AppendByte(33) != MemoryStatus.Ok)
+    {
         return false;
     }
 
@@ -477,8 +529,12 @@ fn bool BuildAsciiLabel(mut borrow OwnedAscii text) {
 `OwnedAscii` also accepts byte slices and Unicode data encoded as UTF-8:
 
 ```stark
-fn bool AppendAsciiPieces(mut borrow OwnedAscii text) {
-    stack i8[min max][3] suffix = { 88, 89, 90 };
+fn bool AppendAsciiPieces(mut borrow OwnedAscii text)
+{
+    stack i8[min max][3] suffix =
+    {
+        88, 89, 90
+    };
 
     return text.AppendAscii("abc") == MemoryStatus.Ok
         && text.AppendSlice(suffix, 3) == MemoryStatus.Ok
@@ -492,8 +548,12 @@ fn bool AppendAsciiPieces(mut borrow OwnedAscii text) {
 For code-point text, use `OwnedUnicode`:
 
 ```stark
-fn bool BuildUnicodeLabel(mut borrow OwnedUnicode text) {
-    stack i32[min max][2] marks = { 33, 63 };
+fn bool BuildUnicodeLabel(mut borrow OwnedUnicode text)
+{
+    stack i32[min max][2] marks =
+    {
+        33, 63
+    };
 
     return text.AppendUnicode((unicode)"score=") == MemoryStatus.Ok
         && text.AppendU64(42) == MemoryStatus.Ok
@@ -506,7 +566,8 @@ fn bool BuildUnicodeLabel(mut borrow OwnedUnicode text) {
 For UTF-16 storage, append code units, code points, ASCII, or Unicode:
 
 ```stark
-fn bool BuildUtf16Text(mut borrow OwnedUtf16 text) {
+fn bool BuildUtf16Text(mut borrow OwnedUtf16 text)
+{
     return text.AppendCodeUnit(65) == MemoryStatus.Ok
         && text.AppendCodePoint(66) == MemoryStatus.Ok
         && text.AppendAscii("C") == MemoryStatus.Ok
@@ -519,8 +580,10 @@ Use `Clear()` when the owned builder should keep its storage but forget the
 current contents:
 
 ```stark
-fn bool ReuseAsciiBuilder(mut borrow OwnedAscii text) {
-    if (text.AppendAscii("temporary") != MemoryStatus.Ok) {
+fn bool ReuseAsciiBuilder(mut borrow OwnedAscii text)
+{
+    if (text.AppendAscii("temporary") != MemoryStatus.Ok)
+    {
         return false;
     }
 
@@ -593,12 +656,14 @@ The failure branch matters. A parse can fail because the text is not a valid
 value or because the value does not fit the requested type:
 
 ```stark
-fn bool ParseSmallUnsigned(ascii source, out u8[0 max] value) {
+fn bool ParseSmallUnsigned(ascii source, out u8[0 max] value)
+{
     value = 0;
     stack TextResult<u8[0 max]> parsed =
         ParseU8Ascii(source);
 
-    switch (parsed) {
+    switch (parsed)
+    {
         case TextResult<u8[0 max]>.Err(var error):
             return false;
         case TextResult<u8[0 max]>.Ok(var parsedValue):
@@ -612,11 +677,13 @@ For allocated formatting, switch on the memory result before using the owned
 text:
 
 ```stark
-fn bool WriteFormattedCount(i32[min max] count) {
+fn bool WriteFormattedCount(i32[min max] count)
+{
     stack MemoryResult<OwnedUnicode> result =
         ToUnicode(count);
 
-    switch (result) {
+    switch (result)
+    {
         case MemoryResult<OwnedUnicode>.Err(var error):
             return false;
         case MemoryResult<OwnedUnicode>.Ok(var text):

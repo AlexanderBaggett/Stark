@@ -41,7 +41,8 @@ unless it moves the value somewhere else first.
 A moved mutable binding can become usable again if it is initialized again:
 
 ```stark
-box = new Box() {
+box = new Box()
+{
     Value = 2
 };
 ```
@@ -94,12 +95,15 @@ when it needs custom work. In this sketch, `PlatformClose` stands for a
 non-fallible helper supplied by the type implementation:
 
 ```stark
-struct FileHandle {
+struct FileHandle
+{
     i64[min max] Handle;
     bool Closed;
 
-    drop {
-        if (!self.Closed) {
+    drop
+    {
+        if (!self.Closed)
+        {
             PlatformClose(self.Handle);
         }
     }

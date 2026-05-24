@@ -80,7 +80,8 @@ The allocator identity travels with the owned backing storage.
 
 ```stark
 stack Allocator allocator = Allocator.Default();
-if (!allocator.IsDefault()) {
+if (!allocator.IsDefault())
+{
     return false;
 }
 ```
@@ -89,7 +90,8 @@ Use `SupportsDynamicAllocator(allocator)` before passing a custom
 allocator into code that must grow `dynamic T` storage:
 
 ```stark
-finite law bool CanGrowDynamic(Allocator allocator) {
+finite law bool CanGrowDynamic(Allocator allocator)
+{
     return SupportsDynamicAllocator(allocator);
 }
 ```
@@ -109,8 +111,10 @@ hidden exception.
 Use a helper when several operations return `MemoryStatus`:
 
 ```stark
-finite law bool MemoryOk(MemoryStatus status) {
-    switch (status) {
+finite law bool MemoryOk(MemoryStatus status)
+{
+    switch (status)
+    {
         case MemoryStatus.Ok:
             return true;
         case MemoryStatus.Err(var error):
@@ -122,8 +126,10 @@ finite law bool MemoryOk(MemoryStatus status) {
 When the exact error matters, switch on `MemoryError`:
 
 ```stark
-finite law bool IsCapacityProblem(MemoryError error) {
-    switch (error) {
+finite law bool IsCapacityProblem(MemoryError error)
+{
+    switch (error)
+    {
         case MemoryError.OutOfMemory:
             return true;
         case MemoryError.InvalidLayout:
@@ -139,12 +145,15 @@ finite law bool IsCapacityProblem(MemoryError error) {
 Reserve when the caller knows the needed capacity:
 
 ```stark
-fn bool AddTwo(mut borrow List<u32[0 max]> values) {
-    if (!MemoryOk(values.Reserve(2))) {
+fn bool AddTwo(mut borrow List<u32[0 max]> values)
+{
+    if (!MemoryOk(values.Reserve(2)))
+    {
         return false;
     }
 
-    if (!MemoryOk(values.Push(10))) {
+    if (!MemoryOk(values.Push(10)))
+    {
         return false;
     }
 
@@ -187,7 +196,8 @@ Borrow the initialized part of a list as a slice when another API only needs a
 view:
 
 ```stark
-fn u64[0 2 ** 63 - 1] CountView(borrow List<u32[0 max]> values) {
+fn u64[0 2 ** 63 - 1] CountView(borrow List<u32[0 max]> values)
+{
     stack u32[0 max][] view = values.AsSlice();
     return view.Length;
 }
@@ -196,7 +206,8 @@ fn u64[0 2 ** 63 - 1] CountView(borrow List<u32[0 max]> values) {
 Use `GetMut` when the caller needs to modify one element:
 
 ```stark
-fn void SetFirst(mut borrow List<u32[0 max]> values, u32[0 max] value) {
+fn void SetFirst(mut borrow List<u32[0 max]> values, u32[0 max] value)
+{
     values.GetMut(0) = value;
     return;
 }
@@ -205,7 +216,8 @@ fn void SetFirst(mut borrow List<u32[0 max]> values, u32[0 max] value) {
 Use `AsMutableSlice()` when another helper should update several elements:
 
 ```stark
-fn void ClearFirstTwo(mut borrow List<u32[0 max]> values) {
+fn void ClearFirstTwo(mut borrow List<u32[0 max]> values)
+{
     stack mut u32[0 max][] view = values.AsMutableSlice();
     view[0] = 0;
     view[1] = 0;
@@ -227,7 +239,8 @@ stack bool hadTop = lifo.TryPop(top);
 Use `Peek()` when the stack keeps owning the element:
 
 ```stark
-fn u32[0 max] ReadTop(borrow Stack<u32[0 max]> lifo) {
+fn u32[0 max] ReadTop(borrow Stack<u32[0 max]> lifo)
+{
     return lifo.Peek();
 }
 ```
@@ -246,7 +259,8 @@ stack bool hadNext = queue.TryDequeue(next);
 Use `Peek()` when the queue keeps owning the front element:
 
 ```stark
-fn u32[0 max] ReadNext(borrow Queue<u32[0 max]> queue) {
+fn u32[0 max] ReadNext(borrow Queue<u32[0 max]> queue)
+{
     return queue.Peek();
 }
 ```
@@ -256,7 +270,8 @@ capacity directly:
 
 ```stark
 stack mut RingQueue<u32[0 max]> ring = new();
-if (!MemoryOk(ring.Reserve(4))) {
+if (!MemoryOk(ring.Reserve(4)))
+{
     return false;
 }
 
@@ -278,7 +293,8 @@ stack bool hadRemoved = list.TryRemoveFirst(removed);
 Reserve node storage when the workload knows it will add many nodes:
 
 ```stark
-fn bool PrepareNodes(mut borrow LinkedList<u32[0 max]> list) {
+fn bool PrepareNodes(mut borrow LinkedList<u32[0 max]> list)
+{
     return MemoryOk(list.ReserveNodes(16));
 }
 ```
@@ -288,7 +304,8 @@ Remove from the back when the newest tail item should be moved out:
 ```stark
 fn bool TryRemoveTail(
     mut borrow LinkedList<u32[0 max]> list,
-    out u32[0 max] value) {
+    out u32[0 max] value)
+{
     return list.TryRemoveLast(value);
 }
 ```
@@ -306,7 +323,8 @@ stack bool found = scores.TryGet(key, score);
 Use `ContainsKey` when the caller only needs membership:
 
 ```stark
-finite law bool HasScore(borrow Dictionary<u32[0 max], u32[0 max]> scores) {
+finite law bool HasScore(borrow Dictionary<u32[0 max], u32[0 max]> scores)
+{
     stack u32[0 max] key = 7;
     return scores.ContainsKey(key);
 }
@@ -315,7 +333,8 @@ finite law bool HasScore(borrow Dictionary<u32[0 max], u32[0 max]> scores) {
 Use `Remove` to delete a key and report whether it was present:
 
 ```stark
-fn bool RemoveScore(mut borrow Dictionary<u32[0 max], u32[0 max]> scores) {
+fn bool RemoveScore(mut borrow Dictionary<u32[0 max], u32[0 max]> scores)
+{
     stack u32[0 max] key = 7;
     return scores.Remove(key);
 }
@@ -324,9 +343,13 @@ fn bool RemoveScore(mut borrow Dictionary<u32[0 max], u32[0 max]> scores) {
 Use `Lookup<T>` for readonly lookup tables:
 
 ```stark
-const i32[min max][3] Scores = { 10, 20, 30 };
+const i32[min max][3] Scores =
+{
+    10, 20, 30
+};
 
-fn retborrow frozen i32[min max] ScoreAt(u64[0 2 ** 63 - 1] index) {
+fn retborrow frozen i32[min max] ScoreAt(u64[0 2 ** 63 - 1] index)
+{
     return Lookup(Scores, index);
 }
 ```
@@ -334,7 +357,8 @@ fn retborrow frozen i32[min max] ScoreAt(u64[0 2 ** 63 - 1] index) {
 Use metadata helpers before operations with a non-empty precondition:
 
 ```stark
-fn bool HasItems(borrow Queue<u32[0 max]> queue) {
+fn bool HasItems(borrow Queue<u32[0 max]> queue)
+{
     return !queue.IsEmpty() && queue.Count() > 0;
 }
 ```
@@ -354,7 +378,8 @@ destination for a removed value:
 
 ```stark
 stack mut u32[0 max] popped = 0;
-if (!values.TryPop(popped)) {
+if (!values.TryPop(popped))
+{
     return 4;
 }
 ```
@@ -364,7 +389,8 @@ That keeps element movement visible.
 Use borrowed accessors when the collection keeps owning the element:
 
 ```stark
-fn u32[0 max] FirstValue(borrow List<u32[0 max]> values) {
+fn u32[0 max] FirstValue(borrow List<u32[0 max]> values)
+{
     return values.Get(0);
 }
 ```
@@ -373,7 +399,8 @@ Use `Clear` when the collection should drop its initialized elements but keep
 the collection value usable:
 
 ```stark
-fn void Reset(mut borrow List<u32[0 max]> values) {
+fn void Reset(mut borrow List<u32[0 max]> values)
+{
     values.Clear();
     return;
 }
@@ -385,7 +412,8 @@ fn void Reset(mut borrow List<u32[0 max]> values) {
 fn void ResetAll(
     mut borrow Stack<u32[0 max]> stack,
     mut borrow Queue<u32[0 max]> queue,
-    mut borrow Dictionary<u32[0 max], u32[0 max]> dictionary) {
+    mut borrow Dictionary<u32[0 max], u32[0 max]> dictionary)
+{
     stack.Clear();
     queue.Clear();
     dictionary.Clear();
@@ -403,8 +431,14 @@ bytes or code points.
 The byte helpers operate on `i8[min max]` storage:
 
 ```stark
-stack i8[min max][4] source = { 1, 2, 3, 4 };
-stack mut i8[min max][4] destination = { 0, 0, 0, 0 };
+stack i8[min max][4] source =
+{
+    1, 2, 3, 4
+};
+stack mut i8[min max][4] destination =
+{
+    0, 0, 0, 0
+};
 CopyBytesDisjoint(source, destination, 4);
 ```
 
@@ -427,18 +461,30 @@ MoveBytesInfallible(source, destination, 4);
 The same shape exists for Unicode code points stored as `i32[min max]`:
 
 ```stark
-stack i32[min max][3] codePoints = { 65, 66, 67 };
-stack mut i32[min max][3] copied = { 0, 0, 0 };
+stack i32[min max][3] codePoints =
+{
+    65, 66, 67
+};
+stack mut i32[min max][3] copied =
+{
+    0, 0, 0
+};
 CopyCodePointsDisjoint(codePoints, copied, 3);
 ```
 
 Use fill helpers when the destination should receive one repeated value:
 
 ```stark
-stack mut i8[min max][8] bytes = { 1, 1, 1, 1, 1, 1, 1, 1 };
+stack mut i8[min max][8] bytes =
+{
+    1, 1, 1, 1, 1, 1, 1, 1
+};
 FillInitializedBytes(bytes, 0, 8);
 
-stack mut i32[min max][4] codePoints = { 65, 66, 67, 68 };
+stack mut i32[min max][4] codePoints =
+{
+    65, 66, 67, 68
+};
 FillInitializedCodePoints(codePoints, 0, 4);
 ```
 
@@ -446,7 +492,8 @@ The `init` helpers are for constructing uninitialized destination slots:
 
 ```stark
 stack mut dynamic i8[min max] bytes = new();
-if (bytes.TryReserve(4)) {
+if (bytes.TryReserve(4))
+{
     stack init i8[min max][] tail = init bytes[bytes.Length, 4];
     FillBytes(tail, 0, 4);
 }
@@ -457,12 +504,14 @@ buffer rather than a collection:
 
 ```stark
 stack mut dynamic i8[min max] bytes = new();
-if (!MemoryOk(ReserveBytes(bytes, 64))) {
+if (!MemoryOk(ReserveBytes(bytes, 64)))
+{
     return false;
 }
 
 stack mut dynamic i32[min max] codePoints = new();
-if (!MemoryOk(ReserveCodePoints(codePoints, 16))) {
+if (!MemoryOk(ReserveCodePoints(codePoints, 16)))
+{
     return false;
 }
 ```
@@ -471,14 +520,19 @@ Use append helpers when the destination is a `dynamic` owner and new initialized
 elements should be added to the end:
 
 ```stark
-stack i8[min max][3] header = { 1, 2, 3 };
+stack i8[min max][3] header =
+{
+    1, 2, 3
+};
 stack mut dynamic i8[min max] bytes = new();
 
-if (!MemoryOk(AppendBytesDisjoint(bytes, header, 3))) {
+if (!MemoryOk(AppendBytesDisjoint(bytes, header, 3)))
+{
     return false;
 }
 
-if (!MemoryOk(AppendFillBytes(bytes, 0, 4))) {
+if (!MemoryOk(AppendFillBytes(bytes, 0, 4)))
+{
     return false;
 }
 ```
@@ -486,14 +540,19 @@ if (!MemoryOk(AppendFillBytes(bytes, 0, 4))) {
 The code-point helpers have the same shape:
 
 ```stark
-stack i32[min max][2] letters = { 65, 66 };
+stack i32[min max][2] letters =
+{
+    65, 66
+};
 stack mut dynamic i32[min max] codePoints = new();
 
-if (!MemoryOk(AppendCodePointsDisjoint(codePoints, letters, 2))) {
+if (!MemoryOk(AppendCodePointsDisjoint(codePoints, letters, 2)))
+{
     return false;
 }
 
-if (!MemoryOk(AppendFillCodePoints(codePoints, 32, 1))) {
+if (!MemoryOk(AppendFillCodePoints(codePoints, 32, 1)))
+{
     return false;
 }
 ```
@@ -512,7 +571,8 @@ Use `InitializeBytes` or `InitializeCodePoints` when you already have an
 
 ```stark
 stack mut dynamic i8[min max] copied = new();
-if (!copied.TryReserve(3)) {
+if (!copied.TryReserve(3))
+{
     return false;
 }
 
@@ -566,7 +626,8 @@ Use `Remove(key)` when the caller only needs to know whether the key was
 present:
 
 ```stark
-fn bool DropScore(mut borrow Dictionary<u32[0 max], u32[0 max]> scores) {
+fn bool DropScore(mut borrow Dictionary<u32[0 max], u32[0 max]> scores)
+{
     stack u32[0 max] key = 7;
     return scores.Remove(key);
 }
@@ -578,7 +639,8 @@ caller-owned destination:
 ```stark
 fn bool TakeScore(
     mut borrow Dictionary<u32[0 max], u32[0 max]> scores,
-    out u32[0 max] value) {
+    out u32[0 max] value)
+{
     value = 0;
     stack u32[0 max] key = 7;
     return scores.TryRemove(key, value);
@@ -590,12 +652,14 @@ removed value:
 
 ```stark
 fn u32[0 max] TakeScoreOrZero(
-    mut borrow Dictionary<u32[0 max], u32[0 max]> scores) {
+    mut borrow Dictionary<u32[0 max], u32[0 max]> scores)
+{
     stack u32[0 max] key = 7;
     stack DictionaryRemoveResult<u32[0 max]> removed =
         scores.RemoveMove(key);
 
-    switch (removed) {
+    switch (removed)
+    {
         case DictionaryRemoveResult<u32[0 max]>.Missing:
             return 0;
         case DictionaryRemoveResult<u32[0 max]>.Removed(var value):

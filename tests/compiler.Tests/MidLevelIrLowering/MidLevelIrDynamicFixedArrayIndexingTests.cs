@@ -11,7 +11,8 @@ public sealed class MidLevelIrDynamicFixedArrayIndexingTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(i32[min max] index) {
+            unsafe fn i32[min max] Run(i32[min max] index)
+            {
                 return (new i32[min max][3])[index];
             }
             """);

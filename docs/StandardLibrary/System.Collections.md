@@ -73,7 +73,8 @@ releases that storage in its destructor.
 `List<T>` is the primary growable contiguous collection.
 
 ```stark
-public struct List<T> {
+public struct List<T>
+{
     finite law i64[0 max] Count(borrow List<T> self);
     finite law i64[0 max] Capacity(borrow List<T> self);
     finite law bool IsEmpty(borrow List<T> self);
@@ -97,7 +98,8 @@ index bounds are easy to see.
 `Stack<T>` is a last-in, first-out collection backed by owned dynamic storage.
 
 ```stark
-public struct Stack<T> {
+public struct Stack<T>
+{
     finite law i64[0 max] Count(borrow Stack<T> self);
     finite law bool IsEmpty(borrow Stack<T> self);
     fn System.Memory.MemoryStatus Push(mut borrow Stack<T> self, T value);
@@ -117,7 +119,8 @@ storage. Dequeue and peek are O(1): the implementation keeps head/length
 metadata and moves only the occupied slot being removed.
 
 ```stark
-public struct Queue<T> {
+public struct Queue<T>
+{
     finite law i64[0 max] Count(borrow Queue<T> self);
     finite law bool IsEmpty(borrow Queue<T> self);
     fn System.Memory.MemoryStatus Enqueue(mut borrow Queue<T> self, T value);
@@ -131,7 +134,8 @@ public struct Queue<T> {
 need an explicit capacity check while keeping FIFO operations O(1).
 
 ```stark
-public struct RingQueue<T> {
+public struct RingQueue<T>
+{
     finite law i64[0 max] Count(borrow RingQueue<T> self);
     finite law i64[0 max] Capacity(borrow RingQueue<T> self);
     finite law bool IsEmpty(borrow RingQueue<T> self);
@@ -149,7 +153,8 @@ public struct RingQueue<T> {
 movement is undesirable.
 
 ```stark
-public struct LinkedList<T> {
+public struct LinkedList<T>
+{
     finite law i64[0 max] Count(borrow LinkedList<T> self);
     finite law bool IsEmpty(borrow LinkedList<T> self);
     fn System.Memory.MemoryStatus ReserveNodes(mut borrow LinkedList<T> self, i64[0 max] count);
@@ -169,15 +174,18 @@ can come later once the borrow and iterator story is deliberate.
 Dictionary key requirements live in the source module:
 
 ```stark
-public trait Equatable<T> {
+public trait Equatable<T>
+{
     finite law bool Equals(borrow T left, borrow T right);
 }
 
-public trait Hashable<T> {
+public trait Hashable<T>
+{
     finite law u64[0 max] Hash(borrow T value);
 }
 
-public doctrine DictionaryKey<T> {
+public doctrine DictionaryKey<T>
+{
     finite law bool Equals(borrow T left, borrow T right);
     finite law u64[0 max] Hash(borrow T value);
 }
@@ -195,7 +203,8 @@ are rejected at generic use sites.
 `Dictionary<K, V>` is an owned hash table.
 
 ```stark
-public struct Dictionary<K, V> {
+public struct Dictionary<K, V>
+{
     finite law i64[0 max] Count(borrow Dictionary<K, V> self);
     finite law i64[0 max] Capacity(borrow Dictionary<K, V> self);
     finite law bool IsEmpty(borrow Dictionary<K, V> self);

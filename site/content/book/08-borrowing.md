@@ -43,14 +43,17 @@ read or mutate only according to the authority in its type, and it never becomes
 responsible for cleanup.
 
 ```stark
-struct Counter {
+struct Counter
+{
     i32[min max] Value;
 
-    finite law i32[min max] Current(borrow Counter self) {
+    finite law i32[min max] Current(borrow Counter self)
+    {
         return self.Value;
     }
 
-    finite void Add(mut borrow Counter self, i32[min max] amount) {
+    finite void Add(mut borrow Counter self, i32[min max] amount)
+    {
         self.Value += amount;
         return;
     }
@@ -67,11 +70,13 @@ Borrow escape is part of the type. Use the narrowest class that matches what
 the API actually does:
 
 ```stark
-finite law i32[min max] Current(borrow Counter self) {
+finite law i32[min max] Current(borrow Counter self)
+{
     return self.Value;
 }
 
-finite retborrow mut i32[min max] Slot(mut borrow Counter self) {
+finite retborrow mut i32[min max] Slot(mut borrow Counter self)
+{
     return self.Value;
 }
 ```
@@ -86,11 +91,13 @@ The three escape classes are:
 A storage-bearing API should say that directly:
 
 ```stark
-struct CounterView {
+struct CounterView
+{
     storeborrow Counter Target;
 }
 
-fn void Remember(mut borrow CounterView view, storeborrow Counter target) {
+fn void Remember(mut borrow CounterView view, storeborrow Counter target)
+{
     view.Target = target;
     return;
 }
@@ -113,8 +120,10 @@ Mutable borrowing gives permission to write through the borrow. It does not
 move the value and it does not make the callee responsible for destroying it.
 
 ```stark
-export fn i32[min max] main() {
-    stack mut Counter counter = new Counter() {
+export fn i32[min max] main()
+{
+    stack mut Counter counter = new Counter()
+    {
         Value = 4
     };
 
@@ -138,12 +147,14 @@ non-null. If a borrow needs to escape through a return value, that intent is
 written directly with `retborrow`.
 
 ```stark
-fn void Inspect(borrow Counter counter) {
+fn void Inspect(borrow Counter counter)
+{
     counter.Current();
     return;
 }
 
-fn retborrow mut i32[min max] Field(mut borrow Counter counter) {
+fn retborrow mut i32[min max] Field(mut borrow Counter counter)
+{
     return counter.Value;
 }
 ```
@@ -164,7 +175,8 @@ Use raw pointers at FFI boundaries when a foreign API can return or accept
 the facts that safe code relies on.
 
 ```stark
-unsafe fn bool IsMissing(rawptr<i32[min max]> value) {
+unsafe fn bool IsMissing(rawptr<i32[min max]> value)
+{
     return value == null;
 }
 ```
@@ -210,7 +222,8 @@ views, `out`, `init`, bounded raw pointer regions, `rawptr`, and `rawmutptr`.
 The important default is visible in this small function:
 
 ```stark
-fn void AddSeparate(mut borrow Cell left, mut borrow Cell right) {
+fn void AddSeparate(mut borrow Cell left, mut borrow Cell right)
+{
     left.Value += 1;
     right.Value += 10;
     return;
@@ -227,14 +240,16 @@ The default can be adjusted with relation clauses:
 
 ```stark
 fn void AddOverlapSafe(mut borrow Cell left, mut borrow Cell right)
-    where overlap(left, right) {
+    where overlap(left, right)
+{
     left.Value += 1;
     right.Value += 10;
     return;
 }
 
 finite law bool SameCell(borrow Cell left, borrow Cell right)
-    where same(left, right) {
+    where same(left, right)
+{
     return left.Value == right.Value;
 }
 ```
@@ -252,7 +267,8 @@ fn void CopyWindow(
     rawmutptr<i8[min max]> destination,
     u64[0 max] sourceStart,
     u64[0 max] length)
-    where disjoint(source[sourceStart, length], destination[0, length]) {
+    where disjoint(source[sourceStart, length], destination[0, length])
+{
     return;
 }
 ```
@@ -275,7 +291,8 @@ parameters are non-overlapping by default:
 The valid version either passes distinct visible storage:
 
 ```stark
-fn void AddPairFields(mut borrow Pair pair) {
+fn void AddPairFields(mut borrow Pair pair)
+{
     AddSeparate(pair.Left, pair.Right);
     return;
 }
@@ -285,7 +302,8 @@ or calls an overlap-capable API:
 
 ```stark
 fn void AddMaybeSame(mut borrow Cell first, mut borrow Cell second)
-    where overlap(first, second) {
+    where overlap(first, second)
+{
     AddOverlapSafe(first, second);
     return;
 }
@@ -305,7 +323,8 @@ non-overlap fact:
 The shape is:
 
 ```stark
-if disjoint(left, right) {
+if disjoint(left, right)
+{
     AddSeparate(left, right);
     return true;
 }
@@ -329,7 +348,8 @@ Inside an `unsafe fn` or an existing `unsafe { ... }` block, the leading
 `unsafe` may be omitted:
 
 ```stark
-assume disjoint(left, right) {
+assume disjoint(left, right)
+{
     AddSeparate(left, right);
 }
 ```
@@ -350,8 +370,10 @@ non-overlap.
 result:
 
 ```stark
-fn bool TryDivide(i32[min max] numerator, i32[min max] denominator, out i32[min max] result) {
-    if (denominator == 0) {
+fn bool TryDivide(i32[min max] numerator, i32[min max] denominator, out i32[min max] result)
+{
+    if (denominator == 0)
+    {
         result = 0;
         return false;
     }
@@ -384,7 +406,8 @@ A zero count may use `null`. To use ordinary slice rules, convert explicitly
 inside an unsafe proof boundary:
 
 ```stark
-unsafe {
+unsafe
+{
     stack i32[min max][] view = slice(pointer, count);
 }
 ```
@@ -416,11 +439,13 @@ Borrowing is not only a safety feature. It gives lowering and LLVM specific
 facts:
 
 ```stark
-finite law i32[min max] ReadFrozenTwice(frozen Box box) {
+finite law i32[min max] ReadFrozenTwice(frozen Box box)
+{
     return box.Value + box.Value;
 }
 
-fn void AddSeparate(mut borrow Cell left, mut borrow Cell right) {
+fn void AddSeparate(mut borrow Cell left, mut borrow Cell right)
+{
     left.Value += 1;
     right.Value += 10;
     return;

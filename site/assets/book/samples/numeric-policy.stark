@@ -1,27 +1,34 @@
 module Book.NumericPolicy
 
-finite law i32[min max] WrappedMaxPlusOne() {
+finite law i32[min max] WrappedMaxPlusOne()
+{
     return 2147483647 +% 1;
 }
 
-finite law i32[min max] SaturatedMaxPlusOne() {
+finite law i32[min max] SaturatedMaxPlusOne()
+{
     return 2147483647 +| 1;
 }
 
-strictfp finite law f32 StrictAdd(f32 left, f32 right) {
+strictfp finite law f32 StrictAdd(f32 left, f32 right)
+{
     return left + right;
 }
 
-export fn i32[min max] main() {
-    if (WrappedMaxPlusOne() != -2147483648) {
+export fn i32[min max] main()
+{
+    if (WrappedMaxPlusOne() != -2147483648)
+    {
         return 1;
     }
 
-    if (SaturatedMaxPlusOne() != 2147483647) {
+    if (SaturatedMaxPlusOne() != 2147483647)
+    {
         return 2;
     }
 
-    if (StrictAdd(1.0f, 2.0f) != 3.0f) {
+    if (StrictAdd(1.0f, 2.0f) != 3.0f)
+    {
         return 3;
     }
 

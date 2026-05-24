@@ -83,7 +83,8 @@ The default is module-private:
 ```stark
 module Geometry.InternalMath
 
-finite law i32[min max] Square(i32[min max] value) {
+finite law i32[min max] Square(i32[min max] value)
+{
     return value * value;
 }
 ```
@@ -95,7 +96,8 @@ Sibling modules cannot call `Square` until you deliberately widen visibility.
 ```stark
 module Geometry.InternalMath
 
-internal finite law i32[min max] Multiply(u16[0 1000] left, u16[0 1000] right) {
+internal finite law i32[min max] Multiply(u16[0 1000] left, u16[0 1000] right)
+{
     return (i32[min max])left * (i32[min max])right;
 }
 ```
@@ -106,12 +108,14 @@ internal finite law i32[min max] Multiply(u16[0 1000] left, u16[0 1000] right) {
 import Geometry.InternalMath
 module Geometry
 
-public struct Rectangle {
+public struct Rectangle
+{
     u16[0 1000] Width;
     u16[0 1000] Height;
 }
 
-public finite law i32[min max] Area(Rectangle rectangle) {
+public finite law i32[min max] Area(Rectangle rectangle)
+{
     return Multiply(rectangle.Width, rectangle.Height);
 }
 ```
@@ -122,13 +126,16 @@ public finite law i32[min max] Area(Rectangle rectangle) {
 import Geometry
 module App
 
-export fn i32[min max] main() {
-    stack Geometry.Rectangle rectangle = new Geometry.Rectangle() {
+export fn i32[min max] main()
+{
+    stack Geometry.Rectangle rectangle = new Geometry.Rectangle()
+    {
         Width = 6,
         Height = 7
     };
 
-    if (Geometry.Area(rectangle) != 42) {
+    if (Geometry.Area(rectangle) != 42)
+    {
         return 1;
     }
 
@@ -178,7 +185,8 @@ There is no wildcard import. When two imported modules expose the same short
 name, write the qualified name at the use site:
 
 ```stark
-stack Geometry.Rectangle rectangle = new Geometry.Rectangle() {
+stack Geometry.Rectangle rectangle = new Geometry.Rectangle()
+{
     Width = 6,
     Height = 7
 };
@@ -220,12 +228,15 @@ Most library declarations should be `public` or `internal`, not `export`.
 Member functions follow the enclosing type unless you narrow them:
 
 ```stark
-public struct PackageClient {
-    fn bool IsOpen(self) {
+public struct PackageClient
+{
+    fn bool IsOpen(self)
+    {
         return true;
     }
 
-    internal fn i64[min max] RuntimeHandle(self) {
+    internal fn i64[min max] RuntimeHandle(self)
+    {
         return 0;
     }
 }
@@ -237,8 +248,10 @@ to package-only use.
 A member cannot be more visible than its enclosing type:
 
 ```stark
-internal struct InternalCounter {
-    fn i32[min max] Current(self) {
+internal struct InternalCounter
+{
+    fn i32[min max] Current(self)
+    {
         return 0;
     }
 }

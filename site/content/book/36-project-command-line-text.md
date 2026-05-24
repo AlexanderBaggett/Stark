@@ -52,18 +52,22 @@ convert the status to a process exit code at the edge.
 Keep the parsing function independent from console input:
 
 ```stark
-enum Command {
+enum Command
+{
     Help,
     Run,
     Unknown,
 }
 
-finite law Command ParseCommand(ascii input) {
-    if (input == "help") {
+finite law Command ParseCommand(ascii input)
+{
+    if (input == "help")
+    {
         return Command.Help;
     }
 
-    if (input == "run") {
+    if (input == "run")
+    {
         return Command.Run;
     }
 
@@ -74,8 +78,10 @@ finite law Command ParseCommand(ascii input) {
 Then map the parsed command into the tool's status:
 
 ```stark
-finite law ToolStatus ClassifyCommand(ascii input) {
-    switch (ParseCommand(input)) {
+finite law ToolStatus ClassifyCommand(ascii input)
+{
+    switch (ParseCommand(input))
+    {
         case Command.Help:
             return ToolStatus.Ok;
         case Command.Run:
@@ -91,15 +97,18 @@ layer: read owned text, switch on the allocation result, then pass a text view
 to the parser.
 
 ```stark
-fn i32[min max] RunCommand(mut borrow OwnedAscii line) {
+fn i32[min max] RunCommand(mut borrow OwnedAscii line)
+{
     return ExitCode(ClassifyCommand(line.View()));
 }
 
-export fn i32[min max] main() {
+export fn i32[min max] main()
+{
     stack MemoryResult<OwnedAscii> read =
         ReadAsciiLine();
 
-    switch (read) {
+    switch (read)
+    {
         case MemoryResult<OwnedAscii>.Err(var error):
             WriteErrorLine("could not read command");
             return 1;
@@ -125,7 +134,8 @@ Do not imply hidden allocation behind every string operation.
 Convert owned text to a view at the processing boundary:
 
 ```stark
-fn ToolStatus RunOwned(mut borrow OwnedAscii input) {
+fn ToolStatus RunOwned(mut borrow OwnedAscii input)
+{
     return ClassifyCommand(input.View());
 }
 ```
@@ -133,11 +143,13 @@ fn ToolStatus RunOwned(mut borrow OwnedAscii input) {
 Parse text by switching on `TextResult<T>`:
 
 ```stark
-fn ToolStatus ReadCount(ascii input, out i32[min max] destination) {
+fn ToolStatus ReadCount(ascii input, out i32[min max] destination)
+{
     stack TextResult<i32[min max]> parsed =
         ParseI32Ascii(input);
 
-    switch (parsed) {
+    switch (parsed)
+    {
         case TextResult<i32[min max]>.Err(var error):
             return ToolStatus.InvalidInput;
         case TextResult<i32[min max]>.Ok(var value):
@@ -161,7 +173,8 @@ When formatting a small result, use fixed-capacity text when the capacity is
 part of the program shape:
 
 ```stark
-fn IOStatus WriteScore(i32[min max] score) {
+fn IOStatus WriteScore(i32[min max] score)
+{
     stack Ascii line[32] = $"score={score}";
     return WriteLine(AsciiView(line));
 }
@@ -170,16 +183,19 @@ fn IOStatus WriteScore(i32[min max] score) {
 When conversion allocates owned text, switch on the memory result:
 
 ```stark
-fn ToolStatus PrintNumber(i32[min max] value) {
+fn ToolStatus PrintNumber(i32[min max] value)
+{
     stack MemoryResult<OwnedAscii> converted =
         ToAscii(value);
 
-    switch (converted) {
+    switch (converted)
+    {
         case MemoryResult<OwnedAscii>.Err(var error):
             return ToolStatus.OutputFailed;
         case MemoryResult<OwnedAscii>.Ok(var text):
             stack mut OwnedAscii output = text;
-            switch (WriteLine(output)) {
+            switch (WriteLine(output))
+            {
                 case IOStatus.Ok:
                     return ToolStatus.Ok;
                 case IOStatus.Err(var ioError):
@@ -194,7 +210,8 @@ fn ToolStatus PrintNumber(i32[min max] value) {
 Recoverable problems should return ordinary values:
 
 ```stark
-enum ToolStatus {
+enum ToolStatus
+{
     Ok,
     MissingInput,
     InvalidInput,
@@ -206,8 +223,10 @@ The entrypoint maps those values to process exit codes. It should not depend on
 exceptions or unwinding.
 
 ```stark
-finite law i32[min max] ExitCode(ToolStatus status) {
-    switch (status) {
+finite law i32[min max] ExitCode(ToolStatus status)
+{
+    switch (status)
+    {
         case ToolStatus.Ok:
             return 0;
         case ToolStatus.MissingInput:
@@ -223,8 +242,10 @@ finite law i32[min max] ExitCode(ToolStatus status) {
 Use small helpers to keep `main` readable:
 
 ```stark
-finite law bool IsOk(ToolStatus status) {
-    switch (status) {
+finite law bool IsOk(ToolStatus status)
+{
+    switch (status)
+    {
         case ToolStatus.Ok:
             return true;
         case ToolStatus.MissingInput:
@@ -240,8 +261,10 @@ finite law bool IsOk(ToolStatus status) {
 Console writes also return status values:
 
 ```stark
-fn ToolStatus PrintUsage() {
-    switch (WriteLine("usage: text-tool <command>")) {
+fn ToolStatus PrintUsage()
+{
+    switch (WriteLine("usage: text-tool <command>"))
+    {
         case IOStatus.Ok:
             return ToolStatus.Ok;
         case IOStatus.Err(var error):

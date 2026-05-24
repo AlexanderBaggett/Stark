@@ -192,7 +192,8 @@ export import System.IO.File
 export import System.IO.Path
 module System.IO
 
-public enum IOError {
+public enum IOError
+{
     NotFound,
     PermissionDenied,
     AlreadyExists,
@@ -202,12 +203,14 @@ public enum IOError {
     Unknown(i32),
 }
 
-public enum IOResult<T> {
+public enum IOResult<T>
+{
     Ok(T),
     Err(IOError),
 }
 
-public enum IOStatus {
+public enum IOStatus
+{
     Ok,
     Err(IOError),
 }
@@ -220,34 +223,40 @@ public enum IOStatus {
 ```stark
 module System.Text
 
-public enum Encoding {
+public enum Encoding
+{
     Binary,
     UTF8,
     UTF16,
     UTF32,
 }
 
-public enum TextError {
+public enum TextError
+{
     InvalidFormat,
     Overflow,
 }
 
-public enum TextResult<T> {
+public enum TextResult<T>
+{
     Ok(T),
     Err(TextError),
 }
 
-public struct OwnedAscii {
+public struct OwnedAscii
+{
     finite ascii View(borrow OwnedAscii self);
     finite law i64 Length(borrow OwnedAscii self);
 }
 
-public struct OwnedUnicode {
+public struct OwnedUnicode
+{
     finite unicode View(borrow OwnedUnicode self);
     finite law i64 Length(borrow OwnedUnicode self);
 }
 
-public struct OwnedUtf16 {
+public struct OwnedUtf16
+{
     finite law i64 Length(borrow OwnedUtf16 self);
     finite i16[] AsSlice(borrow OwnedUtf16 self);
 }
@@ -575,7 +584,8 @@ If Stark reaches this redesign before it has a stronger type-opacity story, the 
 import System.IO
 module System.IO.File
 
-public struct File {
+public struct File
+{
     finite law bool IsOpen(borrow File self);
     fn System.IO.IOStatus Close(mut borrow File self);
     fn System.IO.IOStatus Flush(mut borrow File self);
@@ -610,7 +620,8 @@ mutate handle or buffer state, or depend on filesystem state.
 ### File Modes
 
 ```stark
-public enum FileMode {
+public enum FileMode
+{
     Read,
     Write,
     Append,
@@ -621,7 +632,8 @@ public enum FileMode {
 ### File Buffering
 
 ```stark
-public enum FileBuffering {
+public enum FileBuffering
+{
     None,
     Line,
     Full,
@@ -973,7 +985,8 @@ Example:
 import System
 module Hello
 
-export fn i32 main() {
+export fn i32 main()
+{
     System.Console.WriteLine("Hello, world!");
     System.Console.WriteErrorLine("stderr works too");
     return 0;

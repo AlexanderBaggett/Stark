@@ -33,8 +33,10 @@ explicitly asks for allocation.
 The full shape is:
 
 ```stark
-fn bool TryDivide(i32[min max] numerator, i32[min max] denominator, out i32[min max] result) {
-    if (denominator == 0) {
+fn bool TryDivide(i32[min max] numerator, i32[min max] denominator, out i32[min max] result)
+{
+    if (denominator == 0)
+    {
         result = 0;
         return false;
     }
@@ -43,9 +45,11 @@ fn bool TryDivide(i32[min max] numerator, i32[min max] denominator, out i32[min 
     return true;
 }
 
-fn i32[min max] UseTryDivide() {
+fn i32[min max] UseTryDivide()
+{
     stack mut i32[min max] quotient = 0;
-    if (!TryDivide(21, 3, quotient)) {
+    if (!TryDivide(21, 3, quotient))
+    {
         return -1;
     }
 
@@ -68,10 +72,12 @@ import System.Text
 ```
 
 ```stark
-fn bool TryMakeReadyLabel(out OwnedAscii label) {
+fn bool TryMakeReadyLabel(out OwnedAscii label)
+{
     stack MemoryStatus copied = FromConstAscii(label, "ready");
 
-    switch (copied) {
+    switch (copied)
+    {
         case MemoryStatus.Ok:
             return true;
         case MemoryStatus.Err(var error):
@@ -116,18 +122,22 @@ worked.
 A status enum is useful when there is no success value:
 
 ```stark
-enum SaveStatus {
+enum SaveStatus
+{
     Ok,
     PermissionDenied,
     DiskFull,
 }
 
-fn SaveStatus SaveMarker(bool canWrite, bool hasSpace) {
-    if (!canWrite) {
+fn SaveStatus SaveMarker(bool canWrite, bool hasSpace)
+{
+    if (!canWrite)
+    {
         return SaveStatus.PermissionDenied;
     }
 
-    if (!hasSpace) {
+    if (!hasSpace)
+    {
         return SaveStatus.DiskFull;
     }
 
@@ -138,7 +148,8 @@ fn SaveStatus SaveMarker(bool canWrite, bool hasSpace) {
 The caller handles it with `switch`:
 
 ```stark
-switch (SaveMarker(true, true)) {
+switch (SaveMarker(true, true))
+{
     case SaveStatus.Ok:
         return 0;
     case SaveStatus.PermissionDenied:
@@ -151,8 +162,10 @@ switch (SaveMarker(true, true)) {
 Use standard-library status enums the same way:
 
 ```stark
-finite law bool IOOk(IOStatus status) {
-    switch (status) {
+finite law bool IOOk(IOStatus status)
+{
+    switch (status)
+    {
         case IOStatus.Ok:
             return true;
         case IOStatus.Err(var error):
@@ -164,10 +177,12 @@ finite law bool IOOk(IOStatus status) {
 For allocation-backed APIs, switch on `MemoryResult<T>`:
 
 ```stark
-fn bool FormatNumber(i32[min max] value, out OwnedAscii text) {
+fn bool FormatNumber(i32[min max] value, out OwnedAscii text)
+{
     stack MemoryResult<OwnedAscii> formatted = ToAscii(value);
 
-    switch (formatted) {
+    switch (formatted)
+    {
         case MemoryResult<OwnedAscii>.Err(var error):
             text = new();
             return false;
@@ -189,7 +204,8 @@ control flow, and recoverable failure stays in the function's return value.
 Good unrecoverable examples are source mistakes or violated invariants:
 
 ```stark
-fn i32[min max] RequireFirst(i32[min max][] values) {
+fn i32[min max] RequireFirst(i32[min max][] values)
+{
     return values[0];
 }
 ```
@@ -199,13 +215,16 @@ input is recoverable for the API, do not rely on a trap. Return a status or
 result instead:
 
 ```stark
-enum FirstResult {
+enum FirstResult
+{
     Ok(i32[min max]),
     Empty,
 }
 
-fn FirstResult TryFirst(i32[min max][] values, u64[0 max] count) {
-    if (count == 0) {
+fn FirstResult TryFirst(i32[min max][] values, u64[0 max] count)
+{
+    if (count == 0)
+    {
         return FirstResult.Empty;
     }
 
@@ -240,23 +259,28 @@ Choose `bool` only when the caller does not need a reason. Choose a named enum
 when the reason changes what the caller should do:
 
 ```stark
-enum LoginStatus {
+enum LoginStatus
+{
     Ok,
     MissingUser,
     BadPassword,
     Locked,
 }
 
-fn LoginStatus CheckLogin(bool hasUser, bool passwordOk, bool locked) {
-    if (!hasUser) {
+fn LoginStatus CheckLogin(bool hasUser, bool passwordOk, bool locked)
+{
+    if (!hasUser)
+    {
         return LoginStatus.MissingUser;
     }
 
-    if (locked) {
+    if (locked)
+    {
         return LoginStatus.Locked;
     }
 
-    if (!passwordOk) {
+    if (!passwordOk)
+    {
         return LoginStatus.BadPassword;
     }
 

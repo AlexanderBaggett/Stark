@@ -55,7 +55,8 @@ Use `export fn` for safe Stark functions that must be visible to the native
 world, such as the hosted entrypoint:
 
 ```stark
-export fn i32[min max] main() {
+export fn i32[min max] main()
+{
     return 0;
 }
 ```
@@ -69,7 +70,8 @@ Foreign C varargs are also explicit:
 ```stark
 unsafe ffi varargs fn i32[min max] printf(ascii format);
 
-unsafe fn i32[min max] PrintScore(i32[min max] score) {
+unsafe fn i32[min max] PrintScore(i32[min max] score)
+{
     return printf("score: %d\n", score);
 }
 ```
@@ -88,7 +90,8 @@ Raw pointers are the explicit low-level pointer forms:
 Raw pointers may be `null`. Safe borrows may not.
 
 ```stark
-unsafe fn bool IsMissing(rawptr<i32[min max]> value) {
+unsafe fn bool IsMissing(rawptr<i32[min max]> value)
+{
     stack rawptr<i32[min max]> missing = null;
     return value == missing;
 }
@@ -115,14 +118,17 @@ Check nullable native results before converting them to an ordinary Stark API:
 ```stark
 unsafe ffi fn rawptr<i8[min max]> native_message();
 
-public enum NativeMessage {
+public enum NativeMessage
+{
     Missing,
     Present,
 }
 
-public unsafe fn NativeMessage CheckNativeMessage() {
+public unsafe fn NativeMessage CheckNativeMessage()
+{
     stack rawptr<i8[min max]> message = native_message();
-    if (message == null) {
+    if (message == null)
+    {
         return NativeMessage.Missing;
     }
 
@@ -141,7 +147,8 @@ Raw pointer parameters can state an element count:
 unsafe fn void Fill(
     i64[0 max] length,
     rawmutptr<i32[min max]>[length] destination,
-    i32[min max] value) {
+    i32[min max] value)
+{
     return;
 }
 ```
@@ -172,11 +179,13 @@ unsafe fn void CopyBytesFast(
     i64[0 max] length,
     rawptr<i8[min max]>[length] source,
     rawmutptr<i8[min max]>[length] destination)
-    where disjoint(source[0, length], destination[0, length]) {
+    where disjoint(source[0, length], destination[0, length])
+{
     stack i8[min max][] sourceView = slice(source, length);
     stack mut i8[min max][] destinationView = slice(destination, length);
 
-    for willexit independent (stack mut i64[0 max] index = 0; index < length; index += 1) {
+    for willexit independent (stack mut i64[0 max] index = 0; index < length; index += 1)
+    {
         destinationView[index] = sourceView[index];
     }
 
@@ -187,8 +196,10 @@ unsafe fn void CopyBytes(
     i64[0 max] length,
     rawptr<i8[min max]>[length] source,
     rawmutptr<i8[min max]>[length] destination)
-    where overlap(source, destination) {
-    if disjoint(source[0, length], destination[0, length]) {
+    where overlap(source, destination)
+{
+    if disjoint(source[0, length], destination[0, length])
+    {
         CopyBytesFast(length, source, destination);
         return;
     }
@@ -218,16 +229,19 @@ When possible, wrap raw-pointer work in a small API that returns ordinary Stark
 status/result data.
 
 ```stark
-public enum NativeOpenResult {
+public enum NativeOpenResult
+{
     Ok(i32[min max]),
     Err,
 }
 
 unsafe ffi fn i32[min max] native_open();
 
-public unsafe fn NativeOpenResult TryOpenNative() {
+public unsafe fn NativeOpenResult TryOpenNative()
+{
     stack i32[min max] handle = native_open();
-    if (handle < 0) {
+    if (handle < 0)
+    {
         return NativeOpenResult.Err;
     }
 

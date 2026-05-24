@@ -68,16 +68,22 @@ Moving an owned value consumes the old binding:
 ```stark
 module Demo
 
-struct Box {
+struct Box
+{
     i32[min max] Value;
 }
 
-fn void Consume(Box value) {
+fn void Consume(Box value)
+{
     return;
 }
 
-fn i32[min max] InvalidUseAfterMove() {
-    stack Box box = new Box() { Value = 1 };
+fn i32[min max] InvalidUseAfterMove()
+{
+    stack Box box = new Box()
+    {
+        Value = 1
+    };
     Consume(box);
 
     // Rejected: `box` was moved into `Consume`.
@@ -90,19 +96,28 @@ Reinitializing makes the binding usable again:
 ```stark
 module Demo
 
-struct Box {
+struct Box
+{
     i32[min max] Value;
 }
 
-fn void Consume(Box value) {
+fn void Consume(Box value)
+{
     return;
 }
 
-fn i32[min max] MoveThenReinitialize() {
-    stack mut Box box = new Box() { Value = 1 };
+fn i32[min max] MoveThenReinitialize()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 1
+    };
     Consume(box);
 
-    box = new Box() { Value = 2 };
+    box = new Box()
+    {
+        Value = 2
+    };
     return box.Value;
 }
 ```
@@ -112,7 +127,8 @@ Copyable scalars stay usable after assignment:
 ```stark
 module Demo
 
-finite law i32[min max] ScalarsCopy() {
+finite law i32[min max] ScalarsCopy()
+{
     stack i32[min max] left = 10;
     stack i32[min max] right = left;
     return left + right;
@@ -136,21 +152,28 @@ Use `borrow` for temporary access:
 ```stark
 module Demo
 
-struct Counter {
+struct Counter
+{
     i32[min max] Value;
 
-    finite law i32[min max] Current(borrow Counter self) {
+    finite law i32[min max] Current(borrow Counter self)
+    {
         return self.Value;
     }
 
-    finite void Add(mut borrow Counter self, i32[min max] amount) {
+    finite void Add(mut borrow Counter self, i32[min max] amount)
+    {
         self.Value += amount;
         return;
     }
 }
 
-fn i32[min max] Run() {
-    stack mut Counter counter = new Counter() { Value = 2 };
+fn i32[min max] Run()
+{
+    stack mut Counter counter = new Counter()
+    {
+        Value = 2
+    };
     counter.Add(3);
     return counter.Current();
 }
@@ -161,16 +184,22 @@ Use `retborrow` when a borrow is deliberately returned:
 ```stark
 module Demo
 
-struct Counter {
+struct Counter
+{
     i32[min max] Value;
 
-    finite retborrow mut i32[min max] Slot(mut borrow Counter self) {
+    finite retborrow mut i32[min max] Slot(mut borrow Counter self)
+    {
         return self.Value;
     }
 }
 
-fn i32[min max] Run() {
-    stack mut Counter counter = new Counter() { Value = 1 };
+fn i32[min max] Run()
+{
+    stack mut Counter counter = new Counter()
+    {
+        Value = 1
+    };
     counter.Slot() = 9;
     return counter.Value;
 }
@@ -181,11 +210,13 @@ A plain `borrow` return is rejected because the type says the borrow must not es
 ```stark
 module Demo
 
-struct Box {
+struct Box
+{
     i32[min max] Value;
 }
 
-fn borrow Box InvalidReturn(borrow Box box) {
+fn borrow Box InvalidReturn(borrow Box box)
+{
     // Rejected: use `retborrow Box` for a returned borrow.
     return box;
 }
@@ -241,7 +272,8 @@ module Demo
 
 unsafe ffi fn rawptr<i8[min max]> getenv(rawptr<i8[min max]> name);
 
-unsafe fn bool RawNullIsExplicit() {
+unsafe fn bool RawNullIsExplicit()
+{
     stack rawptr<i8[min max]> missing = null;
     return missing == null;
 }
@@ -252,7 +284,8 @@ The same value cannot be assigned to a safe borrow:
 ```stark
 module Demo
 
-fn void InvalidNullBorrow() {
+fn void InvalidNullBorrow()
+{
     // Rejected: safe borrows are never null.
     stack borrow i8[min max] value = null;
 }
@@ -285,15 +318,18 @@ Frozen access permits reads but rejects mutation through anything reachable:
 ```stark
 module Demo
 
-struct Box {
+struct Box
+{
     i32[min max] Value;
 }
 
-finite law i32[min max] ReadFrozen(frozen Box box) {
+finite law i32[min max] ReadFrozen(frozen Box box)
+{
     return box.Value;
 }
 
-fn void InvalidFrozenWrite(frozen Box box) {
+fn void InvalidFrozenWrite(frozen Box box)
+{
     // Rejected: `box` and everything reachable through it is readonly.
     box.Value = 3;
 }
@@ -322,14 +358,17 @@ An `out` parameter is a write destination:
 ```stark
 module Demo
 
-fn bool TryWrite(out i32[0 max] value) {
+fn bool TryWrite(out i32[0 max] value)
+{
     value = 7;
     return true;
 }
 
-fn i32[0 max] Run() {
+fn i32[0 max] Run()
+{
     stack mut i32[0 max] value = 0;
-    if (!TryWrite(value)) {
+    if (!TryWrite(value))
+    {
         return 0;
     }
 
@@ -391,19 +430,23 @@ The mapping:
 ```stark
 module Demo
 
-finite law i32[min max] Clamp(i32[min max] value, i32[min max] low, i32[min max] high) {
-    if (value < low) {
+finite law i32[min max] Clamp(i32[min max] value, i32[min max] low, i32[min max] high)
+{
+    if (value < low)
+    {
         return low;
     }
 
-    if (value > high) {
+    if (value > high)
+    {
         return high;
     }
 
     return value;
 }
 
-fn void PrintScore(i32[min max] score) {
+fn void PrintScore(i32[min max] score)
+{
     // Console and file IO belong in plain `fn`. They observe or modify the
     // outside world.
     return;
@@ -488,17 +531,20 @@ Rules:
 The relational forms adjust the default:
 
 ```stark
-fn void CopyDisjoint(borrow u8[] source, borrow mut u8[] destination) {
+fn void CopyDisjoint(borrow u8[] source, borrow mut u8[] destination)
+{
     return;
 }
 
 fn void MoveOverlapSafe(borrow u8[] source, borrow mut u8[] destination)
-    where overlap(source, destination) {
+    where overlap(source, destination)
+{
     return;
 }
 
 fn void RequireSame(borrow u8[] left, borrow u8[] right)
-    where same(left, right) {
+    where same(left, right)
+{
     return;
 }
 ```
@@ -516,7 +562,8 @@ fnptr<fn void(borrow u8[], borrow mut u8[]) where overlap(arg0, arg1)>
 The checked branch form scopes the same fact to the true branch:
 
 ```stark
-if disjoint(source, destination) {
+if disjoint(source, destination)
+{
     Copy(source, destination);
 }
 ```
@@ -526,7 +573,8 @@ The false branch receives no disjoint fact and must use overlap-safe code.
 An unsafe block by itself is not a non-overlap proof. When a low-level boundary has separation facts the compiler cannot prove, write a scoped assertion:
 
 ```stark
-unsafe assume disjoint(source, destination) {
+unsafe assume disjoint(source, destination)
+{
     Copy(source, destination);
 }
 ```
@@ -553,7 +601,8 @@ fn void Copy(
     i64[0 max] length,
     rawptr<i8[min max]>[length] source,
     rawmutptr<i8[min max]>[length] destination)
-    where disjoint(source[0, length], destination[0, length]) {
+    where disjoint(source[0, length], destination[0, length])
+{
     return;
 }
 ```
@@ -578,8 +627,10 @@ fn bool RangesDoNotOverlap(
     rawptr<i32[min max]>[count] left,
     rawptr<i32[min max]>[count] right,
     i32[0 max] start,
-    i32[0 max] count) {
-    if disjoint(left[start, count], right[0, count]) {
+    i32[0 max] count)
+{
+    if disjoint(left[start, count], right[0, count])
+    {
         return true;
     }
 
@@ -592,8 +643,10 @@ Inside the true branch, the listed raw pointer regions are known to be pairwise 
 Unsafe raw slice construction converts a bounded raw pointer region into an ordinary slice view:
 
 ```stark
-fn i32[min max] ReadFirst(rawptr<i32[min max]>[count] pointer, i32[0 max] count) {
-    unsafe {
+fn i32[min max] ReadFirst(rawptr<i32[min max]>[count] pointer, i32[0 max] count)
+{
+    unsafe
+    {
         stack i32[min max][] view = slice(pointer, count);
         return view[0];
     }
@@ -609,36 +662,45 @@ Common bounded raw pointer diagnostics:
 ```stark
 module Demo
 
-fn void NeedsData(rawptr<i32[min max]>[1] input) {
+fn void NeedsData(rawptr<i32[min max]>[1] input)
+{
     return;
 }
 
-fn void NullPositiveCount() {
+fn void NullPositiveCount()
+{
     NeedsData(null); // STK3029: positive bounded raw pointer regions cannot be null.
 }
 
-fn rawptr<i32[min max]> Identity(rawptr<i32[min max]> pointer) {
+fn rawptr<i32[min max]> Identity(rawptr<i32[min max]> pointer)
+{
     return pointer;
 }
 
-fn void HiddenRoot(rawptr<i32[min max]> pointer, i32[0 max] count) {
-    unsafe {
+fn void HiddenRoot(rawptr<i32[min max]> pointer, i32[0 max] count)
+{
+    unsafe
+    {
         stack i32[min max][] view = slice(Identity(pointer), count); // STK3029: hidden raw pointer root.
     }
 
     return;
 }
 
-fn void StrengthenMutability(rawptr<i32[min max]>[count] pointer, i32[0 max] count) {
-    unsafe {
+fn void StrengthenMutability(rawptr<i32[min max]>[count] pointer, i32[0 max] count)
+{
+    unsafe
+    {
         stack mut mut i32[min max][] view = slice(pointer, count); // STK3002: readonly raw provenance cannot create a mutable slice.
     }
 
     return;
 }
 
-fn void UnboundedIndependent(rawmutptr<i32[min max]> output, i32[0 max] count) {
-    for willexit independent (stack mut i32[0 max] index = 0; index < count; index += 1) {
+fn void UnboundedIndependent(rawmutptr<i32[min max]> output, i32[0 max] count)
+{
+    for willexit independent (stack mut i32[0 max] index = 0; index < count; index += 1)
+    {
         *(&output[index]) = 0; // STK3027: independent raw pointer loops need a bounded raw pointer region.
     }
 

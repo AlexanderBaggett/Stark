@@ -13,38 +13,44 @@ operations.
 import System.IO
 module System.FileSystem
 
-public enum FileSystemEntryKind {
+public enum FileSystemEntryKind
+{
     File,
     Directory,
     Symlink,
     Other,
 }
 
-public struct FileSystemEntry {
+public struct FileSystemEntry
+{
     System.Text.OwnedAscii Name;
     FileSystemEntryKind Kind;
 
     finite ascii NameView(mut borrow FileSystemEntry self);
 }
 
-public struct FileSystemEntryInfo {
+public struct FileSystemEntryInfo
+{
     u64[0 2 ** 63 - 1] NameLength;
     FileSystemEntryKind Kind;
 }
 
-public enum DirectoryReadResult {
+public enum DirectoryReadResult
+{
     Entry(FileSystemEntry),
     End,
     Err(System.IO.IOError),
 }
 
-public enum DirectoryReadInfoResult {
+public enum DirectoryReadInfoResult
+{
     Entry(FileSystemEntryInfo),
     End,
     Err(System.IO.IOError),
 }
 
-public struct Directory {
+public struct Directory
+{
     finite law bool IsOpen(borrow Directory self);
     fn DirectoryReadInfoResult ReadNextInfo(mut borrow Directory self);
     fn DirectoryReadResult ReadNext(mut borrow Directory self);
@@ -70,18 +76,22 @@ Directory listing should return owned Stark values, not raw OS directory
 entries.
 
 ```stark
-fn System.IO.IOStatus PrintEntries(ascii path) {
+fn System.IO.IOStatus PrintEntries(ascii path)
+{
     stack System.IO.IOResult<System.FileSystem.Directory> opened =
         System.FileSystem.OpenDirectory(path);
 
-    switch (opened) {
+    switch (opened)
+    {
         case System.IO.IOResult<System.FileSystem.Directory>.Err(var error):
             return System.IO.IOStatus.Err(error);
         case System.IO.IOResult<System.FileSystem.Directory>.Ok(var directory):
             stack mut System.FileSystem.Directory entries = directory;
-            while non-deterministic (true) {
+            while non-deterministic (true)
+            {
                 stack System.FileSystem.DirectoryReadResult next = entries.ReadNext();
-                switch (next) {
+                switch (next)
+                {
                     case System.FileSystem.DirectoryReadResult.End:
                         return entries.Close();
                     case System.FileSystem.DirectoryReadResult.Err(var error):

@@ -59,7 +59,8 @@ Now keep the return value. The write functions return
 and failure instead of ignoring IO:
 
 ```stark
-switch (WriteLine("Hello")) {
+switch (WriteLine("Hello"))
+{
     case IOStatus.Ok:
         return true;
     case IOStatus.Err(var error):
@@ -70,8 +71,10 @@ switch (WriteLine("Hello")) {
 Most command-line programs want a tiny helper for this:
 
 ```stark
-finite law bool StatusOk(IOStatus status) {
-    switch (status) {
+finite law bool StatusOk(IOStatus status)
+{
+    switch (status)
+    {
         case IOStatus.Ok:
             return true;
         case IOStatus.Err(var error):
@@ -98,7 +101,8 @@ literals and owned text values.
 When the text is owned, keep it mutable if the API asks for a mutable borrow:
 
 ```stark
-fn bool WriteOwned(mut borrow OwnedAscii text) {
+fn bool WriteOwned(mut borrow OwnedAscii text)
+{
     return StatusOk(WriteLine(text));
 }
 ```
@@ -106,13 +110,21 @@ fn bool WriteOwned(mut borrow OwnedAscii text) {
 When the program wants to write bytes, pass a byte slice:
 
 ```stark
-fn bool WriteBytes() {
-    stack i8[min max][3] bytes = { 65, 66, 67 };
+fn bool WriteBytes()
+{
+    stack i8[min max][3] bytes =
+    {
+        65, 66, 67
+    };
     return StatusOk(Write(bytes));
 }
 
-fn bool WriteErrorBytes() {
-    stack i8[min max][3] bytes = { 69, 82, 82 };
+fn bool WriteErrorBytes()
+{
+    stack i8[min max][3] bytes =
+    {
+        69, 82, 82
+    };
     return StatusOk(WriteError(bytes));
 }
 ```
@@ -131,10 +143,12 @@ The input helpers return `MemoryResult<T>`. That keeps allocation
 failure visible and gives the caller an owned text value on success:
 
 ```stark
-fn bool ReadCommand() {
+fn bool ReadCommand()
+{
     stack MemoryResult<OwnedAscii> result = ReadAsciiLine();
 
-    switch (result) {
+    switch (result)
+    {
         case MemoryResult<OwnedAscii>.Err(var error):
             return false;
         case MemoryResult<OwnedAscii>.Ok(var line):
@@ -165,10 +179,12 @@ Handle them with the same `switch` pattern before using `.View()` or `.Length()`
 Turn owned input into a text view only after the `Ok` branch:
 
 ```stark
-fn bool ReadNonEmptyAscii() {
+fn bool ReadNonEmptyAscii()
+{
     stack MemoryResult<OwnedAscii> result = ReadAsciiLine();
 
-    switch (result) {
+    switch (result)
+    {
         case MemoryResult<OwnedAscii>.Err(var error):
             return false;
         case MemoryResult<OwnedAscii>.Ok(var line):
@@ -185,11 +201,13 @@ Use the line helpers when the program wants text. Use `ReadBytes` when the
 program wants raw bytes from standard input:
 
 ```stark
-fn bool ReadSomeBytes() {
+fn bool ReadSomeBytes()
+{
     stack mut FixedByteBuffer512 buffer = new();
     stack MemoryResult<u64[0 2 ** 63 - 1]> result = ReadBytes(buffer, 128);
 
-    switch (result) {
+    switch (result)
+    {
         case MemoryResult<u64[0 2 ** 63 - 1]>.Err(var error):
             return false;
         case MemoryResult<u64[0 2 ** 63 - 1]>.Ok(var count):
@@ -210,7 +228,10 @@ Console output accepts byte slices and byte buffers. Use `WriteError` for an
 error byte slice, and `WriteErrorLine` when the error path already has a buffer:
 
 ```stark
-stack i8[min max][3] bytes = { 65, 66, 67 };
+stack i8[min max][3] bytes =
+{
+    65, 66, 67
+};
 Write(bytes);
 WriteError(bytes);
 
@@ -239,12 +260,15 @@ Stark-owned values, so ordinary application code should prefer returning from
 `main` when normal cleanup should run.
 
 ```stark
-export fn i32[min max] main() {
-    if (CurrentId() <= 0) {
+export fn i32[min max] main()
+{
+    if (CurrentId() <= 0)
+    {
         return 1;
     }
 
-    if (!StatusOk(WriteLine("done"))) {
+    if (!StatusOk(WriteLine("done")))
+    {
         return 2;
     }
 
@@ -256,7 +280,8 @@ Use `Exit` for process-fatal boundaries where skipping local cleanup is the
 intended behavior:
 
 ```stark
-fn void StopNow() {
+fn void StopNow()
+{
     WriteErrorLine("fatal");
     Exit(2);
 }
@@ -265,12 +290,15 @@ fn void StopNow() {
 For ordinary failure, prefer returning an exit code:
 
 ```stark
-export fn i32[min max] main() {
-    if (!StatusOk(WriteLine("starting"))) {
+export fn i32[min max] main()
+{
+    if (!StatusOk(WriteLine("starting")))
+    {
         return 1;
     }
 
-    if (CurrentId() <= 0) {
+    if (CurrentId() <= 0)
+    {
         return 2;
     }
 

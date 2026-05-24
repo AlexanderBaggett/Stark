@@ -35,8 +35,10 @@ Read the four ordinary source-level function kinds as the base contract:
 The keyword order is fixed:
 
 ```stark
-finite law i32[min max] ClampToZero(i32[min max] value) {
-    if (value < 0) {
+finite law i32[min max] ClampToZero(i32[min max] value)
+{
+    if (value < 0)
+    {
         return 0;
     }
 
@@ -49,19 +51,23 @@ Write `finite law`, not `law finite`.
 The four kinds look like this in complete declarations:
 
 ```stark
-fn i32[min max] General(i32[min max] value) {
+fn i32[min max] General(i32[min max] value)
+{
     return value;
 }
 
-finite i32[min max] AlwaysReturns(i32[min max] value) {
+finite i32[min max] AlwaysReturns(i32[min max] value)
+{
     return value;
 }
 
-law i32[min max] PureRead(i32[min max] value) {
+law i32[min max] PureRead(i32[min max] value)
+{
     return value;
 }
 
-finite law i32[min max] PureAndReturns(i32[min max] value) {
+finite law i32[min max] PureAndReturns(i32[min max] value)
+{
     return value;
 }
 ```
@@ -73,15 +79,18 @@ function. Chapter 15 covers visibility; this chapter focuses on behavior.
 Visibility goes before function modifiers:
 
 ```stark
-internal finite law i32[min max] PackageHelper(i32[min max] value) {
+internal finite law i32[min max] PackageHelper(i32[min max] value)
+{
     return value + 1;
 }
 
-public finite law i32[min max] PublicHelper(i32[min max] value) {
+public finite law i32[min max] PublicHelper(i32[min max] value)
+{
     return value + 1;
 }
 
-export fn i32[min max] main() {
+export fn i32[min max] main()
+{
     return 0;
 }
 ```
@@ -114,16 +123,19 @@ These examples show the usual choice:
 ```stark
 import System.IO
 
-finite law bool IsSmall(u8[0 max] value) {
+finite law bool IsSmall(u8[0 max] value)
+{
     return value < 10;
 }
 
-finite void Reset(mut borrow Counter counter) {
+finite void Reset(mut borrow Counter counter)
+{
     counter.Value = 0;
     return;
 }
 
-fn IOStatus WriteLine(ascii text) {
+fn IOStatus WriteLine(ascii text)
+{
     return System.Console.WriteLine(text);
 }
 ```
@@ -136,19 +148,23 @@ Use the smallest kind that honestly describes the body. Do not mark a function
 Use `inline`, `inlinehint`, and `noinline` for call-shape intent:
 
 ```stark
-inline finite law i32[min max] ClampToZero(i32[min max] value) {
-    if (value < 0) {
+inline finite law i32[min max] ClampToZero(i32[min max] value)
+{
+    if (value < 0)
+    {
         return 0;
     }
 
     return value;
 }
 
-inlinehint finite law i32[min max] AddBias(i32[min max] value) {
+inlinehint finite law i32[min max] AddBias(i32[min max] value)
+{
     return value + 1;
 }
 
-noinline cold fn i32[min max] RareFallback(i32[min max] value) {
+noinline cold fn i32[min max] RareFallback(i32[min max] value)
+{
     return value - 1;
 }
 ```
@@ -161,8 +177,10 @@ Only one of those three may appear on a function.
 Use `hot` and `cold` to mark expected hot and rare paths:
 
 ```stark
-hot fn i32[min max] Choose(bool useClamp, i32[min max] value) {
-    if (useClamp) {
+hot fn i32[min max] Choose(bool useClamp, i32[min max] value)
+{
+    if (useClamp)
+    {
         return ClampToZero(value);
     }
 
@@ -176,11 +194,13 @@ says the opposite. A function may not be both.
 Valid combinations are meant to read naturally:
 
 ```stark
-inline hot finite law i32[min max] HotTiny(i32[min max] value) {
+inline hot finite law i32[min max] HotTiny(i32[min max] value)
+{
     return value + 1;
 }
 
-noinline cold fn i32[min max] ColdPath(i32[min max] value) {
+noinline cold fn i32[min max] ColdPath(i32[min max] value)
+{
     return value - 1;
 }
 ```
@@ -223,7 +243,8 @@ contract.
 An unsafe Stark function body is different from an FFI declaration:
 
 ```stark
-unsafe fn i32[min max] ReadRaw(rawptr<i32[min max]> pointer) {
+unsafe fn i32[min max] ReadRaw(rawptr<i32[min max]> pointer)
+{
     return *pointer;
 }
 ```
@@ -237,7 +258,8 @@ Ordinary Stark floating point uses Stark's default fast math rules. Add
 `strictfp` when the function needs strict IEEE-style behavior instead:
 
 ```stark
-strictfp finite law f64 AddStrict(f64 left, f64 right) {
+strictfp finite law f64 AddStrict(f64 left, f64 right)
+{
     return left + right;
 }
 ```
@@ -251,13 +273,16 @@ chose strict reproducibility rules over the default fast-math model.
 means the function belongs to the type and does not receive `self`:
 
 ```stark
-struct ScoreMath {
-    static inline finite law i32[min max] Double(i32[min max] value) {
+struct ScoreMath
+{
+    static inline finite law i32[min max] Double(i32[min max] value)
+    {
         return value * 2;
     }
 }
 
-fn i32[min max] Run() {
+fn i32[min max] Run()
+{
     return ScoreMath.Double(6);
 }
 ```
@@ -269,14 +294,17 @@ parameter when the function reads or mutates one value.
 Instance members use `self`:
 
 ```stark
-struct Counter {
+struct Counter
+{
     i32[min max] Value;
 
-    finite law i32[min max] Read(borrow Counter self) {
+    finite law i32[min max] Read(borrow Counter self)
+    {
         return self.Value;
     }
 
-    finite void Add(mut borrow Counter self, i32[min max] amount) {
+    finite void Add(mut borrow Counter self, i32[min max] amount)
+    {
         self.Value += amount;
         return;
     }
@@ -294,12 +322,14 @@ that behavior visible.
 import System.Collections
 import System.Memory
 
-fn bool TryRead(out i32[min max] destination) {
+fn bool TryRead(out i32[min max] destination)
+{
     destination = 42;
     return true;
 }
 
-fn MemoryStatus Grow(mut borrow List<i32[min max]> values) {
+fn MemoryStatus Grow(mut borrow List<i32[min max]> values)
+{
     return values.Reserve(1);
 }
 ```

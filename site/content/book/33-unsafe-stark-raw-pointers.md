@@ -40,7 +40,8 @@ deliberately low-level.
 Use an `unsafe fn` when callers must uphold the contract:
 
 ```stark
-unsafe fn i32[min max] ReadAt(rawptr<i32[min max]> pointer) {
+unsafe fn i32[min max] ReadAt(rawptr<i32[min max]> pointer)
+{
     return *pointer;
 }
 ```
@@ -49,8 +50,10 @@ Use an `unsafe { ... }` block when one small operation inside a safe wrapper
 needs the audited boundary:
 
 ```stark
-fn i32[min max] ReadKnownAddress(i64[0 max] address) {
-    unsafe {
+fn i32[min max] ReadKnownAddress(i64[0 max] address)
+{
+    unsafe
+    {
         stack rawptr<i32[min max]> pointer = (rawptr<i32[min max]>)address;
         return *pointer;
     }
@@ -62,11 +65,13 @@ Keep the unsafe block as small as the operation that needs it.
 Raw pointer and integer conversions also belong in that small region:
 
 ```stark
-unsafe fn rawptr<i32[min max]> PointerFromAddress(i64[0 max] address) {
+unsafe fn rawptr<i32[min max]> PointerFromAddress(i64[0 max] address)
+{
     return (rawptr<i32[min max]>)address;
 }
 
-unsafe fn i64[0 max] AddressOf(rawptr<i32[min max]> pointer) {
+unsafe fn i64[0 max] AddressOf(rawptr<i32[min max]> pointer)
+{
     return (i64[0 max])pointer;
 }
 ```
@@ -90,7 +95,8 @@ For example, taking a raw address and dereferencing it both belong inside an
 unsafe boundary:
 
 ```stark
-unsafe fn i32[min max] ReadLocalThroughPointer() {
+unsafe fn i32[min max] ReadLocalThroughPointer()
+{
     stack mut i32[min max] value = 7;
     stack rawmutptr<i32[min max]> pointer = &value;
     return *pointer;
@@ -100,7 +106,8 @@ unsafe fn i32[min max] ReadLocalThroughPointer() {
 Prefer a safe borrow when the caller does not need raw pointer behavior:
 
 ```stark
-fn i32[min max] ReadThroughBorrow(borrow i32[min max] value) {
+fn i32[min max] ReadThroughBorrow(borrow i32[min max] value)
+{
     return value;
 }
 ```
@@ -125,12 +132,15 @@ fn void CopyBytes(
     i64[0 max] length,
     rawptr<i8[min max]>[length] source,
     rawmutptr<i8[min max]>[length] destination)
-    where disjoint(source[0, length], destination[0, length]) {
-    unsafe {
+    where disjoint(source[0, length], destination[0, length])
+{
+    unsafe
+    {
         stack i8[min max][] sourceView = slice(source, length);
         stack mut i8[min max][] destinationView = slice(destination, length);
 
-        for willexit independent (stack mut i64[0 max] index = 0; index < length; index += 1) {
+        for willexit independent (stack mut i64[0 max] index = 0; index < length; index += 1)
+        {
             destinationView[index] = sourceView[index];
         }
     }
@@ -144,11 +154,13 @@ Use `rawptr<T>` for read-only raw access and `rawmutptr<T>` for mutable raw
 access:
 
 ```stark
-unsafe fn i32[min max] ReadOnly(rawptr<i32[min max]> pointer) {
+unsafe fn i32[min max] ReadOnly(rawptr<i32[min max]> pointer)
+{
     return *pointer;
 }
 
-unsafe fn void WriteOne(rawmutptr<i32[min max]> pointer) {
+unsafe fn void WriteOne(rawmutptr<i32[min max]> pointer)
+{
     *pointer = 1;
     return;
 }
@@ -165,7 +177,8 @@ low-level boundary has already checked or guaranteed separation, write a scoped
 assertion:
 
 ```stark
-unsafe assume disjoint(source[0, count], destination[0, count]) {
+unsafe assume disjoint(source[0, count], destination[0, count])
+{
     CopyFast(source, destination);
 }
 ```
@@ -174,7 +187,8 @@ Inside an `unsafe fn` or an existing `unsafe { ... }` block, the leading
 `unsafe` is optional:
 
 ```stark
-assume disjoint(source[0, count], destination[0, count]) {
+assume disjoint(source[0, count], destination[0, count])
+{
     CopyFast(source, destination);
 }
 ```
@@ -193,7 +207,8 @@ Check `null` while the value is still raw:
 ```stark
 unsafe ffi fn rawptr<i8[min max]> platform_message();
 
-unsafe fn bool HasMessage() {
+unsafe fn bool HasMessage()
+{
     stack rawptr<i8[min max]> pointer = platform_message();
     return pointer != null;
 }
@@ -203,16 +218,19 @@ Do not assign `null` to a safe borrow or safe value. Convert raw platform
 results into a Stark result enum before publishing them to ordinary callers.
 
 ```stark
-public enum MessageStatus {
+public enum MessageStatus
+{
     Missing,
     Present,
 }
 
 unsafe ffi fn rawptr<i8[min max]> platform_message();
 
-public unsafe fn MessageStatus CheckMessage() {
+public unsafe fn MessageStatus CheckMessage()
+{
     stack rawptr<i8[min max]> pointer = platform_message();
-    if (pointer == null) {
+    if (pointer == null)
+    {
         return MessageStatus.Missing;
     }
 
@@ -232,17 +250,20 @@ For native calls that return both a status and an output value, convert the
 pair into a Stark enum:
 
 ```stark
-public enum ReadNumberResult {
+public enum ReadNumberResult
+{
     Err,
     Ok(i32[min max] Value),
 }
 
 unsafe ffi fn i32[min max] platform_read_number(rawmutptr<i32[min max]> value);
 
-public unsafe fn ReadNumberResult ReadNumber() {
+public unsafe fn ReadNumberResult ReadNumber()
+{
     stack mut i32[min max] value = 0;
     stack i32[min max] status = platform_read_number(&value);
-    if (status != 0) {
+    if (status != 0)
+    {
         return ReadNumberResult.Err;
     }
 
@@ -263,13 +284,15 @@ When registering a platform callback, keep unsafe erasure at the registration
 site:
 
 ```stark
-unsafe fn i32[min max] CallbackEntry() {
+unsafe fn i32[min max] CallbackEntry()
+{
     return 0;
 }
 
 unsafe ffi fn void register_callback(fnptr<fn i32[min max]()> callback);
 
-unsafe fn void RegisterCallback() {
+unsafe fn void RegisterCallback()
+{
     register_callback(CallbackEntry);
     return;
 }
@@ -284,7 +307,8 @@ the form the C side expects:
 ```stark
 public unsafe ffi varargs fn i32[min max] printf(ascii format);
 
-unsafe fn i32[min max] PrintScore(i32[min max] score) {
+unsafe fn i32[min max] PrintScore(i32[min max] score)
+{
     return printf("Score: %d\n", score);
 }
 ```

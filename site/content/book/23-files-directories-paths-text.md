@@ -68,8 +68,10 @@ These are ordinary Stark enums. Use `switch` at the call site before adding more
 filesystem behavior; it keeps the happy path and cleanup path visible.
 
 ```stark
-fn bool StatusOk(IOStatus status) {
-    switch (status) {
+fn bool StatusOk(IOStatus status)
+{
+    switch (status)
+    {
         case IOStatus.Ok:
             return true;
         case IOStatus.Err(var error):
@@ -82,8 +84,10 @@ The shared error cases are the names you will usually branch on when a command
 can recover:
 
 ```stark
-fn bool CanCreateMissingParent(IOError error) {
-    switch (error) {
+fn bool CanCreateMissingParent(IOError error)
+{
+    switch (error)
+    {
         case IOError.NotFound:
             return true;
         case IOError.PermissionDenied:
@@ -110,12 +114,14 @@ fn bool CanCreateMissingParent(IOError error) {
 stack IOResult<File> opened =
     Open(path, FileMode.Write);
 
-switch (opened) {
+switch (opened)
+{
     case IOResult<File>.Err(var error):
         return false;
     case IOResult<File>.Ok(var value):
         stack mut File file = value;
-        if (!StatusOk(file.WriteLine("marker"))) {
+        if (!StatusOk(file.WriteLine("marker")))
+        {
             return false;
         }
 
@@ -158,7 +164,10 @@ Open("utf16.txt", FileMode.Write, Encoding.UTF16, FileBuffering.Full);
 Use byte slices for binary IO:
 
 ```stark
-stack mut i8[min max][4] buffer = { 1, 2, 3, 4 };
+stack mut i8[min max][4] buffer =
+{
+    1, 2, 3, 4
+};
 stack IOResult<u64[0 2 ** 63 - 1]> written = file.Write(buffer);
 stack IOResult<u64[0 2 ** 63 - 1]> read = file.Read(buffer);
 ```
@@ -168,9 +177,11 @@ Most examples become easier to read with a small byte-count helper:
 ```stark
 fn bool ByteCountIs(
     IOResult<u64[0 2 ** 63 - 1]> result,
-    u64[0 2 ** 63 - 1] expected) {
-        switch (result) {
-            case IOResult<u64[0 2 ** 63 - 1]>.Err(var error):
+    u64[0 2 ** 63 - 1] expected)
+{
+    switch (result)
+    {
+        case IOResult<u64[0 2 ** 63 - 1]>.Err(var error):
                 return false;
             case IOResult<u64[0 2 ** 63 - 1]>.Ok(var count):
                 return count == expected;
@@ -181,13 +192,21 @@ fn bool ByteCountIs(
 For a small binary round trip, open for writing, close, then open for reading:
 
 ```stark
-fn bool WriteThenRead(ascii path) {
-    stack i8[min max][4] source = { 1, 2, 3, 4 };
-    stack mut i8[min max][4] destination = { 0, 0, 0, 0 };
+fn bool WriteThenRead(ascii path)
+{
+    stack i8[min max][4] source =
+    {
+        1, 2, 3, 4
+    };
+    stack mut i8[min max][4] destination =
+    {
+        0, 0, 0, 0
+    };
 
     stack mut File output =
         OpenOrEmpty(Open(path, FileMode.Write));
-    if (!ByteCountIs(output.Write(source), 4)) {
+    if (!ByteCountIs(output.Write(source), 4))
+    {
         output.Close();
         return false;
     }
@@ -196,12 +215,14 @@ fn bool WriteThenRead(ascii path) {
 
     stack mut File input =
         OpenOrEmpty(Open(path, FileMode.Read));
-    if (!ByteCountIs(input.Seek(0, SeekOrigin.Begin), 0)) {
+    if (!ByteCountIs(input.Seek(0, SeekOrigin.Begin), 0))
+    {
         input.Close();
         return false;
     }
 
-    if (!ByteCountIs(input.Read(destination), 4)) {
+    if (!ByteCountIs(input.Read(destination), 4))
+    {
         input.Close();
         return false;
     }
@@ -214,7 +235,8 @@ fn bool WriteThenRead(ascii path) {
 Switch on byte counts when the count matters:
 
 ```stark
-switch (written) {
+switch (written)
+{
     case IOResult<u64[0 2 ** 63 - 1]>.Err(var error):
         return false;
     case IOResult<u64[0 2 ** 63 - 1]>.Ok(var count):
@@ -226,7 +248,8 @@ Use `Flush` for buffered Stark writes and `SyncAll` when the program needs a
 durable-storage boundary:
 
 ```stark
-if (!StatusOk(file.Flush())) {
+if (!StatusOk(file.Flush()))
+{
     return false;
 }
 
@@ -298,14 +321,17 @@ ordinary code to manage raw OS directory buffers.
 stack IOResult<Directory> opened =
     OpenDirectory(".");
 
-switch (opened) {
+switch (opened)
+{
     case IOResult<Directory>.Err(var error):
         return false;
     case IOResult<Directory>.Ok(var directory):
         stack mut Directory entries = directory;
-        while non-deterministic (true) {
+        while non-deterministic (true)
+        {
             stack DirectoryReadResult next = entries.ReadNext();
-            switch (next) {
+            switch (next)
+            {
                 case DirectoryReadResult.End:
                     return StatusOk(entries.Close());
                 case DirectoryReadResult.Err(var error):
@@ -322,7 +348,8 @@ switch (opened) {
 Each directory entry has a name and a kind:
 
 ```stark
-fn bool IsVisibleFile(mut borrow FileSystemEntry entry) {
+fn bool IsVisibleFile(mut borrow FileSystemEntry entry)
+{
     return entry.Kind == FileSystemEntryKind.File
         && entry.NameView() != ".";
 }
@@ -332,9 +359,11 @@ Use `ReadNextInfo()` when the program needs the entry kind but not an owned copy
 of the entry name:
 
 ```stark
-fn bool DirectoryHasAnyEntryInfo(mut borrow Directory directory) {
+fn bool DirectoryHasAnyEntryInfo(mut borrow Directory directory)
+{
     stack DirectoryReadInfoResult next = directory.ReadNextInfo();
-    switch (next) {
+    switch (next)
+    {
         case DirectoryReadInfoResult.End:
             return false;
         case DirectoryReadInfoResult.Err(var error):
@@ -365,9 +394,11 @@ operation is about the filesystem entry rather than a file handle.
 The path-level helpers return the same status/result families:
 
 ```stark
-fn bool EnsureDirectory(ascii path) {
+fn bool EnsureDirectory(ascii path)
+{
     stack IOStatus created = CreateDirectory(path);
-    switch (created) {
+    switch (created)
+    {
         case IOStatus.Ok:
             return true;
         case IOStatus.Err(var error):
@@ -377,9 +408,11 @@ fn bool EnsureDirectory(ascii path) {
 ```
 
 ```stark
-fn bool PathIsFile(ascii path) {
+fn bool PathIsFile(ascii path)
+{
     stack IOResult<bool> result = IsFile(path);
-    switch (result) {
+    switch (result)
+    {
         case IOResult<bool>.Err(var error):
             return false;
         case IOResult<bool>.Ok(var value):
@@ -423,12 +456,14 @@ should choose the destination capacity.
 
 ```stark
 stack mut OwnedAscii current = new();
-if (CurrentDirectory(current) != MemoryStatus.Ok) {
+if (CurrentDirectory(current) != MemoryStatus.Ok)
+{
     return false;
 }
 
 stack mut OwnedAscii joined = new();
-if (TryJoin(joined, current.View(), "output.txt") != MemoryStatus.Ok) {
+if (TryJoin(joined, current.View(), "output.txt") != MemoryStatus.Ok)
+{
     return false;
 }
 
@@ -439,7 +474,8 @@ Use the allocation-returning form when the function should return owned path
 text:
 
 ```stark
-fn MemoryResult<OwnedAscii> BuildOutputPath(ascii directory) {
+fn MemoryResult<OwnedAscii> BuildOutputPath(ascii directory)
+{
     return Join(directory, "output.txt");
 }
 ```
@@ -447,11 +483,13 @@ fn MemoryResult<OwnedAscii> BuildOutputPath(ascii directory) {
 There is also an allocation-returning current-directory form:
 
 ```stark
-fn bool HasCurrentDirectory() {
+fn bool HasCurrentDirectory()
+{
     stack MemoryResult<OwnedAscii> result =
         CurrentDirectory();
 
-    switch (result) {
+    switch (result)
+    {
         case MemoryResult<OwnedAscii>.Err(var error):
             return false;
         case MemoryResult<OwnedAscii>.Ok(var value):
@@ -464,14 +502,16 @@ fn bool HasCurrentDirectory() {
 Use `TryJoinConst` or `JoinConst` when both pieces are literal path text:
 
 ```stark
-fn bool BuildConstPath(mut borrow OwnedAscii destination) {
+fn bool BuildConstPath(mut borrow OwnedAscii destination)
+{
     return TryJoinConst(destination, "samples", "main.stark")
         == MemoryStatus.Ok;
 }
 ```
 
 ```stark
-fn MemoryResult<OwnedAscii> BuildConstPath() {
+fn MemoryResult<OwnedAscii> BuildConstPath()
+{
     return JoinConst("samples", "main.stark");
 }
 ```
@@ -479,7 +519,8 @@ fn MemoryResult<OwnedAscii> BuildConstPath() {
 Use separator normalization when path text may contain the alternate separator:
 
 ```stark
-fn MemoryResult<OwnedAscii> CleanPath(ascii path) {
+fn MemoryResult<OwnedAscii> CleanPath(ascii path)
+{
     return NormalizeSeparators(path);
 }
 ```
@@ -487,7 +528,8 @@ fn MemoryResult<OwnedAscii> CleanPath(ascii path) {
 Use the caller-owned form when the caller already owns the destination buffer:
 
 ```stark
-fn bool CleanInto(mut borrow OwnedAscii destination, ascii path) {
+fn bool CleanInto(mut borrow OwnedAscii destination, ascii path)
+{
     return TryNormalizeSeparators(destination, path)
         == MemoryStatus.Ok;
 }
@@ -496,7 +538,8 @@ fn bool CleanInto(mut borrow OwnedAscii destination, ascii path) {
 The constant forms are for literal paths:
 
 ```stark
-fn MemoryResult<OwnedAscii> CleanConstPath() {
+fn MemoryResult<OwnedAscii> CleanConstPath()
+{
     return NormalizeSeparatorsConst("samples\\main.stark");
 }
 ```
@@ -504,7 +547,8 @@ fn MemoryResult<OwnedAscii> CleanConstPath() {
 Use `TryNormalizeSeparatorsConst` when the caller already owns the destination:
 
 ```stark
-fn bool CleanConstInto(mut borrow OwnedAscii destination) {
+fn bool CleanConstInto(mut borrow OwnedAscii destination)
+{
     return TryNormalizeSeparatorsConst(destination, "samples/main.stark")
         == MemoryStatus.Ok;
 }
@@ -521,7 +565,8 @@ stack ascii directory = DirectoryName("logs/app.txt");
 When you need several pieces of the same path, compute them together:
 
 ```stark
-fn bool IsStarkFile(ascii path) {
+fn bool IsStarkFile(ascii path)
+{
     stack PathFacts facts = GetFacts(path);
     return facts.Extension() == ".stark" && facts.BaseNameLength() > 0;
 }
@@ -530,7 +575,8 @@ fn bool IsStarkFile(ascii path) {
 The constant forms are useful for literal paths:
 
 ```stark
-finite law ascii SampleExtension() {
+finite law ascii SampleExtension()
+{
     return ExtensionConst("samples/main.stark");
 }
 ```
@@ -539,7 +585,8 @@ When several facts are needed from the same literal path, use
 `GetConstFacts`:
 
 ```stark
-finite law bool ConstSampleLooksLikeStarkSource() {
+finite law bool ConstSampleLooksLikeStarkSource()
+{
     stack PathFacts facts =
         GetConstFacts("samples/main.stark");
 

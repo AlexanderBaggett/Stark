@@ -48,7 +48,8 @@ Do not mix widths accidentally. Convert at the point where the program changes
 precision:
 
 ```stark
-fn f64 PromoteAndRoot(f32 value) {
+fn f64 PromoteAndRoot(f32 value)
+{
     return Sqrt((f64)value);
 }
 ```
@@ -56,11 +57,13 @@ fn f64 PromoteAndRoot(f32 value) {
 The return type follows the input width:
 
 ```stark
-fn f32 UnitLengthF32(f32 x, f32 y) {
+fn f32 UnitLengthF32(f32 x, f32 y)
+{
     return Sqrt(x * x + y * y);
 }
 
-fn f64 UnitLengthF64(f64 x, f64 y) {
+fn f64 UnitLengthF64(f64 x, f64 y)
+{
     return Sqrt(x * x + y * y);
 }
 ```
@@ -71,7 +74,8 @@ fn f64 UnitLengthF64(f64 x, f64 y) {
 programs reach for first:
 
 ```stark
-fn f64 ClampDistance(f64 x, f64 y, f64 limit) {
+fn f64 ClampDistance(f64 x, f64 y, f64 limit)
+{
     stack f64 distance = Sqrt(x * x + y * y);
     return Min(distance, limit);
 }
@@ -80,7 +84,8 @@ fn f64 ClampDistance(f64 x, f64 y, f64 limit) {
 Use `Pow` when the exponent is part of the value-level calculation:
 
 ```stark
-fn f64 AreaFromRadius(f64 radius) {
+fn f64 AreaFromRadius(f64 radius)
+{
     return 3.141592653589793 * Pow(radius, 2.0);
 }
 ```
@@ -97,7 +102,8 @@ stack f64 nearest = Round(3.5);
 `Min` and `Max` make bounds readable:
 
 ```stark
-fn f32 Clamp01(f32 value) {
+fn f32 Clamp01(f32 value)
+{
     return Max((f32)0.0, Min(value, (f32)1.0));
 }
 ```
@@ -107,11 +113,13 @@ fn f32 Clamp01(f32 value) {
 Use `Sin` and `Cos` directly when the program needs one result:
 
 ```stark
-fn f64 VerticalOffset(f64 angle, f64 radius) {
+fn f64 VerticalOffset(f64 angle, f64 radius)
+{
     return Sin(angle) * radius;
 }
 
-fn f64 HorizontalOffset(f64 angle, f64 radius) {
+fn f64 HorizontalOffset(f64 angle, f64 radius)
+{
     return Cos(angle) * radius;
 }
 ```
@@ -120,12 +128,14 @@ When a calculation needs both sine and cosine of the same angle, call `SinCos`
 once and read the named fields:
 
 ```stark
-fn f64 RotatedX(f64 x, f64 y, f64 angle) {
+fn f64 RotatedX(f64 x, f64 y, f64 angle)
+{
     stack SinCosF64 pair = SinCos(angle);
     return x * pair.Cos - y * pair.Sin;
 }
 
-fn f64 RotatedY(f64 x, f64 y, f64 angle) {
+fn f64 RotatedY(f64 x, f64 y, f64 angle)
+{
     stack SinCosF64 pair = SinCos(angle);
     return x * pair.Sin + y * pair.Cos;
 }
@@ -148,7 +158,8 @@ Teach and read this as a convenience: `Sin` and `Cos` are the basic operations;
 operation in your source:
 
 ```stark
-fn f64 Linear(f64 scale, f64 value, f64 offset) {
+fn f64 Linear(f64 scale, f64 value, f64 offset)
+{
     return FusedMultiplyAdd(scale, value, offset);
 }
 ```
@@ -157,7 +168,8 @@ Use it for polynomial steps, dot-product pieces, interpolation, and other
 places where the source idea really is "multiply, then add":
 
 ```stark
-fn f32 Lerp(f32 start, f32 end, f32 t) {
+fn f32 Lerp(f32 start, f32 end, f32 t)
+{
     return FusedMultiplyAdd(end - start, t, start);
 }
 ```
@@ -188,7 +200,8 @@ stack mut XorShift32 random = XorShift32.Seeded(12345);
 Use an explicit seed when reproducibility matters:
 
 ```stark
-fn u32[0 max] FirstRoll(u32[0 max] seed) {
+fn u32[0 max] FirstRoll(u32[0 max] seed)
+{
     stack mut XorShift32 random = XorShift32.Seeded(seed);
     return random.NextU32();
 }
@@ -206,7 +219,8 @@ stack f32 unit = random.NextF32();
 usual input shape for sampling:
 
 ```stark
-fn f32 RandomBetween(mut borrow XorShift32 random, f32 low, f32 high) {
+fn f32 RandomBetween(mut borrow XorShift32 random, f32 low, f32 high)
+{
     return low + (high - low) * random.NextF32();
 }
 ```

@@ -42,7 +42,8 @@ write. Examples:
 import System
 module App
 
-export fn i32[min max] main() {
+export fn i32[min max] main()
+{
     return 0;
 }
 ```
@@ -52,7 +53,8 @@ Imports come before `module`, and the function body uses braces.
 For a type diagnostic, ask what type the left side promised:
 
 ```stark
-fn i32[min max] UseWholeRange() {
+fn i32[min max] UseWholeRange()
+{
     stack i32[min max] value = 10;
     return value;
 }
@@ -62,7 +64,8 @@ For a range diagnostic, put the accepted value range directly on the parameter
 or local:
 
 ```stark
-finite law u8[0 100] Percent(u8[0 100] value) {
+finite law u8[0 100] Percent(u8[0 100] value)
+{
     return value;
 }
 ```
@@ -80,12 +83,17 @@ The fix is to reinitialize the binding or change the callee to borrow instead
 of taking ownership.
 
 ```stark
-fn void Inspect(borrow Box value) {
+fn void Inspect(borrow Box value)
+{
     return;
 }
 
-fn i32[min max] ReadAfterBorrow() {
-    stack Box box = new Box() { Value = 1 };
+fn i32[min max] ReadAfterBorrow()
+{
+    stack Box box = new Box()
+    {
+        Value = 1
+    };
     Inspect(box);
     return box.Value;
 }
@@ -94,14 +102,22 @@ fn i32[min max] ReadAfterBorrow() {
 When the callee truly needs ownership, reinitialize before reading again:
 
 ```stark
-fn void Consume(Box value) {
+fn void Consume(Box value)
+{
     return;
 }
 
-fn i32[min max] MoveThenReplace() {
-    stack mut Box box = new Box() { Value = 1 };
+fn i32[min max] MoveThenReplace()
+{
+    stack mut Box box = new Box()
+    {
+        Value = 1
+    };
     Consume(box);
-    box = new Box() { Value = 2 };
+    box = new Box()
+    {
+        Value = 2
+    };
     return box.Value;
 }
 ```
@@ -117,7 +133,8 @@ important. Stark is not asking for a hidden lifetime annotation; it is asking
 whether the API really returns a borrow or stores one somewhere longer-lived.
 
 ```stark
-fn retborrow Box ReturnBorrow(retborrow Box box) {
+fn retborrow Box ReturnBorrow(retborrow Box box)
+{
     return box;
 }
 ```
@@ -128,7 +145,8 @@ and a stored-borrow form only when the API truly stores it.
 If the function only needs to read the value, do not return a borrow at all:
 
 ```stark
-fn i32[min max] ReadValue(borrow Box box) {
+fn i32[min max] ReadValue(borrow Box box)
+{
     return box.Value;
 }
 ```
@@ -143,7 +161,10 @@ The diagnostic points at the initializer and explains that array initializers
 need a fixed-size array target. The fix is to create backing storage first:
 
 ```stark
-stack i32[min max][3] values = { 1, 2, 3 };
+stack i32[min max][3] values =
+{
+    1, 2, 3
+};
 stack i32[min max][] view = values;
 ```
 
@@ -167,7 +188,8 @@ The fix is not to hope the value is small. Put the small range on the input or
 check before converting:
 
 ```stark
-finite law i32[0 10] KeepSmall(i32[0 10] value) {
+finite law i32[0 10] KeepSmall(i32[0 10] value)
+{
     return value;
 }
 ```
@@ -176,8 +198,10 @@ When a value is accepted from a wider range, narrow it only after the source
 condition is visible:
 
 ```stark
-fn bool TryKeepSmall(i32[min max] value, out i32[0 10] destination) {
-    if (value < 0 || value > 10) {
+fn bool TryKeepSmall(i32[min max] value, out i32[0 10] destination)
+{
+    if (value < 0 || value > 10)
+    {
         return false;
     }
 
@@ -196,11 +220,13 @@ The fix depends on what the helper really does. If it is pure and always
 returns, mark the helper with the stronger kind:
 
 ```stark
-finite law i32[min max] AddOne(i32[min max] value) {
+finite law i32[min max] AddOne(i32[min max] value)
+{
     return value + 1;
 }
 
-finite law i32[min max] UseAddOne(i32[min max] value) {
+finite law i32[min max] UseAddOne(i32[min max] value)
+{
     return AddOne(value);
 }
 ```
@@ -219,15 +245,18 @@ The fix is to either weaken the expected callable type or strengthen the
 function declaration when the body honestly satisfies it:
 
 ```stark
-finite law i32[min max] Clamp(i32[min max] value) {
-    if (value < 0) {
+finite law i32[min max] Clamp(i32[min max] value)
+{
+    if (value < 0)
+    {
         return 0;
     }
 
     return value;
 }
 
-fn i32[min max] UseClamp() {
+fn i32[min max] UseClamp()
+{
     stack fnptr<finite law i32[min max](i32[min max])> op = Clamp;
     return op(4);
 }

@@ -116,7 +116,10 @@ stack MemoryStatus status = buffer.WriteByte(65);
 Use `WriteSlice(source, count)` when the source bytes are already in a slice:
 
 ```stark
-stack i8[min max][3] source = { 65, 66, 67 };
+stack i8[min max][3] source =
+{
+    65, 66, 67
+};
 stack MemoryStatus status = buffer.WriteSlice(source, 3);
 ```
 
@@ -136,7 +139,8 @@ Use `ReadMutableSlice()` only when the caller should edit readable bytes in
 place:
 
 ```stark
-fn void ReplaceFirst(mut borrow i8[min max][] readableBytes) {
+fn void ReplaceFirst(mut borrow i8[min max][] readableBytes)
+{
     readableBytes[0] = 42;
     return;
 }
@@ -161,7 +165,8 @@ it. After the helper writes bytes into that slice, call `AdvanceWrite(count)` so
 the buffer knows those bytes are now readable:
 
 ```stark
-fn void FillPrefix(mut borrow i8[min max][] destination) {
+fn void FillPrefix(mut borrow i8[min max][] destination)
+{
     destination[0] = 65;
     destination[1] = 66;
     return;
@@ -219,7 +224,10 @@ stack MemoryStatus reserved = bytes.Reserve(1024);
 Then write byte data the same way:
 
 ```stark
-stack i8[min max][3] source = { 65, 66, 67 };
+stack i8[min max][3] source =
+{
+    65, 66, 67
+};
 bytes.WriteByte(65);
 bytes.WriteSlice(source, 3);
 bytes.WriteFill(0, 3);
@@ -229,7 +237,8 @@ Use `TryReadByte` when consuming one byte at a time:
 
 ```stark
 stack mut i8[min max] value = 0;
-if (bytes.TryReadByte(value)) {
+if (bytes.TryReadByte(value))
+{
     WriteLine("had a byte");
 }
 ```

@@ -49,12 +49,14 @@ are separate promises.
 Both `struct` and `record` are ordinary named data forms:
 
 ```stark
-public struct Rectangle {
+public struct Rectangle
+{
     i32[min max] Width;
     i32[min max] Height;
 }
 
-public record Point {
+public record Point
+{
     i32[min max] X;
     i32[min max] Y;
 }
@@ -65,11 +67,13 @@ Use a `record` when the type is mainly a simple value bundle. Both forms are
 accessed through fields:
 
 ```stark
-finite law i32[min max] RectangleArea(Rectangle rectangle) {
+finite law i32[min max] RectangleArea(Rectangle rectangle)
+{
     return rectangle.Width * rectangle.Height;
 }
 
-finite law i32[min max] Manhattan(Point point) {
+finite law i32[min max] Manhattan(Point point)
+{
     return point.X + point.Y;
 }
 ```
@@ -77,8 +81,12 @@ finite law i32[min max] Manhattan(Point point) {
 Fixed arrays own their elements. Slices view backing storage created elsewhere:
 
 ```stark
-fn i32[min max] ReadFirst() {
-    stack i32[min max][3] values = { 10, 20, 30 };
+fn i32[min max] ReadFirst()
+{
+    stack i32[min max][3] values =
+    {
+        10, 20, 30
+    };
     stack i32[min max][] view = values;
     return view[0];
 }
@@ -91,12 +99,15 @@ borrow or slice it where a view is enough.
 Use `dynamic T` when the object owns a growable buffer:
 
 ```stark
-struct IntBuffer {
+struct IntBuffer
+{
     dynamic i32[min max] Items;
 }
 
-fn bool Push(mut borrow IntBuffer buffer, i32[min max] value) {
-    if (!buffer.Items.TryReserve(1)) {
+fn bool Push(mut borrow IntBuffer buffer, i32[min max] value)
+{
+    if (!buffer.Items.TryReserve(1))
+    {
         return false;
     }
 
@@ -108,13 +119,16 @@ fn bool Push(mut borrow IntBuffer buffer, i32[min max] value) {
 Use an enum when the value has a small set of named cases:
 
 ```stark
-public enum ShapeKind {
+public enum ShapeKind
+{
     Point,
     Rectangle,
 }
 
-finite law i32[min max] ShapeTag(ShapeKind kind) {
-    switch (kind) {
+finite law i32[min max] ShapeTag(ShapeKind kind)
+{
+    switch (kind)
+    {
         case ShapeKind.Point:
             return 1;
         case ShapeKind.Rectangle:
@@ -134,12 +148,14 @@ the source API, not on private field order choices that were only meant for the
 package internals.
 
 ```stark
-public struct Rectangle {
+public struct Rectangle
+{
     i32[min max] Width;
     i32[min max] Height;
 }
 
-internal struct NativeRectangle {
+internal struct NativeRectangle
+{
     f32 X;
     f32 Y;
     f32 Width;
@@ -153,8 +169,10 @@ because the native boundary wants that exact shape.
 Keep the conversion explicit and close to the boundary:
 
 ```stark
-internal finite law NativeRectangle ToNative(Rectangle rectangle) {
-    return new NativeRectangle() {
+internal finite law NativeRectangle ToNative(Rectangle rectangle)
+{
+    return new NativeRectangle()
+    {
         X = 0.0f,
         Y = 0.0f,
         Width = (f32)rectangle.Width,
@@ -178,11 +196,13 @@ Use `export` when the declaration is truly a binary boundary: an entrypoint,
 plugin hook, runtime hook, or FFI-facing function.
 
 ```stark
-public finite law i32[min max] Area(Rectangle rectangle) {
+public finite law i32[min max] Area(Rectangle rectangle)
+{
     return rectangle.Width * rectangle.Height;
 }
 
-export fn i32[min max] main() {
+export fn i32[min max] main()
+{
     return 0;
 }
 ```
@@ -193,15 +213,18 @@ hosted executable entrypoint.
 An exported function can still call ordinary public helpers:
 
 ```stark
-public finite law i32[min max] ExitCode(bool ok) {
-    if (ok) {
+public finite law i32[min max] ExitCode(bool ok)
+{
+    if (ok)
+    {
         return 0;
     }
 
     return 1;
 }
 
-export fn i32[min max] main() {
+export fn i32[min max] main()
+{
     return ExitCode(true);
 }
 ```
@@ -228,15 +251,18 @@ rather than assuming an ordinary internal type should double as an ABI type.
 ```stark
 unsafe ffi fn void native_draw_rectangle(rawptr<NativeRectangle> rectangle);
 
-fn void Draw(Rectangle rectangle) {
-    stack NativeRectangle native = new() {
+fn void Draw(Rectangle rectangle)
+{
+    stack NativeRectangle native = new()
+    {
         X = 0.0f,
         Y = 0.0f,
         Width = (f32)rectangle.Width,
         Height = (f32)rectangle.Height
     };
 
-    unsafe {
+    unsafe
+    {
         native_draw_rectangle(&native);
     }
 
@@ -250,13 +276,16 @@ edge. Raw pointers stay inside the wrapper.
 For enum-like data, cross the boundary with an explicit tag shape:
 
 ```stark
-public enum DrawMode {
+public enum DrawMode
+{
     Lines,
     Filled,
 }
 
-internal finite law i32[min max] DrawModeTag(DrawMode mode) {
-    switch (mode) {
+internal finite law i32[min max] DrawModeTag(DrawMode mode)
+{
+    switch (mode)
+    {
         case DrawMode.Lines:
             return 1;
         case DrawMode.Filled:
@@ -266,7 +295,8 @@ internal finite law i32[min max] DrawModeTag(DrawMode mode) {
 
 unsafe ffi fn void native_set_draw_mode(i32[min max] mode);
 
-public unsafe fn void SetDrawMode(DrawMode mode) {
+public unsafe fn void SetDrawMode(DrawMode mode)
+{
     native_set_draw_mode(DrawModeTag(mode));
     return;
 }
@@ -281,15 +311,18 @@ publish a safer Stark wrapper:
 ```stark
 unsafe ffi fn i32[min max] native_read_size(rawmutptr<i32[min max]> output);
 
-public enum SizeRead {
+public enum SizeRead
+{
     Failed,
     Ok(i32[min max] Value),
 }
 
-public unsafe fn SizeRead ReadSize() {
+public unsafe fn SizeRead ReadSize()
+{
     stack mut i32[min max] value = 0;
     stack i32[min max] status = native_read_size(&value);
-    if (status != 0) {
+    if (status != 0)
+    {
         return SizeRead.Failed;
     }
 
@@ -302,14 +335,17 @@ For nullable native results, check `null` before returning to safe callers:
 ```stark
 unsafe ffi fn rawptr<i8[min max]> native_error_message();
 
-public enum ErrorMessageState {
+public enum ErrorMessageState
+{
     Missing,
     Present,
 }
 
-public unsafe fn ErrorMessageState HasErrorMessage() {
+public unsafe fn ErrorMessageState HasErrorMessage()
+{
     stack rawptr<i8[min max]> message = native_error_message();
-    if (message == null) {
+    if (message == null)
+    {
         return ErrorMessageState.Missing;
     }
 
@@ -329,7 +365,8 @@ and publish a smaller Stark API.
 The public module should read like ordinary Stark:
 
 ```stark
-public fn void DrawRectangle(Rectangle rectangle) {
+public fn void DrawRectangle(Rectangle rectangle)
+{
     Draw(rectangle);
     return;
 }
@@ -340,7 +377,8 @@ The native declarations can stay internal and unsafe:
 ```stark
 internal unsafe ffi fn void native_flush();
 
-internal unsafe fn void FlushNative() {
+internal unsafe fn void FlushNative()
+{
     native_flush();
     return;
 }

@@ -11,11 +11,15 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(bool flag) {
+            unsafe fn i32[min max] Run(bool flag)
+            {
                 stack mut i32[min max] value = 0;
-                if (flag) {
+                if (flag)
+                {
                     value = 1;
-                } else {
+                }
+                else
+                {
                     value = 2;
                 }
 
@@ -39,7 +43,8 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right) {
+            unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right)
+            {
                 stack i32[min max] first = left + right;
                 stack i32[min max] second = right + left;
                 return first + second;
@@ -63,11 +68,15 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(bool flag) {
+            unsafe fn i32[min max] Run(bool flag)
+            {
                 stack mut i32[min max] value = 7;
-                if (flag) {
+                if (flag)
+                {
                     value = 7;
-                } else {
+                }
+                else
+                {
                     value = 7;
                 }
 
@@ -199,9 +208,11 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run() {
+            unsafe fn i32[min max] Run()
+            {
                 stack mut i32[min max] i = 0;
-                while willexit (i < 4) {
+                while willexit (i < 4)
+                {
                     i = i + 1;
                 }
 
@@ -225,16 +236,30 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            unsafe fn i32[min max] Run(bool flag) {
-                stack mut Box box = new Box() { Value = 0 };
-                if (flag) {
-                    box = new Box() { Value = 1 };
-                } else {
-                    box = new Box() { Value = 2 };
+            unsafe fn i32[min max] Run(bool flag)
+            {
+                stack mut Box box = new Box()
+                {
+                    Value = 0
+                };
+                if (flag)
+                {
+                    box = new Box()
+                    {
+                        Value = 1
+                    };
+                }
+                else
+                {
+                    box = new Box()
+                    {
+                        Value = 2
+                    };
                 }
 
                 return box.Value;
@@ -258,10 +283,14 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run() {
-                if (true) {
+            unsafe fn i32[min max] Run()
+            {
+                if (true)
+                {
                     return 1;
-                } else {
+                }
+                else
+                {
                     return 2;
                 }
             }
@@ -281,12 +310,17 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            unsafe fn i32[min max] Run() {
-                stack mut Box box = new Box() { Value = 1 };
+            unsafe fn i32[min max] Run()
+            {
+                stack mut Box box = new Box()
+                {
+                    Value = 1
+                };
                 box.Value = 2;
                 return box.Value;
             }
@@ -307,12 +341,17 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            unsafe fn i32[min max] Run() {
-                register Box box = new Box() { Value = 7 };
+            unsafe fn i32[min max] Run()
+            {
+                register Box box = new Box()
+                {
+                    Value = 7
+                };
                 return box.Value;
             }
             """);
@@ -334,7 +373,8 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run() {
+            unsafe fn i32[min max] Run()
+            {
                 register mut i32[min max] value = 7;
                 value = value + 1;
                 return value;
@@ -359,12 +399,17 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
-            unsafe fn i32[min max] Run() {
-                heap Box box = new Box() { Value = 7 };
+            unsafe fn i32[min max] Run()
+            {
+                heap Box box = new Box()
+                {
+                    Value = 7
+                };
                 return box.Value;
             }
             """);
@@ -387,12 +432,14 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            struct Pair {
+            struct Pair
+            {
                 i32[min max] Left;
                 i32[min max] Right;
             }
 
-            unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right) {
+            unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right)
+            {
                 heap mut Pair pair;
                 pair.Left = left;
                 pair.Right = right;
@@ -420,7 +467,8 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right) {
+            unsafe fn i32[min max] Run(i32[min max] left, i32[min max] right)
+            {
                 heap mut i32[min max][2] values;
                 values[0] = left;
                 values[1] = right;
@@ -447,14 +495,22 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            struct Pair {
+            struct Pair
+            {
                 i32[min max] Left;
                 i32[min max] Right;
             }
 
-            unsafe fn i32[min max] Run() {
-                stack Pair source = new Pair() { Left = 1, Right = 2 };
-                stack mut Pair dest = new Pair() { Left = 0, Right = 0 };
+            unsafe fn i32[min max] Run()
+            {
+                stack Pair source = new Pair()
+                {
+                    Left = 1, Right = 2
+                };
+                stack mut Pair dest = new Pair()
+                {
+                    Left = 0, Right = 0
+                };
                 stack rawptr<Pair> sourcePtr = &source;
                 stack rawptr<Pair> destPtr = &dest;
                 dest = source;
@@ -489,19 +545,28 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            struct Pair {
+            struct Pair
+            {
                 i32[min max] Left;
                 i32[min max] Right;
             }
 
-            unsafe fn void Touch(Pair value) {
+            unsafe fn void Touch(Pair value)
+            {
             }
 
-            unsafe fn i32[min max] Run() {
-                stack mut Pair source = new Pair() { Left = 1, Right = 2 };
+            unsafe fn i32[min max] Run()
+            {
+                stack mut Pair source = new Pair()
+                {
+                    Left = 1, Right = 2
+                };
                 stack rawptr<Pair> sourcePtr = &source;
                 Touch(source);
-                source = new Pair() { Left = 3, Right = 4 };
+                source = new Pair()
+                {
+                    Left = 3, Right = 4
+                };
                 return source.Right;
             }
             """);
@@ -527,13 +592,18 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            struct Pair {
+            struct Pair
+            {
                 i32[min max] Left;
                 i32[min max] Right;
             }
 
-            unsafe fn i32[min max] Run() {
-                stack Pair value = new Pair() { Left = 1, Right = 2 };
+            unsafe fn i32[min max] Run()
+            {
+                stack Pair value = new Pair()
+                {
+                    Left = 1, Right = 2
+                };
                 stack rawptr<Pair> ptr = &value;
                 return value.Right;
             }
@@ -562,13 +632,22 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            struct Pair {
+            struct Pair
+            {
                 i32[min max] Left;
                 i32[min max] Right;
             }
 
-            unsafe fn i32[min max] Run(bool flag) {
-                stack Pair value = flag ? new Pair() { Left = 1, Right = 2 } : new Pair() { Left = 3, Right = 4 };
+            unsafe fn i32[min max] Run(bool flag)
+            {
+                stack Pair value = flag ? new Pair()
+                {
+                    Left = 1, Right = 2
+                }:
+                new Pair()
+                {
+                    Left = 3, Right = 4
+                };
                 stack rawptr<Pair> ptr = &value;
                 return value.Right;
             }
@@ -597,12 +676,17 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max][3] Make(i32[min max] left, i32[min max] middle, i32[min max] right) {
-                stack i32[min max][3] values = { left, middle, right };
+            unsafe fn i32[min max][3] Make(i32[min max] left, i32[min max] middle, i32[min max] right)
+            {
+                stack i32[min max][3] values =
+                {
+                    left, middle, right
+                };
                 return values;
             }
 
-            unsafe fn i32[min max] Run(i32[min max] index, i32[min max] seed) {
+            unsafe fn i32[min max] Run(i32[min max] index, i32[min max] seed)
+            {
                 return Make(seed, seed + 1, seed + 2)[index];
             }
             """);
@@ -635,8 +719,12 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run() {
-                stack mut i32[min max][3] values = { 1, 2, 3 };
+            unsafe fn i32[min max] Run()
+            {
+                stack mut i32[min max][3] values =
+                {
+                    1, 2, 3
+                };
                 values[1] = 9;
                 return values[1];
             }
@@ -661,8 +749,12 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(i32[min max] index) {
-                stack i32[min max][3] values = { 4, 7, 9 };
+            unsafe fn i32[min max] Run(i32[min max] index)
+            {
+                stack i32[min max][3] values =
+                {
+                    4, 7, 9
+                };
                 stack i32[min max][] view = values;
                 return view[index];
             }
@@ -688,7 +780,8 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            unsafe fn unicode Run(unicode text, i32[min max] start, i32[min max] length) {
+            unsafe fn unicode Run(unicode text, i32[min max] start, i32[min max] length)
+            {
                 return text[start, length];
             }
             """);
@@ -719,7 +812,8 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            unsafe fn unicode Run() {
+            unsafe fn unicode Run()
+            {
                 return (unicode)"Hello";
             }
             """);
@@ -749,8 +843,12 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(i32[min max] index) {
-                stack mut i32[min max][3] values = { 1, 2, 3 };
+            unsafe fn i32[min max] Run(i32[min max] index)
+            {
+                stack mut i32[min max][3] values =
+                {
+                    1, 2, 3
+                };
                 values[index] = 9;
                 return values[index];
             }
@@ -776,7 +874,8 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(mut i32[min max][] view, i32[min max] index) {
+            unsafe fn i32[min max] Run(mut i32[min max][] view, i32[min max] index)
+            {
                 view[index] = 9;
                 return view[index];
             }
@@ -798,7 +897,8 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            unsafe fn i32[min max] Run(i64[min max] bits) {
+            unsafe fn i32[min max] Run(i64[min max] bits)
+            {
                 stack mut i32[min max] value = 1;
                 stack rawmutptr<i32[min max]> ptr = &value;
                 stack rawptr<i32[min max]> readonlyPtr = (rawptr<i32[min max]>)ptr;
@@ -836,14 +936,19 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
             static mut i32[min max] Counter = 0;
 
-            unsafe fn i32[min max] Run(i32[min max] input) {
-                stack mut Box box = new Box() { Value = 1 };
+            unsafe fn i32[min max] Run(i32[min max] input)
+            {
+                stack mut Box box = new Box()
+                {
+                    Value = 1
+                };
                 *(&(box.Value)) = input;
                 Counter = *(&(box.Value));
                 return *(&Counter);
@@ -875,12 +980,14 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            struct Buffer {
+            struct Buffer
+            {
                 i8[min max][16] Storage;
                 i64[min max] WritePos;
             }
 
-            unsafe fn i32[min max] Touch(rawmutptr<Buffer> buffer, i64[min max] index, i8[min max] value) {
+            unsafe fn i32[min max] Touch(rawmutptr<Buffer> buffer, i64[min max] index, i8[min max] value)
+            {
                 *(&(*buffer).Storage[index]) = value;
                 return (i32[min max])*(&(*buffer).Storage[index]);
             }
@@ -903,18 +1010,24 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            struct Box {
+            struct Box
+            {
                 i32[min max] Value;
             }
 
             static i32[min max] Counter = 0;
-            static Box Current = new Box() { Value = 5 };
+            static Box Current = new Box()
+            {
+                Value = 5
+            };
 
-            unsafe fn rawptr<i32[min max]> CounterPtr() {
+            unsafe fn rawptr<i32[min max]> CounterPtr()
+            {
                 return &Counter;
             }
 
-            unsafe fn rawptr<i32[min max]> FieldPtr() {
+            unsafe fn rawptr<i32[min max]> FieldPtr()
+            {
                 return &(Current.Value);
             }
             """);
@@ -957,7 +1070,8 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            unsafe fn rawptr<frozen i32[min max]> FirstPtr(frozen i32[min max][] view) {
+            unsafe fn rawptr<frozen i32[min max]> FirstPtr(frozen i32[min max][] view)
+            {
                 return &(view[0]);
             }
             """);
@@ -985,8 +1099,10 @@ public sealed class SsaLoweringTests
 
             unsafe fn i32[min max] Run(
                 rawmutptr<i32[min max]> left,
-                rawmutptr<i32[min max]> right) {
-                if disjoint(left, right) {
+                rawmutptr<i32[min max]> right)
+                {
+                    if disjoint(left, right)
+                {
                     *left = 7;
                     return *right;
                 }
@@ -1029,9 +1145,11 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            unsafe fn u8[0 10] Run() {
+            unsafe fn u8[0 10] Run()
+            {
                 stack mut u8[0 10] sum = 0;
-                for willexit independent (stack mut u8[0 10] index = 0; index < 4; index += 1) {
+                for willexit independent (stack mut u8[0 10] index = 0; index < 4; index += 1)
+                {
                     sum += index;
                 }
 
@@ -1056,11 +1174,14 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            unsafe fn u8[0 10] Run(u8[0 10] limit) {
+            unsafe fn u8[0 10] Run(u8[0 10] limit)
+            {
                 stack mut u8[0 10] value = 0;
-                while willexit (value < limit) {
+                while willexit (value < limit)
+                {
                     value += 1;
-                    if (value == 2) {
+                    if (value == 2)
+                    {
                         continue;
                     }
                 }
@@ -1091,8 +1212,10 @@ public sealed class SsaLoweringTests
                 borrow i32[min max][] left,
                 borrow i32[min max][] right,
                 borrow mut i32[min max][] output,
-                u8[0 10] count) {
-                for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1) {
+                u8[0 10] count)
+                {
+                    for willexit independent (stack mut u8[0 10] index = 0; index < count; index += 1)
+                {
                     output[index] = left[index] + right[index];
                 }
 
@@ -1122,12 +1245,14 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            unsafe fn void Fill(init u32[0 max][] destination) {
+            unsafe fn void Fill(init u32[0 max][] destination)
+            {
                 init destination[0] = 7;
                 return;
             }
 
-            fn void Write(out u32[0 max] value) {
+            fn void Write(out u32[0 max] value)
+            {
                 value = 9;
                 return;
             }
@@ -1162,7 +1287,8 @@ public sealed class SsaLoweringTests
             """
             module Demo
 
-            unsafe fn void Replace(borrow mut u32[0 max][] destination) {
+            unsafe fn void Replace(borrow mut u32[0 max][] destination)
+            {
                 destination[0] = 7;
                 return;
             }

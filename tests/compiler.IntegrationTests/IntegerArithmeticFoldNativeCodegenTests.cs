@@ -31,7 +31,8 @@ public sealed class IntegerArithmeticFoldNativeCodegenTests
                     """
                     module Demo
 
-                    public fn i32[min max] Run(i32[min max] value) {
+                    public fn i32[min max] Run(i32[min max] value)
+                    {
                         return value + value + value;
                     }
                     """),

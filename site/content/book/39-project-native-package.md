@@ -52,7 +52,8 @@ Keep the public wrapper source-shaped and small:
 ```stark
 unsafe ffi fn i32[min max] native_value();
 
-public unsafe fn i32[min max] ReadNativeValue() {
+public unsafe fn i32[min max] ReadNativeValue()
+{
     return native_value();
 }
 ```
@@ -63,8 +64,10 @@ make the public wrapper safe and keep `unsafe` inside:
 ```stark
 unsafe ffi fn i32[min max] native_abs_i32(i32[min max] value);
 
-public fn i32[min max] AbsI32(i32[min max] value) {
-    unsafe {
+public fn i32[min max] AbsI32(i32[min max] value)
+{
+    unsafe
+    {
         return native_abs_i32(value);
     }
 }
@@ -77,14 +80,17 @@ When the native API can fail, return a Stark enum or status value instead of
 turning the failure into a magic integer:
 
 ```stark
-public enum NativeValueResult {
+public enum NativeValueResult
+{
     Ok(i32[min max]),
     Err,
 }
 
-public unsafe fn NativeValueResult TryReadNativeValue() {
+public unsafe fn NativeValueResult TryReadNativeValue()
+{
     stack i32[min max] value = native_value();
-    if (value < 0) {
+    if (value < 0)
+    {
         return NativeValueResult.Err;
     }
 
@@ -98,14 +104,17 @@ wrapper and publish a Stark result:
 ```stark
 unsafe ffi fn rawptr<i8[min max]> native_error_message();
 
-public enum NativeMessageStatus {
+public enum NativeMessageStatus
+{
     None,
     Available,
 }
 
-public unsafe fn NativeMessageStatus HasNativeMessage() {
+public unsafe fn NativeMessageStatus HasNativeMessage()
+{
     stack rawptr<i8[min max]> pointer = native_error_message();
-    if (pointer == null) {
+    if (pointer == null)
+    {
         return NativeMessageStatus.None;
     }
 
@@ -122,15 +131,18 @@ result value at the Stark surface:
 ```stark
 unsafe ffi fn i32[min max] native_read_count(rawmutptr<i32[min max]> count);
 
-public enum NativeCountResult {
+public enum NativeCountResult
+{
     Err,
     Ok(i32[min max] Count),
 }
 
-public unsafe fn NativeCountResult ReadCount() {
+public unsafe fn NativeCountResult ReadCount()
+{
     stack mut i32[min max] count = 0;
     stack i32[min max] status = native_read_count(&count);
-    if (status != 0) {
+    if (status != 0)
+    {
         return NativeCountResult.Err;
     }
 
@@ -183,13 +195,15 @@ unsafe ffi fn i32[min max] stark_native_abs_i32(i32[min max] value);
 For callbacks, expose an explicit registration wrapper:
 
 ```stark
-unsafe fn i32[min max] OnNativeEvent() {
+unsafe fn i32[min max] OnNativeEvent()
+{
     return 0;
 }
 
 unsafe ffi fn void stark_register_callback(fnptr<fn i32[min max]()> callback);
 
-public unsafe fn void RegisterNativeCallback() {
+public unsafe fn void RegisterNativeCallback()
+{
     stark_register_callback(OnNativeEvent);
     return;
 }
@@ -259,9 +273,11 @@ The consuming app should call the wrapper API, not the native shim:
 import Raylib
 module App
 
-export unsafe fn i32[min max] main() {
+export unsafe fn i32[min max] main()
+{
     stack i32[min max] value = Raylib.ReadNativeValue();
-    if (value < 0) {
+    if (value < 0)
+    {
         return 1;
     }
 
@@ -275,9 +291,11 @@ If the wrapper exposes a result enum, keep the switch in the app:
 import NativeValues
 module App
 
-export unsafe fn i32[min max] main() {
+export unsafe fn i32[min max] main()
+{
     stack NativeValues.NativeValueResult result = NativeValues.TryReadNativeValue();
-    switch (result) {
+    switch (result)
+    {
         case NativeValues.NativeValueResult.Err:
             return 1;
         case NativeValues.NativeValueResult.Ok(var value):

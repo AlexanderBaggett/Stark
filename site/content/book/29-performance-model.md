@@ -138,7 +138,8 @@ immutable graph, so `const` and `disjoint` remain separate contracts.
 
 ```stark
 stack mut i32[0 10] value = 0;
-while willexit independent (value < 4) {
+while willexit independent (value < 4)
+{
     value += 1;
 }
 ```
@@ -175,9 +176,11 @@ import System.Text
 ```
 
 ```stark
-fn bool PushScore(mut borrow List<i32[min max]> scores, i32[min max] score) {
+fn bool PushScore(mut borrow List<i32[min max]> scores, i32[min max] score)
+{
     stack MemoryStatus pushed = scores.Push(score);
-    switch (pushed) {
+    switch (pushed)
+    {
         case MemoryStatus.Ok:
             return true;
         case MemoryStatus.Err(var error):
@@ -189,10 +192,12 @@ fn bool PushScore(mut borrow List<i32[min max]> scores, i32[min max] score) {
 Use owned text results when formatting may allocate:
 
 ```stark
-fn bool PrintScore(i64[min max] score) {
+fn bool PrintScore(i64[min max] score)
+{
     stack MemoryResult<OwnedAscii> formatted = ToAscii(score);
 
-    switch (formatted) {
+    switch (formatted)
+    {
         case MemoryResult<OwnedAscii>.Err(var error):
             return false;
         case MemoryResult<OwnedAscii>.Ok(var value):
@@ -206,7 +211,8 @@ fn bool PrintScore(i64[min max] score) {
 Use fixed-capacity text when the maximum size is part of the function:
 
 ```stark
-fn Ascii SmallLabel(i32[min max] value) {
+fn Ascii SmallLabel(i32[min max] value)
+{
     stack Ascii label[64] = $"Value: {value}";
     return label;
 }
@@ -224,15 +230,18 @@ not become part of an exception-control-flow story.
 Write recoverable failures as values:
 
 ```stark
-enum ParseCountResult {
+enum ParseCountResult
+{
     Ok(i32[min max]),
     Invalid,
 }
 
-fn ParseCountResult ParseCount(ascii text) {
+fn ParseCountResult ParseCount(ascii text)
+{
     stack TextResult<i32[min max]> parsed = ParseI32Ascii(text);
 
-    switch (parsed) {
+    switch (parsed)
+    {
         case TextResult<i32[min max]>.Err(var error):
             return ParseCountResult.Invalid;
         case TextResult<i32[min max]>.Ok(var value):
@@ -261,11 +270,13 @@ inputs.
 Keep ordinary calls ordinary:
 
 ```stark
-finite law i32[min max] Double(i32[min max] value) {
+finite law i32[min max] Double(i32[min max] value)
+{
     return value * 2;
 }
 
-finite law i32[min max] UseDirectCall(i32[min max] value) {
+finite law i32[min max] UseDirectCall(i32[min max] value)
+{
     return Double(value);
 }
 ```
@@ -275,7 +286,8 @@ Introduce `fnptr` only when a value needs to store or pass the callable:
 ```stark
 fn i32[min max] Apply(
     fnptr<fn i32[min max](i32[min max])> op,
-    i32[min max] value) {
+    i32[min max] value)
+{
     return op(value);
 }
 ```
@@ -292,7 +304,10 @@ This is why fixed-array initializers and slice views are separate concepts.
 Name the storage you want:
 
 ```stark
-stack i32[min max][4] fixedValues = { 1, 2, 3, 4 };
+stack i32[min max][4] fixedValues =
+{
+    1, 2, 3, 4
+};
 stack i32[min max][] fixedView = fixedValues;
 
 heap i32[min max] heapValue = 42;
@@ -310,7 +325,8 @@ Keep the raw declaration at the edge:
 ```stark
 unsafe ffi fn i32[min max] native_value();
 
-public unsafe fn i32[min max] ReadNativeValue() {
+public unsafe fn i32[min max] ReadNativeValue()
+{
     return native_value();
 }
 ```

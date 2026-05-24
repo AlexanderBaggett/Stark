@@ -34,7 +34,8 @@ This chapter focuses on how to read and write the source code.
 Generic parameters are written after the function name:
 
 ```stark
-fn T Identity<T>(T value) {
+fn T Identity<T>(T value)
+{
     return value;
 }
 ```
@@ -62,16 +63,19 @@ important type information in the return value.
 Structs, records, and enums can also be generic:
 
 ```stark
-struct Box<T> {
+struct Box<T>
+{
     T Value;
 }
 
-record Pair<A, B> {
+record Pair<A, B>
+{
     A First;
     B Second;
 }
 
-enum Option<T> {
+enum Option<T>
+{
     None,
     Some(T),
 }
@@ -80,8 +84,12 @@ enum Option<T> {
 When you declare a value, write the type arguments:
 
 ```stark
-stack Box<i32[min max]> box = new Box<i32[min max]>() { Value = 7 };
-stack Pair<i32[min max], bool> pair = new Pair<i32[min max], bool>() {
+stack Box<i32[min max]> box = new Box<i32[min max]>()
+{
+    Value = 7
+};
+stack Pair<i32[min max], bool> pair = new Pair<i32[min max], bool>()
+{
     First = 10,
     Second = true
 };
@@ -104,7 +112,8 @@ Option<bool>.Some(true)
 Use the same pattern for result-shaped enums:
 
 ```stark
-enum Result<T, E> {
+enum Result<T, E>
+{
     Ok(T),
     Error(E),
 }
@@ -128,7 +137,8 @@ A generic function can only use operations that are valid for its parameters.
 This works because returning a value does not require any behavior from `T`:
 
 ```stark
-fn T Forward<T>(T value) {
+fn T Forward<T>(T value)
+{
     return value;
 }
 ```
@@ -136,7 +146,8 @@ fn T Forward<T>(T value) {
 This is not a good unconstrained generic body:
 
 ```stark
-fn T Add<T>(T left, T right) {
+fn T Add<T>(T left, T right)
+{
     return left + right;
 }
 ```
@@ -152,7 +163,8 @@ That habit matters in Stark: generic code should say what it needs.
 A trait declares a behavior contract:
 
 ```stark
-trait Reader<T> {
+trait Reader<T>
+{
     finite law T Read();
 }
 ```
@@ -163,7 +175,8 @@ provide the body.
 Traits are useful when an API needs to name a required operation:
 
 ```stark
-trait Parser<T> {
+trait Parser<T>
+{
     law T Parse(ascii text);
 }
 ```
@@ -171,7 +184,8 @@ trait Parser<T> {
 A trait may use the type parameter in parameters, returns, or both:
 
 ```stark
-trait Comparator<T> {
+trait Comparator<T>
+{
     finite law i32[min max] Compare(borrow T left, borrow T right);
 }
 ```
@@ -192,13 +206,16 @@ Use a doctrine when the grouped functions have bodies and callers should call
 them by name:
 
 ```stark
-doctrine ScoreRules {
-    finite law bool IsPassing(u8[0 100] score) {
+doctrine ScoreRules
+{
+    finite law bool IsPassing(u8[0 100] score)
+    {
         return score >= 70;
     }
 }
 
-fn bool CheckPassing() {
+fn bool CheckPassing()
+{
     return ScoreRules.IsPassing(85);
 }
 ```
@@ -210,17 +227,21 @@ The full sample adds a second law and checks both paths:
 Doctrines can be generic too:
 
 ```stark
-struct Box<T> {
+struct Box<T>
+{
     T Value;
 }
 
-doctrine Inspect<T> {
-    finite law T Read(borrow Box<T> box) {
+doctrine Inspect<T>
+{
+    finite law T Read(borrow Box<T> box)
+    {
         return box.Value;
     }
 }
 
-finite law i32[min max] ReadInt(borrow Box<i32[min max]> box) {
+finite law i32[min max] ReadInt(borrow Box<i32[min max]> box)
+{
     return Inspect<i32[min max]>.Read(box);
 }
 ```
@@ -232,13 +253,17 @@ Doctrines can return status values like any other `law` or `finite law`
 function:
 
 ```stark
-doctrine PercentRules {
-    finite law bool IsValid(u8[0 max] value) {
+doctrine PercentRules
+{
+    finite law bool IsValid(u8[0 max] value)
+    {
         return value <= 100;
     }
 
-    finite law u8[0 100] Clamp(u8[0 max] value) {
-        if (value > 100) {
+    finite law u8[0 100] Clamp(u8[0 max] value)
+    {
+        if (value > 100)
+        {
             return 100;
         }
 
@@ -255,7 +280,8 @@ the doctrine name; you do not allocate or store the doctrine itself.
 Use a generic function when the same body truly works for multiple types:
 
 ```stark
-fn T First<T>(T left, T right) {
+fn T First<T>(T left, T right)
+{
     return left;
 }
 ```
@@ -263,7 +289,8 @@ fn T First<T>(T left, T right) {
 Use a generic type when the shape is the same but the stored value changes:
 
 ```stark
-struct Pair<A, B> {
+struct Pair<A, B>
+{
     A First;
     B Second;
 }
@@ -272,7 +299,8 @@ struct Pair<A, B> {
 Use a trait when you need to name a required behavior:
 
 ```stark
-trait Hashable {
+trait Hashable
+{
     law u32[0 max] Hash();
 }
 ```
@@ -280,8 +308,10 @@ trait Hashable {
 Use a doctrine when you want a named group of law functions with bodies:
 
 ```stark
-doctrine ScoreRules {
-    finite law bool IsPassing(u8[0 100] score) {
+doctrine ScoreRules
+{
+    finite law bool IsPassing(u8[0 100] score)
+    {
         return score >= 70;
     }
 }

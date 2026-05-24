@@ -13,29 +13,34 @@ public sealed class CommentTriviaTests
                 module Demo
 
                 //stuff.
-                // fn u32[0 2 ** 31 - 1] CommentedOutLine() {
+                // fn u32[0 2 ** 31 - 1] CommentedOutLine()
+                // {
                 //     return 11;
                 // }
 
                 /*
-                fn u32[0 2 ** 31 - 1] CommentedOutBlock() {
+                fn u32[0 2 ** 31 - 1] CommentedOutBlock()
+                {
                     return 22;
                 }
                 */
 
                 /// <summary>
-                /// fn u32[0 2 ** 31 - 1] CommentedOutXmlLine() {
+                /// fn u32[0 2 ** 31 - 1] CommentedOutXmlLine()
+                /// {
                 ///     return 33;
                 /// }
                 /// </summary>
                 /**
                  * <summary>
-                 * fn u32[0 2 ** 31 - 1] CommentedOutXmlBlock() {
+                 * fn u32[0 2 ** 31 - 1] CommentedOutXmlBlock()
+                 * {
                  *     return 44;
                  * }
                  * </summary>
                  */
-                finite law u32[0 2 ** 31 - 1] Run() {
+                finite law u32[0 2 ** 31 - 1] Run()
+                {
                     // stack u32[0 2 ** 31 - 1] commentedLocal = 55;
                     /*
                     stack u32[0 2 ** 31 - 1] commentedBlockLocal = 66;
