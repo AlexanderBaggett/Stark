@@ -1,0 +1,54 @@
+{
+  "name": "stark-language-vscode",
+  "displayName": "Stark Language",
+  "description": "Syntax highlighting, snippets, and standard library completions for the Stark language.",
+  "version": "0.1.0",
+  "publisher": "stark-language",
+  "license": "MIT",
+  "icon": "assets/brand.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/AlexanderBaggett/Stark.git",
+    "directory": "vscode-stark"
+  },
+  "engines": {
+    "vscode": "^1.82.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Snippets"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "stark",
+        "aliases": [
+          "Stark",
+          "stark"
+        ],
+        "extensions": [
+          ".stark"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "stark",
+        "scopeName": "source.stark",
+        "path": "./syntaxes/stark.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "stark",
+        "path": "./snippets/stark.code-snippets"
+      }
+    ]
+  },
+  "scripts": {
+    "generate:stdlib": "node scripts/generate-stdlib-completions.js",
+    "check": "node scripts/generate-stdlib-completions.js && node -c extension.js && node -c scripts/generate-stdlib-completions.js && node -e \"const fs=require('fs'); for (const file of ['package.json','language-configuration.json','syntaxes/stark.tmLanguage.json','snippets/stark.code-snippets','data/language-completions.json','data/stdlib-completions.json']) JSON.parse(fs.readFileSync(file,'utf8'));\""
+  }
+}

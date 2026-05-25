@@ -1692,7 +1692,106 @@ unsafe fn i32 PrintScore(i32[min max] score)
 }
 ```
 
-### 13.2 Unsafe Operations
+### 13.2 Assembly Functions
+
+Assembly functions are Stark's current low level inline assembly boundary. They
+are intended for small platform shims such as Linux syscalls, CPU instructions,
+and tightly audited runtime helpers. Ordinary application code should prefer
+safe standard library wrappers.
+
+The implemented v1 surface is:
+
+```stark
+visibility unsafe ffi asm(architecture) fn ReturnType Name(parameters)
+    in("register") parameterName,
+    out("register") return,
+    clobber("register1", "register2")
+{
+    "assembly template"
+}
+```
+
+Example: a Linux x86_64 syscall shim with one integer argument:
+
+```stark
+module Platform.Syscall
+
+internal unsafe ffi asm(x86_64) fn i64[min max] Syscall1(
+    i64[min max] number,
+    i64[min max] arg1)
+    in("rax") number,
+    in("rdi") arg1,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "syscall"
+}
+```
+
+Assembly declarations must use `unsafe ffi asm(architecture) fn`. The current
+surface does not support generic assembly functions, member assembly functions,
+`finite`, `law`, `inline`, `noinline`, `hot`, `cold`, `strictfp`, or ordinary
+Stark statement bodies. The body is a single string containing the assembly
+template.
+
+The `architecture` name is matched against the active target. Supported names
+are:
+
+* `x86_64` or `amd64`
+* `aarch64` or `arm64`
+* `riscv64`
+* `x86`, `i386`, `i486`, `i586`, or `i686`
+* `arm`, `arm32`, or `thumb`
+
+Multiple assembly declarations may share the same function name when each one
+targets a different architecture. During compilation, Stark keeps exactly the
+declaration that matches the active target and rejects the group if none or
+more than one match.
+
+Operands are explicit:
+
+* `in("reg") parameterName` binds a parameter to an input register.
+* `out("reg") return` binds the function return value to an output register.
+* `clobber("reg1", "reg2")` lists registers the template may modify.
+
+Non-void assembly functions must bind exactly one return value with
+`out("reg") return`. Void assembly functions must not bind `return`.
+
+The current LLVM emission path supports direct return bindings only. The grammar
+also accepts `out("reg") parameterName` for output parameters, but source
+assembly bodies using non-return outputs are not fully implemented yet and
+should not be used in portable code.
+
+Assembly parameters may be integer scalars, floating point scalars, or raw
+pointers. Assembly return types may be one of those types or `void`. Text views,
+borrows, slices, structs, records, enums, dynamic storage, and ordinary Stark
+owned objects must be handled by a safe wrapper around the assembly boundary.
+
+Register classes are checked. Integer and raw pointer operands must use
+general-purpose registers. Floating point operands must use floating point
+registers. For example, x86_64 integer values can bind `rax`, `rdi`, `rsi`,
+`rdx`, `r8`, and similar general-purpose registers, while `f32` and `f64`
+values use `xmm` registers.
+
+Assembly declarations are foreign boundaries. They do not receive the default
+Stark non-overlap contract for memory-backed parameters, so write explicit
+`where disjoint(...)`, `where overlap(...)`, or `where same(...)` contracts when
+the wrapper needs those facts.
+
+Calls to assembly functions require an unsafe context:
+
+```stark
+unsafe fn i64[min max] RawSyscall1(i64[min max] number, i64[min max] value)
+{
+    return Syscall1(number, value);
+}
+```
+
+The compiler lowers root source assembly bodies to LLVM inline assembly with
+side effects. It also adds an implicit `memory` clobber, and on x86/x86_64 it
+adds the standard direction-flag, floating-point-status, and flags clobbers.
+
+### 13.3 Unsafe Operations
 
 Stark's unsafe model marks proof boundaries rather than disabling the language's ordinary safety rules.
 

@@ -1,6 +1,6 @@
 ---
 name: stark-language
-description: Stark language development guidance for writing, reviewing, explaining, and editing .stark source files, Stark.toml project manifests, and Stark.solution.toml solution manifests. Use for Stark syntax, ownership and borrowing, callable values, modules and visibility, project/test/native-package setup, FFI boundaries, memory contracts, and Stark source style.
+description: Stark language development guidance for writing, reviewing, explaining, and editing .stark source files, Stark.toml project manifests, and Stark.solution.toml solution manifests. Use for Stark syntax, ownership and borrowing, callable values, modules and visibility, project/test/native-package setup, FFI and assembly boundaries, memory contracts, and Stark source style.
 ---
 
 # Stark Language
@@ -399,6 +399,28 @@ FFI rules:
 - Stark enums do not cross `ffi` or `export` boundaries.
 - C varargs use `unsafe ffi varargs fn`; callers must pass ABI-ready values explicitly.
 
+Assembly functions are unsafe FFI boundaries for small platform/CPU shims:
+
+```stark
+internal unsafe ffi asm(x86_64) fn i64[min max] Syscall1(
+    i64[min max] number,
+    i64[min max] arg1)
+    in("rax") number,
+    in("rdi") arg1,
+    out("rax") return,
+    clobber("rcx", "r11")
+{
+    "syscall"
+}
+```
+
+Use `unsafe ffi asm(arch) fn`, `in("reg") parameter`, `out("reg") return`,
+and `clobber(...)`. Supported value families are integer scalars, floating
+point scalars, raw pointers, and `void` returns. Calls require unsafe context.
+Avoid non-return `out("reg") parameter` in source asm bodies; it parses but is
+not fully emitted yet. For full rules and target/register details, read
+[`references/assembly-functions-reference.md`](references/assembly-functions-reference.md).
+
 ## Control Flow
 
 Loops require a behavior keyword:
@@ -503,6 +525,7 @@ Use these bundled references when the task needs more detail while staying self-
 - [`references/syntax-quick-reference.md`](references/syntax-quick-reference.md): source structure, keywords, operators, ranges, switches, text, and callable syntax.
 - [`references/borrower-recipes.md`](references/borrower-recipes.md): choosing `borrow`, `mut borrow`, `retborrow`, `storeborrow`, `frozen`, `const`, `out`, `init`, raw pointers, and memory contracts.
 - [`references/callables-closures-reference.md`](references/callables-closures-reference.md): function items, `fnptr`, lambdas, inline closures, borrowed closures, heap closures, once closures, and thread entries.
+- [`references/assembly-functions-reference.md`](references/assembly-functions-reference.md): `unsafe ffi asm(arch) fn`, operands, clobbers, target selection, supported types, and current lowering limits.
 - [`references/project-manifest-reference.md`](references/project-manifest-reference.md): `Stark.toml`, `Stark.solution.toml`, project kinds, profiles, dependencies, native metadata, and commands.
 - [`references/ffi-native-layout-reference.md`](references/ffi-native-layout-reference.md): FFI declarations, `export`, raw pointer regions, ABI-facing layout, enum tags, safe wrappers, and native package metadata.
 - [`references/performance-cookbook.md`](references/performance-cookbook.md): source-level performance recipes for kernels, non-overlap, independent loops, raw regions, `const`, allocation, numeric policy, and benchmarks.
