@@ -1,0 +1,827 @@
+[
+  {
+    "label": "import",
+    "insertText": "import ${1:System.Console}",
+    "kind": "keyword",
+    "detail": "Import a Stark module",
+    "documentation": "Imports a module. Imported declarations are available by final name."
+  },
+  {
+    "label": "export import",
+    "insertText": "export import ${1:Some.Module}",
+    "kind": "keyword",
+    "detail": "Re-export a Stark module import",
+    "documentation": "Imports a module and re-exports that import from the current module."
+  },
+  {
+    "label": "module",
+    "insertText": "module ${1:Current.Module}",
+    "kind": "keyword",
+    "detail": "Declare the current module",
+    "documentation": "Every Stark source file declares exactly one module."
+  },
+  {
+    "label": "fn",
+    "insertText": "fn ${1:void} ${2:Name}(${3})\n{\n\t$0\n}",
+    "kind": "snippet",
+    "detail": "Function declaration",
+    "documentation": "Declares a general Stark function."
+  },
+  {
+    "label": "finite",
+    "insertText": "finite ${1:void} ${2:Name}(${3})\n{\n\t$0\n}",
+    "kind": "snippet",
+    "detail": "Terminating function declaration",
+    "documentation": "Declares a function that must make progress and return."
+  },
+  {
+    "label": "law",
+    "insertText": "law ${1:bool} ${2:Name}(${3})\n{\n\treturn ${4:true};\n}",
+    "kind": "snippet",
+    "detail": "Pure function declaration",
+    "documentation": "Declares a readonly function with no visible side effects."
+  },
+  {
+    "label": "finite law",
+    "insertText": "finite law ${1:i32[0 max]} ${2:Name}(${3})\n{\n\treturn ${4:0};\n}",
+    "kind": "snippet",
+    "detail": "Pure terminating function declaration",
+    "documentation": "Declares a function that is both pure and guaranteed to return."
+  },
+  {
+    "label": "struct",
+    "insertText": "struct ${1:Name}\n{\n\t${2:i32[0 max]} ${3:Value};\n\t$0\n}",
+    "kind": "snippet",
+    "detail": "Struct declaration",
+    "documentation": "Declares a Stark struct."
+  },
+  {
+    "label": "record",
+    "insertText": "record ${1:Name}(${2:i32[0 max] Value})\n{\n\t$0\n}",
+    "kind": "snippet",
+    "detail": "Record declaration",
+    "documentation": "Declares a Stark record."
+  },
+  {
+    "label": "enum",
+    "insertText": "enum ${1:Name}\n{\n\t${2:First},\n\t${3:Second}\n}\n$0",
+    "kind": "snippet",
+    "detail": "Enum declaration",
+    "documentation": "Declares a Stark enum."
+  },
+  {
+    "label": "trait",
+    "insertText": "trait ${1:Name}<${2:T}>\n{\n\tlaw bool ${3:Matches}(borrow ${2:T} value);\n}\n$0",
+    "kind": "snippet",
+    "detail": "Trait declaration",
+    "documentation": "Declares a Stark trait contract."
+  },
+  {
+    "label": "doctrine",
+    "insertText": "doctrine ${1:Name}<${2:T}>\n{\n\tfinite law bool ${3:Matches}(borrow ${2:T} value);\n}\n$0",
+    "kind": "snippet",
+    "detail": "Doctrine declaration",
+    "documentation": "Declares a Stark doctrine contract."
+  },
+  {
+    "label": "switch",
+    "insertText": "switch (${1:value})\n{\n\tcase ${2:0}:\n\t{\n\t\t$0\n\t}\n\tdefault:\n\t{\n\t}\n}",
+    "kind": "snippet",
+    "detail": "Switch statement",
+    "documentation": "Dispatches on a value using case/default labels."
+  },
+  {
+    "label": "while willexit",
+    "insertText": "while willexit (${1:condition})\n{\n\t$0\n}",
+    "kind": "snippet",
+    "detail": "While loop",
+    "documentation": "Declares a while loop with an exit guarantee."
+  },
+  {
+    "label": "for willexit",
+    "insertText": "for willexit (${1:stack mut u64[0 max] index = 0}; ${2:index < count}; ${3:index += 1})\n{\n\t$0\n}",
+    "kind": "snippet",
+    "detail": "For loop",
+    "documentation": "Declares a for loop."
+  },
+  {
+    "label": "unsafe",
+    "insertText": "unsafe\n{\n\t$0\n}",
+    "kind": "snippet",
+    "detail": "Unsafe block",
+    "documentation": "Introduces a block where unsafe operations are permitted."
+  },
+  {
+    "label": "unsafe ffi asm",
+    "insertText": "unsafe ffi asm(${1:x86_64}) fn ${2:i64[min max]} ${3:Name}(${4:i64[min max] value})\n\tin(\"${5:rax}\") ${6:value},\n\tout(\"${7:rax}\") return\n{\n\t\"${8:mov rax, rdi}\"\n}",
+    "kind": "snippet",
+    "detail": "Assembly function",
+    "documentation": "Declares an assembly-backed Stark function."
+  },
+  {
+    "label": "stack",
+    "insertText": "stack ${1:mut }${2:i32[0 max]} ${3:name} = ${4:0};",
+    "kind": "keyword",
+    "detail": "Stack storage declaration",
+    "documentation": "Declares stack storage."
+  },
+  {
+    "label": "heap",
+    "insertText": "heap ${1:mut }${2:i32[0 max]} ${3:name} = ${4:0};",
+    "kind": "keyword",
+    "detail": "Heap storage declaration",
+    "documentation": "Declares heap storage."
+  },
+  {
+    "label": "arena",
+    "insertText": "arena ${1:mut }${2:i32[0 max]} ${3:name} = ${4:0};",
+    "kind": "keyword",
+    "detail": "Arena storage declaration",
+    "documentation": "Declares arena storage."
+  },
+  {
+    "label": "register",
+    "insertText": "register ${1:mut }${2:i32[0 max]} ${3:name} = ${4:0};",
+    "kind": "keyword",
+    "detail": "Register storage declaration",
+    "documentation": "Declares register-preferred storage."
+  },
+  {
+    "label": "const",
+    "insertText": "const ${1:Name} = ${2:0};",
+    "kind": "keyword",
+    "detail": "Constant declaration",
+    "documentation": "Declares a compile-time constant."
+  },
+  {
+    "label": "borrow",
+    "kind": "keyword",
+    "detail": "Borrow type qualifier",
+    "documentation": "Marks a borrowed parameter or type."
+  },
+  {
+    "label": "mut",
+    "kind": "keyword",
+    "detail": "Mutable qualifier",
+    "documentation": "Marks mutable storage or a mutable borrow."
+  },
+  {
+    "label": "retborrow",
+    "kind": "keyword",
+    "detail": "Returned borrow qualifier",
+    "documentation": "Marks a borrow returned from a function."
+  },
+  {
+    "label": "storeborrow",
+    "kind": "keyword",
+    "detail": "Stored borrow qualifier",
+    "documentation": "Marks a borrow stored by a value."
+  },
+  {
+    "label": "frozen",
+    "kind": "keyword",
+    "detail": "Frozen borrow qualifier",
+    "documentation": "Marks a readonly borrow."
+  },
+  {
+    "label": "shared",
+    "kind": "keyword",
+    "detail": "Shared borrow qualifier",
+    "documentation": "Marks shared access."
+  },
+  {
+    "label": "out",
+    "kind": "keyword",
+    "detail": "Output parameter qualifier",
+    "documentation": "Marks an output parameter."
+  },
+  {
+    "label": "init",
+    "kind": "keyword",
+    "detail": "Initialization qualifier",
+    "documentation": "Marks initialization of an output or storage location."
+  },
+  {
+    "label": "disjoint",
+    "insertText": "disjoint(${1:left}, ${2:right})",
+    "kind": "keyword",
+    "detail": "Memory contract",
+    "documentation": "States that expressions do not overlap."
+  },
+  {
+    "label": "overlap",
+    "insertText": "overlap(${1:left}, ${2:right})",
+    "kind": "keyword",
+    "detail": "Memory contract",
+    "documentation": "States that expressions may overlap."
+  },
+  {
+    "label": "same",
+    "insertText": "same(${1:left}, ${2:right})",
+    "kind": "keyword",
+    "detail": "Memory contract",
+    "documentation": "States that expressions refer to the same storage."
+  },
+  {
+    "label": "rawptr",
+    "insertText": "rawptr<${1:i8[min max]}>",
+    "kind": "keyword",
+    "detail": "Raw pointer type",
+    "documentation": "Declares a readonly raw pointer type."
+  },
+  {
+    "label": "rawmutptr",
+    "insertText": "rawmutptr<${1:i8[min max]}>",
+    "kind": "keyword",
+    "detail": "Mutable raw pointer type",
+    "documentation": "Declares a mutable raw pointer type."
+  },
+  {
+    "label": "fnptr",
+    "insertText": "fnptr<fn ${1:void} (${2})>",
+    "kind": "keyword",
+    "detail": "Function pointer type",
+    "documentation": "Declares a function pointer type."
+  },
+  {
+    "label": "closure",
+    "insertText": "closure<fn ${1:void} (${2})>",
+    "kind": "keyword",
+    "detail": "Closure type",
+    "documentation": "Declares a closure type."
+  },
+  {
+    "label": "sizeof",
+    "insertText": "sizeof(${1:type})",
+    "kind": "function",
+    "detail": "Layout query",
+    "documentation": "Returns the size of a type."
+  },
+  {
+    "label": "alignof",
+    "insertText": "alignof(${1:type})",
+    "kind": "function",
+    "detail": "Layout query",
+    "documentation": "Returns the alignment of a type."
+  },
+  {
+    "label": "public",
+    "insertText": "public",
+    "kind": "keyword",
+    "detail": "public visibility",
+    "documentation": "Marks a declaration with public visibility."
+  },
+  {
+    "label": "internal",
+    "insertText": "internal",
+    "kind": "keyword",
+    "detail": "internal visibility",
+    "documentation": "Marks a declaration with internal visibility."
+  },
+  {
+    "label": "export",
+    "insertText": "export",
+    "kind": "keyword",
+    "detail": "export visibility",
+    "documentation": "Marks a declaration with export visibility."
+  },
+  {
+    "label": "inline",
+    "insertText": "inline",
+    "kind": "keyword",
+    "detail": "inline function modifier",
+    "documentation": "Applies the inline modifier to a function or member where valid."
+  },
+  {
+    "label": "noinline",
+    "insertText": "noinline",
+    "kind": "keyword",
+    "detail": "noinline function modifier",
+    "documentation": "Applies the noinline modifier to a function or member where valid."
+  },
+  {
+    "label": "inlinehint",
+    "insertText": "inlinehint",
+    "kind": "keyword",
+    "detail": "inlinehint function modifier",
+    "documentation": "Applies the inlinehint modifier to a function or member where valid."
+  },
+  {
+    "label": "hot",
+    "insertText": "hot",
+    "kind": "keyword",
+    "detail": "hot function modifier",
+    "documentation": "Applies the hot modifier to a function or member where valid."
+  },
+  {
+    "label": "cold",
+    "insertText": "cold",
+    "kind": "keyword",
+    "detail": "cold function modifier",
+    "documentation": "Applies the cold modifier to a function or member where valid."
+  },
+  {
+    "label": "ffi",
+    "insertText": "ffi",
+    "kind": "keyword",
+    "detail": "ffi function modifier",
+    "documentation": "Applies the ffi modifier to a function or member where valid."
+  },
+  {
+    "label": "varargs",
+    "insertText": "varargs",
+    "kind": "keyword",
+    "detail": "varargs function modifier",
+    "documentation": "Applies the varargs modifier to a function or member where valid."
+  },
+  {
+    "label": "strictfp",
+    "insertText": "strictfp",
+    "kind": "keyword",
+    "detail": "strictfp function modifier",
+    "documentation": "Applies the strictfp modifier to a function or member where valid."
+  },
+  {
+    "label": "static",
+    "insertText": "static",
+    "kind": "keyword",
+    "detail": "static function modifier",
+    "documentation": "Applies the static modifier to a function or member where valid."
+  },
+  {
+    "label": "if",
+    "insertText": "if",
+    "kind": "keyword",
+    "detail": "if control flow keyword",
+    "documentation": "Stark control flow keyword: if."
+  },
+  {
+    "label": "else",
+    "insertText": "else",
+    "kind": "keyword",
+    "detail": "else control flow keyword",
+    "documentation": "Stark control flow keyword: else."
+  },
+  {
+    "label": "case",
+    "insertText": "case",
+    "kind": "keyword",
+    "detail": "case control flow keyword",
+    "documentation": "Stark control flow keyword: case."
+  },
+  {
+    "label": "default",
+    "insertText": "default",
+    "kind": "keyword",
+    "detail": "default control flow keyword",
+    "documentation": "Stark control flow keyword: default."
+  },
+  {
+    "label": "when",
+    "insertText": "when",
+    "kind": "keyword",
+    "detail": "when control flow keyword",
+    "documentation": "Stark control flow keyword: when."
+  },
+  {
+    "label": "while",
+    "insertText": "while",
+    "kind": "keyword",
+    "detail": "while control flow keyword",
+    "documentation": "Stark control flow keyword: while."
+  },
+  {
+    "label": "for",
+    "insertText": "for",
+    "kind": "keyword",
+    "detail": "for control flow keyword",
+    "documentation": "Stark control flow keyword: for."
+  },
+  {
+    "label": "return",
+    "insertText": "return",
+    "kind": "keyword",
+    "detail": "return control flow keyword",
+    "documentation": "Stark control flow keyword: return."
+  },
+  {
+    "label": "break",
+    "insertText": "break",
+    "kind": "keyword",
+    "detail": "break control flow keyword",
+    "documentation": "Stark control flow keyword: break."
+  },
+  {
+    "label": "continue",
+    "insertText": "continue",
+    "kind": "keyword",
+    "detail": "continue control flow keyword",
+    "documentation": "Stark control flow keyword: continue."
+  },
+  {
+    "label": "infinite",
+    "insertText": "infinite",
+    "kind": "keyword",
+    "detail": "infinite loop keyword",
+    "documentation": "Loop behavior or loop contract keyword: infinite."
+  },
+  {
+    "label": "non-deterministic",
+    "insertText": "non-deterministic",
+    "kind": "keyword",
+    "detail": "non-deterministic loop keyword",
+    "documentation": "Loop behavior or loop contract keyword: non-deterministic."
+  },
+  {
+    "label": "willexit",
+    "insertText": "willexit",
+    "kind": "keyword",
+    "detail": "willexit loop keyword",
+    "documentation": "Loop behavior or loop contract keyword: willexit."
+  },
+  {
+    "label": "independent",
+    "insertText": "independent",
+    "kind": "keyword",
+    "detail": "independent loop keyword",
+    "documentation": "Loop behavior or loop contract keyword: independent."
+  },
+  {
+    "label": "new",
+    "insertText": "new",
+    "kind": "keyword",
+    "detail": "new keyword",
+    "documentation": "Stark keyword: new."
+  },
+  {
+    "label": "drop",
+    "insertText": "drop",
+    "kind": "keyword",
+    "detail": "drop keyword",
+    "documentation": "Stark keyword: drop."
+  },
+  {
+    "label": "where",
+    "insertText": "where",
+    "kind": "keyword",
+    "detail": "where keyword",
+    "documentation": "Stark keyword: where."
+  },
+  {
+    "label": "var",
+    "insertText": "var",
+    "kind": "keyword",
+    "detail": "var keyword",
+    "documentation": "Stark keyword: var."
+  },
+  {
+    "label": "once",
+    "insertText": "once",
+    "kind": "keyword",
+    "detail": "once keyword",
+    "documentation": "Stark keyword: once."
+  },
+  {
+    "label": "assume",
+    "insertText": "assume",
+    "kind": "keyword",
+    "detail": "assume keyword",
+    "documentation": "Stark keyword: assume."
+  },
+  {
+    "label": "asm",
+    "insertText": "asm",
+    "kind": "keyword",
+    "detail": "asm keyword",
+    "documentation": "Stark keyword: asm."
+  },
+  {
+    "label": "clobber",
+    "insertText": "clobber",
+    "kind": "keyword",
+    "detail": "clobber keyword",
+    "documentation": "Stark keyword: clobber."
+  },
+  {
+    "label": "in",
+    "insertText": "in",
+    "kind": "keyword",
+    "detail": "in keyword",
+    "documentation": "Stark keyword: in."
+  },
+  {
+    "label": "dynamic",
+    "insertText": "dynamic",
+    "kind": "keyword",
+    "detail": "dynamic keyword",
+    "documentation": "Stark keyword: dynamic."
+  },
+  {
+    "label": "true",
+    "insertText": "true",
+    "kind": "keyword",
+    "detail": "true literal",
+    "documentation": "Stark literal or range endpoint: true."
+  },
+  {
+    "label": "false",
+    "insertText": "false",
+    "kind": "keyword",
+    "detail": "false literal",
+    "documentation": "Stark literal or range endpoint: false."
+  },
+  {
+    "label": "null",
+    "insertText": "null",
+    "kind": "keyword",
+    "detail": "null literal",
+    "documentation": "Stark literal or range endpoint: null."
+  },
+  {
+    "label": "min",
+    "insertText": "min",
+    "kind": "keyword",
+    "detail": "min literal",
+    "documentation": "Stark literal or range endpoint: min."
+  },
+  {
+    "label": "max",
+    "insertText": "max",
+    "kind": "keyword",
+    "detail": "max literal",
+    "documentation": "Stark literal or range endpoint: max."
+  },
+  {
+    "label": "void",
+    "insertText": "void",
+    "kind": "keyword",
+    "detail": "void type",
+    "documentation": "Built-in Stark type: void."
+  },
+  {
+    "label": "bool",
+    "insertText": "bool",
+    "kind": "keyword",
+    "detail": "bool type",
+    "documentation": "Built-in Stark type: bool."
+  },
+  {
+    "label": "ascii",
+    "insertText": "ascii",
+    "kind": "keyword",
+    "detail": "ascii type",
+    "documentation": "Built-in Stark type: ascii."
+  },
+  {
+    "label": "unicode",
+    "insertText": "unicode",
+    "kind": "keyword",
+    "detail": "unicode type",
+    "documentation": "Built-in Stark type: unicode."
+  },
+  {
+    "label": "Ascii",
+    "insertText": "Ascii",
+    "kind": "keyword",
+    "detail": "Ascii type",
+    "documentation": "Built-in Stark type: Ascii."
+  },
+  {
+    "label": "Unicode",
+    "insertText": "Unicode",
+    "kind": "keyword",
+    "detail": "Unicode type",
+    "documentation": "Built-in Stark type: Unicode."
+  },
+  {
+    "label": "i8",
+    "insertText": "i8",
+    "kind": "keyword",
+    "detail": "signed 8-bit integer type",
+    "documentation": "Signed Stark integer type. Use ranges like i8[min max]."
+  },
+  {
+    "label": "u8",
+    "insertText": "u8",
+    "kind": "keyword",
+    "detail": "unsigned 8-bit integer type",
+    "documentation": "Unsigned Stark integer type. Use ranges like u8[0 max]."
+  },
+  {
+    "label": "i16",
+    "insertText": "i16",
+    "kind": "keyword",
+    "detail": "signed 16-bit integer type",
+    "documentation": "Signed Stark integer type. Use ranges like i16[min max]."
+  },
+  {
+    "label": "u16",
+    "insertText": "u16",
+    "kind": "keyword",
+    "detail": "unsigned 16-bit integer type",
+    "documentation": "Unsigned Stark integer type. Use ranges like u16[0 max]."
+  },
+  {
+    "label": "i24",
+    "insertText": "i24",
+    "kind": "keyword",
+    "detail": "signed 24-bit integer type",
+    "documentation": "Signed Stark integer type. Use ranges like i24[min max]."
+  },
+  {
+    "label": "u24",
+    "insertText": "u24",
+    "kind": "keyword",
+    "detail": "unsigned 24-bit integer type",
+    "documentation": "Unsigned Stark integer type. Use ranges like u24[0 max]."
+  },
+  {
+    "label": "i32",
+    "insertText": "i32",
+    "kind": "keyword",
+    "detail": "signed 32-bit integer type",
+    "documentation": "Signed Stark integer type. Use ranges like i32[min max]."
+  },
+  {
+    "label": "u32",
+    "insertText": "u32",
+    "kind": "keyword",
+    "detail": "unsigned 32-bit integer type",
+    "documentation": "Unsigned Stark integer type. Use ranges like u32[0 max]."
+  },
+  {
+    "label": "i48",
+    "insertText": "i48",
+    "kind": "keyword",
+    "detail": "signed 48-bit integer type",
+    "documentation": "Signed Stark integer type. Use ranges like i48[min max]."
+  },
+  {
+    "label": "u48",
+    "insertText": "u48",
+    "kind": "keyword",
+    "detail": "unsigned 48-bit integer type",
+    "documentation": "Unsigned Stark integer type. Use ranges like u48[0 max]."
+  },
+  {
+    "label": "i64",
+    "insertText": "i64",
+    "kind": "keyword",
+    "detail": "signed 64-bit integer type",
+    "documentation": "Signed Stark integer type. Use ranges like i64[min max]."
+  },
+  {
+    "label": "u64",
+    "insertText": "u64",
+    "kind": "keyword",
+    "detail": "unsigned 64-bit integer type",
+    "documentation": "Unsigned Stark integer type. Use ranges like u64[0 max]."
+  },
+  {
+    "label": "i96",
+    "insertText": "i96",
+    "kind": "keyword",
+    "detail": "signed 96-bit integer type",
+    "documentation": "Signed Stark integer type. Use ranges like i96[min max]."
+  },
+  {
+    "label": "u96",
+    "insertText": "u96",
+    "kind": "keyword",
+    "detail": "unsigned 96-bit integer type",
+    "documentation": "Unsigned Stark integer type. Use ranges like u96[0 max]."
+  },
+  {
+    "label": "i128",
+    "insertText": "i128",
+    "kind": "keyword",
+    "detail": "signed 128-bit integer type",
+    "documentation": "Signed Stark integer type. Use ranges like i128[min max]."
+  },
+  {
+    "label": "u128",
+    "insertText": "u128",
+    "kind": "keyword",
+    "detail": "unsigned 128-bit integer type",
+    "documentation": "Unsigned Stark integer type. Use ranges like u128[0 max]."
+  },
+  {
+    "label": "i192",
+    "insertText": "i192",
+    "kind": "keyword",
+    "detail": "signed 192-bit integer type",
+    "documentation": "Signed Stark integer type. Use ranges like i192[min max]."
+  },
+  {
+    "label": "u192",
+    "insertText": "u192",
+    "kind": "keyword",
+    "detail": "unsigned 192-bit integer type",
+    "documentation": "Unsigned Stark integer type. Use ranges like u192[0 max]."
+  },
+  {
+    "label": "i256",
+    "insertText": "i256",
+    "kind": "keyword",
+    "detail": "signed 256-bit integer type",
+    "documentation": "Signed Stark integer type. Use ranges like i256[min max]."
+  },
+  {
+    "label": "u256",
+    "insertText": "u256",
+    "kind": "keyword",
+    "detail": "unsigned 256-bit integer type",
+    "documentation": "Unsigned Stark integer type. Use ranges like u256[0 max]."
+  },
+  {
+    "label": "i384",
+    "insertText": "i384",
+    "kind": "keyword",
+    "detail": "signed 384-bit integer type",
+    "documentation": "Signed Stark integer type. Use ranges like i384[min max]."
+  },
+  {
+    "label": "u384",
+    "insertText": "u384",
+    "kind": "keyword",
+    "detail": "unsigned 384-bit integer type",
+    "documentation": "Unsigned Stark integer type. Use ranges like u384[0 max]."
+  },
+  {
+    "label": "i512",
+    "insertText": "i512",
+    "kind": "keyword",
+    "detail": "signed 512-bit integer type",
+    "documentation": "Signed Stark integer type. Use ranges like i512[min max]."
+  },
+  {
+    "label": "u512",
+    "insertText": "u512",
+    "kind": "keyword",
+    "detail": "unsigned 512-bit integer type",
+    "documentation": "Unsigned Stark integer type. Use ranges like u512[0 max]."
+  },
+  {
+    "label": "i768",
+    "insertText": "i768",
+    "kind": "keyword",
+    "detail": "signed 768-bit integer type",
+    "documentation": "Signed Stark integer type. Use ranges like i768[min max]."
+  },
+  {
+    "label": "u768",
+    "insertText": "u768",
+    "kind": "keyword",
+    "detail": "unsigned 768-bit integer type",
+    "documentation": "Unsigned Stark integer type. Use ranges like u768[0 max]."
+  },
+  {
+    "label": "i1024",
+    "insertText": "i1024",
+    "kind": "keyword",
+    "detail": "signed 1024-bit integer type",
+    "documentation": "Signed Stark integer type. Use ranges like i1024[min max]."
+  },
+  {
+    "label": "u1024",
+    "insertText": "u1024",
+    "kind": "keyword",
+    "detail": "unsigned 1024-bit integer type",
+    "documentation": "Unsigned Stark integer type. Use ranges like u1024[0 max]."
+  },
+  {
+    "label": "f16",
+    "insertText": "f16",
+    "kind": "keyword",
+    "detail": "16-bit floating point type",
+    "documentation": "Stark floating point type: f16."
+  },
+  {
+    "label": "f32",
+    "insertText": "f32",
+    "kind": "keyword",
+    "detail": "32-bit floating point type",
+    "documentation": "Stark floating point type: f32."
+  },
+  {
+    "label": "f64",
+    "insertText": "f64",
+    "kind": "keyword",
+    "detail": "64-bit floating point type",
+    "documentation": "Stark floating point type: f64."
+  },
+  {
+    "label": "f80",
+    "insertText": "f80",
+    "kind": "keyword",
+    "detail": "80-bit floating point type",
+    "documentation": "Stark floating point type: f80."
+  },
+  {
+    "label": "f128",
+    "insertText": "f128",
+    "kind": "keyword",
+    "detail": "128-bit floating point type",
+    "documentation": "Stark floating point type: f128."
+  }
+]

@@ -1,0 +1,193 @@
+{
+  "Module": {
+    "prefix": "module",
+    "body": [
+      "module ${1:Demo}",
+      "",
+      "$0"
+    ],
+    "description": "Declare a Stark module"
+  },
+  "Import": {
+    "prefix": "import",
+    "body": [
+      "import ${1:System.Console}"
+    ],
+    "description": "Import a Stark module"
+  },
+  "Function": {
+    "prefix": "fn",
+    "body": [
+      "fn ${1:void} ${2:Name}(${3})",
+      "{",
+      "\t$0",
+      "}"
+    ],
+    "description": "Declare a Stark function"
+  },
+  "Finite Law": {
+    "prefix": "finite law",
+    "body": [
+      "finite law ${1:i32[0 max]} ${2:Name}(${3})",
+      "{",
+      "\treturn ${4:0};",
+      "}"
+    ],
+    "description": "Declare a pure terminating function"
+  },
+  "Main Void": {
+    "prefix": "main",
+    "body": [
+      "fn void Main()",
+      "{",
+      "\t$0",
+      "}"
+    ],
+    "description": "Declare a void entrypoint"
+  },
+  "Main Exit Code": {
+    "prefix": "maincode",
+    "body": [
+      "fn u8[0 255] Main()",
+      "{",
+      "\treturn ${1:0};",
+      "}"
+    ],
+    "description": "Declare an entrypoint with an exit code"
+  },
+  "Struct": {
+    "prefix": "struct",
+    "body": [
+      "struct ${1:Name}",
+      "{",
+      "\t${2:i32[0 max]} ${3:Value};",
+      "",
+      "\t$0",
+      "}"
+    ],
+    "description": "Declare a Stark struct"
+  },
+  "Record": {
+    "prefix": "record",
+    "body": [
+      "record ${1:Name}(${2:i32[0 max] Value})",
+      "{",
+      "\t$0",
+      "}"
+    ],
+    "description": "Declare a Stark record"
+  },
+  "Enum": {
+    "prefix": "enum",
+    "body": [
+      "enum ${1:Name}",
+      "{",
+      "\t${2:First},",
+      "\t${3:Second}",
+      "}",
+      "$0"
+    ],
+    "description": "Declare a Stark enum"
+  },
+  "Trait": {
+    "prefix": "trait",
+    "body": [
+      "trait ${1:Name}<${2:T}>",
+      "{",
+      "\tlaw bool ${3:Matches}(borrow ${2:T} value);",
+      "}",
+      "$0"
+    ],
+    "description": "Declare a Stark trait"
+  },
+  "Doctrine": {
+    "prefix": "doctrine",
+    "body": [
+      "doctrine ${1:Name}<${2:T}>",
+      "{",
+      "\tfinite law bool ${3:Matches}(borrow ${2:T} value);",
+      "}",
+      "$0"
+    ],
+    "description": "Declare a Stark doctrine"
+  },
+  "Switch": {
+    "prefix": "switch",
+    "body": [
+      "switch (${1:value})",
+      "{",
+      "\tcase ${2:0}:",
+      "\t{",
+      "\t\t$0",
+      "\t}",
+      "\tdefault:",
+      "\t{",
+      "\t}",
+      "}"
+    ],
+    "description": "Declare a Stark switch statement"
+  },
+  "While Will Exit": {
+    "prefix": "while",
+    "body": [
+      "while willexit (${1:condition})",
+      "{",
+      "\t$0",
+      "}"
+    ],
+    "description": "Declare a while loop with an exit guarantee"
+  },
+  "For Will Exit": {
+    "prefix": "for",
+    "body": [
+      "for willexit (${1:stack mut u64[0 max] index = 0}; ${2:index < count}; ${3:index += 1})",
+      "{",
+      "\t$0",
+      "}"
+    ],
+    "description": "Declare a Stark for loop"
+  },
+  "Unsafe Block": {
+    "prefix": "unsafe",
+    "body": [
+      "unsafe",
+      "{",
+      "\t$0",
+      "}"
+    ],
+    "description": "Declare an unsafe block"
+  },
+  "FFI Declaration": {
+    "prefix": "ffi",
+    "body": [
+      "unsafe ffi fn ${1:i32[min max]} ${2:NativeCall}(${3});"
+    ],
+    "description": "Declare a native FFI function"
+  },
+  "Assembly Function": {
+    "prefix": "asmfn",
+    "body": [
+      "unsafe ffi asm(${1:x86_64}) fn ${2:i64[min max]} ${3:Name}(${4:i64[min max] value})",
+      "\tin(\"${5:rax}\") ${6:value},",
+      "\tout(\"${7:rax}\") return",
+      "{",
+      "\t\"${8:mov rax, rdi}\"",
+      "}"
+    ],
+    "description": "Declare an assembly-backed function"
+  },
+  "Stack Local": {
+    "prefix": "stack",
+    "body": [
+      "stack ${1:mut }${2:i32[0 max]} ${3:name} = ${4:0};"
+    ],
+    "description": "Declare a stack local"
+  },
+  "Constant": {
+    "prefix": "const",
+    "body": [
+      "const ${1:Name} = ${2:0};"
+    ],
+    "description": "Declare a constant"
+  }
+}
