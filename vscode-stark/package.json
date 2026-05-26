@@ -2,7 +2,7 @@
   "name": "stark-language-vscode",
   "displayName": "Stark Language",
   "description": "Syntax highlighting, snippets, and standard library completions for the Stark language.",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "publisher": "stark-language",
   "license": "MIT",
   "icon": "assets/brand.png",

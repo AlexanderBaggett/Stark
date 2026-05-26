@@ -15,7 +15,7 @@ const TensIndex = 22;
 const OnesIndex = 23;
 const ExpectedChecksum = 212992;
 
-unsafe fn bool IOOk(System.IO.IOStatus status) {
+ finite law bool IOOk(System.IO.IOStatus status) {
     switch (status) {
         case System.IO.IOStatus.Ok:
             return true;
@@ -35,7 +35,7 @@ unsafe fn void WriteUnicodeEntryPath(rawmutptr<i8[min max]> data, u8[0 7] index)
     *(&data[OnesIndex]) = (i8[min max])(48 + (i32[min max])index);
 }
 
-unsafe fn bool CreateEntry(ascii path) {
+fn bool CreateEntry(ascii path) {
     stack System.IO.IOResult<System.IO.File.File> opened =
         System.IO.File.Open(path, System.IO.File.FileMode.Write, System.IO.File.FileBuffering.None);
     switch (opened) {

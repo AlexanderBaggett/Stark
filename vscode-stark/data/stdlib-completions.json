@@ -4109,11 +4109,11 @@
     "module": "System.Memory",
     "owner": "Allocator",
     "source": "stdlib/src/System/Memory.stark",
-    "detail": "static finite law Allocator Default()",
-    "signature": "static finite law Allocator Default()",
+    "detail": "static inline finite law Allocator Default()",
+    "signature": "static inline finite law Allocator Default()",
     "visibility": "public",
     "qualifiedName": "System.Memory.Allocator.Default",
-    "documentation": "```stark\nstatic finite law Allocator Default();\n```\n\nSystem.Memory.Allocator\n\nVisibility: public"
+    "documentation": "```stark\nstatic inline finite law Allocator Default();\n```\n\nSystem.Memory.Allocator\n\nVisibility: public"
   },
   {
     "label": "IsDefault",
@@ -4122,11 +4122,11 @@
     "module": "System.Memory",
     "owner": "Allocator",
     "source": "stdlib/src/System/Memory.stark",
-    "detail": "finite law bool IsDefault(borrow Allocator self)",
-    "signature": "finite law bool IsDefault(borrow Allocator self)",
+    "detail": "inline finite law bool IsDefault(borrow Allocator self)",
+    "signature": "inline finite law bool IsDefault(borrow Allocator self)",
     "visibility": "public",
     "qualifiedName": "System.Memory.Allocator.IsDefault",
-    "documentation": "```stark\nfinite law bool IsDefault(borrow Allocator self);\n```\n\nSystem.Memory.Allocator\n\nVisibility: public"
+    "documentation": "```stark\ninline finite law bool IsDefault(borrow Allocator self);\n```\n\nSystem.Memory.Allocator\n\nVisibility: public"
   },
   {
     "label": "Kind",
@@ -4623,11 +4623,11 @@
     "kind": "function",
     "module": "System.Memory",
     "source": "stdlib/src/System/Memory.stark",
-    "detail": "public finite law bool SupportsDynamicAllocator(Allocator allocator)",
-    "signature": "public finite law bool SupportsDynamicAllocator(Allocator allocator)",
+    "detail": "public inline finite law bool SupportsDynamicAllocator(Allocator allocator)",
+    "signature": "public inline finite law bool SupportsDynamicAllocator(Allocator allocator)",
     "visibility": "public",
     "qualifiedName": "System.Memory.SupportsDynamicAllocator",
-    "documentation": "```stark\npublic finite law bool SupportsDynamicAllocator(Allocator allocator);\n```\n\nSystem.Memory\n\nVisibility: public"
+    "documentation": "```stark\npublic inline finite law bool SupportsDynamicAllocator(Allocator allocator);\n```\n\nSystem.Memory\n\nVisibility: public"
   },
   {
     "label": "System.Net",

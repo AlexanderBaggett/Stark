@@ -3,7 +3,7 @@ module Benchmarks.Micro.StackFieldBranchForwarding
 
 record Pair(i64[min max] Left, i64[min max] Right) { }
 
-unsafe finite law i64[min max] Accumulate(i64[min max] seed, i64[min max] salt, bool chooseLeft) {
+finite law i64[min max] Accumulate(i64[min max] seed, i64[min max] salt, bool chooseLeft) {
     stack mut Pair pair = new Pair(seed, salt);
     pair.Left = pair.Left + pair.Right;
     if (chooseLeft) {

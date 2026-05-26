@@ -8,7 +8,7 @@ module Benchmarks.IO.FileSystemPathTranscode
 
 const Iterations = 16;
 
-unsafe fn bool IOOk(System.IO.IOStatus status) {
+fn bool IOOk(System.IO.IOStatus status) {
     switch (status) {
         case System.IO.IOStatus.Ok:
             return true;
@@ -17,7 +17,7 @@ unsafe fn bool IOOk(System.IO.IOStatus status) {
     }
 }
 
-unsafe fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
+fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
     switch (result) {
         case System.IO.IOResult<bool>.Ok(var value):
             return value;
@@ -26,7 +26,7 @@ unsafe fn bool BoolOrFalse(System.IO.IOResult<bool> result) {
     }
 }
 
-unsafe fn i64[min max] PathLength(System.Memory.MemoryResult<System.Text.OwnedAscii> result) {
+fn i64[min max] PathLength(System.Memory.MemoryResult<System.Text.OwnedAscii> result) {
     switch (result) {
         case System.Memory.MemoryResult<System.Text.OwnedAscii>.Ok(var value):
             return (i64[min max])value.Length();
@@ -35,7 +35,7 @@ unsafe fn i64[min max] PathLength(System.Memory.MemoryResult<System.Text.OwnedAs
     }
 }
 
-unsafe fn i64[min max] FirstEntryLength(System.FileSystem.DirectoryReadResult result) {
+fn i64[min max] FirstEntryLength(System.FileSystem.DirectoryReadResult result) {
     switch (result) {
         case System.FileSystem.DirectoryReadResult.Entry(var entry):
             return (i64[min max])entry.Name.Length();

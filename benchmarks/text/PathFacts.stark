@@ -1,7 +1,7 @@
 import System.IO.Path
 module Benchmarks.Text.PathFacts
 
-unsafe fn i64[min max] AddFacts(ascii path) {
+fn i64[min max] AddFacts(ascii path) {
     stack System.IO.Path.PathFacts facts = System.IO.Path.GetFacts(path);
     return facts.PathLength()
         + facts.ExtensionLength()

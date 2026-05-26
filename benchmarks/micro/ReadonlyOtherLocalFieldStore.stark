@@ -3,11 +3,11 @@ module Benchmarks.Micro.ReadonlyOtherLocalFieldStore
 
 record Box(i64[min max] Value) { }
 
-noinline unsafe finite law i64[min max] ReadValue(borrow Box box) {
+noinline finite law i64[min max] ReadValue(borrow Box box) {
     return box.Value;
 }
 
-unsafe finite law i64[min max] Accumulate(i64[min max] seed, i64[min max] salt) {
+finite law i64[min max] Accumulate(i64[min max] seed, i64[min max] salt) {
     stack mut Box left = new Box(seed);
     stack mut Box right = new Box(salt);
     left.Value = seed + salt;

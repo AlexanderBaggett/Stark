@@ -1,7 +1,7 @@
 import System.Process
 module Benchmarks.Micro.BranchSelectPredication
 
-noinline unsafe finite law i64[min max] Choose(bool flag, i64[min max] left, i64[min max] right) {
+noinline finite law i64[min max] Choose(bool flag, i64[min max] left, i64[min max] right) {
     if (flag) {
         return left;
     }

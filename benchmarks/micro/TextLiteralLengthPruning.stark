@@ -2,7 +2,7 @@ import System.Process
 import System.Text
 module Benchmarks.Micro.TextLiteralLengthPruning
 
-unsafe finite law i64[min max] Score(i64[min max] salt) {
+finite law i64[min max] Score(i64[min max] salt) {
     stack mut i64[min max] adjusted = salt;
 
     if (System.Text.AsciiLength("stark-performance") == 17) {

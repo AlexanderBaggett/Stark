@@ -7,7 +7,7 @@ module Benchmarks.IO.FileBufferedReadWrite
 const Iterations = 64;
 const Chunks = 33;
 
-unsafe fn bool IOOk(System.IO.IOStatus status) {
+fn bool IOOk(System.IO.IOStatus status) {
     switch (status) {
         case System.IO.IOStatus.Ok:
             return true;
@@ -16,7 +16,7 @@ unsafe fn bool IOOk(System.IO.IOStatus status) {
     }
 }
 
-unsafe fn bool MemoryOk(System.Memory.MemoryStatus status) {
+fn bool MemoryOk(System.Memory.MemoryStatus status) {
     switch (status) {
         case System.Memory.MemoryStatus.Ok:
             return true;
@@ -25,7 +25,7 @@ unsafe fn bool MemoryOk(System.Memory.MemoryStatus status) {
     }
 }
 
-unsafe fn i64[min max] CountOrNegative(System.IO.IOResult<u64[0 2 ** 63 - 1]> result) {
+fn i64[min max] CountOrNegative(System.IO.IOResult<u64[0 2 ** 63 - 1]> result) {
     switch (result) {
         case System.IO.IOResult<u64[0 2 ** 63 - 1]>.Ok(var value):
             return (i64[min max])value;
@@ -34,7 +34,7 @@ unsafe fn i64[min max] CountOrNegative(System.IO.IOResult<u64[0 2 ** 63 - 1]> re
     }
 }
 
-unsafe fn i64[min max] SumBytes(borrow i8[min max][] values, u64[0 2 ** 63 - 1] count) {
+fn i64[min max] SumBytes(borrow i8[min max][] values, u64[0 2 ** 63 - 1] count) {
     stack mut i64[min max] checksum = 0;
     for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
         checksum += (i64[min max])values[index];

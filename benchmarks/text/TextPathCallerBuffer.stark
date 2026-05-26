@@ -4,7 +4,7 @@ import System.Memory
 import System.Text
 module Benchmarks.Text.TextPathCallerBuffer
 
-unsafe fn bool Ok(System.Memory.MemoryStatus status) {
+fn bool Ok(System.Memory.MemoryStatus status) {
     switch (status) {
         case System.Memory.MemoryStatus.Ok:
             return true;

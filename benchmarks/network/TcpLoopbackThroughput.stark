@@ -10,7 +10,7 @@ const ChunkBytes = 4096;
 const Iterations = 256;
 const ExpectedBytes = 1048576;
 
-unsafe fn System.Net.IPv4Endpoint LoopbackEndpoint(u8[0 63] attempt) {
+fn System.Net.IPv4Endpoint LoopbackEndpoint(u8[0 63] attempt) {
     stack i32[min max] processId = System.Process.CurrentId();
     stack mut u32[0 max] positiveProcessId = 0;
     if (processId > 0) {
@@ -29,7 +29,7 @@ unsafe fn System.Net.IPv4Endpoint LoopbackEndpoint(u8[0 63] attempt) {
     };
 }
 
-unsafe fn bool MemoryOk(System.Memory.MemoryStatus status) {
+fn bool MemoryOk(System.Memory.MemoryStatus status) {
     switch (status) {
         case System.Memory.MemoryStatus.Ok:
             return true;

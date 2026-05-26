@@ -1,7 +1,7 @@
 import System.Process
 module Benchmarks.Micro.IndependentSliceAdd
 
-unsafe fn void Add(
+fn void Add(
     borrow i64[min max][] left,
     borrow i64[min max][] right,
     borrow mut i64[min max][] output) {

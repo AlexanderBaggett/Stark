@@ -24,7 +24,7 @@ public struct Allocator
 {
     u8[0 2 ** 7 - 1] Kind;
 
-    static finite law Allocator Default()
+    static inline finite law Allocator Default()
     {
         return new Allocator()
         {
@@ -32,7 +32,7 @@ public struct Allocator
         };
     }
 
-    finite law bool IsDefault(borrow Allocator self)
+    inline finite law bool IsDefault(borrow Allocator self)
     {
         return self.Kind == 0;
     }
@@ -50,7 +50,7 @@ internal inline fn Allocation Allocate(Allocator allocator, u64[0 2 ** 63 - 1] b
 internal inline fn Allocation Reallocate(Allocation allocation, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
 internal inline fn void Free(Allocation allocation);
 
-public finite law bool SupportsDynamicAllocator(Allocator allocator)
+public inline finite law bool SupportsDynamicAllocator(Allocator allocator)
 {
     return allocator.IsDefault();
 }

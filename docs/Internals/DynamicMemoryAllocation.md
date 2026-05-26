@@ -165,8 +165,8 @@ public struct Allocator
 {
     u8[0 2 ** 7 - 1] Kind;
 
-    static finite law Allocator Default();
-    finite law bool IsDefault(borrow Allocator self);
+    static inline finite law Allocator Default();
+    inline finite law bool IsDefault(borrow Allocator self);
 }
 ```
 

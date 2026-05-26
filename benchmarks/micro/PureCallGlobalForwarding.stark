@@ -3,11 +3,11 @@ module Benchmarks.Micro.PureCallGlobalForwarding
 
 static mut i64[min max] Counter = 1;
 
-noinline unsafe finite law i64[min max] Mix(i64[min max] value) {
+noinline finite law i64[min max] Mix(i64[min max] value) {
     return (value ^ (value >> 7)) + 17;
 }
 
-unsafe finite i64[min max] Accumulate(i64[min max] salt) {
+finite i64[min max] Accumulate(i64[min max] salt) {
     Counter = (Counter + salt) % 1000000007;
     stack i64[min max] first = Counter;
     stack i64[min max] mixed = Mix(first);

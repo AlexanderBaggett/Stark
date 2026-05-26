@@ -1,11 +1,11 @@
 import System.Process
 module Benchmarks.Micro.DirectCallInlining
 
-public unsafe finite law i64[min max] MixCore(i64[min max] value, i64[min max] salt) {
+public finite law i64[min max] MixCore(i64[min max] value, i64[min max] salt) {
     return (((value * 31) + salt) ^ (value >> 3)) % 1000003;
 }
 
-public unsafe finite law i64[min max] Mix(i64[min max] value, i64[min max] salt) {
+public finite law i64[min max] Mix(i64[min max] value, i64[min max] salt) {
     return MixCore(value, salt);
 }
 
