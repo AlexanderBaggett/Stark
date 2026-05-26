@@ -10,7 +10,7 @@ const ChunkBytes = 4096;
 const Iterations = 256;
 const ExpectedBytes = 1048576;
 
-unsafe fn System.Net.IPv4Endpoint LoopbackEndpoint(u8[0 63] attempt) {
+fn System.Net.IPv4Endpoint LoopbackEndpoint(u8[0 63] attempt) {
     stack i32[min max] processId = System.Process.CurrentId();
     stack mut u32[0 max] positiveProcessId = 0;
     if (processId > 0) {
@@ -29,7 +29,7 @@ unsafe fn System.Net.IPv4Endpoint LoopbackEndpoint(u8[0 63] attempt) {
     };
 }
 
-unsafe fn bool WriteVectorExact(
+fn bool WriteVectorExact(
     mut borrow System.Net.Tcp.TcpClient client,
     borrow i8[min max][] firstSource,
     borrow i8[min max][] secondSource) {
@@ -42,7 +42,7 @@ unsafe fn bool WriteVectorExact(
     }
 }
 
-unsafe fn bool ReadVectorExact(
+fn bool ReadVectorExact(
     mut borrow System.Net.Tcp.TcpClient server,
     mut borrow i8[min max][] firstDestination,
     mut borrow i8[min max][] secondDestination) {

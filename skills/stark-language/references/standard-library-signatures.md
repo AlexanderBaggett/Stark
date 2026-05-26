@@ -483,7 +483,7 @@ Public types:
 Top-level functions:
 
 ```stark
-public finite law bool SupportsDynamicAllocator(Allocator allocator);
+public inline finite law bool SupportsDynamicAllocator(Allocator allocator);
 public inline fn MemoryStatus ReserveBytes(mut borrow dynamic i8[min max] storage, u64[0 2 ** 63 - 1] additional);
 public inline fn MemoryStatus ReserveCodePoints(mut borrow dynamic i32[min max] storage, u64[0 2 ** 63 - 1] additional);
 public inline fn MemoryStatus AppendBytesDisjoint(mut borrow dynamic i8[min max] storage, borrow i8[min max][] source, u64[0 2 ** 63 - 1] count);
@@ -519,8 +519,8 @@ Member functions:
 `Allocator`
 
 ```stark
-static finite law Allocator Default();
-finite law bool IsDefault(borrow Allocator self);
+static inline finite law Allocator Default();
+inline finite law bool IsDefault(borrow Allocator self);
 ```
 
 
@@ -1062,4 +1062,3 @@ fn ThreadStatus Detach(mut borrow Thread self);
 static fn void Yield();
 static fn void SleepMilliseconds(u64[0 2 ** 63 - 1] milliseconds);
 ```
-

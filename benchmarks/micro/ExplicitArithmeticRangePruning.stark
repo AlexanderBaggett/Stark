@@ -1,7 +1,7 @@
 import System.Process
 module Benchmarks.Micro.ExplicitArithmeticRangePruning
 
-unsafe finite law i64[min max] Score(u8[0 10] left, u8[0 5] right, i64[min max] salt) {
+finite law i64[min max] Score(u8[0 10] left, u8[0 5] right, i64[min max] salt) {
     stack i32[min max] saturated = left +| right;
     stack i32[min max] wrapped = left +% right;
 

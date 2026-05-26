@@ -4,7 +4,7 @@ module Benchmarks.Allocator.MemoryCopyFill
 
 const Iterations = 10000;
 
-unsafe fn bool Ok(System.Memory.MemoryStatus status) {
+fn bool Ok(System.Memory.MemoryStatus status) {
     switch (status) {
         case System.Memory.MemoryStatus.Err(var error):
             return false;
@@ -13,7 +13,7 @@ unsafe fn bool Ok(System.Memory.MemoryStatus status) {
     }
 }
 
-unsafe fn i64[min max] SumBytes(borrow i8[min max][] values, u64[0 2 ** 63 - 1] count) {
+fn i64[min max] SumBytes(borrow i8[min max][] values, u64[0 2 ** 63 - 1] count) {
     stack mut i64[min max] checksum = 0;
     for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
         checksum += (i64[min max])values[index];
@@ -22,7 +22,7 @@ unsafe fn i64[min max] SumBytes(borrow i8[min max][] values, u64[0 2 ** 63 - 1] 
     return checksum;
 }
 
-unsafe fn i64[min max] SumCodePoints(borrow i32[min max][] values, u64[0 2 ** 63 - 1] count) {
+fn i64[min max] SumCodePoints(borrow i32[min max][] values, u64[0 2 ** 63 - 1] count) {
     stack mut i64[min max] checksum = 0;
     for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
         checksum += (i64[min max])values[index];

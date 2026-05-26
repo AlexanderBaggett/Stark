@@ -2,7 +2,7 @@ import System.Collections
 import System.Memory
 module Benchmarks.Collections.StackGrowth
 
-unsafe finite law bool Ok(MemoryStatus status) {
+finite law bool Ok(MemoryStatus status) {
     switch (status) {
         case MemoryStatus.Ok:
             return true;

@@ -5,7 +5,7 @@ module Benchmarks.Runtime.RuntimeBufferDynamic
 const Iterations = 1000;
 const Chunks = 32;
 
-unsafe fn bool Ok(System.Memory.MemoryStatus status) {
+fn bool Ok(System.Memory.MemoryStatus status) {
     switch (status) {
         case System.Memory.MemoryStatus.Err(var error):
             return false;
@@ -14,7 +14,7 @@ unsafe fn bool Ok(System.Memory.MemoryStatus status) {
     }
 }
 
-unsafe fn i64[min max] SumBytes(borrow i8[min max][] values, u64[0 2 ** 63 - 1] count) {
+fn i64[min max] SumBytes(borrow i8[min max][] values, u64[0 2 ** 63 - 1] count) {
     stack mut i64[min max] checksum = count;
     for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1) {
         checksum += (i64[min max])values[index];

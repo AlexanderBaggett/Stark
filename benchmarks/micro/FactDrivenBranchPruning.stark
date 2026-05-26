@@ -1,7 +1,7 @@
 import System.Process
 module Benchmarks.Micro.FactDrivenBranchPruning
 
-unsafe finite law i64[min max] Score(u8[0 10] value, i64[min max] salt) {
+finite law i64[min max] Score(u8[0 10] value, i64[min max] salt) {
     if (value < 20) {
         return (((i64[min max])value * 37) + salt) % 1000003;
     }
@@ -9,7 +9,7 @@ unsafe finite law i64[min max] Score(u8[0 10] value, i64[min max] salt) {
     return salt - 1000;
 }
 
-unsafe finite law i64[min max] SwitchScore(u8[10 12] value, i64[min max] salt) {
+finite law i64[min max] SwitchScore(u8[10 12] value, i64[min max] salt) {
     stack i32[min max] widened = (i32[min max])value;
     switch (widened) {
         case 10:
@@ -23,7 +23,7 @@ unsafe finite law i64[min max] SwitchScore(u8[10 12] value, i64[min max] salt) {
     }
 }
 
-unsafe finite law i64[min max] NestedScore(u8[0 20] value, i64[min max] salt) {
+finite law i64[min max] NestedScore(u8[0 20] value, i64[min max] salt) {
     if (value < 10) {
         if (value >= 10) {
             return salt - 10000;
@@ -35,7 +35,7 @@ unsafe finite law i64[min max] NestedScore(u8[0 20] value, i64[min max] salt) {
     return salt + (i64[min max])value;
 }
 
-unsafe finite law i64[min max] ModuloScore(u8[0 100] value, i64[min max] salt) {
+finite law i64[min max] ModuloScore(u8[0 100] value, i64[min max] salt) {
     stack i32[min max] slot = value % 8;
     if (slot >= 8) {
         return salt - 4000;
@@ -44,7 +44,7 @@ unsafe finite law i64[min max] ModuloScore(u8[0 100] value, i64[min max] salt) {
     return salt + (i64[min max])slot;
 }
 
-unsafe finite law i64[min max] DivideScore(u8[0 100] value, i64[min max] salt) {
+finite law i64[min max] DivideScore(u8[0 100] value, i64[min max] salt) {
     stack i32[min max] bucket = value / 10;
     if (bucket > 10) {
         return salt - 5000;

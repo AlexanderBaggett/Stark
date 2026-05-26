@@ -6,7 +6,7 @@ struct Pair {
     i64[min max] Tag;
 }
 
-unsafe finite law i64[min max] ReadValue(bool flag, i64[min max] value, i64[min max] tag) {
+finite law i64[min max] ReadValue(bool flag, i64[min max] value, i64[min max] tag) {
     stack Pair pair = flag
         ? new Pair() { Value = value, Tag = tag }
         : new Pair() { Value = value, Tag = tag + 1 };

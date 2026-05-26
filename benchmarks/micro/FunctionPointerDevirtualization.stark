@@ -1,6 +1,6 @@
 module Benchmarks.Micro.FunctionPointerDevirtualization
 
-noinline unsafe finite law i64[min max] Mix(i64[min max] value, i64[min max] salt) {
+noinline finite law i64[min max] Mix(i64[min max] value, i64[min max] salt) {
     return ((value * 31) + salt) % 1000003;
 }
 

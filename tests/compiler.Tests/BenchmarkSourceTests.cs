@@ -73,8 +73,6 @@ public sealed class BenchmarkSourceTests
         Assert.Contains("@__stark_inline_clone_System_Memory_FillInitializedBytesInfallible(", mainBody, StringComparison.Ordinal);
         Assert.Contains("@__stark_inline_clone_System_Memory_CopyCodePointsDisjointInfallible(", mainBody, StringComparison.Ordinal);
         Assert.Contains("@__stark_inline_clone_System_Memory_FillInitializedCodePointsInfallible(", mainBody, StringComparison.Ordinal);
-        Assert.Contains("@__stark_inline_clone_System_Memory_ReserveBytes(", mainBody, StringComparison.Ordinal);
-        Assert.Contains("@__stark_inline_clone_System_Memory_ReserveCodePoints(", mainBody, StringComparison.Ordinal);
         Assert.Contains("@__stark_inline_clone_System_Memory_MoveBytesInfallible(", mainBody, StringComparison.Ordinal);
         Assert.Contains("@__stark_inline_clone_System_Memory_MoveCodePointsInfallible(", mainBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@System_Memory_CopyBytesDisjointInfallible(", mainBody, StringComparison.Ordinal);
@@ -91,7 +89,6 @@ public sealed class BenchmarkSourceTests
         Assert.DoesNotContain("@System_Memory_FillInitializedCodePoints(", mainBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@System_Memory_MoveBytes(", mainBody, StringComparison.Ordinal);
         Assert.DoesNotContain("@System_Memory_MoveCodePoints(", mainBody, StringComparison.Ordinal);
-        Assert.Contains("; closed-world imported inline body: System.Memory.ReserveBytes", llvm, StringComparison.Ordinal);
         Assert.Contains("; closed-world imported inline body: System.Memory.CopyBytesDisjointInfallible", llvm, StringComparison.Ordinal);
         Assert.Contains("; closed-world imported inline body: System.Memory.MoveBytesInfallible", llvm, StringComparison.Ordinal);
 

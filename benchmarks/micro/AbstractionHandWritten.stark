@@ -1,7 +1,7 @@
 import System.Process
 module Benchmarks.Micro.AbstractionHandWritten
 
-unsafe finite law i64[min max] Score(i64[min max] value, i64[min max] salt) {
+ finite law i64[min max] Score(i64[min max] value, i64[min max] salt) {
     return (((value * 31) + salt) ^ (value >> 3)) % 1000003;
 }
 

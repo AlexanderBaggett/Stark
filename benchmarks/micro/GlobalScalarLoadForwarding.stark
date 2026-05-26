@@ -3,7 +3,7 @@ module Benchmarks.Micro.GlobalScalarLoadForwarding
 
 static mut i64[min max] Counter = 1;
 
-unsafe finite i64[min max] Accumulate(i64[min max] salt) {
+finite i64[min max] Accumulate(i64[min max] salt) {
     Counter = Counter + salt;
     stack i64[min max] first = Counter;
     stack i64[min max] second = Counter;

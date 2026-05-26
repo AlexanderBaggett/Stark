@@ -51,8 +51,8 @@ public struct Allocator
 {
     u8[0 127] Kind;
 
-    static finite law Allocator Default();
-    finite law bool IsDefault(borrow Allocator self);
+    static inline finite law Allocator Default();
+    inline finite law bool IsDefault(borrow Allocator self);
 }
 ```
 
@@ -146,7 +146,7 @@ result.
 
 ## Function Kinds
 
-`Allocator.Default()` and `Allocator.IsDefault` are `finite law` because they
+`Allocator.Default()` and `Allocator.IsDefault` are `inline finite law` because they
 return allocator identity information without allocating, freeing, mutating
 state, synchronizing, or touching the operating system.
 
@@ -167,7 +167,7 @@ through the allocation policy.
 
 - `System.Memory` now has an initial source module and is re-exported by
   `System`.
-- `Allocator.Default()` and `Allocator.IsDefault` are implemented as `finite law`
+- `Allocator.Default()` and `Allocator.IsDefault` are implemented as `inline finite law`
   member functions.
 - Internal allocate, reallocate, and free operations lower through the compiler
   to Stark-owned runtime helpers and are marked `inline` so allocation facts are

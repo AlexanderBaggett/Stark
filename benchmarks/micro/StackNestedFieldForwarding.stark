@@ -4,7 +4,7 @@ module Benchmarks.Micro.StackNestedFieldForwarding
 record Inner(i64[min max] Value, i64[min max] Salt) { }
 record Outer(Inner Left, Inner Right) { }
 
-unsafe finite law i64[min max] Accumulate(i64[min max] seed, i64[min max] salt) {
+finite law i64[min max] Accumulate(i64[min max] seed, i64[min max] salt) {
     stack mut Outer outer = new Outer(new Inner(seed, salt), new Inner(salt, seed));
     outer.Left.Value = outer.Left.Value + outer.Right.Salt;
     stack i64[min max] first = outer.Left.Value;

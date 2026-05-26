@@ -3,7 +3,7 @@ module Benchmarks.Micro.DeadStackFieldStore
 
 record Pair(i64[min max] Left, i64[min max] Right) { }
 
-unsafe finite law i64[min max] Accumulate(i64[min max] seed, i64[min max] salt) {
+finite law i64[min max] Accumulate(i64[min max] seed, i64[min max] salt) {
     stack mut Pair pair = new Pair(seed, salt);
     pair.Left = seed + salt;
     pair.Right = seed ^ salt;

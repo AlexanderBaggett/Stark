@@ -3,7 +3,7 @@ module System.Memory
 public struct Allocator {
     u8[0 127] Kind;
 
-    static unsafe finite law Allocator Default() {
+    static finite law Allocator Default() {
         return new Allocator() {
             Kind = 0
         };
@@ -17,9 +17,9 @@ internal struct Allocation {
     Allocator Allocator;
 }
 
-internal unsafe fn Allocation Allocate(Allocator allocator, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
-internal unsafe fn Allocation Reallocate(Allocation allocation, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
-internal unsafe fn void Free(Allocation allocation);
+internal fn Allocation Allocate(Allocator allocator, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
+internal fn Allocation Reallocate(Allocation allocation, u64[0 2 ** 63 - 1] byteLength, u64[1 2 ** 63 - 1] alignment);
+internal fn void Free(Allocation allocation);
 
 export unsafe ffi fn i32[min max] main() {
     stack Allocator allocator = Allocator.Default();

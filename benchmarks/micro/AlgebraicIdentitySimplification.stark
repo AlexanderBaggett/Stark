@@ -1,7 +1,7 @@
 import System.Process
 module Benchmarks.Micro.AlgebraicIdentitySimplification
 
-unsafe finite law i64[min max] Normalize(i64[min max] value) {
+finite law i64[min max] Normalize(i64[min max] value) {
     stack i64[min max] add = value + 0;
     stack i64[min max] multiply = add * 1;
     stack i64[min max] masked = multiply & -1;
@@ -19,19 +19,19 @@ unsafe finite law i64[min max] Normalize(i64[min max] value) {
     return ((rightShifted ^ 0) + zeroXor + zeroAnd + zeroMultiply + zeroSubtract + zeroModulo + (allOnes & 1)) - 1;
 }
 
-unsafe finite law i64[min max] NormalizeSlot(u8[0 7] slot, i64[min max] salt) {
+finite law i64[min max] NormalizeSlot(u8[0 7] slot, i64[min max] salt) {
     stack i32[min max] modulo = slot % 8;
     stack i32[min max] divided = slot / 8;
     return salt + (i64[min max])modulo + (i64[min max])divided;
 }
 
-unsafe finite law i64[min max] NormalizeNonZeroSlot(u8[1 8] slot, i64[min max] salt) {
+finite law i64[min max] NormalizeNonZeroSlot(u8[1 8] slot, i64[min max] salt) {
     stack i32[min max] divided = slot / slot;
     stack i32[min max] modulo = slot % slot;
     return salt + (i64[min max])divided + (i64[min max])modulo;
 }
 
-unsafe finite law i64[min max] NormalizeComparisons(i32[min max] value, i64[min max] salt) {
+finite law i64[min max] NormalizeComparisons(i32[min max] value, i64[min max] salt) {
     stack i32[min max] copy = value;
     stack i32[min max] equal = value == copy ? 1 : 100;
     stack i32[min max] notEqual = value != copy ? 100 : 1;

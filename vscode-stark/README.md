@@ -1,14 +1,12 @@
-# Stark Language VS Code Extension
+# Stark Language
 
-This extension provides editor support for Stark source files.
+Editor support for Stark source files.
 
-The extension icon is generated from the repository's `brand.svg`, bundled as
-`assets/brand.svg` with a package-compatible `assets/brand.png`.
+Programming language repository: [github.com/AlexanderBaggett/Stark](https://github.com/AlexanderBaggett/Stark)
 
 ## Features
 
-- `.stark` language registration
-- TextMate syntax highlighting for Stark grammar tokens, including:
+- Syntax highlighting for `.stark` files, including:
   - modules and imports
   - attributes
   - functions, `finite`, `law`, and `finite law`
@@ -19,39 +17,10 @@ The extension icon is generated from the repository's `brand.svg`, bundled as
   - wrapping and saturating arithmetic operators
   - switch patterns, loop behavior keywords, and layout queries
   - unsafe, FFI, and assembly function syntax
-- Language configuration for comments, brackets, indentation, and auto-closing pairs
-- Allman-style snippets for common Stark declarations and statements
-- Standard library completions generated from `stdlib/src/System`
-  - module import completions
+- Comment toggling, bracket matching, indentation, and auto-closing pairs
+- Snippets for common Stark declarations and statements
+- Standard library autocomplete
+  - module imports
   - qualified completions like `System.Console.`
-  - public top-level functions, types, enum cases, constructors, and public member functions
-  - snippet placeholders for function parameters
-
-## Development
-
-Open this folder in VS Code and press `F5` to run an Extension Development Host.
-
-Refresh standard library completions after changing `stdlib/src/System`:
-
-```bash
-npm run generate:stdlib
-```
-
-Run the extension consistency check:
-
-```bash
-npm run check
-```
-
-The extension intentionally has no npm runtime dependencies. VS Code provides the `vscode` API at extension runtime.
-
-## Packaging
-
-Install `vsce` if you want to package a `.vsix` locally:
-
-```bash
-npm install -g @vscode/vsce
-vsce package
-```
-
-The generated package can be installed through VS Code's "Install from VSIX..." command.
+  - functions, types, enum cases, constructors, fields, and member functions
+  - function-call snippets with parameter placeholders

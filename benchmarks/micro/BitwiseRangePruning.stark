@@ -1,7 +1,7 @@
 import System.Process
 module Benchmarks.Micro.BitwiseRangePruning
 
-unsafe finite law i64[min max] Score(u16[0 1023] value, i64[min max] salt) {
+finite law i64[min max] Score(u16[0 1023] value, i64[min max] salt) {
     stack u16[0 2047] masked = (u16[0 2047])(value & 255);
     stack u16[0 2047] shifted = (u16[0 2047])(masked << 1);
     stack u16[0 2047] folded = (u16[0 2047])(shifted | (value & 3));
