@@ -1,8 +1,8 @@
 # Stark
 
-Stark is a performance-focused programming language targeting LLVM. It is built
+Stark is a performance-focused non-GC systems programming language targeting LLVM. It is built
 around a simple rule: ordinary safe code should make ownership, aliasing,
-allocation, and backend facts explicit enough for the compiler to produce
+allocation, and backend facts explicit enough for the compiler to produce fast
 predictable native code.
 
 The syntax is C#-adjacent, but the semantics are systems-oriented:
@@ -13,6 +13,60 @@ library designed around visible costs.
 This repository contains the compiler, the `System` standard library, a broad
 compiler and standard-library test suite, executable examples, C/Rust benchmark
 counterparts, and the public documentation site.
+
+- **Range-typed integers.** `i32[0 100]`, `u8[0 max]`, `i64[min max]`. Ranges are part of the type and propagate through arithmetic. The optimizer uses them; you don't pay for branches checking ranges the type already proves.
+- **Memory non-overlap by default.** Two memory-backed parameters of an ordinary function are assumed disjoint unless you opt out with `where overlap(a, b)` or `where same(a, b)`. This is what Rust gets from `&mut` aliasing rules, but expressed as a contract rather than a borrow-checker side effect, and you can branch on it at runtime with `if disjoint(...)`.
+- **Function kinds.** `fn` is a normal function, `finite` guarantees termination, `law` guarantees purity, `finite law` is both. Function kind is part of `fnptr` types, so a callback slot can demand purity or totality at the type level.
+- **Explicit visibility for binary symbols.** `public` is for downstream Stark callers; `export` is a real binary symbol (FFI/entrypoints/ABI). The distinction matters for separate compilation and link-time decisions.
+- **Closure forms match retention.** `inline closure`, `borrow closure`, `mut borrow closure`, `heap closure`, `heap closure<once>` — pick what the callsite actually does with the callback.
+
+## What it looks like
+
+    import System.Console
+    module Demo.App
+
+    finite law i32[min max] Clamp(i32[min max] value, i32[min max] lo, i32[min max] hi)
+    {
+        if (value < lo) { return lo; }
+        if (value > hi) { return hi; }
+        return value;
+    }
+
+    fn void Scale(
+        borrow i32[min max][] input,
+        borrow mut i32[min max][] output,
+        i32[min max] factor)
+    {
+        for willexit independent (stack mut u64[0 max] i = 0; i < input.Length; i += 1)
+        {
+            output[i] = input[i] * factor;
+        }
+    }
+
+    export fn i32[min max] main()
+    {
+        WriteLine("Hello from Stark");
+        return 0;
+    }
+
+`borrow` and `mut borrow` are non-owning views (non-null, checked). `willexit independent` tells the compiler the loop terminates and iterations have no carried dependency — combined with the default non-overlap of `input` and `output`, the optimizer can vectorize without aliasing checks.
+
+## Performance
+
+I ran 72 benchmarks comparing Stark, Rust, and C (all release builds, ratios normalized to C):
+
+| | Stark faster | Tied (±1%) | Slower |
+|---|---|---|---|
+| **vs Rust** | 57 (79%) | 11 (15%) | 4 (6%) |
+| **vs C** | 20 (28%) | 20 (28%) | 32 (44%) |
+
+- **Geometric mean runtime:** Stark 0.989× C, Rust 1.071× C
+- **Median binary size:** Stark 11.5 KB, Rust 3.95 MB, C 16 KB
+
+Stark essentially matches C on average and beats Rust on most workloads. The places Rust wins are micro-benchmarks where the gap is under 2%. Big Stark wins concentrate in text/formatting and dictionary lookup, where range types and non-overlap pay off.
+
+The benchmark suite, the actual numbers, and the harness are in the repo — happy to
+
 
 The active implementation roadmap lives in
 [docs/Internals/Roadmap.md](./docs/Internals/Roadmap.md).
