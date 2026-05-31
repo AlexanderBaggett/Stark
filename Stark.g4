@@ -159,11 +159,11 @@ asmFunctionBody
     ;
 
 structDeclaration
-    : STRUCT Identifier typeParameterList? structBody
+    : STRUCT Identifier typeParameterList? baseTraitList? structBody
     ;
 
 recordDeclaration
-    : RECORD Identifier typeParameterList? primaryConstructorParameters? recordBody
+    : RECORD Identifier typeParameterList? primaryConstructorParameters? baseTraitList? recordBody
     ;
 
 enumDeclaration
@@ -184,6 +184,10 @@ typeAliasDeclaration
 
 primaryConstructorParameters
     : parameterList
+    ;
+
+baseTraitList
+    : COLON type_ (COMMA type_)*
     ;
 
 structBody

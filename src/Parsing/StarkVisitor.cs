@@ -261,6 +261,12 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitPrimaryConstructorParameters([NotNull] StarkParser.PrimaryConstructorParametersContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.baseTraitList"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitBaseTraitList([NotNull] StarkParser.BaseTraitListContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.structBody"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>

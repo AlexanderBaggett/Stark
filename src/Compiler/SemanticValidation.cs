@@ -69,6 +69,7 @@ internal sealed class SemanticValidator
     {
         ValidateGlobalDeclarations();
         ValidateTypeDeclarations();
+        ValidateBaseTraitLists();
         ValidateDestructorDeclarations();
 
         foreach (var function in _functionDeclarations.Values)
@@ -644,6 +645,307 @@ internal sealed class SemanticValidator
                 }
             }
         }
+    }
+
+    // A base list (`struct X : A, B`) names the traits a type implements. Stark
+    // has no class-style inheritance, so every base-list entry must resolve to a
+    // trait; inheriting from a struct, record, enum, or doctrine is rejected
+    // here rather than at the parser, which now accepts the `: ...` syntax for
+    // trait implementation. Full member conformance is validated separately.
+    private void ValidateBaseTraitLists()
+    {
+        var traitRequiredMethods = CollectCurrentModuleTraitRequiredMethods();
+
+        foreach (var declaration in _parseResult.Root.topLevelDeclaration())
+        {
+            StarkParser.BaseTraitListContext? baseList;
+            ISet<string>? genericParameters;
+            string ownerName;
+            HashSet<string> implementedMethodNames;
+
+            if (declaration.structDeclaration() is { } structDeclaration)
+            {
+                baseList = structDeclaration.baseTraitList();
+                genericParameters = _typeResolver.GetGenericParameterNames(structDeclaration.typeParameterList());
+                ownerName = structDeclaration.Identifier().GetText();
+                implementedMethodNames = CollectMemberMethodNames(
+                    structDeclaration.structBody().structMember()
+                        .Select(static member => member.methodDeclaration()));
+            }
+            else if (declaration.recordDeclaration() is { } recordDeclaration)
+            {
+                baseList = recordDeclaration.baseTraitList();
+                genericParameters = _typeResolver.GetGenericParameterNames(recordDeclaration.typeParameterList());
+                ownerName = recordDeclaration.Identifier().GetText();
+                implementedMethodNames = CollectMemberMethodNames(
+                    recordDeclaration.recordBody().recordMember()
+                        .Select(static member => member.methodDeclaration()));
+            }
+            else
+            {
+                continue;
+            }
+
+            if (baseList is null)
+            {
+                continue;
+            }
+
+            foreach (var entry in baseList.type_())
+            {
+                var resolved = ResolveType(entry, genericParameters);
+                var named = ResolveNamedTypeSymbol(resolved);
+                if (named is null)
+                {
+                    // Unknown or unresolved base names are reported by type
+                    // resolution; do not double-report them here.
+                    continue;
+                }
+
+                if (named.Kind != DeclarationKind.Trait)
+                {
+                    _context.Diagnostics.Error(
+                        "STK3026",
+                        $"'{ownerName}' cannot inherit from '{named.Name}'. Stark has no class-style inheritance; only traits may appear in a base list.",
+                        "semantic-validate",
+                        Location(entry));
+                    continue;
+                }
+
+                // Member conformance for traits declared in the current module.
+                // Checks that every required (non-default) trait method is
+                // implemented with a compatible parameter count and function kind.
+                // Full parameter-type matching with `Self`/type-argument
+                // substitution and cross-module trait conformance are follow-up work.
+                var traitSimpleName = LastNameSegment(named.Name);
+                if (traitRequiredMethods.TryGetValue(traitSimpleName, out var requiredMethods))
+                {
+                    foreach (var requiredMethod in requiredMethods)
+                    {
+                        if (!implementedMethodNames.Contains(requiredMethod))
+                        {
+                            _context.Diagnostics.Error(
+                                "STK3032",
+                                $"'{ownerName}' does not implement trait method '{traitSimpleName}.{requiredMethod}' required by trait '{traitSimpleName}'.",
+                                "semantic-validate",
+                                Location(entry));
+                            continue;
+                        }
+
+                        if (_typeModel.Functions.TryGetValue($"{traitSimpleName}.{requiredMethod}", out var traitSignature)
+                            && _typeModel.Functions.TryGetValue($"{ownerName}.{requiredMethod}", out var implSignature))
+                        {
+                            if (traitSignature.Parameters.Count != implSignature.Parameters.Count)
+                            {
+                                _context.Diagnostics.Error(
+                                    "STK3033",
+                                    $"'{ownerName}.{requiredMethod}' does not match trait method '{traitSimpleName}.{requiredMethod}': the trait requires {traitSignature.Parameters.Count} parameter(s) but the implementation has {implSignature.Parameters.Count}.",
+                                    "semantic-validate",
+                                    Location(entry));
+                            }
+                            else if (!TypeCompatibilityFacts.FunctionKindSatisfies(implSignature.Kind, traitSignature.Kind))
+                            {
+                                _context.Diagnostics.Error(
+                                    "STK3033",
+                                    $"'{ownerName}.{requiredMethod}' must be '{DescribeFunctionKind(traitSignature.Kind)}' to satisfy trait method '{traitSimpleName}.{requiredMethod}'.",
+                                    "semantic-validate",
+                                    Location(entry));
+                            }
+                            else if (!TraitMethodSignatureConforms(traitSignature, implSignature, named, resolved))
+                            {
+                                _context.Diagnostics.Error(
+                                    "STK3033",
+                                    $"'{ownerName}.{requiredMethod}' does not match the parameter or return types of trait method '{traitSimpleName}.{requiredMethod}' (after substituting 'Self' and trait type arguments).",
+                                    "semantic-validate",
+                                    Location(entry));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Collects the required (non-default) method names declared by each trait in
+    // the current module. A trait method with a block body is a default and is
+    // not required of implementers; one with a `;` body is required.
+    private Dictionary<string, List<string>> CollectCurrentModuleTraitRequiredMethods()
+    {
+        var result = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        foreach (var declaration in _parseResult.Root.topLevelDeclaration())
+        {
+            if (declaration.traitDeclaration() is not { } traitDeclaration)
+            {
+                continue;
+            }
+
+            var required = new List<string>();
+            foreach (var member in traitDeclaration.traitBody().traitMember())
+            {
+                if (member.traitMethodDeclaration() is { } method
+                    && method.functionBody().block() is null)
+                {
+                    required.Add(method.Identifier().GetText());
+                }
+            }
+
+            result[traitDeclaration.Identifier().GetText()] = required;
+        }
+
+        return result;
+    }
+
+    private static HashSet<string> CollectMemberMethodNames(
+        IEnumerable<StarkParser.MethodDeclarationContext?> methods)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var method in methods)
+        {
+            if (method is not null)
+            {
+                names.Add(method.Identifier().GetText());
+            }
+        }
+
+        return names;
+    }
+
+    private static string LastNameSegment(string qualifiedName)
+    {
+        var lastDot = qualifiedName.LastIndexOf('.');
+        return lastDot >= 0 ? qualifiedName[(lastDot + 1)..] : qualifiedName;
+    }
+
+    private static string DescribeFunctionKind(StarkFunctionKind kind)
+    {
+        return (FunctionKindFacts.IsFinite(kind), FunctionKindFacts.IsLaw(kind)) switch
+        {
+            (true, true) => "finite law",
+            (false, true) => "law",
+            (true, false) => "finite",
+            _ => "fn"
+        };
+    }
+
+    // Verifies the implementing method's parameter and return types match the
+    // trait method's after substituting the trait's type parameters with the
+    // base-list type arguments and `Self` with the implementing type (taken from
+    // the impl's own receiver, so name/qualifier forms stay consistent).
+    private static bool TraitMethodSignatureConforms(
+        TypedFunctionSignature traitSignature,
+        TypedFunctionSignature implSignature,
+        NamedTypeSymbol traitType,
+        StarkTypeSymbol resolvedTrait)
+    {
+        var substitution = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+        var traitTypeParams = traitType.GenericParams;
+        if (resolvedTrait.TypeArguments is { } traitArgs)
+        {
+            for (var index = 0; index < traitTypeParams.Count && index < traitArgs.Count; index++)
+            {
+                substitution[traitTypeParams[index]] = traitArgs[index];
+            }
+        }
+
+        if (implSignature.Parameters.Count > 0)
+        {
+            substitution["Self"] = implSignature.Parameters[0].Type;
+        }
+
+        for (var index = 0; index < traitSignature.Parameters.Count; index++)
+        {
+            var expected = FunctionOverloadFacts.SubstituteType(traitSignature.Parameters[index].Type, substitution);
+            if (!TraitTypesEquivalent(expected, implSignature.Parameters[index].Type))
+            {
+                return false;
+            }
+        }
+
+        var expectedReturn = FunctionOverloadFacts.SubstituteType(traitSignature.ReturnType, substitution);
+        return TraitTypesEquivalent(expectedReturn, implSignature.ReturnType);
+    }
+
+    // Structural type comparison for conformance. Ignores incidental fields such
+    // as DisplayName and compares only semantically meaningful shape: kind, named
+    // identity, width/range/sign, pointer/borrow/access/init qualifiers, element
+    // type, type arguments, and function-pointer/closure parts.
+    private static bool TraitTypesEquivalent(StarkTypeSymbol left, StarkTypeSymbol right)
+    {
+        if (ReferenceEquals(left, right))
+        {
+            return true;
+        }
+
+        if (left.Kind != right.Kind
+            || !string.Equals(left.NamedType, right.NamedType, StringComparison.Ordinal)
+            || left.BitWidth != right.BitWidth
+            || left.IsUnsigned != right.IsUnsigned
+            || left.RangeMin != right.RangeMin
+            || left.RangeMax != right.RangeMax
+            || left.FixedLength != right.FixedLength
+            || left.IsMutablePointer != right.IsMutablePointer
+            || left.BorrowKind != right.BorrowKind
+            || left.AccessKind != right.AccessKind
+            || left.InitializationKind != right.InitializationKind
+            || left.IsMutableView != right.IsMutableView
+            || left.FunctionPointerKind != right.FunctionPointerKind
+            || left.ClosureFunctionKind != right.ClosureFunctionKind
+            || left.ClosureStorageKind != right.ClosureStorageKind
+            || left.ClosureCallCapability != right.ClosureCallCapability)
+        {
+            return false;
+        }
+
+        if (!OptionalTypeEquivalent(left.ElementType, right.ElementType)
+            || !OptionalTypeEquivalent(left.FunctionPointerReturnType, right.FunctionPointerReturnType)
+            || !OptionalTypeEquivalent(left.ClosureReturnType, right.ClosureReturnType))
+        {
+            return false;
+        }
+
+        return TypeListEquivalent(left.TypeArguments, right.TypeArguments)
+            && TypeListEquivalent(left.FunctionPointerParameterTypes, right.FunctionPointerParameterTypes)
+            && TypeListEquivalent(left.ClosureParameterTypes, right.ClosureParameterTypes);
+    }
+
+    private static bool OptionalTypeEquivalent(StarkTypeSymbol? left, StarkTypeSymbol? right)
+    {
+        if (left is null)
+        {
+            return right is null;
+        }
+
+        return right is not null && TraitTypesEquivalent(left, right);
+    }
+
+    private static bool TypeListEquivalent(
+        IReadOnlyList<StarkTypeSymbol>? left,
+        IReadOnlyList<StarkTypeSymbol>? right)
+    {
+        if (left is null)
+        {
+            return right is null || right.Count == 0;
+        }
+
+        if (right is null)
+        {
+            return left.Count == 0;
+        }
+
+        if (left.Count != right.Count)
+        {
+            return false;
+        }
+
+        for (var index = 0; index < left.Count; index++)
+        {
+            if (!TraitTypesEquivalent(left[index], right[index]))
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     private void ValidateFieldDeclarationType(

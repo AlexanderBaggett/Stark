@@ -136,4 +136,48 @@ public sealed class TraitsAndDoctrinesFeatureTests : FeatureLlvmTestBase
         Assert.DoesNotContain("dispatch", llvm, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("fnptr", llvm, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void GenericTraitBoundDispatchLowersToDirectConcreteCall()
+    {
+        var llvm = CompileToLlvm(
+            """
+            module Demo
+
+            trait Drawable
+            {
+                finite law i32[min max] Width(borrow Self self);
+            }
+
+            struct Widget : Drawable
+            {
+                i32[min max] W;
+
+                finite law i32[min max] Width(borrow Widget self)
+                {
+                    return self.W;
+                }
+            }
+
+            finite law i32[min max] DoubleWidth<T>(borrow T value) where T: Drawable
+            {
+                return value.Width() + value.Width();
+            }
+
+            export fn i32[min max] main()
+            {
+                stack Widget w = new Widget() { W = 5 };
+                return DoubleWidth(w);
+            }
+            """,
+            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        // A trait-method call on a `where T: Trait` generic must monomorphize to a
+        // direct call to the concrete implementation -- no vtable, no indirect dispatch.
+        Assert.Contains("call fastcc i32 @Widget_Width(", llvm);
+        Assert.DoesNotContain("call fastcc i32 @Drawable_Width", llvm);
+        Assert.DoesNotContain("vtable", llvm, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("dispatch", llvm, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("fnptr", llvm, StringComparison.OrdinalIgnoreCase);
+    }
 }

@@ -720,6 +720,7 @@ public static class DefaultCompilerPipeline
             var ownership = BuildInstantiationOwnershipModel(loadedModules, typeModel);
 
             ValidateDictionaryKeyConstraints(context, ownership.Types);
+            ValidateGenericConstraints(context, ownership.Functions, typeModel);
 
             context.Artifacts.Set(
                 CompilerArtifactKeys.InstantiationOwnership,
@@ -754,6 +755,82 @@ public static class DefaultCompilerPipeline
                     $"Dictionary key type '{keyType.DisplayName}' must satisfy 'System.Collections.DictionaryKey<{keyType.DisplayName}>'. Built-in dictionary key contracts are available for 'bool' and Stark integer key types; add an explicit hash/equality contract before using this key type.",
                     "instantiation-ownership",
                     type.FirstUseLocation);
+            }
+        }
+
+        // Enforces `where T: Trait` bounds at each concrete generic call site: the
+        // type argument bound to a constrained parameter must implement every
+        // required trait (its base list, captured as `ImplementedTraits`). A
+        // still-generic argument is skipped here and validated at its own concrete
+        // instantiation. Deep method conformance is enforced at the `struct X :
+        // Trait` declaration site.
+        private static void ValidateGenericConstraints(
+            CompilerPassContext context,
+            IEnumerable<FunctionInstantiationOwnership> functions,
+            TypeCheckModel typeModel)
+        {
+            foreach (var instantiation in functions)
+            {
+                var signature = instantiation.Signature;
+                if (signature.Constraints.Count == 0)
+                {
+                    continue;
+                }
+
+                // The instantiated signature preserves the `where` constraints but
+                // clears the generic-parameter name list, so take the parameter
+                // ordering (which `TypeArguments` is positional against) from the
+                // uninstantiated template.
+                var genericParameters = signature.GenericParams;
+                if (genericParameters.Count == 0
+                    && signature.TemplateName is { } templateKey
+                    && typeModel.Functions.TryGetValue(templateKey, out var templateSignature))
+                {
+                    genericParameters = templateSignature.GenericParams;
+                }
+                foreach (var constraint in signature.Constraints)
+                {
+                    var parameterIndex = -1;
+                    for (var index = 0; index < genericParameters.Count; index++)
+                    {
+                        if (string.Equals(genericParameters[index], constraint.ParameterName, StringComparison.Ordinal))
+                        {
+                            parameterIndex = index;
+                            break;
+                        }
+                    }
+
+                    if (parameterIndex < 0 || parameterIndex >= instantiation.TypeArguments.Count)
+                    {
+                        continue;
+                    }
+
+                    var typeArgument = instantiation.TypeArguments[parameterIndex];
+                    if (typeArgument.NamedType is not { } typeArgumentName
+                        || !typeModel.NamedTypes.TryGetValue(typeArgumentName, out var typeArgumentSymbol))
+                    {
+                        // Not a concrete named type (e.g. still a type parameter of the
+                        // caller); validated when the caller is itself instantiated.
+                        continue;
+                    }
+
+                    foreach (var bound in constraint.BoundTraits)
+                    {
+                        if (bound.NamedType is not { } boundName)
+                        {
+                            continue;
+                        }
+
+                        if (!typeArgumentSymbol.ImplementedTraits.Contains(boundName))
+                        {
+                            context.Diagnostics.Error(
+                                "STK3034",
+                                $"Type argument '{typeArgumentSymbol.Name}' does not satisfy the '{bound.DisplayName}' bound on type parameter '{constraint.ParameterName}' of '{instantiation.TemplateName}'. The type must declare ': {bound.DisplayName}' in its base list.",
+                                "instantiation-ownership",
+                                instantiation.FirstUseLocation);
+                        }
+                    }
+                }
             }
         }
 
