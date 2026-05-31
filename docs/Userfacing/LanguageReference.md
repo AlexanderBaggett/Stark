@@ -886,6 +886,19 @@ Generic type parameters may appear on functions, `struct` declarations, `record`
 
 Generic parameters participate in name resolution and type substitution.
 
+#### Trait bounds
+
+A generic type parameter may be constrained to implement a trait with a `where` clause:
+
+```stark
+finite law i32[min max] TotalWidth<T>(borrow T left, borrow T right) where T: Drawable
+{
+    return left.Width() + right.Width();
+}
+```
+
+A `where T: Trait` bound makes the trait's methods callable on `T` inside the body (see 8.5) and requires every concrete type argument to implement the trait; passing a non-conforming type is a compile error. Bounds are resolved statically — each instantiation monomorphizes the bounded calls to direct calls on the concrete type, with no runtime dispatch. A parameter may carry several bounds (`where T: A, B`), and multiple parameters may be constrained with separate `where` clauses.
+
 Type aliases introduce alternate names for existing types:
 
 ```stark
@@ -1085,17 +1098,53 @@ Default enum layout is not a stable FFI contract:
 
 ### 8.5 Traits
 
-`trait` declares a named behavior contract.
+`trait` declares a named behavior contract: a set of method requirements a type can implement. Traits do not imply class style inheritance.
 
-Traits group function requirements for a type or family of types. Traits do not imply class style inheritance.
+#### Implementing a trait
 
-Trait members are type requirements. They are not directly callable as ordinary runtime functions.
+A `struct` or `record` implements traits with a base list and provides the methods inline:
 
-Traits are not values:
+```stark
+trait Drawable
+{
+    finite law i32[min max] Width(borrow Self self);
 
-* no trait objects
-* no hidden callable-table values
-* trait names are rejected in value positions such as fields, globals, locals, parameters, and returns
+    finite law i32[min max] DoubledWidth(borrow Self self)
+    {
+        return self.Width() * 2;
+    }
+}
+
+struct Button : Drawable
+{
+    i32[min max] W;
+
+    finite law i32[min max] Width(borrow Button self)
+    {
+        return self.W;
+    }
+}
+```
+
+`Self` names the implementing type. A trait method's receiver is spelled like any other receiver — `borrow Self self`, `mut borrow Self self` — and the implementation writes the concrete type (`borrow Button self`), exactly like an ordinary member method. Only traits may appear in a base list; "inheriting" from a `struct`, `record`, `enum`, or `doctrine` is rejected.
+
+#### Required and default methods
+
+* a trait method with a `;` body is **required**: every implementer must provide it
+* a trait method with a `{ ... }` body is a **default**: implementers may use it as-is or override it
+
+A type satisfies a trait when it provides every required method with a compatible signature: matching parameter count, matching parameter and return types (with `Self` resolved to the implementing type), and a function kind at least as strong as the trait's, so `law` and `finite` obligations are preserved. A missing required method or an incompatible signature is a compile error. Default method bodies may call other trait methods on `self`.
+
+#### Calling trait methods
+
+Trait methods are called on values, not through the trait name:
+
+* on a conforming concrete value: `button.Width()`
+* on a generic type parameter bounded by the trait (see 6.5): `value.Width()` inside a function declaring `where T: Drawable`
+
+Every such call is resolved statically and monomorphized to a **direct call** — an overridden method dispatches to the override, and a not-overridden default dispatches to the default body specialized for the concrete type. There is no vtable, no runtime indirection, and no hidden dispatch; the trait abstraction is erased at compile time.
+
+Traits remain compile-time contracts, not runtime values: there are no trait-object values, trait names are rejected in value positions (fields, globals, locals, parameters, returns), and a trait method cannot be invoked through the trait name (`Drawable.Width(x)` is an error).
 
 ### 8.6 Doctrines
 

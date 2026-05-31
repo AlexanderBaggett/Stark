@@ -35,7 +35,7 @@ across all docs, so an agent can jump to the detail doc for full context.
 | Audit & design (Phases 0–9) | gap analyses + self-hosted architecture | `[x]` complete (docs 00–09) |
 | **M0** | Test infrastructure first | `[ ]` not started |
 | **M1** | Port test suite vs host compiler | `[ ]` not started |
-| **M2** | Close language blockers | `[~]` traits/dispatch in progress (TD) |
+| **M2** | Close language blockers | `[~]` static traits + constrained generics + default members done (TD01–TD11, CG01–CG07, committed); `dyn`/vtable + L01–L14 remain |
 | **M3** | Close stdlib blockers | `[ ]` not started |
 | **M4** | Close tooling blockers | `[ ]` not started |
 | **M5** | Port compiler subsystems leaf-first | `[ ]` not started |
@@ -114,7 +114,7 @@ Port helpers first, then text-only tests, then artifact tests, then integration.
 - [x] **TD08–TD11** — default trait members: `;`-body = required / `{ }`-body = default (not required); a not-overridden default dispatches to the default body monomorphized over `Self` (direct call) for concrete **and** `where T: Trait` receivers; overrides win; defaults call other trait methods via the implicit `Self: <trait>` bound; tests landed — → `10`
 - [ ] **TD12–TD17** — `dyn` trait objects (`dyn trait`, storage-prefixed types, object safety, vtable synthesis, coercion, indirect-call lowering + devirt) — → `10`
 - [ ] **TD18–TD21** — visible vtable / roll-your-own (`T.Vtable`, unsafe from-parts + decompose) — → `10`
-- [ ] **TD22–TD24** — userfacing docs, gap-doc sync, migrate Dictionary keys toward general hashing/eq — → `10`
+- [~] **TD22–TD24** — TD22 **done**: `LanguageReference.md` §6.5 (trait bounds) + §8.5 (impl/`Self`/required+default/static dispatch) and `skills/stark-language/SKILL.md` updated, examples verified to compile+run; TD23 gap-doc sync + TD24 Dictionary-keys → general hashing/eq remain — → `10`
 
 ### Constrained generics (`where T: Trait` / doctrine bounds)  → `docs/Internals/Roadmap.md` §Constrained Generics (1829) + §specialization (2696)
 

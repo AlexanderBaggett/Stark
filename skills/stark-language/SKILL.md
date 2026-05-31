@@ -244,7 +244,7 @@ fn i32[min max] Read(Token token)
 }
 ```
 
-Traits name behavior contracts; they are not runtime values or trait objects. Doctrines bundle `law` functions and constraints; they have no owned identity, heap allocation, or captured environment.
+Traits name behavior contracts. A `struct`/`record` implements a trait with a base list (`struct Button : Drawable`) and provides the methods inline; `Self` is the implementing type, so receivers read `borrow Self self` (the impl writes the concrete type). A trait method with a `;` body is required of every implementer; one with a `{ ... }` body is a default the implementer may override. Conformance requires matching parameter/return types (with `Self` substituted), arity, and a function kind at least as strong as the trait's. A generic parameter is bounded with `where T: Trait`, which makes the trait's methods callable on `T` and requires every concrete type argument to implement the trait. Trait dispatch is fully **static**: concrete-receiver calls, bounded-generic calls, and not-overridden defaults all monomorphize to **direct calls** with no vtable or runtime indirection. Traits are still not runtime values — no trait objects, and a trait method cannot be invoked through the trait name. Doctrines bundle `law` functions and constraints; they have no owned identity, heap allocation, or captured environment, and members are called directly by qualified name.
 
 ## Ownership And Borrows
 
