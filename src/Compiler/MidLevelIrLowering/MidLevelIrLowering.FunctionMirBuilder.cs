@@ -6988,8 +6988,7 @@ internal sealed partial class MidLevelIrLowerer
         }
 
         // True when the signature's containing type is a trait, i.e. the recorded
-        // target is an abstract trait method that must be rebound to a concrete
-        // implementation at the (now concrete) receiver type.
+        // target is a trait method.
         private bool IsTraitMethodTarget(TypedFunctionSignature signature)
         {
             var name = signature.SourceName ?? signature.Name;
@@ -7002,6 +7001,26 @@ internal sealed partial class MidLevelIrLowerer
             var containingTypeName = name[..lastDot];
             return _namedTypes.TryGetValue(containingTypeName, out var symbol)
                 && symbol.Kind == DeclarationKind.Trait;
+        }
+
+        // A recorded trait-method call is rebound to the receiver's concrete
+        // implementation only when that type actually overrides the method. When
+        // there is no override the recorded (Self-instantiated) default body is used
+        // as-is, so default trait methods dispatch correctly.
+        private bool ShouldRerouteTraitMethodToOverride(
+            TypedFunctionSignature signature,
+            MidLevelIrOperand receiver,
+            string memberName)
+        {
+            if (!IsTraitMethodTarget(signature)
+                || receiver.Type.NamedType is not { } receiverTypeName)
+            {
+                return false;
+            }
+
+            var overrideName = $"{StarkTypeSymbols.GetGenericBaseName(receiverTypeName)}.{memberName}";
+            return TryGetFunctionOverloads(overrideName, out var overrides)
+                && overrides.Any(static method => !method.IsStatic);
         }
 
         private bool TryBuildMemberCall(
@@ -7019,7 +7038,7 @@ internal sealed partial class MidLevelIrLowerer
             // concrete type, so fall through to resolve the concrete implementation as a
             // direct call rather than binding the abstract trait method.
             if (TryResolveRecordedMemberCallSignature(memberName, arguments, out var recordedSignature)
-                && !IsTraitMethodTarget(recordedSignature))
+                && !ShouldRerouteTraitMethodToOverride(recordedSignature, receiver, memberName))
             {
                 if (TryBuildCall(recordedSignature.Name, recordedSignature, receiver, receiverPlace, arguments, text, out call))
                 {

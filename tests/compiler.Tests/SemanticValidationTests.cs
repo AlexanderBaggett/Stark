@@ -1625,6 +1625,40 @@ public sealed class SemanticValidationTests
                 && diagnostic.Message.Contains("Drawable", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void BaseListDoesNotRequireDefaultTraitMethods()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            trait Greeter
+            {
+                finite law i32[min max] Base(borrow Self self);
+
+                finite law i32[min max] Doubled(borrow Self self)
+                {
+                    return self.Base() * 2;
+                }
+            }
+
+            struct Widget : Greeter
+            {
+                i32[min max] V;
+
+                finite law i32[min max] Base(borrow Widget self)
+                {
+                    return self.V;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        // `Doubled` has a default body, so `Widget` need not override it to conform.
+        Assert.True(result.Succeeded);
+        Assert.DoesNotContain(result.Diagnostics, static diagnostic => diagnostic.Code == "STK3032");
+    }
+
     private static CompilationResult Compile(string source, CompilerOptions? options = null)
     {
         return DefaultCompilerPipeline.Create().Run(new CompilationInput(source), options);

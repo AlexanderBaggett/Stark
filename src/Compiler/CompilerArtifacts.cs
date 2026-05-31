@@ -2055,7 +2055,8 @@ public sealed record TypedFunctionSignature(
     IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null,
     IReadOnlyList<ParameterOverlapGroup>? OverlapParameterGroups = null,
     IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null,
-    IReadOnlyList<TypeParameterConstraint>? TypeParameterConstraints = null)
+    IReadOnlyList<TypeParameterConstraint>? TypeParameterConstraints = null,
+    bool HasBody = true)
 {
     public string DisplaySourceName => SourceName ?? Name;
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
