@@ -368,7 +368,7 @@ the absence of `vtable`/`dispatch` where dispatch must not appear).
 
 | ID | Item | Depends | Acceptance |
 |---|---|---|---|
-| TD22 | User-facing docs: `LanguageReference.md` (sections 8.5/6.x), `BorrowerSystem.md`, `ModulesAndVisibility.md` | A-D | reference updated; book unaffected here |
+| TD22 | User-facing docs: `LanguageReference.md` (§6.5 trait bounds, §8.5 impl/`Self`/required+default/static dispatch) + `skills/stark-language/SKILL.md` | **done** | both updated for implemented traits/generics/defaults; examples verified compile+run (`dyn` documented when it lands) |
 | TD23 | Update `01-language-feature-gaps.md` L06 and `09-self-hosted-compiler-architecture.md` to reflect the chosen design | A-D | gap docs consistent |
 | TD24 | Revisit `Dictionary<K,V>` keys: migrate the special-cased bool/integer `DictionaryKey` doctrine toward general trait-based hashing/equality | TD06 | string/symbol keys expressible; ties to L06/S06 |
 
