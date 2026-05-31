@@ -1932,7 +1932,8 @@ public sealed record NamedTypeSymbol(
     IReadOnlyDictionary<string, FieldSymbol> Fields,
     IReadOnlyList<FieldSymbol> OrderedFields,
     IReadOnlyList<EnumVariantSymbol>? EnumVariants = null,
-    IReadOnlyList<string>? GenericParameterNames = null)
+    IReadOnlyList<string>? GenericParameterNames = null,
+    IReadOnlyList<string>? ImplementedTraitNames = null)
 {
     public bool TryGetField(string name, out FieldSymbol field, out int index)
     {
@@ -1957,6 +1958,8 @@ public sealed record NamedTypeSymbol(
 
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
     public bool IsGeneric => GenericParameterNames is { Count: > 0 };
+
+    public IReadOnlyList<string> ImplementedTraits => ImplementedTraitNames ?? [];
 
     public IReadOnlyList<EnumVariantSymbol> Variants => EnumVariants ?? [];
 
@@ -2029,6 +2032,13 @@ public sealed record TypedConstructorShape(
             : null;
 }
 
+// A `where T: Trait` bound on a generic function: the type parameter and the
+// traits it must implement. Used to enforce constraints at instantiation sites
+// and to resolve trait-method calls on the parameter inside the body.
+public sealed record TypeParameterConstraint(
+    string ParameterName,
+    IReadOnlyList<StarkTypeSymbol> BoundTraits);
+
 public sealed record TypedFunctionSignature(
     string Name,
     StarkTypeSymbol ReturnType,
@@ -2044,10 +2054,12 @@ public sealed record TypedFunctionSignature(
     ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default,
     IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null,
     IReadOnlyList<ParameterOverlapGroup>? OverlapParameterGroups = null,
-    IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null)
+    IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null,
+    IReadOnlyList<TypeParameterConstraint>? TypeParameterConstraints = null)
 {
     public string DisplaySourceName => SourceName ?? Name;
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
+    public IReadOnlyList<TypeParameterConstraint> Constraints => TypeParameterConstraints ?? [];
     public bool IsGeneric => GenericParameterNames is { Count: > 0 };
     public bool IsGenericInstantiation => TemplateName is not null && TypeArguments is { Count: > 0 };
     public IReadOnlyList<ParameterDisjointGroup> DisjointGroups => DisjointParameterGroups ?? [];

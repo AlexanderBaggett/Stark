@@ -1402,6 +1402,229 @@ public sealed class SemanticValidationTests
         AssertDiagnostic(result, "STK4014");
     }
 
+    [Fact]
+    public void BaseListRejectsClassStyleInheritanceFromStruct()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Base
+            {
+                i32[min max] Value;
+            }
+
+            struct Widget : Base
+            {
+                i32[min max] Other;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3026"
+                && diagnostic.Message.Contains("Base", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("class-style inheritance", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void BaseListAcceptsConformingTraitImplementation()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            trait Drawable
+            {
+                finite law i32[min max] Width(borrow Self self);
+            }
+
+            struct Widget : Drawable
+            {
+                i32[min max] W;
+
+                finite law i32[min max] Width(borrow Widget self)
+                {
+                    return self.W;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.True(result.Succeeded);
+        Assert.DoesNotContain(result.Diagnostics, static diagnostic => diagnostic.Code == "STK3026");
+        Assert.DoesNotContain(result.Diagnostics, static diagnostic => diagnostic.Code == "STK3032");
+        Assert.DoesNotContain(result.Diagnostics, static diagnostic => diagnostic.Code == "STK3033");
+    }
+
+    [Fact]
+    public void BaseListRejectsTraitMethodKindMismatch()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            trait Drawable
+            {
+                finite law i32[min max] Width(borrow Self self);
+            }
+
+            struct Widget : Drawable
+            {
+                i32[min max] W;
+
+                fn i32[min max] Width(borrow Widget self)
+                {
+                    return self.W;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3033"
+                && diagnostic.Message.Contains("finite law", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("Width", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void BaseListRejectsTraitMethodParameterTypeMismatch()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            trait Scaler
+            {
+                finite law i32[min max] Scale(borrow Self self, i32[min max] factor);
+            }
+
+            struct Widget : Scaler
+            {
+                i32[min max] W;
+
+                finite law i32[min max] Scale(borrow Widget self, u8[0 max] factor)
+                {
+                    return self.W;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3033"
+                && diagnostic.Message.Contains("Scale", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void BaseListRejectsMissingTraitMethod()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            trait Drawable
+            {
+                finite law i32[min max] Width(borrow Self self);
+            }
+
+            struct Widget : Drawable
+            {
+                i32[min max] W;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3032"
+                && diagnostic.Message.Contains("Width", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("Widget", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void GenericConstraintAcceptsConformingTypeArgument()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            trait Drawable
+            {
+                finite law i32[min max] Width(borrow Self self);
+            }
+
+            struct Widget : Drawable
+            {
+                i32[min max] W;
+
+                finite law i32[min max] Width(borrow Widget self)
+                {
+                    return self.W;
+                }
+            }
+
+            finite law i32[min max] Use<T>(borrow T value) where T: Drawable
+            {
+                return 0;
+            }
+
+            export fn i32[min max] main()
+            {
+                stack Widget w = new Widget() { W = 5 };
+                return Use(w);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "instantiation-ownership"));
+
+        Assert.DoesNotContain(result.Diagnostics, static diagnostic => diagnostic.Code == "STK3034");
+    }
+
+    [Fact]
+    public void GenericConstraintRejectsNonConformingTypeArgument()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            trait Drawable
+            {
+                finite law i32[min max] Width(borrow Self self);
+            }
+
+            struct Plain
+            {
+                i32[min max] V;
+            }
+
+            finite law i32[min max] Use<T>(borrow T value) where T: Drawable
+            {
+                return 0;
+            }
+
+            export fn i32[min max] main()
+            {
+                stack Plain p = new Plain() { V = 1 };
+                return Use(p);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "instantiation-ownership"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3034"
+                && diagnostic.Message.Contains("Plain", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("Drawable", StringComparison.Ordinal));
+    }
+
     private static CompilationResult Compile(string source, CompilerOptions? options = null)
     {
         return DefaultCompilerPipeline.Create().Run(new CompilationInput(source), options);

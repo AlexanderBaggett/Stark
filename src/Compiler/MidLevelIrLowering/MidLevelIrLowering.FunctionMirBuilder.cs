@@ -6987,6 +6987,23 @@ internal sealed partial class MidLevelIrLowerer
             throw LoweringInvariantViolation(arguments, $"Call '{functionName}' could not bind its arguments to '{signature.Name}'. {_lastCallBuildFailureReason}");
         }
 
+        // True when the signature's containing type is a trait, i.e. the recorded
+        // target is an abstract trait method that must be rebound to a concrete
+        // implementation at the (now concrete) receiver type.
+        private bool IsTraitMethodTarget(TypedFunctionSignature signature)
+        {
+            var name = signature.SourceName ?? signature.Name;
+            var lastDot = name.LastIndexOf('.');
+            if (lastDot <= 0)
+            {
+                return false;
+            }
+
+            var containingTypeName = name[..lastDot];
+            return _namedTypes.TryGetValue(containingTypeName, out var symbol)
+                && symbol.Kind == DeclarationKind.Trait;
+        }
+
         private bool TryBuildMemberCall(
             MidLevelIrOperand receiver,
             PlaceTarget? receiverPlace,
@@ -6997,7 +7014,12 @@ internal sealed partial class MidLevelIrLowerer
         {
             call = default!;
 
-            if (TryResolveRecordedMemberCallSignature(memberName, arguments, out var recordedSignature))
+            // CG06: a recorded member call whose target is a trait method comes from a
+            // `where T: Trait` generic body. After specialization the receiver has a
+            // concrete type, so fall through to resolve the concrete implementation as a
+            // direct call rather than binding the abstract trait method.
+            if (TryResolveRecordedMemberCallSignature(memberName, arguments, out var recordedSignature)
+                && !IsTraitMethodTarget(recordedSignature))
             {
                 if (TryBuildCall(recordedSignature.Name, recordedSignature, receiver, receiverPlace, arguments, text, out call))
                 {

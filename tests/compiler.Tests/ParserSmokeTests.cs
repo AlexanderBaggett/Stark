@@ -432,16 +432,6 @@ public sealed class ParserSmokeTests
             """
         },
         {
-            "class-style inheritance is not part of Stark",
-            """
-            module Demo
-
-            struct Widget : BaseWidget
-            {
-            }
-            """
-        },
-        {
             "constructor base initializer is not part of Stark",
             """
             module Demo

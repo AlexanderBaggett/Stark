@@ -119,6 +119,7 @@ internal sealed class TypeChecker
     private readonly HashSet<string> _refreshingConcreteTypes = new(StringComparer.Ordinal);
     private StarkTypeResolver? _typeResolver;
     private ISet<string>? _currentFunctionGenericParameters;
+    private IReadOnlyList<TypeParameterConstraint> _currentFunctionConstraints = [];
     private string? _currentFunctionName;
     private string? _currentFunctionModuleName;
     private bool _insideConstructorBody;
@@ -357,7 +358,8 @@ internal sealed class TypeChecker
                             .Where(static field => field is not null)!,
                         module.SyntaxModel.ModuleName,
                         declarationModel.Visibility,
-                        structGenericParams);
+                        structGenericParams,
+                        ResolveBaseTraitNames(structDeclaration.baseTraitList(), structGenericParams, module.SyntaxModel.ModuleName));
                     continue;
                 }
 
@@ -407,7 +409,8 @@ internal sealed class TypeChecker
                         DeclarationKind.Record,
                         fields,
                         orderedFields,
-                        GenericParameterNames: genericParameters?.ToList());
+                        GenericParameterNames: genericParameters?.ToList(),
+                        ImplementedTraitNames: ResolveBaseTraitNames(recordDeclaration.baseTraitList(), genericParameters, module.SyntaxModel.ModuleName));
                     continue;
                 }
 
@@ -478,7 +481,8 @@ internal sealed class TypeChecker
         IEnumerable<StarkParser.FieldDeclarationContext> fieldDeclarations,
         string currentModuleName,
         StarkVisibility containingVisibility,
-        ISet<string>? genericParameters = null)
+        ISet<string>? genericParameters = null,
+        IReadOnlyList<string>? implementedTraitNames = null)
     {
         var fields = new Dictionary<string, FieldSymbol>(StringComparer.Ordinal);
         var orderedFields = new List<FieldSymbol>();
@@ -488,7 +492,8 @@ internal sealed class TypeChecker
             kind,
             fields,
             orderedFields,
-            GenericParameterNames: genericParameterNames);
+            GenericParameterNames: genericParameterNames,
+            ImplementedTraitNames: implementedTraitNames);
 
         foreach (var field in fieldDeclarations)
         {
@@ -496,9 +501,85 @@ internal sealed class TypeChecker
         }
 
         var namedType = new NamedTypeSymbol(name, kind, fields, orderedFields,
-            GenericParameterNames: genericParameterNames);
+            GenericParameterNames: genericParameterNames,
+            ImplementedTraitNames: implementedTraitNames);
         RefreshConcreteInstantiationsForTemplate(namedType);
         return namedType;
+    }
+
+    // Resolves each base-list entry to the qualified name of the trait it
+    // names. Non-trait entries are dropped here; the base-list-must-be-trait
+    // contract is reported separately in semantic validation (STK3026).
+    private IReadOnlyList<string>? ResolveBaseTraitNames(
+        StarkParser.BaseTraitListContext? baseTraitList,
+        ISet<string>? genericParameters,
+        string currentModuleName)
+    {
+        if (baseTraitList is null)
+        {
+            return null;
+        }
+
+        var names = new List<string>();
+        foreach (var entry in baseTraitList.type_())
+        {
+            var resolved = ResolveType(entry, genericParameters, currentModuleName);
+            if (resolved.NamedType is { } namedType
+                && _namedTypes.TryGetValue(namedType, out var symbol)
+                && symbol.Kind == DeclarationKind.Trait
+                && !names.Contains(namedType))
+            {
+                names.Add(namedType);
+            }
+        }
+
+        return names.Count > 0 ? names : null;
+    }
+
+    // Parses `where T: Trait, ...` clauses into typed constraints so they can be
+    // enforced at instantiation sites and used to resolve trait-method calls on
+    // the type parameter inside the body. Bound types are resolved in the
+    // function's generic scope.
+    private IReadOnlyList<TypeParameterConstraint>? ParseTypeParameterConstraints(
+        DeclaredFunctionSyntax functionSyntax,
+        ISet<string>? genericParameters,
+        string currentModuleName)
+    {
+        var constraintContexts = GetTypeParameterConstraintContexts(functionSyntax.DeclarationContext);
+        if (constraintContexts.Length == 0)
+        {
+            return null;
+        }
+
+        var result = new List<TypeParameterConstraint>();
+        foreach (var constraintContext in constraintContexts)
+        {
+            var parameterName = constraintContext.Identifier().GetText();
+            var bounds = new List<StarkTypeSymbol>();
+            foreach (var boundContext in constraintContext.type_())
+            {
+                bounds.Add(ResolveType(boundContext, genericParameters, currentModuleName));
+            }
+
+            if (bounds.Count > 0)
+            {
+                result.Add(new TypeParameterConstraint(parameterName, bounds));
+            }
+        }
+
+        return result.Count > 0 ? result : null;
+    }
+
+    private static StarkParser.TypeParameterConstraintsContext[] GetTypeParameterConstraintContexts(ParserRuleContext declarationContext)
+    {
+        return declarationContext switch
+        {
+            StarkParser.FunctionDeclarationContext function => function.typeParameterConstraints(),
+            StarkParser.MethodDeclarationContext method => method.typeParameterConstraints(),
+            StarkParser.TraitMethodDeclarationContext traitMethod => traitMethod.typeParameterConstraints(),
+            StarkParser.DoctrineMethodDeclarationContext doctrineMethod => doctrineMethod.typeParameterConstraints(),
+            _ => []
+        };
     }
 
     private NamedTypeSymbol BuildEnumNamedType(
@@ -789,7 +870,8 @@ internal sealed class TypeChecker
                         BackendOptimizationMode: declarationModel.Function?.BackendOptimizationMode ?? ModuleBackendOptimizationMode.Default,
                         DisjointParameterGroups: effectiveDisjointGroups,
                         OverlapParameterGroups: overlapGroups,
-                        SameParameterGroups: sameGroups);
+                        SameParameterGroups: sameGroups,
+                        TypeParameterConstraints: ParseTypeParameterConstraints(functionSyntax, genericParameters, module.SyntaxModel.ModuleName));
                     RegisterFunctionSignature(signature, seenOverloadKeys, functionSyntax.DeclarationContext);
                 }
                 finally
@@ -2089,11 +2171,13 @@ internal sealed class TypeChecker
                 var previousImportedTemplateMemberCalls = _currentImportedTemplateMemberCalls;
                 var previousImportedTemplateMemberCallOrdinals = _currentImportedTemplateMemberCallOrdinals;
                 var previousUnsafeDepth = _unsafeDepth;
+                var previousFunctionConstraints = _currentFunctionConstraints;
                 _currentFunctionGenericParameters = signature.IsGeneric
                     ? signature.GenericParams.ToHashSet(StringComparer.Ordinal)
                     : null;
                 _currentFunctionName = signature.Name;
                 _currentFunctionModuleName = module.SyntaxModel.ModuleName;
+                _currentFunctionConstraints = signature.Constraints;
                 if (signature.IsUnsafe)
                 {
                     _unsafeDepth++;
@@ -2186,6 +2270,7 @@ internal sealed class TypeChecker
                 finally
                 {
                     _currentFunctionGenericParameters = previousGenericParameters;
+                    _currentFunctionConstraints = previousFunctionConstraints;
                     _currentFunctionName = previousFunctionName;
                     _currentFunctionModuleName = previousFunctionModuleName;
                     _currentImportedTemplateObjectCreations = previousImportedTemplateObjectCreations;
@@ -11783,6 +11868,11 @@ internal sealed class TypeChecker
         var namedType = target.NamedType ?? ResolveNamedTypeSymbol(target.Type);
         if (namedType is null)
         {
+            if (TryResolveTraitBoundMemberCall(target, memberName, out var traitBoundCall))
+            {
+                return traitBoundCall;
+            }
+
             ReportError("STK3011", $"Cannot access member '{memberName}' on {DescribeExpressionTarget(target)}.", context);
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
@@ -11894,6 +11984,94 @@ internal sealed class TypeChecker
 
         ReportError("STK3005", $"Type '{namedType.Name}' does not contain a field named '{memberName}'.", context);
         return new ExpressionBinding(StarkTypeSymbols.Error);
+    }
+
+    // CG05: resolves `value.Member(...)` where `value` is a generic type parameter
+    // constrained by `where T: Trait`. Binds the call to the trait method with
+    // `Self` (and any trait type arguments) substituted to the type parameter so
+    // the generic body type-checks. The bound target keeps the trait-method name,
+    // which MIR lowering rebinds to the concrete implementation per specialization
+    // (a direct call, not dynamic dispatch).
+    private bool TryResolveTraitBoundMemberCall(
+        ExpressionBinding target,
+        string memberName,
+        out ExpressionBinding binding)
+    {
+        binding = new ExpressionBinding(StarkTypeSymbols.Error);
+
+        var parameterName = target.Type.NamedType;
+        if (parameterName is null
+            || _currentFunctionGenericParameters?.Contains(parameterName) != true
+            || _currentFunctionConstraints.Count == 0)
+        {
+            return false;
+        }
+
+        foreach (var constraint in _currentFunctionConstraints)
+        {
+            if (!string.Equals(constraint.ParameterName, parameterName, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            foreach (var bound in constraint.BoundTraits)
+            {
+                if (bound.NamedType is not { } boundName)
+                {
+                    continue;
+                }
+
+                var methodSourceName = $"{StarkTypeSymbols.GetGenericBaseName(boundName)}.{memberName}";
+                if (!TryGetFunctionOverloads(methodSourceName, out var methods))
+                {
+                    continue;
+                }
+
+                var instanceMethods = methods.Where(static method => !method.IsStatic).ToArray();
+                if (instanceMethods.Length != 1)
+                {
+                    continue;
+                }
+
+                var traitMethod = instanceMethods[0];
+
+                // Substitute `Self` -> the type parameter, plus the trait's own type
+                // arguments (e.g. `Equatable<i32>` binds the trait's parameter to i32).
+                var substitution = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal)
+                {
+                    ["Self"] = StarkTypeSymbols.Named(parameterName),
+                };
+
+                var boundSymbol = ResolveNamedTypeSymbol(bound);
+                if (boundSymbol is not null && bound.TypeArguments is { } boundArguments)
+                {
+                    var traitParameters = boundSymbol.GenericParams;
+                    for (var index = 0; index < traitParameters.Count && index < boundArguments.Count; index++)
+                    {
+                        substitution[traitParameters[index]] = boundArguments[index];
+                    }
+                }
+
+                var resolvedMethod = traitMethod with
+                {
+                    ReturnType = FunctionOverloadFacts.SubstituteType(traitMethod.ReturnType, substitution),
+                    Parameters = traitMethod.Parameters
+                        .Select(parameter => parameter with { Type = FunctionOverloadFacts.SubstituteType(parameter.Type, substitution) })
+                        .ToArray(),
+                    GenericParameterNames = null,
+                };
+
+                binding = new ExpressionBinding(
+                    resolvedMethod.ReturnType,
+                    NamedType: ResolveNamedTypeSymbol(resolvedMethod.ReturnType),
+                    Function: resolvedMethod,
+                    DiagnosticName: $"trait method '{traitMethod.DisplaySourceName}'",
+                    Receiver: target);
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private ExpressionBinding ApplyDynamicMemberAccess(ExpressionBinding target, string memberName, ParserRuleContext context)
