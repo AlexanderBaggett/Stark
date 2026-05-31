@@ -9,12 +9,14 @@ sites (STK3034), trait methods are callable on bounded type parameters, and they
 lower to **direct concrete calls** (no vtable); and **default members** (Phase B,
 TD08–TD11) — a not-overridden default dispatches to the default body monomorphized
 over `Self` (direct call) for both concrete and `where T: Trait` receivers, while
-overrides win. **Borrowed `dyn` trait objects (Phase C) now work end-to-end**:
-`dyn trait` opt-in, `borrow`/`mut borrow dyn Trait` fat-pointer views, a synthesized
-read-only vtable, indirect dispatch that preserves the `law`/`finite` effect contract,
-and object-safety diagnostics (STK3035/3036/3037). Remaining: cross-module conformance
-(TD04); owned `heap dyn` + dyn-call devirt/DSE-precision (Phase C follow-ups); visible
-vtable (Phase D). This document tracks the work to make traits usable in Stark
+overrides win. **`dyn` trait objects (Phase C) now work end-to-end** — both the
+borrowed forms (`borrow`/`mut borrow dyn Trait`, non-owning fat views) and the owning
+form (`heap dyn Trait`, which boxes the value on the heap, owns it, and drops + frees it
+via a synthesized per-type drop thunk in the vtable's drop slot). Dispatch is one indirect
+call through a synthesized read-only vtable and preserves the `law`/`finite` effect
+contract; object safety and `dyn`-misuse are diagnosed (STK3035/3036). Remaining:
+cross-module conformance (TD04); dyn-call devirt + DSE-precision (a perf follow-up);
+visible vtable (Phase D). This document tracks the work to make traits usable in Stark
 and to add an explicit dynamic-dispatch surface, in service of self-hosting
 (see `08-stark-feature-roadmap.md` and `09-self-hosted-compiler-architecture.md`).
 
@@ -350,25 +352,29 @@ the absence of `vtable`/`dispatch` where dispatch must not appear).
 
 ### Phase C - `dyn` trait objects
 
-**Borrowed trait objects (`borrow`/`mut borrow dyn Trait`) are working end-to-end.**
+**`dyn` trait objects are working end-to-end — both borrowed and owning forms.**
 A `dyn trait` opts a trait into runtime dispatch; a conforming concrete value coerces
-into a `borrow dyn Trait` slot (a 2-word `{ data_ptr, vtable_ptr }` fat pointer, no
-allocation); a call lowers to one indirect call through a synthesized read-only vtable,
-**preserving the method's `law`/`finite` effect contract** (the indirect call site keeps
-the kind attributes). Object safety is enforced; misuse is diagnosed (STK3035/3036/3037).
-Verified by a polymorphic runtime test (two impls behind one `dyn` param → 31), an LLVM
-effect-preservation test, and three diagnostic tests; all suites green.
+into a `dyn`-typed slot (a 2-word `{ data_ptr, vtable_ptr }` fat pointer). A
+`borrow`/`mut borrow dyn Trait` view borrows the source in place (no allocation); an
+owning `heap dyn Trait` moves the value into a heap box it owns and drops + frees it at
+scope exit through a synthesized per-type drop thunk in the vtable's drop slot. A call
+lowers to one indirect call through a synthesized read-only vtable, **preserving the
+method's `law`/`finite` effect contract** (the indirect call site keeps the kind
+attributes). Object safety is enforced; misuse is diagnosed (STK3035/3036). Verified by a
+polymorphic borrowed runtime test (two impls behind one `dyn` param → 31), an owned
+runtime test (two types boxed + dropped → 9), an LLVM effect-preservation test, and
+diagnostic tests; all suites green.
 
-Two follow-ups remain (tracked below): **owned `heap dyn`** and **devirt/DSE-precision**.
+One follow-up remains (tracked below): **dyn-call devirt / DSE-precision** (perf only).
 
 | ID | Item | Status | Notes |
 |---|---|---|---|
 | TD12 | Grammar: `DYN` token, `dyn trait`, `dynTraitType`, `dynStoragePrefix`; regen | **done** | `borrow dyn T` / `heap dyn T` and `dyn trait` parse |
-| TD13 | Object-safety check + diagnostics | **done** | STK3035 (`dyn` over a non-`dyn trait`), STK3036 (non-object-safe method in a `dyn trait`), STK3037 (owned `heap dyn` not yet supported) |
-| TD14 | Vtable synthesis: per-(type, trait) static table of method `fnptr` slots + drop slot | **done** (borrow) | `@__stark_vtable_<Type>__<Trait>` emitted in the module surface; drop slot is `null` for borrowed objects (populated when owned `heap dyn` lands); Size/Align deferred to Phase D roll-your-own |
-| TD15 | Coercion: concrete → dyn slot | **partial** | `borrow`/`mut borrow dyn` (View) coercion done via `CoerceOperand` (address-of source + vtable global, no alloc). **Owned `heap dyn` deferred**: needs a per-type drop thunk (HIR-registered, closure-thunk pattern) and resolution of the grammar overlap where a leading `heap` in a local declaration is the local's storage class, not the dyn prefix |
-| TD16 | Lowering: `dyn` call → indirect `fnptr`-kind call; preserve finite/law; devirt | **partial** | indirect dispatch via `DynVTableSlot` (GEP+load) feeding the existing indirect-call path → kind attributes preserved (verified). **Stark-level devirt of dyn calls deferred** (perf): LLVM still devirtualizes after inlining; recovering it in `devirt-ssa` (map known vtable+slot → concrete method) is a follow-up |
-| TD17 | Tests | **done** (borrow) | runtime polymorphic dispatch, LLVM indirect+effect-attrs, STK3035/3036/3037 diagnostics |
+| TD13 | Object-safety check + diagnostics | **done** | STK3035 (`dyn` over a non-`dyn trait`), STK3036 (non-object-safe method in a `dyn trait`) |
+| TD14 | Vtable synthesis: per-(type, trait) static table of method `fnptr` slots + drop slot | **done** | `@__stark_vtable_<Type>__<Trait>` emitted in the module surface; the drop slot holds the type's `<Type>.__dyn_drop` thunk (used by owning objects, ignored by borrowed ones). Size/Align deferred to Phase D roll-your-own |
+| TD15 | Coercion: concrete → dyn slot | **done** | `borrow`/`mut borrow dyn` (View) coerces via address-of-source + vtable global (no alloc); `heap dyn` (owned) moves the source into an untracked heap box the trait object owns (mirroring a heap closure's environment). Both via `CoerceOperand` |
+| TD16 | Lowering: `dyn` call → indirect `fnptr`-kind call; preserve finite/law; devirt | **done** (dispatch) | indirect dispatch via `DynVTableSlot` (GEP+load) feeding the existing indirect-call path → kind attributes preserved (verified). Owned drop loads the vtable drop slot and calls it (`MayFree`), freeing the box via the thunk. **Stark-level devirt of dyn calls deferred** (perf): LLVM still devirtualizes after inlining |
+| TD17 | Tests | **done** | borrowed polymorphic dispatch, owned alloc/dispatch/drop, LLVM indirect+effect-attrs, STK3035/3036 diagnostics |
 | TD-perf | DSE precision around dyn dispatch | **open** | A dyn call reads the object behind the data pointer (`ReadsOtherMemory`), so the two memory optimizers now treat such a callee as a DSE barrier (conservative, correct). A pointer-content provenance summary (track roots through `insertfield`/`insertindex`/`select`/`storelocal`/`loadlocal`/argument memory) would restore precise per-call local read sets without the barrier |
 
 ### Phase D - Visible vtable / roll-your-own

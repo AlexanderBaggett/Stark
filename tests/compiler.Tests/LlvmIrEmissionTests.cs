@@ -57,6 +57,50 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void DynTraitObjectDispatchLoadsVtableSlotAndCallsIndirectly()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            dyn trait Speaker
+            {
+                finite law i32[min max] Speak(borrow Self self);
+            }
+
+            struct Dog : Speaker
+            {
+                i32[min max] Volume;
+
+                finite law i32[min max] Speak(borrow Dog self)
+                {
+                    return self.Volume;
+                }
+            }
+
+            export fn i32[min max] main()
+            {
+                stack Dog d = new Dog() { Volume = 7 };
+                stack borrow dyn Speaker s = d;
+                return s.Speak();
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var mainBody = ExtractDefinitionBody(llvm, "main");
+
+        // The vtable global, the slot load (SsaDynVTableSlotRValue -> getelementptr+load),
+        // and the indirect call carrying the trait method's law/finite attributes.
+        Assert.Contains("@__stark_vtable_Dog__Speaker", llvm, StringComparison.Ordinal);
+        Assert.Contains("getelementptr ptr,", mainBody, StringComparison.Ordinal);
+        Assert.Contains("load ptr,", mainBody, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i32 %", mainBody, StringComparison.Ordinal);
+        Assert.Contains("nosync nofree", mainBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void NonCapturingClosureValuesLowerToInvokeAndEnvironmentPair()
     {
         var result = Compile(

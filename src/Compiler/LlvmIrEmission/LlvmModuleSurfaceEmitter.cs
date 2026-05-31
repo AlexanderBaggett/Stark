@@ -102,9 +102,15 @@ internal sealed class LlvmModuleSurfaceEmitter
             elements.Add($"ptr @{EscapeIdentifier(symbol)}");
         }
 
-        // Drop slot: `null` for a borrowed view; an owning `heap dyn` populates it
-        // with the implementing type's drop thunk.
-        elements.Add("ptr null");
+        // Drop slot: the implementing type's drop thunk (`<Type>.__dyn_drop`), which an
+        // owning `heap dyn` calls at scope exit to drop the boxed value and free the
+        // box. A borrowed trait object never reads this slot. Generic templates have no
+        // synthesized thunk, so their slot stays null (owned generic dyn is unsupported).
+        var dropSlot = _context.TypeModel.NamedTypes.TryGetValue(concreteTypeName, out var concreteType)
+                       && !concreteType.IsGeneric
+            ? $"ptr @{EscapeIdentifier(DynTraitFacts.BuildDropThunkName(concreteTypeName))}"
+            : "ptr null";
+        elements.Add(dropSlot);
         initializer = $"{{ {string.Join(", ", elements)} }}";
         return true;
     }

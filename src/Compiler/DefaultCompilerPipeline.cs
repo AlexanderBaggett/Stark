@@ -3818,6 +3818,7 @@ public static class DefaultCompilerPipeline
                 })
                 .ToArray();
             var closureDropFunctions = BuildClosureDropFunctions(types);
+            var dynDropThunks = BuildDynDropThunks(types);
             var declarationsByQualifiedName = CollectFunctionDeclarationsByQualifiedName(loadedModules);
             var specializedFunctions = MaterializeSpecializedFunctions(
                 specializationStrategy,
@@ -3830,6 +3831,7 @@ public static class DefaultCompilerPipeline
                 .Concat(closureLambdaFunctions)
                 .Concat(closureFunctionAdapterFunctions)
                 .Concat(closureDropFunctions)
+                .Concat(dynDropThunks)
                 .Concat(specializedFunctions)
                 .ToArray();
 
@@ -3844,6 +3846,7 @@ public static class DefaultCompilerPipeline
                         .Concat(types.ClosureLambdas.Select(static lambda => lambda.FunctionName))
                         .Concat(types.ClosureFunctionPromotions.Select(static adapter => adapter.AdapterFunctionName))
                         .Concat(closureDropFunctions.Select(static function => function.Name))
+                        .Concat(dynDropThunks.Select(static function => function.Name))
                         .Distinct(StringComparer.Ordinal)
                         .OrderBy(static name => name, StringComparer.Ordinal)
                         .ToArray()));
@@ -3885,6 +3888,49 @@ public static class DefaultCompilerPipeline
             if (needsEmptyDrop)
             {
                 var functionName = CallableValueFacts.EmptyClosureDropFunctionName;
+                functions.Add(new HighLevelIrFunction(
+                    functionName,
+                    CallableValueFacts.BuildClosureDropSignature(functionName),
+                    HasBody: true,
+                    BodyLoweringKind: FunctionBodyLoweringKind.StarkCfg,
+                    Effects: CallableValueFacts.BuildClosureDropEffectProfile(functionName)));
+            }
+
+            return functions;
+        }
+
+        // Synthesizes the per-type drop thunk referenced by each `dyn trait` vtable's
+        // Drop slot: `<Type>.__dyn_drop(rawmutptr<i8> self)` drops the boxed value and
+        // frees the box. Emitted for every non-generic concrete type that implements a
+        // `dyn trait` (the slot is dead for borrowed objects but correct for `heap dyn`);
+        // the thunk's signature/effects mirror a heap-closure drop thunk.
+        private static IReadOnlyList<HighLevelIrFunction> BuildDynDropThunks(TypeCheckModel types)
+        {
+            var functions = new List<HighLevelIrFunction>();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+
+            foreach (var namedType in types.NamedTypes.Values)
+            {
+                if (namedType.Kind is not (DeclarationKind.Struct or DeclarationKind.Record)
+                    || namedType.IsGeneric
+                    || namedType.ImplementedTraits.Count == 0)
+                {
+                    continue;
+                }
+
+                var implementsDynTrait = namedType.ImplementedTraits.Any(traitName =>
+                    types.NamedTypes.TryGetValue(traitName, out var traitType) && traitType.IsDynTrait);
+                if (!implementsDynTrait)
+                {
+                    continue;
+                }
+
+                var functionName = DynTraitFacts.BuildDropThunkName(namedType.Name);
+                if (!seen.Add(functionName))
+                {
+                    continue;
+                }
+
                 functions.Add(new HighLevelIrFunction(
                     functionName,
                     CallableValueFacts.BuildClosureDropSignature(functionName),

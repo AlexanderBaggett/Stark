@@ -675,6 +675,40 @@ internal sealed partial class MidLevelIrLowerer
             CompleteOpenFunctionTerminator();
         }
 
+        // Body of a `<Type>.__dyn_drop(rawmutptr<i8> self)` thunk (the vtable Drop
+        // slot): run the boxed value's drop (destructor + owned field drops), then
+        // free the box. Mirrors the heap-closure drop thunk, with the boxed concrete
+        // value in place of the captured environment.
+        public void LowerDynBoxDrop(StarkTypeSymbol boxedType)
+        {
+            var boxParameter = new MidLevelIrParameterOperand(
+                CallableValueFacts.ClosureEnvironmentParameterName,
+                CallableValueFacts.BuildClosureDropEnvironmentPointerType());
+
+            if (RequiresRuntimeDrop(boxedType))
+            {
+                var typedBoxPointer = EmitRequiredTemporary(
+                    new MidLevelIrConvertRValue(
+                        boxParameter,
+                        AddressType(boxedType, isMutable: true),
+                        $"{boxParameter.Text}:typed-box"),
+                    "dyn_box");
+                var boxedValue = EmitRequiredTemporary(
+                    new MidLevelIrLoadIndirectRValue(
+                        typedBoxPointer,
+                        boxedType,
+                        $"{typedBoxPointer.Text}:load"),
+                    "dyn_box");
+                EmitRuntimeDropFromOperandCore(boxedValue, boxedType);
+            }
+
+            Emit(
+                MidLevelIrStatementKind.Evaluate,
+                $"free {boxParameter.Text}",
+                value: new MidLevelIrHeapStorageFreeRValue(boxParameter, $"free {boxParameter.Text}"));
+            CompleteOpenFunctionTerminator();
+        }
+
         private void CompleteOpenFunctionTerminator()
         {
             if (_function.Signature.ReturnType.Kind == StarkTypeKind.Void)
@@ -9975,8 +10009,7 @@ internal sealed partial class MidLevelIrLowerer
                 return operand;
             }
 
-            if (dynType.DynTraitName is not { } traitName
-                || dynType.DynTraitStorageKind != StarkDynTraitStorageKind.View)
+            if (dynType.DynTraitName is not { } traitName)
             {
                 return null;
             }
@@ -9986,7 +10019,12 @@ internal sealed partial class MidLevelIrLowerer
                 return null;
             }
 
-            var dataPointer = BuildErasedDynDataPointer(operand);
+            // The two storage forms differ only in the data half: a borrowed view
+            // points at the source in place (no allocation); an owning `heap dyn`
+            // moves the source into a heap box the trait object owns.
+            var dataPointer = dynType.DynTraitStorageKind == StarkDynTraitStorageKind.Heap
+                ? BuildOwnedDynBoxPointer(operand, concreteTypeName)
+                : BuildErasedDynDataPointer(operand);
             if (dataPointer is null)
             {
                 return null;
@@ -10070,6 +10108,38 @@ internal sealed partial class MidLevelIrLowerer
             var temporary = CreateTemporaryLocal(operand.Type, "dyn_spill");
             EmitOperandAssignment(temporary, operand, operand.Text);
             return CreateAddressOfLocal(temporary.Name, operand.Type);
+        }
+
+        // An owning trait object's data half: the source value moved into a heap box
+        // that the trait object owns. The box is a heap-storage temporary deliberately
+        // NOT tracked for scope-exit drop -- the `heap dyn` value owns it and frees it
+        // via the vtable Drop slot, exactly as a heap closure owns its environment.
+        private MidLevelIrOperand? BuildOwnedDynBoxPointer(MidLevelIrOperand operand, string concreteTypeName)
+        {
+            var boxType = operand.Type.Kind == StarkTypeKind.Named && operand.Type.BorrowKind == StarkBorrowKind.None
+                ? operand.Type
+                : StarkTypeSymbols.Named(concreteTypeName);
+
+            var boxLocalName = AllocateTemporaryName("dyn_box");
+            RegisterLocal(boxLocalName, boxType, "heap", isMutable: true, isConstant: false);
+            Emit(MidLevelIrStatementKind.StorageLive, boxLocalName, boxLocalName, boxType);
+
+            var boxLocal = new MidLevelIrLocalOperand(boxLocalName, boxType);
+            EmitOperandAssignment(boxLocal, operand, operand.Text);
+            RecordMoveFromOperand(operand, boxType);
+
+            var boxAddress = CreateAddressOfLocal(boxLocalName, boxType);
+            if (boxAddress is null)
+            {
+                return null;
+            }
+
+            var erasedPointerType = StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: true);
+            return boxAddress.Type == erasedPointerType
+                ? boxAddress
+                : EmitTemporary(
+                    new MidLevelIrConvertRValue(boxAddress, erasedPointerType, $"{boxAddress.Text}:erase"),
+                    "dyn_data");
         }
 
         private bool TryCoerceFixedArrayToSlice(

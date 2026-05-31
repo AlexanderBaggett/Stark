@@ -1169,20 +1169,24 @@ finite law i32[min max] AreaOf(borrow dyn Shape shape)
 A **trait object** is a two-word fat pointer — a data pointer plus a pointer to a per-implementing-type vtable. It is spelled with a storage prefix that discloses its cost:
 
 * `borrow dyn Shape` / `mut borrow dyn Shape` — a non-owning fat *view*: a borrow of some value plus its vtable. **No allocation.** The `mut` form permits calling `mut borrow Self` methods.
+* `heap dyn Shape` — an *owning*, heap-boxed trait object: the value is moved into a heap box the trait object owns. **The only allocating form.** At scope exit it drops the boxed value (through the vtable's drop slot) and frees the box. The `heap` here is the dyn type's storage prefix, parallel to `heap closure`; the local's own storage class (e.g. `stack`) is written separately, as in `stack heap dyn Shape`.
 
 A conforming concrete value coerces implicitly into a `dyn`-typed slot — the visible `dyn` in the slot's type is the disclosure that a trait object is being formed:
 
 ```stark
 stack Square square = new Square() { Side = 4 };
-stack borrow dyn Shape view = square;   // forms the fat view; no allocation
-return view.Area();                     // dynamic call through the vtable
+stack borrow dyn Shape view = square;                  // borrowed fat view; no allocation
+return view.Area();                                    // dynamic call through the vtable
+
+stack heap dyn Shape owned = new Square() { Side = 7 };  // boxes the value on the heap; owned
+return owned.Area();                                    // dropped + freed at scope exit
 ```
 
 A call on a trait object (`view.Area()`) lowers to a single **indirect call** through the vtable slot. Crucially, the method's effect contract survives erasure: a `law` method called through `dyn` is still pure and a `finite` method still terminates, because the vtable slot carries the function kind. Dynamic dispatch erases the body, never the cost contract.
 
 Only a `dyn trait` can form a trait object (`dyn` over a plain `trait` is an error, with guidance to add `dyn` or use an enum). To be `dyn`, every instance method must be **object-safe**: its receiver is `borrow Self`/`mut borrow Self`, it has no method-level generic parameters, and it does not pass or return `Self` by value. `static` (no-self) members are allowed but are not callable through the trait object.
 
-The gradient of dispatch costs is therefore explicit in the source: an `enum` + `switch` (zero indirection) → static trait calls / `where T: Trait` (zero indirection, monomorphized) → `dyn` trait objects (one disclosed indirection). Owned, heap-boxed trait objects (`heap dyn`) are not yet available; use a borrowed `borrow dyn` view.
+The gradient of dispatch costs is therefore explicit in the source: an `enum` + `switch` (zero indirection) → static trait calls / `where T: Trait` (zero indirection, monomorphized) → a borrowed `dyn` trait object (one disclosed indirection, no allocation) → an owning `heap dyn` trait object (one indirection plus one disclosed allocation). Every step up in flexibility is visible in the type.
 
 ### 8.6 Doctrines
 

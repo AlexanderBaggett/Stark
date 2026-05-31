@@ -35,7 +35,7 @@ across all docs, so an agent can jump to the detail doc for full context.
 | Audit & design (Phases 0–9) | gap analyses + self-hosted architecture | `[x]` complete (docs 00–09) |
 | **M0** | Test infrastructure first | `[ ]` not started |
 | **M1** | Port test suite vs host compiler | `[ ]` not started |
-| **M2** | Close language blockers | `[~]` static traits + constrained generics + default members + **borrowed `dyn` trait objects** done (TD01–TD17 borrow form, CG01–CG07); owned `heap dyn` + vtable Phase D + L01–L14 remain |
+| **M2** | Close language blockers | `[~]` static traits + constrained generics + default members + **`dyn` trait objects (borrowed + owning)** done (TD01–TD17, CG01–CG07); vtable Phase D (roll-your-own) + L01–L14 remain |
 | **M3** | Close stdlib blockers | `[ ]` not started |
 | **M4** | Close tooling blockers | `[ ]` not started |
 | **M5** | Port compiler subsystems leaf-first | `[ ]` not started |
@@ -112,7 +112,7 @@ Port helpers first, then text-only tests, then artifact tests, then integration.
 - [~] **TD06** — lowering: concrete trait calls already lower to direct calls; **pending** bind generic-`T` calls to concrete impl in monomorphization — → `10`
 - [~] **TD07** — conformance diagnostics tests (3026/3032/3033 landed; param-type-mismatch pending) — → `10`
 - [x] **TD08–TD11** — default trait members: `;`-body = required / `{ }`-body = default (not required); a not-overridden default dispatches to the default body monomorphized over `Self` (direct call) for concrete **and** `where T: Trait` receivers; overrides win; defaults call other trait methods via the implicit `Self: <trait>` bound; tests landed — → `10`
-- [~] **TD12–TD17** — `dyn` trait objects: **borrowed form done** (`dyn trait` opt-in, `borrow`/`mut borrow dyn Trait` fat-pointer views, object-safety diagnostics STK3035/3036/3037, per-(type,trait) vtable synthesis, concrete→dyn coercion, indirect-call lowering that **preserves the `law`/`finite` effect contract**; runtime + LLVM + diagnostic tests, all suites green). **Follow-ups:** owned `heap dyn` (per-type drop thunk + `heap`-storage/`heap`-prefix grammar overlap), Stark-level dyn-call devirt + DSE-precision (provenance model; today a conservative `ReadsOtherMemory` DSE barrier keeps it correct) — → `10`
+- [x] **TD12–TD17** — `dyn` trait objects **done** (borrowed + owning): `dyn trait` opt-in; `borrow`/`mut borrow dyn Trait` fat-pointer views (no alloc) and owning `heap dyn Trait` (boxes + owns + drops the value via a synthesized per-type drop thunk in the vtable); object-safety diagnostics STK3035/3036; per-(type,trait) vtable synthesis; concrete→dyn coercion; indirect-call lowering that **preserves the `law`/`finite` effect contract**; runtime (borrowed + owned) + LLVM + diagnostic tests, all suites green. **Perf follow-up only:** Stark-level dyn-call devirt + DSE-precision (provenance model; today a conservative `ReadsOtherMemory` DSE barrier keeps it correct) — → `10`
 - [ ] **TD18–TD21** — visible vtable / roll-your-own (`T.Vtable`, unsafe from-parts + decompose) — → `10`
 - [~] **TD22–TD24** — TD22 **done**: `LanguageReference.md` §6.5 (trait bounds) + §8.5 (impl/`Self`/required+default/static dispatch) and `skills/stark-language/SKILL.md` updated, examples verified to compile+run; TD23 gap-doc sync + TD24 Dictionary-keys → general hashing/eq remain — → `10`
 
