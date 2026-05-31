@@ -70,6 +70,7 @@ internal sealed class SemanticValidator
         ValidateGlobalDeclarations();
         ValidateTypeDeclarations();
         ValidateBaseTraitLists();
+        ValidateDynTraitDeclarations();
         ValidateDestructorDeclarations();
 
         foreach (var function in _functionDeclarations.Values)
@@ -652,6 +653,45 @@ internal sealed class SemanticValidator
     // trait; inheriting from a struct, record, enum, or doctrine is rejected
     // here rather than at the parser, which now accepts the `: ...` syntax for
     // trait implementation. Full member conformance is validated separately.
+    // A `dyn trait` promises that every instance method can be dispatched through a
+    // fat pointer. Each instance method must therefore be object-safe: a
+    // `borrow Self`/`mut borrow Self` receiver, no method-level generics, and no
+    // by-value `Self` in parameter or return position. Static (no-self) members are
+    // excluded from the vtable and are always allowed.
+    private void ValidateDynTraitDeclarations()
+    {
+        foreach (var declaration in _parseResult.Root.topLevelDeclaration())
+        {
+            if (declaration.traitDeclaration() is not { } traitDeclaration
+                || traitDeclaration.DYN() is null)
+            {
+                continue;
+            }
+
+            var traitName = traitDeclaration.Identifier().GetText();
+            foreach (var member in traitDeclaration.traitBody().traitMember())
+            {
+                if (member.traitMethodDeclaration() is not { } method)
+                {
+                    continue;
+                }
+
+                var methodName = method.Identifier().GetText();
+                if (!_typeModel.Functions.TryGetValue($"{traitName}.{methodName}", out var signature)
+                    || DynTraitFacts.TryValidateDynTraitMethod(signature, out var reason))
+                {
+                    continue;
+                }
+
+                _context.Diagnostics.Error(
+                    "STK3036",
+                    $"Trait method '{traitName}.{methodName}' is not object-safe and cannot appear in 'dyn trait {traitName}': {reason}.",
+                    "semantic-validate",
+                    Location(method));
+            }
+        }
+    }
+
     private void ValidateBaseTraitLists()
     {
         var traitRequiredMethods = CollectCurrentModuleTraitRequiredMethods();
@@ -3409,6 +3449,26 @@ internal sealed class SemanticValidator
         }
 
         ValidatePendingCallArguments(target, argumentValues, receiverOffset, explicitParameterCount, summary, arguments);
+
+        if (target.Receiver?.Type.Kind == StarkTypeKind.DynTrait)
+        {
+            // A dynamic dispatch invokes an unknown concrete implementation that
+            // accesses the object behind the trait object's data pointer -- memory
+            // that is NOT this function's argument memory. Recording the abstract
+            // trait method as a precise callee would let the enclosing function be
+            // marked `argmemonly`, which LLVM would miscompile. Apply conservative
+            // effects instead, preserving `law` purity (every conforming impl shares
+            // the trait method's kind, so a `law` method never writes memory).
+            var dynamicDispatchIsLaw = FunctionKindFacts.IsLaw(target.Function.Kind);
+            summary.ApplyFunctionMemoryEffects(new FunctionMemoryEffectSummary(
+                ReadsArgumentMemory: true,
+                WritesArgumentMemory: !dynamicDispatchIsLaw,
+                CapturesArgumentMemory: false,
+                ReadsOtherMemory: true,
+                WritesOtherMemory: !dynamicDispatchIsLaw));
+            return BuildCallReturnValue(target, argumentValues, receiverOffset, explicitParameterCount);
+        }
+
         summary.PendingCalls.Add(new PendingCall(
             target.Function.Name,
             BuildPendingCallArguments(target, argumentValues, receiverOffset, explicitParameterCount),
@@ -3842,6 +3902,11 @@ internal sealed class SemanticValidator
             return new ValidationValue(StarkTypeSymbols.Error);
         }
 
+        if (target.Type.Kind == StarkTypeKind.DynTrait)
+        {
+            return ApplyDynTraitMemberAccess(target, memberName);
+        }
+
         var namedType = target.NamedType ?? ResolveNamedTypeSymbol(target.Type);
         if (namedType is null)
         {
@@ -3893,6 +3958,55 @@ internal sealed class SemanticValidator
 
         return new ValidationValue(
             StarkTypeSymbols.Error);
+    }
+
+    // Resolves `receiver.Member(...)` on a `dyn Trait` receiver to the trait
+    // method's signature (with `Self` bound to the trait-object type), mirroring
+    // type checking so the call validates and its effects are analyzed. The
+    // resulting binding carries the dyn receiver, which the call analysis uses to
+    // apply conservative (dynamic-dispatch) memory effects.
+    private ValidationValue ApplyDynTraitMemberAccess(ValidationValue target, string memberName)
+    {
+        if (target.Type.DynTraitName is not { } traitName)
+        {
+            return new ValidationValue(StarkTypeSymbols.Error);
+        }
+
+        var methodSourceName = $"{StarkTypeSymbols.GetGenericBaseName(traitName)}.{memberName}";
+        if (!TryGetFunctionOverloads(methodSourceName, out var methods)
+            || methods.Where(static method => !method.IsStatic).ToArray() is not { Length: 1 } instanceMethods)
+        {
+            return new ValidationValue(StarkTypeSymbols.Error);
+        }
+
+        var traitMethod = instanceMethods[0];
+        var substitution = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal)
+        {
+            ["Self"] = target.Type,
+        };
+        if (_typeModel.NamedTypes.TryGetValue(traitName, out var traitSymbol) && target.Type.TypeArguments is { } traitArguments)
+        {
+            var traitParameters = traitSymbol.GenericParams;
+            for (var index = 0; index < traitParameters.Count && index < traitArguments.Count; index++)
+            {
+                substitution[traitParameters[index]] = traitArguments[index];
+            }
+        }
+
+        var resolvedMethod = traitMethod with
+        {
+            ReturnType = FunctionOverloadFacts.SubstituteType(traitMethod.ReturnType, substitution),
+            Parameters = traitMethod.Parameters
+                .Select(parameter => parameter with { Type = FunctionOverloadFacts.SubstituteType(parameter.Type, substitution) })
+                .ToArray(),
+            GenericParameterNames = null,
+        };
+
+        return new ValidationValue(
+            resolvedMethod.ReturnType,
+            Function: resolvedMethod,
+            NamedType: ResolveNamedTypeSymbol(resolvedMethod.ReturnType),
+            Receiver: target);
     }
 
     private bool TryApplyValueTextConversionMemberAccess(

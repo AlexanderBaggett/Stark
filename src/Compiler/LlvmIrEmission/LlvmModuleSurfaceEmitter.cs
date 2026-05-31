@@ -35,7 +35,95 @@ internal sealed class LlvmModuleSurfaceEmitter
         EmitBuiltinTypeDefinitions(builder);
         EmitNamedTypeDefinitions(builder);
         EmitStringConstants(builder);
+        EmitVTableGlobals(builder);
         EmitGlobals(builder);
+    }
+
+    // Emits one read-only vtable per (implementing type, `dyn trait`) pair. The
+    // table holds a function pointer for each object-safe trait method, in the
+    // shared slot order from DynTraitFacts, followed by a drop slot (`null` for a
+    // borrowed trait object; the implementing type's drop thunk for `heap dyn`).
+    // A `dyn Trait` fat pointer's second word points at one of these tables, and
+    // a dynamic call loads slot i with `getelementptr ptr, ptr <vtable>, i32 i`.
+    private void EmitVTableGlobals(StringBuilder builder)
+    {
+        var emittedAny = false;
+        foreach (var concreteType in _context.TypeModel.NamedTypes.Values
+                     .Where(static type => type.Kind is DeclarationKind.Struct or DeclarationKind.Record
+                                           && type.ImplementedTraits.Count > 0)
+                     .OrderBy(static type => type.Name, StringComparer.Ordinal))
+        {
+            foreach (var traitName in concreteType.ImplementedTraits
+                         .Distinct()
+                         .OrderBy(static name => name, StringComparer.Ordinal))
+            {
+                if (!_context.TypeModel.NamedTypes.TryGetValue(traitName, out var traitType)
+                    || traitType.Kind != DeclarationKind.Trait
+                    || !traitType.IsDynTrait)
+                {
+                    continue;
+                }
+
+                if (!TryBuildVTableInitializer(concreteType.Name, traitName, out var slotCount, out var initializer))
+                {
+                    continue;
+                }
+
+                var vtableType = $"{{ {string.Join(", ", Enumerable.Repeat("ptr", slotCount + 1))} }}";
+                var symbolName = DynTraitFacts.BuildVtableGlobalName(concreteType.Name, traitName);
+                builder.AppendLine($"@{EscapeIdentifier(symbolName)} = private unnamed_addr constant {vtableType} {initializer}");
+                emittedAny = true;
+            }
+        }
+
+        if (emittedAny)
+        {
+            builder.AppendLine();
+        }
+    }
+
+    private bool TryBuildVTableInitializer(string concreteTypeName, string traitName, out int slotCount, out string initializer)
+    {
+        initializer = string.Empty;
+        var layout = DynTraitFacts.GetVtableLayout(traitName, _context.TypeModel.Functions);
+        slotCount = layout.Count;
+        var elements = new List<string>(slotCount + 1);
+        foreach (var slot in layout)
+        {
+            if (!TryResolveSlotFunctionSymbol(concreteTypeName, slot.MethodName, out var symbol))
+            {
+                // A non-overridden default method has no concrete `Type.Method`
+                // symbol; dispatching it through a trait object is not supported in
+                // this version (the implementing type must override it). Skip the
+                // table; the coercion site is rejected during semantic validation.
+                return false;
+            }
+
+            elements.Add($"ptr @{EscapeIdentifier(symbol)}");
+        }
+
+        // Drop slot: `null` for a borrowed view; an owning `heap dyn` populates it
+        // with the implementing type's drop thunk.
+        elements.Add("ptr null");
+        initializer = $"{{ {string.Join(", ", elements)} }}";
+        return true;
+    }
+
+    private bool TryResolveSlotFunctionSymbol(string concreteTypeName, string methodName, out string symbol)
+    {
+        symbol = string.Empty;
+        var dot = concreteTypeName.LastIndexOf('.');
+        var simpleType = dot < 0 ? concreteTypeName : concreteTypeName[(dot + 1)..];
+        foreach (var key in new[] { $"{concreteTypeName}.{methodName}", $"{simpleType}.{methodName}" })
+        {
+            if (_context.TypeModel.Functions.TryGetValue(key, out var signature) && !signature.IsStatic)
+            {
+                symbol = signature.Name;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private void EmitBuiltinTypeDefinitions(StringBuilder builder)

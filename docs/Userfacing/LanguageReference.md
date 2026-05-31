@@ -1142,9 +1142,47 @@ Trait methods are called on values, not through the trait name:
 * on a conforming concrete value: `button.Width()`
 * on a generic type parameter bounded by the trait (see 6.5): `value.Width()` inside a function declaring `where T: Drawable`
 
-Every such call is resolved statically and monomorphized to a **direct call** — an overridden method dispatches to the override, and a not-overridden default dispatches to the default body specialized for the concrete type. There is no vtable, no runtime indirection, and no hidden dispatch; the trait abstraction is erased at compile time.
+Every such call is resolved statically and monomorphized to a **direct call** — an overridden method dispatches to the override, and a not-overridden default dispatches to the default body specialized for the concrete type. There is no vtable, no runtime indirection, and no hidden dispatch; the trait abstraction is erased at compile time. This is the default, zero-indirection tier.
 
-Traits remain compile-time contracts, not runtime values: there are no trait-object values, trait names are rejected in value positions (fields, globals, locals, parameters, returns), and a trait method cannot be invoked through the trait name (`Drawable.Width(x)` is an error).
+A plain `trait` is compile-time-only: it has no trait-object values, its name is rejected in value positions, and a trait method cannot be invoked through the trait name (`Drawable.Width(x)` is an error). Runtime dispatch is opt-in per trait, with `dyn trait` (below).
+
+#### Dynamic dispatch with `dyn` trait objects
+
+Sometimes the concrete type genuinely is not known until run time. A trait opts into runtime dispatch by being declared `dyn trait`; the cost is disclosed at every use by spelling `dyn` in the type.
+
+```stark
+dyn trait Shape
+{
+    finite law i32[min max] Area(borrow Self self);
+}
+
+struct Square : Shape { i32[min max] Side;  finite law i32[min max] Area(borrow Square self) { return self.Side * self.Side; } }
+struct Box    : Shape { i32[min max] W; i32[min max] H; finite law i32[min max] Area(borrow Box self) { return self.W * self.H; } }
+
+// Dispatches dynamically: the concrete type is erased behind the trait object.
+finite law i32[min max] AreaOf(borrow dyn Shape shape)
+{
+    return shape.Area();
+}
+```
+
+A **trait object** is a two-word fat pointer — a data pointer plus a pointer to a per-implementing-type vtable. It is spelled with a storage prefix that discloses its cost:
+
+* `borrow dyn Shape` / `mut borrow dyn Shape` — a non-owning fat *view*: a borrow of some value plus its vtable. **No allocation.** The `mut` form permits calling `mut borrow Self` methods.
+
+A conforming concrete value coerces implicitly into a `dyn`-typed slot — the visible `dyn` in the slot's type is the disclosure that a trait object is being formed:
+
+```stark
+stack Square square = new Square() { Side = 4 };
+stack borrow dyn Shape view = square;   // forms the fat view; no allocation
+return view.Area();                     // dynamic call through the vtable
+```
+
+A call on a trait object (`view.Area()`) lowers to a single **indirect call** through the vtable slot. Crucially, the method's effect contract survives erasure: a `law` method called through `dyn` is still pure and a `finite` method still terminates, because the vtable slot carries the function kind. Dynamic dispatch erases the body, never the cost contract.
+
+Only a `dyn trait` can form a trait object (`dyn` over a plain `trait` is an error, with guidance to add `dyn` or use an enum). To be `dyn`, every instance method must be **object-safe**: its receiver is `borrow Self`/`mut borrow Self`, it has no method-level generic parameters, and it does not pass or return `Self` by value. `static` (no-self) members are allowed but are not callable through the trait object.
+
+The gradient of dispatch costs is therefore explicit in the source: an `enum` + `switch` (zero indirection) → static trait calls / `where T: Trait` (zero indirection, monomorphized) → `dyn` trait objects (one disclosed indirection). Owned, heap-boxed trait objects (`heap dyn`) are not yet available; use a borrowed `borrow dyn` view.
 
 ### 8.6 Doctrines
 

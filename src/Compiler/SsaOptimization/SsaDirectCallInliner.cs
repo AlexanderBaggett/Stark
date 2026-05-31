@@ -1421,6 +1421,9 @@ internal sealed class SsaDirectCallInliner
                 CollectUsedValueNames(insertIndex.Target, names);
                 CollectUsedValueNames(insertIndex.Value, names);
                 break;
+            case SsaDynVTableSlotRValue vtableSlot:
+                CollectUsedValueNames(vtableSlot.VtablePointer, names);
+                break;
             case SsaMakeSliceFromPointerRValue makeSlice:
                 CollectUsedValueNames(makeSlice.Pointer, names);
                 CollectUsedValueNames(makeSlice.Length, names);
@@ -1695,6 +1698,10 @@ internal sealed class SsaDirectCallInliner
             {
                 Target = RewriteValue(insertIndex.Target, replacements),
                 Value = RewriteValue(insertIndex.Value, replacements)
+            },
+            SsaDynVTableSlotRValue vtableSlot => vtableSlot with
+            {
+                VtablePointer = RewriteValue(vtableSlot.VtablePointer, replacements)
             },
             SsaMakeSliceFromPointerRValue makeSlice => makeSlice with
             {

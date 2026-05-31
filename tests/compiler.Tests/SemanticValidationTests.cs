@@ -1550,6 +1550,81 @@ public sealed class SemanticValidationTests
     }
 
     [Fact]
+    public void DynTraitObjectRejectsStaticOnlyTrait()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            trait Speaker
+            {
+                finite law i32[min max] Speak(borrow Self self);
+            }
+
+            finite law i32[min max] AreaOf(borrow dyn Speaker speaker)
+            {
+                return speaker.Speak();
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3035"
+                && diagnostic.Message.Contains("Speaker", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("dyn trait", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void DynTraitRejectsNonObjectSafeGenericMethod()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            dyn trait Speaker
+            {
+                finite law i32[min max] Speak<T>(borrow Self self, borrow T item);
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3036"
+                && diagnostic.Message.Contains("Speak", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("object-safe", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void HeapDynTraitObjectIsRejectedPendingOwnedSupport()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            dyn trait Speaker
+            {
+                finite law i32[min max] Speak(borrow Self self);
+            }
+
+            finite law i32[min max] AreaOf(heap dyn Speaker speaker)
+            {
+                return speaker.Speak();
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "semantic-validate"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3037"
+                && diagnostic.Message.Contains("heap dyn", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void GenericConstraintAcceptsConformingTypeArgument()
     {
         var result = Compile(

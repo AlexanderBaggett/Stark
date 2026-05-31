@@ -449,7 +449,8 @@ internal sealed class TypeChecker
                         DeclarationKind.Trait,
                         new Dictionary<string, FieldSymbol>(StringComparer.Ordinal),
                         [],
-                        GenericParameterNames: genericParameters?.ToList());
+                        GenericParameterNames: genericParameters?.ToList(),
+                        IsDynTrait: traitDeclaration.DYN() is not null);
                     continue;
                 }
 
@@ -11897,6 +11898,11 @@ internal sealed class TypeChecker
             return ApplyDynamicMemberAccess(target, memberName, context);
         }
 
+        if (target.Type.Kind == StarkTypeKind.DynTrait)
+        {
+            return ApplyDynTraitMemberAccess(target, memberName, context);
+        }
+
         var namedType = target.NamedType ?? ResolveNamedTypeSymbol(target.Type);
         if (namedType is null)
         {
@@ -12031,6 +12037,72 @@ internal sealed class TypeChecker
     // `Self` (and any trait type arguments) substituted to the type parameter so
     // the generic body type-checks. The bound target keeps the trait-method name,
     // which MIR lowering rebinds to the concrete implementation per specialization
+    // Resolves `receiver.Member(...)` where the receiver is a `dyn Trait` trait
+    // object: the call binds to the trait method's signature (so it type-checks and
+    // yields the right return type) while MIR lowers it to an indirect vtable call.
+    // `Self` is substituted to the trait-object type; the method must be object-safe.
+    private ExpressionBinding ApplyDynTraitMemberAccess(ExpressionBinding target, string memberName, ParserRuleContext context)
+    {
+        if (target.Type.DynTraitName is not { } traitName)
+        {
+            ReportError("STK3011", $"Cannot access member '{memberName}' on {DescribeExpressionTarget(target)}.", context);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        var traitSimpleName = traitName.LastIndexOf('.') is var dot && dot >= 0 ? traitName[(dot + 1)..] : traitName;
+        var methodSourceName = $"{StarkTypeSymbols.GetGenericBaseName(traitName)}.{memberName}";
+        if (!TryGetFunctionOverloads(methodSourceName, out var methods)
+            || methods.Where(static method => !method.IsStatic).ToArray() is not { Length: 1 } instanceMethods)
+        {
+            ReportError(
+                "STK3011",
+                $"'dyn {traitSimpleName}' has no instance method '{memberName}' to dispatch.",
+                context);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        var traitMethod = instanceMethods[0];
+        if (!DynTraitFacts.IsObjectSafeInstanceMethod(traitMethod))
+        {
+            ReportError(
+                "STK3036",
+                $"Trait method '{methodSourceName}' is not object-safe and cannot be called through 'dyn {traitSimpleName}'.",
+                context);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        // Substitute `Self` -> the trait-object type, plus the trait's own type
+        // arguments, so the bound signature's parameter/return types are concrete.
+        var substitution = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal)
+        {
+            ["Self"] = target.Type,
+        };
+        if (_namedTypes.TryGetValue(traitName, out var traitSymbol) && target.Type.TypeArguments is { } traitArguments)
+        {
+            var traitParameters = traitSymbol.GenericParams;
+            for (var index = 0; index < traitParameters.Count && index < traitArguments.Count; index++)
+            {
+                substitution[traitParameters[index]] = traitArguments[index];
+            }
+        }
+
+        var resolvedMethod = traitMethod with
+        {
+            ReturnType = FunctionOverloadFacts.SubstituteType(traitMethod.ReturnType, substitution),
+            Parameters = traitMethod.Parameters
+                .Select(parameter => parameter with { Type = FunctionOverloadFacts.SubstituteType(parameter.Type, substitution) })
+                .ToArray(),
+            GenericParameterNames = null,
+        };
+
+        return new ExpressionBinding(
+            resolvedMethod.ReturnType,
+            NamedType: ResolveNamedTypeSymbol(resolvedMethod.ReturnType),
+            Function: resolvedMethod,
+            DiagnosticName: $"dynamic trait method '{traitMethod.DisplaySourceName}'",
+            Receiver: target);
+    }
+
     // (a direct call, not dynamic dispatch).
     private bool TryResolveTraitBoundMemberCall(
         ExpressionBinding target,
@@ -15079,11 +15151,62 @@ internal sealed class TypeChecker
             : projectedType;
     }
 
+    // Whether a value coerces into a `dyn Trait` slot: another trait object over
+    // the same trait (reborrow), or a concrete type that implements the `dyn trait`.
+    private bool CanAssignToDynTrait(StarkTypeSymbol dynTarget, StarkTypeSymbol source)
+    {
+        if (dynTarget.DynTraitName is not { } traitName)
+        {
+            return false;
+        }
+
+        if (source.Kind == StarkTypeKind.DynTrait)
+        {
+            return string.Equals(
+                StarkTypeSymbols.GetGenericBaseName(source.DynTraitName ?? string.Empty),
+                StarkTypeSymbols.GetGenericBaseName(traitName),
+                StringComparison.Ordinal);
+        }
+
+        var concreteTypeName = source.Kind switch
+        {
+            StarkTypeKind.Named => source.NamedType,
+            StarkTypeKind.RawPointer when source.ElementType is { NamedType: { } named } => named,
+            _ => null
+        };
+        if (concreteTypeName is null
+            || !_namedTypes.TryGetValue(concreteTypeName, out var concreteType)
+            || !_namedTypes.TryGetValue(traitName, out var traitType)
+            || !traitType.IsDynTrait)
+        {
+            return false;
+        }
+
+        var traitBaseName = StarkTypeSymbols.GetGenericBaseName(traitName);
+        foreach (var implemented in concreteType.ImplementedTraits)
+        {
+            if (string.Equals(StarkTypeSymbols.GetGenericBaseName(implemented), traitBaseName, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private bool CanAssign(StarkTypeSymbol target, StarkTypeSymbol source)
     {
         if (target.Kind == StarkTypeKind.Error || source.Kind == StarkTypeKind.Error)
         {
             return true;
+        }
+
+        // A conforming concrete value (or another trait object over the same trait)
+        // coerces into a `dyn Trait` slot. The storage prefix on the slot discloses
+        // the cost, so this is the only implicit path into a trait object.
+        if (target.Kind == StarkTypeKind.DynTrait)
+        {
+            return CanAssignToDynTrait(target, source);
         }
 
         if (!AreQualifiersAssignable(target, source))

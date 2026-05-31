@@ -451,6 +451,11 @@ internal sealed class SsaLowerer
                     LowerOperand(blockId, block, insertIndex.Value),
                     insertIndex.Type,
                     insertIndex.Text)),
+                MidLevelIrDynVTableSlotRValue vtableSlot => EmitValue(block, new SsaDynVTableSlotRValue(
+                    LowerOperand(blockId, block, vtableSlot.VtablePointer),
+                    vtableSlot.SlotIndex,
+                    vtableSlot.Type,
+                    vtableSlot.Text)),
                 MidLevelIrMakeSliceFromLocalRValue makeSlice => EmitValue(block, new SsaMakeSliceFromLocalRValue(
                     makeSlice.LocalName,
                     makeSlice.SourceType,

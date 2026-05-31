@@ -231,4 +231,47 @@ public sealed class TraitsAndDoctrinesFeatureTests : FeatureLlvmTestBase
         Assert.DoesNotContain("dispatch", llvm, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("fnptr", llvm, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void DynTraitObjectDispatchesThroughVtablePreservingEffectContract()
+    {
+        var llvm = CompileToLlvm(
+            """
+            module Demo
+
+            dyn trait Speaker
+            {
+                finite law i32[min max] Speak(borrow Self self);
+            }
+
+            struct Dog : Speaker
+            {
+                i32[min max] Volume;
+
+                finite law i32[min max] Speak(borrow Dog self)
+                {
+                    return self.Volume;
+                }
+            }
+
+            export fn i32[min max] main()
+            {
+                stack Dog d = new Dog() { Volume = 7 };
+                stack borrow dyn Speaker s = d;
+                return s.Speak();
+            }
+            """,
+            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        // A read-only vtable is synthesized for the (type, trait) pair: the Speak
+        // slot points at the concrete implementation, followed by a drop slot.
+        Assert.Contains("@__stark_vtable_Dog__Speaker = private unnamed_addr constant { ptr, ptr } { ptr @Dog_Speak, ptr null }", llvm);
+
+        // The dynamic call is an INDIRECT call through the loaded vtable slot (target
+        // is an SSA value, not a direct `@Dog_Speak`), and -- the cost-transparency
+        // payoff -- the `finite law` effect contract survives erasure: the indirect
+        // call site still carries the law/finite attributes.
+        Assert.Contains("getelementptr ptr,", llvm);
+        Assert.Matches(@"call fastcc i32 %\w+\(ptr[^\n]*nounwind willreturn mustprogress nosync nofree", llvm);
+    }
 }

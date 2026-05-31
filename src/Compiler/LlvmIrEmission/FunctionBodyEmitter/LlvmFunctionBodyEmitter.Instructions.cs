@@ -100,6 +100,16 @@ internal sealed partial class LlvmFunctionBodyEmitter
             case SsaInsertIndexRValue insertIndex:
                 AppendLine($"  {result} = insertvalue {MapType(insertIndex.Target.Type)} {FormatAggregateValueUse(insertIndex.Target, insertIndex.Target.Type, "insert_index_target")}, {MapType(insertIndex.Value.Type)} {FormatAggregateValueUse(insertIndex.Value, insertIndex.Value.Type, "insert_index_value")}, {insertIndex.ElementIndex}");
                 return;
+            case SsaDynVTableSlotRValue vtableSlot:
+            {
+                // Load method slot i from the vtable: the slots before the size/align
+                // tail are all pointers, so `getelementptr ptr, ptr <vtable>, i32 i`
+                // lands on slot i and the loaded value is the method's function pointer.
+                var slotPointer = $"%{EscapeIdentifier(CreateAbiTempName("dyn_vtable_slot_ptr"))}";
+                AppendLine($"  {slotPointer} = getelementptr ptr, ptr {FormatValue(vtableSlot.VtablePointer)}, i32 {vtableSlot.SlotIndex}");
+                AppendLine($"  {result} = load ptr, ptr {slotPointer}");
+                return;
+            }
             case SsaMakeSliceFromLocalRValue makeSlice:
                 EmitMakeSliceFromLocal(result, makeSlice);
                 return;

@@ -171,7 +171,7 @@ enumDeclaration
     ;
 
 traitDeclaration
-    : TRAIT Identifier typeParameterList? traitBody
+    : DYN? TRAIT Identifier typeParameterList? traitBody
     ;
 
 doctrineDeclaration
@@ -342,12 +342,21 @@ nonArrayType
     | rawPointerType
     | functionPointerType
     | closureType
+    | dynTraitType
     | integerType
     | simpleType
     ;
 
 dynamicType
     : DYNAMIC type_
+    ;
+
+dynTraitType
+    : dynStoragePrefix? DYN simpleType
+    ;
+
+dynStoragePrefix
+    : HEAP
     ;
 
 rawPointerType
@@ -862,6 +871,7 @@ FROZEN      : 'frozen';
 SHARED      : 'shared';
 OUT         : 'out';
 INIT        : 'init';
+DYN         : 'dyn';
 DYNAMIC     : 'dynamic';
 RAWPTR      : 'rawptr';
 RAWMUTPTR   : 'rawmutptr';
