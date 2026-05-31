@@ -6,9 +6,11 @@ model (TD02/TD03); same-module conformance with exact signature matching
 (TD04 — STK3026/3032/3033); and **constrained generics / generic trait dispatch**
 (TD05/TD06, CG01–CG07) — `where T: Trait` bounds are captured, enforced at call
 sites (STK3034), trait methods are callable on bounded type parameters, and they
-lower to **direct concrete calls** (no vtable). Remaining: cross-module
-conformance (TD04), default members (Phase B), `dyn` objects (Phase C), visible
-vtable (Phase D). This document tracks the work to make traits usable in Stark
+lower to **direct concrete calls** (no vtable); and **default members** (Phase B,
+TD08–TD11) — a not-overridden default dispatches to the default body monomorphized
+over `Self` (direct call) for both concrete and `where T: Trait` receivers, while
+overrides win. Remaining: cross-module conformance (TD04), `dyn` objects
+(Phase C), visible vtable (Phase D). This document tracks the work to make traits usable in Stark
 and to add an explicit dynamic-dispatch surface, in service of self-hosting
 (see `08-stark-feature-roadmap.md` and `09-self-hosted-compiler-architecture.md`).
 
@@ -337,10 +339,10 @@ the absence of `vtable`/`dispatch` where dispatch must not appear).
 
 | ID | Item | Depends | Acceptance |
 |---|---|---|---|
-| TD08 | Semantics: trait method with body = default; `;` = required | TD04 | default fills unimplemented method; required-missing still errors |
-| TD09 | Override resolution: impl method wins over default | TD08 | override selected; default otherwise |
-| TD10 | Defaults may call other trait methods | TD08 | default body calling required/default methods type-checks and lowers |
-| TD11 | Tests: default used, override wins, default-calls-trait-method | TD08-TD10 | feature + diagnostic tests |
+| TD08 | Semantics: trait method with body = default; `;` = required | **done** | defaults are not required of implementers; `HasBody` on `TypedFunctionSignature` distinguishes default from abstract |
+| TD09 | Override resolution: impl method wins over default | **done** | CG06 reroutes to the concrete override when the type defines one; otherwise the default body (monomorphized over `Self`) is used |
+| TD10 | Defaults may call other trait methods | **done** | the implicit `Self: <trait>` bound resolves `self.X()` inside default bodies (CG05); verified direct-call lowering |
+| TD11 | Tests: default conformance, default + override dispatch | **done** | `BaseListDoesNotRequireDefaultTraitMethods` + `TraitDefaultMethodsDispatchToMonomorphizedDirectCalls` |
 
 ### Phase C - `dyn` trait objects
 

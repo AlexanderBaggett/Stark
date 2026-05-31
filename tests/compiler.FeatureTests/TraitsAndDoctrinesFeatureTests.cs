@@ -180,4 +180,55 @@ public sealed class TraitsAndDoctrinesFeatureTests : FeatureLlvmTestBase
         Assert.DoesNotContain("dispatch", llvm, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("fnptr", llvm, StringComparison.OrdinalIgnoreCase);
     }
+
+    [Fact]
+    public void TraitDefaultMethodsDispatchToMonomorphizedDirectCalls()
+    {
+        var llvm = CompileToLlvm(
+            """
+            module Demo
+
+            trait Greeter
+            {
+                finite law i32[min max] Base(borrow Self self);
+
+                finite law i32[min max] Doubled(borrow Self self)
+                {
+                    return self.Base() * 2;
+                }
+            }
+
+            struct Widget : Greeter
+            {
+                i32[min max] V;
+
+                finite law i32[min max] Base(borrow Widget self)
+                {
+                    return self.V;
+                }
+            }
+
+            finite law i32[min max] CallIt<T>(borrow T value) where T: Greeter
+            {
+                return value.Doubled();
+            }
+
+            export fn i32[min max] main()
+            {
+                stack Widget w = new Widget() { V = 9 };
+                return w.Doubled() + CallIt(w);
+            }
+            """,
+            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        // A not-overridden default method dispatches to the default body monomorphized
+        // for the concrete type (both directly and through a `where T: Trait` generic),
+        // and the abstract method it calls resolves to the concrete override -- all
+        // direct calls, no vtable/indirect dispatch.
+        Assert.Contains("@__stark_mono_fn_Demo__Greeter_Doubled__Widget(", llvm);
+        Assert.Contains("call fastcc i32 @Widget_Base(", llvm);
+        Assert.DoesNotContain("vtable", llvm, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("dispatch", llvm, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("fnptr", llvm, StringComparison.OrdinalIgnoreCase);
+    }
 }

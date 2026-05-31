@@ -43,8 +43,8 @@ across all docs, so an agent can jump to the detail doc for full context.
 | **M7** | Snapshot strategy & drop host | `[ ]` not started |
 
 **Counts:** Language 0/14 · Stdlib 0/18 · Tooling 0/15 · Test-infra 0/12 ·
-Traits/Dispatch 5/24 done (TD01–TD03, TD05–TD06) + 1 partial (TD04: cross-module
-left) · Constrained generics 7/7 done · Decisions (OQ) 0/20 formally resolved
+Traits/Dispatch 9/24 done (TD01–TD03, TD05–TD06, TD08–TD11) + 1 partial (TD04:
+cross-module left) · Constrained generics 7/7 done · Decisions (OQ) 0/20 formally resolved
 (4 trait/dispatch decisions settled in doc 10 §3) · Compiler files to port ~115
 · Test files to port ~90.
 
@@ -111,7 +111,7 @@ Port helpers first, then text-only tests, then artifact tests, then integration.
 - [~] **TD05** — trait-method calls: concrete-receiver calls work end-to-end ✅; **pending** generic `where T: Trait` dispatch (currently STK3011) — → `10`
 - [~] **TD06** — lowering: concrete trait calls already lower to direct calls; **pending** bind generic-`T` calls to concrete impl in monomorphization — → `10`
 - [~] **TD07** — conformance diagnostics tests (3026/3032/3033 landed; param-type-mismatch pending) — → `10`
-- [ ] **TD08–TD11** — default trait members (grammar ready; semantics + override resolution + tests) — → `10`
+- [x] **TD08–TD11** — default trait members: `;`-body = required / `{ }`-body = default (not required); a not-overridden default dispatches to the default body monomorphized over `Self` (direct call) for concrete **and** `where T: Trait` receivers; overrides win; defaults call other trait methods via the implicit `Self: <trait>` bound; tests landed — → `10`
 - [ ] **TD12–TD17** — `dyn` trait objects (`dyn trait`, storage-prefixed types, object safety, vtable synthesis, coercion, indirect-call lowering + devirt) — → `10`
 - [ ] **TD18–TD21** — visible vtable / roll-your-own (`T.Vtable`, unsafe from-parts + decompose) — → `10`
 - [ ] **TD22–TD24** — userfacing docs, gap-doc sync, migrate Dictionary keys toward general hashing/eq — → `10`

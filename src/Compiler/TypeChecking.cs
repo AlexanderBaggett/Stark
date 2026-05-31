@@ -582,6 +582,37 @@ internal sealed class TypeChecker
         };
     }
 
+    // Inside a trait method body `Self` is implicitly bound by the enclosing trait,
+    // so trait-method calls on `self` (e.g. a default body calling another trait
+    // method) resolve through that bound via the same generic-dispatch path (CG05).
+    private IReadOnlyList<TypeParameterConstraint> WithImplicitTraitSelfConstraint(TypedFunctionSignature signature)
+    {
+        var name = signature.SourceName ?? signature.Name;
+        var lastDot = name.LastIndexOf('.');
+        if (lastDot <= 0)
+        {
+            return signature.Constraints;
+        }
+
+        var containingTypeName = name[..lastDot];
+        if (!_namedTypes.TryGetValue(containingTypeName, out var containingType)
+            || containingType.Kind != DeclarationKind.Trait
+            || signature.Constraints.Any(constraint => string.Equals(constraint.ParameterName, "Self", StringComparison.Ordinal)))
+        {
+            return signature.Constraints;
+        }
+
+        var selfBound = containingType.IsGeneric
+            ? StarkTypeSymbols.GenericInstantiation(
+                containingTypeName,
+                containingType.GenericParams.Select(parameter => StarkTypeSymbols.Named(parameter)).ToArray())
+            : StarkTypeSymbols.Named(containingTypeName);
+        return new List<TypeParameterConstraint>(signature.Constraints)
+        {
+            new("Self", [selfBound]),
+        };
+    }
+
     private NamedTypeSymbol BuildEnumNamedType(
         string name,
         IEnumerable<StarkParser.EnumVariantDeclarationContext> variantDeclarations,
@@ -871,7 +902,8 @@ internal sealed class TypeChecker
                         DisjointParameterGroups: effectiveDisjointGroups,
                         OverlapParameterGroups: overlapGroups,
                         SameParameterGroups: sameGroups,
-                        TypeParameterConstraints: ParseTypeParameterConstraints(functionSyntax, genericParameters, module.SyntaxModel.ModuleName));
+                        TypeParameterConstraints: ParseTypeParameterConstraints(functionSyntax, genericParameters, module.SyntaxModel.ModuleName),
+                        HasBody: functionSyntax.HasBody);
                     RegisterFunctionSignature(signature, seenOverloadKeys, functionSyntax.DeclarationContext);
                 }
                 finally
@@ -2177,7 +2209,7 @@ internal sealed class TypeChecker
                     : null;
                 _currentFunctionName = signature.Name;
                 _currentFunctionModuleName = module.SyntaxModel.ModuleName;
-                _currentFunctionConstraints = signature.Constraints;
+                _currentFunctionConstraints = WithImplicitTraitSelfConstraint(signature);
                 if (signature.IsUnsafe)
                 {
                     _unsafeDepth++;
@@ -11982,6 +12014,14 @@ internal sealed class TypeChecker
             return new ExpressionBinding(StarkTypeSymbols.Error);
         }
 
+        // Default-member fallback (Phase B): a type that implements a trait but does
+        // not override one of its default methods dispatches to the trait's default
+        // body, instantiated with Self = this type via ordinary overload resolution.
+        if (TryResolveTraitDefaultMemberCall(namedType, target, memberName, out var traitDefaultCall))
+        {
+            return traitDefaultCall;
+        }
+
         ReportError("STK3005", $"Type '{namedType.Name}' does not contain a field named '{memberName}'.", context);
         return new ExpressionBinding(StarkTypeSymbols.Error);
     }
@@ -12035,6 +12075,22 @@ internal sealed class TypeChecker
 
                 var traitMethod = instanceMethods[0];
 
+                // A default method (one with a body) is dispatched by instantiating
+                // the default over `Self` = this type parameter through ordinary
+                // overload resolution; the per-type default body is materialized via
+                // a deferred instantiation trigger. An abstract method instead falls
+                // through to the pre-substituted form and is rerouted to the concrete
+                // override during MIR lowering (CG06).
+                if (traitMethod.HasBody)
+                {
+                    binding = new ExpressionBinding(
+                        StarkTypeSymbols.Error,
+                        DiagnosticName: $"trait default method '{methodSourceName}'",
+                        Receiver: target,
+                        OverloadSourceName: methodSourceName);
+                    return true;
+                }
+
                 // Substitute `Self` -> the type parameter, plus the trait's own type
                 // arguments (e.g. `Equatable<i32>` binds the trait's parameter to i32).
                 var substitution = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal)
@@ -12067,6 +12123,38 @@ internal sealed class TypeChecker
                     Function: resolvedMethod,
                     DiagnosticName: $"trait method '{traitMethod.DisplaySourceName}'",
                     Receiver: target);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Phase B: resolves `value.Member(...)` to a trait default method when the
+    // value's concrete type implements a trait that defines `Member` but does not
+    // override it. Binds through ordinary overload resolution so `Self` is inferred
+    // from the receiver and the default body is monomorphized for the concrete type
+    // (a direct call). An abstract (non-default) unimplemented method is reported as
+    // a conformance failure (STK3032) elsewhere.
+    private bool TryResolveTraitDefaultMemberCall(
+        NamedTypeSymbol implementingType,
+        ExpressionBinding target,
+        string memberName,
+        out ExpressionBinding binding)
+    {
+        binding = new ExpressionBinding(StarkTypeSymbols.Error);
+
+        foreach (var traitName in implementingType.ImplementedTraits)
+        {
+            var methodSourceName = $"{StarkTypeSymbols.GetGenericBaseName(traitName)}.{memberName}";
+            if (TryGetFunctionOverloads(methodSourceName, out var methods)
+                && methods.Any(static method => !method.IsStatic))
+            {
+                binding = new ExpressionBinding(
+                    StarkTypeSymbols.Error,
+                    DiagnosticName: $"trait default method '{methodSourceName}'",
+                    Receiver: target,
+                    OverloadSourceName: methodSourceName);
                 return true;
             }
         }
