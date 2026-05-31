@@ -1366,6 +1366,17 @@ internal sealed class SsaScalarReplacementOptimizer
             return false;
         }
 
+        if (effects.ReadsOtherMemory)
+        {
+            // The callee reads memory beyond its own arguments -- for example, the
+            // object behind a `dyn` trait object's data pointer (reachable by loading
+            // a pointer out of argument memory), or global memory. The precise set of
+            // local fields it may read is not computable from the argument roots, so
+            // treat the read set as unavailable; callers then keep all candidate
+            // field stores live rather than eliminating them.
+            return false;
+        }
+
         if (!effects.ReadsArgumentMemory)
         {
             return true;

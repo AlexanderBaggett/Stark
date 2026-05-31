@@ -1415,6 +1415,7 @@ internal sealed class LlvmIrEmitter
             SsaInsertFieldRValue insertField => [insertField.Target, insertField.Value],
             SsaExtractIndexRValue extractIndex => [extractIndex.Target],
             SsaInsertIndexRValue insertIndex => [insertIndex.Target, insertIndex.Value],
+            SsaDynVTableSlotRValue vtableSlot => [vtableSlot.VtablePointer],
             SsaMakeSliceFromPointerRValue slice => [slice.Pointer, slice.Length],
             SsaDynamicStorageAllocationRValue allocation => [allocation.Capacity],
             SsaDynamicStorageFreeRValue free => [free.Storage],
@@ -2448,6 +2449,9 @@ internal sealed class LlvmIrEmitter
             StarkTypeKind.Closure => type.ClosureStorageKind == StarkClosureStorageKind.Heap
                 ? "{ ptr, ptr, ptr }"
                 : "{ ptr, ptr }",
+            // A `dyn Trait` value is a two-word fat pointer { data_ptr, vtable_ptr }.
+            // `heap dyn` owns the data behind data_ptr but the value layout is identical.
+            StarkTypeKind.DynTrait => "{ ptr, ptr }",
             StarkTypeKind.FixedArray when type.ElementType is not null && type.FixedLength is int fixedLength => $"[{fixedLength} x {MapType(type.ElementType)}]",
             StarkTypeKind.Slice => "{ ptr, i64 }",
             StarkTypeKind.Dynamic => "{ ptr, i64, i64 }",

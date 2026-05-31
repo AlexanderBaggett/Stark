@@ -459,6 +459,18 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitDynamicType([NotNull] StarkParser.DynamicTypeContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.dynTraitType"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitDynTraitType([NotNull] StarkParser.DynTraitTypeContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.dynStoragePrefix"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitDynStoragePrefix([NotNull] StarkParser.DynStoragePrefixContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.rawPointerType"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>

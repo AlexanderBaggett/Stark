@@ -1258,7 +1258,9 @@ internal sealed class SsaAliasAwareMemoryOptimizer
         return _effectModel is not { } effectModel
                || !effectModel.Functions.TryGetValue(call.FunctionName, out var effects)
                || !effects.IsPure
-               || !effects.NoSync;
+               || !effects.NoSync
+               // A callee that writes memory beyond its arguments may write globals.
+               || effects.WritesOtherMemory;
     }
 
     private bool MayReadGlobalMemory(
@@ -1279,6 +1281,9 @@ internal sealed class SsaAliasAwareMemoryOptimizer
                || !effectModel.Functions.TryGetValue(call.FunctionName, out var effects)
                || !effects.IsPure
                || !effects.NoSync
+               // A callee that reads memory beyond its arguments (e.g. through a
+               // dyn trait object's data pointer) may read global memory.
+               || effects.ReadsOtherMemory
                || effects.ReadsArgumentMemory && EnumerateCallMemoryArguments(call).Any(argument =>
                    ValueMayReferenceGlobalMemory(
                        argument,
@@ -1300,6 +1305,15 @@ internal sealed class SsaAliasAwareMemoryOptimizer
             || !effects.IsPure
             || !effects.NoSync)
         {
+            return false;
+        }
+
+        if (effects.ReadsOtherMemory)
+        {
+            // The callee reads memory beyond its arguments (e.g. the object behind a
+            // dyn trait object's data pointer, reachable by loading a pointer out of
+            // argument memory). The precise local-field read set is not computable
+            // from the argument roots, so report it as unavailable.
             return false;
         }
 

@@ -1157,7 +1157,12 @@ public sealed record FunctionEffectProfile(
     bool IsCold,
     InlinePreference InlinePreference,
     bool IsStrictFp,
-    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default);
+    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default,
+    // Whether the function accesses memory beyond its own arguments (e.g. globals,
+    // or the object behind a `dyn` trait object's data pointer). Optimizers that
+    // compute a precise per-call local read/write set must treat these as a barrier.
+    bool ReadsOtherMemory = false,
+    bool WritesOtherMemory = false);
 
 public sealed record FunctionEffectModel(
     string ModuleName,
@@ -1240,6 +1245,16 @@ public enum StarkClosureCallCapability
     Once
 }
 
+public enum StarkDynTraitStorageKind
+{
+    // Non-owning fat view (data borrow + shared vtable). No allocation. The
+    // borrow/mut-borrow distinction comes from the outer type qualifier.
+    View,
+    // Owned, heap-boxed trait object. The only allocating form; dropped via the
+    // vtable Drop slot at scope exit.
+    Heap
+}
+
 public enum StarkTypeKind
 {
     Error,
@@ -1256,7 +1271,8 @@ public enum StarkTypeKind
     FunctionPointer,
     Closure,
     Named,
-    Null
+    Null,
+    DynTrait
 }
 
 public sealed record StarkTypeSymbol(
@@ -1290,7 +1306,9 @@ public sealed record StarkTypeSymbol(
     StarkAccessKind AccessKind = StarkAccessKind.None,
     StarkInitializationKind InitializationKind = StarkInitializationKind.None,
     bool IsMutableView = false,
-    IReadOnlyList<StarkTypeSymbol>? TypeArguments = null);
+    IReadOnlyList<StarkTypeSymbol>? TypeArguments = null,
+    string? DynTraitName = null,
+    StarkDynTraitStorageKind DynTraitStorageKind = StarkDynTraitStorageKind.View);
 
 public static class StarkTypeSymbols
 {
@@ -1516,6 +1534,27 @@ public static class StarkTypeSymbols
             ClosureDisjointParameterGroups: effectiveDisjointGroups,
             ClosureOverlapParameterGroups: effectiveOverlapGroups,
             ClosureSameParameterGroups: effectiveSameGroups);
+    }
+
+    // A `dyn Trait` trait object: a two-word fat pointer { data_ptr, vtable_ptr }.
+    // `heap dyn Trait` owns its data (boxed, dropped via the vtable); a plain
+    // `dyn Trait` is a borrowed view whose ownership comes from the outer
+    // borrow/mut-borrow qualifier. The vtable is a real, nameable representation.
+    public static StarkTypeSymbol DynTrait(
+        string traitName,
+        StarkDynTraitStorageKind storageKind = StarkDynTraitStorageKind.View,
+        IReadOnlyList<StarkTypeSymbol>? typeArguments = null)
+    {
+        var storagePrefix = storageKind == StarkDynTraitStorageKind.Heap ? "heap " : string.Empty;
+        var typeArgumentSuffix = typeArguments is { Count: > 0 }
+            ? $"<{string.Join(", ", typeArguments.Select(argument => argument.DisplayName))}>"
+            : string.Empty;
+        return new StarkTypeSymbol(
+            StarkTypeKind.DynTrait,
+            $"{storagePrefix}dyn {traitName}{typeArgumentSuffix}",
+            DynTraitName: traitName,
+            DynTraitStorageKind: storageKind,
+            TypeArguments: typeArguments);
     }
 
     private static string FormatCallableFunctionKind(StarkFunctionKind functionKind)
@@ -1933,7 +1972,8 @@ public sealed record NamedTypeSymbol(
     IReadOnlyList<FieldSymbol> OrderedFields,
     IReadOnlyList<EnumVariantSymbol>? EnumVariants = null,
     IReadOnlyList<string>? GenericParameterNames = null,
-    IReadOnlyList<string>? ImplementedTraitNames = null)
+    IReadOnlyList<string>? ImplementedTraitNames = null,
+    bool IsDynTrait = false)
 {
     public bool TryGetField(string name, out FieldSymbol field, out int index)
     {
@@ -3554,7 +3594,10 @@ public enum IndexedElementOperationFamily
 {
     FixedArrayElement,
     ViewComponent,
-    ClosureComponent
+    ClosureComponent,
+    // Components of a `dyn Trait` fat pointer: slot 0 is the erased data pointer
+    // (rawmutptr<i8>), slot 1 is the read-only vtable pointer (rawptr<i8>).
+    DynTraitComponent
 }
 
 public enum MidLevelIrTerminatorKind
@@ -3735,6 +3778,17 @@ public sealed record MidLevelIrConvertRValue(
     string Text)
     : MidLevelIrRValue(TargetType, Text);
 
+// Loads a method slot from a `dyn Trait` vtable: the function pointer at slot
+// `SlotIndex` reached via `getelementptr ptr, ptr <vtable>, i32 SlotIndex`. The
+// result type is the slot's `fnptr<kind ...>` so an indirect call through it
+// preserves the trait method's effect contract (law/finite call-site attributes).
+public sealed record MidLevelIrDynVTableSlotRValue(
+    MidLevelIrOperand VtablePointer,
+    int SlotIndex,
+    StarkTypeSymbol Type,
+    string Text)
+    : MidLevelIrRValue(Type, Text);
+
 public sealed record MidLevelIrExtractFieldRValue(
     MidLevelIrOperand Target,
     string FieldName,
@@ -3841,6 +3895,7 @@ internal static class MidLevelIrArtifactValidation
             IndexedElementOperationFamily.FixedArrayElement => GetFixedArrayIndexElementType(targetType, elementIndex, text, artifactName),
             IndexedElementOperationFamily.ViewComponent => GetViewIndexElementType(targetType, elementIndex, text, artifactName),
             IndexedElementOperationFamily.ClosureComponent => GetClosureIndexElementType(targetType, elementIndex, text, artifactName),
+            IndexedElementOperationFamily.DynTraitComponent => MidLevelIrArtifactValidation.GetDynTraitIndexElementType(targetType, elementIndex, text, artifactName),
             _ => throw new ArgumentException(
                 $"{artifactName} index operation '{text}' uses unsupported operation family '{operationFamily}'.",
                 nameof(operationFamily))
@@ -3942,6 +3997,32 @@ internal static class MidLevelIrArtifactValidation
         return expectedType == actualType
             || expectedType.Kind == actualType.Kind
             && string.Equals(expectedType.DisplayName, actualType.DisplayName, StringComparison.Ordinal);
+    }
+
+    // The component types of a `dyn Trait` fat pointer: slot 0 is the erased data
+    // pointer (rawmutptr<i8>), slot 1 is the read-only vtable pointer (rawptr<i8>).
+    // Shared by MIR and SSA index validation so both agree on the fat-pointer layout.
+    internal static StarkTypeSymbol GetDynTraitIndexElementType(
+        StarkTypeSymbol targetType,
+        int elementIndex,
+        string text,
+        string artifactName)
+    {
+        if (targetType.Kind != StarkTypeKind.DynTrait)
+        {
+            throw new ArgumentException(
+                $"{artifactName} dyn-trait index operation '{text}' requires a dyn-trait target, but found '{targetType.DisplayName}'.",
+                nameof(targetType));
+        }
+
+        return elementIndex switch
+        {
+            0 => StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: true),
+            1 => StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: false),
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(elementIndex),
+                $"{artifactName} dyn-trait index operation '{text}' index '{elementIndex}' is out of range for '{targetType.DisplayName}' with 2 component(s).")
+        };
     }
 
     public static StarkTypeSymbol ValidateObjectConstruction(
@@ -4549,6 +4630,7 @@ internal static class SsaArtifactValidation
             IndexedElementOperationFamily.FixedArrayElement => GetFixedArrayIndexElementType(targetType, elementIndex, text, artifactName),
             IndexedElementOperationFamily.ViewComponent => GetViewIndexElementType(targetType, elementIndex, text, artifactName),
             IndexedElementOperationFamily.ClosureComponent => GetClosureIndexElementType(targetType, elementIndex, text, artifactName),
+            IndexedElementOperationFamily.DynTraitComponent => MidLevelIrArtifactValidation.GetDynTraitIndexElementType(targetType, elementIndex, text, artifactName),
             _ => throw new ArgumentException(
                 $"{artifactName} index operation '{text}' uses unsupported operation family '{operationFamily}'.",
                 nameof(operationFamily))
@@ -4692,6 +4774,16 @@ public sealed record SsaInsertIndexRValue(
     StarkTypeSymbol Type,
     string Text)
     : SsaRValue(SsaArtifactValidation.ValidateIndexInsertion(Target, ElementIndex, OperationFamily, Value, Type, Text), Text);
+
+// Loads a method slot from a `dyn Trait` vtable (see MidLevelIrDynVTableSlotRValue).
+// The result is the slot's `fnptr<kind ...>`; the devirtualizer can recover a
+// direct call when the vtable traces back to a known concrete table.
+public sealed record SsaDynVTableSlotRValue(
+    SsaValue VtablePointer,
+    int SlotIndex,
+    StarkTypeSymbol Type,
+    string Text)
+    : SsaRValue(Type, Text);
 
 public sealed record SsaMakeSliceFromLocalRValue(
     string LocalName,

@@ -2879,6 +2879,12 @@ public static class DefaultCompilerPipeline
                 var readsArgumentMemory = summary?.MemoryEffects?.ReadsArgumentMemory
                     ?? importedSummary?.MemoryEffects?.ReadsArgumentMemory
                     ?? existing.ReadsArgumentMemory;
+                var readsOtherMemory = summary?.MemoryEffects?.ReadsOtherMemory
+                    ?? importedSummary?.MemoryEffects?.ReadsOtherMemory
+                    ?? existing.ReadsOtherMemory;
+                var writesOtherMemory = summary?.MemoryEffects?.WritesOtherMemory
+                    ?? importedSummary?.MemoryEffects?.WritesOtherMemory
+                    ?? existing.WritesOtherMemory;
                 var inlinePreference = DetermineInlinePreference(
                     name,
                     summary,
@@ -2897,6 +2903,8 @@ public static class DefaultCompilerPipeline
                 {
                     Kind = effectiveKind,
                     ReadsArgumentMemory = readsArgumentMemory,
+                    ReadsOtherMemory = readsOtherMemory,
+                    WritesOtherMemory = writesOtherMemory,
                     IsPure = isLaw,
                     NoSync = isLaw,
                     NoFree = isLaw,
@@ -2918,6 +2926,8 @@ public static class DefaultCompilerPipeline
                     {
                         Kind = effectiveKind,
                         ReadsArgumentMemory = lambdaSummary.MemoryEffects?.ReadsArgumentMemory ?? lambdaEffects.ReadsArgumentMemory,
+                        ReadsOtherMemory = lambdaSummary.MemoryEffects?.ReadsOtherMemory ?? lambdaEffects.ReadsOtherMemory,
+                        WritesOtherMemory = lambdaSummary.MemoryEffects?.WritesOtherMemory ?? lambdaEffects.WritesOtherMemory,
                         IsPure = isLaw,
                         NoSync = isLaw,
                         NoFree = isLaw,
@@ -2941,6 +2951,8 @@ public static class DefaultCompilerPipeline
                     {
                         Kind = effectiveKind,
                         ReadsArgumentMemory = lambdaSummary.MemoryEffects?.ReadsArgumentMemory ?? lambdaEffects.ReadsArgumentMemory,
+                        ReadsOtherMemory = lambdaSummary.MemoryEffects?.ReadsOtherMemory ?? lambdaEffects.ReadsOtherMemory,
+                        WritesOtherMemory = lambdaSummary.MemoryEffects?.WritesOtherMemory ?? lambdaEffects.WritesOtherMemory,
                         IsPure = isLaw,
                         NoSync = isLaw,
                         NoFree = isLaw,

@@ -1369,6 +1369,20 @@ internal sealed class SsaIrValidator
             case SsaLoadLocalRValue loadLocal:
                 ValidateLocalExists(function, loadLocal.LocalName, localDefinitions, location);
                 break;
+            case SsaDynVTableSlotRValue vtableSlot:
+                ValidateValue(function, vtableSlot.VtablePointer, valueDefinitions, location);
+                ValidateRawPointerValue(function, vtableSlot.VtablePointer, "dyn vtable slot base", location);
+                if (vtableSlot.SlotIndex < 0)
+                {
+                    Report(function, location, $"dyn vtable slot index '{vtableSlot.SlotIndex}' must be non-negative.");
+                }
+
+                if (vtableSlot.Type.Kind != StarkTypeKind.FunctionPointer)
+                {
+                    Report(function, location, $"dyn vtable slot result must be a function pointer, but found '{vtableSlot.Type.DisplayName}'.");
+                }
+
+                break;
             default:
                 Report(function, location, $"unsupported SSA rvalue type '{value.GetType().Name}' reached validation.");
                 break;
@@ -1491,6 +1505,7 @@ internal sealed class SsaIrValidator
                 or StarkTypeKind.Ascii
                 or StarkTypeKind.Unicode,
             IndexedElementOperationFamily.ClosureComponent => normalizedType.Kind == StarkTypeKind.Closure,
+            IndexedElementOperationFamily.DynTraitComponent => normalizedType.Kind == StarkTypeKind.DynTrait,
             _ => false
         };
 
@@ -1535,9 +1550,36 @@ internal sealed class SsaIrValidator
             StarkTypeKind.FixedArray => TryGetFixedArrayElementType(function, aggregateType, index, usage, location, out elementType),
             StarkTypeKind.Dynamic => TryGetDynamicStorageElementType(function, aggregateType, index, fieldName: null, usage: usage, location: location, out elementType),
             StarkTypeKind.Closure => TryGetClosureElementType(function, aggregateType, index, usage, location, out elementType),
+            StarkTypeKind.DynTrait => TryGetDynTraitElementType(function, aggregateType, index, usage, location, out elementType),
             StarkTypeKind.Named => TryGetNamedAggregateElementType(function, aggregateType, index, fieldName: null, usage: usage, location: location, out elementType),
             _ => ReportInvalidAggregateElementAccess(function, aggregateType, usage, "aggregate or view", location)
         };
+    }
+
+    // The fat-pointer components of a `dyn Trait` value: slot 0 is the erased data
+    // pointer (rawmutptr<i8>), slot 1 is the read-only vtable pointer (rawptr<i8>).
+    private bool TryGetDynTraitElementType(
+        SsaFunction function,
+        StarkTypeSymbol aggregateType,
+        int index,
+        string usage,
+        SourceLocation? location,
+        out StarkTypeSymbol elementType)
+    {
+        elementType = index switch
+        {
+            0 => StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: true),
+            1 => StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: false),
+            _ => StarkTypeSymbols.Error
+        };
+
+        if (index is 0 or 1)
+        {
+            return true;
+        }
+
+        Report(function, location, $"{usage} index {index} is out of range for trait object '{aggregateType.DisplayName}'.");
+        return false;
     }
 
     private bool TryGetClosureElementType(
@@ -2546,6 +2588,13 @@ internal sealed class SsaIrValidator
         SsaGlobalAddressValue globalAddress,
         SourceLocation? location)
     {
+        // Synthesized trait-object vtables are emitted by the module surface emitter,
+        // not the user/global type model, so they are not in the known-global set.
+        if (DynTraitFacts.IsVtableGlobalName(globalAddress.GlobalName))
+        {
+            return;
+        }
+
         if (!TryGetKnownGlobal(function, globalAddress.GlobalName, "global address", location, out var global))
         {
             return;

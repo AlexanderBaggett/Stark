@@ -285,12 +285,73 @@ internal sealed class StarkTypeResolver
             return ResolveClosureType(closureType, genericParameters, currentModuleName);
         }
 
+        if (type.dynTraitType() is { } dynTraitType)
+        {
+            return ResolveDynTraitType(dynTraitType, genericParameters, currentModuleName);
+        }
+
         if (type.integerType() is { } integerType)
         {
             return ResolveIntegerType(integerType);
         }
 
         return ResolveSimpleType(type.simpleType(), genericParameters, currentModuleName);
+    }
+
+    // Resolves a `dyn Trait` trait-object type (optionally `heap dyn Trait`).
+    // The borrow/mut-borrow distinction is supplied by the outer type qualifier
+    // and applied later by ApplyQualifiers, exactly like `borrow closure<...>`.
+    // Object safety of the trait's individual methods is validated separately at
+    // the trait declaration; here we require that the trait opted into dynamic
+    // dispatch with `dyn trait`.
+    private StarkTypeSymbol ResolveDynTraitType(
+        StarkParser.DynTraitTypeContext type,
+        ISet<string>? genericParameters,
+        string? currentModuleName)
+    {
+        var traitType = ResolveSimpleType(type.simpleType(), genericParameters, currentModuleName);
+        if (traitType.Kind == StarkTypeKind.Error)
+        {
+            return StarkTypeSymbols.Error;
+        }
+
+        var traitName = traitType.NamedType ?? type.simpleType().GetText();
+        var simpleName = traitName.LastIndexOf('.') is var dot && dot >= 0 ? traitName[(dot + 1)..] : traitName;
+
+        if (_namedTypes.TryGetValue(traitName, out var traitSymbol))
+        {
+            if (traitSymbol.Kind != DeclarationKind.Trait)
+            {
+                ReportError(
+                    "STK3035",
+                    $"'dyn' requires a trait, but '{simpleName}' is not a trait. A trait object can only be formed over a 'dyn trait'.",
+                    type);
+                return StarkTypeSymbols.Error;
+            }
+
+            if (!traitSymbol.IsDynTrait)
+            {
+                ReportError(
+                    "STK3035",
+                    $"Trait '{simpleName}' is static-only and cannot form a trait object. Declare it as 'dyn trait {simpleName}' to opt into dynamic dispatch, or use an enum for a closed set of cases.",
+                    type);
+                return StarkTypeSymbols.Error;
+            }
+        }
+
+        if (type.dynStoragePrefix() is not null)
+        {
+            // Owned, heap-boxed trait objects require a per-type drop thunk in the
+            // vtable; that lowering is a follow-up. Borrowed trait objects are fully
+            // supported, so direct users to them rather than emitting a leaking box.
+            ReportError(
+                "STK3037",
+                $"Owned trait objects ('heap dyn {simpleName}') are not yet supported in this version; use a borrowed 'borrow dyn {simpleName}' view.",
+                type);
+            return StarkTypeSymbols.Error;
+        }
+
+        return StarkTypeSymbols.DynTrait(traitName, StarkDynTraitStorageKind.View, traitType.TypeArguments);
     }
 
     private bool TryResolveBoundedRawPointerParameterType(

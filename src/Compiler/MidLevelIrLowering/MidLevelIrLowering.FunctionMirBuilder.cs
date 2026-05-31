@@ -1929,6 +1929,12 @@ internal sealed partial class MidLevelIrLowerer
                 return false;
             }
 
+            if (TryLowerDynTraitCallExpressionAsStatement(postfix, out var dynTraitCall))
+            {
+                call = dynTraitCall;
+                return true;
+            }
+
             if (TryLowerDirectCallExpressionAsStatement(postfix, out var directCall))
             {
                 call = directCall;
@@ -3822,6 +3828,17 @@ internal sealed partial class MidLevelIrLowerer
             {
                 var moved = EmitRequiredTemporary(moveAt, "dynamic_move");
                 return expectedType is null ? moved : CoerceOperand(moved, expectedType);
+            }
+
+            if (TryLowerDynTraitCallExpression(expression, out var dynCall))
+            {
+                if (dynCall.Type.Kind == StarkTypeKind.Void)
+                {
+                    throw LoweringInvariantViolation(expression, "Void dyn-trait calls cannot be lowered as value expressions.");
+                }
+
+                var dynResult = EmitRequiredTemporary(dynCall, "call");
+                return expectedType is null ? dynResult : CoerceOperand(dynResult, expectedType);
             }
 
             if (TryLowerCallExpression(expression, out var call))
@@ -6566,6 +6583,222 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             call = ToStatementCall(parts);
+            return true;
+        }
+
+        // Lowers `receiver.Method(args)` where the receiver is a `dyn Trait` trait
+        // object: an indirect call through the vtable slot. The receiver is the
+        // postfix chain up to the trailing `.Method(args)`.
+        private bool TryLowerDynTraitCallExpression(StarkParser.PostfixExpressionContext expression, out MidLevelIrIndirectCallRValue call)
+        {
+            call = default!;
+            if (!TryLowerDynTraitCallReceiver(expression, out var receiver, out var memberName, out var arguments))
+            {
+                return false;
+            }
+
+            return TryBuildDynTraitCall(
+                receiver,
+                memberName,
+                arguments,
+                $"{receiver.Text}.{memberName}{arguments.GetText()}",
+                out call);
+        }
+
+        private bool TryLowerDynTraitCallExpressionAsStatement(
+            StarkParser.PostfixExpressionContext expression,
+            out MidLevelIrIndirectCallStatementOperation call)
+        {
+            call = default!;
+            if (!TryLowerDynTraitCallReceiver(expression, out var receiver, out var memberName, out var arguments)
+                || !TryBuildDynTraitCallParts(receiver, memberName, arguments, $"{receiver.Text}.{memberName}{arguments.GetText()}", out var parts))
+            {
+                return false;
+            }
+
+            call = ToStatementCall(parts);
+            return true;
+        }
+
+        // Identifies a `<receiver>.Method(args)` shape whose receiver lowers to a
+        // `dyn Trait` value, returning the lowered receiver, the method name, and
+        // the argument list. Receiver prefixes that are themselves calls or index
+        // accesses are deferred to the general member-call path.
+        private bool TryLowerDynTraitCallReceiver(
+            StarkParser.PostfixExpressionContext expression,
+            out MidLevelIrOperand receiver,
+            out string memberName,
+            out StarkParser.ArgumentListContext arguments)
+        {
+            receiver = default!;
+            memberName = default!;
+            arguments = default!;
+
+            var parts = expression.postfixPart();
+            if (parts.Length < 2
+                || parts[^1].argumentList() is not { } trailingArguments
+                || parts[^2].Identifier()?.GetText() is not { } member)
+            {
+                return false;
+            }
+
+            if (!TryInitializePostfixState(expression.primaryExpression(), out var current, out _) || current is null)
+            {
+                return false;
+            }
+
+            for (var index = 0; index < parts.Length - 2; index++)
+            {
+                var part = parts[index];
+                if (part.argumentList() is not null || part.expressionList() is not null
+                    || part.Identifier()?.GetText() is not { } fieldName)
+                {
+                    return false;
+                }
+
+                current = LowerFieldAccess(current, fieldName);
+                if (current is null)
+                {
+                    return false;
+                }
+            }
+
+            if (current.Type.Kind != StarkTypeKind.DynTrait)
+            {
+                return false;
+            }
+
+            receiver = current;
+            memberName = member;
+            arguments = trailingArguments;
+            return true;
+        }
+
+        private bool TryBuildDynTraitCall(
+            MidLevelIrOperand receiver,
+            string memberName,
+            StarkParser.ArgumentListContext arguments,
+            string text,
+            out MidLevelIrIndirectCallRValue call)
+        {
+            if (!TryBuildDynTraitCallParts(receiver, memberName, arguments, text, out var parts))
+            {
+                call = default!;
+                return false;
+            }
+
+            return TryCreateValueCall(parts, out call);
+        }
+
+        // Builds the indirect-call parts for a dynamic dispatch: load the method
+        // slot from the receiver's vtable and call it with the erased data pointer
+        // as the receiver argument. The slot's `fnptr<kind ...>` type carries the
+        // trait method's effect contract, so the call site keeps law/finite
+        // attributes exactly like any other function-pointer call.
+        private bool TryBuildDynTraitCallParts(
+            MidLevelIrOperand receiver,
+            string memberName,
+            StarkParser.ArgumentListContext arguments,
+            string text,
+            out LoweredIndirectCallParts call)
+        {
+            call = default!;
+            if (receiver.Type.DynTraitName is not { } traitName
+                || !DynTraitFacts.TryGetSlot(traitName, memberName, _typeModel.Functions, out var slot))
+            {
+                return false;
+            }
+
+            var signature = slot.TraitSignature;
+            var methodParameters = signature.Parameters;
+            if (methodParameters.Count - 1 != arguments.argument().Length)
+            {
+                return false;
+            }
+
+            var erasedReceiverType = StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: true);
+            var erasedVtableType = StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: false);
+
+            // Slot fn-ptr type: fnptr<kind ret(rawmutptr<i8>, params...)>. The
+            // receiver `borrow Self`/`mut borrow Self` is erased to the data pointer.
+            var slotParameterTypes = new List<StarkTypeSymbol>(methodParameters.Count) { erasedReceiverType };
+            for (var index = 1; index < methodParameters.Count; index++)
+            {
+                slotParameterTypes.Add(methodParameters[index].Type);
+            }
+
+            var slotFunctionPointerType = StarkTypeSymbols.FunctionPointer(signature.Kind, signature.ReturnType, slotParameterTypes);
+
+            var vtablePointer = EmitTemporary(
+                new MidLevelIrExtractIndexRValue(
+                    receiver,
+                    ElementIndex: 1,
+                    OperationFamily: IndexedElementOperationFamily.DynTraitComponent,
+                    erasedVtableType,
+                    $"{receiver.Text}.vtable"),
+                "dyn_vtable");
+            var dataPointer = EmitTemporary(
+                new MidLevelIrExtractIndexRValue(
+                    receiver,
+                    ElementIndex: 0,
+                    OperationFamily: IndexedElementOperationFamily.DynTraitComponent,
+                    erasedReceiverType,
+                    $"{receiver.Text}.data"),
+                "dyn_data");
+            if (vtablePointer is null || dataPointer is null)
+            {
+                return false;
+            }
+
+            var methodPointer = EmitTemporary(
+                new MidLevelIrDynVTableSlotRValue(
+                    vtablePointer,
+                    slot.Index,
+                    slotFunctionPointerType,
+                    $"{receiver.Text}.{memberName}#slot{slot.Index}"),
+                "dyn_method");
+            if (methodPointer is null)
+            {
+                return false;
+            }
+
+            var loweredArguments = new List<MidLevelIrOperand>(methodParameters.Count) { dataPointer };
+            var indirectArgumentLocals = new List<string?>(methodParameters.Count) { null };
+            var indirectArgumentAddresses = new List<MidLevelIrOperand?>(methodParameters.Count) { null };
+
+            for (var index = 0; index < arguments.argument().Length; index++)
+            {
+                var parameterType = methodParameters[index + 1].Type;
+                var lowered = LowerExpressionToOperand(arguments.argument(index).expression(), parameterType);
+                if (lowered is null)
+                {
+                    return false;
+                }
+
+                var argument = CoerceCallArgument(lowered, parameterType);
+                if (argument is null)
+                {
+                    return false;
+                }
+
+                loweredArguments.Add(argument);
+                var indirectArgumentAddress = ResolveIndirectArgumentAddress(parameterType, arguments.argument(index).expression());
+                indirectArgumentLocals.Add(indirectArgumentAddress is null
+                    ? ResolveIndirectArgumentLocal(parameterType, lowered) ?? ResolveIndirectArgumentLocal(parameterType, argument)
+                    : null);
+                indirectArgumentAddresses.Add(indirectArgumentAddress);
+                RecordMoveFromOperand(argument, parameterType);
+            }
+
+            call = new LoweredIndirectCallParts(
+                methodPointer,
+                loweredArguments,
+                StarkTypeSymbols.BorrowReturnRuntimeType(signature.ReturnType),
+                text,
+                signature.ReturnType,
+                indirectArgumentLocals,
+                indirectArgumentAddresses,
+                MayFree: false);
             return true;
         }
 
@@ -9618,6 +9851,12 @@ internal sealed partial class MidLevelIrLowerer
                 return operand;
             }
 
+            if (targetType.Kind == StarkTypeKind.DynTrait
+                && BuildDynTraitCoercion(operand, targetType) is { } dynValue)
+            {
+                return dynValue;
+            }
+
             if (operand.Type.Kind == StarkTypeKind.Null && targetType.Kind == StarkTypeKind.RawPointer)
             {
                 return new MidLevelIrNullOperand(targetType);
@@ -9720,6 +9959,117 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             return operand;
+        }
+
+        // Coerce a conforming concrete value into a `dyn Trait` trait object by
+        // building the two-word fat pointer { erased data ptr, vtable ptr }. A
+        // borrowed view takes the address of the source place (no allocation); the
+        // vtable is the synthesized read-only table for the (concrete type, trait)
+        // pair. Owned `heap dyn` is rejected during validation until its drop is
+        // lowered, so only the View storage kind is built here.
+        private MidLevelIrOperand? BuildDynTraitCoercion(MidLevelIrOperand operand, StarkTypeSymbol dynType)
+        {
+            // dyn -> dyn (reborrow): the fat pointer already has the right shape.
+            if (operand.Type.Kind == StarkTypeKind.DynTrait)
+            {
+                return operand;
+            }
+
+            if (dynType.DynTraitName is not { } traitName
+                || dynType.DynTraitStorageKind != StarkDynTraitStorageKind.View)
+            {
+                return null;
+            }
+
+            if (ResolveConcreteTypeNameForDyn(operand.Type) is not { } concreteTypeName)
+            {
+                return null;
+            }
+
+            var dataPointer = BuildErasedDynDataPointer(operand);
+            if (dataPointer is null)
+            {
+                return null;
+            }
+
+            var vtableElementType = StarkTypeSymbols.Integer(8);
+            var vtablePointerType = StarkTypeSymbols.RawPointer(vtableElementType, isMutable: false);
+            MidLevelIrOperand vtablePointer = new MidLevelIrGlobalAddressOperand(
+                DynTraitFacts.BuildVtableGlobalName(concreteTypeName, traitName),
+                vtableElementType,
+                vtablePointerType);
+
+            var withData = EmitTemporary(
+                new MidLevelIrInsertIndexRValue(
+                    new MidLevelIrZeroInitializerOperand(dynType),
+                    ElementIndex: 0,
+                    OperationFamily: IndexedElementOperationFamily.DynTraitComponent,
+                    dataPointer,
+                    dynType,
+                    $"dyn<{traitName}>.data"),
+                "dyn");
+            if (withData is null)
+            {
+                return null;
+            }
+
+            return EmitTemporary(
+                new MidLevelIrInsertIndexRValue(
+                    withData,
+                    ElementIndex: 1,
+                    OperationFamily: IndexedElementOperationFamily.DynTraitComponent,
+                    vtablePointer,
+                    dynType,
+                    $"dyn<{traitName}>.vtable"),
+                "dyn");
+        }
+
+        // The concrete implementing type behind a value being coerced into a trait
+        // object (the source may be a value or a borrow/pointer to it).
+        private static string? ResolveConcreteTypeNameForDyn(StarkTypeSymbol type)
+        {
+            return type.Kind switch
+            {
+                StarkTypeKind.Named => type.NamedType,
+                StarkTypeKind.RawPointer when type.ElementType is { NamedType: { } named } => named,
+                _ => null
+            };
+        }
+
+        // A borrowed trait object's data half: a pointer to the source value erased
+        // to rawmutptr<i8>, matching the vtable's erased-context convention. A value
+        // place is addressed; a borrow/pointer source is used directly.
+        private MidLevelIrOperand? BuildErasedDynDataPointer(MidLevelIrOperand operand)
+        {
+            var erasedPointerType = StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: true);
+
+            MidLevelIrOperand? address =
+                operand.Type.Kind == StarkTypeKind.RawPointer || operand.Type.BorrowKind != StarkBorrowKind.None
+                    ? operand
+                    : operand switch
+                    {
+                        MidLevelIrLocalOperand local => CreateAddressOfLocal(local.Name, operand.Type),
+                        MidLevelIrParameterOperand parameter => CreateAddressOfParameter(parameter.Name, operand.Type),
+                        MidLevelIrGlobalOperand global => CreateAddressOfGlobal(global.Name, operand.Type),
+                        _ => SpillToTemporaryAddress(operand)
+                    };
+            if (address is null)
+            {
+                return null;
+            }
+
+            return address.Type == erasedPointerType
+                ? address
+                : EmitTemporary(
+                    new MidLevelIrConvertRValue(address, erasedPointerType, $"{address.Text}:erase"),
+                    "dyn_data");
+        }
+
+        private MidLevelIrOperand? SpillToTemporaryAddress(MidLevelIrOperand operand)
+        {
+            var temporary = CreateTemporaryLocal(operand.Type, "dyn_spill");
+            EmitOperandAssignment(temporary, operand, operand.Text);
+            return CreateAddressOfLocal(temporary.Name, operand.Type);
         }
 
         private bool TryCoerceFixedArrayToSlice(
