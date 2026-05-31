@@ -220,6 +220,15 @@ internal sealed partial class MidLevelIrLowerer
                 return true;
             }
 
+            // An owning `heap dyn` trait object owns its boxed data and must drop it
+            // (concrete destructor via the vtable Drop slot) and free the box. A
+            // borrowed `dyn` view owns nothing and needs no drop.
+            if (type.Kind == StarkTypeKind.DynTrait
+                && type.DynTraitStorageKind == StarkDynTraitStorageKind.Heap)
+            {
+                return true;
+            }
+
             if (type.Kind != StarkTypeKind.Named || type.NamedType is null)
             {
                 return false;
@@ -393,6 +402,13 @@ internal sealed partial class MidLevelIrLowerer
                 return;
             }
 
+            if (type.Kind == StarkTypeKind.DynTrait
+                && type.DynTraitStorageKind == StarkDynTraitStorageKind.Heap)
+            {
+                EmitOwnedDynTraitDropCore(operand, type);
+                return;
+            }
+
             var temporary = operand is MidLevelIrLocalOperand localOperand && localOperand.Type == type
                 ? localOperand
                 : CreateTemporaryLocal(type, "drop");
@@ -461,6 +477,59 @@ internal sealed partial class MidLevelIrLowerer
                 call: new MidLevelIrIndirectCallStatementOperation(
                     dropPointer,
                     [mutableEnvironmentPointer],
+                    StarkTypeSymbols.Void,
+                    $"drop {operand.Text}",
+                    SourceReturnType: StarkTypeSymbols.Void,
+                    MayFree: true));
+        }
+
+        // Drops an owning `heap dyn` trait object: load the vtable's Drop slot (which
+        // follows the method slots) and call it with the erased data pointer. The
+        // thunk runs the boxed value's destructor/field drops and frees the box, so
+        // the call is `MayFree`. Mirrors the heap-closure drop, but the drop function
+        // comes from the shared vtable rather than from the value itself.
+        private void EmitOwnedDynTraitDropCore(MidLevelIrOperand operand, StarkTypeSymbol type)
+        {
+            if (type.DynTraitName is not { } traitName)
+            {
+                return;
+            }
+
+            var erasedDataType = StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: true);
+            var erasedVtableType = StarkTypeSymbols.RawPointer(StarkTypeSymbols.Integer(8), isMutable: false);
+            var dropSlotFunctionPointerType = CallableValueFacts.BuildClosureDropFunctionPointerType();
+            var dropSlotIndex = DynTraitFacts.GetVtableLayout(traitName, _typeModel.Functions).Count;
+
+            var dataPointer = EmitRequiredTemporary(
+                new MidLevelIrExtractIndexRValue(
+                    operand,
+                    ElementIndex: 0,
+                    OperationFamily: IndexedElementOperationFamily.DynTraitComponent,
+                    erasedDataType,
+                    $"{operand.Text}.data"),
+                "dyn_drop_data");
+            var vtablePointer = EmitRequiredTemporary(
+                new MidLevelIrExtractIndexRValue(
+                    operand,
+                    ElementIndex: 1,
+                    OperationFamily: IndexedElementOperationFamily.DynTraitComponent,
+                    erasedVtableType,
+                    $"{operand.Text}.vtable"),
+                "dyn_drop_vtable");
+            var dropPointer = EmitRequiredTemporary(
+                new MidLevelIrDynVTableSlotRValue(
+                    vtablePointer,
+                    dropSlotIndex,
+                    dropSlotFunctionPointerType,
+                    $"{operand.Text}.drop#slot{dropSlotIndex}"),
+                "dyn_drop_fn");
+
+            Emit(
+                MidLevelIrStatementKind.Evaluate,
+                $"drop {operand.Text}",
+                call: new MidLevelIrIndirectCallStatementOperation(
+                    dropPointer,
+                    [dataPointer],
                     StarkTypeSymbols.Void,
                     $"drop {operand.Text}",
                     SourceReturnType: StarkTypeSymbols.Void,

@@ -434,6 +434,12 @@ internal sealed class LlvmIrEmitter
                 ? [CallableValueFacts.EmptyClosureDropFunctionName]
                 : [])
             .Concat(_typeModel.ClosureFunctionPromotions.Select(static promotion => promotion.AdapterFunctionName))
+            .Concat(_typeModel.NamedTypes.Values
+                .Where(type => type.Kind is DeclarationKind.Struct or DeclarationKind.Record
+                    && !type.IsGeneric
+                    && type.ImplementedTraits.Any(traitName =>
+                        _typeModel.NamedTypes.TryGetValue(traitName, out var traitType) && traitType.IsDynTrait))
+                .Select(static type => DynTraitFacts.BuildDropThunkName(type.Name)))
             .ToHashSet(StringComparer.Ordinal);
 
         foreach (var clone in _closedWorldImportedLawClones.Values.OrderBy(static clone => clone.FunctionName, StringComparer.Ordinal))
@@ -814,7 +820,8 @@ internal sealed class LlvmIrEmitter
         foreach (var function in ssa.Functions)
         {
             if (string.Equals(function.Name, CallableValueFacts.EmptyClosureDropFunctionName, StringComparison.Ordinal)
-                || function.Name.EndsWith(".__drop", StringComparison.Ordinal))
+                || function.Name.EndsWith(".__drop", StringComparison.Ordinal)
+                || DynTraitFacts.IsVtableReferencedRoot(function.Name))
             {
                 functions.TryAdd(function.Name, CallableValueFacts.BuildClosureDropEffectProfile(function.Name));
             }

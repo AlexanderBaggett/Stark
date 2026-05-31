@@ -167,6 +167,12 @@ internal sealed partial class MidLevelIrLowerer
             return LowerClosureFunctionAdapter(function, closureFunctionAdapter);
         }
 
+        if (DynTraitFacts.TryGetDropThunkConcreteType(function.Name) is { } dynDropConcreteType
+            && _typeModel.NamedTypes.ContainsKey(dynDropConcreteType))
+        {
+            return LowerDynDropThunkFunction(function, dynDropConcreteType);
+        }
+
         var loweringTemplateName = function.BodyTemplateName ?? function.Name;
         _importedFunctionTemplates.TryGetValue(loweringTemplateName, out var importedTemplateSummary);
         var keepOpenGenericTemplateDeclarationBodyless =
@@ -570,6 +576,15 @@ internal sealed partial class MidLevelIrLowerer
         using var builder = CreateSyntheticFunctionBuilder(function, location);
         builder.LowerClosureEnvironmentDrop(lambda);
         return BuildLoweredFunction(function, builder, location, ResolveOwnershipSummary(function));
+    }
+
+    private MidLevelIrFunction LowerDynDropThunkFunction(
+        HighLevelIrFunction function,
+        string concreteTypeName)
+    {
+        using var builder = CreateSyntheticFunctionBuilder(function, SourceLocation.Synthetic());
+        builder.LowerDynBoxDrop(StarkTypeSymbols.Named(concreteTypeName));
+        return BuildLoweredFunction(function, builder, SourceLocation.Synthetic(), ResolveOwnershipSummary(function));
     }
 
     private FunctionMirBuilder CreateSyntheticFunctionBuilder(

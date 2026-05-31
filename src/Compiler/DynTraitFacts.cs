@@ -168,6 +168,27 @@ internal static class DynTraitFacts
     public static bool IsVtableGlobalName(string globalName)
         => globalName.StartsWith(VtableGlobalNamePrefix, StringComparison.Ordinal);
 
+    // The per-(implementing type) drop thunk referenced by a vtable's Drop slot.
+    // It takes the box pointer (rawmutptr<i8>), runs the concrete type's drop
+    // (destructor + field drops), then frees the box. An owning `heap dyn` calls it
+    // through the vtable at scope exit; borrowed trait objects never invoke it.
+    public const string DropThunkNameSuffix = ".__dyn_drop";
+
+    public static string BuildDropThunkName(string concreteTypeName)
+        => $"{concreteTypeName}{DropThunkNameSuffix}";
+
+    // Recovers the implementing type name from a drop-thunk function name, or null
+    // if the name is not a dyn drop thunk.
+    public static string? TryGetDropThunkConcreteType(string functionName)
+        => functionName.EndsWith(DropThunkNameSuffix, StringComparison.Ordinal)
+            ? functionName[..^DropThunkNameSuffix.Length]
+            : null;
+
+    // True for functions that are reachable only through a synthesized vtable global
+    // (drop thunks), so SSA-only reachability analyses must treat them as roots.
+    public static bool IsVtableReferencedRoot(string functionName)
+        => functionName.EndsWith(DropThunkNameSuffix, StringComparison.Ordinal);
+
     private static string Mangle(string name)
     {
         Span<char> buffer = stackalloc char[name.Length];

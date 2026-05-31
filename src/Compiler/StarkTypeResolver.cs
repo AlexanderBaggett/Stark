@@ -339,19 +339,10 @@ internal sealed class StarkTypeResolver
             }
         }
 
-        if (type.dynStoragePrefix() is not null)
-        {
-            // Owned, heap-boxed trait objects require a per-type drop thunk in the
-            // vtable; that lowering is a follow-up. Borrowed trait objects are fully
-            // supported, so direct users to them rather than emitting a leaking box.
-            ReportError(
-                "STK3037",
-                $"Owned trait objects ('heap dyn {simpleName}') are not yet supported in this version; use a borrowed 'borrow dyn {simpleName}' view.",
-                type);
-            return StarkTypeSymbols.Error;
-        }
-
-        return StarkTypeSymbols.DynTrait(traitName, StarkDynTraitStorageKind.View, traitType.TypeArguments);
+        var storageKind = type.dynStoragePrefix() is not null
+            ? StarkDynTraitStorageKind.Heap
+            : StarkDynTraitStorageKind.View;
+        return StarkTypeSymbols.DynTrait(traitName, storageKind, traitType.TypeArguments);
     }
 
     private bool TryResolveBoundedRawPointerParameterType(

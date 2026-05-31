@@ -1599,32 +1599,6 @@ public sealed class SemanticValidationTests
     }
 
     [Fact]
-    public void HeapDynTraitObjectIsRejectedPendingOwnedSupport()
-    {
-        var result = Compile(
-            """
-            module Demo
-
-            dyn trait Speaker
-            {
-                finite law i32[min max] Speak(borrow Self self);
-            }
-
-            finite law i32[min max] AreaOf(heap dyn Speaker speaker)
-            {
-                return speaker.Speak();
-            }
-            """,
-            new CompilerOptions(StopAfterPassId: "semantic-validate"));
-
-        Assert.False(result.Succeeded);
-        Assert.Contains(
-            result.Diagnostics,
-            static diagnostic => diagnostic.Code == "STK3037"
-                && diagnostic.Message.Contains("heap dyn", StringComparison.Ordinal));
-    }
-
-    [Fact]
     public void GenericConstraintAcceptsConformingTypeArgument()
     {
         var result = Compile(
