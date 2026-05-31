@@ -1368,13 +1368,15 @@ internal sealed class SsaScalarReplacementOptimizer
 
         if (effects.ReadsOtherMemory)
         {
-            // The callee reads memory beyond its own arguments -- for example, the
-            // object behind a `dyn` trait object's data pointer (reachable by loading
-            // a pointer out of argument memory), or global memory. The precise set of
-            // local fields it may read is not computable from the argument roots, so
-            // treat the read set as unavailable; callers then keep all candidate
-            // field stores live rather than eliminating them.
-            return false;
+            // The callee reads memory beyond its own arguments -- e.g. the object
+            // behind a `dyn` trait object's data pointer, or memory reached through a
+            // global. It can only reach a local through a pointer to that local, so
+            // the locals it may read are exactly those whose address has escaped (had
+            // its address taken anywhere in this function). Locals whose address is
+            // never taken cannot be observed by such a callee, so their field stores
+            // remain eligible for elimination.
+            CollectAddressEscapedLocals(definitions, roots);
+            return true;
         }
 
         if (!effects.ReadsArgumentMemory)
@@ -1396,6 +1398,35 @@ internal sealed class SsaScalarReplacementOptimizer
         }
 
         return true;
+    }
+
+    // Locals whose address is taken anywhere in the function (directly, or via a
+    // field/element/slice address). Only these can be observed by a callee that
+    // reads memory beyond its arguments, so they bound such a callee's local reads.
+    private static void CollectAddressEscapedLocals(
+        IReadOnlyDictionary<string, SsaRValue> definitions,
+        ISet<string> escapedLocals)
+    {
+        foreach (var rvalue in definitions.Values)
+        {
+            switch (rvalue)
+            {
+                case SsaAddressOfLocalRValue addressOfLocal:
+                    escapedLocals.Add(addressOfLocal.LocalName);
+                    break;
+                case SsaMakeSliceFromLocalRValue makeSlice:
+                    escapedLocals.Add(makeSlice.LocalName);
+                    break;
+                case SsaFieldAddressRValue fieldAddress
+                    when TryResolveFieldAddressRoot(fieldAddress.Address, definitions, new HashSet<string>(StringComparer.Ordinal), out var fieldRoot, out _):
+                    escapedLocals.Add(fieldRoot);
+                    break;
+                case SsaElementAddressRValue elementAddress
+                    when TryResolveFieldAddressRoot(elementAddress.Address, definitions, new HashSet<string>(StringComparer.Ordinal), out var elementRoot, out _):
+                    escapedLocals.Add(elementRoot);
+                    break;
+            }
+        }
     }
 
     private static bool TryCollectLocalMemoryReads(
