@@ -22,7 +22,7 @@ across all docs, so an agent can jump to the detail doc for full context.
 `09` self-hosted compiler architecture ·
 `10` traits & dynamic dispatch (TD*) ·
 `11` error-value propagation `try`/`from` (EP*) ·
-`12` thread ownership & data-race freedom (TH*, design draft) ·
+`12` atomics (AT*; full thread-ownership model parked in git history) ·
 `SelfHostingRoadmap.md` (capability rationale) ·
 `ToolchainPackagingRoadmap.md` (release/packaging detail) ·
 `docs/Internals/CompilerPipeline.md` (pass list) ·
@@ -101,7 +101,7 @@ Port helpers first, then text-only tests, then artifact tests, then integration.
 - [x] **L07** — compiler invariant-failure policy — *blocker* — **closed without adding panic/trap/assert (OQ-05 resolved):** invalid states are made unrepresentable instead. New language guarantees: **switch exhaustiveness (STK3044)** — every `switch` covers its whole domain (all enum variants / both bools / every value of a ranged integer) or has `default`; **definite return (STK3045)** — non-`void` functions must return on every path. These remove the silent runtime-trap and fall-off-the-end-UB paths. Port convention for host `throw` sites documented in doc `09` Error Model (restructure → exhaustive types → `Result`+`try` → stderr+`Process.Exit` residual) — → `01`, `09`, OQ-05
 - [ ] **L08** — raw/multiline string literal ergonomics for compiler text — *workaround exists* — → `01`
 - [ ] **L09** — general compile-time function evaluation / table generation — *workaround exists* — → `01`
-- [ ] **L10** — async / build-driver concurrency replacement — *workaround exists* — **design drafted in doc `12`** (thread ownership: scoped vs owning spawn, structural cross-thread marker, lock-owns-data; OQ-TH1..6 await lock) — → `01`, `12`, OQ-11
+- [ ] **L10** — async / build-driver concurrency replacement — *workaround exists* — **verified non-blocking for self-hosting:** the host compiler is functionally single-threaded (zero parallelism; `async` is sequential I/O idiom), so the synchronous port is behaviorally identical. Full thread-ownership model parked (git history, doc 12 pre-atomics revision + `stark-thread-safety-laws.md` draft); revisit post-self-hosting for parallel builds — → `01`, OQ-11
 - [ ] **L11** — nullability / optional-value conventions (no safe nulls) — *blocker* — → `01`, OQ-06
 - [ ] **L12** — partial/nested/generated type layout ergonomics — *workaround exists* — → `01`
 - [ ] **L13** — alias/noalias proof carriers + wrong-alias compile-time diagnostics — *blocker* — → `01`, OQ-17
@@ -187,10 +187,29 @@ the dist stdlib — are `try`-propagatable exactly like source imports.
 - [ ] **S13** — TOML parser/emitter (`Stark.toml`, `Stark.solution.toml`, user config) — *blocker* — → `02`, OQ-10
 - [ ] **S14** — JSON parser/emitter (`.starkpkg.json`) — *blocker unless format changes* — → `02`, OQ-09
 - [ ] **S15** — time/stopwatch (pass durations, metrics) — *parity* — → `02`
-- [ ] **S16** — threading/sync primitives (mutex/once/atomics/channels) — *workaround for single-threaded v1* — design frame in doc `12` (TH06/TH08: lock-owns-data containers over existing ownership rules) — → `02`, `12`, OQ-11
+- [~] **S16** — threading/sync primitives (mutex/once/atomics/channels) — *workaround for single-threaded v1* — **atomics design locked + in progress (doc `12`, AT01–AT08 below)**; mutex/once/channels deferred (build on atomics + existing platform futex) — → `02`, `12`, OQ-11
 - [ ] **S17** — allocator/arena/shared-ownership strategy for IR graphs — *blocker* — → `02`, OQ-16
 - [ ] **S18** — testing/golden/snapshot support (see M0) — *blocker* — → `02`
 - [ ] **S19** _ File IO conveniences functions mirror .Net System.File api surface such as WriteAllLines, ReadAllLines
+
+### Atomics (first slice of S16)  → `12`
+
+Safe shared state for the threads Stark already ships. Locked design: atomic **data
+types** (never a keyword qualifier) covering **every Stark integer width** (i8…i1024,
+u8…u1024) plus `AtomicBool`; seq-cst only; ops Load/Store/Add/Sub/And/Or/Xor/Exchange/
+CompareExchange (RMW returns previous value). Three implementation tiers: single
+instructions (8–64 bit), lock-free CAS loops (24/48/96/128), embedded spinlock
+(192–1024; visible in `sizeof`, never a hidden lock table). Not required for
+self-hosting — this is shipped-surface hardening.
+
+- [ ] **AT01** — stdlib type surface: `AtomicBool` + 28 integer atomic types in `System.Threading` — → `12`
+- [ ] **AT02** — intrinsic recognition + LLVM lowering, tier 1 (8/16/32/64): single `atomicrmw`/`cmpxchg`/`load atomic`/`store atomic` — → `12`
+- [ ] **AT03** — tier 2 lowering (24/48/96/128): CAS loops on power-of-2 storage containers — → `12`
+- [ ] **AT04** — tier 3 lowering (192–1024): embedded-spinlock layout + serialized ops — → `12`
+- [ ] **AT05** — runtime tests: multi-threaded exact-count increments per tier, CAS contention, `AtomicBool` flag pattern — → `12`
+- [ ] **AT06** — LLVM emission tests: tier-1 single-instruction guarantees, tier-3 lock-word layout — → `12`
+- [ ] **AT07** — dist stdlib rebuild + package-image verification — → `12`
+- [ ] **AT08** — user-facing docs: stdlib reference, LanguageReference/SKILL, book Ch24 safe-sharing section, doc sync — → `12`
 
 ## M4 — Close tooling blockers  → `03`, `ToolchainPackagingRoadmap.md`
 
