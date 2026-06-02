@@ -1,6 +1,6 @@
 # Stark
 
-Stark is a performance-focused programming language targeting LLVM. It's about intentionality. This language forces you to be clear about your intentions for your types and the result is fast, safe native code.
+Stark is a performance-focused programming language targeting LLVM. It's about intentionality. This language forces you to be clear about your intentions for your types and the result is fast, safe, native code.
 
 The syntax is C#-adjacent, but the semantics are systems-oriented:
 explicit storage classes, deterministic ownership, no hidden exceptions, no
