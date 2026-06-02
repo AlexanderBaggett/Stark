@@ -264,8 +264,10 @@ public sealed class TraitsAndDoctrinesFeatureTests : FeatureLlvmTestBase
             new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
 
         // A read-only vtable is synthesized for the (type, trait) pair: the Speak
-        // slot points at the concrete implementation, followed by a drop slot.
-        Assert.Contains("@__stark_vtable_Dog__Speaker = private unnamed_addr constant { ptr, ptr } { ptr @Dog_Speak, ptr null }", llvm);
+        // slot points at the concrete implementation, followed by the type's drop
+        // thunk in the drop slot (used by owning `heap dyn` objects, ignored by this
+        // borrowed view).
+        Assert.Contains("@__stark_vtable_Dog__Speaker = private unnamed_addr constant { ptr, ptr } { ptr @Dog_Speak, ptr @Dog___dyn_drop }", llvm);
 
         // The dynamic call is an INDIRECT call through the loaded vtable slot (target
         // is an SSA value, not a direct `@Dog_Speak`), and -- the cost-transparency

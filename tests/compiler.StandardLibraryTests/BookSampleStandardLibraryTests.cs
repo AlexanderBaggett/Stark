@@ -6,15 +6,19 @@ public sealed class BookSampleStandardLibraryTests : StandardLibraryTestSuite
 {
     public static IEnumerable<object[]> CompileCheckedBookSamples()
     {
+        // Positive book samples live per chapter: site/content/book/<chapter>/samples/*.stark
+        // (negative ones live in rejected/ and are covered by scripts/check-book-samples.sh).
         var repositoryRoot = FindRepositoryRoot();
-        var sampleRoots = new[]
-        {
-            Path.Combine(repositoryRoot, "site", "assets", "book", "samples"),
-            Path.Combine(repositoryRoot, "site", "assets", "book", "stdlib-samples")
-        };
+        var bookRoot = Path.Combine(repositoryRoot, "site", "content", "book");
 
-        foreach (var sampleRoot in sampleRoots)
+        foreach (var chapterDirectory in Directory.EnumerateDirectories(bookRoot).Order(StringComparer.OrdinalIgnoreCase))
         {
+            var sampleRoot = Path.Combine(chapterDirectory, "samples");
+            if (!Directory.Exists(sampleRoot))
+            {
+                continue;
+            }
+
             foreach (var path in Directory.EnumerateFiles(sampleRoot, "*.stark").Order(StringComparer.OrdinalIgnoreCase))
             {
                 yield return [Path.GetRelativePath(repositoryRoot, path).Replace(Path.DirectorySeparatorChar, '/')];

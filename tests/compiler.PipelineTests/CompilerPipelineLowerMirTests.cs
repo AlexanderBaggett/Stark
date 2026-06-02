@@ -2646,6 +2646,7 @@ public sealed class CompilerPipelineLowerMirTests
                     switch (value)
                     {
                         case 0:
+                        default:
                     }
 
                     return value;

@@ -140,7 +140,11 @@ internal static partial class PackageImageBuilder
                             .Select(field => new StarkPackageFieldManifest(
                                 field.Name ?? $"Item{field.Position}",
                                 RenderManifestTypeText(field.Type, module.SyntaxModel.ModuleName)))
-                            .ToArray()))
+                            .ToArray(),
+                        Role: RenderEnumVariantRole(variant.Role),
+                        AbsorbsErrorType: variant.AbsorbsErrorType is { } absorbedErrorType
+                            ? RenderManifestTypeText(absorbedErrorType, module.SyntaxModel.ModuleName)
+                            : null))
                     .ToArray(),
             Methods: declaration.Kind == DeclarationKind.Enum
                 ? null
@@ -187,7 +191,11 @@ internal static partial class PackageImageBuilder
                             .Select(field => new StarkPackageTypedFieldManifest(
                                 field.Name ?? $"Item{field.Position}",
                                 BuildTypeReference(field.Type, module.SyntaxModel.ModuleName)))
-                            .ToArray()))
+                            .ToArray(),
+                        Role: RenderEnumVariantRole(variant.Role),
+                        AbsorbsErrorType: variant.AbsorbsErrorType is { } absorbedErrorType
+                            ? BuildTypeReference(absorbedErrorType, module.SyntaxModel.ModuleName)
+                            : null))
                     .ToArray(),
             Methods: declaration.Kind == DeclarationKind.Enum
                 ? null

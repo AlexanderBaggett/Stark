@@ -14,14 +14,14 @@ public enum ThreadError
 
 public enum ThreadStatus
 {
-    Ok,
-    Err(ThreadError),
+    [Ok] Ok,
+    [Err] Err(ThreadError),
 }
 
 public enum ThreadJoinResult
 {
-    Ok(i32[min max]),
-    Err(ThreadError),
+    [Ok] Ok(i32[min max]),
+    [Err] Err(ThreadError),
 }
 
 public struct Thread

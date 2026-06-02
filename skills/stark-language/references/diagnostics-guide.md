@@ -236,6 +236,11 @@ Capturing lambdas cannot be stored in a plain `fnptr`. Use a closure type.
 
 ## Switch Coverage And Dead Arms
 
+Every `switch` must be exhaustive: cover all enum variants (or both bools, or every
+value of a ranged integer), or include a `default`. A value with no matching arm is a
+compile error — never a runtime trap or a silent fall-through. `when`-guarded arms do
+not count toward coverage.
+
 When all enum variants are already handled, a later `default` arm is dead.
 Remove the dead arm or make an earlier pattern narrower.
 
@@ -257,6 +262,76 @@ finite law i32[min max] Score(Token token)
     }
 }
 ```
+
+## Missing Return Paths
+
+A non-`void` function must return on every control-flow path. If control can fall
+out of the body, the compiler reports it — add a `return`, give the final `if` an
+`else` that returns, or make the final `switch` exhaustive with every section
+returning.
+
+```stark
+finite law i32[min max] Sign(i32[min max] value)
+{
+    if (value < 0)
+    {
+        return -1;
+    }
+    else
+    {
+        return 1;
+    }
+}
+```
+
+## Error Propagation Roles And `try`
+
+`try` only works when both the operand's type and the enclosing function's
+return type are propagatable enums: two-variant enums whose declarations mark
+one variant `[Ok]` and one `[Err]`. An enum with the right shape but no role
+attributes is rejected — add the attributes; renaming variants changes nothing
+because roles never come from names.
+
+```stark
+enum FetchError { Timeout }
+
+enum FetchOutcome
+{
+    [Ok] Got(i32[min max]),
+    [Err] Failed(FetchError),
+}
+
+fn FetchOutcome Read(i32[min max] x)
+{
+    if (x < 0)
+    {
+        return FetchOutcome.Failed(FetchError.Timeout);
+    }
+
+    return FetchOutcome.Got(x + 1);
+}
+
+fn FetchOutcome Pipe(i32[min max] x)
+{
+    stack i32[min max] value = try Read(x);
+    return FetchOutcome.Got(value * 2);
+}
+```
+
+Role declaration errors point at the enum itself: a role-carrying enum needs
+exactly two variants, one of each role, each with at most one payload, and
+`[Ok]`/`[Err]` take no arguments.
+
+If the operand and the enclosing function fail with different error types,
+declare a `from` funnel on the enclosing error enum
+(`enum AppError { Fetch from FetchError }`); a missing funnel is a compile
+error, never an inferred conversion. Unit failures (an `[Err]` variant with no
+payload) only propagate into other unit failures.
+
+`try` may only sit at a statement boundary: a binding initializer, an
+assignment right side, the operand of `return`, or a bare expression
+statement. `Use(try a(), try b())` is rejected — bind each fallible call to a
+local first, then `try` each local on its own line.
 
 ## Enum ABI Boundary
 

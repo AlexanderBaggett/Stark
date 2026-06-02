@@ -229,12 +229,13 @@ recordMember
     ;
 
 enumVariantDeclaration
-    : Identifier enumVariantPayload?
+    : attributeList* Identifier enumVariantPayload?
     ;
 
 enumVariantPayload
     : LPAREN (type_ (COMMA type_)*)? COMMA? RPAREN
     | LBRACE (enumVariantFieldDeclaration (COMMA enumVariantFieldDeclaration)* COMMA?)? RBRACE
+    | FROM type_
     ;
 
 enumVariantFieldDeclaration
@@ -477,7 +478,7 @@ localVariableDeclaration
     ;
 
 ifStatement
-    : IF weightSpecifier? (LPAREN expression RPAREN | disjointRuntimeCondition) statement (ELSE statement)?
+    : IF weightSpecifier? (LPAREN expression (IS pattern)? RPAREN | disjointRuntimeCondition) statement (ELSE statement)?
     ;
 
 disjointRuntimeCondition
@@ -502,7 +503,7 @@ whenClause
     ;
 
 whileStatement
-    : WHILE loopBehavior loopContract* LPAREN expression RPAREN statement
+    : WHILE loopBehavior loopContract* LPAREN expression (IS pattern)? RPAREN statement
     ;
 
 forStatement
@@ -673,6 +674,7 @@ multiplicativeExpression
 unaryExpression
     : powerExpression
     | INIT unaryExpression
+    | TRY unaryExpression
     | LPAREN conversionType RPAREN unaryExpression
     | unaryOperator unaryExpression
     ;
@@ -855,6 +857,7 @@ TRAIT       : 'trait';
 DOCTRINE    : 'doctrine';
 ALIAS       : 'alias';
 DROP        : 'drop';
+FROM        : 'from';
 
 STACK       : 'stack';
 HEAP        : 'heap';
@@ -885,6 +888,7 @@ SAME        : 'same';
 ASSUME      : 'assume';
 
 IF          : 'if';
+IS          : 'is';
 ELSE        : 'else';
 SWITCH      : 'switch';
 CASE        : 'case';
@@ -895,6 +899,7 @@ FOR         : 'for';
 RETURN      : 'return';
 BREAK       : 'break';
 CONTINUE    : 'continue';
+TRY         : 'try';
 NEW         : 'new';
 CONST       : 'const';
 WHERE       : 'where';

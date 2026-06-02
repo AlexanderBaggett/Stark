@@ -102,9 +102,29 @@ internal static partial class PackageImageLoader
                 foreach (var variant in type.Variants ?? [])
                 {
                     builder.Append("    ");
+
+                    // Re-render the [Ok]/[Err] role attribute so synthetic source keeps the
+                    // enum `try`-propagatable when the bridge path re-parses it.
+                    switch (variant.Role)
+                    {
+                        case "ok":
+                            builder.Append("[Ok] ");
+                            break;
+                        case "err":
+                            builder.Append("[Err] ");
+                            break;
+                    }
+
                     builder.Append(variant.Name);
 
-                    if (variant.Fields.Count != 0)
+                    if (variant.AbsorbsErrorType is { } absorbsErrorType)
+                    {
+                        // A funnel variant re-renders as `Name from Type`: the single payload
+                        // and the `from` conversion funnel are one declaration.
+                        builder.Append(" from ");
+                        builder.Append(absorbsErrorType);
+                    }
+                    else if (variant.Fields.Count != 0)
                     {
                         if (variant.UsesNamedFields)
                         {
@@ -2240,7 +2260,11 @@ internal static partial class PackageImageLoader
                 variant.UsesNamedFields,
                 variant.Fields
                     .Select(field => new StarkPackageFieldManifest(field.Name, RenderTypeReference(field.Type)))
-                    .ToArray()))
+                    .ToArray(),
+                Role: variant.Role,
+                AbsorbsErrorType: variant.AbsorbsErrorType is { } absorbedErrorType
+                    ? RenderTypeReference(absorbedErrorType)
+                    : null))
                 .ToArray(),
             type.Methods?.Select(method => new StarkPackageMethodManifest(
                 method.Name,

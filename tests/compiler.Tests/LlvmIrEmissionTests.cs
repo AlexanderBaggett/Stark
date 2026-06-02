@@ -7420,15 +7420,24 @@ public sealed class LlvmIrEmissionTests
     [Fact]
     public void UnrecoverableUnreachablePathsLowerThroughColdTrapHelper()
     {
+        // Definite-return analysis (STK3045) and switch exhaustiveness (STK3044) make
+        // user-reachable fall-off-the-end paths a compile error, so the only remaining
+        // unreachable paths are compiler-proven impossible ones — e.g. the mandatory
+        // default destination of an LLVM `switch` over an exhaustively-covered enum.
+        // Those still lower through the cold trap helper (never exception machinery).
         var result = Compile(
             """
             module Demo
 
-            unsafe fn i32[min max] Run(bool fail)
+            enum Color { Red, Green, Blue }
+
+            unsafe fn i32[min max] Run(Color c)
             {
-                if (fail)
+                switch (c)
                 {
-                    return 1;
+                    case Color.Red: return 1;
+                    case Color.Green: return 2;
+                    case Color.Blue: return 3;
                 }
             }
             """);

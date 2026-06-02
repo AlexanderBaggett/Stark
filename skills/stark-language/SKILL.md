@@ -244,6 +244,8 @@ fn i32[min max] Read(Token token)
 }
 ```
 
+A two-variant enum can opt into `try` error propagation by marking its variants with the innate `[Ok]`/`[Err]` role attributes (see Control Flow).
+
 Traits name behavior contracts. A `struct`/`record` implements a trait with a base list (`struct Button : Drawable`) and provides the methods inline; `Self` is the implementing type, so receivers read `borrow Self self` (the impl writes the concrete type). A trait method with a `;` body is required of every implementer; one with a `{ ... }` body is a default the implementer may override. Conformance requires matching parameter/return types (with `Self` substituted), arity, and a function kind at least as strong as the trait's. A generic parameter is bounded with `where T: Trait`, which makes the trait's methods callable on `T` and requires every concrete type argument to implement the trait. Trait dispatch is **static by default**: concrete-receiver calls, bounded-generic calls, and not-overridden defaults all monomorphize to **direct calls** with no vtable or runtime indirection. Runtime dispatch is opt-in: a trait declared `dyn trait` can form a **trait object** — a two-word fat pointer (data + vtable). It comes in a borrowed form, `borrow dyn Trait` / `mut borrow dyn Trait` (a non-owning view, no allocation), and an owning form, `heap dyn Trait` (the value is moved into a heap box the trait object owns and drops + frees at scope exit; in a local, write the storage class then the type, e.g. `stack heap dyn Trait`, paralleling `heap closure`). A conforming concrete value coerces into a `dyn`-typed slot (the visible `dyn`/`heap` is the cost disclosure), and a call on it lowers to one indirect call through the vtable, with the method's `law`/`finite` effect contract preserved. A `dyn trait` must be object-safe (borrow-`Self` receiver, no generic methods, no by-value `Self`); `dyn` over a plain `trait` is an error. A plain `trait` is otherwise compile-time-only — no trait objects, and no calling through the trait name. Doctrines bundle `law` functions and constraints; they have no owned identity, heap allocation, or captured environment, and members are called directly by qualified name.
 
 ## Ownership And Borrows
@@ -438,11 +440,25 @@ for willexit independent (stack mut i64[0 max] index = 0; index < length; index 
 }
 ```
 
-`switch` supports literal cases, `default`, `when` guards, `case var capture`, `_`, enum case patterns, and exact aggregate patterns.
+`switch` supports literal cases, `default`, `when` guards, `case var capture`, `_`, enum case patterns, and exact aggregate patterns. Every `switch` must be **exhaustive**: cover all enum variants / both bools / every value of a ranged integer (e.g. `u8[0 3]` with cases 0–3), or include a `default`. `when`-guarded arms never count toward coverage. Relatedly, a non-`void` function must **return on every path** (end paths with `return`, an `if`/`else` that returns on both sides, an exhaustive `switch` whose sections all return, or a break-free `infinite` loop) — falling off the end is a compile error, not a runtime trap.
+
+`if` and `while` conditions also take a pattern-match form, `expr is pattern`, using the same `switch case` pattern surface: `if (Lookup(k) is Option<V>.Some(var value)) { Use(value); }` binds `value` in the then-branch only; `while willexit (next() is Option<T>.Some(var x)) { ... }` is the `while let` drain idiom (captures re-bind each iteration, loop exits on the first non-match). Move-only captures move out of the matched value (dropped at branch/body exit) exactly as in `switch`. With `is pattern` the condition is the scrutinee, not a `bool`.
+
+Errors are values, never exceptions. Any two-variant enum becomes **propagatable** by marking its variants with the innate role attributes `[Ok]` and `[Err]`: `enum Result<T, E> { [Ok] Ok(T), [Err] Err(E) }`, `enum Option<T> { [Ok] Some(T), [Err] None }` — the stdlib result/option/status enums are annotated this way, and user enums with any names work identically (`enum FetchOutcome { [Ok] Got(Data), [Err] Failed(FetchError) }`). Roles are recognized only from the attributes, never from type names, variant names, or stdlib identity. Role rules: exactly two variants, one of each role, each carrying at most one payload; `[Ok]`/`[Err]` take no arguments. `try expr` propagates a propagatable value: it yields the `[Ok]` payload and continues, or **early-returns** the `[Err]` from the enclosing function (rewrapped in the enclosing return type's `[Err]` variant), running the same drops a `return` would. Requirements: the operand's type is a propagatable enum; the enclosing function's return type is a propagatable enum (it need not be the same enum or the same generic family); and the failure payloads are connected — both unit-like, both the same error type, or the enclosing `[Err]` payload type has a `from` funnel for the operand's error type (otherwise compile error; unit-vs-payload mixing is rejected — `try` never invents or discards an error value). The success payloads are independent; only the failure path ties the two signatures together. `try` is a visible, greppable leading keyword — not a trailing sigil — and is restricted to statement-boundary positions (a binding initializer, an assignment right side, the operand of `return`, or a bare expression statement); it may not be nested inside a larger expression. When the enclosing error type differs from the operand's, an error `enum` declares the conversion once by marking the absorbing variant with `from` (`enum LoadError { Io from IoError, Parse from ParseError }`); `try` then wraps automatically (zero-cost variant wrap) and the call sites stay bare — including across families, e.g. a stdlib `IOResult<T>` operand inside a function returning `Result<T, LoadError>` converts through `LoadError`'s `Io from IOError` funnel. Same error type needs no `from`; a cross-family `try` with no matching funnel is a compile error.
+
+```stark
+fn Result<Module, LoadError> LoadModule(ascii path)
+{
+    stack ascii  text = try ReadFile(path);   // Ok -> text; Err(IoError) -> return LoadError.Io(...)
+    stack Ast    ast  = try Parse(text);       // Err(ParseError) -> return LoadError.Parse(...)
+    stack Module mod  = try Resolve(ast);      // Err(ResolveError) -> return LoadError.Resolve(...)
+    return Result<Module, LoadError>.Ok(mod);
+}
+```
 
 ## Expressions And Operators
 
-Expression forms include literals, identifiers, qualified names, calls, member access, indexing/slicing, `new`, field initializers, array initializers, unary/binary operators, ternary `?:`, assignments, and compound assignments.
+Expression forms include literals, identifiers, qualified names, calls, member access, indexing/slicing, `new`, field initializers, array initializers, unary/binary operators, ternary `?:`, error propagation `try`, assignments, and compound assignments.
 
 Operator notes:
 

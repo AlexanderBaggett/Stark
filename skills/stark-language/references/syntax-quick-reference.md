@@ -44,7 +44,7 @@ fn finite law inline noinline inlinehint hot cold ffi varargs unsafe strictfp as
 Data declarations:
 
 ```text
-struct record enum trait doctrine alias drop const
+struct record enum trait doctrine alias drop const from
 ```
 
 Storage and access:
@@ -56,7 +56,7 @@ stack heap register arena borrow retborrow storeborrow frozen shared out init mu
 Control flow and patterns:
 
 ```text
-if else switch case default when while for infinite non-deterministic willexit return break continue where var
+if else switch case default when while for infinite non-deterministic willexit return break continue where var try is
 ```
 
 Builtins and literals:
@@ -216,6 +216,41 @@ switch (token)
 
 Supported patterns include literals, enum cases, aggregate fields, `_`,
 `var` captures, `default`, and `when` guards.
+
+Switches must be exhaustive (cover every enum variant / bool value / ranged-integer
+value, or add `default`), and non-`void` functions must return on every path.
+`when`-guarded arms do not count toward coverage.
+
+## Error Propagation And Pattern Conditions
+
+```stark
+enum Outcome<T>
+{
+    [Ok] Got(T),
+    [Err] Failed(FetchError),
+}
+
+stack i32[min max] value = try Fetch(x);
+
+if (Lookup(key) is Option<Value>.Some(var found))
+{
+    Use(found);
+}
+
+while willexit (queue.Pop() is Option<Job>.Some(var job))
+{
+    Run(job);
+}
+```
+
+- `[Ok]`/`[Err]` variant attributes make any two-variant enum propagatable.
+- `try expr` unwraps the `[Ok]` payload or early-returns the `[Err]` failure,
+  rewrapped in the enclosing return type's `[Err]` variant (`from` funnels
+  convert differing error types).
+- `try` sits only at statement boundaries: binding initializer, assignment
+  right side, `return` operand, or bare expression statement.
+- `expr is pattern` in `if`/`while` conditions binds captures on the matching
+  path only.
 
 ## Text Forms
 

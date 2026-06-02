@@ -40,6 +40,8 @@ public sealed class SystemTextStandardLibraryTests
                             return true;
                         case System.Memory.MemoryError.InvalidLayout:
                             return false;
+                        case System.Memory.MemoryError.UnsupportedAlignment:
+                            return false;
                     }
             }
         }
@@ -58,6 +60,8 @@ public sealed class SystemTextStandardLibraryTests
                         case System.Memory.MemoryError.TooLarge:
                             return true;
                         case System.Memory.MemoryError.InvalidLayout:
+                            return false;
+                        case System.Memory.MemoryError.UnsupportedAlignment:
                             return false;
                     }
             }

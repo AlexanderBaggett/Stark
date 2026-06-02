@@ -776,7 +776,8 @@ public sealed record ImportedFunctionTemplateSummary(
     IReadOnlyList<ImportedTemplateMemberCallSummary>? MemberCallSummaries = null,
     IReadOnlyList<ImportedTemplateFunctionAddressSummary>? FunctionAddressSummaries = null,
     IReadOnlyList<ImportedTemplateBoundOperationSummary>? BoundOperationSummaries = null,
-    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default)
+    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default,
+    IReadOnlyList<ImportedTemplateTryPropagationSummary>? TryPropagationSummaries = null)
 {
     public ImportedFunctionSemanticSummary? Semantics => SemanticSummary;
 
@@ -824,6 +825,9 @@ public sealed record ImportedFunctionTemplateSummary(
 
     public IReadOnlyList<ImportedTemplateConversionSummary> Conversions =>
         ConversionSummaries ?? [];
+
+    public IReadOnlyList<ImportedTemplateTryPropagationSummary> TryPropagations =>
+        TryPropagationSummaries ?? [];
 
     public IReadOnlyList<ImportedTemplateDirectCallSummary> DirectCalls =>
         DirectCallSummaries ?? [];
@@ -1091,6 +1095,26 @@ public sealed record ImportedTemplateFunctionAddressSummary(
 public sealed record ImportedTemplateConversionSummary(
     int Ordinal,
     StarkTypeSymbol TargetType);
+
+/// <summary>
+/// Published `try` propagation facts for one `try` expression inside an exported generic
+/// template body. Downstream packages never re-type-check imported template bodies, so the
+/// roles/funnel resolution computed by the producing package is republished here
+/// (ordinal-keyed in body order) for the consumer's MIR lowering to consume directly.
+/// Types may reference the template's generic parameters; the consumer substitutes them
+/// per specialization.
+/// </summary>
+public sealed record ImportedTemplateTryPropagationSummary(
+    int Ordinal,
+    StarkTypeSymbol OperandType,
+    string OperandOkVariantName,
+    string OperandErrVariantName,
+    StarkTypeSymbol? SuccessPayloadType,
+    StarkTypeSymbol? OperandFailurePayloadType,
+    StarkTypeSymbol ReturnType,
+    string EnclosingErrVariantName,
+    StarkTypeSymbol? EnclosingFailurePayloadType,
+    string? ConversionFunnelVariant);
 
 public sealed record ImportedTemplateBoundOperationSummary(
     int? Ordinal,
@@ -1957,12 +1981,37 @@ public sealed record EnumVariantFieldSymbol(
     string? Name,
     StarkTypeSymbol Type);
 
+/// <summary>
+/// The propagation role a variant plays for <c>try</c>, declared with the innate
+/// <c>[Ok]</c> / <c>[Err]</c> variant attributes (doc 11 v2). <see cref="None"/>
+/// means the variant has no role. An enum is propagatable only when it has exactly
+/// two variants, one <see cref="Ok"/> and one <see cref="Err"/>; the roles — never
+/// type names and never stdlib identity — are what `try` consults.
+/// </summary>
+public enum EnumVariantRole
+{
+    None,
+    Ok,
+    Err,
+}
+
 public sealed record EnumVariantSymbol(
     string Name,
     bool UsesNamedFields,
-    IReadOnlyList<EnumVariantFieldSymbol> Fields)
+    IReadOnlyList<EnumVariantFieldSymbol> Fields,
+    StarkTypeSymbol? AbsorbsErrorType = null,
+    EnumVariantRole Role = EnumVariantRole.None)
 {
     public bool IsUnit => Fields.Count == 0;
+
+    /// <summary>
+    /// True when the variant was declared with the `from` payload form
+    /// (e.g. <c>Io from IoError</c>), marking it as the canonical funnel that a
+    /// <c>try</c> expression uses to wrap <see cref="AbsorbsErrorType"/> into this
+    /// enum. Such a variant carries exactly one positional field whose type equals
+    /// <see cref="AbsorbsErrorType"/>; it is otherwise an ordinary single-payload variant.
+    /// </summary>
+    public bool IsErrorFunnel => AbsorbsErrorType is not null;
 }
 
 public sealed record NamedTypeSymbol(
@@ -2556,6 +2605,28 @@ public sealed record ConversionTypingRecord(
     SourceLocation Location,
     string? EnclosingFunctionName = null);
 
+/// <summary>
+/// One <c>try</c> expression under the role model (doc 11 v2). The type checker
+/// resolves the operand's and the enclosing return type's <c>[Ok]</c>/<c>[Err]</c>
+/// role variants, the success/failure payload types (with generic substitution), and
+/// the <c>from</c> funnel variant used when the failure payload types differ. MIR
+/// lowering reads this back by <see cref="Location"/> to emit the discriminant test,
+/// the success unwrap, and the failure early return — using the recorded variant
+/// names, never hard-coded ones.
+/// </summary>
+public sealed record TryPropagationTypingRecord(
+    SourceLocation Location,
+    StarkTypeSymbol OperandType,
+    string OperandOkVariantName,
+    string OperandErrVariantName,
+    StarkTypeSymbol? SuccessPayloadType,
+    StarkTypeSymbol? OperandFailurePayloadType,
+    StarkTypeSymbol ReturnType,
+    string EnclosingErrVariantName,
+    StarkTypeSymbol? EnclosingFailurePayloadType,
+    string? ConversionFunnelVariant,
+    string? EnclosingFunctionName = null);
+
 public sealed record FieldAccessTypingRecord(
     string FieldName,
     int FieldIndex,
@@ -2708,8 +2779,12 @@ public sealed record TypeCheckModel(
     IReadOnlyList<DynamicStorageOperationTypingRecord>? DynamicStorageOperationRecords = null,
     IReadOnlyList<SwitchTypingRecord>? SwitchRecords = null,
     IReadOnlyList<ClosureFunctionPromotionTypingRecord>? ClosureFunctionPromotionRecords = null,
-    IReadOnlyList<BoundOperation>? BoundOperationRecords = null)
+    IReadOnlyList<BoundOperation>? BoundOperationRecords = null,
+    IReadOnlyList<TryPropagationTypingRecord>? TryPropagationRecords = null)
 {
+    public IReadOnlyList<TryPropagationTypingRecord> TryPropagations =>
+        TryPropagationRecords ?? [];
+
     public IReadOnlyDictionary<string, IReadOnlyList<TypedFunctionSignature>> Overloads =>
         FunctionOverloads
         ?? Functions.Values

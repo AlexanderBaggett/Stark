@@ -1,0 +1,70 @@
+import System
+module Book.IsPatternCondition
+
+enum Shape
+{
+    Circle(i32[min max]),
+    Square(i32[min max]),
+    Empty,
+}
+
+fn i32[min max] Area(Shape shape)
+{
+    if (shape is Shape.Circle(var radius))
+    {
+        return radius * radius * 3;
+    }
+    else if (shape is Shape.Square(var side))
+    {
+        return side * side;
+    }
+    else
+    {
+        return 0;
+    }
+}
+
+static mut i32[min max] Remaining = 3;
+
+fn System.Option<i32[min max]> NextJob()
+{
+    if (Remaining <= 0)
+    {
+        return System.Option<i32[min max]>.None;
+    }
+
+    stack i32[min max] job = Remaining;
+    Remaining = Remaining - 1;
+    return System.Option<i32[min max]>.Some(job);
+}
+
+export fn i32[min max] main()
+{
+    if (Area(Shape.Circle(2)) != 12)
+    {
+        return 1;
+    }
+
+    if (Area(Shape.Square(3)) != 9)
+    {
+        return 2;
+    }
+
+    if (Area(Shape.Empty) != 0)
+    {
+        return 3;
+    }
+
+    stack mut i32[min max] total = 0;
+    while willexit (NextJob() is System.Option<i32[min max]>.Some(var job))
+    {
+        total = total + job;
+    }
+
+    if (total != 6)
+    {
+        return 4;
+    }
+
+    return 0;
+}

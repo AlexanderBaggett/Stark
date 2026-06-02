@@ -6153,6 +6153,7 @@ public sealed class CompilerPipelineFullIntegrationTests
                     switch (value)
                     {
                         case 0:
+                        default:
                     }
 
                     return value;
@@ -6188,8 +6189,8 @@ public sealed class CompilerPipelineFullIntegrationTests
             var emptySwitch = Assert.Single(facadeModule.GenericTemplates.Functions, static template => template.QualifiedResolvedName == "Facade.EmptySwitch");
             var switchStatement = Assert.Single(emptySwitch.TypedBody!.Statements, static statement => statement.Kind == "switch");
             Assert.NotNull(switchStatement.SwitchCases);
-            Assert.Single(switchStatement.SwitchCases!);
-            Assert.Empty(Assert.Single(switchStatement.SwitchCases!).Statements ?? []);
+            Assert.Equal(2, switchStatement.SwitchCases!.Count);
+            Assert.All(switchStatement.SwitchCases!, static switchCase => Assert.Empty(switchCase.Statements ?? []));
 
             var json = manifest.ToJson();
             Assert.DoesNotContain("\"BodyText\"", json, StringComparison.Ordinal);

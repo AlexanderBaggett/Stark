@@ -21,6 +21,8 @@ across all docs, so an agent can jump to the detail doc for full context.
 `08` Stark feature roadmap ·
 `09` self-hosted compiler architecture ·
 `10` traits & dynamic dispatch (TD*) ·
+`11` error-value propagation `try`/`from` (EP*) ·
+`12` thread ownership & data-race freedom (TH*, design draft) ·
 `SelfHostingRoadmap.md` (capability rationale) ·
 `ToolchainPackagingRoadmap.md` (release/packaging detail) ·
 `docs/Internals/CompilerPipeline.md` (pass list) ·
@@ -35,18 +37,21 @@ across all docs, so an agent can jump to the detail doc for full context.
 | Audit & design (Phases 0–9) | gap analyses + self-hosted architecture | `[x]` complete (docs 00–09) |
 | **M0** | Test infrastructure first | `[ ]` not started |
 | **M1** | Port test suite vs host compiler | `[ ]` not started |
-| **M2** | Close language blockers | `[~]` static traits + constrained generics + default members + **`dyn` trait objects (borrowed + owning)** done (TD01–TD17, CG01–CG07); vtable Phase D (roll-your-own) + L01–L14 remain |
+| **M2** | Close language blockers | `[~]` static traits + constrained generics + default members + **`dyn` trait objects (borrowed + owning)** done (TD01–TD17, CG01–CG07; TD04/TD07 partial — cross-module); **error propagation (L01) done: `try` + `from` funnels + `[Ok]`/`[Err]` role attributes (v2, EP16–EP20) incl. cross-module package carry (EP15)**; **`if let`/`while let` pattern conditions (L02) implemented**; **invariant-failure policy (L07) closed via switch exhaustiveness + definite return (STK3044/STK3045), no trap surface**; vtable Phase D (TD18–21) + remaining L03–L14 |
 | **M3** | Close stdlib blockers | `[ ]` not started |
 | **M4** | Close tooling blockers | `[ ]` not started |
 | **M5** | Port compiler subsystems leaf-first | `[ ]` not started |
 | **M6** | Bootstrap (Stage1/Stage2) | `[ ]` not started |
 | **M7** | Snapshot strategy & drop host | `[ ]` not started |
 
-**Counts:** Language 0/14 · Stdlib 0/18 · Tooling 0/15 · Test-infra 0/12 ·
-Traits/Dispatch 9/24 done (TD01–TD03, TD05–TD06, TD08–TD11) + 1 partial (TD04:
-cross-module left) · Constrained generics 7/7 done · Decisions (OQ) 0/20 formally resolved
-(4 trait/dispatch decisions settled in doc 10 §3) · Compiler files to port ~115
-· Test files to port ~90.
+**Counts:** Language 3/14 (L01, L02, L07 done) · Stdlib 0/18 ·
+Tooling 0/15 · Test-infra 0/12 · Traits/Dispatch 16/24 done (TD01–TD03, TD05–TD06,
+TD08–TD17, TD22) + 2 partial (TD04, TD07: cross-module left) · Constrained generics
+7/7 done · Error propagation 18/20 done (EP01–EP10, EP13–EP20; v2 role attributes +
+cross-module package carry) + 2 open (EP11/EP12 proposed — depend OQ-EP5) ·
+Decisions (OQ) 1/20 formally resolved (OQ-04, in doc
+11; 4 trait/dispatch decisions settled separately in doc 10 §3) · Compiler files
+to port ~115 · Test files to port ~90.
 
 **Critical path (recommended order, per doc 06):**
 M0 → M1 → resolve OQ-02 (parser) & OQ-14 (test runner) → M2/M3/M4 in parallel →
@@ -87,16 +92,16 @@ Port helpers first, then text-only tests, then artifact tests, then integration.
 
 ## M2 — Close language feature blockers  → `01`, `10`
 
-- [ ] **L01** — `Result`/`Option` error-value propagation (replace throw/try/catch/nullable) — *blocker* — → `01`, OQ-04
-- [ ] **L02** — pattern binding in `if`/`while` conditions (`if let`/`while let`) — *workaround exists* — → `01`
+- [x] **L01** — error-value propagation (replace throw/try/catch/nullable) — *blocker* — **done (v2):** `try` expression + `from` funnels + **`[Ok]`/`[Err]` variant role attributes** (any two-variant enum is propagatable; no privileged stdlib types; recognition never by name). Position rule, drop-on-return lowering, cross-family funnel conversion, role/misuse diagnostics (STK3037–STK3043), stdlib annotation, runtime + diagnostics tests, user-facing docs — → `01`, `11`, OQ-04
+- [x] **L02** — pattern binding in `if`/`while` conditions (`if let`/`while let`) — **implemented** as `is`-pattern conditions: `if (expr is pattern)` / `while behavior (expr is pattern)` reuse the `switch case` pattern grammar + binder verbatim (full enum/nested/struct/named-field/`var`/`_`/literal), captures bind into the consequent; lowers via the shared switch decision machinery (single-case-switch cost), same move/drop semantics. `is` reserved; runtime + diagnostic tests; LanguageReference §10.6 + SKILL updated — → `01`
 - [ ] **L03** — iterator/foreach/collection traversal surface — *workaround exists* — → `01`
 - [ ] **L04** — rich switch patterns (or/range/list/property patterns) — *workaround exists* — → `01`
 - [ ] **L05** — generic value / const generic parameters — *workaround exists* — → `01`
 - [~] **L06** — operator/hash/equality doctrine + trait surface for generics — *blocker* — trait conformance landing via TD (below); hashing/eq doctrine still open — → `01`, `10`
-- [ ] **L07** — compiler invariant-failure policy (`panic`/`trap`/`unreachable`/`assert`) — *blocker* — → `01`, OQ-05
+- [x] **L07** — compiler invariant-failure policy — *blocker* — **closed without adding panic/trap/assert (OQ-05 resolved):** invalid states are made unrepresentable instead. New language guarantees: **switch exhaustiveness (STK3044)** — every `switch` covers its whole domain (all enum variants / both bools / every value of a ranged integer) or has `default`; **definite return (STK3045)** — non-`void` functions must return on every path. These remove the silent runtime-trap and fall-off-the-end-UB paths. Port convention for host `throw` sites documented in doc `09` Error Model (restructure → exhaustive types → `Result`+`try` → stderr+`Process.Exit` residual) — → `01`, `09`, OQ-05
 - [ ] **L08** — raw/multiline string literal ergonomics for compiler text — *workaround exists* — → `01`
 - [ ] **L09** — general compile-time function evaluation / table generation — *workaround exists* — → `01`
-- [ ] **L10** — async / build-driver concurrency replacement — *workaround exists* — → `01`, OQ-11
+- [ ] **L10** — async / build-driver concurrency replacement — *workaround exists* — **design drafted in doc `12`** (thread ownership: scoped vs owning spawn, structural cross-thread marker, lock-owns-data; OQ-TH1..6 await lock) — → `01`, `12`, OQ-11
 - [ ] **L11** — nullability / optional-value conventions (no safe nulls) — *blocker* — → `01`, OQ-06
 - [ ] **L12** — partial/nested/generated type layout ergonomics — *workaround exists* — → `01`
 - [ ] **L13** — alias/noalias proof carriers + wrong-alias compile-time diagnostics — *blocker* — → `01`, OQ-17
@@ -108,9 +113,9 @@ Port helpers first, then text-only tests, then artifact tests, then integration.
 - [x] **TD02** — base-trait list captured on `NamedTypeSymbol.ImplementedTraits` (source modules; package-image carry pending for imported-type queries) — → `10`
 - [x] **TD03** — type → implemented-trait edges = `NamedTypeSymbol.ImplementedTraits` — → `10`
 - [~] **TD04** — conformance: `Self` type ✅, base-must-be-trait (STK3026) ✅, required-method presence (STK3032) ✅, arity+kind ✅, **exact param/return-type match with `Self`/type-arg substitution** (STK3033) ✅; **pending** cross-module (imported-trait) required-method detection — → `10`
-- [~] **TD05** — trait-method calls: concrete-receiver calls work end-to-end ✅; **pending** generic `where T: Trait` dispatch (currently STK3011) — → `10`
-- [~] **TD06** — lowering: concrete trait calls already lower to direct calls; **pending** bind generic-`T` calls to concrete impl in monomorphization — → `10`
-- [~] **TD07** — conformance diagnostics tests (3026/3032/3033 landed; param-type-mismatch pending) — → `10`
+- [x] **TD05** — trait-method calls on conforming values **and** `where T: Trait` generics: both resolve via `TryResolveTraitBoundMemberCall` at `ApplyMemberAccess` (captured bound, `Self`-substituted; = CG05); `Trait.Method(...)` via the trait name stays rejected (STK3013) — → `10`
+- [x] **TD06** — lowering: concrete **and** generic-`T` trait calls bind to the receiver's concrete impl (`FunctionMirBuilder.IsTraitMethodTarget`; = CG06) → direct `call fastcc`, zero indirect/vtable — → `10`
+- [~] **TD07** — conformance diagnostics tests: STK3026/3032/3033 incl. param-type-mismatch landed (5 tests in `SemanticValidationTests`); **pending** cross-module + generic-dispatch test coverage (tied to TD04 cross-module) — → `10`
 - [x] **TD08–TD11** — default trait members: `;`-body = required / `{ }`-body = default (not required); a not-overridden default dispatches to the default body monomorphized over `Self` (direct call) for concrete **and** `where T: Trait` receivers; overrides win; defaults call other trait methods via the implicit `Self: <trait>` bound; tests landed — → `10`
 - [x] **TD12–TD17** — `dyn` trait objects **done** (borrowed + owning): `dyn trait` opt-in; `borrow`/`mut borrow dyn Trait` fat-pointer views (no alloc) and owning `heap dyn Trait` (boxes + owns + drops the value via a synthesized per-type drop thunk in the vtable); object-safety diagnostics STK3035/3036; per-(type,trait) vtable synthesis; concrete→dyn coercion; indirect-call lowering that **preserves the `law`/`finite` effect contract**; runtime (borrowed + owned) + LLVM + diagnostic tests, all suites green. **Perf follow-up only:** Stark-level dyn-call devirt + DSE-precision (provenance model; today a conservative `ReadsOtherMemory` DSE barrier keeps it correct) — → `10`
 - [ ] **TD18–TD21** — visible vtable / roll-your-own (`T.Vtable`, unsafe from-parts + decompose) — → `10`
@@ -130,6 +135,41 @@ slice). `where` clauses are currently parsed but entirely ignored.
 - [x] **CG06** — trait-method calls rebound to the concrete impl in `FunctionMirBuilder` (`IsTraitMethodTarget` → falls through to receiver-concrete-type resolution) → **direct `call fastcc @Type_Method`** (= **TD06**) — → Roadmap §1835
 - [x] **CG07** — abstraction fully erased: verified LLVM emits direct concrete calls, zero indirect/vtable, trait contract has "no runtime callable surface" — → Roadmap §1837, §2700
 
+### Error propagation `try` / `from` (closes L01)  → `11`
+
+Errors are values, returned not thrown; `try` is the **visible** early-return (no
+trailing `?`), and `from` declares once, on the error type, how a composite absorbs
+its causes. **v2 (implemented):** propagatable types are recognized by `[Ok]`/`[Err]`
+**variant role attributes** on any two-variant enum — never by type name, never by
+stdlib identity. The v1 (name-based) recognizers were replaced by the v2 role model
+(Phase F); see doc `11` §3/§4.2 for the rules. Roles, funnels, and template `try`
+facts survive the package-image boundary (EP15), so packaged dependencies — including
+the dist stdlib — are `try`-propagatable exactly like source imports.
+
+- [x] **EP01** — `Result<T,E>` + `Option<T>` as ordinary enums in `System` — *done* (`stdlib/src/System.stark`) — → `11`
+- [x] **EP02** — conversion-representation decision: marker-backed `from` (no surfaced `FromError<E>` trait); trait deferred (OQ-EP1) — → `11`
+- [x] **EP03** — grammar: `TRY` token + `try` unary expr; regen parser — `Stark.g4`, `antlr4` 4.13.2; `TRY`/`FROM` reserved (no in-tree collisions) — *unchanged by v2* — → `11`
+- [x] **EP04** — typing — position rule + `_currentFunctionReturnType` + STK3037/3038/3039; recognizers reworked to role lookup in EP18 — → `11`
+- [x] **EP05** — lowering — drop-on-return structure + `LowerDirectTagEnumConstructor`; variant lookup reworked to recorded roles in EP18 — → `11`
+- [x] **EP06** — `try` tests — rewritten against role-annotated enums (EP20) — → `11`
+- [x] **EP07** — grammar: `Ident from type_` absorbing enum-variant payload; regen — *unchanged by v2* — → `11`
+- [x] **EP08** — model + diagnostics (in-module): `EnumVariantSymbol.AbsorbsErrorType`; STK3040 (duplicate funnel). *Cross-module carry = EP15* — *unchanged by v2* — → `11`
+- [x] **EP09** — `try` cross-family conversion via `from` — funnel resolution + STK3041; inputs (failure payload types) come from `[Err]` role variants (EP18) — → `11`
+- [x] **EP10** — `from` tests — rewritten against role-annotated enums (EP20) — → `11`
+- [ ] **EP11** — *(proposed)* function-local `where Source => Variant` funnel (override type default) — *depends OQ-EP5* — → `11`
+- [ ] **EP12** — *(proposed)* site overrides `try expr as Variant` / `maperr (E e) => …` — *depends OQ-EP5* — → `11`
+- [x] **EP13** — user-facing docs (`LanguageReference.md` §10.5, `SKILL.md` + skill references, book Ch17/Ch13/appendices) — rewritten to the role model (EP20) — → `11`
+- [x] **EP14** — gap-doc sync — doc `01` L01 entry + ROADMAP counts synced to v2 — → `11`
+- [x] **EP15** — cross-module: roles + funnels serialized in all package-image sections and restored on load (generic instantiation threads them; `try` typing materializes imported instantiations on demand); exported generic templates with `try` bodies republish ordinal-keyed propagation facts consumed by downstream MIR lowering; bridge re-renders `[Ok]`/`[Err]`/`from` in synthetic source; verified against the dist stdlib package — → `11`
+
+**Phase F — v2 rework: `[Ok]`/`[Err]` role attributes (the redo) — complete**
+
+- [x] [x] **EP16** — grammar: attribute lists on enum variants (`enumVariantDeclaration : attributeList* Identifier enumVariantPayload?`); regen. No new keywords — → `11`
+- [x] [x] **EP17** — innate-attribute model: `[Ok]`/`[Err]` roles on `EnumVariantSymbol` (`EnumVariantRole`); diagnostics STK3042 (unknown attribute / args) + STK3043 (role configuration: exactly one of each, exactly two variants, payload arity 0/1); roles + funnels threaded through generic monomorphization (`CreateConcreteEnum`) — → `11`, OQ-EP7
+- [x] [x] **EP18** — recognizers reworked to roles: typing (`TryResolvePropagationRoles`) + lowering (recorded variant names in `TryPropagationTypingRecord`) consult `[Ok]`/`[Err]`; `TryGetResultShape`/`TryGetOptionShape`/`IsBlessedPropagationType` deleted; funnel inputs come from `[Err]` payload types — → `11`
+- [x] [x] **EP19** — stdlib annotation: `[Ok]`/`[Err]` on `Result`/`Option`/`IOResult`/`IOStatus`/`MemoryResult`/`MemoryStatus`/`NetResult`/`NetStatus`/`ThreadStatus`/`ThreadJoinResult`; `dist/libSystem.starkpkg.json` rebuilt — → `11`
+- [x] [x] **EP20** — tests + user-facing docs reworked to roles: diagnostics tests (non-conventional variant names, STK3037–3043), runtime tests (incl. cross-family `try` of a stdlib `IOResult` operand inside a user `AppResult` function, drop correctness through funnels), book Ch17 + samples, LanguageReference §10.5, SKILL + skill references — → `11`
+
 ## M3 — Close stdlib blockers  → `02`
 
 - [ ] **S01** — shared `Option<T>` / `Result<T,E>` conventions — *blocker* — → `02`, OQ-06
@@ -147,9 +187,10 @@ slice). `where` clauses are currently parsed but entirely ignored.
 - [ ] **S13** — TOML parser/emitter (`Stark.toml`, `Stark.solution.toml`, user config) — *blocker* — → `02`, OQ-10
 - [ ] **S14** — JSON parser/emitter (`.starkpkg.json`) — *blocker unless format changes* — → `02`, OQ-09
 - [ ] **S15** — time/stopwatch (pass durations, metrics) — *parity* — → `02`
-- [ ] **S16** — threading/sync primitives (mutex/once/atomics/channels) — *workaround for single-threaded v1* — → `02`, OQ-11
+- [ ] **S16** — threading/sync primitives (mutex/once/atomics/channels) — *workaround for single-threaded v1* — design frame in doc `12` (TH06/TH08: lock-owns-data containers over existing ownership rules) — → `02`, `12`, OQ-11
 - [ ] **S17** — allocator/arena/shared-ownership strategy for IR graphs — *blocker* — → `02`, OQ-16
 - [ ] **S18** — testing/golden/snapshot support (see M0) — *blocker* — → `02`
+- [ ] **S19** _ File IO conveniences functions mirror .Net System.File api surface such as WriteAllLines, ReadAllLines
 
 ## M4 — Close tooling blockers  → `03`, `ToolchainPackagingRoadmap.md`
 
@@ -207,13 +248,13 @@ effort (S/M/L/XL), and gap dependencies.
 
 ## Open decisions  → `07` (full options/trade-offs)
 
-Resolve before or during the milestone that depends on each. None formally closed
-in `07` yet; the four trait/dispatch decisions are settled in `10` §3.
+Resolve before or during the milestone that depends on each. OQ-04 is resolved in
+`11`; the four trait/dispatch decisions are settled in `10` §3; the rest remain open.
 
 - [ ] **OQ-01** self-hosted source location (`src-stark/` vs replace `src/` vs `compiler/` package)
 - [ ] **OQ-02** parser strategy (port ANTLR / handwritten / Stark-native generator) — *shapes M1–M2*
 - [ ] **OQ-03** ANTLR version mismatch (runtime 4.13.1 vs generated 4.13.2) — *note: local regen now produces 4.13.2*
-- [ ] **OQ-04** error-propagation surface (`?`-operator vs explicit `switch`)
+- [x] **OQ-04** error-propagation surface — **resolved (doc `11`, v2):** `try` (visible early-return) + `[Ok]`/`[Err]` role attributes (propagatable types — structural, no privileged stdlib types) + `from` (conversion on the error type); not a trailing `?`-sigil, not switch-only — *sub-questions OQ-EP1..7 in `11`*
 - [ ] **OQ-05** compiler invariant-failure policy (Trap/Unreachable/Assert vs Result vs unsafe trap)
 - [ ] **OQ-06** optional/null replacement (`Option<T>` vs project enums vs unsafe nullable raw)
 - [ ] **OQ-07** BigInt scope (true arbitrary precision vs `i1024` facade vs hybrid)
@@ -234,6 +275,15 @@ in `07` yet; the four trait/dispatch decisions are settled in `10` §3.
 **Settled (in `10` §3):** dynamic dispatch = `dyn` over a visible vtable (+ optional
 roll-your-own) · call disclosure = type-spelling only · impl syntax = C#-style base
 list · receiver model = `<qualifier> Self self`.
+
+**Settled (in `11`):** error propagation = `try` leading keyword (no trailing `?`) ·
+propagatable types = **`[Ok]`/`[Err]` variant role attributes on any two-variant
+enum** (v2 — never by type name, never by stdlib identity; stdlib `Result`/`Option`
+are ordinary annotated enums) · conversion = `from`-on-variant, declared once on the
+error type (From-on-target; declaration syntax, not an attribute) · per-call `maperr`
+rejected as the default · conversion is marker-backed (no surfaced `FromError<E>`
+trait yet, OQ-EP1) · innate attributes are strict (unknown attribute = compile
+error, OQ-EP7).
 
 ---
 
