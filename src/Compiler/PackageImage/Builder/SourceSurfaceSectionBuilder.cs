@@ -448,12 +448,29 @@ internal static partial class PackageImageBuilder
         LoadedModuleDocument module,
         StarkParser.EnumVariantDeclarationContext variant)
     {
+        // The authored [Ok]/[Err] role attribute is part of the published surface: it is
+        // what keeps the enum `try`-propagatable for downstream packages.
+        var role = GetSourceSurfaceEnumVariantRole(variant);
+
         if (variant.enumVariantPayload() is not { } payload)
         {
             return new StarkPackageEnumVariantManifest(
                 variant.Identifier().GetText(),
                 UsesNamedFields: false,
-                Fields: []);
+                Fields: [],
+                Role: role);
+        }
+
+        if (payload.FROM() is not null)
+        {
+            // `Name from Type`: a single positional payload plus the `try` conversion funnel.
+            var absorbedErrorTypeText = GetContextSourceText(module.ParseResult, payload.type_(0));
+            return new StarkPackageEnumVariantManifest(
+                variant.Identifier().GetText(),
+                UsesNamedFields: false,
+                Fields: [new StarkPackageFieldManifest("Item0", absorbedErrorTypeText)],
+                Role: role,
+                AbsorbsErrorType: absorbedErrorTypeText);
         }
 
         if (payload.enumVariantFieldDeclaration().Length != 0)
@@ -465,7 +482,8 @@ internal static partial class PackageImageBuilder
                     .Select(field => new StarkPackageFieldManifest(
                         field.Identifier().GetText(),
                         GetContextSourceText(module.ParseResult, field.type_())))
-                    .ToArray());
+                    .ToArray(),
+                Role: role);
         }
 
         return new StarkPackageEnumVariantManifest(
@@ -475,7 +493,31 @@ internal static partial class PackageImageBuilder
                 .Select((fieldType, index) => new StarkPackageFieldManifest(
                     $"Item{index}",
                     GetContextSourceText(module.ParseResult, fieldType)))
-                .ToArray());
+                .ToArray(),
+            Role: role);
+    }
+
+    private static string? GetSourceSurfaceEnumVariantRole(StarkParser.EnumVariantDeclarationContext variant)
+    {
+        foreach (var attributeList in variant.attributeList())
+        {
+            foreach (var attribute in attributeList.attribute())
+            {
+                var role = attribute.qualifiedName().GetText() switch
+                {
+                    "Ok" => "ok",
+                    "Err" => "err",
+                    _ => null
+                };
+
+                if (role is not null)
+                {
+                    return role;
+                }
+            }
+        }
+
+        return null;
     }
 
     private static Dictionary<string, Queue<StarkParser.FunctionDeclarationContext>> BuildFunctionDeclarationSyntaxLookup(

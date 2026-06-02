@@ -200,11 +200,22 @@ Recoverable compiler failures should be values:
 - file/process/tool failures
 - project manifest errors
 
-Internal compiler bugs should use a documented invariant failure path. Examples:
+**Invariant failure convention (closes L07, resolves OQ-05).** Stark deliberately has
+no `panic`/`trap`/`assert` surface and no exceptions: invalid states are made
+unrepresentable rather than detected and aborted. The host compiler's ~236
+`throw new` sites map onto Stark as follows, in priority order:
 
-- required artifact missing
-- malformed SSA after validation should have rejected it
-- accepted source construct reaches LLVM emission with no lowering rule
+| Host pattern | Stark port discipline |
+|---|---|
+| "Artifact/record missing from dictionary" lookups between passes (`GetRequired`, location-keyed lookups) | **Restructure so the state cannot exist**: pass N hands pass N+1 a typed value attached to the right node, not a stringly-keyed lookup that can miss. |
+| "Unexpected node kind" / "unsupported case" switches over IR shapes | **Exhaustive switches over closed enums** (and ranged integers): a missed case is a compile error in the ported compiler, not a runtime throw. |
+| Toolchain and environment failures (clang missing, link failed, file unreadable) | **These are not bugs — they are errors.** `Result<T, E>` + `try` propagation up to the driver, reported as ordinary diagnostics. |
+| True self-detected bugs (the small residual: "this should be impossible") | `Result<T, InternalError>` propagated with `try` to `main`, reported as `error: internal: <message>`; or, where threading a Result is genuinely impractical, print to stderr + `System.Process.Exit(1)`. |
+
+The port never introduces a hidden control-flow giving-up mechanism. The compile-time
+guarantees that make the first two rows possible — switch exhaustiveness and
+definite-return analysis — are language features (STK3044/STK3045), so the ported
+compiler's own impossible states are compile errors in the ported compiler's source.
 
 ## Alias And Memory Facts
 

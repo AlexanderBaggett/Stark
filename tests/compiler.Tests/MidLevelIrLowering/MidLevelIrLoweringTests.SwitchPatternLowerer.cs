@@ -763,6 +763,8 @@ public sealed partial class MidLevelIrLoweringTests
                         return word == (unicode)"cat" ? 7 : 3;
                     case Token.Empty:
                         return 0;
+                    default:
+                        return -1;
                 }
             }
             """);

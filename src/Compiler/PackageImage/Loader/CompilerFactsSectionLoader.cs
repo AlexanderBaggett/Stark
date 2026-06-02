@@ -149,7 +149,11 @@ internal static partial class PackageImageLoader
                                 index,
                                 variant.UsesNamedFields ? field.Name : null,
                                 BuildTypeSymbol(field.Type, module.Module.ModuleName, localNamedTypes)))
-                            .ToArray()))
+                            .ToArray(),
+                        AbsorbsErrorType: variant.AbsorbsErrorType is { } absorbedErrorType
+                            ? BuildTypeSymbol(absorbedErrorType, module.Module.ModuleName, localNamedTypes)
+                            : null,
+                        Role: ParseEnumVariantRole(variant.Role)))
                     .ToArray();
                 loadedNamedTypes[qualifiedName] = new NamedTypeSymbol(
                     qualifiedName,
@@ -486,7 +490,26 @@ internal static partial class PackageImageLoader
                         BuildTypeSymbol(functionAddress.TargetType)))
                     .ToArray(),
                 BoundOperationSummaries: boundOperationSummaries,
-                BackendOptimizationMode: templateBackendOptimizationMode);
+                BackendOptimizationMode: templateBackendOptimizationMode,
+                TryPropagationSummaries: functionTemplate.TryPropagations?
+                    .Select(tryPropagation => new ImportedTemplateTryPropagationSummary(
+                        tryPropagation.Ordinal,
+                        BuildTypeSymbol(tryPropagation.OperandType),
+                        tryPropagation.OperandOkVariantName,
+                        tryPropagation.OperandErrVariantName,
+                        tryPropagation.SuccessPayloadType is { } successPayloadType
+                            ? BuildTypeSymbol(successPayloadType)
+                            : null,
+                        tryPropagation.OperandFailurePayloadType is { } operandFailurePayloadType
+                            ? BuildTypeSymbol(operandFailurePayloadType)
+                            : null,
+                        BuildTypeSymbol(tryPropagation.ReturnType),
+                        tryPropagation.EnclosingErrVariantName,
+                        tryPropagation.EnclosingFailurePayloadType is { } enclosingFailurePayloadType
+                            ? BuildTypeSymbol(enclosingFailurePayloadType)
+                            : null,
+                        tryPropagation.ConversionFunnelVariant))
+                    .ToArray());
         }
 
         if (loadedFunctionEffects.Count == 0
@@ -689,7 +712,11 @@ internal static partial class PackageImageLoader
                             index,
                             variant.UsesNamedFields ? field.Name : null,
                             BuildTypeSymbol(field.Type, moduleName, localNamedTypes)))
-                        .ToArray()))
+                        .ToArray(),
+                    AbsorbsErrorType: variant.AbsorbsErrorType is { } absorbedErrorType
+                        ? BuildTypeSymbol(absorbedErrorType, moduleName, localNamedTypes)
+                        : null,
+                    Role: ParseEnumVariantRole(variant.Role)))
                 .ToArray();
             loadedNamedTypes[qualifiedName] = new NamedTypeSymbol(
                 qualifiedName,

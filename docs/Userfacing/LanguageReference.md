@@ -224,6 +224,13 @@ Function parameters are normally written as `T name`. Parameter memory contracts
 
 Default argument syntax such as `fn i32 Add(i32 left = 1)` is not part of Stark.
 
+**Definite return.** A function with a non-`void` return type must return on every
+control-flow path; a body that control can fall out of is a compile error, not a
+runtime failure. A path counts as returning when it ends in a `return`, an
+`if`/`else` whose branches both return, an exhaustive `switch` (10.4) whose sections
+all return, or an `infinite` loop that contains no `break`. `void` functions may fall
+off the end (an implicit return).
+
 ### 5.4 Parameter Memory Contracts
 
 Function parameters support memory-separation and deep-immutability contracts.
@@ -1057,7 +1064,7 @@ stack Token c = Token.Move
 };
 ```
 
-Standard library types such as `Option<T>` or `Result<T, E>`, when provided, are ordinary enums rather than compiler privileged forms.
+Standard library types such as `Option<T>` or `Result<T, E>`, when provided, are ordinary enums rather than compiler privileged forms. A two-variant enum may mark its variants with the innate `[Ok]`/`[Err]` role attributes, which makes it propagatable with the `try` expression, and an error enum can mark a variant with `from` to declare how `try` absorbs a lower-layer error (see 10.5).
 
 Pattern matching uses the same case qualification:
 
@@ -1368,6 +1375,119 @@ The switch surface includes:
 * dot qualified enum case patterns for unit, tuple, and named field enum cases
 * exact type named aggregate patterns with nested aggregate subpatterns
 
+**Exhaustiveness.** Every `switch` must cover its scrutinee's whole domain. A value
+that matches no arm has nowhere to go, so the gap is a compile error rather than a
+hidden runtime trap or a silent fall-through:
+
+* an enum switch covers every variant, or has a `default`
+* a `bool` switch covers `true` and `false`, or has a `default`
+* an integer switch covers every value of the scrutinee's (possibly ranged) type —
+  practical for narrow ranges such as `u8[0 3]` — or has a `default`
+* switches over types whose values cannot be enumerated by cases (floats, text, raw
+  pointers, aggregates) need a `default` or a match-all pattern (`var` / `_`)
+
+`when`-guarded arms never count toward coverage: a guard can decline at runtime, so a
+guarded arm proves nothing about the domain. Exhaustiveness also feeds definite-return
+analysis (5.3): an exhaustive switch whose sections all return counts as returning on
+all paths. Adding a variant to an enum is therefore a compile-time event — every
+non-`default` switch over that enum reports the missing case until it is handled.
+
+### 10.5 Error Propagation with `try`, `[Ok]`/`[Err]` Roles, and `from`
+
+Errors in Stark are values: a fallible function returns an enum with a success variant and a failure variant, and the caller inspects it. Handling every fallible call with an explicit `switch` is correct but verbose, so Stark provides one propagation expression, `try`, that early-returns the failure while keeping the divert point visible. Stark has no exceptions; `try` is the only construct that turns an error value into an early return, and unlike a trailing sigil it is a leading keyword you can grep for.
+
+**Propagatable enums and variant roles.** `try` works with any two-variant enum that declares which variant means success and which means failure. The declaration uses the innate variant attributes `[Ok]` and `[Err]`:
+
+```stark
+public enum Result<T, E>
+{
+    [Ok] Ok(T),
+    [Err] Err(E),
+}
+
+public enum Option<T>
+{
+    [Ok] Some(T),
+    [Err] None,
+}
+
+enum FetchOutcome              // a user enum with arbitrary names: equally propagatable
+{
+    [Ok] Got(Payload),
+    [Err] Failed(FetchError),
+}
+```
+
+Recognition is purely structural: the roles come from the attributes, never from variant names, type names, or standard-library identity. The standard library's `Result<T, E>`, `Option<T>`, `IOResult<T>`, and the other status/result enums are propagatable because their declarations carry these attributes — they are not compiler-privileged. The role rules, checked where the enum is declared:
+
+* a role-carrying enum has exactly two variants, one marked `[Ok]` and one marked `[Err]`;
+* a role-marked variant carries at most one payload (or none);
+* `[Ok]` and `[Err]` take no arguments, and they are the only variant attributes that exist.
+
+An enum that merely has the right shape but no role attributes is not propagatable: roles are opt-in, never inferred.
+
+**What `try` does.** `try expr` evaluates `expr`, which must be a value of a propagatable enum:
+
+* if the value is the `[Ok]` variant, `try` evaluates to that variant's payload (or to no value when the `[Ok]` variant is unit-like) and execution continues;
+* if the value is the `[Err]` variant, `try` **returns from the enclosing function**, wrapping the failure in the enclosing return type's `[Err]` variant, after running the same drops a written `return` would run.
+
+Three requirements connect the operand and the enclosing function:
+
+* the operand's type must be a propagatable enum;
+* the enclosing function's return type must also be a propagatable enum — not necessarily the same enum, and not necessarily the same generic family;
+* the failure payloads must be connected: either both `[Err]` variants are unit-like (no payload), or both carry the same error type, or the enclosing `[Err]` payload type declares a `from` funnel for the operand's error type (below). A unit failure cannot propagate into a payload-carrying failure or vice versa — `try` never invents an error value and never silently discards one. If the failure payloads are not connected, the `try` is a compile error.
+
+The success payloads are deliberately independent: `try` yields the operand's success value for the enclosing function to keep computing with, and what that function later wraps in its own `[Ok]` variant is unrelated to what it unwrapped. Only the failure path ties the two signatures together.
+
+```stark
+fn Result<Module, LoadError> LoadModule(ascii path)
+{
+    stack ascii  text = try ReadFile(path);   // [Ok] -> text; [Err] -> return the error
+    stack Ast    ast  = try Parse(text);
+    stack Module mod  = try Resolve(ast);
+    return Result<Module, LoadError>.Ok(mod);
+}
+```
+
+**Position.** Because `try` injects a hidden early return, it is restricted to positions where that return sits at a statement boundary: the whole initializer of a binding, the whole right side of an assignment, the operand of `return`, or a bare expression statement (which discards the success value but still propagates the failure). It may not be nested inside a larger expression — `Foo(try a(), try b())` is rejected. Bind the fallible call to a local first, then `try` that local.
+
+**Cross-family conversion with `from`.** When the operand and the enclosing function fail with different error types, the lower-layer error must be converted. An error `enum` declares how it absorbs a cause by marking the absorbing variant with `from`:
+
+```stark
+enum LoadError
+{
+    Io      from IoError,        // variant Io, payload IoError, and the funnel for IoError
+    Parse   from ParseError,
+    Resolve from ResolveError,
+}
+```
+
+`Io from IoError` is an ordinary single-payload variant (identical at runtime to `Io(IoError)`) plus a declaration that `try` may wrap a propagating `IoError` into `LoadError.Io`. With the funnels declared once on the error type, every `try` whose operand fails with `IoError`/`ParseError`/`ResolveError` converts automatically; the call sites stay bare. The funnel connects whole enum families: a `try` whose operand is a stdlib `IOResult<T>` (failing with `IOError`) inside a function returning `Result<T, LoadError>` converts through `LoadError`'s `Io from IOError` funnel. When the operand's error type already matches the enclosing error type, no conversion happens and no `from` is needed. An enum may declare at most one `from` funnel per source type, and a cross-family `try` whose enclosing error type has no funnel for the operand's error is a compile error — add a `from` variant or handle the error with `switch`.
+
+`try` lowers to a discriminant test plus the existing early-return and drop machinery, and the conversion is a zero-cost variant wrap; a `law` method behind `try` stays pure and a `finite` method stays terminating. There is no hidden cost beyond the disclosed early return.
+
+### 10.6 Pattern Conditions in `if` and `while`
+
+`if` and `while` conditions accept a pattern-match form, `expr is pattern`, that tests a value against a pattern and binds its captures into the branch that runs on a match. The pattern is exactly the `switch case` pattern surface (10.4): enum case patterns, nested aggregate patterns, named-field patterns, `var` captures, `_`, and literals.
+
+```stark
+if (Lookup(key) is Option<Value>.Some(var value))
+{
+    Use(value);          // `value` is bound here, on the match path only
+}
+else
+{
+    UseDefault();        // no binding here
+}
+```
+
+* In `if (expr is pattern) then else else`, `expr` is evaluated; if it matches the pattern, the captures bind and `then` runs; otherwise `else` runs (or control continues past the `if`). The captures are in scope only in `then`.
+* In `while behavior (expr is pattern) body`, each iteration evaluates `expr` and, on a match, binds the captures and runs `body` (the captures are re-bound each iteration); the loop exits on the first non-match. This is the `while let` drain idiom.
+
+Capturing a move-only payload with `var` moves it out of the matched value, exactly as in `switch`; the capture is dropped at the end of the branch/body. When the matched value is a local, the move is tracked so its own scope drop does not double-drop. The condition expression of `expr is pattern` is the scrutinee, not a boolean — only a plain (non-`is`) condition is required to be `bool`.
+
+`expr is pattern` lowers to the same discriminant-test-and-bind machinery as `switch`, so it carries no extra cost over the equivalent single-case `switch`.
+
 ## 11. Expressions
 
 The expression surface includes:
@@ -1385,6 +1505,7 @@ The expression surface includes:
 * binary operators
 * ternary conditional `?:`
 * assignments and compound assignments
+* error propagation `try` (see 10.5)
 
 Object creation supports both explicit and target typed forms:
 

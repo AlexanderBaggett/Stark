@@ -13,12 +13,12 @@ public enum IOError
 
 public enum IOResult<T>
 {
-    Ok(T),
-    Err(IOError),
+    [Ok] Ok(T),
+    [Err] Err(IOError),
 }
 
 public enum IOStatus
 {
-    Ok,
-    Err(IOError),
+    [Ok] Ok,
+    [Err] Err(IOError),
 }

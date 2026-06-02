@@ -202,6 +202,13 @@ preserves optimizer-relevant facts such as:
 - typed direct-call, member-call, and field-access targets
 - typed object-creation and initializer-member facts
 - typed enum constructor, enum call, enum value, enum pattern, and aggregate pattern facts
+- `try` propagation facts (ordinal-keyed roles, payload types, and `from` funnel
+  resolution per `try` expression), so downstream specialization lowers `try` without
+  re-type-checking the imported body
+
+Published enum types additionally carry their `[Ok]`/`[Err]` propagation roles and
+`from` funnel markers on every variant, in the source-surface, typed-interface, and
+compiler-facts sections alike, so imported enums stay `try`-propagatable.
 
 That richer surface lets future cross-package inlining and other package-aware
 optimizations reason about imported generic bodies from structured package-image

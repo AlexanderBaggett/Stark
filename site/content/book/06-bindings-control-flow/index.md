@@ -162,4 +162,20 @@ switch (value)
 }
 ```
 
-Later enum chapters build on `switch` for variant-shaped data.
+Every `switch` must account for the whole domain of the value it tests: cover
+every possible value with cases, or say what happens to the rest with
+`default`. A value that matches no arm is a compile error, not a runtime
+surprise.
+
+When only a single case matters, `if` and `while` conditions also accept the
+same patterns directly, written `expr is pattern`:
+
+```stark
+if (value is 42)
+{
+    return true;
+}
+```
+
+Later enum chapters build on `switch` and `is` patterns for variant-shaped
+data, including pattern captures that bind new locals on the matching path.

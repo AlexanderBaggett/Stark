@@ -259,6 +259,7 @@ internal sealed partial class MidLevelIrLowerer
         private readonly IReadOnlyDictionary<int, ImportedTemplateAggregatePatternSummary> _importedTemplateAggregatePatterns;
         private readonly IReadOnlyDictionary<string, StarkTypeSymbol> _importedTemplateLocalDeclarations;
         private readonly IReadOnlyDictionary<int, StarkTypeSymbol> _importedTemplateConversions;
+        private readonly IReadOnlyDictionary<int, ImportedTemplateTryPropagationSummary> _importedTemplateTryPropagations;
         private readonly IReadOnlyDictionary<int, TypedFunctionSignature> _importedTemplateDirectCalls;
         private readonly IReadOnlyDictionary<int, ImportedTemplateFieldAccessSummary> _importedTemplateFieldAccesses;
         private readonly IReadOnlyDictionary<int, TypedFunctionSignature> _importedTemplateMemberCalls;
@@ -302,6 +303,7 @@ internal sealed partial class MidLevelIrLowerer
         private IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int>? _importedEnumValueOrdinals;
         private IReadOnlyDictionary<ParserRuleContext, int>? _importedEnumPatternOrdinals;
         private IReadOnlyDictionary<StarkParser.UnaryExpressionContext, int>? _importedConversionOrdinals;
+        private IReadOnlyDictionary<StarkParser.UnaryExpressionContext, int>? _importedTryPropagationOrdinals;
         private IReadOnlyDictionary<StarkParser.ArgumentListContext, int>? _importedDirectCallOrdinals;
         private IReadOnlyDictionary<StarkParser.PostfixPartContext, int>? _importedFieldAccessOrdinals;
         private IReadOnlyDictionary<StarkParser.ArgumentListContext, int>? _importedMemberCallOrdinals;
@@ -403,6 +405,10 @@ internal sealed partial class MidLevelIrLowerer
                 static conversion => conversion.Ordinal,
                 static conversion => conversion.TargetType)
                 ?? new Dictionary<int, StarkTypeSymbol>();
+            _importedTemplateTryPropagations = importedTemplateSummary?.TryPropagations.ToDictionary(
+                static tryPropagation => tryPropagation.Ordinal,
+                static tryPropagation => tryPropagation)
+                ?? new Dictionary<int, ImportedTemplateTryPropagationSummary>();
             _importedTemplateDirectCalls = importedTemplateSummary?.DirectCalls.ToDictionary(
                 static call => call.Ordinal,
                 static call => call.Signature)
@@ -542,6 +548,9 @@ internal sealed partial class MidLevelIrLowerer
                 : null;
             _importedConversionOrdinals = _importedTemplateSummary is { Conversions.Count: > 0 }
                 ? CollectTemplateConversionOrdinals(body)
+                : null;
+            _importedTryPropagationOrdinals = _importedTemplateSummary is { TryPropagations.Count: > 0 }
+                ? CollectTemplateTryPropagationOrdinals(body)
                 : null;
             _importedDirectCallOrdinals = _importedTemplateSummary is { DirectCalls.Count: > 0 } directCallTemplateSummary
                 ? CollectTemplateDirectCallOrdinals(body, directCallTemplateSummary.DirectCalls)
@@ -2427,6 +2436,12 @@ internal sealed partial class MidLevelIrLowerer
 
         private void LowerIf(StarkParser.IfStatementContext ifStatement)
         {
+            if (ifStatement.pattern() is { } ifPattern)
+            {
+                LowerIfPatternCondition(ifStatement, ifPattern);
+                return;
+            }
+
             var thenBlock = CreateBlock("if_then");
             var elseBlock = ifStatement.statement().Length > 1 ? CreateBlock("if_else") : null;
             var joinBlock = CreateBlock("if_join");
@@ -2464,6 +2479,84 @@ internal sealed partial class MidLevelIrLowerer
                 }
             }
 
+            var thenFallsThrough = !CurrentBlock.HasTerminator;
+            var thenDropStates = SnapshotRuntimeDropStates();
+            EnsureGoto(joinBlock.Id);
+
+            Dictionary<string, bool>? elseDropStates;
+            bool elseFallsThrough;
+            if (elseBlock is not null)
+            {
+                RestoreRuntimeDropStates(branchEntryDropStates);
+                CurrentBlock = elseBlock;
+                LowerStatement(ifStatement.statement(1));
+                elseFallsThrough = !CurrentBlock.HasTerminator;
+                elseDropStates = SnapshotRuntimeDropStates();
+                EnsureGoto(joinBlock.Id);
+            }
+            else
+            {
+                elseFallsThrough = true;
+                elseDropStates = branchEntryDropStates;
+            }
+
+            RestoreRuntimeDropStates(MergeRuntimeDropStates(
+                thenFallsThrough ? thenDropStates : null,
+                elseFallsThrough ? elseDropStates : null,
+                branchEntryDropStates));
+            CurrentBlock = joinBlock;
+        }
+
+        // Lowers `if (expr is pattern) then else else`. The boolean branch is replaced by the
+        // switch pattern-decision: on match it binds the pattern's captures and enters the then
+        // block; on failure it enters the else/join block. Drop-state handling mirrors LowerIf so
+        // the (possible) move of the scrutinee on the match path and the captures' scoped drops are
+        // correct, and the captures are dropped at the then-block scope exit.
+        private void LowerIfPatternCondition(StarkParser.IfStatementContext ifStatement, StarkParser.PatternContext pattern)
+        {
+            var switchValue = LowerExpressionToOperand(ifStatement.expression());
+            if (switchValue is null)
+            {
+                throw LoweringInvariantViolation(ifStatement.expression(), "if-pattern condition expression was accepted but did not lower to an operand.");
+            }
+
+            if (!TryBuildSwitchLabelFromPattern(pattern, guardExpression: null, out var builtLabel) || builtLabel is null)
+            {
+                throw LoweringInvariantViolation(pattern, "if-pattern was accepted but could not be lowered.");
+            }
+
+            if (!TryRegisterSwitchCaptureLocalsCore([builtLabel], switchValue.Type, out var labels))
+            {
+                throw LoweringInvariantViolation(pattern, "if-pattern capture locals could not be registered.");
+            }
+
+            var thenBlock = CreateBlock("if_then");
+            var elseBlock = ifStatement.statement().Length > 1 ? CreateBlock("if_else") : null;
+            var joinBlock = CreateBlock("if_join");
+            var failTarget = elseBlock?.Id ?? joinBlock.Id;
+
+            var branchEntryDropStates = SnapshotRuntimeDropStates();
+            if (!EmitSwitchSectionDecisionCore(labels, switchValue, thenBlock.Id, failTarget, ifStatement.expression().GetText(), 0))
+            {
+                throw LoweringInvariantViolation(pattern, "if-pattern decision could not be lowered.");
+            }
+
+            CurrentBlock = thenBlock;
+            _scopes.Push(new ScopeFrame());
+            TrackSwitchSectionCaptureLocals(labels, switchValue.Type);
+            _compileTimeConstantState.PushScope();
+            try
+            {
+                LowerStatement(ifStatement.statement(0));
+            }
+            finally
+            {
+                _compileTimeConstantState.PopScope();
+            }
+
+            var thenScope = _scopes.Pop();
+            EmitStorageDead(thenScope);
+            RestoreScopedNameAliases(thenScope);
             var thenFallsThrough = !CurrentBlock.HasTerminator;
             var thenDropStates = SnapshotRuntimeDropStates();
             EnsureGoto(joinBlock.Id);
@@ -3139,6 +3232,12 @@ internal sealed partial class MidLevelIrLowerer
 
         private void LowerWhile(StarkParser.WhileStatementContext whileStatement)
         {
+            if (whileStatement.pattern() is { } whilePattern)
+            {
+                LowerWhilePatternCondition(whileStatement, whilePattern);
+                return;
+            }
+
             var loopBehavior = whileStatement.loopBehavior().GetText();
             var loopContracts = GetLoopContractNames(whileStatement.loopContract());
             var loopAccessGroups = CreateIndependentLoopAccessGroups(loopContracts);
@@ -3191,6 +3290,98 @@ internal sealed partial class MidLevelIrLowerer
             }
             EnsureGoto(conditionBlock.Id, loopContracts, loopAccessGroups, loopBehavior);
 
+            CurrentBlock = exitBlock;
+        }
+
+        // Lowers `while behavior (expr is pattern) body`: each iteration evaluates the scrutinee,
+        // and on a match binds the pattern's captures and runs the body (captures dropped at body
+        // scope exit), looping back; on the first failure it exits. Mirrors LowerWhile's loop/break
+        // targets and loop-access groups; the condition is the switch pattern-decision.
+        private void LowerWhilePatternCondition(StarkParser.WhileStatementContext whileStatement, StarkParser.PatternContext pattern)
+        {
+            var loopBehavior = whileStatement.loopBehavior().GetText();
+            var loopContracts = GetLoopContractNames(whileStatement.loopContract());
+            var loopAccessGroups = CreateIndependentLoopAccessGroups(loopContracts);
+            var conditionBlock = CreateBlock($"while_{loopBehavior}_cond");
+            var bodyBlock = CreateBlock("while_body");
+            var exitBlock = CreateBlock("while_exit");
+
+            EnsureGoto(conditionBlock.Id);
+
+            CurrentBlock = conditionBlock;
+            var conditionEntryDropStates = SnapshotRuntimeDropStates();
+            var switchValue = LowerExpressionToOperand(whileStatement.expression());
+            if (switchValue is null)
+            {
+                throw LoweringInvariantViolation(whileStatement.expression(), "while-pattern condition expression was accepted but did not lower to an operand.");
+            }
+
+            if (!TryBuildSwitchLabelFromPattern(pattern, guardExpression: null, out var builtLabel) || builtLabel is null)
+            {
+                throw LoweringInvariantViolation(pattern, "while-pattern was accepted but could not be lowered.");
+            }
+
+            if (!TryRegisterSwitchCaptureLocalsCore([builtLabel], switchValue.Type, out var labels))
+            {
+                throw LoweringInvariantViolation(pattern, "while-pattern capture locals could not be registered.");
+            }
+
+            if (!EmitSwitchSectionDecisionCore(labels, switchValue, bodyBlock.Id, exitBlock.Id, whileStatement.expression().GetText(), 0))
+            {
+                throw LoweringInvariantViolation(pattern, "while-pattern decision could not be lowered.");
+            }
+
+            _loops.Push(new LoopTargets(
+                conditionBlock.Id,
+                exitBlock.Id,
+                _scopes.Count,
+                loopBehavior,
+                loopContracts,
+                loopAccessGroups));
+            _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
+            CurrentBlock = bodyBlock;
+            try
+            {
+                if (loopAccessGroups is { Count: > 0 })
+                {
+                    foreach (var loopAccessGroup in loopAccessGroups.Reverse())
+                    {
+                        _activeLoopAccessGroups.Push(loopAccessGroup);
+                    }
+                }
+
+                _scopes.Push(new ScopeFrame());
+                TrackSwitchSectionCaptureLocals(labels, switchValue.Type);
+                _compileTimeConstantState.PushScope();
+                try
+                {
+                    LowerStatement(whileStatement.statement());
+                }
+                finally
+                {
+                    _compileTimeConstantState.PopScope();
+                }
+
+                var bodyScope = _scopes.Pop();
+                EmitStorageDead(bodyScope);
+                RestoreScopedNameAliases(bodyScope);
+            }
+            finally
+            {
+                if (loopAccessGroups is { Count: > 0 })
+                {
+                    for (var index = 0; index < loopAccessGroups.Count; index++)
+                    {
+                        _activeLoopAccessGroups.Pop();
+                    }
+                }
+
+                _breakTargets.Pop();
+                _loops.Pop();
+            }
+
+            EnsureGoto(conditionBlock.Id, loopContracts, loopAccessGroups, loopBehavior);
+            RestoreRuntimeDropStates(conditionEntryDropStates);
             CurrentBlock = exitBlock;
         }
 
@@ -3677,6 +3868,17 @@ internal sealed partial class MidLevelIrLowerer
                 return expectedType is null ? converted : CoerceOperand(converted, expectedType);
             }
 
+            if (expression.TRY() is not null)
+            {
+                var propagated = LowerTryPropagation(expression);
+                if (propagated is null)
+                {
+                    return null;
+                }
+
+                return expectedType is null ? propagated : CoerceOperand(propagated, expectedType);
+            }
+
             var op = expression.unaryOperator()?.GetText() ?? expression.GetChild(0).GetText();
             if (op == "&")
             {
@@ -3721,6 +3923,213 @@ internal sealed partial class MidLevelIrLowerer
             };
 
             return expectedType is null ? result : CoerceOperand(result, expectedType);
+        }
+
+        // Lowers `try expr`: read the Result/Option discriminant, branch, early-return the
+        // (possibly converted) error on the Err/None arm, and yield the unwrapped Ok/Some
+        // value on the continuation arm. The error arm reuses the exact return sequence
+        // (`RecordMoveFromOperand` + drop-on-return + materialize), so ownership and drops
+        // match a hand-written `switch ... return`.
+        private MidLevelIrOperand? LowerTryPropagation(StarkParser.UnaryExpressionContext expression)
+        {
+            var line = expression.Start.Line;
+            var column = expression.Start.Column + 1;
+            var record = _typeModel.TryPropagations.LastOrDefault(candidate =>
+                candidate.Location.Line == line && candidate.Location.Column == column)
+                ?? ResolveImportedTemplateTryPropagation(expression);
+            if (record is null)
+            {
+                throw LoweringInvariantViolation(expression, "No type-checked `try` propagation record was found for MIR lowering.");
+            }
+
+            var operandValue = LowerUnaryExpression(expression.unaryExpression(), expectedType: null);
+            if (operandValue is null)
+            {
+                return null;
+            }
+
+            var operandType = ApplyGenericSubstitution(record.OperandType);
+            if (!TryGetEnumLayout(operandType, out var operandLayout))
+            {
+                throw LoweringInvariantViolation(expression, $"`try` operand type '{operandType.DisplayName}' has no enum layout at MIR lowering.");
+            }
+
+            // v2 (doc 11): the role variants come from the typing record — `try` never
+            // assumes variant names.
+            if (!operandLayout.TryGetVariant(record.OperandErrVariantName, out var errVariant)
+                || !operandLayout.TryGetVariant(record.OperandOkVariantName, out var okVariant))
+            {
+                throw LoweringInvariantViolation(
+                    expression,
+                    $"`try` operand enum '{operandType.DisplayName}' has no layout for its role variants "
+                        + $"'{record.OperandOkVariantName}'/'{record.OperandErrVariantName}'.");
+            }
+
+            // `try` moves the active payload out and abandons the shell, exactly like a
+            // `switch` that captures the payload with `var`. Consume the operand so it is
+            // not also dropped.
+            RecordMoveFromOperand(operandValue, operandType);
+
+            var tagValue = LowerKnownFieldAccess(operandValue, operandLayout.TagField.Name, 0, operandLayout.TagField.Type, "$tag");
+            var errTag = new MidLevelIrIntegerConstantOperand(new BigInteger(errVariant.TagValue), operandLayout.TagField.Type);
+            var isErr = EmitResolvedEqualityComparison(tagValue, errTag, $"try is {operandType.DisplayName}.{record.OperandErrVariantName}");
+
+            var errorBlock = CreateBlock("try_propagate");
+            var okBlock = CreateBlock("try_continue");
+            CurrentBlock.Terminator = new MidLevelIrTerminator(
+                MidLevelIrTerminatorKind.Branch,
+                [errorBlock.Id, okBlock.Id],
+                ConditionText: $"try {record.OperandErrVariantName}",
+                Condition: isErr);
+
+            // Failure arm: build the (possibly funnel-converted) failure value and
+            // early-return it.
+            CurrentBlock = errorBlock;
+            var errorReturn = BuildTryErrorReturnValue(expression, record, operandValue, errVariant);
+            if (errorReturn is null)
+            {
+                return null;
+            }
+
+            var returnType = ApplyGenericSubstitution(record.ReturnType);
+            if (returnType.BorrowKind == StarkBorrowKind.None)
+            {
+                RecordMoveFromOperand(errorReturn, returnType);
+            }
+
+            errorReturn = MaterializeReturnOperandBeforeStorageCleanup(errorReturn);
+            EmitStorageDeadBeyondDepth(0);
+            EmitOnceClosureEnvironmentCleanup();
+            CurrentBlock.Terminator = new MidLevelIrTerminator(
+                MidLevelIrTerminatorKind.Return,
+                Targets: [],
+                ValueText: $"try {record.OperandErrVariantName} -> {returnType.DisplayName}",
+                Value: errorReturn);
+
+            // Success arm: unwrap the payload (if any) and continue lowering in the new block.
+            CurrentBlock = okBlock;
+            if (record.SuccessPayloadType is null || okVariant.Fields.Count == 0)
+            {
+                // Unit [Ok]: `try` yields nothing. The position rule restricts this to a
+                // bare expression statement, whose value is discarded — return an inert
+                // constant that downstream dead-code elimination removes.
+                return new MidLevelIrIntegerConstantOperand(BigInteger.Zero, operandLayout.TagField.Type);
+            }
+
+            var okField = okVariant.Fields[0];
+            return LowerKnownFieldAccess(
+                operandValue,
+                okField.StorageFieldName,
+                okField.StorageFieldIndex,
+                okField.Type,
+                okField.SourceFieldName ?? record.OperandOkVariantName);
+        }
+
+        /// <summary>
+        /// Resolves the `try` propagation facts for an expression inside an imported generic
+        /// template body. Package-image imports never re-type-check template bodies, so the
+        /// producing package republishes each `try`'s roles/funnel resolution ordinal-keyed in
+        /// the package image (doc 11 EP15); the ordinal walk here mirrors the producer's walk.
+        /// Types in the summary may reference the template's generic parameters — callers
+        /// substitute them via <c>ApplyGenericSubstitution</c> exactly like locally-typed records.
+        /// </summary>
+        private TryPropagationTypingRecord? ResolveImportedTemplateTryPropagation(StarkParser.UnaryExpressionContext expression)
+        {
+            if (_importedTryPropagationOrdinals is null
+                || !_importedTryPropagationOrdinals.TryGetValue(expression, out var ordinal)
+                || !_importedTemplateTryPropagations.TryGetValue(ordinal, out var summary))
+            {
+                return null;
+            }
+
+            return new TryPropagationTypingRecord(
+                new SourceLocation(_moduleFilePath, expression.Start.Line, expression.Start.Column + 1),
+                summary.OperandType,
+                summary.OperandOkVariantName,
+                summary.OperandErrVariantName,
+                summary.SuccessPayloadType,
+                summary.OperandFailurePayloadType,
+                summary.ReturnType,
+                summary.EnclosingErrVariantName,
+                summary.EnclosingFailurePayloadType,
+                summary.ConversionFunnelVariant,
+                _function.Name);
+        }
+
+        private MidLevelIrOperand? BuildTryErrorReturnValue(
+            StarkParser.UnaryExpressionContext expression,
+            TryPropagationTypingRecord record,
+            MidLevelIrOperand operandValue,
+            EnumVariantLayoutSymbol errVariant)
+        {
+            var returnType = ApplyGenericSubstitution(record.ReturnType);
+            if (!TryGetEnumLayout(returnType, out var returnLayout))
+            {
+                throw LoweringInvariantViolation(expression, $"`try` enclosing return type '{returnType.DisplayName}' has no enum layout at MIR lowering.");
+            }
+
+            if (!returnLayout.TryGetVariant(record.EnclosingErrVariantName, out var enclosingErrVariant))
+            {
+                throw LoweringInvariantViolation(
+                    expression,
+                    $"`try` return type '{returnType.DisplayName}' has no layout for its [Err] variant '{record.EnclosingErrVariantName}'.");
+            }
+
+            // Unit failure (no payload, e.g. None): construct the enclosing unit [Err].
+            // The type checker already rejected payload/no-payload mixing.
+            if (record.OperandFailurePayloadType is null)
+            {
+                return LowerDirectTagEnumConstructor(
+                    returnType,
+                    returnLayout,
+                    enclosingErrVariant,
+                    [],
+                    $"{returnType.DisplayName}.{record.EnclosingErrVariantName}");
+            }
+
+            // Payload failure: extract the operand's failure payload, wrap it through the
+            // `from` funnel when the failure payload types differ, then build the
+            // enclosing [Err] around it.
+            var errField = errVariant.Fields[0];
+            var rawError = LowerKnownFieldAccess(
+                operandValue,
+                errField.StorageFieldName,
+                errField.StorageFieldIndex,
+                errField.Type,
+                errField.SourceFieldName ?? record.OperandErrVariantName);
+
+            var errorValue = rawError;
+            if (record.ConversionFunnelVariant is { } funnelVariantName)
+            {
+                var enclosingErrorType = ApplyGenericSubstitution(record.EnclosingFailurePayloadType!);
+                if (!TryGetEnumLayout(enclosingErrorType, out var enclosingLayout)
+                    || !enclosingLayout.TryGetVariant(funnelVariantName, out var funnelVariant))
+                {
+                    throw LoweringInvariantViolation(
+                        expression,
+                        $"`try` funnel variant '{funnelVariantName}' on '{enclosingErrorType.DisplayName}' has no enum layout at MIR lowering.");
+                }
+
+                var funneled = LowerDirectTagEnumConstructor(
+                    enclosingErrorType,
+                    enclosingLayout,
+                    funnelVariant,
+                    [rawError],
+                    $"{enclosingErrorType.DisplayName}.{funnelVariantName}");
+                if (funneled is null)
+                {
+                    return null;
+                }
+
+                errorValue = funneled;
+            }
+
+            return LowerDirectTagEnumConstructor(
+                returnType,
+                returnLayout,
+                enclosingErrVariant,
+                [errorValue],
+                $"{returnType.DisplayName}.{record.EnclosingErrVariantName}");
         }
 
         private MidLevelIrOperand? LowerAddressOfUnary(StarkParser.UnaryExpressionContext operandExpression)

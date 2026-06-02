@@ -1211,114 +1211,135 @@ internal sealed partial class MidLevelIrLowerer
                         return false;
                     }
 
-                    if (pattern.DISCARD() is not null)
-                    {
-                        if (label.whenClause() is null)
-                        {
-                            labels.Add(new LowerableSwitchLabel(pattern.GetText(), null, null, IsDefault: true, IsMatchAll: true, CaptureName: null, AggregatePattern: null));
-                            defaultSectionCount++;
-                            continue;
-                        }
-
-                        labels.Add(new LowerableSwitchLabel(
-                            pattern.GetText(),
-                            Literal: null,
-                            GuardExpression: label.whenClause()?.expression(),
-                            IsDefault: false,
-                            IsMatchAll: true,
-                            CaptureName: null,
-                            AggregatePattern: null));
-                        continue;
-                    }
-
-                    if (pattern.VAR() is not null)
-                    {
-                        labels.Add(new LowerableSwitchLabel(
-                            pattern.GetText(),
-                            Literal: null,
-                            GuardExpression: label.whenClause()?.expression(),
-                            IsDefault: false,
-                            IsMatchAll: true,
-                            CaptureName: pattern.Identifier()?.GetText(),
-                            AggregatePattern: null));
-                        continue;
-                    }
-
-                    if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
-                    {
-                        if (!TryParseEnumNamedFieldPattern(enumNamedFieldPattern, out var parsedEnumNamedFieldPattern)
-                            || parsedEnumNamedFieldPattern is null)
-                        {
-                            return false;
-                        }
-
-                        labels.Add(new LowerableSwitchLabel(
-                            enumNamedFieldPattern.GetText(),
-                            Literal: null,
-                            GuardExpression: label.whenClause()?.expression(),
-                            IsDefault: false,
-                            IsMatchAll: false,
-                            CaptureName: null,
-                            AggregatePattern: parsedEnumNamedFieldPattern));
-                        continue;
-                    }
-
-                    if (pattern.aggregatePattern() is { } aggregatePattern)
-                    {
-                        if (!TryParseAggregatePattern(aggregatePattern, out var parsedAggregatePattern)
-                            || parsedAggregatePattern is null)
-                        {
-                            return false;
-                        }
-
-                        labels.Add(new LowerableSwitchLabel(
-                            aggregatePattern.GetText(),
-                            Literal: null,
-                            GuardExpression: label.whenClause()?.expression(),
-                            IsDefault: false,
-                            IsMatchAll: false,
-                            CaptureName: null,
-                            AggregatePattern: parsedAggregatePattern));
-                        continue;
-                    }
-
-                    if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern)
-                    {
-                        if (!TryParseAggregatePattern(genericEnumAggregatePattern, out var parsedAggregatePattern)
-                            || parsedAggregatePattern is null)
-                        {
-                            return false;
-                        }
-
-                        labels.Add(new LowerableSwitchLabel(
-                            genericEnumAggregatePattern.GetText(),
-                            Literal: null,
-                            GuardExpression: label.whenClause()?.expression(),
-                            IsDefault: false,
-                            IsMatchAll: false,
-                            CaptureName: null,
-                            AggregatePattern: parsedAggregatePattern));
-                        continue;
-                    }
-
-                    if (pattern.literal() is not { } literal)
+                    if (!TryBuildSwitchLabelFromPattern(pattern, label.whenClause()?.expression(), out var builtLabel)
+                        || builtLabel is null)
                     {
                         return false;
                     }
 
-                    labels.Add(new LowerableSwitchLabel(
-                        literal.GetText(),
-                        literal,
-                        label.whenClause()?.expression(),
-                        IsDefault: false,
-                        IsMatchAll: false,
-                        CaptureName: null,
-                        AggregatePattern: null));
+                    if (builtLabel.IsDefault)
+                    {
+                        defaultSectionCount++;
+                    }
+
+                    labels.Add(builtLabel);
                 }
 
                 sections.Add(new LowerableSwitchSection(section, labels));
             }
 
+            return true;
+        }
+
+        // Builds a single lowerable label from one `pattern` (with an optional `when` guard).
+        // Shared by `switch case` sections and by `if (expr is pattern)` / `while (expr is pattern)`
+        // so all three get identical pattern coverage (discard, var-capture, enum/struct/nested
+        // aggregate, named-field enum, literal).
+        private bool TryBuildSwitchLabelFromPattern(
+            StarkParser.PatternContext pattern,
+            StarkParser.ExpressionContext? guardExpression,
+            out LowerableSwitchLabel? label)
+        {
+            label = null;
+
+            if (pattern.DISCARD() is not null)
+            {
+                label = guardExpression is null
+                    ? new LowerableSwitchLabel(pattern.GetText(), null, null, IsDefault: true, IsMatchAll: true, CaptureName: null, AggregatePattern: null)
+                    : new LowerableSwitchLabel(
+                        pattern.GetText(),
+                        Literal: null,
+                        GuardExpression: guardExpression,
+                        IsDefault: false,
+                        IsMatchAll: true,
+                        CaptureName: null,
+                        AggregatePattern: null);
+                return true;
+            }
+
+            if (pattern.VAR() is not null)
+            {
+                label = new LowerableSwitchLabel(
+                    pattern.GetText(),
+                    Literal: null,
+                    GuardExpression: guardExpression,
+                    IsDefault: false,
+                    IsMatchAll: true,
+                    CaptureName: pattern.Identifier()?.GetText(),
+                    AggregatePattern: null);
+                return true;
+            }
+
+            if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
+            {
+                if (!TryParseEnumNamedFieldPattern(enumNamedFieldPattern, out var parsedEnumNamedFieldPattern)
+                    || parsedEnumNamedFieldPattern is null)
+                {
+                    return false;
+                }
+
+                label = new LowerableSwitchLabel(
+                    enumNamedFieldPattern.GetText(),
+                    Literal: null,
+                    GuardExpression: guardExpression,
+                    IsDefault: false,
+                    IsMatchAll: false,
+                    CaptureName: null,
+                    AggregatePattern: parsedEnumNamedFieldPattern);
+                return true;
+            }
+
+            if (pattern.aggregatePattern() is { } aggregatePattern)
+            {
+                if (!TryParseAggregatePattern(aggregatePattern, out var parsedAggregatePattern)
+                    || parsedAggregatePattern is null)
+                {
+                    return false;
+                }
+
+                label = new LowerableSwitchLabel(
+                    aggregatePattern.GetText(),
+                    Literal: null,
+                    GuardExpression: guardExpression,
+                    IsDefault: false,
+                    IsMatchAll: false,
+                    CaptureName: null,
+                    AggregatePattern: parsedAggregatePattern);
+                return true;
+            }
+
+            if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern)
+            {
+                if (!TryParseAggregatePattern(genericEnumAggregatePattern, out var parsedAggregatePattern)
+                    || parsedAggregatePattern is null)
+                {
+                    return false;
+                }
+
+                label = new LowerableSwitchLabel(
+                    genericEnumAggregatePattern.GetText(),
+                    Literal: null,
+                    GuardExpression: guardExpression,
+                    IsDefault: false,
+                    IsMatchAll: false,
+                    CaptureName: null,
+                    AggregatePattern: parsedAggregatePattern);
+                return true;
+            }
+
+            if (pattern.literal() is not { } literal)
+            {
+                return false;
+            }
+
+            label = new LowerableSwitchLabel(
+                literal.GetText(),
+                literal,
+                guardExpression,
+                IsDefault: false,
+                IsMatchAll: false,
+                CaptureName: null,
+                AggregatePattern: null);
             return true;
         }
 

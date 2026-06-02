@@ -190,7 +190,9 @@ internal sealed record StarkPackageTypeManifest(
 internal sealed record StarkPackageEnumVariantManifest(
     string Name,
     bool UsesNamedFields,
-    IReadOnlyList<StarkPackageFieldManifest> Fields);
+    IReadOnlyList<StarkPackageFieldManifest> Fields,
+    string? Role = null,
+    string? AbsorbsErrorType = null);
 
 internal sealed record StarkPackageFieldManifest(
     string Name,
@@ -317,7 +319,9 @@ internal sealed record StarkPackageTypedMethodManifest(
 internal sealed record StarkPackageTypedEnumVariantManifest(
     string Name,
     bool UsesNamedFields,
-    IReadOnlyList<StarkPackageTypedFieldManifest> Fields);
+    IReadOnlyList<StarkPackageTypedFieldManifest> Fields,
+    string? Role = null,
+    StarkPackageTypeReference? AbsorbsErrorType = null);
 
 internal sealed record StarkPackageTypedTypeManifest(
     string Name,
@@ -615,7 +619,26 @@ internal sealed record StarkPackageFunctionTemplateManifest(
     IReadOnlyList<StarkPackageTemplateMemberCallManifest>? MemberCalls = null,
     IReadOnlyList<StarkPackageTemplateFunctionAddressManifest>? FunctionAddresses = null,
     IReadOnlyList<StarkPackageTemplateBoundOperationManifest>? BoundOperations = null,
-    string? BackendOptimizationMode = null);
+    string? BackendOptimizationMode = null,
+    IReadOnlyList<StarkPackageTemplateTryPropagationManifest>? TryPropagations = null);
+
+/// <summary>
+/// Republished `try` propagation facts for one `try` expression inside an exported generic
+/// template body, ordinal-keyed in body order. Downstream packages do not re-type-check
+/// imported template bodies; their MIR lowering reads these facts (with the template's
+/// generic parameters substituted per specialization).
+/// </summary>
+internal sealed record StarkPackageTemplateTryPropagationManifest(
+    int Ordinal,
+    StarkPackageTypeReference OperandType,
+    string OperandOkVariantName,
+    string OperandErrVariantName,
+    StarkPackageTypeReference ReturnType,
+    string EnclosingErrVariantName,
+    StarkPackageTypeReference? SuccessPayloadType = null,
+    StarkPackageTypeReference? OperandFailurePayloadType = null,
+    StarkPackageTypeReference? EnclosingFailurePayloadType = null,
+    string? ConversionFunnelVariant = null);
 
 internal sealed record StarkPackageCompilerFactsSection(
     IReadOnlyList<StarkPackageFunctionEffectManifest> FunctionEffects,

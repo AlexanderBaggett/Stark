@@ -12,6 +12,15 @@ internal sealed class TypeChecker
     private static readonly StarkTypeSymbol NonNegativeI64Type = StarkTypeSymbols.Integer(64, BigInteger.Zero, (BigInteger.One << 63) - 1);
     private const string BoolTrueCoverageKey = "bool:true";
     private const string BoolFalseCoverageKey = "bool:false";
+    private const string IntegerCoverageKeyPrefix = "int:";
+
+    /// <summary>
+    /// Switches proven exhaustive by <see cref="AnalyzeSwitchCoverage"/>: every possible
+    /// scrutinee value matches some non-guarded label. Consumed by the definite-return
+    /// analysis (<see cref="StatementGuaranteesFunctionExit"/>) so an exhaustive switch
+    /// whose sections all return counts as returning on all paths.
+    /// </summary>
+    private readonly HashSet<StarkParser.SwitchStatementContext> _exhaustiveSwitches = [];
 
     private enum SwitchCoveragePatternKind
     {
@@ -86,6 +95,7 @@ internal sealed class TypeChecker
     private readonly List<LocalDeclarationTypingRecord> _localDeclarations = [];
     private readonly List<LocalStorageCapacityTypingRecord> _localStorageCapacities = [];
     private readonly List<ConversionTypingRecord> _conversions = [];
+    private readonly List<TryPropagationTypingRecord> _tryPropagations = [];
     private readonly List<DirectCallTypingRecord> _directCalls = [];
     private readonly List<FunctionPointerPromotionTypingRecord> _functionPointerPromotions = [];
     private readonly List<ClosureFunctionPromotionTypingRecord> _closureFunctionPromotions = [];
@@ -122,6 +132,7 @@ internal sealed class TypeChecker
     private IReadOnlyList<TypeParameterConstraint> _currentFunctionConstraints = [];
     private string? _currentFunctionName;
     private string? _currentFunctionModuleName;
+    private StarkTypeSymbol? _currentFunctionReturnType;
     private bool _insideConstructorBody;
     private int _unsafeDepth;
     private readonly Dictionary<string, ImportedFunctionTemplateSummary> _importedFunctionTemplates;
@@ -223,7 +234,8 @@ internal sealed class TypeChecker
             _dynamicStorageOperations,
             _switches,
             _closureFunctionPromotions,
-            _boundOperations);
+            _boundOperations,
+            _tryPropagations);
     }
 
     private void CollectTypeAliasSources()
@@ -621,7 +633,9 @@ internal sealed class TypeChecker
         string currentModuleName)
     {
         var variants = new List<EnumVariantSymbol>();
+        var variantContexts = new List<StarkParser.EnumVariantDeclarationContext>();
         var seenVariantNames = new HashSet<string>(StringComparer.Ordinal);
+        var funnelSourceTypeToVariant = new Dictionary<string, string>(StringComparer.Ordinal);
 
         foreach (var variantDeclaration in variantDeclarations)
         {
@@ -635,10 +649,50 @@ internal sealed class TypeChecker
                 continue;
             }
 
+            // Innate variant attributes: `[Ok]` / `[Err]` declare the propagation roles
+            // that `try` consults (doc 11 v2). Anything else on a variant is rejected.
+            var role = ResolveEnumVariantRole(variantDeclaration, name, variantName);
+
             var payload = variantDeclaration.enumVariantPayload();
             if (payload is null)
             {
-                variants.Add(new EnumVariantSymbol(variantName, UsesNamedFields: false, Fields: []));
+                variants.Add(new EnumVariantSymbol(variantName, UsesNamedFields: false, Fields: [], Role: role));
+                variantContexts.Add(variantDeclaration);
+                continue;
+            }
+
+            // `Io from IoError` — a single positional-payload variant additionally
+            // marked as the canonical error funnel that `try` uses to wrap an
+            // `IoError` into this enum. Layout/construction/matching are identical to
+            // `Io(IoError)`; only the `AbsorbsErrorType` marker is added.
+            if (payload.FROM() is not null)
+            {
+                var sourceType = ValidateRuntimeValueType(
+                    ResolveType(payload.type_(0), genericParameters, currentModuleName),
+                    payload.type_(0),
+                    $"enum variant '{name}.{variantName}' from-payload");
+                var funnelKey = sourceType.DisplayName;
+                if (funnelSourceTypeToVariant.TryGetValue(funnelKey, out var existingVariant))
+                {
+                    ReportError(
+                        "STK3040",
+                        $"Enum '{name}' declares more than one `from` funnel for '{sourceType.DisplayName}' "
+                            + $"(variants '{existingVariant}' and '{variantName}'). `try` could not pick one; "
+                            + "give each absorbed error type a single `from` variant, or convert explicitly.",
+                        variantDeclaration);
+                }
+                else
+                {
+                    funnelSourceTypeToVariant.Add(funnelKey, variantName);
+                }
+
+                variants.Add(new EnumVariantSymbol(
+                    variantName,
+                    UsesNamedFields: false,
+                    Fields: [new EnumVariantFieldSymbol(0, Name: null, sourceType)],
+                    AbsorbsErrorType: sourceType,
+                    Role: role));
+                variantContexts.Add(variantDeclaration);
                 continue;
             }
 
@@ -668,7 +722,8 @@ internal sealed class TypeChecker
                             $"enum variant field '{fieldName}' in '{name}.{variantName}'")));
                 }
 
-                variants.Add(new EnumVariantSymbol(variantName, UsesNamedFields: true, Fields: fields));
+                variants.Add(new EnumVariantSymbol(variantName, UsesNamedFields: true, Fields: fields, Role: role));
+                variantContexts.Add(variantDeclaration);
                 continue;
             }
 
@@ -683,8 +738,12 @@ internal sealed class TypeChecker
                             ResolveType(fieldType, genericParameters, currentModuleName),
                             fieldType,
                             $"enum variant field '{name}.{variantName}#{index}'")))
-                    .ToArray()));
+                    .ToArray(),
+                Role: role));
+            variantContexts.Add(variantDeclaration);
         }
+
+        ValidateEnumPropagationRoles(name, variants, variantContexts);
 
         return new NamedTypeSymbol(
             name,
@@ -693,6 +752,126 @@ internal sealed class TypeChecker
             [],
             EnumVariants: variants,
             GenericParameterNames: genericParameters?.ToList());
+    }
+
+    /// <summary>
+    /// Reads the innate `[Ok]` / `[Err]` propagation-role attributes from an enum
+    /// variant declaration (doc 11 v2). Variant attributes are load-bearing for `try`,
+    /// so anything unrecognized is a compile error rather than inert metadata — a typo
+    /// like `[Okk]` must not silently produce a non-propagatable enum.
+    /// </summary>
+    private EnumVariantRole ResolveEnumVariantRole(
+        StarkParser.EnumVariantDeclarationContext variantDeclaration,
+        string enumName,
+        string variantName)
+    {
+        var role = EnumVariantRole.None;
+        foreach (var attributeList in variantDeclaration.attributeList())
+        {
+            foreach (var attribute in attributeList.attribute())
+            {
+                var attributeName = attribute.qualifiedName().GetText();
+                var resolvedRole = attributeName switch
+                {
+                    "Ok" => EnumVariantRole.Ok,
+                    "Err" => EnumVariantRole.Err,
+                    _ => EnumVariantRole.None,
+                };
+
+                if (resolvedRole == EnumVariantRole.None)
+                {
+                    ReportError(
+                        "STK3042",
+                        $"Unknown attribute '[{attributeName}]' on enum variant '{enumName}.{variantName}'. "
+                            + "The attributes recognized on enum variants are [Ok] and [Err].",
+                        attribute);
+                    continue;
+                }
+
+                if (attribute.LPAREN() is not null)
+                {
+                    ReportError(
+                        "STK3042",
+                        $"Attribute '[{attributeName}]' on enum variant '{enumName}.{variantName}' takes no arguments.",
+                        attribute);
+                }
+
+                if (role != EnumVariantRole.None)
+                {
+                    ReportError(
+                        "STK3043",
+                        $"Enum variant '{enumName}.{variantName}' declares more than one propagation role; "
+                            + "a variant is either [Ok] or [Err], never both.",
+                        attribute);
+                    continue;
+                }
+
+                role = resolvedRole;
+            }
+        }
+
+        return role;
+    }
+
+    /// <summary>
+    /// Validates an enum's propagation-role configuration (doc 11 v2). Roles are
+    /// optional, but once any variant carries one, the enum must have exactly two
+    /// variants — one [Ok] and one [Err] — and each role variant carries zero or one
+    /// payload. Violations are STK3043.
+    /// </summary>
+    private void ValidateEnumPropagationRoles(
+        string name,
+        IReadOnlyList<EnumVariantSymbol> variants,
+        IReadOnlyList<StarkParser.EnumVariantDeclarationContext> variantContexts)
+    {
+        var okCount = 0;
+        var errCount = 0;
+        foreach (var variant in variants)
+        {
+            if (variant.Role == EnumVariantRole.Ok)
+            {
+                okCount++;
+            }
+            else if (variant.Role == EnumVariantRole.Err)
+            {
+                errCount++;
+            }
+        }
+
+        if (okCount == 0 && errCount == 0)
+        {
+            return;
+        }
+
+        if (variantContexts.Count == 0)
+        {
+            return;
+        }
+
+        var reportContext = variantContexts[0];
+        if (variants.Count != 2 || okCount != 1 || errCount != 1)
+        {
+            ReportError(
+                "STK3043",
+                $"Enum '{name}' uses propagation role attributes but is not a propagatable shape: it has "
+                    + $"{variants.Count} variant(s) with {okCount} [Ok] and {errCount} [Err]. A propagatable "
+                    + "enum has exactly two variants, one [Ok] and one [Err].",
+                reportContext);
+            return;
+        }
+
+        for (var index = 0; index < variants.Count && index < variantContexts.Count; index++)
+        {
+            var variant = variants[index];
+            if (variant.Role != EnumVariantRole.None && variant.Fields.Count > 1)
+            {
+                ReportError(
+                    "STK3043",
+                    $"Propagation role variant '{name}.{variant.Name}' must carry zero or one payload, "
+                        + $"but it has {variant.Fields.Count}.",
+                    variantContexts[index]);
+            }
+        }
     }
 
     private void AddFields(
@@ -2183,6 +2362,7 @@ internal sealed class TypeChecker
                 var previousGenericParameters = _currentFunctionGenericParameters;
                 var previousFunctionName = _currentFunctionName;
                 var previousFunctionModuleName = _currentFunctionModuleName;
+                var previousFunctionReturnType = _currentFunctionReturnType;
                 var previousImportedTemplateObjectCreations = _currentImportedTemplateObjectCreations;
                 var previousImportedTemplateObjectCreationOrdinals = _currentImportedTemplateObjectCreationOrdinals;
                 var previousImportedTemplateEnumConstructors = _currentImportedTemplateEnumConstructors;
@@ -2210,6 +2390,7 @@ internal sealed class TypeChecker
                     : null;
                 _currentFunctionName = signature.Name;
                 _currentFunctionModuleName = module.SyntaxModel.ModuleName;
+                _currentFunctionReturnType = signature.ReturnType;
                 _currentFunctionConstraints = WithImplicitTraitSelfConstraint(signature);
                 if (signature.IsUnsafe)
                 {
@@ -2299,6 +2480,11 @@ internal sealed class TypeChecker
                 try
                 {
                     CheckBlock(block, scope, signature.ReturnType);
+                    ValidateFunctionReturnsOnAllPaths(
+                        block,
+                        signature.ReturnType,
+                        $"Function '{functionSyntax.Name}'",
+                        block);
                 }
                 finally
                 {
@@ -2306,6 +2492,7 @@ internal sealed class TypeChecker
                     _currentFunctionConstraints = previousFunctionConstraints;
                     _currentFunctionName = previousFunctionName;
                     _currentFunctionModuleName = previousFunctionModuleName;
+                    _currentFunctionReturnType = previousFunctionReturnType;
                     _currentImportedTemplateObjectCreations = previousImportedTemplateObjectCreations;
                     _currentImportedTemplateObjectCreationOrdinals = previousImportedTemplateObjectCreationOrdinals;
                     _currentImportedTemplateEnumConstructors = previousImportedTemplateEnumConstructors;
@@ -2451,9 +2638,20 @@ internal sealed class TypeChecker
         if (statement.ifStatement() is { } ifStatement)
         {
             IReadOnlyList<string>? trueBranchDisjointRoots = null;
+            StarkTypeSymbol? ifPatternScrutineeType = null;
             if (ifStatement.expression() is { } condition)
             {
-                EnsureBoolean(EvaluateExpression(condition, scope, allowFunctionReference: false).Type, condition, "if conditions must be of type 'bool'");
+                var conditionType = EvaluateExpression(condition, scope, allowFunctionReference: false).Type;
+                if (ifStatement.pattern() is not null)
+                {
+                    // `if (expr is pattern)` — the condition expression is the scrutinee, not a
+                    // boolean; the pattern's captures bind into the then-branch only.
+                    ifPatternScrutineeType = conditionType;
+                }
+                else
+                {
+                    EnsureBoolean(conditionType, condition, "if conditions must be of type 'bool'");
+                }
             }
             else if (ifStatement.disjointRuntimeCondition() is { } disjointCondition)
             {
@@ -2461,6 +2659,10 @@ internal sealed class TypeChecker
             }
 
             var thenScope = new Scope(scope);
+            if (ifPatternScrutineeType is { } ifScrutineeType && ifStatement.pattern() is { } ifPattern)
+            {
+                BindPattern(ifPattern, ifScrutineeType, thenScope);
+            }
             if (trueBranchDisjointRoots is { Count: >= 2 })
             {
                 thenScope.AddDisjointFact(trueBranchDisjointRoots);
@@ -2483,7 +2685,13 @@ internal sealed class TypeChecker
 
         if (statement.switchStatement() is { } switchStatement)
         {
-            var switchType = EvaluateExpression(switchStatement.expression(), scope, allowFunctionReference: false).Type;
+            // Imported (package-image) signatures can hand back generic enum instantiations
+            // this compilation has not monomorphized yet (e.g. switching directly on
+            // `Pkg.Fetch(x)` returning `Pkg.Outcome<i32>`). Ensure the concrete enum exists so
+            // coverage analysis sees its variants and pattern binding resolves against it.
+            var switchType = EnsureMonomorphizedType(
+                EvaluateExpression(switchStatement.expression(), scope, allowFunctionReference: false).Type,
+                Location(switchStatement.expression()));
             ValidateImplementedSwitchShape(switchStatement, switchType);
             RecordSwitch(switchStatement, switchType);
 
@@ -2519,13 +2727,24 @@ internal sealed class TypeChecker
 
         if (statement.whileStatement() is { } whileStatement)
         {
-            EnsureBoolean(EvaluateExpression(whileStatement.expression(), scope, allowFunctionReference: false).Type, whileStatement.expression(), "while conditions must be of type 'bool'");
+            var whileConditionType = EvaluateExpression(whileStatement.expression(), scope, allowFunctionReference: false).Type;
+            var loopBodyScope = new Scope(scope);
+            if (whileStatement.pattern() is { } whilePattern)
+            {
+                // `while ... (expr is pattern)` — the condition is the scrutinee; captures bind
+                // into the loop body and are re-bound each iteration.
+                BindPattern(whilePattern, whileConditionType, loopBodyScope);
+            }
+            else
+            {
+                EnsureBoolean(whileConditionType, whileStatement.expression(), "while conditions must be of type 'bool'");
+            }
+
             CheckLoopContracts(
                 whileStatement.loopContract(),
                 whileStatement.statement(),
                 scope,
                 condition: whileStatement.expression());
-            var loopBodyScope = new Scope(scope);
             CheckStatement(whileStatement.statement(), loopBodyScope, returnType);
             scope.InvalidateCurrentFlowMemoryProvenance(loopBodyScope.FlowAssignedOuterLocalNames);
             return;
@@ -4245,12 +4464,15 @@ internal sealed class TypeChecker
         var boolFalseCovered = false;
         var exhaustiveEnumVariants = new HashSet<string>(StringComparer.Ordinal);
         var enumVariantCount = 0;
+        NamedTypeSymbol? switchEnumType = null;
+        var coveredIntegerValues = new HashSet<BigInteger>();
 
         if (switchType.Kind == StarkTypeKind.Named
             && switchType.NamedType is not null
             && _namedTypes.TryGetValue(switchType.NamedType, out var switchNamedType)
             && switchNamedType.Kind == DeclarationKind.Enum)
         {
+            switchEnumType = switchNamedType;
             enumVariantCount = switchNamedType.Variants.Count;
         }
 
@@ -4319,7 +4541,232 @@ internal sealed class TypeChecker
                         exhaustivePattern = currentPattern;
                     }
                 }
+
+                // Integer switches can be exhaustive by covering every value of the
+                // scrutinee's (possibly ranged) type, e.g. `u8[0 3]` with cases 0..3.
+                if (currentPattern.Kind == SwitchCoveragePatternKind.Literal
+                    && switchType.Kind == StarkTypeKind.Integer
+                    && currentPattern.LiteralKey is { } literalKey
+                    && literalKey.StartsWith(IntegerCoverageKeyPrefix, StringComparison.Ordinal)
+                    && BigInteger.TryParse(literalKey[IntegerCoverageKeyPrefix.Length..], out var literalValue)
+                    && StarkTypeSymbols.IntegerValueFitsEffectiveRange(literalValue, switchType)
+                    && StarkTypeSymbols.TryGetEffectiveIntegerBounds(switchType, out var rangeMin, out var rangeMax))
+                {
+                    coveredIntegerValues.Add(literalValue);
+                    if (coveredIntegerValues.Count == rangeMax - rangeMin + 1)
+                    {
+                        exhaustivePattern = currentPattern;
+                    }
+                }
             }
+        }
+
+        // Every switch must be exhaustive: a value that matches no arm has nowhere to go
+        // (a hidden trap at best, undefined fall-through at worst), which is exactly the
+        // kind of invalid state Stark makes unrepresentable. Cover the whole domain or
+        // declare the remainder explicitly with `default`.
+        if (exhaustivePattern is not null)
+        {
+            _exhaustiveSwitches.Add(switchStatement);
+            return;
+        }
+
+        ReportError(
+            "STK3044",
+            BuildNonExhaustiveSwitchMessage(switchType, switchEnumType, exhaustiveEnumVariants, coveredIntegerValues, boolTrueCovered, boolFalseCovered),
+            switchStatement.expression());
+    }
+
+    private static string BuildNonExhaustiveSwitchMessage(
+        StarkTypeSymbol switchType,
+        NamedTypeSymbol? switchEnumType,
+        IReadOnlySet<string> coveredEnumVariants,
+        IReadOnlyCollection<BigInteger> coveredIntegerValues,
+        bool boolTrueCovered,
+        bool boolFalseCovered)
+    {
+        if (switchEnumType is not null)
+        {
+            var missingVariants = switchEnumType.Variants
+                .Select(static variant => variant.Name)
+                .Where(variant => !coveredEnumVariants.Contains(variant))
+                .ToArray();
+            var missingText = missingVariants.Length <= 4
+                ? string.Join(", ", missingVariants.Select(static variant => $"'{variant}'"))
+                : string.Join(", ", missingVariants.Take(4).Select(static variant => $"'{variant}'")) + $", … ({missingVariants.Length} total)";
+            return $"Switch over '{switchType.DisplayName}' is not exhaustive: variant(s) {missingText} are not covered. "
+                + "Add the missing case(s) or a `default` arm.";
+        }
+
+        if (switchType.Kind == StarkTypeKind.Bool)
+        {
+            var missing = !boolTrueCovered && !boolFalseCovered ? "'true' and 'false'" : boolTrueCovered ? "'false'" : "'true'";
+            return $"Switch over 'bool' is not exhaustive: {missing} not covered. Add the missing case(s) or a `default` arm.";
+        }
+
+        if (switchType.Kind == StarkTypeKind.Integer
+            && StarkTypeSymbols.TryGetEffectiveIntegerBounds(switchType, out var rangeMin, out var rangeMax))
+        {
+            var rangeSize = rangeMax - rangeMin + 1;
+            return $"Switch over '{switchType.DisplayName}' is not exhaustive: {coveredIntegerValues.Count} of {rangeSize} possible value(s) covered. "
+                + "Cover the full range or add a `default` arm.";
+        }
+
+        return $"Switch over '{switchType.DisplayName}' is not exhaustive: values of this type cannot be enumerated by cases. "
+            + "Add a `default` arm or a match-all pattern (`var`/`_`).";
+    }
+
+    /// <summary>
+    /// Definite-return analysis: a function with a non-void return type must return on
+    /// every control-flow path. Falling off the end of the body has no value to return —
+    /// previously that was silent undefined behavior. Reported as STK3045.
+    /// </summary>
+    private void ValidateFunctionReturnsOnAllPaths(
+        StarkParser.BlockContext block,
+        StarkTypeSymbol returnType,
+        string functionDescription,
+        ParserRuleContext context)
+    {
+        if (returnType.Kind is StarkTypeKind.Void or StarkTypeKind.Error)
+        {
+            return;
+        }
+
+        if (BlockGuaranteesFunctionExit(block))
+        {
+            return;
+        }
+
+        ReportError(
+            "STK3045",
+            $"{functionDescription} returns '{returnType.DisplayName}' but control can reach the end of the body without "
+                + "returning a value. End every path with `return`, an exhaustive `switch` whose sections all return, an "
+                + "`if`/`else` whose branches both return, or an `infinite` loop.",
+            context);
+    }
+
+    private bool BlockGuaranteesFunctionExit(StarkParser.BlockContext block)
+    {
+        var statements = block.statement();
+        return statements.Length != 0 && StatementGuaranteesFunctionExit(statements[^1]);
+    }
+
+    /// <summary>
+    /// True when control cannot flow past <paramref name="statement"/> to the next
+    /// statement in sequence: it returns, every branch/section of it returns, or it loops
+    /// forever. Conservative — anything unproven counts as falling through.
+    /// </summary>
+    private bool StatementGuaranteesFunctionExit(StarkParser.StatementContext statement)
+    {
+        if (statement.returnStatement() is not null)
+        {
+            return true;
+        }
+
+        if (statement.block() is { } nestedBlock)
+        {
+            return BlockGuaranteesFunctionExit(nestedBlock);
+        }
+
+        if (statement.unsafeStatement() is { } unsafeStatement)
+        {
+            if (unsafeStatement.block() is { } unsafeBlock)
+            {
+                return BlockGuaranteesFunctionExit(unsafeBlock);
+            }
+
+            return unsafeStatement.assumeStatement() is { } unsafeAssumeStatement
+                && StatementGuaranteesFunctionExit(unsafeAssumeStatement.statement());
+        }
+
+        // `assume disjoint(...) stmt` always executes its body — the assumption is a
+        // declared fact, not a runtime condition — so it exits iff its body exits.
+        if (statement.assumeStatement() is { } assumeStatement)
+        {
+            return StatementGuaranteesFunctionExit(assumeStatement.statement());
+        }
+
+        if (statement.ifStatement() is { } ifStatement)
+        {
+            return ifStatement.statement().Length > 1
+                && StatementGuaranteesFunctionExit(ifStatement.statement(0))
+                && StatementGuaranteesFunctionExit(ifStatement.statement(1));
+        }
+
+        if (statement.switchStatement() is { } switchStatement)
+        {
+            if (!_exhaustiveSwitches.Contains(switchStatement))
+            {
+                return false;
+            }
+
+            foreach (var section in switchStatement.switchSection())
+            {
+                var sectionStatements = section.statement();
+                if (sectionStatements.Length == 0 || !StatementGuaranteesFunctionExit(sectionStatements[^1]))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        // A loop only falls through when its condition can turn false or its body can
+        // `break`. That makes two never-falling-through shapes: `infinite` loops (which
+        // additionally forbid structural exits), and the loop-until-return idiom — a
+        // literal `true` condition (or no `for` condition) with no top-level break, whose
+        // only exits are `return`s.
+        if (statement.whileStatement() is { } whileStatement)
+        {
+            var whileAlwaysRepeats = whileStatement.loopBehavior().INFINITE() is not null
+                || (whileStatement.pattern() is null
+                    && string.Equals(whileStatement.expression().GetText(), "true", StringComparison.Ordinal));
+            return whileAlwaysRepeats && !LoopBodyContainsTopLevelBreak(whileStatement.statement());
+        }
+
+        if (statement.forStatement() is { } forStatement)
+        {
+            var forCondition = forStatement.forCondition();
+            var forAlwaysRepeats = forStatement.loopBehavior().INFINITE() is not null
+                || forCondition is null
+                || string.Equals(forCondition.GetText(), "true", StringComparison.Ordinal);
+            return forAlwaysRepeats && !LoopBodyContainsTopLevelBreak(forStatement.statement());
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// True when the loop body contains a `break` that targets this loop (i.e. not nested
+    /// inside an inner loop), meaning the loop can exit and control can flow past it.
+    /// </summary>
+    private static bool LoopBodyContainsTopLevelBreak(StarkParser.StatementContext body)
+    {
+        return ContainsTopLevelBreak(body);
+
+        static bool ContainsTopLevelBreak(Antlr4.Runtime.Tree.IParseTree node)
+        {
+            if (node is StarkParser.BreakStatementContext)
+            {
+                return true;
+            }
+
+            // Breaks inside nested loops target those loops, not this one.
+            if (node is StarkParser.WhileStatementContext or StarkParser.ForStatementContext)
+            {
+                return false;
+            }
+
+            for (var index = 0; index < node.ChildCount; index++)
+            {
+                if (ContainsTopLevelBreak(node.GetChild(index)))
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 
@@ -8222,6 +8669,11 @@ internal sealed class TypeChecker
             return MakeInitDestinationBinding(initOperand, expression);
         }
 
+        if (expression.TRY() is not null)
+        {
+            return EvaluateTryExpression(expression, scope, expectedType);
+        }
+
         var operand = EvaluateUnaryExpression(expression.unaryExpression(), scope, allowFunctionReference: false);
         var op = expression.unaryOperator()?.GetText() ?? expression.GetChild(0).GetText();
 
@@ -8235,6 +8687,317 @@ internal sealed class TypeChecker
             "*" => EnsureDereferenceUnary(operand, expression),
             _ => new ExpressionBinding(StarkTypeSymbols.Error)
         };
+    }
+
+    private ExpressionBinding EvaluateTryExpression(
+        StarkParser.UnaryExpressionContext expression,
+        Scope scope,
+        StarkTypeSymbol? expectedType)
+    {
+        // Position rule (doc 11 §4.6): `try` may only appear where its early return sits
+        // at a statement boundary — the whole initializer of a binding, the whole right
+        // side of an assignment, the operand of `return`, or a bare expression statement.
+        // That keeps the divert greppable and makes the drop set on the error path
+        // identical to a normal `return`.
+        if (!IsPropagationBoundaryPosition(expression))
+        {
+            ReportError(
+                "STK3037",
+                "`try` may only appear as the whole initializer of a binding, the whole right side of an "
+                    + "assignment, the operand of `return`, or a bare expression statement. Bind the fallible "
+                    + "call to a local first, then `try` that local.",
+                expression);
+        }
+
+        var operandBinding = EvaluateUnaryExpression(expression.unaryExpression(), scope, allowFunctionReference: false);
+        var operandType = operandBinding.Type;
+        if (operandType.Kind == StarkTypeKind.Error)
+        {
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        // Imported (package-image) signatures hand back generic instantiations that this
+        // compilation may not have monomorphized yet — e.g. `try Pkg.Fetch(x)` where Fetch
+        // returns Pkg.FetchOutcome<i32> and no consumer type annotation names that
+        // instantiation. Ensure the concrete enum exists (threading the imported template's
+        // [Ok]/[Err] roles and `from` funnels) and is registered for enum-layout planning.
+        operandType = EnsureMonomorphizedType(operandType, Location(expression));
+
+        // The operand must be a propagatable enum: exactly two variants carrying the
+        // [Ok]/[Err] roles (doc 11 v2). Recognition is by role — never by type name and
+        // never by stdlib identity.
+        if (!TryResolvePropagationRoles(operandType, out var operandRoles))
+        {
+            ReportError(
+                "STK3039",
+                $"`try` requires a propagatable operand: an enum with one `[Ok]` and one `[Err]` variant. "
+                    + $"'{operandType.DisplayName}' has no propagation roles.",
+                expression);
+            return new ExpressionBinding(StarkTypeSymbols.Error);
+        }
+
+        var successBinding = operandRoles.SuccessPayloadType is { } successType
+            ? new ExpressionBinding(successType, NamedType: ResolveNamedTypeSymbol(successType))
+            : new ExpressionBinding(StarkTypeSymbols.Void);
+
+        // The enclosing function must also return a propagatable enum so the early
+        // return can construct its [Err] variant.
+        var returnType = _currentFunctionReturnType is { } declaredReturnType
+            ? EnsureMonomorphizedType(declaredReturnType, Location(expression))
+            : null;
+        if (returnType is null || !TryResolvePropagationRoles(returnType, out var enclosingRoles))
+        {
+            ReportError(
+                "STK3038",
+                $"`try` requires the enclosing function to return a propagatable enum (one `[Ok]` and one "
+                    + $"`[Err]` variant), but it returns '{(returnType?.DisplayName ?? "void")}'. Change the "
+                    + "return type or handle the failure with `switch`.",
+                expression);
+            return successBinding;
+        }
+
+        // The failure payloads must be connected: identical types, a `from` funnel on
+        // the enclosing failure payload's enum, or both unit (no payload). Mixing a
+        // payload failure with a unit failure is rejected — an error value is never
+        // silently discarded and never invented.
+        string? funnelVariant = null;
+        if (operandRoles.FailurePayloadType is { } operandFailure
+            && enclosingRoles.FailurePayloadType is { } enclosingFailure)
+        {
+            // Failure payload enums may themselves be imported and/or generic; the funnel
+            // lookup needs their concrete definitions (with `from` markers) in the type table.
+            funnelVariant = ResolveErrorFunnelVariant(
+                EnsureMonomorphizedType(operandFailure, Location(expression)),
+                EnsureMonomorphizedType(enclosingFailure, Location(expression)),
+                expression);
+        }
+        else if (operandRoles.FailurePayloadType is not null || enclosingRoles.FailurePayloadType is not null)
+        {
+            var operandFailureText = operandRoles.FailurePayloadType is { } operandPayload
+                ? $"fails with '{operandPayload.DisplayName}'"
+                : "fails without a payload";
+            var enclosingFailureText = enclosingRoles.FailurePayloadType is { } enclosingPayload
+                ? $"fails with '{enclosingPayload.DisplayName}'"
+                : "fails without a payload";
+            ReportError(
+                "STK3038",
+                $"`try` cannot propagate here: the operand '{operandType.DisplayName}' {operandFailureText}, "
+                    + $"but the enclosing '{returnType.DisplayName}' {enclosingFailureText}. An error value is "
+                    + "never silently discarded or invented; convert explicitly or handle with `switch`.",
+                expression);
+            return successBinding;
+        }
+
+        RecordTryPropagation(new TryPropagationTypingRecord(
+            Location(expression),
+            operandType,
+            operandRoles.OkVariantName,
+            operandRoles.ErrVariantName,
+            operandRoles.SuccessPayloadType,
+            operandRoles.FailurePayloadType,
+            returnType,
+            enclosingRoles.ErrVariantName,
+            enclosingRoles.FailurePayloadType,
+            funnelVariant,
+            _currentFunctionName));
+
+        return successBinding;
+    }
+
+    private void RecordTryPropagation(TryPropagationTypingRecord record) => _tryPropagations.Add(record);
+
+    /// <summary>
+    /// Resolves how the operand's error type funnels into the enclosing error type for a
+    /// cross-layer `try`. Returns <c>null</c> when no conversion is needed (the error types
+    /// match); otherwise the name of the `from` funnel variant on the enclosing error enum.
+    /// Reports STK3041 when the types differ and no funnel exists.
+    /// </summary>
+    private string? ResolveErrorFunnelVariant(
+        StarkTypeSymbol operandErrorType,
+        StarkTypeSymbol enclosingErrorType,
+        StarkParser.UnaryExpressionContext expression)
+    {
+        if (SameErrorType(operandErrorType, enclosingErrorType))
+        {
+            return null;
+        }
+
+        if (ResolveNamedTypeSymbol(enclosingErrorType) is { } enclosingNamed)
+        {
+            foreach (var variant in enclosingNamed.Variants)
+            {
+                if (variant.AbsorbsErrorType is { } absorbed && SameErrorType(absorbed, operandErrorType))
+                {
+                    return variant.Name;
+                }
+            }
+        }
+
+        ReportError(
+            "STK3041",
+            $"`try` cannot convert error '{operandErrorType.DisplayName}' into '{enclosingErrorType.DisplayName}': "
+                + $"'{enclosingErrorType.DisplayName}' declares no `from {operandErrorType.DisplayName}` funnel variant. "
+                + $"Add one (e.g. `SomeVariant from {operandErrorType.DisplayName}`), convert explicitly, or handle the error with `switch`.",
+            expression);
+        return null;
+    }
+
+    private static bool SameErrorType(StarkTypeSymbol a, StarkTypeSymbol b)
+        => string.Equals(a.NamedType ?? a.DisplayName, b.NamedType ?? b.DisplayName, StringComparison.Ordinal);
+
+    /// <summary>
+    /// The resolved [Ok]/[Err] propagation roles of an enum type (doc 11 v2): the role
+    /// variant names plus the success/failure payload types (substituted for generic
+    /// instantiations; <c>null</c> when the role variant carries no payload).
+    /// </summary>
+    private readonly record struct PropagationRoles(
+        string OkVariantName,
+        string ErrVariantName,
+        StarkTypeSymbol? SuccessPayloadType,
+        StarkTypeSymbol? FailurePayloadType);
+
+    /// <summary>
+    /// Resolves a type's [Ok]/[Err] propagation roles. Returns false when the type is
+    /// not an enum, has no role-marked variants, or is malformed (which
+    /// <c>ValidateEnumPropagationRoles</c> already diagnosed at its declaration).
+    /// Recognition is purely role-based: any two-variant enum with one [Ok] and one
+    /// [Err] qualifies, regardless of its name or where it is declared.
+    /// </summary>
+    private bool TryResolvePropagationRoles(StarkTypeSymbol type, out PropagationRoles roles)
+    {
+        roles = default;
+        if (type.Kind != StarkTypeKind.Named)
+        {
+            return false;
+        }
+
+        var namedType = ResolveNamedTypeSymbol(type);
+        if (namedType is null || namedType.Variants.Count != 2)
+        {
+            return false;
+        }
+
+        EnumVariantSymbol? okVariant = null;
+        EnumVariantSymbol? errVariant = null;
+        foreach (var variant in namedType.Variants)
+        {
+            if (variant.Role == EnumVariantRole.Ok)
+            {
+                okVariant = variant;
+            }
+            else if (variant.Role == EnumVariantRole.Err)
+            {
+                errVariant = variant;
+            }
+        }
+
+        if (okVariant is null
+            || errVariant is null
+            || okVariant.Fields.Count > 1
+            || errVariant.Fields.Count > 1)
+        {
+            return false;
+        }
+
+        var successPayload = okVariant.Fields.Count == 1
+            ? SubstitutePropagationPayloadType(okVariant.Fields[0].Type, namedType, type)
+            : null;
+        var failurePayload = errVariant.Fields.Count == 1
+            ? SubstitutePropagationPayloadType(errVariant.Fields[0].Type, namedType, type)
+            : null;
+
+        roles = new PropagationRoles(okVariant.Name, errVariant.Name, successPayload, failurePayload);
+        return true;
+    }
+
+    /// <summary>
+    /// Substitutes generic parameters in a role variant's payload type using the
+    /// instantiation's type arguments. Concrete enums produced by
+    /// <c>CreateConcreteEnum</c> already carry substituted field types, making this a
+    /// no-op; the substitution covers paths that resolve to the generic template.
+    /// </summary>
+    private StarkTypeSymbol SubstitutePropagationPayloadType(
+        StarkTypeSymbol payloadType,
+        NamedTypeSymbol enumDefinition,
+        StarkTypeSymbol instantiatedType)
+    {
+        if (!enumDefinition.IsGeneric || instantiatedType.TypeArguments is not { Count: > 0 } typeArguments)
+        {
+            return payloadType;
+        }
+
+        var substitution = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+        var genericParameters = enumDefinition.GenericParams;
+        for (var index = 0; index < genericParameters.Count && index < typeArguments.Count; index++)
+        {
+            substitution[genericParameters[index]] = typeArguments[index];
+        }
+
+        return SubstituteType(payloadType, substitution);
+    }
+
+    /// <summary>
+    /// True when this `try` unary expression sits at a propagation boundary: walking up,
+    /// every expression-precedence wrapper is a pure pass-through (applies no operator),
+    /// and the first structural ancestor is a binding initializer, an assignment whose
+    /// whole right side is the try, a `return`, or an expression statement.
+    /// </summary>
+    private static bool IsPropagationBoundaryPosition(StarkParser.UnaryExpressionContext tryExpression)
+    {
+        RuleContext? previous = tryExpression;
+        var current = tryExpression.Parent as RuleContext;
+        while (current is not null)
+        {
+            switch (current)
+            {
+                case StarkParser.ReturnStatementContext:
+                case StarkParser.ExpressionStatementContext:
+                case StarkParser.VariableInitializerContext:
+                    return true;
+                case StarkParser.AssignmentExpressionContext assignment:
+                    // `lhs = try ...;` / `lhs op= try ...;` — boundary when the try is the whole
+                    // right side. A pure pass-through (single child) just continues upward.
+                    if (assignment.ChildCount == 1)
+                    {
+                        break;
+                    }
+
+                    if (assignment.assignmentExpression() is { } rhs && ReferenceEquals(rhs, previous))
+                    {
+                        break;
+                    }
+
+                    return false;
+                case StarkParser.ExpressionContext:
+                case StarkParser.ConditionalExpressionContext:
+                case StarkParser.LogicalOrExpressionContext:
+                case StarkParser.LogicalAndExpressionContext:
+                case StarkParser.BitwiseOrExpressionContext:
+                case StarkParser.BitwiseXorExpressionContext:
+                case StarkParser.BitwiseAndExpressionContext:
+                case StarkParser.EqualityExpressionContext:
+                case StarkParser.RelationalExpressionContext:
+                case StarkParser.ShiftExpressionContext:
+                case StarkParser.AdditiveExpressionContext:
+                case StarkParser.MultiplicativeExpressionContext:
+                    if (current.ChildCount != 1)
+                    {
+                        return false;
+                    }
+
+                    break;
+                default:
+                    // argumentList, powerExpression (as an exponent), a unary operator/cast
+                    // wrapper, object/array initializers, etc. — the try is nested inside a
+                    // larger expression, not at a statement boundary.
+                    return false;
+            }
+
+            previous = current;
+            current = current.Parent as RuleContext;
+        }
+
+        return false;
     }
 
     private ExpressionBinding EvaluatePowerExpression(
@@ -9094,6 +9857,7 @@ internal sealed class TypeChecker
             else if (expression.block() is { } block)
             {
                 CheckBlock(block, lambdaScope, returnType);
+                ValidateFunctionReturnsOnAllPaths(block, returnType, "Lambda", block);
             }
         }
         finally
@@ -13515,13 +14279,21 @@ internal sealed class TypeChecker
         NamedTypeSymbol template,
         IReadOnlyDictionary<string, StarkTypeSymbol> substitution)
     {
+        // Carry the propagation `Role` ([Ok]/[Err]) and the `from` funnel marker through
+        // monomorphization: `try` consults them on the *instantiated* enum (e.g.
+        // `Result<i32, ParseError>`), so dropping them here would silently disable
+        // propagation for every generic enum.
         var concreteVariants = template.Variants
             .Select(variant => new EnumVariantSymbol(
                 variant.Name,
                 variant.UsesNamedFields,
                 variant.Fields
                     .Select(f => new EnumVariantFieldSymbol(f.Position, f.Name, SubstituteType(f.Type, substitution)))
-                    .ToArray()))
+                    .ToArray(),
+                AbsorbsErrorType: variant.AbsorbsErrorType is { } absorbed
+                    ? SubstituteType(absorbed, substitution)
+                    : null,
+                Role: variant.Role))
             .ToList();
 
         return new NamedTypeSymbol(

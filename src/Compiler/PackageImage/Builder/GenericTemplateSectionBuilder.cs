@@ -154,6 +154,13 @@ internal static partial class PackageImageBuilder
                 static group => group.Key,
                 static group => (IReadOnlyList<BoundOperation>)group.ToArray(),
                 StringComparer.Ordinal);
+        var tryPropagationsByFunction = typeModel.TryPropagations
+            .Where(static record => record.EnclosingFunctionName is not null)
+            .GroupBy(static record => record.EnclosingFunctionName!, StringComparer.Ordinal)
+            .ToDictionary(
+                static group => group.Key,
+                static group => (IReadOnlyList<TryPropagationTypingRecord>)group.ToArray(),
+                StringComparer.Ordinal);
 
         var candidates = DeclaredFunctionSyntaxCollector.Collect(module.ParseResult, module.SyntaxModel)
             .Where(static function => function.HasBody)
@@ -206,6 +213,7 @@ internal static partial class PackageImageBuilder
                 memberCallsByFunction.TryGetValue(lookupName, out var memberCalls);
                 functionPointerPromotionsByFunction.TryGetValue(lookupName, out var functionPointerPromotions);
                 boundOperationsByFunction.TryGetValue(lookupName, out var boundOperations);
+                tryPropagationsByFunction.TryGetValue(lookupName, out var tryPropagations);
                 var effectiveEnumValues = MergeTemplateEnumValues(enumValues, boundOperations);
 
                 var typedBody = BuildPublishedTypedTemplateBody(
@@ -277,7 +285,8 @@ internal static partial class PackageImageBuilder
                     MemberCalls: BuildPublishedTemplateMemberCalls(module, function.Body, memberCalls),
                     FunctionAddresses: BuildPublishedTemplateFunctionAddresses(module, functionPointerPromotions),
                     BoundOperations: BuildPublishedTemplateBoundOperations(module, function.Body, boundOperations),
-                    BackendOptimizationMode: RenderBackendOptimizationMode(functionSignature.BackendOptimizationMode));
+                    BackendOptimizationMode: RenderBackendOptimizationMode(functionSignature.BackendOptimizationMode),
+                    TryPropagations: BuildPublishedTemplateTryPropagations(module, function.Body, tryPropagations));
             })
             .Where(static template => template is not null)
             .Cast<StarkPackageFunctionTemplateManifest>()
@@ -3909,6 +3918,16 @@ internal static partial class PackageImageBuilder
             return false;
         }
 
+        // `try` propagation deliberately has no typed-body expression kind yet: the typed
+        // template lowerer (ImportedTemplateLowerer) cannot lower it, so a try-containing
+        // template falls back to BodyText publication. Its propagation semantics still
+        // travel as ordinal-keyed template facts (BuildPublishedTemplateTryPropagations),
+        // which the re-parsed-body MIR lowering consumes.
+        if (unaryExpression.TRY() is not null)
+        {
+            return false;
+        }
+
         if (unaryExpression.conversionType() is { } conversionType)
         {
             if (!conversionsByLocation.TryGetValue(
@@ -4317,6 +4336,76 @@ internal static partial class PackageImageBuilder
             .ToArray();
 
         return published.Length == 0 ? null : published;
+    }
+
+    private static IReadOnlyList<StarkPackageTemplateTryPropagationManifest>? BuildPublishedTemplateTryPropagations(
+        LoadedModuleDocument module,
+        ParserRuleContext functionBody,
+        IReadOnlyList<TryPropagationTypingRecord>? tryPropagations)
+    {
+        if (tryPropagations is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var tryPropagationsByLocation = tryPropagations
+            .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location.Line, record.Location.Column))
+            .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
+        var published = CollectTemplateTryPropagationExpressions(functionBody)
+            .Select((tryExpression, ordinal) => tryPropagationsByLocation.TryGetValue(
+                    TemplateDirectCallFacts.BuildLookupKey(tryExpression.Start.Line, tryExpression.Start.Column + 1),
+                    out var record)
+                ? new StarkPackageTemplateTryPropagationManifest(
+                    ordinal,
+                    BuildPublishedAbiTypeReference(record.OperandType, module),
+                    record.OperandOkVariantName,
+                    record.OperandErrVariantName,
+                    BuildPublishedAbiTypeReference(record.ReturnType, module),
+                    record.EnclosingErrVariantName,
+                    SuccessPayloadType: record.SuccessPayloadType is { } successPayloadType
+                        ? BuildPublishedAbiTypeReference(successPayloadType, module)
+                        : null,
+                    OperandFailurePayloadType: record.OperandFailurePayloadType is { } operandFailurePayloadType
+                        ? BuildPublishedAbiTypeReference(operandFailurePayloadType, module)
+                        : null,
+                    EnclosingFailurePayloadType: record.EnclosingFailurePayloadType is { } enclosingFailurePayloadType
+                        ? BuildPublishedAbiTypeReference(enclosingFailurePayloadType, module)
+                        : null,
+                    ConversionFunnelVariant: record.ConversionFunnelVariant)
+                : null)
+            .Where(static tryPropagation => tryPropagation is not null)
+            .Cast<StarkPackageTemplateTryPropagationManifest>()
+            .ToArray();
+
+        return published.Length == 0 ? null : published;
+    }
+
+    /// <summary>
+    /// Collects `try` unary expressions in body order. The same depth-first walk runs on the
+    /// consumer side (MIR lowering of imported template specializations), so the ordinals
+    /// assigned here line up with the consumer's re-parsed body.
+    /// </summary>
+    private static IReadOnlyList<StarkParser.UnaryExpressionContext> CollectTemplateTryPropagationExpressions(ParserRuleContext node)
+    {
+        var tryExpressions = new List<StarkParser.UnaryExpressionContext>();
+        Collect(node, tryExpressions);
+        return tryExpressions;
+
+        static void Collect(
+            Antlr4.Runtime.Tree.IParseTree current,
+            List<StarkParser.UnaryExpressionContext> accumulator)
+        {
+            if (current is StarkParser.UnaryExpressionContext { } unaryExpression
+                && unaryExpression.TRY() is not null)
+            {
+                accumulator.Add(unaryExpression);
+            }
+
+            for (var index = 0; index < current.ChildCount; index++)
+            {
+                Collect(current.GetChild(index), accumulator);
+            }
+        }
     }
 
     private static IReadOnlyList<StarkPackageTemplateEnumCallManifest>? BuildPublishedTemplateEnumCalls(

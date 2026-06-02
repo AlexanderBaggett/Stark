@@ -732,6 +732,35 @@ internal sealed partial class MidLevelIrLowerer
         }
     }
 
+    /// <summary>
+    /// Assigns body-order ordinals to `try` expressions. Mirrors the producing package's
+    /// walk (GenericTemplateSectionBuilder.CollectTemplateTryPropagationExpressions) so the
+    /// republished `try` propagation facts of an imported template line up with the
+    /// re-parsed body lowered here.
+    /// </summary>
+    private static IReadOnlyDictionary<StarkParser.UnaryExpressionContext, int> CollectTemplateTryPropagationOrdinals(
+        ParserRuleContext body)
+    {
+        var ordinals = new Dictionary<StarkParser.UnaryExpressionContext, int>();
+        var nextOrdinal = 0;
+        Collect(body);
+        return ordinals;
+
+        void Collect(Antlr4.Runtime.Tree.IParseTree current)
+        {
+            if (current is StarkParser.UnaryExpressionContext { } unaryExpression
+                && unaryExpression.TRY() is not null)
+            {
+                ordinals[unaryExpression] = nextOrdinal++;
+            }
+
+            for (var index = 0; index < current.ChildCount; index++)
+            {
+                Collect(current.GetChild(index));
+            }
+        }
+    }
+
     private static IReadOnlyDictionary<StarkParser.PrimaryExpressionContext, int> CollectTemplateEnumValueOrdinals(
         ParserRuleContext body)
     {

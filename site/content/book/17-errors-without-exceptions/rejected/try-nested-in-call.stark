@@ -1,0 +1,27 @@
+import System
+module Book.TryNestedInCall
+
+enum ParseError
+{
+    Empty,
+}
+
+fn System.Result<i32[min max], ParseError> ParseDigit(i32[min max] raw)
+{
+    if (raw < 0)
+    {
+        return System.Result<i32[min max], ParseError>.Err(ParseError.Empty);
+    }
+
+    return System.Result<i32[min max], ParseError>.Ok(raw);
+}
+
+fn i32[min max] Double(i32[min max] value)
+{
+    return value * 2;
+}
+
+fn System.Result<i32[min max], ParseError> LoadDoubled(i32[min max] raw)
+{
+    return System.Result<i32[min max], ParseError>.Ok(Double(try ParseDigit(raw)));
+}
