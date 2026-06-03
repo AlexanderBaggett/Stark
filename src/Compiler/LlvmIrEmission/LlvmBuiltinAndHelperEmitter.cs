@@ -2929,6 +2929,14 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             return true;
         }
 
+        if (TryResolveSystemThreadingAtomicBuiltin(moduleName, function, out var systemThreadingAtomicBuiltin))
+        {
+            builder.AppendLine(_buildDefinitionSignature(internalize, function, abiFunction, effects, memoryEffects, parameterEffects) + " {");
+            EmitSystemThreadingAtomicBuiltin(builder, function, abiFunction, systemThreadingAtomicBuiltin);
+            builder.AppendLine("}");
+            return true;
+        }
+
         if (!TryGetSystemTextBuiltin(moduleName, function.Name, out var builtinKind))
         {
             return false;
@@ -3108,6 +3116,418 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             default:
                 throw new InvalidOperationException($"Unsupported System.Collections builtin '{builtinKind}'.");
         }
+    }
+
+    private static bool TryResolveSystemThreadingAtomicBuiltin(
+        string moduleName,
+        TypedFunctionSignature function,
+        out SystemThreadingAtomicBuiltin builtin)
+    {
+        return SystemThreadingAtomicFacts.TryGetAtomicBuiltin(moduleName, function.DisplaySourceName, out builtin)
+            || SystemThreadingAtomicFacts.TryGetAtomicBuiltin(moduleName: string.Empty, function.Name, out builtin);
+    }
+
+    /// <summary>
+    /// Emits the body of one System.Threading atomic builtin method (doc 12 §4/§5).
+    /// Every operation is seq-cst, performed on the power-of-2 storage container at
+    /// offset 0 of the receiver. The container always holds the sign/zero-extension of
+    /// the logical value (the canonical-extension invariant, maintained by the
+    /// constructor and by every mutation here), which keeps Load / Store / Exchange /
+    /// And / Or / Xor / CompareExchange single hardware instructions at every width;
+    /// only Add / Sub on narrower-than-container values need a compare-exchange retry
+    /// loop, because carries do not commute with extension.
+    /// </summary>
+    private void EmitSystemThreadingAtomicBuiltin(
+        StringBuilder builder,
+        TypedFunctionSignature function,
+        AbiFunctionSignature abiFunction,
+        SystemThreadingAtomicBuiltin builtin)
+    {
+        ValidateSystemThreadingAtomicBuiltinSignature(function, abiFunction, builtin);
+
+        if (builtin.Tier == SystemThreadingAtomicTier.EmbeddedLock)
+        {
+            EmitSystemThreadingAtomicEmbeddedLockBuiltin(builder, function, abiFunction, builtin);
+            return;
+        }
+
+        // The atomic container is the struct's only field, at offset 0: the receiver
+        // pointer is the container pointer.
+        var receiverPointer = $"%{EscapeIdentifier(abiFunction.UserParameters[0].LlvmName)}";
+        var containerType = $"i{builtin.StorageBitWidth}";
+        var alignment = builtin.StorageAlignmentBytes;
+
+        builder.AppendLine("entry:");
+        switch (builtin.Operation)
+        {
+            case SystemThreadingAtomicOperation.Load:
+                builder.AppendLine($"  %atomic_loaded = load atomic {containerType}, ptr {receiverPointer} seq_cst, align {alignment}");
+                EmitSystemThreadingAtomicValueReturn(builder, builtin, "%atomic_loaded");
+                return;
+
+            case SystemThreadingAtomicOperation.Store:
+            {
+                var storeValue = WidenSystemThreadingAtomicOperand(builder, builtin, abiFunction.UserParameters[1], "store");
+                builder.AppendLine($"  store atomic {containerType} {storeValue}, ptr {receiverPointer} seq_cst, align {alignment}");
+                builder.AppendLine("  ret void");
+                return;
+            }
+
+            case SystemThreadingAtomicOperation.And:
+            case SystemThreadingAtomicOperation.Or:
+            case SystemThreadingAtomicOperation.Xor:
+            case SystemThreadingAtomicOperation.Exchange:
+            {
+                // Extension commutes with xchg/and/or/xor, so these are single
+                // instructions on the container at every width.
+                var rmwOperation = GetSystemThreadingAtomicRmwOperationName(builtin.Operation);
+                var operand = WidenSystemThreadingAtomicOperand(builder, builtin, abiFunction.UserParameters[1], "rmw");
+                builder.AppendLine($"  %atomic_previous = atomicrmw {rmwOperation} ptr {receiverPointer}, {containerType} {operand} seq_cst, align {alignment}");
+                EmitSystemThreadingAtomicValueReturn(builder, builtin, "%atomic_previous");
+                return;
+            }
+
+            case SystemThreadingAtomicOperation.Add:
+            case SystemThreadingAtomicOperation.Sub:
+            {
+                var rmwOperation = GetSystemThreadingAtomicRmwOperationName(builtin.Operation);
+                var operand = $"%{EscapeIdentifier(abiFunction.UserParameters[1].LlvmName)}";
+                if (builtin.ValueBitWidth == builtin.StorageBitWidth)
+                {
+                    // Full-width values: a single atomicrmw (wrapping arithmetic).
+                    builder.AppendLine($"  %atomic_previous = atomicrmw {rmwOperation} ptr {receiverPointer}, {containerType} {operand} seq_cst, align {alignment}");
+                    builder.AppendLine($"  ret {containerType} %atomic_previous");
+                    return;
+                }
+
+                // Carries do not commute with extension: re-extend the value-width
+                // result through a compare-exchange retry loop.
+                EmitSystemThreadingAtomicArithmeticCasLoop(builder, builtin, receiverPointer, rmwOperation, operand, containerType, alignment);
+                return;
+            }
+
+            case SystemThreadingAtomicOperation.CompareExchange:
+            {
+                // Both comparands are canonically extended, so a single container-wide
+                // cmpxchg compares exactly the logical values.
+                var expected = WidenSystemThreadingAtomicOperand(builder, builtin, abiFunction.UserParameters[1], "expected");
+                var desired = WidenSystemThreadingAtomicOperand(builder, builtin, abiFunction.UserParameters[2], "desired");
+                builder.AppendLine($"  %atomic_pair = cmpxchg ptr {receiverPointer}, {containerType} {expected}, {containerType} {desired} seq_cst seq_cst, align {alignment}");
+                builder.AppendLine($"  %atomic_swapped = extractvalue {{ {containerType}, i1 }} %atomic_pair, 1");
+                builder.AppendLine("  ret i1 %atomic_swapped");
+                return;
+            }
+
+            default:
+                throw new InvalidOperationException($"Unsupported System.Threading atomic operation '{builtin.Operation}'.");
+        }
+    }
+
+    /// <summary>
+    /// Add/Sub for values narrower than their storage container: truncate the observed
+    /// container to the value width, do the wrapping arithmetic there, re-extend, and
+    /// publish with cmpxchg — retrying until no other thread raced the update. Returns
+    /// the previous value.
+    /// </summary>
+    private static void EmitSystemThreadingAtomicArithmeticCasLoop(
+        StringBuilder builder,
+        SystemThreadingAtomicBuiltin builtin,
+        string receiverPointer,
+        string arithmeticOperation,
+        string operand,
+        string containerType,
+        int alignment)
+    {
+        var valueType = $"i{builtin.ValueBitWidth}";
+        var extendOperation = builtin.IsUnsigned ? "zext" : "sext";
+
+        builder.AppendLine($"  %atomic_initial = load atomic {containerType}, ptr {receiverPointer} seq_cst, align {alignment}");
+        builder.AppendLine("  br label %cas_loop");
+        builder.AppendLine();
+        builder.AppendLine("cas_loop:");
+        builder.AppendLine($"  %atomic_current = phi {containerType} [ %atomic_initial, %entry ], [ %atomic_observed, %cas_loop ]");
+        builder.AppendLine($"  %atomic_current_value = trunc {containerType} %atomic_current to {valueType}");
+        builder.AppendLine($"  %atomic_new_value = {arithmeticOperation} {valueType} %atomic_current_value, {operand}");
+        builder.AppendLine($"  %atomic_new_container = {extendOperation} {valueType} %atomic_new_value to {containerType}");
+        builder.AppendLine($"  %atomic_pair = cmpxchg ptr {receiverPointer}, {containerType} %atomic_current, {containerType} %atomic_new_container seq_cst seq_cst, align {alignment}");
+        builder.AppendLine($"  %atomic_observed = extractvalue {{ {containerType}, i1 }} %atomic_pair, 0");
+        builder.AppendLine($"  %atomic_swapped = extractvalue {{ {containerType}, i1 }} %atomic_pair, 1");
+        builder.AppendLine("  br i1 %atomic_swapped, label %cas_done, label %cas_loop");
+        builder.AppendLine();
+        builder.AppendLine("cas_done:");
+        builder.AppendLine($"  ret {valueType} %atomic_current_value");
+    }
+
+    /// <summary>
+    /// 192-1024-bit atomics (doc 12 §4 tier 3): no CPU supports lock-free atomics above
+    /// 128 bits, so the struct embeds its own spinlock word (field 1) next to the value
+    /// (field 0, at offset 0) and every operation serializes through it. The lock
+    /// acquire/release are seq-cst, making each whole operation observably indivisible
+    /// and sequentially consistent; inside the critical section the value is accessed
+    /// with ordinary loads/stores.
+    /// </summary>
+    private void EmitSystemThreadingAtomicEmbeddedLockBuiltin(
+        StringBuilder builder,
+        TypedFunctionSignature function,
+        AbiFunctionSignature abiFunction,
+        SystemThreadingAtomicBuiltin builtin)
+    {
+        var receiverPointer = $"%{EscapeIdentifier(abiFunction.UserParameters[0].LlvmName)}";
+        var structType = MapType(function.Parameters[0].Type);
+        var valueType = $"i{builtin.ValueBitWidth}";
+
+        // The value sits at offset 0 (the receiver pointer); the lock word is field 1.
+        // Stark guarantees at least 8-byte alignment for these structs; the wide value
+        // accesses use that conservative alignment.
+        builder.AppendLine("entry:");
+        builder.AppendLine($"  %atomic_lock_addr = getelementptr{GetProvenInObjectGepFlags()} {structType}, ptr {receiverPointer}, i32 0, i32 1");
+        builder.AppendLine("  br label %acquire");
+        builder.AppendLine();
+        builder.AppendLine("acquire:");
+        builder.AppendLine("  %atomic_lock_previous = atomicrmw xchg ptr %atomic_lock_addr, i32 1 seq_cst, align 4");
+        builder.AppendLine("  %atomic_lock_acquired = icmp eq i32 %atomic_lock_previous, 0");
+        builder.AppendLine("  br i1 %atomic_lock_acquired, label %critical, label %acquire");
+        builder.AppendLine();
+        builder.AppendLine("critical:");
+
+        switch (builtin.Operation)
+        {
+            case SystemThreadingAtomicOperation.Load:
+            {
+                builder.AppendLine($"  %atomic_value = load {valueType}, ptr {receiverPointer}, align 8");
+                EmitSystemThreadingAtomicEmbeddedLockRelease(builder);
+                builder.AppendLine($"  ret {valueType} %atomic_value");
+                return;
+            }
+
+            case SystemThreadingAtomicOperation.Store:
+            {
+                var storeValue = $"%{EscapeIdentifier(abiFunction.UserParameters[1].LlvmName)}";
+                builder.AppendLine($"  store {valueType} {storeValue}, ptr {receiverPointer}, align 8");
+                EmitSystemThreadingAtomicEmbeddedLockRelease(builder);
+                builder.AppendLine("  ret void");
+                return;
+            }
+
+            case SystemThreadingAtomicOperation.Exchange:
+            {
+                var exchangeValue = $"%{EscapeIdentifier(abiFunction.UserParameters[1].LlvmName)}";
+                builder.AppendLine($"  %atomic_previous = load {valueType}, ptr {receiverPointer}, align 8");
+                builder.AppendLine($"  store {valueType} {exchangeValue}, ptr {receiverPointer}, align 8");
+                EmitSystemThreadingAtomicEmbeddedLockRelease(builder);
+                builder.AppendLine($"  ret {valueType} %atomic_previous");
+                return;
+            }
+
+            case SystemThreadingAtomicOperation.Add:
+            case SystemThreadingAtomicOperation.Sub:
+            case SystemThreadingAtomicOperation.And:
+            case SystemThreadingAtomicOperation.Or:
+            case SystemThreadingAtomicOperation.Xor:
+            {
+                var binaryOperation = builtin.Operation switch
+                {
+                    SystemThreadingAtomicOperation.Add => "add",
+                    SystemThreadingAtomicOperation.Sub => "sub",
+                    SystemThreadingAtomicOperation.And => "and",
+                    SystemThreadingAtomicOperation.Or => "or",
+                    _ => "xor"
+                };
+                var operand = $"%{EscapeIdentifier(abiFunction.UserParameters[1].LlvmName)}";
+                builder.AppendLine($"  %atomic_previous = load {valueType}, ptr {receiverPointer}, align 8");
+                builder.AppendLine($"  %atomic_updated = {binaryOperation} {valueType} %atomic_previous, {operand}");
+                builder.AppendLine($"  store {valueType} %atomic_updated, ptr {receiverPointer}, align 8");
+                EmitSystemThreadingAtomicEmbeddedLockRelease(builder);
+                builder.AppendLine($"  ret {valueType} %atomic_previous");
+                return;
+            }
+
+            case SystemThreadingAtomicOperation.CompareExchange:
+            {
+                var expected = $"%{EscapeIdentifier(abiFunction.UserParameters[1].LlvmName)}";
+                var desired = $"%{EscapeIdentifier(abiFunction.UserParameters[2].LlvmName)}";
+                builder.AppendLine($"  %atomic_current = load {valueType}, ptr {receiverPointer}, align 8");
+                builder.AppendLine($"  %atomic_matches = icmp eq {valueType} %atomic_current, {expected}");
+                // Branch-free publish: keep the current value unless the comparison matched.
+                builder.AppendLine($"  %atomic_publish = select i1 %atomic_matches, {valueType} {desired}, {valueType} %atomic_current");
+                builder.AppendLine($"  store {valueType} %atomic_publish, ptr {receiverPointer}, align 8");
+                EmitSystemThreadingAtomicEmbeddedLockRelease(builder);
+                builder.AppendLine("  ret i1 %atomic_matches");
+                return;
+            }
+
+            default:
+                throw new InvalidOperationException($"Unsupported System.Threading atomic operation '{builtin.Operation}'.");
+        }
+    }
+
+    private static void EmitSystemThreadingAtomicEmbeddedLockRelease(StringBuilder builder)
+    {
+        builder.AppendLine("  store atomic i32 0, ptr %atomic_lock_addr seq_cst, align 4");
+    }
+
+    private static string GetSystemThreadingAtomicRmwOperationName(SystemThreadingAtomicOperation operation)
+    {
+        return operation switch
+        {
+            SystemThreadingAtomicOperation.Add => "add",
+            SystemThreadingAtomicOperation.Sub => "sub",
+            SystemThreadingAtomicOperation.And => "and",
+            SystemThreadingAtomicOperation.Or => "or",
+            SystemThreadingAtomicOperation.Xor => "xor",
+            SystemThreadingAtomicOperation.Exchange => "xchg",
+            _ => throw new InvalidOperationException($"Atomic operation '{operation}' is not an atomicrmw operation.")
+        };
+    }
+
+    /// <summary>
+    /// Brings an incoming value-width operand up to the container width ahead of the
+    /// atomic instruction: bool zero-extends its i1 to the storage byte, narrower
+    /// integers sign/zero-extend to their power-of-2 container, and full-width values
+    /// pass through unchanged.
+    /// </summary>
+    private string WidenSystemThreadingAtomicOperand(
+        StringBuilder builder,
+        SystemThreadingAtomicBuiltin builtin,
+        AbiParameterSymbol parameter,
+        string nameHint)
+    {
+        var rawValue = $"%{EscapeIdentifier(parameter.LlvmName)}";
+        if (builtin.IsBool)
+        {
+            var widenedBool = $"%atomic_{nameHint}_byte";
+            builder.AppendLine($"  {widenedBool} = zext i1 {rawValue} to i8");
+            return widenedBool;
+        }
+
+        if (builtin.ValueBitWidth == builtin.StorageBitWidth)
+        {
+            return rawValue;
+        }
+
+        var extendOperation = builtin.IsUnsigned ? "zext" : "sext";
+        var widenedValue = $"%atomic_{nameHint}_container";
+        builder.AppendLine($"  {widenedValue} = {extendOperation} i{builtin.ValueBitWidth} {rawValue} to i{builtin.StorageBitWidth}");
+        return widenedValue;
+    }
+
+    /// <summary>
+    /// Returns the loaded/previous container value to the caller at the declared value
+    /// width: bool narrows its byte back to i1, narrower integers truncate their
+    /// container, and full-width values return directly.
+    /// </summary>
+    private static void EmitSystemThreadingAtomicValueReturn(
+        StringBuilder builder,
+        SystemThreadingAtomicBuiltin builtin,
+        string containerValue)
+    {
+        if (builtin.IsBool)
+        {
+            builder.AppendLine($"  %atomic_result = icmp ne i8 {containerValue}, 0");
+            builder.AppendLine("  ret i1 %atomic_result");
+            return;
+        }
+
+        if (builtin.ValueBitWidth == builtin.StorageBitWidth)
+        {
+            builder.AppendLine($"  ret i{builtin.StorageBitWidth} {containerValue}");
+            return;
+        }
+
+        builder.AppendLine($"  %atomic_result = trunc i{builtin.StorageBitWidth} {containerValue} to i{builtin.ValueBitWidth}");
+        builder.AppendLine($"  ret i{builtin.ValueBitWidth} %atomic_result");
+    }
+
+    /// <summary>
+    /// The stdlib declarations and this emitter move in lockstep; any mismatch here is a
+    /// compiler/stdlib bug, not a user error. Checks the operation arity, that the
+    /// receiver is a borrowed atomic struct whose single field is the storage container
+    /// at offset 0, and that operand/return types match the value type.
+    /// </summary>
+    private void ValidateSystemThreadingAtomicBuiltinSignature(
+        TypedFunctionSignature function,
+        AbiFunctionSignature abiFunction,
+        SystemThreadingAtomicBuiltin builtin)
+    {
+        var expectedParameterCount = builtin.Operation switch
+        {
+            SystemThreadingAtomicOperation.Load => 1,
+            SystemThreadingAtomicOperation.CompareExchange => 3,
+            _ => 2
+        };
+
+        if (function.Parameters.Count != expectedParameterCount
+            || abiFunction.UserParameters.Count != expectedParameterCount)
+        {
+            throw new InvalidOperationException(
+                $"System.Threading atomic builtin '{function.Name}' expects exactly {expectedParameterCount} parameter(s) including the receiver.");
+        }
+
+        var receiverType = function.Parameters[0].Type;
+        if (receiverType.Kind != StarkTypeKind.Named
+            || receiverType.BorrowKind != StarkBorrowKind.Borrow
+            || !IsSystemThreadingAtomicTypeName(receiverType.NamedType, builtin.AtomicTypeName))
+        {
+            throw new InvalidOperationException(
+                $"System.Threading atomic builtin '{function.Name}' must take 'borrow {builtin.AtomicTypeName} self' as its first parameter.");
+        }
+
+        if (builtin.Operation != SystemThreadingAtomicOperation.Load && !receiverType.IsMutableView)
+        {
+            throw new InvalidOperationException(
+                $"System.Threading atomic builtin '{function.Name}' mutates the value and must take 'mut borrow {builtin.AtomicTypeName} self'.");
+        }
+
+        if (ResolveNamedTypeSymbol(receiverType) is { } atomicStructType
+            && !SystemThreadingAtomicFacts.HasValidAtomicFieldLayout(atomicStructType, builtin))
+        {
+            throw new InvalidOperationException(SystemThreadingAtomicFacts.DescribeRequiredAtomicFieldLayout(builtin));
+        }
+
+        foreach (var parameter in function.Parameters.Skip(1))
+        {
+            if (!IsSystemThreadingAtomicValueType(parameter.Type, builtin))
+            {
+                throw new InvalidOperationException(
+                    $"System.Threading atomic builtin '{function.Name}' parameter '{parameter.Name}' must match the atomic value type.");
+            }
+        }
+
+        var returnTypeIsValid = builtin.Operation switch
+        {
+            SystemThreadingAtomicOperation.Store => function.ReturnType.Kind == StarkTypeKind.Void,
+            SystemThreadingAtomicOperation.CompareExchange => function.ReturnType.Kind == StarkTypeKind.Bool,
+            _ => IsSystemThreadingAtomicValueType(function.ReturnType, builtin)
+        };
+
+        if (!returnTypeIsValid)
+        {
+            throw new InvalidOperationException(
+                $"System.Threading atomic builtin '{function.Name}' has the wrong return type for operation '{builtin.Operation}'.");
+        }
+    }
+
+    private static bool IsSystemThreadingAtomicTypeName(string? namedType, string atomicTypeName)
+    {
+        if (namedType is null)
+        {
+            return false;
+        }
+
+        return string.Equals(namedType, atomicTypeName, StringComparison.Ordinal)
+            || string.Equals(namedType, SystemThreadingAtomicFacts.ModuleName + "." + atomicTypeName, StringComparison.Ordinal);
+    }
+
+    private static bool IsSystemThreadingAtomicValueType(StarkTypeSymbol type, SystemThreadingAtomicBuiltin builtin)
+    {
+        if (builtin.IsBool)
+        {
+            return type.Kind == StarkTypeKind.Bool;
+        }
+
+        return type.Kind == StarkTypeKind.Integer
+            && type.BitWidth == builtin.ValueBitWidth
+            && type.IsUnsigned == builtin.IsUnsigned;
     }
 
     private void EmitSystemRuntimeBuiltin(

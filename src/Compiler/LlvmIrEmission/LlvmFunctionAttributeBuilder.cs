@@ -179,6 +179,19 @@ internal sealed class LlvmFunctionAttributeBuilder
             _ => "inlinehint"
         });
 
+        // Stark's x86-64 baseline includes cmpxchg16b (every x86-64 CPU since ~2006):
+        // 128-bit atomics (System.Threading.AtomicI96/I128/U96/U128) lower to it. The
+        // feature must be stamped on every function — not just the atomic builtins — so
+        // the inliner can move atomic operations freely and link-time LTO codegen never
+        // falls back to __atomic_* libcalls that freestanding Stark binaries cannot
+        // link. (This mirrors how clang applies -m feature flags to every function it
+        // emits; toolchain-level flags cannot do this job because they do not survive
+        // the IR-to-bitcode-to-LTO pipeline.)
+        if (StarkAsmArchitectureFacts.ResolveActiveArchitecture(_context.TargetInfo) == StarkAsmArchitecture.X86_64)
+        {
+            attributes.Add("\"target-features\"=\"+cx16\"");
+        }
+
         return string.Join(" ", attributes);
     }
 
