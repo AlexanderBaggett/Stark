@@ -1271,6 +1271,27 @@ Mutability remains opt in:
 * `mut` enables reassignment where the binding form permits it
 * `const` on a global freezes the reachable object graph rather than merely freezing the top level name
 
+### 9.1 Sharing Globals Between Threads
+
+A `static mut` global that more than one thread touches is a data race unless every
+access goes through an atomic type. `System.Threading` provides one atomic struct per
+integer width (`AtomicI8` … `AtomicI1024`, `AtomicU8` … `AtomicU1024`) plus
+`AtomicBool`; their operations are compiler builtins that lower to hardware atomic
+instructions, and every operation is sequentially consistent.
+
+```stark
+static mut System.Threading.AtomicI64 Counter = new System.Threading.AtomicI64(0);
+
+fn void Bump()
+{
+    Counter.Add(1);    // one indivisible instruction — never a load/store pair
+}
+```
+
+There is no atomic qualifier keyword and no way to make plain assignment atomic: the
+atomic types are the sharing surface. See the `System.Threading` standard library
+reference for the full operation set and the per-width cost model.
+
 ## 10. Control Flow
 
 The statement forms:

@@ -1,8 +1,9 @@
 # Phase 12 - Atomics
 
-Status: **design locked (2026-06-02) — implementation in progress.** Locked by
-Alexander: atomic types covering Stark's full integer width family, as data types
-(not a keyword qualifier), seq-cst only in v1.
+Status: **implemented (2026-06-02).** All 29 atomic types (AT01-AT07) are in the
+stdlib, lower through all three tiers, and are verified by runtime/emission/package
+tests. Design locked by Alexander: atomic types covering Stark's full integer width
+family, as data types (not a keyword qualifier), seq-cst only in v1.
 
 This phase delivers the **minimal safe-sharing primitive for the threads Stark
 already ships**. The broader thread-ownership redesign (execution roots, scoped
@@ -81,7 +82,9 @@ Canonical usage with today's threads:
 import System.Threading
 module Demo
 
-static mut AtomicI64 Counter = new AtomicI64(0);
+// Module-level declarations use qualified type names (unqualified import
+// resolution at module scope is a separate, pre-existing gap).
+static mut System.Threading.AtomicI64 Counter = new System.Threading.AtomicI64(0);
 
 fn i32[min max] Worker()
 {
@@ -146,14 +149,47 @@ TDD-first, in dependency order.
 
 | ID | Item | Status |
 |---|---|---|
-| AT01 | Stdlib type surface: `AtomicBool` + the 28 integer atomic types in `System.Threading`, constructors + method signatures | not started |
-| AT02 | Compiler intrinsic recognition + LLVM lowering, tier 1 (8/16/32/64): single-instruction `atomicrmw`/`cmpxchg`/`load atomic`/`store atomic` | not started |
-| AT03 | Tier 2 lowering (24/48/96/128): CAS loops on power-of-2 storage containers | not started |
-| AT04 | Tier 3 lowering (192–1024): embedded-spinlock layout + serialized operations | not started |
-| AT05 | Runtime tests: multi-threaded exact-count increments per tier, CAS contention, `AtomicBool` flag/spinlock pattern | not started |
-| AT06 | LLVM emission tests: tier-1 single-instruction guarantees, tier-3 layout (lock word present) | not started |
-| AT07 | Dist stdlib rebuild + package-image verification (atomics usable from packaged stdlib) | not started |
-| AT08 | User-facing docs: stdlib reference, LanguageReference/SKILL touch-ups, book Ch24 safe-sharing section, ROADMAP/doc sync | not started |
+| AT01 | Stdlib type surface: `AtomicBool` + the 28 integer atomic types in `System.Threading`, constructors + method signatures | **done** |
+| AT02 | Compiler intrinsic recognition + LLVM lowering, tier 1 (8/16/32/64): single-instruction `atomicrmw`/`cmpxchg`/`load atomic`/`store atomic` | **done** |
+| AT03 | Tier 2 lowering (24/48/96/128): CAS loops on power-of-2 storage containers | **done** |
+| AT04 | Tier 3 lowering (192–1024): embedded-spinlock layout + serialized operations | **done** |
+| AT05 | Runtime tests: multi-threaded exact-count increments per tier, CAS contention, `AtomicBool` flag/spinlock pattern | **done** |
+| AT06 | LLVM emission tests: tier-1 single-instruction guarantees, tier-3 layout (lock word present) | **done** |
+| AT07 | Dist stdlib rebuild + package-image verification (atomics usable from packaged stdlib) | **done** |
+| AT08 | User-facing docs: stdlib reference, LanguageReference/SKILL touch-ups, book Ch24 safe-sharing section, ROADMAP/doc sync | **done** |
+
+## 6.1 Implementation Record (what shipped, beyond the spec)
+
+The implementation matches §2-§5 with these refinements discovered during the work:
+
+- **Canonical-extension invariant (tier 2).** A narrower-than-container value
+  (24/48/96-bit) is always stored sign/zero-extended to its power-of-2 container, by
+  the constructor and every mutation. Because extension commutes with
+  `xchg`/`and`/`or`/`xor` and both comparands of `cmpxchg` can be pre-extended,
+  **only `Add`/`Sub` need the CAS retry loop** — Load/Store/Exchange/And/Or/Xor/
+  CompareExchange stay single lock-free instructions even at tier 2. (Carries do not
+  commute with extension, which is why Add/Sub re-extend through the loop.)
+- **`Add`/`Sub` wrap** at the value width (two's complement), like the `+%`/`-%`
+  operators. This is the only implementable semantic for fetch-and-modify hardware
+  instructions.
+- **x86-64 baseline includes `cmpxchg16b`.** 128-bit atomics need it; the compiler
+  stamps `"target-features"="+cx16"` on every emitted x86-64 function so inlining/LTO
+  can never strand a 128-bit atomic in a function without the feature (which would
+  produce un-linkable `__atomic_*` libcalls). Every x86-64 CPU since ~2006 has it.
+- **Tier-3 layout**: value at offset 0 (consistent with the other tiers — the receiver
+  pointer is the value pointer), `u32` lock word after it.
+  `%System_Threading_AtomicI256 = type { i256, i32 }`. Lock acquire/release are
+  seq-cst.
+- **Builtin architecture**: recognition + layout facts live in
+  `SystemThreadingAtomicFacts` (shared by SSA validation and LLVM emission);
+  recognition is name-based (`System.Threading.AtomicXxx.Op`), the same pattern as
+  the `System.Math`/`System.Collections` builtins.
+- **Statics needed real compiler work**: `static mut AtomicI64 C = new AtomicI64(0);`
+  required (a) the global-initializer planner to compile-time-trace explicit
+  constructor bodies (assignments + constant-foldable `if`/`else`) — statics are
+  comptime contexts per doc `13` — and (b) fixing MIR so method calls on globals pass
+  the global's address as `self` rather than a copy. Both fixes are general, not
+  atomics-specific.
 
 ## 7. Deferred (parked, not abandoned)
 
