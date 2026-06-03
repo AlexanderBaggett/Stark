@@ -23,6 +23,7 @@ across all docs, so an agent can jump to the detail doc for full context.
 `10` traits & dynamic dispatch (TD*) ·
 `11` error-value propagation `try`/`from` (EP*) ·
 `12` atomics (AT*; full thread-ownership model parked in git history) ·
+`13` compile-time evaluation `comptime` (CT*, design proposal — awaiting lock) ·
 `SelfHostingRoadmap.md` (capability rationale) ·
 `ToolchainPackagingRoadmap.md` (release/packaging detail) ·
 `docs/Internals/CompilerPipeline.md` (pass list) ·
@@ -100,7 +101,7 @@ Port helpers first, then text-only tests, then artifact tests, then integration.
 - [~] **L06** — operator/hash/equality doctrine + trait surface for generics — *blocker* — trait conformance landing via TD (below); hashing/eq doctrine still open — → `01`, `10`
 - [x] **L07** — compiler invariant-failure policy — *blocker* — **closed without adding panic/trap/assert (OQ-05 resolved):** invalid states are made unrepresentable instead. New language guarantees: **switch exhaustiveness (STK3044)** — every `switch` covers its whole domain (all enum variants / both bools / every value of a ranged integer) or has `default`; **definite return (STK3045)** — non-`void` functions must return on every path. These remove the silent runtime-trap and fall-off-the-end-UB paths. Port convention for host `throw` sites documented in doc `09` Error Model (restructure → exhaustive types → `Result`+`try` → stderr+`Process.Exit` residual) — → `01`, `09`, OQ-05
 - [ ] **L08** — raw/multiline string literal ergonomics for compiler text — *workaround exists* — → `01`
-- [ ] **L09** — general compile-time function evaluation / table generation — *workaround exists* — → `01`
+- [ ] **L09** — general compile-time function evaluation / table generation — *workaround exists* — **design proposal in doc `13`** (C3 model: `comptime` blocks/expressions as a time selector over ordinary Stark; only new rules are the step budget + input availability; CT01–CT08 + OQ-CT1..5 await design lock) — → `01`, `13`
 - [ ] **L10** — async / build-driver concurrency replacement — *workaround exists* — **verified non-blocking for self-hosting:** the host compiler is functionally single-threaded (zero parallelism; `async` is sequential I/O idiom), so the synchronous port is behaviorally identical. Full thread-ownership model parked (git history, doc 12 pre-atomics revision + `stark-thread-safety-laws.md` draft); revisit post-self-hosting for parallel builds — → `01`, OQ-11
 - [ ] **L11** — nullability / optional-value conventions (no safe nulls) — *blocker* — → `01`, OQ-06
 - [ ] **L12** — partial/nested/generated type layout ergonomics — *workaround exists* — → `01`
