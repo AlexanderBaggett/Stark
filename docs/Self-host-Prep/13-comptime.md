@@ -1,8 +1,10 @@
 # Phase 13 - Compile-Time Evaluation (`comptime`)
 
-Status: **design proposal (C3 model) — drafted by Alexander; awaiting design lock.
-No implementation.** Original draft preserved in git history
-(`comptime-c3-spec.md`, commit `d6d1ed6`).
+Status: **design proposal (C3 model) — drafted by Alexander; awaiting full design
+lock. No implementation.** Module-scope semantics locked 2026-06-02 (§4.1): const
+and static initializers are implicit comptime contexts (no keyword), and
+free-standing module-scope `comptime` blocks do not exist. Original draft preserved
+in git history (`comptime-c3-spec.md`, commit `d6d1ed6`).
 
 The guiding principle: **`comptime` is a time selector, not a restricted
 sublanguage.** Comptime-ness is a property of a *context* (a block or an
@@ -102,8 +104,29 @@ comptime
 A `comptime` block may appear:
 
 - as a statement within a function body,
-- as the whole initializer of a binding (when it ends in `return`, see 4.3),
-- at module scope, to compute a module-level constant or run a build-time effect.
+- as the whole initializer of a binding (when it ends in `return`, see 4.3).
+
+**Module scope (locked 2026-06-02).** Module scope needs no `comptime` keyword and
+gets no new grammar:
+
+- **Const and static initializers are implicit comptime contexts.** They already
+  must be compile-time evaluable; the C3 engine simply makes them more powerful.
+  Calling a function in a module-level initializer just works:
+
+  ```stark
+  const u8[0 max][256] CrcTable = BuildCrcTable();        // const-evaluated, no keyword
+  static const Config DefaultConfig = LoadDefaults();      // same
+  ```
+
+  Writing `comptime` inside an already-comptime context is redundant and is linted
+  as such (the keyword is a no-op there, like redundant parentheses).
+
+- **Free-standing module-scope `comptime` blocks do not exist.** Every compile-time
+  evaluation has an owner — the constant, static, or function-body context it
+  initializes. This keeps evaluation ordering equal to ordinary dependency order,
+  gives memoization a key, and avoids anonymous build-time effects (a build-tool
+  concern, not a language concern). Build-time effects are still possible — inside
+  an owned context (§4.4, §7).
 
 ### 4.2 `comptime` expression
 
@@ -137,24 +160,38 @@ A value-producing `comptime` block in statement position with the value unused i
 warning (computed value discarded), consistent with Stark's treatment of unused
 values elsewhere.
 
+At module scope the same computation is written without the keyword — the const
+initializer is already a comptime context (§4.1):
+
+```stark
+const u8[0 max][256] CrcTable = BuildCrcTable();
+```
+
 ### 4.4 Statement-position effects
 
-A `comptime` block or expression in statement position may run for its effect alone,
-executing the effect *during compilation* (§7):
+A `comptime` block or expression in statement position **inside a function body**
+may run for its effect alone, executing the effect *during compilation* (§7):
 
 ```stark
 comptime System.Console.WriteLine("generating CRC table");
 ```
 
+There is no module-scope analog (§4.1): a build-time effect always lives inside an
+owned context — a function-body `comptime` block, or the evaluation of a const or
+static initializer that something depends on.
+
 ### 4.5 Grammar deltas
 
 - `COMPTIME : 'comptime';` — new keyword (in-tree identifier collisions to be
   audited before lock).
-- `comptime` block: statement alternative `COMPTIME block`.
+- `comptime` block: statement alternative `COMPTIME block` (function bodies only —
+  falls out of statements not existing at module scope).
 - `comptime` expression: expression prefix `COMPTIME unaryExpression` (same shape
   as `try`).
 - Attributes `[ComptimeBudget(N)]` (declaration-level) and `[BuildValue]`
   (binding-level) extend the innate attribute registry.
+- **No top-level grammar changes.** Module-scope comptime is a semantic widening of
+  existing const/static initializers (CT02), not new syntax.
 
 ## 5. Semantics
 
@@ -167,6 +204,8 @@ the rest of the compiler uses.
 Evaluation order within a `comptime` context follows ordinary Stark evaluation
 order. Across multiple `comptime` contexts, evaluation follows dependency order: a
 `comptime` constant required to type or size another construct is evaluated first.
+Because every comptime evaluation has an owner (§4.1), this is the same dependency
+order const initializers already obey today — no new ordering rules exist.
 
 ### 5.2 Result materialization
 
@@ -392,8 +431,8 @@ TDD-first, in dependency order. Nothing starts until the design is locked.
 | OQ-CT1 | Default step budget | What count balances ergonomics against compiler responsiveness for typical workloads? |
 | OQ-CT2 | `[BuildValue]` vs a sanctioned `System.BuildTime` module | Is an opt-in annotation the right way to silence the origin lint, or should a dedicated module be the sanctioned source of build-origin values? |
 | OQ-CT3 | Type values (C4-style generics) | Out of scope for C3. If pursued later it layers on top without altering these rules, but error locality for generated types needs its own treatment. |
-| OQ-CT4 | Memoization | Should identical `comptime` evaluations be cached across call sites / compilation units, and what determinism requirements make that sound? |
-| OQ-CT5 | Cross-module comptime effects | Ordering and idempotency guarantees (if any) for build-time effects spanning modules. |
+| OQ-CT4 | Memoization | Should identical `comptime` evaluations be cached across call sites / compilation units, and what determinism requirements make that sound? The module-scope lock (§4.1) guarantees every evaluation has an owner, so cache keys exist. |
+| OQ-CT5 | Cross-module comptime effects | **Narrowed by the §4.1 lock**: effects always live inside owned contexts, so ordering is dependency order. Residual question: idempotency when one module's constants are evaluated in multiple downstream compilations (re-run per compile vs. cached via package image). |
 
 ## 13. Relationship to Existing Docs
 
@@ -418,9 +457,12 @@ TDD-first, in dependency order. Nothing starts until the design is locked.
    evaluation.
 3. Value-vs-effect is enforced by the ordinary type checker, not a comptime
    blocklist.
-4. Effects in statement position are permitted at compile time.
-5. Build-origin value reads are legal but linted (STK3048) for expectation mismatch.
-6. The only comptime-specific hard errors are **budget** (STK3046 — don't hang the
+4. Effects in statement position are permitted at compile time, inside owned
+   contexts (function-body `comptime`, or an initializer something depends on).
+5. Module scope needs no keyword: const/static initializers are implicit comptime
+   contexts, and free-standing module-scope blocks do not exist (locked, §4.1).
+6. Build-origin value reads are legal but linted (STK3048) for expectation mismatch.
+7. The only comptime-specific hard errors are **budget** (STK3046 — don't hang the
    compiler) and **availability** (STK3047 — don't read what doesn't exist yet).
-7. Diagnostics trace the evaluation path, classify the wall, and offer a dual fix.
-8. The backend never sees `comptime`; it receives concrete values and types.
+8. Diagnostics trace the evaluation path, classify the wall, and offer a dual fix.
+9. The backend never sees `comptime`; it receives concrete values and types.
