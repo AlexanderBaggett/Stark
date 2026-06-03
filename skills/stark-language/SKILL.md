@@ -532,6 +532,20 @@ Public modules:
 - `System.Text`: owned text, encoding conversion, parsing, formatting
 - `System.Threading`: threads, joins, detach, yield, sleep; atomic types (`AtomicBool`, `AtomicI8`…`AtomicI1024`, `AtomicU8`…`AtomicU1024`) for safe seq-cst shared state between threads
 
+**Sharing state between threads**: a `static mut` touched by more than one thread is a data race unless every access goes through an atomic type — atomics are the only safe sharing surface (there is no atomic qualifier keyword and no mutex yet). One atomic struct exists per integer width plus `AtomicBool`; every operation is one indivisible seq-cst action. RMW operations (`Add`/`Sub`/`And`/`Or`/`Xor`/`Exchange`) return the **previous** value; `Add`/`Sub` wrap at the value width; `CompareExchange(expected, desired)` returns whether it swapped. Module-level declarations spell the qualified type name (unqualified imported types only resolve inside function bodies):
+
+```stark
+static mut System.Threading.AtomicI64 Counter = new System.Threading.AtomicI64(0);
+
+fn i32[min max] Worker()
+{
+    Counter.Add(1);              // one atomic instruction; two threads never lose an increment
+    return 0;
+}
+```
+
+Cost model: 8–64-bit and bool are single hardware instructions; 24/48/96/128-bit stay lock-free (only `Add`/`Sub` can retry under contention); 192-bit and wider serialize through a lock word embedded in the struct (visible in `sizeof`).
+
 For exact public standard-library signatures, read [`references/standard-library-signatures.md`](references/standard-library-signatures.md). It is generated from `stdlib/src/System` and bundled with this skill.
 
 ## Bundled References
