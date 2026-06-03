@@ -222,8 +222,112 @@ internal sealed class SsaIrValidator
             if (TryResolveSystemRuntimeBuiltin(function, out var runtimeBuiltin))
             {
                 ValidateSystemRuntimeBuiltinContract(function, runtimeBuiltin);
+                continue;
+            }
+
+            if (TryResolveSystemThreadingAtomicBuiltin(function, out var atomicBuiltin))
+            {
+                ValidateSystemThreadingAtomicBuiltinContract(function, atomicBuiltin);
             }
         }
+    }
+
+    private bool TryResolveSystemThreadingAtomicBuiltin(
+        TypedFunctionSignature function,
+        out SystemThreadingAtomicBuiltin builtin)
+    {
+        return SystemThreadingAtomicFacts.TryGetAtomicBuiltin(CurrentModuleName, function.DisplaySourceName, out builtin)
+            || SystemThreadingAtomicFacts.TryGetAtomicBuiltin(moduleName: string.Empty, function.Name, out builtin);
+    }
+
+    /// <summary>
+    /// Validates one System.Threading atomic builtin declaration against the contract the
+    /// LLVM lowering relies on (doc 12 §5): operation arity, a borrowed atomic-struct
+    /// receiver (mutable for mutating operations), value-typed operands, the right return
+    /// type, and the value stored as the struct's single storage field at offset 0.
+    /// </summary>
+    private void ValidateSystemThreadingAtomicBuiltinContract(
+        TypedFunctionSignature function,
+        SystemThreadingAtomicBuiltin builtin)
+    {
+        var expectedParameterCount = builtin.Operation switch
+        {
+            SystemThreadingAtomicOperation.Load => 1,
+            SystemThreadingAtomicOperation.CompareExchange => 3,
+            _ => 2
+        };
+
+        if (function.Parameters.Count != expectedParameterCount)
+        {
+            ReportBuiltin(function, $"System.Threading atomic builtin '{function.Name}' expects exactly {expectedParameterCount} parameter(s) including the receiver.");
+            return;
+        }
+
+        var receiverType = function.Parameters[0].Type;
+        if (receiverType.Kind != StarkTypeKind.Named
+            || receiverType.BorrowKind != StarkBorrowKind.Borrow
+            || !IsSystemThreadingAtomicReceiverTypeName(receiverType.NamedType, builtin.AtomicTypeName))
+        {
+            ReportBuiltin(function, $"System.Threading atomic builtin '{function.Name}' must take 'borrow {builtin.AtomicTypeName} self' as its first parameter.");
+            return;
+        }
+
+        if (builtin.Operation != SystemThreadingAtomicOperation.Load && !receiverType.IsMutableView)
+        {
+            ReportBuiltin(function, $"System.Threading atomic builtin '{function.Name}' mutates the value and must take 'mut borrow {builtin.AtomicTypeName} self'.");
+            return;
+        }
+
+        if (ResolveNamedTypeSymbol(receiverType) is { } atomicStructType
+            && !SystemThreadingAtomicFacts.HasValidAtomicFieldLayout(atomicStructType, builtin))
+        {
+            ReportBuiltin(function, SystemThreadingAtomicFacts.DescribeRequiredAtomicFieldLayout(builtin));
+            return;
+        }
+
+        foreach (var parameter in function.Parameters.Skip(1))
+        {
+            if (!IsSystemThreadingAtomicValueType(parameter.Type, builtin))
+            {
+                ReportBuiltin(function, $"System.Threading atomic builtin '{function.Name}' parameter '{parameter.Name}' must match the atomic value type.");
+                return;
+            }
+        }
+
+        var returnTypeIsValid = builtin.Operation switch
+        {
+            SystemThreadingAtomicOperation.Store => function.ReturnType.Kind == StarkTypeKind.Void,
+            SystemThreadingAtomicOperation.CompareExchange => function.ReturnType.Kind == StarkTypeKind.Bool,
+            _ => IsSystemThreadingAtomicValueType(function.ReturnType, builtin)
+        };
+
+        if (!returnTypeIsValid)
+        {
+            ReportBuiltin(function, $"System.Threading atomic builtin '{function.Name}' has the wrong return type for operation '{builtin.Operation}'.");
+        }
+    }
+
+    private static bool IsSystemThreadingAtomicReceiverTypeName(string? namedType, string atomicTypeName)
+    {
+        if (namedType is null)
+        {
+            return false;
+        }
+
+        return string.Equals(namedType, atomicTypeName, StringComparison.Ordinal)
+            || string.Equals(namedType, SystemThreadingAtomicFacts.ModuleName + "." + atomicTypeName, StringComparison.Ordinal);
+    }
+
+    private static bool IsSystemThreadingAtomicValueType(StarkTypeSymbol type, SystemThreadingAtomicBuiltin builtin)
+    {
+        if (builtin.IsBool)
+        {
+            return type.Kind == StarkTypeKind.Bool;
+        }
+
+        return type.Kind == StarkTypeKind.Integer
+            && type.BitWidth == builtin.ValueBitWidth
+            && type.IsUnsigned == builtin.IsUnsigned;
     }
 
     private IReadOnlyDictionary<string, TypedFunctionSignature> BuildAllFunctionSignatures()

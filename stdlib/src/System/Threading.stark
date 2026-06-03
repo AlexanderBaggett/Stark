@@ -152,3 +152,633 @@ public struct Thread
         }
     }
 }
+
+// Atomic types (docs/Self-host-Prep/12-atomics.md): the safe-sharing primitive for
+// threads. One type per Stark integer width plus AtomicBool; every operation is a
+// single indivisible seq-cst action. RMW operations return the PREVIOUS value;
+// arithmetic wraps on overflow (two's complement, like the wrapping operators).
+//
+// The semicolon-bodied methods are compiler builtins: they lower directly onto LLVM
+// atomic instructions (atomicrmw / cmpxchg / load atomic / store atomic). The 8/16/32/
+// 64-bit types and AtomicBool are single hardware instructions on every supported
+// target.
+
+public struct AtomicI8
+{
+    internal i8[min max] Value;
+
+    AtomicI8(i8[min max] initial)
+    {
+        self.Value = initial;
+    }
+
+    fn i8[min max] Load(borrow AtomicI8 self);
+    fn void Store(mut borrow AtomicI8 self, i8[min max] value);
+    fn i8[min max] Add(mut borrow AtomicI8 self, i8[min max] operand);
+    fn i8[min max] Sub(mut borrow AtomicI8 self, i8[min max] operand);
+    fn i8[min max] And(mut borrow AtomicI8 self, i8[min max] operand);
+    fn i8[min max] Or(mut borrow AtomicI8 self, i8[min max] operand);
+    fn i8[min max] Xor(mut borrow AtomicI8 self, i8[min max] operand);
+    fn i8[min max] Exchange(mut borrow AtomicI8 self, i8[min max] value);
+    fn bool CompareExchange(mut borrow AtomicI8 self, i8[min max] expected, i8[min max] desired);
+}
+
+public struct AtomicI16
+{
+    internal i16[min max] Value;
+
+    AtomicI16(i16[min max] initial)
+    {
+        self.Value = initial;
+    }
+
+    fn i16[min max] Load(borrow AtomicI16 self);
+    fn void Store(mut borrow AtomicI16 self, i16[min max] value);
+    fn i16[min max] Add(mut borrow AtomicI16 self, i16[min max] operand);
+    fn i16[min max] Sub(mut borrow AtomicI16 self, i16[min max] operand);
+    fn i16[min max] And(mut borrow AtomicI16 self, i16[min max] operand);
+    fn i16[min max] Or(mut borrow AtomicI16 self, i16[min max] operand);
+    fn i16[min max] Xor(mut borrow AtomicI16 self, i16[min max] operand);
+    fn i16[min max] Exchange(mut borrow AtomicI16 self, i16[min max] value);
+    fn bool CompareExchange(mut borrow AtomicI16 self, i16[min max] expected, i16[min max] desired);
+}
+
+public struct AtomicI32
+{
+    internal i32[min max] Value;
+
+    AtomicI32(i32[min max] initial)
+    {
+        self.Value = initial;
+    }
+
+    fn i32[min max] Load(borrow AtomicI32 self);
+    fn void Store(mut borrow AtomicI32 self, i32[min max] value);
+    fn i32[min max] Add(mut borrow AtomicI32 self, i32[min max] operand);
+    fn i32[min max] Sub(mut borrow AtomicI32 self, i32[min max] operand);
+    fn i32[min max] And(mut borrow AtomicI32 self, i32[min max] operand);
+    fn i32[min max] Or(mut borrow AtomicI32 self, i32[min max] operand);
+    fn i32[min max] Xor(mut borrow AtomicI32 self, i32[min max] operand);
+    fn i32[min max] Exchange(mut borrow AtomicI32 self, i32[min max] value);
+    fn bool CompareExchange(mut borrow AtomicI32 self, i32[min max] expected, i32[min max] desired);
+}
+
+public struct AtomicI64
+{
+    internal i64[min max] Value;
+
+    AtomicI64(i64[min max] initial)
+    {
+        self.Value = initial;
+    }
+
+    fn i64[min max] Load(borrow AtomicI64 self);
+    fn void Store(mut borrow AtomicI64 self, i64[min max] value);
+    fn i64[min max] Add(mut borrow AtomicI64 self, i64[min max] operand);
+    fn i64[min max] Sub(mut borrow AtomicI64 self, i64[min max] operand);
+    fn i64[min max] And(mut borrow AtomicI64 self, i64[min max] operand);
+    fn i64[min max] Or(mut borrow AtomicI64 self, i64[min max] operand);
+    fn i64[min max] Xor(mut borrow AtomicI64 self, i64[min max] operand);
+    fn i64[min max] Exchange(mut borrow AtomicI64 self, i64[min max] value);
+    fn bool CompareExchange(mut borrow AtomicI64 self, i64[min max] expected, i64[min max] desired);
+}
+
+public struct AtomicU8
+{
+    internal u8[0 max] Value;
+
+    AtomicU8(u8[0 max] initial)
+    {
+        self.Value = initial;
+    }
+
+    fn u8[0 max] Load(borrow AtomicU8 self);
+    fn void Store(mut borrow AtomicU8 self, u8[0 max] value);
+    fn u8[0 max] Add(mut borrow AtomicU8 self, u8[0 max] operand);
+    fn u8[0 max] Sub(mut borrow AtomicU8 self, u8[0 max] operand);
+    fn u8[0 max] And(mut borrow AtomicU8 self, u8[0 max] operand);
+    fn u8[0 max] Or(mut borrow AtomicU8 self, u8[0 max] operand);
+    fn u8[0 max] Xor(mut borrow AtomicU8 self, u8[0 max] operand);
+    fn u8[0 max] Exchange(mut borrow AtomicU8 self, u8[0 max] value);
+    fn bool CompareExchange(mut borrow AtomicU8 self, u8[0 max] expected, u8[0 max] desired);
+}
+
+public struct AtomicU16
+{
+    internal u16[0 max] Value;
+
+    AtomicU16(u16[0 max] initial)
+    {
+        self.Value = initial;
+    }
+
+    fn u16[0 max] Load(borrow AtomicU16 self);
+    fn void Store(mut borrow AtomicU16 self, u16[0 max] value);
+    fn u16[0 max] Add(mut borrow AtomicU16 self, u16[0 max] operand);
+    fn u16[0 max] Sub(mut borrow AtomicU16 self, u16[0 max] operand);
+    fn u16[0 max] And(mut borrow AtomicU16 self, u16[0 max] operand);
+    fn u16[0 max] Or(mut borrow AtomicU16 self, u16[0 max] operand);
+    fn u16[0 max] Xor(mut borrow AtomicU16 self, u16[0 max] operand);
+    fn u16[0 max] Exchange(mut borrow AtomicU16 self, u16[0 max] value);
+    fn bool CompareExchange(mut borrow AtomicU16 self, u16[0 max] expected, u16[0 max] desired);
+}
+
+public struct AtomicU32
+{
+    internal u32[0 max] Value;
+
+    AtomicU32(u32[0 max] initial)
+    {
+        self.Value = initial;
+    }
+
+    fn u32[0 max] Load(borrow AtomicU32 self);
+    fn void Store(mut borrow AtomicU32 self, u32[0 max] value);
+    fn u32[0 max] Add(mut borrow AtomicU32 self, u32[0 max] operand);
+    fn u32[0 max] Sub(mut borrow AtomicU32 self, u32[0 max] operand);
+    fn u32[0 max] And(mut borrow AtomicU32 self, u32[0 max] operand);
+    fn u32[0 max] Or(mut borrow AtomicU32 self, u32[0 max] operand);
+    fn u32[0 max] Xor(mut borrow AtomicU32 self, u32[0 max] operand);
+    fn u32[0 max] Exchange(mut borrow AtomicU32 self, u32[0 max] value);
+    fn bool CompareExchange(mut borrow AtomicU32 self, u32[0 max] expected, u32[0 max] desired);
+}
+
+public struct AtomicU64
+{
+    internal u64[0 max] Value;
+
+    AtomicU64(u64[0 max] initial)
+    {
+        self.Value = initial;
+    }
+
+    fn u64[0 max] Load(borrow AtomicU64 self);
+    fn void Store(mut borrow AtomicU64 self, u64[0 max] value);
+    fn u64[0 max] Add(mut borrow AtomicU64 self, u64[0 max] operand);
+    fn u64[0 max] Sub(mut borrow AtomicU64 self, u64[0 max] operand);
+    fn u64[0 max] And(mut borrow AtomicU64 self, u64[0 max] operand);
+    fn u64[0 max] Or(mut borrow AtomicU64 self, u64[0 max] operand);
+    fn u64[0 max] Xor(mut borrow AtomicU64 self, u64[0 max] operand);
+    fn u64[0 max] Exchange(mut borrow AtomicU64 self, u64[0 max] value);
+    fn bool CompareExchange(mut borrow AtomicU64 self, u64[0 max] expected, u64[0 max] desired);
+}
+
+public struct AtomicBool
+{
+    // Stored as a byte (always exactly 0 or 1) so hardware atomic instructions can
+    // operate on it directly.
+    internal u8[0 max] Value;
+
+    AtomicBool(bool initial)
+    {
+        if (initial)
+        {
+            self.Value = 1;
+        }
+        else
+        {
+            self.Value = 0;
+        }
+    }
+
+    fn bool Load(borrow AtomicBool self);
+    fn void Store(mut borrow AtomicBool self, bool value);
+    fn bool Exchange(mut borrow AtomicBool self, bool value);
+    fn bool CompareExchange(mut borrow AtomicBool self, bool expected, bool desired);
+}
+
+// 24/48/96/128-bit atomics: the value lives sign/zero-extended inside a power-of-2
+// storage container (i24 in 4 bytes, i48 in 8, i96/i128 in 16) so hardware
+// compare-exchange can operate on it. Every operation except Add/Sub is still a
+// single lock-free instruction; Add/Sub retry through a compare-exchange loop under
+// contention. 128-bit atomics use cmpxchg16b-class instructions.
+
+public struct AtomicI24
+{
+    internal i32[min max] Value;
+
+    AtomicI24(i24[min max] initial)
+    {
+        self.Value = initial;
+    }
+
+    fn i24[min max] Load(borrow AtomicI24 self);
+    fn void Store(mut borrow AtomicI24 self, i24[min max] value);
+    fn i24[min max] Add(mut borrow AtomicI24 self, i24[min max] operand);
+    fn i24[min max] Sub(mut borrow AtomicI24 self, i24[min max] operand);
+    fn i24[min max] And(mut borrow AtomicI24 self, i24[min max] operand);
+    fn i24[min max] Or(mut borrow AtomicI24 self, i24[min max] operand);
+    fn i24[min max] Xor(mut borrow AtomicI24 self, i24[min max] operand);
+    fn i24[min max] Exchange(mut borrow AtomicI24 self, i24[min max] value);
+    fn bool CompareExchange(mut borrow AtomicI24 self, i24[min max] expected, i24[min max] desired);
+}
+
+public struct AtomicI48
+{
+    internal i64[min max] Value;
+
+    AtomicI48(i48[min max] initial)
+    {
+        self.Value = initial;
+    }
+
+    fn i48[min max] Load(borrow AtomicI48 self);
+    fn void Store(mut borrow AtomicI48 self, i48[min max] value);
+    fn i48[min max] Add(mut borrow AtomicI48 self, i48[min max] operand);
+    fn i48[min max] Sub(mut borrow AtomicI48 self, i48[min max] operand);
+    fn i48[min max] And(mut borrow AtomicI48 self, i48[min max] operand);
+    fn i48[min max] Or(mut borrow AtomicI48 self, i48[min max] operand);
+    fn i48[min max] Xor(mut borrow AtomicI48 self, i48[min max] operand);
+    fn i48[min max] Exchange(mut borrow AtomicI48 self, i48[min max] value);
+    fn bool CompareExchange(mut borrow AtomicI48 self, i48[min max] expected, i48[min max] desired);
+}
+
+public struct AtomicI96
+{
+    internal i128[min max] Value;
+
+    AtomicI96(i96[min max] initial)
+    {
+        self.Value = initial;
+    }
+
+    fn i96[min max] Load(borrow AtomicI96 self);
+    fn void Store(mut borrow AtomicI96 self, i96[min max] value);
+    fn i96[min max] Add(mut borrow AtomicI96 self, i96[min max] operand);
+    fn i96[min max] Sub(mut borrow AtomicI96 self, i96[min max] operand);
+    fn i96[min max] And(mut borrow AtomicI96 self, i96[min max] operand);
+    fn i96[min max] Or(mut borrow AtomicI96 self, i96[min max] operand);
+    fn i96[min max] Xor(mut borrow AtomicI96 self, i96[min max] operand);
+    fn i96[min max] Exchange(mut borrow AtomicI96 self, i96[min max] value);
+    fn bool CompareExchange(mut borrow AtomicI96 self, i96[min max] expected, i96[min max] desired);
+}
+
+public struct AtomicI128
+{
+    internal i128[min max] Value;
+
+    AtomicI128(i128[min max] initial)
+    {
+        self.Value = initial;
+    }
+
+    fn i128[min max] Load(borrow AtomicI128 self);
+    fn void Store(mut borrow AtomicI128 self, i128[min max] value);
+    fn i128[min max] Add(mut borrow AtomicI128 self, i128[min max] operand);
+    fn i128[min max] Sub(mut borrow AtomicI128 self, i128[min max] operand);
+    fn i128[min max] And(mut borrow AtomicI128 self, i128[min max] operand);
+    fn i128[min max] Or(mut borrow AtomicI128 self, i128[min max] operand);
+    fn i128[min max] Xor(mut borrow AtomicI128 self, i128[min max] operand);
+    fn i128[min max] Exchange(mut borrow AtomicI128 self, i128[min max] value);
+    fn bool CompareExchange(mut borrow AtomicI128 self, i128[min max] expected, i128[min max] desired);
+}
+
+public struct AtomicU24
+{
+    internal u32[0 max] Value;
+
+    AtomicU24(u24[0 max] initial)
+    {
+        self.Value = initial;
+    }
+
+    fn u24[0 max] Load(borrow AtomicU24 self);
+    fn void Store(mut borrow AtomicU24 self, u24[0 max] value);
+    fn u24[0 max] Add(mut borrow AtomicU24 self, u24[0 max] operand);
+    fn u24[0 max] Sub(mut borrow AtomicU24 self, u24[0 max] operand);
+    fn u24[0 max] And(mut borrow AtomicU24 self, u24[0 max] operand);
+    fn u24[0 max] Or(mut borrow AtomicU24 self, u24[0 max] operand);
+    fn u24[0 max] Xor(mut borrow AtomicU24 self, u24[0 max] operand);
+    fn u24[0 max] Exchange(mut borrow AtomicU24 self, u24[0 max] value);
+    fn bool CompareExchange(mut borrow AtomicU24 self, u24[0 max] expected, u24[0 max] desired);
+}
+
+public struct AtomicU48
+{
+    internal u64[0 max] Value;
+
+    AtomicU48(u48[0 max] initial)
+    {
+        self.Value = initial;
+    }
+
+    fn u48[0 max] Load(borrow AtomicU48 self);
+    fn void Store(mut borrow AtomicU48 self, u48[0 max] value);
+    fn u48[0 max] Add(mut borrow AtomicU48 self, u48[0 max] operand);
+    fn u48[0 max] Sub(mut borrow AtomicU48 self, u48[0 max] operand);
+    fn u48[0 max] And(mut borrow AtomicU48 self, u48[0 max] operand);
+    fn u48[0 max] Or(mut borrow AtomicU48 self, u48[0 max] operand);
+    fn u48[0 max] Xor(mut borrow AtomicU48 self, u48[0 max] operand);
+    fn u48[0 max] Exchange(mut borrow AtomicU48 self, u48[0 max] value);
+    fn bool CompareExchange(mut borrow AtomicU48 self, u48[0 max] expected, u48[0 max] desired);
+}
+
+public struct AtomicU96
+{
+    internal u128[0 max] Value;
+
+    AtomicU96(u96[0 max] initial)
+    {
+        self.Value = initial;
+    }
+
+    fn u96[0 max] Load(borrow AtomicU96 self);
+    fn void Store(mut borrow AtomicU96 self, u96[0 max] value);
+    fn u96[0 max] Add(mut borrow AtomicU96 self, u96[0 max] operand);
+    fn u96[0 max] Sub(mut borrow AtomicU96 self, u96[0 max] operand);
+    fn u96[0 max] And(mut borrow AtomicU96 self, u96[0 max] operand);
+    fn u96[0 max] Or(mut borrow AtomicU96 self, u96[0 max] operand);
+    fn u96[0 max] Xor(mut borrow AtomicU96 self, u96[0 max] operand);
+    fn u96[0 max] Exchange(mut borrow AtomicU96 self, u96[0 max] value);
+    fn bool CompareExchange(mut borrow AtomicU96 self, u96[0 max] expected, u96[0 max] desired);
+}
+
+public struct AtomicU128
+{
+    internal u128[0 max] Value;
+
+    AtomicU128(u128[0 max] initial)
+    {
+        self.Value = initial;
+    }
+
+    fn u128[0 max] Load(borrow AtomicU128 self);
+    fn void Store(mut borrow AtomicU128 self, u128[0 max] value);
+    fn u128[0 max] Add(mut borrow AtomicU128 self, u128[0 max] operand);
+    fn u128[0 max] Sub(mut borrow AtomicU128 self, u128[0 max] operand);
+    fn u128[0 max] And(mut borrow AtomicU128 self, u128[0 max] operand);
+    fn u128[0 max] Or(mut borrow AtomicU128 self, u128[0 max] operand);
+    fn u128[0 max] Xor(mut borrow AtomicU128 self, u128[0 max] operand);
+    fn u128[0 max] Exchange(mut borrow AtomicU128 self, u128[0 max] value);
+    fn bool CompareExchange(mut borrow AtomicU128 self, u128[0 max] expected, u128[0 max] desired);
+}
+
+// 192-1024-bit atomics: no CPU supports lock-free atomics above 128 bits, so these
+// types serialize through a spinlock word embedded in the struct itself (visible in
+// the layout: sizeof includes the lock word). The API is identical to every other
+// atomic width; only the documented cost differs. Never a hidden global lock table.
+
+
+public struct AtomicI192
+{
+    internal i192[min max] Value;
+    internal u32[0 max] Lock;
+
+    AtomicI192(i192[min max] initial)
+    {
+        self.Value = initial;
+        self.Lock = 0;
+    }
+
+    fn i192[min max] Load(borrow AtomicI192 self);
+    fn void Store(mut borrow AtomicI192 self, i192[min max] value);
+    fn i192[min max] Add(mut borrow AtomicI192 self, i192[min max] operand);
+    fn i192[min max] Sub(mut borrow AtomicI192 self, i192[min max] operand);
+    fn i192[min max] And(mut borrow AtomicI192 self, i192[min max] operand);
+    fn i192[min max] Or(mut borrow AtomicI192 self, i192[min max] operand);
+    fn i192[min max] Xor(mut borrow AtomicI192 self, i192[min max] operand);
+    fn i192[min max] Exchange(mut borrow AtomicI192 self, i192[min max] value);
+    fn bool CompareExchange(mut borrow AtomicI192 self, i192[min max] expected, i192[min max] desired);
+}
+
+public struct AtomicI256
+{
+    internal i256[min max] Value;
+    internal u32[0 max] Lock;
+
+    AtomicI256(i256[min max] initial)
+    {
+        self.Value = initial;
+        self.Lock = 0;
+    }
+
+    fn i256[min max] Load(borrow AtomicI256 self);
+    fn void Store(mut borrow AtomicI256 self, i256[min max] value);
+    fn i256[min max] Add(mut borrow AtomicI256 self, i256[min max] operand);
+    fn i256[min max] Sub(mut borrow AtomicI256 self, i256[min max] operand);
+    fn i256[min max] And(mut borrow AtomicI256 self, i256[min max] operand);
+    fn i256[min max] Or(mut borrow AtomicI256 self, i256[min max] operand);
+    fn i256[min max] Xor(mut borrow AtomicI256 self, i256[min max] operand);
+    fn i256[min max] Exchange(mut borrow AtomicI256 self, i256[min max] value);
+    fn bool CompareExchange(mut borrow AtomicI256 self, i256[min max] expected, i256[min max] desired);
+}
+
+public struct AtomicI384
+{
+    internal i384[min max] Value;
+    internal u32[0 max] Lock;
+
+    AtomicI384(i384[min max] initial)
+    {
+        self.Value = initial;
+        self.Lock = 0;
+    }
+
+    fn i384[min max] Load(borrow AtomicI384 self);
+    fn void Store(mut borrow AtomicI384 self, i384[min max] value);
+    fn i384[min max] Add(mut borrow AtomicI384 self, i384[min max] operand);
+    fn i384[min max] Sub(mut borrow AtomicI384 self, i384[min max] operand);
+    fn i384[min max] And(mut borrow AtomicI384 self, i384[min max] operand);
+    fn i384[min max] Or(mut borrow AtomicI384 self, i384[min max] operand);
+    fn i384[min max] Xor(mut borrow AtomicI384 self, i384[min max] operand);
+    fn i384[min max] Exchange(mut borrow AtomicI384 self, i384[min max] value);
+    fn bool CompareExchange(mut borrow AtomicI384 self, i384[min max] expected, i384[min max] desired);
+}
+
+public struct AtomicI512
+{
+    internal i512[min max] Value;
+    internal u32[0 max] Lock;
+
+    AtomicI512(i512[min max] initial)
+    {
+        self.Value = initial;
+        self.Lock = 0;
+    }
+
+    fn i512[min max] Load(borrow AtomicI512 self);
+    fn void Store(mut borrow AtomicI512 self, i512[min max] value);
+    fn i512[min max] Add(mut borrow AtomicI512 self, i512[min max] operand);
+    fn i512[min max] Sub(mut borrow AtomicI512 self, i512[min max] operand);
+    fn i512[min max] And(mut borrow AtomicI512 self, i512[min max] operand);
+    fn i512[min max] Or(mut borrow AtomicI512 self, i512[min max] operand);
+    fn i512[min max] Xor(mut borrow AtomicI512 self, i512[min max] operand);
+    fn i512[min max] Exchange(mut borrow AtomicI512 self, i512[min max] value);
+    fn bool CompareExchange(mut borrow AtomicI512 self, i512[min max] expected, i512[min max] desired);
+}
+
+public struct AtomicI768
+{
+    internal i768[min max] Value;
+    internal u32[0 max] Lock;
+
+    AtomicI768(i768[min max] initial)
+    {
+        self.Value = initial;
+        self.Lock = 0;
+    }
+
+    fn i768[min max] Load(borrow AtomicI768 self);
+    fn void Store(mut borrow AtomicI768 self, i768[min max] value);
+    fn i768[min max] Add(mut borrow AtomicI768 self, i768[min max] operand);
+    fn i768[min max] Sub(mut borrow AtomicI768 self, i768[min max] operand);
+    fn i768[min max] And(mut borrow AtomicI768 self, i768[min max] operand);
+    fn i768[min max] Or(mut borrow AtomicI768 self, i768[min max] operand);
+    fn i768[min max] Xor(mut borrow AtomicI768 self, i768[min max] operand);
+    fn i768[min max] Exchange(mut borrow AtomicI768 self, i768[min max] value);
+    fn bool CompareExchange(mut borrow AtomicI768 self, i768[min max] expected, i768[min max] desired);
+}
+
+public struct AtomicI1024
+{
+    internal i1024[min max] Value;
+    internal u32[0 max] Lock;
+
+    AtomicI1024(i1024[min max] initial)
+    {
+        self.Value = initial;
+        self.Lock = 0;
+    }
+
+    fn i1024[min max] Load(borrow AtomicI1024 self);
+    fn void Store(mut borrow AtomicI1024 self, i1024[min max] value);
+    fn i1024[min max] Add(mut borrow AtomicI1024 self, i1024[min max] operand);
+    fn i1024[min max] Sub(mut borrow AtomicI1024 self, i1024[min max] operand);
+    fn i1024[min max] And(mut borrow AtomicI1024 self, i1024[min max] operand);
+    fn i1024[min max] Or(mut borrow AtomicI1024 self, i1024[min max] operand);
+    fn i1024[min max] Xor(mut borrow AtomicI1024 self, i1024[min max] operand);
+    fn i1024[min max] Exchange(mut borrow AtomicI1024 self, i1024[min max] value);
+    fn bool CompareExchange(mut borrow AtomicI1024 self, i1024[min max] expected, i1024[min max] desired);
+}
+
+public struct AtomicU192
+{
+    internal u192[0 max] Value;
+    internal u32[0 max] Lock;
+
+    AtomicU192(u192[0 max] initial)
+    {
+        self.Value = initial;
+        self.Lock = 0;
+    }
+
+    fn u192[0 max] Load(borrow AtomicU192 self);
+    fn void Store(mut borrow AtomicU192 self, u192[0 max] value);
+    fn u192[0 max] Add(mut borrow AtomicU192 self, u192[0 max] operand);
+    fn u192[0 max] Sub(mut borrow AtomicU192 self, u192[0 max] operand);
+    fn u192[0 max] And(mut borrow AtomicU192 self, u192[0 max] operand);
+    fn u192[0 max] Or(mut borrow AtomicU192 self, u192[0 max] operand);
+    fn u192[0 max] Xor(mut borrow AtomicU192 self, u192[0 max] operand);
+    fn u192[0 max] Exchange(mut borrow AtomicU192 self, u192[0 max] value);
+    fn bool CompareExchange(mut borrow AtomicU192 self, u192[0 max] expected, u192[0 max] desired);
+}
+
+public struct AtomicU256
+{
+    internal u256[0 max] Value;
+    internal u32[0 max] Lock;
+
+    AtomicU256(u256[0 max] initial)
+    {
+        self.Value = initial;
+        self.Lock = 0;
+    }
+
+    fn u256[0 max] Load(borrow AtomicU256 self);
+    fn void Store(mut borrow AtomicU256 self, u256[0 max] value);
+    fn u256[0 max] Add(mut borrow AtomicU256 self, u256[0 max] operand);
+    fn u256[0 max] Sub(mut borrow AtomicU256 self, u256[0 max] operand);
+    fn u256[0 max] And(mut borrow AtomicU256 self, u256[0 max] operand);
+    fn u256[0 max] Or(mut borrow AtomicU256 self, u256[0 max] operand);
+    fn u256[0 max] Xor(mut borrow AtomicU256 self, u256[0 max] operand);
+    fn u256[0 max] Exchange(mut borrow AtomicU256 self, u256[0 max] value);
+    fn bool CompareExchange(mut borrow AtomicU256 self, u256[0 max] expected, u256[0 max] desired);
+}
+
+public struct AtomicU384
+{
+    internal u384[0 max] Value;
+    internal u32[0 max] Lock;
+
+    AtomicU384(u384[0 max] initial)
+    {
+        self.Value = initial;
+        self.Lock = 0;
+    }
+
+    fn u384[0 max] Load(borrow AtomicU384 self);
+    fn void Store(mut borrow AtomicU384 self, u384[0 max] value);
+    fn u384[0 max] Add(mut borrow AtomicU384 self, u384[0 max] operand);
+    fn u384[0 max] Sub(mut borrow AtomicU384 self, u384[0 max] operand);
+    fn u384[0 max] And(mut borrow AtomicU384 self, u384[0 max] operand);
+    fn u384[0 max] Or(mut borrow AtomicU384 self, u384[0 max] operand);
+    fn u384[0 max] Xor(mut borrow AtomicU384 self, u384[0 max] operand);
+    fn u384[0 max] Exchange(mut borrow AtomicU384 self, u384[0 max] value);
+    fn bool CompareExchange(mut borrow AtomicU384 self, u384[0 max] expected, u384[0 max] desired);
+}
+
+public struct AtomicU512
+{
+    internal u512[0 max] Value;
+    internal u32[0 max] Lock;
+
+    AtomicU512(u512[0 max] initial)
+    {
+        self.Value = initial;
+        self.Lock = 0;
+    }
+
+    fn u512[0 max] Load(borrow AtomicU512 self);
+    fn void Store(mut borrow AtomicU512 self, u512[0 max] value);
+    fn u512[0 max] Add(mut borrow AtomicU512 self, u512[0 max] operand);
+    fn u512[0 max] Sub(mut borrow AtomicU512 self, u512[0 max] operand);
+    fn u512[0 max] And(mut borrow AtomicU512 self, u512[0 max] operand);
+    fn u512[0 max] Or(mut borrow AtomicU512 self, u512[0 max] operand);
+    fn u512[0 max] Xor(mut borrow AtomicU512 self, u512[0 max] operand);
+    fn u512[0 max] Exchange(mut borrow AtomicU512 self, u512[0 max] value);
+    fn bool CompareExchange(mut borrow AtomicU512 self, u512[0 max] expected, u512[0 max] desired);
+}
+
+public struct AtomicU768
+{
+    internal u768[0 max] Value;
+    internal u32[0 max] Lock;
+
+    AtomicU768(u768[0 max] initial)
+    {
+        self.Value = initial;
+        self.Lock = 0;
+    }
+
+    fn u768[0 max] Load(borrow AtomicU768 self);
+    fn void Store(mut borrow AtomicU768 self, u768[0 max] value);
+    fn u768[0 max] Add(mut borrow AtomicU768 self, u768[0 max] operand);
+    fn u768[0 max] Sub(mut borrow AtomicU768 self, u768[0 max] operand);
+    fn u768[0 max] And(mut borrow AtomicU768 self, u768[0 max] operand);
+    fn u768[0 max] Or(mut borrow AtomicU768 self, u768[0 max] operand);
+    fn u768[0 max] Xor(mut borrow AtomicU768 self, u768[0 max] operand);
+    fn u768[0 max] Exchange(mut borrow AtomicU768 self, u768[0 max] value);
+    fn bool CompareExchange(mut borrow AtomicU768 self, u768[0 max] expected, u768[0 max] desired);
+}
+
+public struct AtomicU1024
+{
+    internal u1024[0 max] Value;
+    internal u32[0 max] Lock;
+
+    AtomicU1024(u1024[0 max] initial)
+    {
+        self.Value = initial;
+        self.Lock = 0;
+    }
+
+    fn u1024[0 max] Load(borrow AtomicU1024 self);
+    fn void Store(mut borrow AtomicU1024 self, u1024[0 max] value);
+    fn u1024[0 max] Add(mut borrow AtomicU1024 self, u1024[0 max] operand);
+    fn u1024[0 max] Sub(mut borrow AtomicU1024 self, u1024[0 max] operand);
+    fn u1024[0 max] And(mut borrow AtomicU1024 self, u1024[0 max] operand);
+    fn u1024[0 max] Or(mut borrow AtomicU1024 self, u1024[0 max] operand);
+    fn u1024[0 max] Xor(mut borrow AtomicU1024 self, u1024[0 max] operand);
+    fn u1024[0 max] Exchange(mut borrow AtomicU1024 self, u1024[0 max] value);
+    fn bool CompareExchange(mut borrow AtomicU1024 self, u1024[0 max] expected, u1024[0 max] desired);
+}
