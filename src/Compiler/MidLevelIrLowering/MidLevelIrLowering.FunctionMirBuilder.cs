@@ -3248,11 +3248,18 @@ internal sealed partial class MidLevelIrLowerer
             EnsureGoto(conditionBlock.Id);
 
             CurrentBlock = conditionBlock;
+
+            // Lower the condition BEFORE attaching the loop branch: short-circuit
+            // conditions (&&/||) create their own evaluation blocks and leave the
+            // condition value in their join block, so the branch must terminate
+            // whatever block is current once the value exists — not the block the
+            // condition evaluation started in.
+            var loopCondition = LowerExpressionToOperand(whileStatement.expression(), StarkTypeSymbols.Bool);
             CurrentBlock.Terminator = new MidLevelIrTerminator(
                 MidLevelIrTerminatorKind.Branch,
                 [bodyBlock.Id, exitBlock.Id],
                 ConditionText: whileStatement.expression().GetText(),
-                Condition: LowerExpressionToOperand(whileStatement.expression(), StarkTypeSymbols.Bool));
+                Condition: loopCondition);
 
             _loops.Push(new LoopTargets(
                 conditionBlock.Id,
@@ -3439,11 +3446,15 @@ internal sealed partial class MidLevelIrLowerer
                 CurrentBlock = conditionBlock;
                 if (forStatement.forCondition() is { } condition)
                 {
+                    // Lower the condition BEFORE attaching the loop branch (see
+                    // LowerWhile): short-circuit conditions leave their value in a
+                    // join block that must receive this terminator.
+                    var loopCondition = LowerExpressionToOperand(condition.expression(), StarkTypeSymbols.Bool);
                     CurrentBlock.Terminator = new MidLevelIrTerminator(
                         MidLevelIrTerminatorKind.Branch,
                         [bodyBlock.Id, exitBlock.Id],
                         ConditionText: condition.expression().GetText(),
-                        Condition: LowerExpressionToOperand(condition.expression(), StarkTypeSymbols.Bool));
+                        Condition: loopCondition);
                 }
                 else
                 {
@@ -8221,6 +8232,16 @@ internal sealed partial class MidLevelIrLowerer
                 var indirectArgumentAddress = receiverPlace is { Path.Count: > 0 }
                     ? ResolveIndirectArgumentAddress(receiverParameterType, receiverPlace)
                     : null;
+
+                // A method call on a global passes the global's own address as the
+                // borrowed receiver — never a temporary copy of its value. Mutating
+                // methods (atomics especially) rely on `self` aliasing the global's
+                // storage.
+                indirectArgumentAddress ??= receiver is MidLevelIrGlobalOperand globalReceiver
+                    && CanUseOperandAsIndirectArgumentSource(receiverParameterType, receiver.Type)
+                        ? CreateAddressOfGlobal(globalReceiver.Name, ProjectRootType(receiver))
+                        : null;
+
                 var indirectArgumentLocal = indirectArgumentAddress is null
                     ? ResolveIndirectArgumentLocal(receiverParameterType, receiver)
                         ?? ResolveIndirectArgumentLocal(receiverParameterType, receiverOperand)
