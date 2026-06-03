@@ -530,7 +530,7 @@ Public modules:
 - `System.Runtime.Buffer`: fixed and dynamic byte buffers
 - `System.Testing`: simple assertion/status helpers
 - `System.Text`: owned text, encoding conversion, parsing, formatting
-- `System.Threading`: threads, joins, detach, yield, sleep
+- `System.Threading`: threads, joins, detach, yield, sleep; atomic types (`AtomicBool`, `AtomicI8`…`AtomicI1024`, `AtomicU8`…`AtomicU1024`) for safe seq-cst shared state between threads
 
 For exact public standard-library signatures, read [`references/standard-library-signatures.md`](references/standard-library-signatures.md). It is generated from `stdlib/src/System` and bundled with this skill.
 

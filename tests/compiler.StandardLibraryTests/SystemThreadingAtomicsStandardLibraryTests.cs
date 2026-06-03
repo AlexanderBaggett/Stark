@@ -541,6 +541,139 @@ public sealed class SystemThreadingAtomicsStandardLibraryTests : StandardLibrary
         AssertCasLoopsOnlyInArithmeticBuiltins(llvm);
     }
 
+    [Fact]
+    public async Task PackagedStdLibAtomicsWorkWithoutSource()
+    {
+        // AT07 (doc 12): atomics must be fully usable from the packaged stdlib — the
+        // package image carries the atomic struct types and their builtin method
+        // signatures, and the consuming module's compiler recognizes and lowers them
+        // without any stdlib source available.
+        if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo)
+            || OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var threadingPath = Path.Combine(sourceRoot, "System", "Threading.stark");
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-stdlib-atomics-pkg-");
+        var packageDirectory = Path.Combine(tempDirectory.FullName, "packages");
+        var appDirectory = Path.Combine(tempDirectory.FullName, "app");
+        Directory.CreateDirectory(packageDirectory);
+        Directory.CreateDirectory(appDirectory);
+
+        var libraryPath = Path.Combine(packageDirectory, "libSystem.Threading.a");
+        var appPath = Path.Combine(appDirectory, "App.stark");
+        var outputPath = Path.Combine(appDirectory, "app");
+
+        try
+        {
+            var buildStdout = new StringWriter();
+            var buildStderr = new StringWriter();
+            var buildExitCode = await CompilerCli.RunAsync(
+                [threadingPath, "--emit-lib", "-I", sourceRoot, "-o", libraryPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                buildStdout,
+                buildStderr);
+
+            Assert.True(
+                buildExitCode == 0,
+                buildStdout + Environment.NewLine + buildStderr);
+
+            // One type per tier, threads from the same package: a tier-1 counter,
+            // a tier-2 container value, and a tier-3 embedded-lock value.
+            await File.WriteAllTextAsync(
+                appPath,
+                """
+                import System.Threading
+                module App
+
+                static mut System.Threading.AtomicI64 Counter64 = new System.Threading.AtomicI64(0);
+                static mut System.Threading.AtomicI24 Counter24 = new System.Threading.AtomicI24(0);
+                static mut System.Threading.AtomicI256 Counter256 = new System.Threading.AtomicI256(0);
+
+                fn i32[min max] Worker()
+                {
+                    stack mut i32[min max] i = 0;
+                    while willexit (i < 10000)
+                    {
+                        Counter64.Add(1);
+                        Counter24.Add(1);
+                        Counter256.Add(1);
+                        i += 1;
+                    }
+
+                    return 0;
+                }
+
+                export fn i32[min max] main()
+                {
+                    stack mut Thread a = new(Worker);
+                    stack mut Thread b = new(Worker);
+                    a.Join();
+                    b.Join();
+
+                    if (Counter64.Load() != 20000)
+                    {
+                        return 1;
+                    }
+
+                    if (Counter24.Load() != 20000)
+                    {
+                        return 2;
+                    }
+
+                    if (Counter256.Load() != 20000)
+                    {
+                        return 3;
+                    }
+
+                    if (!Counter64.CompareExchange(20000, 7))
+                    {
+                        return 4;
+                    }
+
+                    if (Counter64.Load() != 7)
+                    {
+                        return 5;
+                    }
+
+                    return 0;
+                }
+                """);
+
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            var exitCode = await CompilerCli.RunAsync(
+                [appPath, "--emit-exe", "-I", packageDirectory, "-o", outputPath, "--target", targetInfo.Triple],
+                new StringReader(string.Empty),
+                stdout,
+                stderr);
+
+            Assert.True(
+                exitCode == 0,
+                stdout + Environment.NewLine + stderr);
+            Assert.True(File.Exists(outputPath));
+
+            var execution = await RunProcessWithUtf8StdinAsync(outputPath, appDirectory, string.Empty);
+            Assert.Equal(string.Empty, execution.Stdout);
+            Assert.Equal(string.Empty, execution.Stderr);
+            Assert.Equal(0, execution.ExitCode);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
     private static void AssertCasLoopsOnlyInArithmeticBuiltins(string llvm)
     {
         string? currentAtomicBuiltin = null;

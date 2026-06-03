@@ -19,7 +19,7 @@ Generated from `stdlib/src/System` public modules. This reference lists public t
 - `System.Runtime.Buffer`: fixed and dynamic byte buffers with read/write cursors and slices.
 - `System.Testing`: test assertions and failure status helpers.
 - `System.Text`: owned ASCII/Unicode/UTF-16 text, conversions, formatting, and encoding results.
-- `System.Threading`: thread handles, thread start/join/detach, yield, and sleep.
+- `System.Threading`: thread handles, thread start/join/detach, yield, sleep, and atomic types for every integer width plus bool (seq-cst shared state).
 
 ## Public API Signatures
 
@@ -1043,6 +1043,10 @@ Public types:
 - `enum ThreadStatus`
 - `enum ThreadJoinResult`
 - `struct Thread`
+- `struct AtomicBool`
+- `struct AtomicI8` … `struct AtomicI1024` and `struct AtomicU8` … `struct AtomicU1024`
+  (one atomic struct per Stark integer width: 8, 16, 24, 32, 48, 64, 96, 128, 192,
+  256, 384, 512, 768, 1024)
 
 Top-level functions:
 
@@ -1061,4 +1065,30 @@ fn ThreadJoinResult Join(mut borrow Thread self);
 fn ThreadStatus Detach(mut borrow Thread self);
 static fn void Yield();
 static fn void SleepMilliseconds(u64[0 2 ** 63 - 1] milliseconds);
+```
+
+`AtomicI64` (the same shape repeats for every `AtomicI*`/`AtomicU*` width; all
+operations are seq-cst; RMW operations return the previous value; `Add`/`Sub` wrap)
+
+```stark
+AtomicI64(i64[min max] initial);
+fn i64[min max] Load(borrow AtomicI64 self);
+fn void Store(mut borrow AtomicI64 self, i64[min max] value);
+fn i64[min max] Add(mut borrow AtomicI64 self, i64[min max] operand);
+fn i64[min max] Sub(mut borrow AtomicI64 self, i64[min max] operand);
+fn i64[min max] And(mut borrow AtomicI64 self, i64[min max] operand);
+fn i64[min max] Or(mut borrow AtomicI64 self, i64[min max] operand);
+fn i64[min max] Xor(mut borrow AtomicI64 self, i64[min max] operand);
+fn i64[min max] Exchange(mut borrow AtomicI64 self, i64[min max] value);
+fn bool CompareExchange(mut borrow AtomicI64 self, i64[min max] expected, i64[min max] desired);
+```
+
+`AtomicBool`
+
+```stark
+AtomicBool(bool initial);
+fn bool Load(borrow AtomicBool self);
+fn void Store(mut borrow AtomicBool self, bool value);
+fn bool Exchange(mut borrow AtomicBool self, bool value);
+fn bool CompareExchange(mut borrow AtomicBool self, bool expected, bool desired);
 ```

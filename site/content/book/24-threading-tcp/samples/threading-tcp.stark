@@ -4,9 +4,50 @@ import System.Runtime.Buffer
 import System.Threading
 module Book.Stdlib.ThreadingTcp
 
+static mut System.Threading.AtomicI64 SharedCounter = new System.Threading.AtomicI64(0);
+static mut System.Threading.AtomicBool SharedReady = new System.Threading.AtomicBool(false);
+
 fn i32[min max] Worker()
 {
     return 7;
+}
+
+fn i32[min max] CountingWorker()
+{
+    stack mut i32[min max] i = 0;
+    while willexit (i < 1000)
+    {
+        SharedCounter.Add(1);
+        i += 1;
+    }
+
+    SharedReady.Store(true);
+    return 0;
+}
+
+fn bool AtomicSharingShapeWorks()
+{
+    stack mut Thread first = new(CountingWorker);
+    stack mut Thread second = new(CountingWorker);
+    first.Join();
+    second.Join();
+
+    if (SharedCounter.Load() != 2000)
+    {
+        return false;
+    }
+
+    if (!SharedReady.Load())
+    {
+        return false;
+    }
+
+    if (!SharedCounter.CompareExchange(2000, 0))
+    {
+        return false;
+    }
+
+    return SharedCounter.Load() == 0;
 }
 
 finite law bool JoinResultIs(ThreadJoinResult result, i32[min max] expected)
@@ -108,14 +149,19 @@ export fn i32[min max] main()
         return 1;
     }
 
-    if (!EndpointShapeWorks())
+    if (!AtomicSharingShapeWorks())
     {
         return 2;
     }
 
-    if (!TcpBufferShapesWorkOnClosedClient())
+    if (!EndpointShapeWorks())
     {
         return 3;
+    }
+
+    if (!TcpBufferShapesWorkOnClosedClient())
+    {
+        return 4;
     }
 
     return 0;

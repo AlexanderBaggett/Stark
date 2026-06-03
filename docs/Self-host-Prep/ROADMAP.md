@@ -189,12 +189,12 @@ the dist stdlib — are `try`-propagatable exactly like source imports.
 - [ ] **S13** — TOML parser/emitter (`Stark.toml`, `Stark.solution.toml`, user config) — *blocker* — → `02`, OQ-10
 - [ ] **S14** — JSON parser/emitter (`.starkpkg.json`) — *blocker unless format changes* — → `02`, OQ-09
 - [ ] **S15** — time/stopwatch (pass durations, metrics) — *parity* — → `02`
-- [~] **S16** — threading/sync primitives (mutex/once/atomics/channels) — *workaround for single-threaded v1* — **atomics design locked + in progress (doc `12`, AT01–AT08 below)**; mutex/once/channels deferred (build on atomics + existing platform futex; their safety rules consume the doc `14` thread-safety laws once locked) — → `02`, `12`, `14`, OQ-11
+- [~] **S16** — threading/sync primitives (mutex/once/atomics/channels) — *workaround for single-threaded v1* — **atomics shipped (doc `12`, AT01–AT08 below: all 29 types, 3 lowering tiers, runtime/emission/package tests)**; mutex/once/channels deferred (build on atomics + existing platform futex; their safety rules consume the doc `14` thread-safety laws once locked) — → `02`, `12`, `14`, OQ-11
 - [ ] **S17** — allocator/arena/shared-ownership strategy for IR graphs — *blocker* — → `02`, OQ-16
 - [ ] **S18** — testing/golden/snapshot support (see M0) — *blocker* — → `02`
 - [ ] **S19** _ File IO conveniences functions mirror .Net System.File api surface such as WriteAllLines, ReadAllLines
 
-### Atomics (first slice of S16)  → `12`
+### Atomics (first slice of S16, shipped)  → `12`
 
 Safe shared state for the threads Stark already ships. Locked design: atomic **data
 types** (never a keyword qualifier) covering **every Stark integer width** (i8…i1024,
@@ -204,14 +204,20 @@ instructions (8–64 bit), lock-free CAS loops (24/48/96/128), embedded spinlock
 (192–1024; visible in `sizeof`, never a hidden lock table). Not required for
 self-hosting — this is shipped-surface hardening.
 
-- [ ] **AT01** — stdlib type surface: `AtomicBool` + 28 integer atomic types in `System.Threading` — → `12`
-- [ ] **AT02** — intrinsic recognition + LLVM lowering, tier 1 (8/16/32/64): single `atomicrmw`/`cmpxchg`/`load atomic`/`store atomic` — → `12`
-- [ ] **AT03** — tier 2 lowering (24/48/96/128): CAS loops on power-of-2 storage containers — → `12`
-- [ ] **AT04** — tier 3 lowering (192–1024): embedded-spinlock layout + serialized ops — → `12`
-- [ ] **AT05** — runtime tests: multi-threaded exact-count increments per tier, CAS contention, `AtomicBool` flag pattern — → `12`
-- [ ] **AT06** — LLVM emission tests: tier-1 single-instruction guarantees, tier-3 lock-word layout — → `12`
-- [ ] **AT07** — dist stdlib rebuild + package-image verification — → `12`
-- [ ] **AT08** — user-facing docs: stdlib reference, LanguageReference/SKILL, book Ch24 safe-sharing section, doc sync — → `12`
+- [x] **AT01** — stdlib type surface: `AtomicBool` + 28 integer atomic types in `System.Threading` — → `12`
+- [x] **AT02** — intrinsic recognition + LLVM lowering, tier 1 (8/16/32/64): single `atomicrmw`/`cmpxchg`/`load atomic`/`store atomic` — → `12`
+- [x] **AT03** — tier 2 lowering (24/48/96/128): CAS loops on power-of-2 storage containers (canonical-extension invariant: only Add/Sub need the loop; everything else stays single-instruction) — → `12`
+- [x] **AT04** — tier 3 lowering (192–1024): embedded-spinlock layout + serialized ops — → `12`
+- [x] **AT05** — runtime tests: multi-threaded exact-count increments per tier, CAS contention, `AtomicBool` flag pattern — → `12`
+- [x] **AT06** — LLVM emission tests: tier-1 single-instruction guarantees, tier-3 lock-word layout — → `12`
+- [x] **AT07** — dist stdlib rebuild + package-image verification — → `12`
+- [x] **AT08** — user-facing docs: stdlib reference, LanguageReference/SKILL, book Ch24 safe-sharing section, doc sync — → `12`
+
+Implementation also fixed three general compiler gaps the atomics work exposed (all
+in doc `12` §6.1): `while`/`for` conditions with `&&`/`||` were miscompiled to
+`br i1 undef`; method calls on `static mut` globals operated on a copy instead of
+the global; static initializers could not call explicit constructors (now
+compile-time traced, per doc `13` comptime semantics).
 
 ## M4 — Close tooling blockers  → `03`, `ToolchainPackagingRoadmap.md`
 

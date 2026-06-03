@@ -184,7 +184,92 @@ fn bool RunWorker()
 }
 ```
 
-## Step 3: Create Network Values Explicitly
+## Step 3: Share State Between Threads With Atomics
+
+Threads that never share state only communicate through their exit codes. The
+moment two threads need to see the same counter, flag, or value, use the atomic
+types — they are the only safe way to share mutable state between threads.
+
+`System.Threading` has one atomic type per integer width (`AtomicI8` through
+`AtomicI1024`, `AtomicU8` through `AtomicU1024`) plus `AtomicBool`. Every
+operation is one indivisible, sequentially-consistent action; there is no way to
+write a racy read-modify-write through this API.
+
+Shared atomics live in `static mut` module state. Module-level declarations
+spell out the qualified type name:
+
+```stark
+static mut System.Threading.AtomicI64 SharedCounter = new System.Threading.AtomicI64(0);
+static mut System.Threading.AtomicBool SharedReady = new System.Threading.AtomicBool(false);
+```
+
+Workers update shared state through the atomic operations, never through plain
+assignment:
+
+```stark
+fn i32[min max] CountingWorker()
+{
+    stack mut i32[min max] i = 0;
+    while willexit (i < 1000)
+    {
+        SharedCounter.Add(1);
+        i += 1;
+    }
+
+    SharedReady.Store(true);
+    return 0;
+}
+```
+
+`Add` returns the *previous* value and is one atomic instruction: two threads
+running this loop produce exactly 2000, every run. After both workers join, the
+main thread reads the results:
+
+```stark
+fn bool AtomicSharingShapeWorks()
+{
+    stack mut Thread first = new(CountingWorker);
+    stack mut Thread second = new(CountingWorker);
+    first.Join();
+    second.Join();
+
+    if (SharedCounter.Load() != 2000)
+    {
+        return false;
+    }
+
+    if (!SharedReady.Load())
+    {
+        return false;
+    }
+
+    if (!SharedCounter.CompareExchange(2000, 0))
+    {
+        return false;
+    }
+
+    return SharedCounter.Load() == 0;
+}
+```
+
+The operation set is the same on every atomic type:
+
+- `Load()` / `Store(value)` — read or replace the value.
+- `Add` / `Sub` / `And` / `Or` / `Xor` — read-modify-write; each returns the
+  **previous** value. `Add`/`Sub` wrap at the value's width.
+- `Exchange(value)` — replace and return the previous value.
+- `CompareExchange(expected, desired)` — replace only if the current value is
+  `expected`; returns whether the swap happened.
+
+`AtomicBool` works as a ready/shutdown flag: one thread publishes data through
+atomics, then stores `true`; other threads check the flag before reading.
+
+Cost model: 8/16/32/64-bit atomics and `AtomicBool` are single hardware
+instructions. 24/48/96/128-bit atomics stay lock-free (only `Add`/`Sub` may
+retry under contention). 192-bit and wider serialize through a small lock
+embedded in the struct itself — visible in `sizeof`, never hidden global state.
+
+## Step 4: Create Network Values Explicitly
 
 `System.Net` defines `IPv4Address`, `IPv4Endpoint`, and shared network
 result/status types. `System.Net.Tcp` adds blocking TCP clients and listeners.
@@ -298,7 +383,7 @@ switch (listening)
 }
 ```
 
-## Step 4: Read And Write Through Safe Slices
+## Step 5: Read And Write Through Safe Slices
 
 TCP read/write uses safe Stark slices:
 
@@ -370,7 +455,7 @@ stack TcpListener listener = new();
 return !listener.IsOpen();
 ```
 
-## Step 5: Use Buffers, Vectored IO, And Wait Helpers When They Match The Work
+## Step 6: Use Buffers, Vectored IO, And Wait Helpers When They Match The Work
 
 Use a fixed byte buffer when the receive size is bounded and should stay in the
 owning value:
@@ -463,11 +548,11 @@ if (NetOk(listener.WaitReadable(1000)))
 }
 ```
 
-## Step 6: Stay Inside The Supported Threading Slice
+## Step 7: Stay Inside The Supported Threading Slice
 
-This chapter teaches threads, joins, detach, sleep/yield, and blocking TCP. Keep
-tutorial code inside that set unless the chapter is deliberately naming an API
-that does not exist yet.
+This chapter teaches threads, joins, detach, sleep/yield, atomics, and blocking
+TCP. Keep tutorial code inside that set unless the chapter is deliberately
+naming an API that does not exist yet.
 
 Do not write tutorial examples that depend on:
 
@@ -478,7 +563,7 @@ Do not write tutorial examples that depend on:
 - async/await
 - non-blocking socket event loops
 
-Keep shared mutable state out of examples unless the sharing mechanism is
-explicit and documented. That keeps the lesson honest: readers learn the APIs
+When examples share mutable state between threads, share it through the atomic
+types and nothing else. That keeps the lesson honest: readers learn the APIs
 that exist today, and they do not mistake absent synchronization types for
 hidden runtime behavior.
