@@ -24,6 +24,7 @@ across all docs, so an agent can jump to the detail doc for full context.
 `11` error-value propagation `try`/`from` (EP*) ·
 `12` atomics (AT*; full thread-ownership model parked in git history) ·
 `13` compile-time evaluation `comptime` (CT*, design proposal — awaiting lock) ·
+`14` thread-safety laws `Transferable`/`Shareable` (TS*, design proposal — awaiting lock) ·
 `SelfHostingRoadmap.md` (capability rationale) ·
 `ToolchainPackagingRoadmap.md` (release/packaging detail) ·
 `docs/Internals/CompilerPipeline.md` (pass list) ·
@@ -102,7 +103,7 @@ Port helpers first, then text-only tests, then artifact tests, then integration.
 - [x] **L07** — compiler invariant-failure policy — *blocker* — **closed without adding panic/trap/assert (OQ-05 resolved):** invalid states are made unrepresentable instead. New language guarantees: **switch exhaustiveness (STK3044)** — every `switch` covers its whole domain (all enum variants / both bools / every value of a ranged integer) or has `default`; **definite return (STK3045)** — non-`void` functions must return on every path. These remove the silent runtime-trap and fall-off-the-end-UB paths. Port convention for host `throw` sites documented in doc `09` Error Model (restructure → exhaustive types → `Result`+`try` → stderr+`Process.Exit` residual) — → `01`, `09`, OQ-05
 - [ ] **L08** — raw/multiline string literal ergonomics for compiler text — *workaround exists* — → `01`
 - [ ] **L09** — general compile-time function evaluation / table generation — *workaround exists* — **design proposal in doc `13`** (C3 model: `comptime` blocks/expressions as a time selector over ordinary Stark; only new rules are the step budget + input availability). Module-scope semantics locked (const/static initializers are implicit comptime contexts; no free-standing blocks); CT01–CT08 + remaining OQ-CT* await full design lock — → `01`, `13`
-- [ ] **L10** — async / build-driver concurrency replacement — *workaround exists* — **verified non-blocking for self-hosting:** the host compiler is functionally single-threaded (zero parallelism; `async` is sequential I/O idiom), so the synchronous port is behaviorally identical. Full thread-ownership model parked (git history, doc 12 pre-atomics revision + `stark-thread-safety-laws.md` draft); revisit post-self-hosting for parallel builds — → `01`, OQ-11
+- [ ] **L10** — async / build-driver concurrency replacement — *workaround exists* — **verified non-blocking for self-hosting:** the host compiler is functionally single-threaded (zero parallelism; `async` is sequential I/O idiom), so the synchronous port is behaviorally identical. Full thread-ownership model parked (git history, doc 12 pre-atomics revision); its language-side prerequisite — the `Transferable`/`Shareable` thread-safety laws — is specified in doc `14` (TS*, awaiting lock); revisit post-self-hosting for parallel builds — → `01`, `14`, OQ-11
 - [ ] **L11** — nullability / optional-value conventions (no safe nulls) — *blocker* — → `01`, OQ-06
 - [ ] **L12** — partial/nested/generated type layout ergonomics — *workaround exists* — → `01`
 - [ ] **L13** — alias/noalias proof carriers + wrong-alias compile-time diagnostics — *blocker* — → `01`, OQ-17
@@ -188,7 +189,7 @@ the dist stdlib — are `try`-propagatable exactly like source imports.
 - [ ] **S13** — TOML parser/emitter (`Stark.toml`, `Stark.solution.toml`, user config) — *blocker* — → `02`, OQ-10
 - [ ] **S14** — JSON parser/emitter (`.starkpkg.json`) — *blocker unless format changes* — → `02`, OQ-09
 - [ ] **S15** — time/stopwatch (pass durations, metrics) — *parity* — → `02`
-- [~] **S16** — threading/sync primitives (mutex/once/atomics/channels) — *workaround for single-threaded v1* — **atomics design locked + in progress (doc `12`, AT01–AT08 below)**; mutex/once/channels deferred (build on atomics + existing platform futex) — → `02`, `12`, OQ-11
+- [~] **S16** — threading/sync primitives (mutex/once/atomics/channels) — *workaround for single-threaded v1* — **atomics design locked + in progress (doc `12`, AT01–AT08 below)**; mutex/once/channels deferred (build on atomics + existing platform futex; their safety rules consume the doc `14` thread-safety laws once locked) — → `02`, `12`, `14`, OQ-11
 - [ ] **S17** — allocator/arena/shared-ownership strategy for IR graphs — *blocker* — → `02`, OQ-16
 - [ ] **S18** — testing/golden/snapshot support (see M0) — *blocker* — → `02`
 - [ ] **S19** _ File IO conveniences functions mirror .Net System.File api surface such as WriteAllLines, ReadAllLines
