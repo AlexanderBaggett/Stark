@@ -168,6 +168,10 @@ internal sealed partial class LlvmFunctionBodyEmitter
         {
             callPrefixSegments.Add("fastcc");
         }
+        else if (StarkFfiAbiFacts.LlvmCallingConventionName(abiCallee.FfiAbi) is { } callingConvention)
+        {
+            callPrefixSegments.Add(callingConvention);
+        }
 
         var callPrefix = string.Join(" ", callPrefixSegments);
         var strictFpCallSuffix = GetStrictFpCallSuffix();
@@ -205,6 +209,19 @@ internal sealed partial class LlvmFunctionBodyEmitter
         if (resultName is null || result is null)
         {
             AppendLine($"  {callPrefix} {RenderCallResultType(abiCallee)} {callTarget}({renderedArguments}){strictFpCallSuffix}{callMetadataSuffix}");
+            return;
+        }
+
+        if (CAbiAggregateClassifier.IsCarrierType(abiCallee.SourceReturnType, abiCallee.LlvmReturnType))
+        {
+            var carrierResult = $"%{EscapeIdentifier(CreateAbiTempName("ffi_ret_carrier"))}";
+            AppendLine($"  {carrierResult} = {callPrefix} {RenderCallResultType(abiCallee)} {callTarget}({renderedArguments}){strictFpCallSuffix}{callMetadataSuffix}");
+            MaterializeSourceValueFromCAbiCarrier(
+                carrierResult,
+                abiCallee.LlvmReturnType,
+                sourceReturnType,
+                resultName,
+                "ffi_ret");
             return;
         }
 
@@ -1009,7 +1026,14 @@ internal sealed partial class LlvmFunctionBodyEmitter
             callPrefixSegments.Add("fast");
         }
 
-        callPrefixSegments.Add("fastcc");
+        if (abiCallee.UsesFastCallingConvention)
+        {
+            callPrefixSegments.Add("fastcc");
+        }
+        else if (StarkFfiAbiFacts.LlvmCallingConventionName(abiCallee.FfiAbi) is { } callingConvention)
+        {
+            callPrefixSegments.Add(callingConvention);
+        }
         var callPrefix = string.Join(" ", callPrefixSegments);
         var renderedArguments = string.Join(", ", arguments);
         var strictFpCallSuffix = GetStrictFpCallSuffix();
@@ -1054,6 +1078,19 @@ internal sealed partial class LlvmFunctionBodyEmitter
         if (resultName is null || result is null)
         {
             AppendLine($"  {callPrefix} {RenderCallResultType(abiCallee)} {FormatValue(call.Target)}({renderedArguments}){callSiteAttributeSuffix}{strictFpCallSuffix}{calleesMetadataSuffix}{callMetadataSuffix}");
+            return;
+        }
+
+        if (CAbiAggregateClassifier.IsCarrierType(abiCallee.SourceReturnType, abiCallee.LlvmReturnType))
+        {
+            var carrierResult = $"%{EscapeIdentifier(CreateAbiTempName("indirect_ffi_ret_carrier"))}";
+            AppendLine($"  {carrierResult} = {callPrefix} {RenderCallResultType(abiCallee)} {FormatValue(call.Target)}({renderedArguments}){callSiteAttributeSuffix}{strictFpCallSuffix}{calleesMetadataSuffix}{callMetadataSuffix}");
+            MaterializeSourceValueFromCAbiCarrier(
+                carrierResult,
+                abiCallee.LlvmReturnType,
+                sourceReturnType,
+                resultName,
+                "indirect_ffi_ret");
             return;
         }
 
@@ -1579,15 +1616,20 @@ internal sealed partial class LlvmFunctionBodyEmitter
                         index)))
                 .ToArray(),
             Kind: call.Target.Type.FunctionPointerKind ?? StarkFunctionKind.Fn,
+            FfiAbi: call.Target.Type.FunctionPointerAbi,
             DisjointParameterGroups: call.Target.Type.FunctionPointerDisjointParameterGroups ?? [],
             OverlapParameterGroups: call.Target.Type.FunctionPointerOverlapParameterGroups ?? [],
             SameParameterGroups: call.Target.Type.FunctionPointerSameParameterGroups ?? []);
+        var isFfi = call.Target.Type.FunctionPointerAbi is not null;
         return LlvmSpecializationEmissionPlanner.BuildSyntheticAbiSignature(
             signature,
             "$indirect",
-            isFfi: false,
+            isFfi,
             _context.TypeModel.NamedTypes,
-            _context.EnumLayouts);
+            _context.EnumLayouts,
+            ffiAbi: call.Target.Type.FunctionPointerAbi,
+            targetInfo: _context.TargetInfo,
+            publishedConcreteLayouts: _publishedConcreteLayouts);
     }
 
     private static IReadOnlyDictionary<string, ParameterMemoryEffectSummary>? BuildIndirectCallParameterEffects(

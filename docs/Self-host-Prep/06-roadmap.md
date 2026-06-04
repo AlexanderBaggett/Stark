@@ -41,7 +41,7 @@ self-hosted compiler can build itself and pass the ported tests.
 | Field | Details |
 |---|---|
 | Entry Criteria | M1 has enough tests to guard feature changes; open decisions OQ-02 through OQ-08 have accepted directions. |
-| Work | Resolve L01, L06, L07, L11, L13, and T01. Decide whether L02-L05/L08-L12 are language work or port conventions. Preserve Stark terminology and contracts: finite, law, borrow, retborrow, storeborrow, doctrine, range-typed integers, memory contracts. |
+| Work | Resolve L01, L06, L07, L11, L13, and T01. Decide whether L02-L05 and L09-L12 are language work or port conventions. L08 source-literal syntax has landed; S02/S03 still track Stark-side text helpers. Preserve Stark terminology and contracts: finite, law, borrow, retborrow, storeborrow, doctrine, range-typed integers, memory contracts. |
 | Exit Criteria | Stark can express the compiler's data model, error model, invariant failures, alias/noalias proofs, optional values, generic collection constraints, and parser strategy without relying on C# semantics. |
 | Key Risks | T01 parser strategy dominates front-end schedule; L13 alias/noalias mistakes must remain compile-time diagnostics; L06 string-key hashing may straddle language and stdlib doctrine design. |
 | Parallel Workstreams | Parser strategy prototype T01; error/option convention L01/L11/S01; invariant API L07; alias-proof artifact checks L13; collection doctrine/hash design L06/S06. |

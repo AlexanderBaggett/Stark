@@ -8297,12 +8297,9 @@ internal sealed partial class MidLevelIrLowerer
                 return false;
             }
 
-            var loweredFunctionName = ResolveCallTargetName(functionName, signature);
-            if (string.Equals(loweredFunctionName, functionName, StringComparison.Ordinal)
-                && TryResolveDictionaryKeyBuiltinCallTarget(functionName, signature, loweredArguments, out var dictionaryKeySpecialization))
-            {
-                loweredFunctionName = dictionaryKeySpecialization;
-            }
+            var loweredFunctionName = TryResolveDictionaryKeyBuiltinCallTarget(functionName, signature, loweredArguments, out var dictionaryKeySpecialization)
+                ? dictionaryKeySpecialization
+                : ResolveCallTargetName(functionName, signature);
 
             var postCallDynamicLengthCommits = BuildPostCallDynamicLengthCommits(
                 signature,
@@ -8547,12 +8544,28 @@ internal sealed partial class MidLevelIrLowerer
                 return false;
             }
 
-            var keyType = StarkTypeSymbols.WithQualifiers(
-                loweredArguments[0].Type,
-                borrowKind: StarkBorrowKind.None,
-                accessKind: StarkAccessKind.None,
-                initializationKind: StarkInitializationKind.None,
-                isMutableView: false);
+            var keyType = signature.Parameters.Count > 0
+                ? SystemCollectionsDictionaryKeyFacts.NormalizeType(signature.Parameters[0].Type)
+                : SystemCollectionsDictionaryKeyFacts.NormalizeType(loweredArguments[0].Type);
+            if (SystemCollectionsDictionaryKeyFacts.TryResolveContract(
+                    keyType,
+                    _typeModel.Overloads,
+                    out var contract,
+                    out _)
+                && contract.UsesExplicitStaticMethods)
+            {
+                var targetFunction = string.Equals(templateName, "System.Collections.DictionaryKey.Hash", StringComparison.Ordinal)
+                    ? contract.HashFunction
+                    : contract.EqualsFunction;
+                if (targetFunction is null)
+                {
+                    return false;
+                }
+
+                symbolName = ResolveCallTargetName(targetFunction.Name, targetFunction);
+                return true;
+            }
+
             var specializationKey = MidLevelIrLowerer.BuildMaterializedSpecializationKey(templateName, [keyType]);
             return _materializedSpecializationSymbols.TryGetValue(specializationKey, out symbolName!);
         }

@@ -138,6 +138,29 @@ public sealed class ParserConformanceTests
             """
         },
         {
+            "raw and multiline text literals",
+            """""
+            module Demo
+
+            finite law ascii RawPath()
+            {
+                return raw"c:\compiler\stage1";
+            }
+
+            finite law ascii Template()
+            {
+                return raw"""define fastcc i32 @main() {
+                  ret i32 0
+                }""";
+            }
+
+            finite law ascii Label()
+            {
+                return $raw"Score: {100}\n";
+            }
+            """""
+        },
+        {
             "fixed-capacity stack text concatenation declaration",
             """
             module Demo
@@ -155,6 +178,38 @@ public sealed class ParserConformanceTests
             module Native
 
             public ffi varargs fn i32[min max] printf(ascii format);
+            """
+        },
+        {
+            "ffi abi modifiers parse on functions and function pointer types",
+            """
+            module Native
+
+            public unsafe ffi(c) fn i32[min max] puts(ascii text);
+            public unsafe ffi(platform(windows.x64: win64, linux.x64: sysv, default: c)) fn i32[min max] write(ascii text);
+            public fn void Register(fnptr<ffi(c) fn i32[min max](ascii)> callback);
+            public fn void RegisterPlatform(fnptr<ffi(platform(windows.x64: win64, linux.x64: sysv, default: c)) fn i32[min max](ascii)> callback);
+            """
+        },
+        {
+            "ffi struct layout attributes parse on structs and fields",
+            """
+            module Native
+
+            [StructLayout(C), Pack(1), Align(4)]
+            public struct Packet
+            {
+                public u8[0 max] Tag;
+                public u32[0 max] Length;
+            }
+
+            [StructLayout(Explicit), Align(4)]
+            public struct WordParts
+            {
+                [FieldOffset(0)] public u32[0 max] Whole;
+                [FieldOffset(0)] public u16[0 max] Low;
+                [FieldOffset(2)] public u16[0 max] High;
+            }
             """
         },
         {
@@ -323,6 +378,23 @@ public sealed class ParserConformanceTests
                         return value;
                     default:
                         return 0;
+                }
+            }
+            """
+        },
+        {
+            "switch labels may contain or-pattern alternatives",
+            """
+            module Branching
+
+            fn i32[min max] Pick(u8[0 3] state, bool allow)
+            {
+                switch (state)
+                {
+                    case 0 | 1 when allow:
+                        return 10;
+                    case 2 | 3:
+                        return 20;
                 }
             }
             """

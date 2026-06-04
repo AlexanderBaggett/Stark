@@ -636,6 +636,7 @@ public static class DefaultCompilerPipeline
                     UseFastCallingConvention: false,
                     IsFfi: true,
                     IsVarargs: false,
+                    FfiAbi: null,
                     IsHot: false,
                     IsCold: false,
                     InlinePreference: InlinePreference.InlineHint,
@@ -663,6 +664,7 @@ public static class DefaultCompilerPipeline
                 UseFastCallingConvention: !function.Modifiers.IsFfi && visibility != StarkVisibility.Export,
                 IsFfi: function.Modifiers.IsFfi,
                 IsVarargs: function.Modifiers.IsVarargs,
+                FfiAbi: function.Modifiers.FfiAbi,
                 IsHot: function.Modifiers.IsHot,
                 IsCold: function.Modifiers.IsCold,
                 InlinePreference: inlinePreference,
@@ -719,7 +721,7 @@ public static class DefaultCompilerPipeline
             var typeModel = context.Artifacts.GetRequired(CompilerArtifactKeys.TypeCheckModel);
             var ownership = BuildInstantiationOwnershipModel(loadedModules, typeModel);
 
-            ValidateDictionaryKeyConstraints(context, ownership.Types);
+            ValidateDictionaryKeyConstraints(context, ownership.Types, typeModel);
             ValidateGenericConstraints(context, ownership.Functions, typeModel);
 
             context.Artifacts.Set(
@@ -729,30 +731,30 @@ public static class DefaultCompilerPipeline
 
         private static void ValidateDictionaryKeyConstraints(
             CompilerPassContext context,
-            IEnumerable<TypeInstantiationOwnership> types)
+            IEnumerable<TypeInstantiationOwnership> types,
+            TypeCheckModel typeModel)
         {
             foreach (var type in types)
             {
-                if (type.TemplateName is not "System.Collections.Dictionary"
+                if (type.TemplateName is not SystemCollectionsDictionaryKeyFacts.DictionaryTypeName
                     || type.TypeArguments.Count != 2)
                 {
                     continue;
                 }
 
-                var keyType = StarkTypeSymbols.WithQualifiers(
-                    type.TypeArguments[0],
-                    borrowKind: StarkBorrowKind.None,
-                    accessKind: StarkAccessKind.None,
-                    initializationKind: StarkInitializationKind.None,
-                    isMutableView: false);
-                if (keyType.Kind is StarkTypeKind.Bool or StarkTypeKind.Integer)
+                var keyType = SystemCollectionsDictionaryKeyFacts.NormalizeType(type.TypeArguments[0]);
+                if (SystemCollectionsDictionaryKeyFacts.TryResolveContract(
+                        keyType,
+                        typeModel.Overloads,
+                        out _,
+                        out var diagnostic))
                 {
                     continue;
                 }
 
                 context.Diagnostics.Error(
                     "STK3023",
-                    $"Dictionary key type '{keyType.DisplayName}' must satisfy 'System.Collections.DictionaryKey<{keyType.DisplayName}>'. Built-in dictionary key contracts are available for 'bool' and Stark integer key types; add an explicit hash/equality contract before using this key type.",
+                    diagnostic,
                     "instantiation-ownership",
                     type.FirstUseLocation);
             }
@@ -4085,7 +4087,7 @@ public static class DefaultCompilerPipeline
                             parameter.parameterContractPrefix().Any(static prefix => prefix.Start.Type == StarkParser.CONST),
                             rawPointerElementCountExpression))
                         .ToArray();
-                    var isFfi = declaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "ffi", StringComparison.Ordinal));
+                    var isFfi = declaration.Modifiers.Any(FfiAbiSyntaxFacts.IsFfiModifier);
                     var isAsm = declarationModel?.Function?.Asm is not null;
                     var overlapGroups = declarationModel?.Function?.OverlapGroups ?? [];
                     var sameGroups = declarationModel?.Function?.SameGroups ?? [];
@@ -4104,6 +4106,7 @@ public static class DefaultCompilerPipeline
                         IsStatic: declaration.IsStatic,
                         IsUnsafe: declaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "unsafe", StringComparison.Ordinal)),
                         IsVarargs: declaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "varargs", StringComparison.Ordinal)),
+                        FfiAbi: declarationModel?.Function?.Modifiers.FfiAbi,
                         DisjointParameterGroups: disjointGroups,
                         OverlapParameterGroups: overlapGroups,
                         SameParameterGroups: sameGroups);

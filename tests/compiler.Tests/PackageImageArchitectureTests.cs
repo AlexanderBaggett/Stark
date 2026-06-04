@@ -305,7 +305,7 @@ public sealed class PackageImageArchitectureTests
             Assert.True(abiFunction.IsVarargs);
 
             Assert.True(PackageImageLoader.TryBuildModuleSource(CreateResolvedPackageModule(facadeModule), out var sourceText));
-            Assert.Contains("public unsafe ffi varargs fn i32[", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public unsafe ffi(c) varargs fn i32[", sourceText, StringComparison.Ordinal);
             Assert.Contains("printf(ascii format);", sourceText, StringComparison.Ordinal);
         }
         finally
@@ -493,6 +493,87 @@ public sealed class PackageImageArchitectureTests
                 importedTemplate.TypedBody.Statements,
                 static statement => statement.Kind == ImportedTemplateTypedBodyStatementKind.For);
             Assert.Equal(["independent"], forSummary.LoopContractNames);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImagePublishesEmptyImportedModulesToKeepManifestModuleGraphClosed()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-empty-import-");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var markerPath = Path.Combine(tempDirectory.FullName, "Marker.stark");
+        var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+
+        try
+        {
+            File.WriteAllText(
+                facadePath,
+                """
+                export import Marker
+                module Facade
+
+                public fn i32[min max] Identity(i32[min max] value)
+                {
+                    return value;
+                }
+                """);
+            File.WriteAllText(markerPath, "module Marker\n");
+
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(
+                new CompilationInput(File.ReadAllText(facadePath), facadePath),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "lower-abi"));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(facadePath);
+            File.Delete(markerPath);
+
+            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+            Assert.Contains(facadeModule.EffectiveSourceSurface.Imports ?? [], static import => import.ModuleName == "Marker" && import.IsExported);
+
+            var markerModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Marker");
+            Assert.True(PackageImageLoader.TryBuildModuleSource(CreateResolvedPackageModule(markerModule), out var markerSource));
+            Assert.Contains("module Marker", markerSource, StringComparison.Ordinal);
+
+            var resolver = new FileSystemModuleResolver(tempDirectory.FullName);
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    fn i32[min max] Run()
+                    {
+                        return Facade.Identity(4);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: resolver,
+                    StopAfterPassId: "type-check"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(resolver.TryResolveModule("Marker", out var resolvedMarker));
+            Assert.Equal(manifestPath, resolvedMarker.ManifestPath);
+            Assert.True(resolver.TryLoadModuleDocument(resolvedMarker, targetInfo: null, out var markerDocument));
+            Assert.Equal("Marker", markerDocument.SyntaxModel.ModuleName);
         }
         finally
         {
@@ -831,6 +912,99 @@ public sealed class PackageImageArchitectureTests
             Assert.Contains("public fn u8[0 127] Keep(u8[0 127] value)", sourceText, StringComparison.Ordinal);
             Assert.Contains("public fn u32[0 max] Keep32(u32[0 max] value)", sourceText, StringComparison.Ordinal);
             Assert.Contains("public fn u96[0 max] Keep96(u96[0 max] value)", sourceText, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImagePreservesStructLayoutMetadataAndConcreteFieldOffsets()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-struct-layout-");
+
+        try
+        {
+            var sourcePath = Path.Combine(tempDirectory.FullName, "Native.stark");
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    module Native
+
+                    [StructLayout(C), Pack(1), Align(4)]
+                    public struct Packet
+                    {
+                        public u8[0 max] Tag;
+                        public u32[0 max] Length;
+                    }
+
+                    [StructLayout(Explicit), Align(4)]
+                    public struct WordParts
+                    {
+                        [FieldOffset(0)] public u32[0 max] Whole;
+                        [FieldOffset(0)] public u16[0 max] Low;
+                        [FieldOffset(2)] public u16[0 max] High;
+                    }
+                    """,
+                    sourcePath),
+                new CompilerOptions(StopAfterPassId: "lower-abi"));
+
+            Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                result,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Native.lib" : "libNative.a"));
+            var module = Assert.Single(manifest.Modules, static item => item.ModuleName == "Native");
+
+            var sourcePacket = Assert.Single(module.EffectiveSourceSurface.Types ?? [], static type => type.Name == "Packet");
+            Assert.Equal("C", sourcePacket.StructLayout);
+            Assert.Equal(1, sourcePacket.PackBytes);
+            Assert.Equal(4, sourcePacket.AlignBytes);
+
+            var sourceWordParts = Assert.Single(module.EffectiveSourceSurface.Types ?? [], static type => type.Name == "WordParts");
+            Assert.Equal("Explicit", sourceWordParts.StructLayout);
+            Assert.Equal(4, sourceWordParts.AlignBytes);
+            Assert.Equal(2, Assert.Single(sourceWordParts.Fields, static field => field.Name == "High").ExplicitOffsetBytes);
+
+            var typedPacket = Assert.Single(module.EffectiveTypedInterface?.Types ?? [], static type => type.Name == "Packet");
+            Assert.Equal("C", typedPacket.StructLayout);
+            Assert.Equal(1, typedPacket.PackBytes);
+            Assert.Equal(4, typedPacket.AlignBytes);
+
+            var typedWordParts = Assert.Single(module.EffectiveTypedInterface?.Types ?? [], static type => type.Name == "WordParts");
+            Assert.Equal("Explicit", typedWordParts.StructLayout);
+            Assert.Equal(4, typedWordParts.AlignBytes);
+            Assert.Equal(0, Assert.Single(typedWordParts.Fields, static field => field.Name == "Low").ExplicitOffsetBytes);
+
+            var packetLayout = Assert.Single(module.EffectiveCompilerFacts?.ConcreteLayouts ?? [], static layout => layout.QualifiedTypeName == "Native.Packet");
+            Assert.Equal(8, packetLayout.SizeBytes);
+            Assert.Equal(4, packetLayout.AlignmentBytes);
+            var lengthLayout = Assert.Single(packetLayout.Fields ?? [], static field => field.Name == "Length");
+            Assert.Equal(1, lengthLayout.OffsetBytes);
+            Assert.True(lengthLayout.IsMisaligned);
+
+            var wordPartsLayout = Assert.Single(module.EffectiveCompilerFacts?.ConcreteLayouts ?? [], static layout => layout.QualifiedTypeName == "Native.WordParts");
+            Assert.Equal(4, wordPartsLayout.SizeBytes);
+            Assert.Equal(4, wordPartsLayout.AlignmentBytes);
+            Assert.Equal(2, Assert.Single(wordPartsLayout.Fields ?? [], static field => field.Name == "High").OffsetBytes);
+
+            Assert.True(PackageImageLoader.TryBuildModuleSource(CreateResolvedPackageModule(module), out var sourceText));
+            Assert.Contains("[StructLayout(C), Pack(1), Align(4)]", sourceText, StringComparison.Ordinal);
+            Assert.Contains("[StructLayout(Explicit), Align(4)]", sourceText, StringComparison.Ordinal);
+            Assert.Contains("[FieldOffset(2)]", sourceText, StringComparison.Ordinal);
+
+            Assert.True(PackageImageLoader.TryBuildLoadedPackageImageFacts(CreateResolvedPackageModule(module), out var facts));
+            Assert.Equal(1, facts.ConcreteLayouts["Native.Packet"].Fields.Single(static field => field.Name == "Length").OffsetBytes);
+            Assert.True(facts.ConcreteLayouts["Native.Packet"].Fields.Single(static field => field.Name == "Length").IsMisaligned);
+            Assert.Equal(2, facts.ConcreteLayouts["Native.WordParts"].Fields.Single(static field => field.Name == "High").OffsetBytes);
         }
         finally
         {
@@ -1703,6 +1877,169 @@ public sealed class PackageImageArchitectureTests
         Assert.True(PackageImageLoader.TryBuildModuleSource(resolvedModule, out var sourceText));
         Assert.Contains(syntaxModel.Imports, static import => import.ModuleName == "Bits" && import.IsReExport);
         Assert.Contains("export import Bits", sourceText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void PackageImagePreservesTraitConformanceMetadata()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-traits-");
+        var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    module Facade
+
+                    public trait Drawable
+                    {
+                        finite law i32[min max] Width(borrow Self self);
+
+                        finite law i32[min max] Twice(borrow Self self)
+                        {
+                            return self.Width() + self.Width();
+                        }
+                    }
+
+                    public struct Widget : Drawable
+                    {
+                        public i32[min max] W;
+
+                        public finite law i32[min max] Width(borrow Widget self)
+                        {
+                            return self.W;
+                        }
+                    }
+                    """,
+                    sourcePath),
+                new CompilerOptions(StopAfterPassId: "lower-abi"));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            var module = Assert.Single(manifest.Modules, static item => item.ModuleName == "Facade");
+
+            var typedWidget = Assert.Single(module.EffectiveTypedInterface?.Types ?? [], static type => type.Name == "Widget");
+            Assert.Contains("Drawable", typedWidget.ImplementedTraits ?? []);
+
+            var typedDrawable = Assert.Single(module.EffectiveTypedInterface?.Types ?? [], static type => type.Name == "Drawable");
+            Assert.False(Assert.Single(typedDrawable.Methods ?? [], static method => method.Name == "Width").HasBody);
+            Assert.True(Assert.Single(typedDrawable.Methods ?? [], static method => method.Name == "Twice").HasBody);
+
+            Assert.True(PackageImageLoader.TryBuildModuleSource(CreateResolvedPackageModule(module), out var sourceText));
+            Assert.Contains("public struct Widget : Drawable", sourceText, StringComparison.Ordinal);
+
+            Assert.True(PackageImageLoader.TryBuildLoadedPackageImageFacts(CreateResolvedPackageModule(module), out var facts));
+            Assert.Contains("Facade.Drawable", facts.NamedTypes["Facade.Widget"].ImplementedTraits);
+            Assert.False(facts.FunctionSignatures["Facade.Drawable.Width"].HasBody);
+            Assert.True(facts.FunctionSignatures["Facade.Drawable.Twice"].HasBody);
+
+            File.Delete(sourcePath);
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    struct Broken : Facade.Drawable
+                    {
+                        i32[min max] W;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "semantic-validate"));
+
+            Assert.False(consumerResult.Succeeded);
+            Assert.Contains(
+                consumerResult.Diagnostics,
+                static diagnostic => diagnostic.Code == "STK3032"
+                    && diagnostic.Message.Contains("Facade.Drawable.Width", StringComparison.Ordinal));
+            Assert.DoesNotContain(
+                consumerResult.Diagnostics,
+                static diagnostic => diagnostic.Code == "STK3032"
+                    && diagnostic.Message.Contains("Facade.Drawable.Twice", StringComparison.Ordinal));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImagePreservesSystemCCVoidTypedInterfaceSurface()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-system-c-");
+        var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+        var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "Facade.starkpkg.json");
+
+        try
+        {
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    module Facade
+
+                    public unsafe ffi(c) fn rawmutptr<System.C.c_void> Allocate(System.C.c_size_t bytes);
+                    public unsafe ffi(c) fn void Free(rawmutptr<System.C.c_void> ptr);
+                    """,
+                    sourcePath),
+                new CompilerOptions(
+                    StopAfterPassId: "lower-abi",
+                    TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+            Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(result, libraryPath);
+            var module = Assert.Single(manifest.Modules, static item => item.ModuleName == "Facade");
+            var typedInterface = module.EffectiveTypedInterface!;
+
+            var allocate = Assert.Single(typedInterface.Functions, static function => function.Name == "Allocate");
+            Assert.Equal("rawpointer", allocate.ReturnType.Kind);
+            Assert.True(allocate.ReturnType.IsMutablePointer);
+            Assert.Equal("cvoid", allocate.ReturnType.ElementType?.Kind);
+            Assert.Equal("integer", Assert.Single(allocate.Parameters).Type.Kind);
+            Assert.Equal(64, Assert.Single(allocate.Parameters).Type.BitWidth);
+            Assert.True(Assert.Single(allocate.Parameters).Type.IsUnsigned);
+
+            var free = Assert.Single(typedInterface.Functions, static function => function.Name == "Free");
+            var freeParameter = Assert.Single(free.Parameters).Type;
+            Assert.Equal("rawpointer", freeParameter.Kind);
+            Assert.True(freeParameter.IsMutablePointer);
+            Assert.Equal("cvoid", freeParameter.ElementType?.Kind);
+
+            Assert.True(PackageImageLoader.TryBuildModuleSource(
+                new ResolvedPackageModule(manifestPath, libraryPath, manifest, module),
+                out var sourceText));
+
+            Assert.Contains("rawmutptr<System.C.c_void> Allocate", sourceText, StringComparison.Ordinal);
+            Assert.Contains("void Free(rawmutptr<System.C.c_void> ptr)", sourceText, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
     }
 
     private static ResolvedPackageModule CreateResolvedPackageModule(StarkPackageModuleManifest module)

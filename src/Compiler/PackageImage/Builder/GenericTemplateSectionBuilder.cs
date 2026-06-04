@@ -1424,7 +1424,8 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         out IReadOnlyList<StarkPackageTypedTemplateSwitchCaseManifest> switchCases)
     {
-        var builtCases = new List<StarkPackageTypedTemplateSwitchCaseManifest>(sections.Sum(static section => section.switchLabel().Length));
+        var builtCases = new List<StarkPackageTypedTemplateSwitchCaseManifest>(
+            sections.Sum(static section => section.switchLabel().Sum(static label => label.DEFAULT() is not null ? 1 : label.pattern().Length)));
         foreach (var section in sections)
         {
             if (section.switchLabel().Length == 0
@@ -1455,7 +1456,7 @@ internal static partial class PackageImageBuilder
 
             foreach (var label in section.switchLabel())
             {
-                if (!TryBuildPublishedTypedTemplateSwitchCase(
+                if (!TryBuildPublishedTypedTemplateSwitchCases(
                         module,
                         label,
                         namedTypes,
@@ -1474,13 +1475,13 @@ internal static partial class PackageImageBuilder
                         memberCallOrdinals,
                         fieldAccessOrdinals,
                         statements,
-                        out var builtCase))
+                        out var labelCases))
                 {
                     switchCases = [];
                     return false;
                 }
 
-                builtCases.Add(builtCase);
+                builtCases.AddRange(labelCases);
             }
         }
 
@@ -1488,7 +1489,7 @@ internal static partial class PackageImageBuilder
         return builtCases.Count > 0;
     }
 
-    private static bool TryBuildPublishedTypedTemplateSwitchCase(
+    private static bool TryBuildPublishedTypedTemplateSwitchCases(
         LoadedModuleDocument module,
         StarkParser.SwitchLabelContext label,
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
@@ -1507,9 +1508,9 @@ internal static partial class PackageImageBuilder
         IReadOnlyDictionary<StarkParser.ArgumentListContext, int> memberCallOrdinals,
         IReadOnlyDictionary<StarkParser.PostfixPartContext, int> fieldAccessOrdinals,
         IReadOnlyList<StarkPackageTypedTemplateStatementManifest> statements,
-        out StarkPackageTypedTemplateSwitchCaseManifest switchCase)
+        out IReadOnlyList<StarkPackageTypedTemplateSwitchCaseManifest> switchCases)
     {
-        switchCase = null!;
+        switchCases = [];
 
         StarkPackageTypedTemplateExpressionManifest? guardExpression = null;
         if (label.whenClause()?.expression() is { } guard
@@ -1535,161 +1536,186 @@ internal static partial class PackageImageBuilder
 
         if (label.DEFAULT() is not null)
         {
-            switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
-                Kind: "default",
-                Statements: statements);
+            switchCases =
+            [
+                new StarkPackageTypedTemplateSwitchCaseManifest(
+                    Kind: "default",
+                    Statements: statements)
+            ];
             return true;
         }
 
-        if (label.pattern() is not { } pattern)
+        var patterns = label.pattern();
+        if (patterns.Length == 0)
         {
             return false;
         }
 
-        if (pattern.DISCARD() is not null)
+        var builtCases = new List<StarkPackageTypedTemplateSwitchCaseManifest>(patterns.Length);
+        foreach (var pattern in patterns)
         {
-            switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
-                Kind: guardExpression is null ? "default" : "match-all",
-                GuardExpression: guardExpression,
-                Statements: statements);
-            return true;
-        }
-
-        if (pattern.VAR() is not null)
-        {
-            var captureName = pattern.Identifier()?.GetText();
-            if (captureName is null)
+            if (!TryBuildCaseFromPattern(pattern, out var builtCase))
             {
                 return false;
             }
 
-            switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
-                Kind: "match-all",
-                Name: captureName,
-                GuardExpression: guardExpression,
-                Statements: statements);
-            return true;
+            builtCases.Add(builtCase);
         }
 
-        if (pattern.literal() is { } literal)
+        switchCases = builtCases;
+        return true;
+
+        bool TryBuildCaseFromPattern(
+            StarkParser.PatternContext pattern,
+            out StarkPackageTypedTemplateSwitchCaseManifest switchCase)
         {
-            if (!TryBuildPublishedTypedTemplateLiteralExpression(module, literal, literalsByLocation, out var literalExpression))
+            switchCase = null!;
+
+            if (pattern.DISCARD() is not null)
             {
-                return false;
+                switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                    Kind: guardExpression is null ? "default" : "match-all",
+                    GuardExpression: guardExpression,
+                    Statements: statements);
+                return true;
             }
 
-            switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
-                Kind: "literal",
-                Expression: literalExpression,
-                GuardExpression: guardExpression,
-                Statements: statements);
-            return true;
-        }
-
-        if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
-        {
-            if (!enumPatternOrdinals.TryGetValue(enumNamedFieldPattern, out var ordinal)
-                || !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
-                    module,
-                    literalsByLocation,
-                    enumPatternOrdinals,
-                    aggregatePatternOrdinals,
-                    enumNamedFieldPattern.enumNamedFieldPatternPayload().namedPatternMember().Select(static member => member.pattern()).ToArray(),
-                    out var members))
+            if (pattern.VAR() is not null)
             {
-                return false;
+                var captureName = pattern.Identifier()?.GetText();
+                if (captureName is null)
+                {
+                    return false;
+                }
+
+                switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                    Kind: "match-all",
+                    Name: captureName,
+                    GuardExpression: guardExpression,
+                    Statements: statements);
+                return true;
             }
 
-            switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
-                Kind: "enum-pattern",
-                Ordinal: ordinal,
-                Members: members,
-                GuardExpression: guardExpression,
-                Statements: statements);
-            return true;
-        }
+            if (pattern.literal() is { } literal)
+            {
+                if (!TryBuildPublishedTypedTemplateLiteralExpression(module, literal, literalsByLocation, out var literalExpression))
+                {
+                    return false;
+                }
 
-        if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern)
-        {
-            var wholeCaptureName = genericEnumAggregatePattern.aggregatePatternSuffix()?.Identifier()?.GetText();
-            IReadOnlyList<StarkPackageTypedTemplatePatternManifest> members = [];
-            if (!enumPatternOrdinals.TryGetValue(genericEnumAggregatePattern, out var ordinal)
-                || (wholeCaptureName is null
-                    && !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                    Kind: "literal",
+                    Expression: literalExpression,
+                    GuardExpression: guardExpression,
+                    Statements: statements);
+                return true;
+            }
+
+            if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
+            {
+                if (!enumPatternOrdinals.TryGetValue(enumNamedFieldPattern, out var ordinal)
+                    || !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
                         module,
                         literalsByLocation,
                         enumPatternOrdinals,
                         aggregatePatternOrdinals,
-                        genericEnumAggregatePattern.aggregatePatternSuffix(),
-                        out members)))
-            {
-                return false;
-            }
-
-            switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
-                Kind: "enum-pattern",
-                Ordinal: ordinal,
-                Name: wholeCaptureName,
-                Members: wholeCaptureName is null ? members : [],
-                GuardExpression: guardExpression,
-                Statements: statements);
-            return true;
-        }
-
-        if (pattern.aggregatePattern() is { } aggregatePattern)
-        {
-            if (enumPatternOrdinals.TryGetValue(aggregatePattern, out var enumOrdinal))
-            {
-                var enumWholeCaptureName = aggregatePattern.aggregatePatternSuffix()?.Identifier()?.GetText();
-                IReadOnlyList<StarkPackageTypedTemplatePatternManifest> enumMembers = [];
-                if (enumWholeCaptureName is null
-                    && !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
-                        module,
-                        literalsByLocation,
-                        enumPatternOrdinals,
-                        aggregatePatternOrdinals,
-                        aggregatePattern.aggregatePatternSuffix(),
-                        out enumMembers))
+                        enumNamedFieldPattern.enumNamedFieldPatternPayload().namedPatternMember().Select(static member => member.pattern()).ToArray(),
+                        out var members))
                 {
                     return false;
                 }
 
                 switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
                     Kind: "enum-pattern",
-                    Ordinal: enumOrdinal,
-                    Name: enumWholeCaptureName,
-                    Members: enumWholeCaptureName is null ? enumMembers : [],
+                    Ordinal: ordinal,
+                    Members: members,
                     GuardExpression: guardExpression,
                     Statements: statements);
                 return true;
             }
 
-            var wholeCaptureName = aggregatePattern.aggregatePatternSuffix()?.Identifier()?.GetText();
-            IReadOnlyList<StarkPackageTypedTemplatePatternManifest> aggregateMembers = [];
-            if (!aggregatePatternOrdinals.TryGetValue(aggregatePattern, out var aggregateOrdinal)
-                || (wholeCaptureName is null
-                    && !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
-                        module,
-                        literalsByLocation,
-                        enumPatternOrdinals,
-                        aggregatePatternOrdinals,
-                        aggregatePattern.aggregatePatternSuffix(),
-                        out aggregateMembers)))
+            if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern)
             {
-                return false;
+                var wholeCaptureName = genericEnumAggregatePattern.aggregatePatternSuffix()?.Identifier()?.GetText();
+                IReadOnlyList<StarkPackageTypedTemplatePatternManifest> members = [];
+                if (!enumPatternOrdinals.TryGetValue(genericEnumAggregatePattern, out var ordinal)
+                    || (wholeCaptureName is null
+                        && !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                            module,
+                            literalsByLocation,
+                            enumPatternOrdinals,
+                            aggregatePatternOrdinals,
+                            genericEnumAggregatePattern.aggregatePatternSuffix(),
+                            out members)))
+                {
+                    return false;
+                }
+
+                switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                    Kind: "enum-pattern",
+                    Ordinal: ordinal,
+                    Name: wholeCaptureName,
+                    Members: wholeCaptureName is null ? members : [],
+                    GuardExpression: guardExpression,
+                    Statements: statements);
+                return true;
             }
 
-            switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
-                Kind: "aggregate-pattern",
-                Ordinal: aggregateOrdinal,
-                Name: wholeCaptureName,
-                Members: wholeCaptureName is null ? aggregateMembers : [],
-                GuardExpression: guardExpression,
-                Statements: statements);
-            return true;
-        }
+            if (pattern.aggregatePattern() is { } aggregatePattern)
+            {
+                if (enumPatternOrdinals.TryGetValue(aggregatePattern, out var enumOrdinal))
+                {
+                    var enumWholeCaptureName = aggregatePattern.aggregatePatternSuffix()?.Identifier()?.GetText();
+                    IReadOnlyList<StarkPackageTypedTemplatePatternManifest> enumMembers = [];
+                    if (enumWholeCaptureName is null
+                        && !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                            module,
+                            literalsByLocation,
+                            enumPatternOrdinals,
+                            aggregatePatternOrdinals,
+                            aggregatePattern.aggregatePatternSuffix(),
+                            out enumMembers))
+                    {
+                        return false;
+                    }
 
-        return false;
+                    switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                        Kind: "enum-pattern",
+                        Ordinal: enumOrdinal,
+                        Name: enumWholeCaptureName,
+                        Members: enumWholeCaptureName is null ? enumMembers : [],
+                        GuardExpression: guardExpression,
+                        Statements: statements);
+                    return true;
+                }
+
+                var wholeCaptureName = aggregatePattern.aggregatePatternSuffix()?.Identifier()?.GetText();
+                IReadOnlyList<StarkPackageTypedTemplatePatternManifest> aggregateMembers = [];
+                if (!aggregatePatternOrdinals.TryGetValue(aggregatePattern, out var aggregateOrdinal)
+                    || (wholeCaptureName is null
+                        && !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                            module,
+                            literalsByLocation,
+                            enumPatternOrdinals,
+                            aggregatePatternOrdinals,
+                            aggregatePattern.aggregatePatternSuffix(),
+                            out aggregateMembers)))
+                {
+                    return false;
+                }
+
+                switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                    Kind: "aggregate-pattern",
+                    Ordinal: aggregateOrdinal,
+                    Name: wholeCaptureName,
+                    Members: wholeCaptureName is null ? aggregateMembers : [],
+                    GuardExpression: guardExpression,
+                    Statements: statements);
+                return true;
+            }
+
+            return false;
+        }
     }
 
     private static bool TryBuildPublishedTypedTemplateLiteralExpression(
@@ -5394,6 +5420,11 @@ internal static partial class PackageImageBuilder
         if (type.functionPointerType() is { } functionPointerType)
         {
             var signature = functionPointerType.functionPointerSignature();
+            if (!TryBuildPublishedFunctionPointerAbi(signature.functionPointerAbiModifier(), out var functionAbi))
+            {
+                return false;
+            }
+
             StarkPackageTypeReference returnType;
             if (signature.returnType().VOID() is not null)
             {
@@ -5418,6 +5449,7 @@ internal static partial class PackageImageBuilder
             typeReference = new StarkPackageTypeReference(
                 "functionpointer",
                 FunctionKind: RenderPublishedFunctionPointerKind(signature.functionKind().GetText()),
+                FunctionAbi: functionAbi,
                 ReturnType: returnType,
                 ParameterTypes: parameterTypes.Count == 0 ? null : parameterTypes.ToArray(),
                 OverlapParameterGroups: BuildParameterOverlapGroupManifests(signature.parameterMemoryContractClause()),
@@ -5442,6 +5474,36 @@ internal static partial class PackageImageBuilder
 
         return type.simpleType() is { } simpleType
             && TryBuildPublishedAbiSimpleTypeReferenceFromSyntax(module, simpleType, out typeReference);
+    }
+
+    private static bool TryBuildPublishedFunctionPointerAbi(
+        StarkParser.FunctionPointerAbiModifierContext? modifier,
+        out string? functionAbi)
+    {
+        functionAbi = null;
+        if (modifier is null)
+        {
+            return true;
+        }
+
+        if (modifier.ffiAbiSpecifier() is null)
+        {
+            functionAbi = StarkFfiAbiFacts.DisplayName(StarkFfiAbi.C);
+            return true;
+        }
+
+        if (!FfiAbiSyntaxFacts.TryResolveFfiAbi(
+                modifier.ffiAbiSpecifier().ffiAbi(),
+                targetInfo: null,
+                out var abi,
+                out _,
+                out _))
+        {
+            return false;
+        }
+
+        functionAbi = StarkFfiAbiFacts.DisplayName(abi);
+        return true;
     }
 
     private static string RenderPublishedFunctionPointerKind(string kind)

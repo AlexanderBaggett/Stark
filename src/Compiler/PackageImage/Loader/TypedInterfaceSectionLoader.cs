@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace Stark.Compiler;
 
 internal static partial class PackageImageLoader
@@ -66,7 +68,7 @@ internal static partial class PackageImageLoader
                     : new DestructorDeclarationModel(
                         type.Destructor.IsMutable,
                         BackendOptimizationMode: typeBackendOptimizationMode),
-                Attributes: BuildBackendAttributes(typeBackendOptimizationMode),
+                Attributes: BuildTypeAttributes(typeBackendOptimizationMode, type),
                 BackendOptimizationMode: typeBackendOptimizationMode));
 
             foreach (var method in (type.Methods ?? []).OrderBy(static item => item.Name, StringComparer.Ordinal))
@@ -123,6 +125,7 @@ internal static partial class PackageImageLoader
                         isStatic: method.IsStatic,
                         publishedOverloadKey: publishedOverloadKey,
                         isUnsafe: method.IsUnsafe,
+                        ffiAbi: method.FfiAbi,
                         backendOptimizationMode: methodBackendOptimizationMode,
                         disjointParameterGroups: method.DisjointParameterGroups,
                         overlapParameterGroups: method.OverlapParameterGroups,
@@ -191,6 +194,7 @@ internal static partial class PackageImageLoader
                     function.Parameters),
                     publishedOverloadKey: publishedOverloadKey,
                     isUnsafe: function.IsUnsafe,
+                    ffiAbi: function.FfiAbi,
                     backendOptimizationMode: functionBackendOptimizationMode,
                     disjointParameterGroups: function.DisjointParameterGroups,
                     overlapParameterGroups: function.OverlapParameterGroups,
@@ -270,6 +274,34 @@ internal static partial class PackageImageLoader
         return backendOptimizationMode == ModuleBackendOptimizationMode.Opaque
             ? [new ModuleAttributeModel("Backend", ["Opaque"])]
             : Array.Empty<ModuleAttributeModel>();
+    }
+
+    private static IReadOnlyList<ModuleAttributeModel> BuildTypeAttributes(
+        ModuleBackendOptimizationMode backendOptimizationMode,
+        StarkPackageTypedTypeManifest type)
+    {
+        var attributes = new List<ModuleAttributeModel>();
+        if (backendOptimizationMode == ModuleBackendOptimizationMode.Opaque)
+        {
+            attributes.Add(new ModuleAttributeModel("Backend", ["Opaque"]));
+        }
+
+        if (!string.IsNullOrWhiteSpace(type.StructLayout))
+        {
+            attributes.Add(new ModuleAttributeModel("StructLayout", [type.StructLayout]));
+        }
+
+        if (type.PackBytes is { } packBytes)
+        {
+            attributes.Add(new ModuleAttributeModel("Pack", [packBytes.ToString(CultureInfo.InvariantCulture)]));
+        }
+
+        if (type.AlignBytes is { } alignBytes)
+        {
+            attributes.Add(new ModuleAttributeModel("Align", [alignBytes.ToString(CultureInfo.InvariantCulture)]));
+        }
+
+        return attributes;
     }
 
     private static bool HasPublishedGenericTemplateBody(

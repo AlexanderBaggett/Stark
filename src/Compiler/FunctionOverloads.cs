@@ -763,6 +763,7 @@ internal static class FunctionOverloadFacts
         if (strippedParameterType.Kind == StarkTypeKind.FunctionPointer)
         {
             if (strippedParameterType.FunctionPointerKind != strippedArgumentType.FunctionPointerKind
+                || strippedParameterType.FunctionPointerAbi != strippedArgumentType.FunctionPointerAbi
                 || strippedParameterType.FunctionPointerReturnType is null
                 || strippedArgumentType.FunctionPointerReturnType is null
                 || strippedParameterType.FunctionPointerParameterTypes is not { } parameterTypes
@@ -944,7 +945,8 @@ internal static class FunctionOverloadFacts
                 coreType.FunctionPointerDisjointParameterGroups,
                 coreType.FunctionPointerOverlapParameterGroups,
                 coreType.FunctionPointerSameParameterGroups,
-                coreType.FunctionPointerParameterRawPointerElementCountExpressions);
+                coreType.FunctionPointerParameterRawPointerElementCountExpressions,
+                coreType.FunctionPointerAbi);
         }
         else if (coreType.Kind == StarkTypeKind.Closure
             && coreType.ClosureFunctionKind is { } closureFunctionKind

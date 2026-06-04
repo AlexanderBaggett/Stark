@@ -362,7 +362,18 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 {
                     var baseAddress = EmitOptimizedRawPointerLoopAddress(fieldAddress.Address, $"{purpose}_base");
                     var fieldPointer = $"%{EscapeIdentifier(CreateAbiTempName($"{purpose}_field"))}";
-                    AppendLine($"  {fieldPointer} = getelementptr{GetProvenInObjectGepFlags()} {MapType(fieldAddress.AggregateType)}, ptr {baseAddress}, i32 0, i32 {fieldAddress.FieldIndex}");
+                    if (TryGetLayoutControlledFieldOffsetBytes(
+                            fieldAddress.AggregateType,
+                            fieldAddress.FieldIndex,
+                            out var fieldOffsetBytes))
+                    {
+                        AppendLine($"  {fieldPointer} = getelementptr{GetProvenInObjectGepFlags()} i8, ptr {baseAddress}, i64 {fieldOffsetBytes}");
+                    }
+                    else
+                    {
+                        AppendLine($"  {fieldPointer} = getelementptr{GetProvenInObjectGepFlags()} {MapType(fieldAddress.AggregateType)}, ptr {baseAddress}, i32 0, i32 {fieldAddress.FieldIndex}");
+                    }
+
                     return fieldPointer;
                 }
             }

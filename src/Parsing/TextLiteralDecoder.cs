@@ -57,6 +57,13 @@ internal static class TextLiteralDecoder
         out TextLiteralDiagnostic diagnostic)
     {
         var content = GetContent(literalText);
+        if (kind == TextLiteralKind.String && IsRawStringLiteral(literalText))
+        {
+            decoded = new DecodedTextLiteral(content);
+            diagnostic = default;
+            return true;
+        }
+
         var builder = new StringBuilder(content.Length);
 
         for (var index = 0; index < content.Length; index++)
@@ -248,6 +255,32 @@ internal static class TextLiteralDecoder
         return units;
     }
 
+    public static string GetContent(string literalText)
+    {
+        if (IsRawMultilineStringLiteral(literalText))
+        {
+            return literalText.Length >= 9 ? literalText[6..^3] : literalText;
+        }
+
+        if (IsRawStringLiteral(literalText))
+        {
+            return literalText.Length >= 5 ? literalText[4..^1] : literalText;
+        }
+
+        return literalText.Length >= 2 ? literalText[1..^1] : literalText;
+    }
+
+    public static bool IsRawStringLiteral(string literalText)
+    {
+        return literalText.StartsWith("raw\"", StringComparison.Ordinal);
+    }
+
+    public static bool IsRawMultilineStringLiteral(string literalText)
+    {
+        return literalText.StartsWith("raw\"\"\"", StringComparison.Ordinal)
+            && literalText.EndsWith("\"\"\"", StringComparison.Ordinal);
+    }
+
     private static string Describe(TextLiteralKind kind)
     {
         return kind == TextLiteralKind.String ? "string literal" : "character literal";
@@ -291,11 +324,6 @@ internal static class TextLiteralDecoder
         }
 
         builder.Append(ch);
-    }
-
-    private static string GetContent(string literalText)
-    {
-        return literalText.Length >= 2 ? literalText[1..^1] : literalText;
     }
 
     private static bool TryDecodeHexEscape(string content, int start, int length, out int value)

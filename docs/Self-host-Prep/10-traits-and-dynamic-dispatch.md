@@ -2,7 +2,8 @@
 
 Status: WIP. **Static trait support is working end-to-end.** Landed: the
 `baseTraitList` grammar (TD01); the `Self` type; trait base lists on the type
-model (TD02/TD03); same-module conformance with exact signature matching
+model (TD02/TD03), including package-image carry for imported type queries;
+cross-module conformance with exact signature matching
 (TD04 — STK3026/3032/3033); and **constrained generics / generic trait dispatch**
 (TD05/TD06, CG01–CG07) — `where T: Trait` bounds are captured, enforced at call
 sites (STK3034), trait methods are callable on bounded type parameters, and they
@@ -12,11 +13,13 @@ over `Self` (direct call) for both concrete and `where T: Trait` receivers, whil
 overrides win. **`dyn` trait objects (Phase C) now work end-to-end** — both the
 borrowed forms (`borrow`/`mut borrow dyn Trait`, non-owning fat views) and the owning
 form (`heap dyn Trait`, which boxes the value on the heap, owns it, and drops + frees it
-via a synthesized per-type drop thunk in the vtable's drop slot). Dispatch is one indirect
-call through a synthesized read-only vtable and preserves the `law`/`finite` effect
-contract; object safety and `dyn`-misuse are diagnosed (STK3035/3036). Remaining:
-cross-module conformance (TD04); dyn-call devirt + DSE-precision (a perf follow-up);
-visible vtable (Phase D). This document tracks the work to make traits usable in Stark
+    via a synthesized per-type drop thunk in the vtable's drop slot). Dispatch is one indirect
+    call through a synthesized read-only vtable and preserves the `law`/`finite` effect
+    contract; object safety and `dyn`-misuse are diagnosed (STK3035/3036). Also landed:
+    `Dictionary<K,V>` keys may now use explicit static `finite law` `Hash`/`Equals`
+    methods on the key type, with bool/integer keys retaining the scalar fast path.
+    Remaining: dyn-call devirt + DSE-precision (a perf follow-up);
+    visible vtable (Phase D). This document tracks the work to make traits usable in Stark
 and to add an explicit dynamic-dispatch surface, in service of self-hosting
 (see `08-stark-feature-roadmap.md` and `09-self-hosted-compiler-architecture.md`).
 
@@ -64,12 +67,13 @@ Trait findings:
   methods on `T`.
 - A trait declaration emits no code
   (`TraitContractsDoNotEmitRuntimeDispatchSurface`).
-- The one "trait-like" feature that works is special-cased and is actually a
-  doctrine: `Dictionary<K,V>` keys go through `doctrine DictionaryKey<T>`
-  hardwired to **bool/integer key types only**
-  (`src/Compiler/DefaultCompilerPipeline.cs:729-754`, bool/integer gate at
-  `:747`; `DictionaryKey.Equals`/`.Hash` builtins in
-  `src/Compiler/SsaIrValidation.cs:542-646`).
+- `Dictionary<K,V>` keys go through `doctrine DictionaryKey<T>`. The original
+  implementation was hardwired to bool/integer key types; it now accepts
+  compiler-known bool/integer keys plus explicit static key-type contracts:
+  `static finite law u64[0 max] Hash(borrow K value)` and
+  `static finite law bool Equals(borrow K left, borrow K right) where overlap(left, right)`.
+  Custom-key dictionary calls lower to direct static calls; the builtin
+  `DictionaryKey<T>` wrappers forward as a backstop.
 - `stdlib/src/System/Collections.stark:5-21` *declares* `trait Equatable<T>` and
   `trait Hashable<T>`, but nothing implements them and nothing calls through
   them.
@@ -334,12 +338,12 @@ the absence of `vtable`/`dispatch` where dispatch must not appear).
 | ID | Item | Status | Notes |
 |---|---|---|---|
 | TD01 | Grammar: add `baseTraitList` to struct/record; regen parser | **done** | landed; `antlr4` 4.13.2 regen; full suite green |
-| TD02 | Capture base-trait list on the type model | **done** | `NamedTypeSymbol.ImplementedTraits` populated for source struct/record (`TypeChecking.ResolveBaseTraitNames`); package-image carry for imported-type queries still pending, used later by `dyn` codegen |
+| TD02 | Capture base-trait list on the type model | **done** | `NamedTypeSymbol.ImplementedTraits` populated for source struct/record (`TypeChecking.ResolveBaseTraitNames`) and package-backed imports; package typed/source surfaces preserve base lists for imported type queries and `dyn` codegen |
 | TD03 | type -> implemented-trait edges | **done** | exposed as `NamedTypeSymbol.ImplementedTraits` |
-| TD04 | Conformance: required methods, compatible signatures, `Self` receiver | **partial** | `Self` type ✅; base-must-be-trait (**STK3026**) ✅; required-method presence (**STK3032**) ✅; arity + function-kind + **exact parameter/return-type matching** with `Self`/type-arg substitution (**STK3033**, via `SubstituteType` + a structural `TraitTypesEquivalent` comparator) ✅. Pending: cross-module (imported-trait) required-method detection |
+| TD04 | Conformance: required methods, compatible signatures, `Self` receiver | **done** | `Self` type ✅; base-must-be-trait (**STK3026**) ✅; required-method presence (**STK3032**) ✅; arity + function-kind + **exact parameter/return-type matching** with `Self`/type-arg substitution (**STK3033**, via `SubstituteType` + a structural `TraitTypesEquivalent` comparator) ✅; imported source and package-backed trait required-method detection ✅ |
 | TD05 | Allow trait-method calls on conforming values and `where T: Trait` generics | **done** | concrete-receiver calls already worked; generic dispatch now resolves via `TryResolveTraitBoundMemberCall` at `ApplyMemberAccess` (consults the captured bound, `Self`-substituted). `Trait.Method(...)` via the trait name stays rejected (STK3013), which is correct |
 | TD06 | Monomorphization + lowering: static trait calls resolve to the concrete impl as direct calls (no vtable) | **done** | `FunctionMirBuilder.IsTraitMethodTarget` reroutes a recorded trait-method call to the receiver's concrete-type impl; verified end-to-end (runs, returns 10) and LLVM shows `call fastcc @Widget_Width` with **zero** indirect/vtable surface |
-| TD07 | Diagnostics tests: conformance success, missing-method failure, signature-mismatch failure | **partial** | reject-inheritance (STK3026), accept-conforming, reject-missing (STK3032), reject-kind-mismatch + reject-parameter-type-mismatch (STK3033) landed in `SemanticValidationTests` (5 tests); cross-module + generic-dispatch tests pending on TD05 |
+| TD07 | Diagnostics tests: conformance success, missing-method failure, signature-mismatch failure | **done** | reject-inheritance (STK3026), accept-conforming, reject-missing (STK3032), reject-kind-mismatch + reject-parameter-type-mismatch (STK3033), imported-trait missing/signature mismatch, package-backed required/default preservation, and imported generic direct-dispatch coverage landed |
 
 ### Phase B - Default trait members
 
@@ -392,7 +396,7 @@ One follow-up remains (tracked below): **dyn-call devirt / DSE-precision** (perf
 |---|---|---|---|
 | TD22 | User-facing docs: `LanguageReference.md` (§6.5 trait bounds, §8.5 impl/`Self`/required+default/static dispatch) + `skills/stark-language/SKILL.md` | **done** | both updated for implemented traits/generics/defaults; examples verified compile+run (`dyn` documented when it lands) |
 | TD23 | Update `01-language-feature-gaps.md` L06 and `09-self-hosted-compiler-architecture.md` to reflect the chosen design | A-D | gap docs consistent |
-| TD24 | Revisit `Dictionary<K,V>` keys: migrate the special-cased bool/integer `DictionaryKey` doctrine toward general trait-based hashing/equality | TD06 | string/symbol keys expressible; ties to L06/S06 |
+| TD24 | Revisit `Dictionary<K,V>` keys: migrate the special-cased bool/integer `DictionaryKey` doctrine toward general compile-time hashing/equality | **partial** | Explicit static key-type `Hash`/`Equals` contracts landed for custom keys; bool/integer scalar fast path preserved. Remaining: stdlib `ascii`/`unicode` contracts and broader `Hash`/`Eq` doctrine/trait surface. |
 
 ## 7. Open Questions
 

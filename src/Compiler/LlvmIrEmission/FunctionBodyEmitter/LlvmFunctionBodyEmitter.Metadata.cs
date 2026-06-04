@@ -1439,6 +1439,17 @@ internal sealed partial class LlvmFunctionBodyEmitter
                      && elementIndex >= 0
                      && elementIndex < orderedFields.Count:
             {
+                if (TryGetConcreteTypeLayout(normalizedType) is { FieldLayouts.Count: > 0 } aggregateLayout)
+                {
+                    var field = orderedFields[elementIndex];
+                    if (aggregateLayout.TryGetField(field.Name, out var concreteFieldLayout))
+                    {
+                        elementType = field.Type;
+                        offsetBytes = concreteFieldLayout.OffsetBytes;
+                        return true;
+                    }
+                }
+
                 var sizeBytes = 0;
                 for (var index = 0; index <= elementIndex; index++)
                 {

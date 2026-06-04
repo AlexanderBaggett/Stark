@@ -394,6 +394,28 @@ internal sealed class StarkTypeResolver
         string? currentModuleName)
     {
         var signature = type.functionPointerSignature();
+        StarkFfiAbi? ffiAbi = null;
+        if (signature.functionPointerAbiModifier() is { } abiModifier)
+        {
+            if (abiModifier.ffiAbiSpecifier() is null)
+            {
+                ffiAbi = StarkFfiAbi.C;
+            }
+            else if (FfiAbiSyntaxFacts.TryResolveFfiAbi(
+                    abiModifier.ffiAbiSpecifier().ffiAbi(),
+                    _context.Options.TargetInfo,
+                    out var resolvedAbi,
+                    out var errorMessage,
+                    out var errorContext))
+            {
+                ffiAbi = resolvedAbi;
+            }
+            else
+            {
+                ReportError("STK3046", errorMessage, errorContext);
+            }
+        }
+
         var returnType = ResolveReturnType(signature.returnType(), genericParameters, currentModuleName);
         var parameterTypeSyntaxes = signature.functionPointerParameterList().type_();
         var parameterTypes = new List<StarkTypeSymbol>(parameterTypeSyntaxes.Length);
@@ -432,7 +454,8 @@ internal sealed class StarkTypeResolver
             disjointGroups,
             overlapGroups,
             sameGroups,
-            rawPointerElementCountExpressions);
+            rawPointerElementCountExpressions,
+            ffiAbi);
     }
 
     private StarkTypeSymbol ResolveClosureType(
@@ -1614,6 +1637,11 @@ internal sealed class StarkTypeResolver
     {
         foreach (var candidate in EnumerateLocalAliasLookupNames(qualifiedName, currentModuleName))
         {
+            if (TryResolveCompilerKnownCTypeAlias(candidate, qualifiedName, typeArguments, token, out aliasType))
+            {
+                return true;
+            }
+
             if (!TryResolveTypeAliasSymbol(candidate, currentModuleName, out var alias))
             {
                 continue;
@@ -1627,12 +1655,38 @@ internal sealed class StarkTypeResolver
             && !qualifiedName.Contains('.', StringComparison.Ordinal))
         {
             var importedAliases = new List<TypeAliasSymbol>();
+            var importedCompilerKnownAliases = new List<(string Name, StarkTypeSymbol Type)>();
             foreach (var candidate in _moduleGraph.EnumerateAccessibleModuleQualifiedNames(currentModuleName, qualifiedName))
             {
+                if (TryResolveCompilerKnownCTypeAlias(candidate, qualifiedName, typeArguments, token, out var compilerKnownAliasType))
+                {
+                    importedCompilerKnownAliases.Add((candidate, compilerKnownAliasType));
+                    continue;
+                }
+
                 if (TryResolveTypeAliasSymbol(candidate, currentModuleName, out var alias))
                 {
                     importedAliases.Add(alias);
                 }
+            }
+
+            if (importedCompilerKnownAliases.Count == 1 && importedAliases.Count == 0)
+            {
+                aliasType = importedCompilerKnownAliases[0].Type;
+                return true;
+            }
+
+            if (importedCompilerKnownAliases.Count + importedAliases.Count > 1)
+            {
+                var aliasNames = importedCompilerKnownAliases
+                    .Select(static alias => alias.Name)
+                    .Concat(importedAliases.Select(static alias => alias.Name));
+                ReportError(
+                    "STK3004",
+                    $"Imported type alias '{qualifiedName}' is ambiguous between {string.Join(", ", aliasNames)}. Use a fully qualified name.",
+                    token);
+                aliasType = StarkTypeSymbols.Error;
+                return true;
             }
 
             if (importedAliases.Count == 1)
@@ -1654,6 +1708,38 @@ internal sealed class StarkTypeResolver
 
         aliasType = StarkTypeSymbols.Error;
         return false;
+    }
+
+    private bool TryResolveCompilerKnownCTypeAlias(
+        string lookupName,
+        string diagnosticName,
+        IReadOnlyList<StarkTypeSymbol>? typeArguments,
+        IToken token,
+        out StarkTypeSymbol aliasType)
+    {
+        if (!StarkCDataModelFacts.TryResolveAlias(
+                lookupName,
+                _context.Options.TargetInfo,
+                out aliasType,
+                out var diagnostic))
+        {
+            return false;
+        }
+
+        if (typeArguments is not null)
+        {
+            ReportError("STK3019", $"Type alias '{diagnosticName}' is not generic and does not accept type arguments.", token);
+            aliasType = StarkTypeSymbols.Error;
+            return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(diagnostic))
+        {
+            ReportError("STK3050", diagnostic, token);
+            aliasType = StarkTypeSymbols.Error;
+        }
+
+        return true;
     }
 
     private bool TryResolveTypeAliasSymbol(string lookupName, string? currentModuleName, out TypeAliasSymbol alias)
@@ -1823,7 +1909,8 @@ internal sealed class StarkTypeResolver
                 coreType.FunctionPointerDisjointParameterGroups,
                 coreType.FunctionPointerOverlapParameterGroups,
                 coreType.FunctionPointerSameParameterGroups,
-                coreType.FunctionPointerParameterRawPointerElementCountExpressions);
+                coreType.FunctionPointerParameterRawPointerElementCountExpressions,
+                coreType.FunctionPointerAbi);
         }
         else if (coreType.Kind == StarkTypeKind.Closure
             && coreType.ClosureFunctionKind is { } closureFunctionKind

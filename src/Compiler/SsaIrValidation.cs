@@ -745,7 +745,11 @@ internal sealed class SsaIrValidator
             }
         }
 
-        if (keyType.Kind is not (StarkTypeKind.Bool or StarkTypeKind.Integer))
+        if (!SystemCollectionsDictionaryKeyFacts.TryResolveContract(
+                keyType,
+                _typeModel?.Overloads ?? new Dictionary<string, IReadOnlyList<TypedFunctionSignature>>(StringComparer.Ordinal),
+                out _,
+                out _))
         {
             ReportBuiltin(function, $"System.Collections DictionaryKey builtin '{function.Name}' does not support key type '{keyType.DisplayName}'.");
             return;

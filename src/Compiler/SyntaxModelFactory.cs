@@ -25,7 +25,7 @@ internal static class SyntaxModelFactory
 
         foreach (var declaration in root.topLevelDeclaration())
         {
-            AddDeclarationModels(declarations, declaration, diagnostics);
+            AddDeclarationModels(declarations, declaration, diagnostics, targetInfo);
         }
 
         declarations = ApplyAsmSelection(
@@ -247,8 +247,9 @@ internal static class SyntaxModelFactory
     {
         var function = declaration.Function!;
         var nameToken = context.Identifier().Symbol;
-        var modifiers = context.functionModifier().Select(static modifier => modifier.GetText()).ToHashSet(StringComparer.Ordinal);
-        var hasUnsupportedModifier = modifiers.Any(static modifier => modifier is not "ffi" and not "unsafe");
+        var hasUnsupportedModifier = context.functionModifier().Any(static modifier =>
+            !IsBareFfiModifier(modifier)
+            && modifier.Start.Type != StarkParser.UNSAFE);
 
         if (function.Asm!.Architecture == StarkAsmArchitecture.Unknown)
         {
@@ -276,6 +277,12 @@ internal static class SyntaxModelFactory
         }
 
         return true;
+    }
+
+    private static bool IsBareFfiModifier(StarkParser.FunctionModifierContext modifier)
+    {
+        return modifier.ffiModifier() is { } ffiModifier
+            && ffiModifier.ffiAbiSpecifier() is null;
     }
 
     private static bool ValidateAsmOperandBindings(
@@ -690,7 +697,8 @@ internal static class SyntaxModelFactory
         IReadOnlyList<StarkParser.AttributeContext> attributeContexts,
         string targetDescription,
         List<SyntaxModelDiagnostic> diagnostics,
-        bool allowTestingAttributes = false)
+        bool allowTestingAttributes = false,
+        bool allowStructLayoutAttributes = false)
     {
         var backendOptimizationMode = ModuleBackendOptimizationMode.Default;
         var backendAttributeCount = 0;
@@ -734,6 +742,21 @@ internal static class SyntaxModelFactory
                         attributeContext.Start.Column + 1));
                 }
 
+                continue;
+            }
+
+            if (IsStructLayoutAttribute(attribute.Name))
+            {
+                if (allowStructLayoutAttributes)
+                {
+                    continue;
+                }
+
+                diagnostics.Add(new SyntaxModelDiagnostic(
+                    "STK2110",
+                    $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. Layout attributes are only supported on structs.",
+                    attributeContext.Start.Line,
+                    attributeContext.Start.Column + 1));
                 continue;
             }
 
@@ -783,6 +806,18 @@ internal static class SyntaxModelFactory
             || string.Equals(name, "Theory", StringComparison.Ordinal);
     }
 
+    private static bool IsStructLayoutAttribute(string name)
+    {
+        return string.Equals(name, "StructLayout", StringComparison.Ordinal)
+            || string.Equals(name, "Pack", StringComparison.Ordinal)
+            || string.Equals(name, "Align", StringComparison.Ordinal);
+    }
+
+    private static bool IsFieldLayoutAttribute(string name)
+    {
+        return string.Equals(name, "FieldOffset", StringComparison.Ordinal);
+    }
+
     private static void AddUnsupportedAttributeDiagnostics(
         IReadOnlyList<ModuleAttributeModel> attributes,
         IReadOnlyList<StarkParser.AttributeContext> attributeContexts,
@@ -804,7 +839,8 @@ internal static class SyntaxModelFactory
     private static void AddDeclarationModels(
         List<TopLevelDeclarationModel> declarations,
         StarkParser.TopLevelDeclarationContext declaration,
-        List<SyntaxModelDiagnostic> diagnostics)
+        List<SyntaxModelDiagnostic> diagnostics,
+        LlvmTargetInfo? targetInfo)
     {
         var visibility = ParseVisibility(declaration.visibilityModifier());
         var declarationAttributes = CreateAttributes(declaration.attributeList());
@@ -838,7 +874,8 @@ internal static class SyntaxModelFactory
                     declarationAttributes,
                     backendOptimizationMode,
                     $"function '{function.Identifier().GetText()}'",
-                    diagnostics),
+                    diagnostics,
+                    targetInfo),
                 Attributes: declarationAttributes,
                 BackendOptimizationMode: backendOptimizationMode));
             return;
@@ -850,7 +887,8 @@ internal static class SyntaxModelFactory
                 declarationAttributes,
                 declarationAttributeContexts,
                 $"struct '{structDeclaration.Identifier().GetText()}'",
-                diagnostics);
+                diagnostics,
+                allowStructLayoutAttributes: true);
             declarations.Add(new TopLevelDeclarationModel(
                 structDeclaration.Identifier().GetText(),
                 DeclarationKind.Struct,
@@ -907,7 +945,8 @@ internal static class SyntaxModelFactory
                         memberAttributes,
                         methodBackendOptimizationMode,
                         $"method '{structDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
-                        diagnostics),
+                        diagnostics,
+                        targetInfo),
                     Attributes: memberAttributes,
                     BackendOptimizationMode: methodBackendOptimizationMode));
             }
@@ -978,7 +1017,8 @@ internal static class SyntaxModelFactory
                         memberAttributes,
                         methodBackendOptimizationMode,
                         $"method '{recordDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
-                        diagnostics),
+                        diagnostics,
+                        targetInfo),
                     Attributes: memberAttributes,
                     BackendOptimizationMode: methodBackendOptimizationMode));
             }
@@ -1044,7 +1084,8 @@ internal static class SyntaxModelFactory
                         memberAttributes,
                         methodBackendOptimizationMode,
                         $"trait method '{traitDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
-                        diagnostics),
+                        diagnostics,
+                        targetInfo),
                     Attributes: memberAttributes,
                     BackendOptimizationMode: methodBackendOptimizationMode));
             }
@@ -1102,7 +1143,8 @@ internal static class SyntaxModelFactory
                         memberAttributes,
                         methodBackendOptimizationMode,
                         $"doctrine method '{doctrineDeclaration.Identifier().GetText()}.{method.Identifier().GetText()}'",
-                        diagnostics),
+                        diagnostics,
+                        targetInfo),
                     Attributes: memberAttributes,
                     BackendOptimizationMode: methodBackendOptimizationMode));
             }
@@ -1174,6 +1216,12 @@ internal static class SyntaxModelFactory
             return;
         }
 
+        if (member.fieldDeclaration() is not null)
+        {
+            ValidateFieldMemberAttributes(attributes, attributeContexts, "struct field", diagnostics);
+            return;
+        }
+
         AddUnsupportedAttributeDiagnostics(attributes, attributeContexts, "struct member", diagnostics);
     }
 
@@ -1195,7 +1243,36 @@ internal static class SyntaxModelFactory
             return;
         }
 
+        if (member.fieldDeclaration() is not null)
+        {
+            ValidateFieldMemberAttributes(attributes, attributeContexts, "record field", diagnostics);
+            return;
+        }
+
         AddUnsupportedAttributeDiagnostics(attributes, attributeContexts, "record member", diagnostics);
+    }
+
+    private static void ValidateFieldMemberAttributes(
+        IReadOnlyList<ModuleAttributeModel> attributes,
+        IReadOnlyList<StarkParser.AttributeContext> attributeContexts,
+        string targetDescription,
+        List<SyntaxModelDiagnostic> diagnostics)
+    {
+        for (var index = 0; index < attributes.Count; index++)
+        {
+            var attribute = attributes[index];
+            if (IsFieldLayoutAttribute(attribute.Name))
+            {
+                continue;
+            }
+
+            var attributeContext = attributeContexts[index];
+            diagnostics.Add(new SyntaxModelDiagnostic(
+                "STK2110",
+                $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. Field layout attributes only support '[FieldOffset(N)]'.",
+                attributeContext.Start.Line,
+                attributeContext.Start.Column + 1));
+        }
     }
 
     private static TypeAliasDeclarationModel CreateTypeAliasModel(StarkParser.TypeAliasDeclarationContext typeAliasDeclaration)
@@ -1226,9 +1303,45 @@ internal static class SyntaxModelFactory
         IReadOnlyList<ModuleAttributeModel>? attributes = null,
         ModuleBackendOptimizationMode backendOptimizationMode = ModuleBackendOptimizationMode.Default,
         string? targetDescription = null,
-        List<SyntaxModelDiagnostic>? diagnostics = null)
+        List<SyntaxModelDiagnostic>? diagnostics = null,
+        LlvmTargetInfo? targetInfo = null)
     {
         var modifiers = modifiersList.Select(static modifier => modifier.GetText()).ToHashSet(StringComparer.Ordinal);
+        var isFfi = modifiersList.Any(FfiAbiSyntaxFacts.IsFfiModifier);
+        var isAsm = asmSpecifier is not null;
+        StarkFfiAbi? ffiAbi = null;
+        if (isFfi)
+        {
+            if (FfiAbiSyntaxFacts.TryResolveFunctionAbi(
+                    modifiersList,
+                    targetInfo,
+                    out var abiResolution,
+                    out var errorMessage,
+                    out var errorContext))
+            {
+                if (isAsm && abiResolution.HasExplicitAbi)
+                {
+                    diagnostics?.Add(new SyntaxModelDiagnostic(
+                        "STK2112",
+                        $"Asm declaration '{name}' cannot also specify an FFI ABI. Use bare 'ffi asm(...)' because asm declarations provide register constraints directly.",
+                        errorContext.Start.Line,
+                        errorContext.Start.Column + 1));
+                }
+                else if (!isAsm)
+                {
+                    ffiAbi = abiResolution.Abi;
+                }
+            }
+            else
+            {
+                diagnostics?.Add(new SyntaxModelDiagnostic(
+                    "STK2111",
+                    errorMessage,
+                    errorContext.Start.Line,
+                    errorContext.Start.Column + 1));
+            }
+        }
+
         AddBackendOpaqueModifierDiagnostics(
             backendOptimizationMode,
             modifiersList,
@@ -1260,10 +1373,11 @@ internal static class SyntaxModelFactory
                 hasExplicitInlinePreference,
                 modifiers.Contains("hot"),
                 modifiers.Contains("cold"),
-                modifiers.Contains("ffi"),
+                isFfi,
                 modifiers.Contains("varargs"),
                 modifiers.Contains("strictfp"),
-                modifiers.Contains("unsafe")),
+                modifiers.Contains("unsafe"),
+                FfiAbi: ffiAbi),
             HasBody: functionBody.block() is not null,
             Asm: CreateAsmModel(asmSpecifier, asmClauseList, functionBody),
             GenericParameterNames: genericParameters,

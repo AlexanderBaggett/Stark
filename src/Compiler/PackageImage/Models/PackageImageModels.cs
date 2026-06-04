@@ -104,6 +104,7 @@ internal sealed record StarkPackageFunctionManifest(
     bool HasExplicitInlinePreference = false,
     bool IsUnsafe = false,
     bool IsVarargs = false,
+    string? FfiAbi = null,
     string? BackendOptimizationMode = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
@@ -160,6 +161,7 @@ internal sealed record StarkPackageMethodManifest(
     string? Visibility = null,
     bool IsUnsafe = false,
     bool IsVarargs = false,
+    string? FfiAbi = null,
     string? BackendOptimizationMode = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
@@ -185,7 +187,11 @@ internal sealed record StarkPackageTypeManifest(
     IReadOnlyList<StarkPackageMethodManifest>? Methods = null,
     StarkPackageDestructorManifest? Destructor = null,
     IReadOnlyList<StarkPackageConstructorManifest>? Constructors = null,
-    string? BackendOptimizationMode = null);
+    string? BackendOptimizationMode = null,
+    string? StructLayout = null,
+    int? PackBytes = null,
+    int? AlignBytes = null,
+    IReadOnlyList<string>? ImplementedTraits = null);
 
 internal sealed record StarkPackageEnumVariantManifest(
     string Name,
@@ -197,7 +203,8 @@ internal sealed record StarkPackageEnumVariantManifest(
 internal sealed record StarkPackageFieldManifest(
     string Name,
     string Type,
-    string? Visibility = null);
+    string? Visibility = null,
+    int? ExplicitOffsetBytes = null);
 
 internal sealed record StarkPackageGlobalManifest(
     string Name,
@@ -238,6 +245,7 @@ internal sealed record StarkPackageTypeReference(
     StarkPackageTypeReference? ElementType = null,
     IReadOnlyList<StarkPackageTypeReference>? TypeArguments = null,
     string? FunctionKind = null,
+    string? FunctionAbi = null,
     string? ClosureStorageKind = null,
     string? ClosureCallCapability = null,
     StarkPackageTypeReference? ReturnType = null,
@@ -260,7 +268,8 @@ internal sealed record StarkPackageTypedConstructorManifest(
 internal sealed record StarkPackageTypedFieldManifest(
     string Name,
     StarkPackageTypeReference Type,
-    string? Visibility = null);
+    string? Visibility = null,
+    int? ExplicitOffsetBytes = null);
 
 internal sealed record StarkPackageTypedFunctionManifest(
     string Name,
@@ -284,10 +293,12 @@ internal sealed record StarkPackageTypedFunctionManifest(
     bool HasExplicitInlinePreference = false,
     bool IsUnsafe = false,
     bool IsVarargs = false,
+    string? FfiAbi = null,
     string? BackendOptimizationMode = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
-    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null);
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null,
+    bool HasBody = true);
 
 internal sealed record StarkPackageTypedMethodManifest(
     string Name,
@@ -311,10 +322,12 @@ internal sealed record StarkPackageTypedMethodManifest(
     string? Visibility = null,
     bool IsUnsafe = false,
     bool IsVarargs = false,
+    string? FfiAbi = null,
     string? BackendOptimizationMode = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
-    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null);
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null,
+    bool HasBody = true);
 
 internal sealed record StarkPackageTypedEnumVariantManifest(
     string Name,
@@ -335,7 +348,11 @@ internal sealed record StarkPackageTypedTypeManifest(
     IReadOnlyList<StarkPackageTypedMethodManifest>? Methods = null,
     StarkPackageDestructorManifest? Destructor = null,
     IReadOnlyList<StarkPackageTypedConstructorManifest>? Constructors = null,
-    string? BackendOptimizationMode = null);
+    string? BackendOptimizationMode = null,
+    string? StructLayout = null,
+    int? PackBytes = null,
+    int? AlignBytes = null,
+    IReadOnlyList<string>? ImplementedTraits = null);
 
 internal sealed record StarkPackageTypedGlobalManifest(
     string Name,
@@ -672,6 +689,7 @@ internal sealed record StarkPackageFunctionEffectManifest(
     string InlinePreference,
     bool IsStrictFp,
     bool IsVarargs = false,
+    string? FfiAbi = null,
     string? BackendOptimizationMode = null);
 
 internal sealed record StarkPackageAbiParameterManifest(
@@ -691,7 +709,8 @@ internal sealed record StarkPackageAbiFunctionManifest(
     bool IsFfi,
     string? SourceName = null,
     bool UsesFastCallingConvention = false,
-    bool IsVarargs = false);
+    bool IsVarargs = false,
+    string? FfiAbi = null);
 
 internal sealed record StarkPackageFunctionMemoryEffectsManifest(
     bool ReadsArgumentMemory,
@@ -801,7 +820,16 @@ internal sealed record StarkPackageFunctionOptimizationManifest(
 internal sealed record StarkPackageConcreteTypeLayoutManifest(
     string QualifiedTypeName,
     int SizeBytes,
-    int AlignmentBytes);
+    int AlignmentBytes,
+    IReadOnlyList<StarkPackageConcreteFieldLayoutManifest>? Fields = null);
+
+internal sealed record StarkPackageConcreteFieldLayoutManifest(
+    string Name,
+    int OffsetBytes,
+    int SizeBytes,
+    int NaturalAlignmentBytes,
+    int EffectiveAlignmentBytes,
+    bool IsMisaligned);
 
 internal sealed record StarkPackageEnumLayoutFieldManifest(
     string Name,

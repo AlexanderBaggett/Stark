@@ -61,6 +61,88 @@ public enum StarkFunctionKind
     FiniteLaw
 }
 
+public enum StarkFfiAbi
+{
+    C,
+    CDecl,
+    StdCall,
+    FastCall,
+    ThisCall,
+    VectorCall,
+    SysV,
+    Win64,
+    Aapcs,
+    Aapcs64
+}
+
+internal static class StarkFfiAbiFacts
+{
+    public static string DisplayName(StarkFfiAbi abi)
+    {
+        return abi switch
+        {
+            StarkFfiAbi.C => "c",
+            StarkFfiAbi.CDecl => "cdecl",
+            StarkFfiAbi.StdCall => "stdcall",
+            StarkFfiAbi.FastCall => "fastcall",
+            StarkFfiAbi.ThisCall => "thiscall",
+            StarkFfiAbi.VectorCall => "vectorcall",
+            StarkFfiAbi.SysV => "sysv",
+            StarkFfiAbi.Win64 => "win64",
+            StarkFfiAbi.Aapcs => "aapcs",
+            StarkFfiAbi.Aapcs64 => "aapcs64",
+            _ => "c"
+        };
+    }
+
+    public static bool TryParse(string? text, out StarkFfiAbi abi)
+    {
+        abi = text?.Trim().ToLowerInvariant() switch
+        {
+            "c" => StarkFfiAbi.C,
+            "cdecl" => StarkFfiAbi.CDecl,
+            "stdcall" => StarkFfiAbi.StdCall,
+            "fastcall" => StarkFfiAbi.FastCall,
+            "thiscall" => StarkFfiAbi.ThisCall,
+            "vectorcall" => StarkFfiAbi.VectorCall,
+            "sysv" => StarkFfiAbi.SysV,
+            "win64" => StarkFfiAbi.Win64,
+            "aapcs" => StarkFfiAbi.Aapcs,
+            "aapcs64" => StarkFfiAbi.Aapcs64,
+            _ => StarkFfiAbi.C
+        };
+
+        return text?.Trim().ToLowerInvariant() is "c"
+            or "cdecl"
+            or "stdcall"
+            or "fastcall"
+            or "thiscall"
+            or "vectorcall"
+            or "sysv"
+            or "win64"
+            or "aapcs"
+            or "aapcs64";
+    }
+
+    public static string? LlvmCallingConventionName(StarkFfiAbi? abi)
+    {
+        return abi switch
+        {
+            null or StarkFfiAbi.C => null,
+            StarkFfiAbi.CDecl => null,
+            StarkFfiAbi.StdCall => "x86_stdcallcc",
+            StarkFfiAbi.FastCall => "x86_fastcallcc",
+            StarkFfiAbi.ThisCall => "x86_thiscallcc",
+            StarkFfiAbi.VectorCall => "x86_vectorcallcc",
+            StarkFfiAbi.SysV => "x86_64_sysvcc",
+            StarkFfiAbi.Win64 => "win64cc",
+            StarkFfiAbi.Aapcs => "aapcscc",
+            StarkFfiAbi.Aapcs64 => "aarch64_aapcscc",
+            _ => null
+        };
+    }
+}
+
 internal static class FunctionKindFacts
 {
     public static bool IsLaw(StarkFunctionKind kind)
@@ -470,7 +552,8 @@ public sealed record FunctionModifierSet(
     bool IsFfi,
     bool IsVarargs,
     bool IsStrictFp,
-    bool IsUnsafe = false);
+    bool IsUnsafe = false,
+    StarkFfiAbi? FfiAbi = null);
 
 public enum StarkAsmArchitecture
 {
@@ -1182,6 +1265,7 @@ public sealed record FunctionEffectProfile(
     InlinePreference InlinePreference,
     bool IsStrictFp,
     ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default,
+    StarkFfiAbi? FfiAbi = null,
     // Whether the function accesses memory beyond its own arguments (e.g. globals,
     // or the object behind a `dyn` trait object's data pointer). Optimizers that
     // compute a precise per-call local read/write set must treat these as a barrier.
@@ -1286,6 +1370,7 @@ public enum StarkTypeKind
     Bool,
     Ascii,
     Unicode,
+    CVoid,
     Integer,
     Float,
     RawPointer,
@@ -1307,6 +1392,7 @@ public sealed record StarkTypeSymbol(
     StarkTypeSymbol? ElementType = null,
     int? FixedLength = null,
     StarkFunctionKind? FunctionPointerKind = null,
+    StarkFfiAbi? FunctionPointerAbi = null,
     StarkTypeSymbol? FunctionPointerReturnType = null,
     IReadOnlyList<StarkTypeSymbol>? FunctionPointerParameterTypes = null,
     IReadOnlyList<string?>? FunctionPointerParameterRawPointerElementCountExpressions = null,
@@ -1345,6 +1431,7 @@ public static class StarkTypeSymbols
     public static readonly StarkTypeSymbol CompileTimeInteger = new(StarkTypeKind.Integer, "integer");
     public static readonly StarkTypeSymbol Ascii = new(StarkTypeKind.Ascii, "ascii");
     public static readonly StarkTypeSymbol Unicode = new(StarkTypeKind.Unicode, "unicode");
+    public static readonly StarkTypeSymbol CVoid = new(StarkTypeKind.CVoid, "System.C.c_void");
     public static readonly StarkTypeSymbol OwnedAscii = new(StarkTypeKind.Named, OwnedAsciiName, NamedType: OwnedAsciiName);
     public static readonly StarkTypeSymbol OwnedUnicode = new(StarkTypeKind.Named, OwnedUnicodeName, NamedType: OwnedUnicodeName);
     public static readonly StarkTypeSymbol Null = new(StarkTypeKind.Null, "null");
@@ -1463,9 +1550,13 @@ public static class StarkTypeSymbols
         IReadOnlyList<ParameterDisjointGroup>? disjointGroups = null,
         IReadOnlyList<ParameterOverlapGroup>? overlapGroups = null,
         IReadOnlyList<ParameterSameGroup>? sameGroups = null,
-        IReadOnlyList<string?>? parameterRawPointerElementCountExpressions = null)
+        IReadOnlyList<string?>? parameterRawPointerElementCountExpressions = null,
+        StarkFfiAbi? ffiAbi = null)
     {
         var displayKind = FormatCallableFunctionKind(functionKind);
+        var abiPrefix = ffiAbi is { } abi
+            ? $"ffi({StarkFfiAbiFacts.DisplayName(abi)}) "
+            : string.Empty;
         var effectiveRawPointerElementCountExpressions =
             NormalizeFunctionPointerParameterRawPointerElementCountExpressions(
                 parameterTypes,
@@ -1487,11 +1578,12 @@ public static class StarkTypeSymbols
                 overlapGroups: effectiveOverlapGroups,
                 sameGroups: effectiveSameGroups,
                 applyDefaultNonOverlap: true);
-        var displayName = $"fnptr<{displayKind} {returnType.DisplayName}({string.Join(", ", parameterTypes.Select((parameter, index) => FormatFunctionPointerParameterDisplayName(parameter, effectiveRawPointerElementCountExpressions, index)))}){FormatFunctionPointerMemoryContracts(effectiveOverlapGroups, effectiveSameGroups)}>";
+        var displayName = $"fnptr<{abiPrefix}{displayKind} {returnType.DisplayName}({string.Join(", ", parameterTypes.Select((parameter, index) => FormatFunctionPointerParameterDisplayName(parameter, effectiveRawPointerElementCountExpressions, index)))}){FormatFunctionPointerMemoryContracts(effectiveOverlapGroups, effectiveSameGroups)}>";
         return new StarkTypeSymbol(
             StarkTypeKind.FunctionPointer,
             displayName,
             FunctionPointerKind: functionKind,
+            FunctionPointerAbi: ffiAbi,
             FunctionPointerReturnType: returnType,
             FunctionPointerParameterTypes: parameterTypes.ToArray(),
             FunctionPointerParameterRawPointerElementCountExpressions: effectiveRawPointerElementCountExpressions,
@@ -1869,6 +1961,7 @@ public static class StarkTypeSymbols
             StarkTypeKind.Bool or
             StarkTypeKind.Ascii or
             StarkTypeKind.Unicode or
+            StarkTypeKind.CVoid or
             StarkTypeKind.Integer or
             StarkTypeKind.Float or
             StarkTypeKind.FunctionPointer or
@@ -1911,6 +2004,7 @@ public static class StarkTypeSymbols
             StarkTypeKind.Bool => Bool,
             StarkTypeKind.Ascii => Ascii,
             StarkTypeKind.Unicode => Unicode,
+            StarkTypeKind.CVoid => CVoid,
             StarkTypeKind.Null => Null,
             StarkTypeKind.Integer => Integer(type.BitWidth ?? 32, type.RangeMin, type.RangeMax, type.IsUnsigned),
             StarkTypeKind.Float => Float(type.BitWidth ?? 32),
@@ -1928,7 +2022,8 @@ public static class StarkTypeSymbols
                     type.FunctionPointerDisjointParameterGroups,
                     type.FunctionPointerOverlapParameterGroups,
                     type.FunctionPointerSameParameterGroups,
-                    type.FunctionPointerParameterRawPointerElementCountExpressions),
+                    type.FunctionPointerParameterRawPointerElementCountExpressions,
+                    type.FunctionPointerAbi),
             StarkTypeKind.Closure when type.ClosureFunctionKind is { } closureFunctionKind
                                        && type.ClosureReturnType is { } closureReturnType
                                        && type.ClosureParameterTypes is { } closureParameterTypes
@@ -1974,7 +2069,20 @@ public sealed record FieldSymbol(
     string Name,
     StarkTypeSymbol Type,
     StarkVisibility Visibility = StarkVisibility.Public,
-    string? DeclaringModuleName = null);
+    string? DeclaringModuleName = null,
+    int? ExplicitOffsetBytes = null);
+
+public enum StructLayoutKind
+{
+    Auto,
+    C,
+    Explicit
+}
+
+public sealed record StructLayoutMetadata(
+    StructLayoutKind Kind,
+    int? PackBytes = null,
+    int? AlignBytes = null);
 
 public sealed record EnumVariantFieldSymbol(
     int Position,
@@ -2022,7 +2130,8 @@ public sealed record NamedTypeSymbol(
     IReadOnlyList<EnumVariantSymbol>? EnumVariants = null,
     IReadOnlyList<string>? GenericParameterNames = null,
     IReadOnlyList<string>? ImplementedTraitNames = null,
-    bool IsDynTrait = false)
+    bool IsDynTrait = false,
+    StructLayoutMetadata? Layout = null)
 {
     public bool TryGetField(string name, out FieldSymbol field, out int index)
     {
@@ -2140,6 +2249,7 @@ public sealed record TypedFunctionSignature(
     StarkFunctionKind Kind = StarkFunctionKind.Fn,
     bool IsUnsafe = false,
     bool IsVarargs = false,
+    StarkFfiAbi? FfiAbi = null,
     ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default,
     IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null,
     IReadOnlyList<ParameterOverlapGroup>? OverlapParameterGroups = null,
@@ -3075,7 +3185,8 @@ public sealed record AbiFunctionSignature(
     bool IsFfi,
     string? SourceName = null,
     bool UsesFastCallingConvention = false,
-    bool IsVarargs = false)
+    bool IsVarargs = false,
+    StarkFfiAbi? FfiAbi = null)
 {
     public string DisplaySourceName => SourceName ?? Name;
 
@@ -3113,7 +3224,36 @@ public sealed record ParameterMemoryEffectSummary(
     bool Writes,
     ParameterCaptureKind CaptureKind);
 
-public sealed record ConcreteTypeLayout(int SizeBytes, int AlignmentBytes);
+public sealed record ConcreteFieldLayout(
+    string Name,
+    int OffsetBytes,
+    int SizeBytes,
+    int NaturalAlignmentBytes,
+    int EffectiveAlignmentBytes,
+    bool IsMisaligned);
+
+public sealed record ConcreteTypeLayout(
+    int SizeBytes,
+    int AlignmentBytes,
+    IReadOnlyList<ConcreteFieldLayout>? FieldLayouts = null)
+{
+    public IReadOnlyList<ConcreteFieldLayout> Fields => FieldLayouts ?? [];
+
+    public bool TryGetField(string name, out ConcreteFieldLayout fieldLayout)
+    {
+        foreach (var field in Fields)
+        {
+            if (string.Equals(field.Name, name, StringComparison.Ordinal))
+            {
+                fieldLayout = field;
+                return true;
+            }
+        }
+
+        fieldLayout = null!;
+        return false;
+    }
+}
 
 internal static class ConcreteTypeLayoutHelper
 {
@@ -3246,29 +3386,9 @@ internal static class ConcreteTypeLayoutHelper
 
         try
         {
-            var sizeBytes = 0;
-            var alignmentBytes = 1;
-
-            foreach (var field in type.OrderedFields)
-            {
-                var fieldLayout = TryGetConcreteTypeLayout(
-                    field.Type,
-                    namedTypes,
-                    enumLayouts,
-                    publishedConcreteLayouts,
-                    activeNamedTypes);
-                if (fieldLayout is null)
-                {
-                    return null;
-                }
-
-                sizeBytes = AlignTo(sizeBytes, fieldLayout.AlignmentBytes);
-                sizeBytes = checked(sizeBytes + fieldLayout.SizeBytes);
-                alignmentBytes = Math.Max(alignmentBytes, fieldLayout.AlignmentBytes);
-            }
-
-            sizeBytes = AlignTo(sizeBytes, alignmentBytes);
-            return new ConcreteTypeLayout(sizeBytes, alignmentBytes);
+            return type.Layout?.Kind == StructLayoutKind.Explicit
+                ? TryGetExplicitNamedTypeLayout(type, namedTypes, enumLayouts, publishedConcreteLayouts, activeNamedTypes)
+                : TryGetSequentialNamedTypeLayout(type, namedTypes, enumLayouts, publishedConcreteLayouts, activeNamedTypes);
         }
         catch (OverflowException)
         {
@@ -3278,6 +3398,109 @@ internal static class ConcreteTypeLayoutHelper
         {
             activeNamedTypes.Remove(type.Name);
         }
+    }
+
+    private static ConcreteTypeLayout? TryGetSequentialNamedTypeLayout(
+        NamedTypeSymbol type,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyDictionary<string, EnumLayoutSymbol>? enumLayouts,
+        IReadOnlyDictionary<string, ConcreteTypeLayout>? publishedConcreteLayouts,
+        ISet<string> activeNamedTypes)
+    {
+        var sizeBytes = 0;
+        var alignmentBytes = 1;
+        var packBytes = type.Layout?.Kind == StructLayoutKind.C ? type.Layout.PackBytes : null;
+        var fieldLayouts = new List<ConcreteFieldLayout>(type.OrderedFields.Count);
+
+        foreach (var field in type.OrderedFields)
+        {
+            var fieldLayout = TryGetConcreteTypeLayout(
+                field.Type,
+                namedTypes,
+                enumLayouts,
+                publishedConcreteLayouts,
+                activeNamedTypes);
+            if (fieldLayout is null)
+            {
+                return null;
+            }
+
+            var naturalAlignmentBytes = fieldLayout.AlignmentBytes;
+            var effectiveAlignmentBytes = packBytes is { } pack
+                ? Math.Min(naturalAlignmentBytes, pack)
+                : naturalAlignmentBytes;
+            var fieldOffsetBytes = AlignTo(sizeBytes, effectiveAlignmentBytes);
+            fieldLayouts.Add(new ConcreteFieldLayout(
+                field.Name,
+                fieldOffsetBytes,
+                fieldLayout.SizeBytes,
+                naturalAlignmentBytes,
+                effectiveAlignmentBytes,
+                fieldOffsetBytes % naturalAlignmentBytes != 0));
+
+            sizeBytes = checked(fieldOffsetBytes + fieldLayout.SizeBytes);
+            alignmentBytes = Math.Max(alignmentBytes, effectiveAlignmentBytes);
+        }
+
+        if (type.Layout?.AlignBytes is { } explicitAlignmentBytes)
+        {
+            alignmentBytes = Math.Max(alignmentBytes, explicitAlignmentBytes);
+        }
+
+        sizeBytes = AlignTo(sizeBytes, alignmentBytes);
+        return new ConcreteTypeLayout(sizeBytes, alignmentBytes, fieldLayouts);
+    }
+
+    private static ConcreteTypeLayout? TryGetExplicitNamedTypeLayout(
+        NamedTypeSymbol type,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyDictionary<string, EnumLayoutSymbol>? enumLayouts,
+        IReadOnlyDictionary<string, ConcreteTypeLayout>? publishedConcreteLayouts,
+        ISet<string> activeNamedTypes)
+    {
+        var sizeBytes = 0;
+        var alignmentBytes = 1;
+        var fieldLayouts = new List<ConcreteFieldLayout>(type.OrderedFields.Count);
+
+        foreach (var field in type.OrderedFields)
+        {
+            if (field.ExplicitOffsetBytes is not { } fieldOffsetBytes)
+            {
+                return null;
+            }
+
+            var fieldLayout = TryGetConcreteTypeLayout(
+                field.Type,
+                namedTypes,
+                enumLayouts,
+                publishedConcreteLayouts,
+                activeNamedTypes);
+            if (fieldLayout is null)
+            {
+                return null;
+            }
+
+            fieldLayouts.Add(new ConcreteFieldLayout(
+                field.Name,
+                fieldOffsetBytes,
+                fieldLayout.SizeBytes,
+                fieldLayout.AlignmentBytes,
+                fieldOffsetBytes % fieldLayout.AlignmentBytes == 0
+                    ? fieldLayout.AlignmentBytes
+                    : GreatestPowerOfTwoDivisor(fieldOffsetBytes),
+                fieldOffsetBytes % fieldLayout.AlignmentBytes != 0));
+
+            sizeBytes = Math.Max(sizeBytes, checked(fieldOffsetBytes + fieldLayout.SizeBytes));
+            alignmentBytes = Math.Max(alignmentBytes, fieldLayout.AlignmentBytes);
+        }
+
+        if (type.Layout?.AlignBytes is { } explicitAlignmentBytes)
+        {
+            alignmentBytes = Math.Max(alignmentBytes, explicitAlignmentBytes);
+        }
+
+        sizeBytes = AlignTo(sizeBytes, alignmentBytes);
+        return new ConcreteTypeLayout(sizeBytes, alignmentBytes, fieldLayouts);
     }
 
     private static ConcreteTypeLayout? TryGetEnumTypeLayout(
@@ -3296,6 +3519,7 @@ internal static class ConcreteTypeLayoutHelper
         {
             var sizeBytes = 0;
             var alignmentBytes = 1;
+            var fieldLayouts = new List<ConcreteFieldLayout>(layout.OrderedFields.Count);
 
             foreach (var field in layout.OrderedFields)
             {
@@ -3310,13 +3534,20 @@ internal static class ConcreteTypeLayoutHelper
                     return null;
                 }
 
-                sizeBytes = AlignTo(sizeBytes, fieldLayout.AlignmentBytes);
-                sizeBytes = checked(sizeBytes + fieldLayout.SizeBytes);
+                var fieldOffsetBytes = AlignTo(sizeBytes, fieldLayout.AlignmentBytes);
+                fieldLayouts.Add(new ConcreteFieldLayout(
+                    field.Name,
+                    fieldOffsetBytes,
+                    fieldLayout.SizeBytes,
+                    fieldLayout.AlignmentBytes,
+                    fieldLayout.AlignmentBytes,
+                    IsMisaligned: false));
+                sizeBytes = checked(fieldOffsetBytes + fieldLayout.SizeBytes);
                 alignmentBytes = Math.Max(alignmentBytes, fieldLayout.AlignmentBytes);
             }
 
             sizeBytes = AlignTo(sizeBytes, alignmentBytes);
-            return new ConcreteTypeLayout(sizeBytes, alignmentBytes);
+            return new ConcreteTypeLayout(sizeBytes, alignmentBytes, fieldLayouts);
         }
         catch (OverflowException)
         {
@@ -3403,6 +3634,16 @@ internal static class ConcreteTypeLayoutHelper
         }
 
         return checked(value + (alignment - remainder));
+    }
+
+    private static int GreatestPowerOfTwoDivisor(int value)
+    {
+        if (value == 0)
+        {
+            return 1;
+        }
+
+        return value & -value;
     }
 }
 

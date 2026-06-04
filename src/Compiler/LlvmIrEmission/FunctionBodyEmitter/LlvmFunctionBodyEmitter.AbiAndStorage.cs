@@ -63,8 +63,99 @@ internal sealed partial class LlvmFunctionBodyEmitter
             segments.AddRange(attributes);
         }
 
-        segments.Add(FormatValue(argument));
+        segments.Add(FormatDirectAbiArgumentValue(parameter, argument));
         return string.Join(" ", segments);
+    }
+
+    private string FormatDirectAbiArgumentValue(AbiParameterSymbol parameter, SsaValue argument)
+    {
+        if (!CAbiAggregateClassifier.IsCarrierType(parameter.SourceType, parameter.LlvmType))
+        {
+            return FormatValue(argument);
+        }
+
+        return MaterializeCAbiCarrierFromSourceValue(
+            parameter.SourceType,
+            parameter.LlvmType,
+            argument,
+            $"ffi_arg_{parameter.SourceName}");
+    }
+
+    private string MaterializeCAbiCarrierFromSourceValue(
+        StarkTypeSymbol sourceType,
+        StarkTypeSymbol carrierType,
+        SsaValue sourceValue,
+        string tempPrefix)
+    {
+        if (TryGetConcreteTypeLayout(sourceType) is not { } sourceLayout
+            || TryGetConcreteTypeLayout(carrierType) is not { } carrierLayout)
+        {
+            return FormatValue(sourceValue);
+        }
+
+        string sourceAddress;
+        int? sourceAlignmentBytes;
+        if (!TryResolveAggregateSourceAddress(sourceValue, sourceType, out sourceAddress, out sourceAlignmentBytes))
+        {
+            sourceAddress = $"%{EscapeIdentifier(CreateAbiTempName($"{tempPrefix}_source"))}";
+            QueueStaticAlloca(sourceAddress, sourceType);
+            sourceAlignmentBytes = GetStackObjectAlignmentBytes(sourceType);
+            EmitValueToAddress(sourceAddress, sourceType, sourceValue, sourceAlignmentBytes);
+        }
+
+        var carrierAddress = $"%{EscapeIdentifier(CreateAbiTempName($"{tempPrefix}_carrier"))}";
+        QueueStaticAlloca(carrierAddress, carrierType);
+        var carrierAlignmentBytes = GetStackObjectAlignmentBytes(carrierType);
+        if (carrierLayout.SizeBytes > sourceLayout.SizeBytes)
+        {
+            AppendLine($"  call void @llvm.memset.inline.p0.i64(ptr{GetArgumentAlignmentFragment(carrierAlignmentBytes)} {carrierAddress}, i8 0, i64 {carrierLayout.SizeBytes}, i1 false)");
+        }
+
+        EmitAggregateMemcpy(
+            carrierAddress,
+            sourceAddress,
+            sourceLayout.SizeBytes,
+            GetArgumentAlignmentFragment(carrierAlignmentBytes),
+            GetArgumentAlignmentFragment(sourceAlignmentBytes));
+
+        var carrierValue = $"%{EscapeIdentifier(CreateAbiTempName($"{tempPrefix}_value"))}";
+        AppendLine($"  {carrierValue} = load {MapType(carrierType)}, ptr {carrierAddress}{GetAlignmentSuffix(carrierAlignmentBytes)}");
+        return carrierValue;
+    }
+
+    private string MaterializeSourceValueFromCAbiCarrier(
+        string carrierValue,
+        StarkTypeSymbol carrierType,
+        StarkTypeSymbol sourceType,
+        string resultName,
+        string tempPrefix,
+        string? materializedValueName = null)
+    {
+        if (TryGetConcreteTypeLayout(sourceType) is not { } sourceLayout
+            || TryGetConcreteTypeLayout(carrierType) is not { } carrierLayout)
+        {
+            return carrierValue;
+        }
+
+        var carrierAddress = $"%{EscapeIdentifier(CreateAbiTempName($"{tempPrefix}_carrier"))}";
+        QueueStaticAlloca(carrierAddress, carrierType);
+        var carrierAlignmentBytes = GetStackObjectAlignmentBytes(carrierType);
+        AppendLine($"  store {MapType(carrierType)} {carrierValue}, ptr {carrierAddress}{GetAlignmentSuffix(carrierAlignmentBytes)}");
+
+        var sourceAddress = $"%{EscapeIdentifier(CreateAbiTempName($"{tempPrefix}_source"))}";
+        QueueStaticAlloca(sourceAddress, sourceType);
+        var sourceAlignmentBytes = GetStackObjectAlignmentBytes(sourceType);
+        EmitAggregateMemcpy(
+            sourceAddress,
+            carrierAddress,
+            Math.Min(sourceLayout.SizeBytes, carrierLayout.SizeBytes),
+            GetArgumentAlignmentFragment(sourceAlignmentBytes),
+            GetArgumentAlignmentFragment(carrierAlignmentBytes));
+
+        _indirectAggregateValueSlots[resultName] = sourceAddress;
+        var sourceValue = $"%{EscapeIdentifier(materializedValueName ?? resultName)}";
+        AppendLine($"  {sourceValue} = load {MapType(sourceType)}, ptr {sourceAddress}{GetAlignmentSuffix(sourceAlignmentBytes)}{GetValueRangeMetadataSuffix(sourceType)}");
+        return sourceValue;
     }
 
     private void AddBoundedRawPointerArgumentAttributes(
@@ -452,6 +543,31 @@ internal sealed partial class LlvmFunctionBodyEmitter
     {
         foreach (var parameter in _abiFunction.UserParameters)
         {
+            if (parameter.Kind == AbiParameterKind.Direct
+                && CAbiAggregateClassifier.IsCarrierType(parameter.SourceType, parameter.LlvmType)
+                && (_referencedValueNames.Contains(parameter.LlvmName)
+                    || _referencedValueNames.Contains(parameter.SourceName)
+                    || _addressTakenParameterNames.Contains(parameter.LlvmName)
+                    || _addressTakenParameterNames.Contains(parameter.SourceName)))
+            {
+                var carrierMaterializedName = EscapeIdentifier(CreateAbiTempName($"arg_{parameter.SourceName}_value"));
+                var materializedValue = MaterializeSourceValueFromCAbiCarrier(
+                    $"%{EscapeIdentifier(parameter.LlvmName)}",
+                    parameter.LlvmType,
+                    parameter.SourceType,
+                    parameter.LlvmName,
+                    $"arg_{parameter.SourceName}",
+                    carrierMaterializedName);
+                _materializedParameters[parameter.LlvmName] = materializedValue;
+                _materializedParameters[parameter.SourceName] = materializedValue;
+                if (_indirectAggregateValueSlots.TryGetValue(parameter.LlvmName, out var sourceAddress))
+                {
+                    _indirectAggregateValueSlots[parameter.SourceName] = sourceAddress;
+                }
+
+                continue;
+            }
+
             if (parameter.Kind != AbiParameterKind.IndirectIn)
             {
                 continue;

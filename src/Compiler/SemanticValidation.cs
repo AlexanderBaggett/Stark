@@ -694,7 +694,7 @@ internal sealed class SemanticValidator
 
     private void ValidateBaseTraitLists()
     {
-        var traitRequiredMethods = CollectCurrentModuleTraitRequiredMethods();
+        var traitRequiredMethods = CollectTraitRequiredMethods();
 
         foreach (var declaration in _parseResult.Root.topLevelDeclaration())
         {
@@ -752,50 +752,47 @@ internal sealed class SemanticValidator
                     continue;
                 }
 
-                // Member conformance for traits declared in the current module.
-                // Checks that every required (non-default) trait method is
-                // implemented with a compatible parameter count and function kind.
-                // Full parameter-type matching with `Self`/type-argument
-                // substitution and cross-module trait conformance are follow-up work.
-                var traitSimpleName = LastNameSegment(named.Name);
-                if (traitRequiredMethods.TryGetValue(traitSimpleName, out var requiredMethods))
+                // Member conformance is model-driven so imported source modules
+                // and package-backed modules use the same trait signatures as
+                // same-module declarations.
+                if (traitRequiredMethods.TryGetValue(named.Name, out var requiredMethods))
                 {
                     foreach (var requiredMethod in requiredMethods)
                     {
-                        if (!implementedMethodNames.Contains(requiredMethod))
+                        var requiredMethodName = LastNameSegment(requiredMethod.Name);
+                        if (!implementedMethodNames.Contains(requiredMethodName))
                         {
                             _context.Diagnostics.Error(
                                 "STK3032",
-                                $"'{ownerName}' does not implement trait method '{traitSimpleName}.{requiredMethod}' required by trait '{traitSimpleName}'.",
+                                $"'{ownerName}' does not implement trait method '{requiredMethod.DisplaySourceName}' required by trait '{named.Name}'.",
                                 "semantic-validate",
                                 Location(entry));
                             continue;
                         }
 
-                        if (_typeModel.Functions.TryGetValue($"{traitSimpleName}.{requiredMethod}", out var traitSignature)
-                            && _typeModel.Functions.TryGetValue($"{ownerName}.{requiredMethod}", out var implSignature))
+                        if (_typeModel.Functions.TryGetValue($"{ownerName}.{requiredMethodName}", out var implSignature))
                         {
-                            if (traitSignature.Parameters.Count != implSignature.Parameters.Count)
+                            if (requiredMethod.Parameters.Count != implSignature.Parameters.Count)
                             {
                                 _context.Diagnostics.Error(
                                     "STK3033",
-                                    $"'{ownerName}.{requiredMethod}' does not match trait method '{traitSimpleName}.{requiredMethod}': the trait requires {traitSignature.Parameters.Count} parameter(s) but the implementation has {implSignature.Parameters.Count}.",
+                                    $"'{ownerName}.{requiredMethodName}' does not match trait method '{requiredMethod.DisplaySourceName}': the trait requires {requiredMethod.Parameters.Count} parameter(s) but the implementation has {implSignature.Parameters.Count}.",
                                     "semantic-validate",
                                     Location(entry));
                             }
-                            else if (!TypeCompatibilityFacts.FunctionKindSatisfies(implSignature.Kind, traitSignature.Kind))
+                            else if (!TypeCompatibilityFacts.FunctionKindSatisfies(implSignature.Kind, requiredMethod.Kind))
                             {
                                 _context.Diagnostics.Error(
                                     "STK3033",
-                                    $"'{ownerName}.{requiredMethod}' must be '{DescribeFunctionKind(traitSignature.Kind)}' to satisfy trait method '{traitSimpleName}.{requiredMethod}'.",
+                                    $"'{ownerName}.{requiredMethodName}' must be '{DescribeFunctionKind(requiredMethod.Kind)}' to satisfy trait method '{requiredMethod.DisplaySourceName}'.",
                                     "semantic-validate",
                                     Location(entry));
                             }
-                            else if (!TraitMethodSignatureConforms(traitSignature, implSignature, named, resolved))
+                            else if (!TraitMethodSignatureConforms(requiredMethod, implSignature, named, resolved))
                             {
                                 _context.Diagnostics.Error(
                                     "STK3033",
-                                    $"'{ownerName}.{requiredMethod}' does not match the parameter or return types of trait method '{traitSimpleName}.{requiredMethod}' (after substituting 'Self' and trait type arguments).",
+                                    $"'{ownerName}.{requiredMethodName}' does not match the parameter or return types of trait method '{requiredMethod.DisplaySourceName}' (after substituting 'Self' and trait type arguments).",
                                     "semantic-validate",
                                     Location(entry));
                             }
@@ -806,30 +803,41 @@ internal sealed class SemanticValidator
         }
     }
 
-    // Collects the required (non-default) method names declared by each trait in
-    // the current module. A trait method with a block body is a default and is
-    // not required of implementers; one with a `;` body is required.
-    private Dictionary<string, List<string>> CollectCurrentModuleTraitRequiredMethods()
+    // Collects required (non-default) instance methods for every loaded trait.
+    // A trait method with a body is a default and is not required of implementers;
+    // one with no body is required. Type checking has already built typed
+    // signatures for source imports and package-backed imports, so this stays
+    // cross-module without re-walking imported parse trees.
+    private Dictionary<string, List<TypedFunctionSignature>> CollectTraitRequiredMethods()
     {
-        var result = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-        foreach (var declaration in _parseResult.Root.topLevelDeclaration())
+        var result = new Dictionary<string, List<TypedFunctionSignature>>(StringComparer.Ordinal);
+        foreach (var function in _typeModel.Functions.Values.OrderBy(static function => function.Name, StringComparer.Ordinal))
         {
-            if (declaration.traitDeclaration() is not { } traitDeclaration)
+            if (function.IsStatic || function.HasBody)
             {
                 continue;
             }
 
-            var required = new List<string>();
-            foreach (var member in traitDeclaration.traitBody().traitMember())
+            var lastDot = function.Name.LastIndexOf('.');
+            if (lastDot <= 0)
             {
-                if (member.traitMethodDeclaration() is { } method
-                    && method.functionBody().block() is null)
-                {
-                    required.Add(method.Identifier().GetText());
-                }
+                continue;
             }
 
-            result[traitDeclaration.Identifier().GetText()] = required;
+            var containingTypeName = function.Name[..lastDot];
+            if (!_typeModel.NamedTypes.TryGetValue(containingTypeName, out var containingType)
+                || containingType.Kind != DeclarationKind.Trait)
+            {
+                continue;
+            }
+
+            if (!result.TryGetValue(containingType.Name, out var methods))
+            {
+                methods = [];
+                result[containingType.Name] = methods;
+            }
+
+            methods.Add(function);
         }
 
         return result;
@@ -929,6 +937,7 @@ internal sealed class SemanticValidator
             || left.InitializationKind != right.InitializationKind
             || left.IsMutableView != right.IsMutableView
             || left.FunctionPointerKind != right.FunctionPointerKind
+            || left.FunctionPointerAbi != right.FunctionPointerAbi
             || left.ClosureFunctionKind != right.ClosureFunctionKind
             || left.ClosureStorageKind != right.ClosureStorageKind
             || left.ClosureCallCapability != right.ClosureCallCapability)
@@ -1133,7 +1142,7 @@ internal sealed class SemanticValidator
             return;
         }
 
-        var hasFfi = functionDeclaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "ffi", StringComparison.Ordinal));
+        var hasFfi = functionDeclaration.Modifiers.Any(FfiAbiSyntaxFacts.IsFfiModifier);
         if (!hasFfi)
         {
             EffectError(
@@ -1381,9 +1390,9 @@ internal sealed class SemanticValidator
                 var sectionScope = new ValidationScope(scope);
                 foreach (var label in section.switchLabel())
                 {
-                    if (label.pattern() is { } pattern)
+                    foreach (var pattern in label.pattern())
                     {
-                            BindSwitchPattern(pattern, switchValue.Type, sectionScope, summary);
+                        BindSwitchPattern(pattern, switchValue.Type, sectionScope, summary);
                     }
 
                     if (label.whenClause() is { } whenClause)
@@ -5037,6 +5046,85 @@ internal sealed class SemanticValidator
                 Location(context.Start));
         }
 
+        if (TryFindInvalidCVoidUse(type, out var invalidCVoidType))
+        {
+            _context.Diagnostics.Error(
+                "STK3050",
+                $"Type '{invalidCVoidType.DisplayName}' is an incomplete C pointee type and is valid only as the direct pointee of rawptr<System.C.c_void> or rawmutptr<System.C.c_void>. Use Stark 'void' for functions that return no value.",
+                "semantic-validate",
+                Location(context.Start));
+        }
+
+    }
+
+    private static bool TryFindInvalidCVoidUse(StarkTypeSymbol type, out StarkTypeSymbol invalidCVoidType)
+    {
+        return TryFindInvalidCVoidUse(type, isDirectRawPointerPointee: false, out invalidCVoidType);
+    }
+
+    private static bool TryFindInvalidCVoidUse(
+        StarkTypeSymbol type,
+        bool isDirectRawPointerPointee,
+        out StarkTypeSymbol invalidCVoidType)
+    {
+        if (type.Kind == StarkTypeKind.CVoid)
+        {
+            invalidCVoidType = type;
+            return !isDirectRawPointerPointee;
+        }
+
+        if (type.Kind == StarkTypeKind.RawPointer && type.ElementType is not null)
+        {
+            return TryFindInvalidCVoidUse(
+                type.ElementType,
+                isDirectRawPointerPointee: true,
+                out invalidCVoidType);
+        }
+
+        if (type.ElementType is not null
+            && TryFindInvalidCVoidUse(type.ElementType, isDirectRawPointerPointee: false, out invalidCVoidType))
+        {
+            return true;
+        }
+
+        if (type.FunctionPointerReturnType is not null
+            && TryFindInvalidCVoidUse(type.FunctionPointerReturnType, isDirectRawPointerPointee: false, out invalidCVoidType))
+        {
+            return true;
+        }
+
+        foreach (var parameterType in type.FunctionPointerParameterTypes ?? [])
+        {
+            if (TryFindInvalidCVoidUse(parameterType, isDirectRawPointerPointee: false, out invalidCVoidType))
+            {
+                return true;
+            }
+        }
+
+        if (type.ClosureReturnType is not null
+            && TryFindInvalidCVoidUse(type.ClosureReturnType, isDirectRawPointerPointee: false, out invalidCVoidType))
+        {
+            return true;
+        }
+
+        foreach (var parameterType in type.ClosureParameterTypes ?? [])
+        {
+            if (TryFindInvalidCVoidUse(parameterType, isDirectRawPointerPointee: false, out invalidCVoidType))
+            {
+                return true;
+            }
+        }
+
+        foreach (var typeArgument in type.TypeArguments ?? [])
+        {
+            if (TryFindInvalidCVoidUse(typeArgument, isDirectRawPointerPointee: false, out invalidCVoidType))
+            {
+                return true;
+            }
+        }
+
+        invalidCVoidType = StarkTypeSymbols.Error;
+        return false;
     }
 
     private static bool TryFindNonStorableBorrowType(

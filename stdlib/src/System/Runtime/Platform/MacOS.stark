@@ -55,7 +55,7 @@ internal unsafe ffi fn i32[min max] closedir(rawptr<i8[min max]> directory);
 internal unsafe ffi fn i32[min max] pthread_create(
     rawmutptr<rawmutptr<i8[min max]>> thread,
     rawptr<i8[min max]> attributes,
-    fnptr<fn rawmutptr<i8[min max]>(fnptr<fn i32[min max]()>)> start,
+    fnptr<ffi(c) fn rawmutptr<i8[min max]>(fnptr<fn i32[min max]()>)> start,
     fnptr<fn i32[min max]()> argument);
 internal unsafe ffi fn i32[min max] pthread_join(rawmutptr<i8[min max]> thread, rawmutptr<rawmutptr<i8[min max]>> value);
 internal unsafe ffi fn i32[min max] pthread_detach(rawmutptr<i8[min max]> thread);
@@ -1445,7 +1445,7 @@ internal unsafe fn bool TryCurrentDirectory(rawmutptr<Ascii> destination)
     return true;
 }
 
-internal unsafe ffi fn rawmutptr<i8[min max]> ThreadEntryThunk(fnptr<fn i32[min max]()> entry)
+internal unsafe ffi(c) fn rawmutptr<i8[min max]> ThreadEntryThunk(fnptr<fn i32[min max]()> entry)
 {
     stack i32[min max] exitCode = entry();
     return (rawmutptr<i8[min max]>)exitCode;

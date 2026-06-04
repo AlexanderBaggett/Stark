@@ -23,13 +23,14 @@ internal static class InterpolatedText
     {
         var parsedSegments = new List<InterpolatedTextSegment>();
         var reportedDiagnostics = new List<InterpolatedTextDiagnostic>();
-        var content = GetContent(stringLiteralText);
+        var isRawLiteral = TextLiteralDecoder.IsRawStringLiteral(stringLiteralText);
+        var content = TextLiteralDecoder.GetContent(stringLiteralText);
         var raw = new StringBuilder();
 
         for (var index = 0; index < content.Length;)
         {
             var ch = content[index];
-            if (ch == '\\')
+            if (!isRawLiteral && ch == '\\')
             {
                 raw.Append(ch);
                 if (index + 1 < content.Length)
@@ -52,8 +53,8 @@ internal static class InterpolatedText
                     continue;
                 }
 
-                FlushRaw(raw, parsedSegments, reportedDiagnostics, index + 1);
-                if (!TryReadHole(content, index, out var holeSource, out var closeIndex))
+                FlushRaw(raw, isRawLiteral, parsedSegments, reportedDiagnostics, index + 1);
+                if (!TryReadHole(content, index, isRawLiteral, out var holeSource, out var closeIndex))
                 {
                     reportedDiagnostics.Add(new InterpolatedTextDiagnostic(
                         index + 1,
@@ -106,7 +107,7 @@ internal static class InterpolatedText
             index++;
         }
 
-        FlushRaw(raw, parsedSegments, reportedDiagnostics, content.Length + 1);
+        FlushRaw(raw, isRawLiteral, parsedSegments, reportedDiagnostics, content.Length + 1);
         segments = parsedSegments;
         diagnostics = reportedDiagnostics;
         return diagnostics.Count == 0;
@@ -204,12 +205,20 @@ internal static class InterpolatedText
 
     private static void FlushRaw(
         StringBuilder raw,
+        bool isRawLiteral,
         List<InterpolatedTextSegment> segments,
         List<InterpolatedTextDiagnostic> diagnostics,
         int offset)
     {
         if (raw.Length == 0)
         {
+            return;
+        }
+
+        if (isRawLiteral)
+        {
+            segments.Add(new InterpolatedTextRawSegment(raw.ToString()));
+            raw.Clear();
             return;
         }
 
@@ -231,6 +240,7 @@ internal static class InterpolatedText
     private static bool TryReadHole(
         string content,
         int openIndex,
+        bool isRawLiteral,
         out string sourceText,
         out int closeIndex)
     {
@@ -238,7 +248,7 @@ internal static class InterpolatedText
         for (var index = openIndex + 1; index < content.Length; index++)
         {
             var ch = content[index];
-            if (ch == '\\')
+            if (!isRawLiteral && ch == '\\')
             {
                 index++;
                 continue;
@@ -268,10 +278,5 @@ internal static class InterpolatedText
         sourceText = string.Empty;
         closeIndex = content.Length;
         return false;
-    }
-
-    private static string GetContent(string literalText)
-    {
-        return literalText.Length >= 2 ? literalText[1..^1] : literalText;
     }
 }

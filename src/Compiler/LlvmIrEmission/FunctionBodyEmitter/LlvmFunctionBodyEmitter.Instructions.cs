@@ -84,9 +84,19 @@ internal sealed partial class LlvmFunctionBodyEmitter
                     return;
                 }
 
+                if (TryEmitLayoutControlledExtractField(result, extract))
+                {
+                    return;
+                }
+
                 AppendLine($"  {result} = extractvalue {MapType(extract.Target.Type)} {FormatValue(extract.Target)}, {extract.FieldIndex}");
                 return;
             case SsaInsertFieldRValue insert:
+                if (TryEmitLayoutControlledInsertField(result, insert))
+                {
+                    return;
+                }
+
                 AppendLine($"  {result} = insertvalue {MapType(insert.Target.Type)} {FormatAggregateValueUse(insert.Target, insert.Target.Type, "insert_field_target")}, {MapType(insert.Value.Type)} {FormatAggregateValueUse(insert.Value, insert.Value.Type, "insert_field_value")}, {insert.FieldIndex}");
                 return;
             case SsaExtractIndexRValue extractIndex:

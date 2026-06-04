@@ -147,12 +147,19 @@ internal sealed class LlvmIrEmitter
         _objectCreationConstructors = typeModel.ObjectCreations
             .GroupBy(static record => new ObjectCreationKey(record.ExpressionText, record.Location.Line, record.Location.Column))
             .ToDictionary(static group => group.Key, static group => group.Last().Constructor);
+        _publishedConcreteLayouts = BuildPublishedConcreteLayouts(loadedModules);
         _allFunctionEffects = BuildAllFunctionEffects(effectModel, typeModel, ssa, specializationCodegenStrategy);
         _allFunctionSignatures = BuildAllFunctionSignatures(typeModel, ssa, specializationCodegenStrategy);
-        _allAbiFunctions = BuildAllAbiFunctions(_allFunctionSignatures, abiModel, _allFunctionEffects, typeModel.NamedTypes, enumLayoutModel.Layouts);
+        _allAbiFunctions = BuildAllAbiFunctions(
+            _allFunctionSignatures,
+            abiModel,
+            _allFunctionEffects,
+            typeModel.NamedTypes,
+            enumLayoutModel.Layouts,
+            targetInfo,
+            _publishedConcreteLayouts);
         _importedInlineCloneSeedFunctions = importedInlineCloneSeedFunctions;
         _ownedFunctionDefinitionFilter = BuildOwnedFunctionDefinitionFilter();
-        _publishedConcreteLayouts = BuildPublishedConcreteLayouts(loadedModules);
         _publishedFunctionSemantics = BuildPublishedFunctionSemantics(loadedModules, specializationCodegenStrategy);
         _specializationTemplateNames = BuildSpecializationTemplateNames(specializationCodegenStrategy);
         _functionLocations = BuildFunctionLocationMap(loadedModules, input.FilePath);
@@ -221,6 +228,7 @@ internal sealed class LlvmIrEmitter
             _emissionContext,
             (internalize, function, abiFunction, effects, memoryEffects, parameterEffects)
                 => BuildDefinitionSignature(internalize, function, abiFunction, effects, memoryEffects, parameterEffects),
+            ResolveFunctionAbi,
             EnumerateBinaryOperations,
             () => _ssa.Functions,
             EscapeInlineAsmString,
@@ -875,6 +883,41 @@ internal sealed class LlvmIrEmitter
         };
     }
 
+    private AbiFunctionSignature? ResolveFunctionAbi(TypedFunctionSignature signature)
+    {
+        if (_allAbiFunctions.TryGetValue(signature.Name, out var abiFunction))
+        {
+            return abiFunction;
+        }
+
+        if (!signature.IsGenericInstantiation
+            || signature.TemplateName is not { } templateName
+            || signature.TypeArguments is not { Count: > 0 } typeArguments)
+        {
+            return null;
+        }
+
+        var typeArgumentKey = FunctionOverloadFacts.BuildTypeArgumentKey(typeArguments);
+        foreach (var candidate in _allFunctionSignatures.Values)
+        {
+            if (!candidate.IsGenericInstantiation
+                || candidate.TemplateName is null
+                || !string.Equals(candidate.TemplateName, templateName, StringComparison.Ordinal)
+                || candidate.TypeArguments is not { Count: > 0 } candidateTypeArguments
+                || !string.Equals(FunctionOverloadFacts.BuildTypeArgumentKey(candidateTypeArguments), typeArgumentKey, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (_allAbiFunctions.TryGetValue(candidate.Name, out abiFunction))
+            {
+                return abiFunction;
+            }
+        }
+
+        return null;
+    }
+
     private static IReadOnlyDictionary<string, TypedFunctionSignature> BuildAllFunctionSignatures(
         TypeCheckModel typeModel,
         SsaIrModule ssa,
@@ -919,7 +962,9 @@ internal sealed class LlvmIrEmitter
         AbiModel abiModel,
         IReadOnlyDictionary<string, FunctionEffectProfile> allFunctionEffects,
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
-        IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts)
+        IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts,
+        LlvmTargetInfo? targetInfo,
+        IReadOnlyDictionary<string, ConcreteTypeLayout> publishedConcreteLayouts)
     {
         var functions = abiModel.Functions.ToDictionary(
             static pair => pair.Key,
@@ -936,7 +981,16 @@ internal sealed class LlvmIrEmitter
             allFunctionEffects.TryGetValue(function.Name, out var effects);
             var isFfi = effects?.IsFfi == true;
             var isVarargs = effects?.IsVarargs == true || function.IsVarargs;
-            functions[function.Name] = BuildSyntheticAbiSignature(function, function.Name, isFfi, namedTypes, enumLayouts, isVarargs);
+            functions[function.Name] = BuildSyntheticAbiSignature(
+                function,
+                function.Name,
+                isFfi,
+                namedTypes,
+                enumLayouts,
+                isVarargs,
+                effects?.FfiAbi ?? function.FfiAbi,
+                targetInfo,
+                publishedConcreteLayouts);
         }
 
         return functions;
@@ -1222,9 +1276,21 @@ internal sealed class LlvmIrEmitter
         bool isFfi,
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
         IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts,
-        bool isVarargs = false)
+        bool isVarargs = false,
+        StarkFfiAbi? ffiAbi = null,
+        LlvmTargetInfo? targetInfo = null,
+        IReadOnlyDictionary<string, ConcreteTypeLayout>? publishedConcreteLayouts = null)
     {
-        return LlvmSpecializationEmissionPlanner.BuildSyntheticAbiSignature(function, symbolName, isFfi, namedTypes, enumLayouts, isVarargs);
+        return LlvmSpecializationEmissionPlanner.BuildSyntheticAbiSignature(
+            function,
+            symbolName,
+            isFfi,
+            namedTypes,
+            enumLayouts,
+            isVarargs,
+            ffiAbi,
+            targetInfo,
+            publishedConcreteLayouts);
     }
 
     private int? TryGetGlobalAlignmentBytes(StarkTypeSymbol type)

@@ -98,14 +98,16 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private void EmitStoreIndirect(SsaStoreIndirectInstruction storeIndirect)
     {
+        var alignmentBytes = GetKnownPointerAlignmentBytes(storeIndirect.Address, storeIndirect.ValueType);
         EmitValueToAddress(
             FormatValue(storeIndirect.Address),
             storeIndirect.ValueType,
             storeIndirect.Value,
-            GetKnownPointerAlignmentBytes(storeIndirect.Address, storeIndirect.ValueType),
+            alignmentBytes,
             GetTbaaMetadataSuffix(storeIndirect.Address, storeIndirect.ValueType),
             GetScopedNoAliasMetadataSuffix(storeIndirect.Address, storeIndirect.ScopedNoAliasGroups)
-                + GetLoopAccessGroupMetadataSuffix(storeIndirect.LoopAccessGroups));
+                + GetLoopAccessGroupMetadataSuffix(storeIndirect.LoopAccessGroups),
+            ShouldEmitExplicitLowAlignment(storeIndirect.Address, storeIndirect.ValueType, alignmentBytes));
     }
 
     private void EmitStoreGlobal(SsaStoreGlobalInstruction storeGlobal)
@@ -120,13 +122,15 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private void EmitValueToAddress(SsaValue destinationAddress, StarkTypeSymbol valueType, SsaValue value)
     {
+        var alignmentBytes = GetKnownPointerAlignmentBytes(destinationAddress, valueType);
         EmitValueToAddress(
             FormatValue(destinationAddress),
             valueType,
             value,
-            GetKnownPointerAlignmentBytes(destinationAddress, valueType),
+            alignmentBytes,
             GetTbaaMetadataSuffix(destinationAddress, valueType),
-            GetScopedNoAliasMetadataSuffix(destinationAddress));
+            GetScopedNoAliasMetadataSuffix(destinationAddress),
+            ShouldEmitExplicitLowAlignment(destinationAddress, valueType, alignmentBytes));
     }
 
     private void EmitValueToAddress(
@@ -135,7 +139,8 @@ internal sealed partial class LlvmFunctionBodyEmitter
         SsaValue value,
         int? alignmentBytes,
         string tbaaMetadataSuffix = "",
-        string scopedNoAliasMetadataSuffix = "")
+        string scopedNoAliasMetadataSuffix = "",
+        bool includeByteAlignment = false)
     {
         if (TryEmitInlineAggregateZeroFill(destinationAddress, valueType, value, alignmentBytes))
         {
@@ -160,7 +165,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
             return;
         }
 
-        AppendLine($"  store {MapType(valueType)} {FormatValue(value)}, ptr {destinationAddress}{GetAlignmentSuffix(alignmentBytes)}{tbaaMetadataSuffix}{scopedNoAliasMetadataSuffix}");
+        AppendLine($"  store {MapType(valueType)} {FormatValue(value)}, ptr {destinationAddress}{GetAlignmentSuffix(alignmentBytes, includeByteAlignment)}{tbaaMetadataSuffix}{scopedNoAliasMetadataSuffix}");
     }
 
     private bool TryEmitInlineAggregateZeroFill(string destinationAddress, StarkTypeSymbol valueType, SsaValue value, int? alignmentBytes)
@@ -822,6 +827,116 @@ internal sealed partial class LlvmFunctionBodyEmitter
         return true;
     }
 
+    private bool TryEmitLayoutControlledExtractField(string result, SsaExtractFieldRValue extract)
+    {
+        if (!TryResolveLayoutControlledField(
+                extract.Target.Type,
+                extract.FieldIndex,
+                out var namedType,
+                out var layout,
+                out _,
+                out var fieldLayout))
+        {
+            return false;
+        }
+
+        if (LlvmLayoutControlledAggregateFacts.TryGetStorageElementIndex(
+                namedType,
+                layout,
+                extract.FieldIndex,
+                out var storageElementIndex))
+        {
+            AppendLine($"  {result} = extractvalue {MapType(extract.Target.Type)} {FormatValue(extract.Target)}, {storageElementIndex}");
+            return true;
+        }
+
+        var slotName = $"%{EscapeIdentifier(CreateAbiTempName("layout_extract_slot"))}";
+        QueueStaticAlloca(slotName, extract.Target.Type);
+        var aggregateValue = FormatAggregateValueUse(extract.Target, extract.Target.Type, "layout_extract_target");
+        AppendLine($"  store {MapType(extract.Target.Type)} {aggregateValue}, ptr {slotName}{GetStackObjectAlignmentSuffix(extract.Target.Type)}");
+        var fieldAddress = $"%{EscapeIdentifier(CreateAbiTempName("layout_extract_field"))}";
+        AppendLine($"  {fieldAddress} = getelementptr{GetProvenInObjectGepFlags()} i8, ptr {slotName}, i64 {fieldLayout.OffsetBytes}");
+        var alignmentBytes = Math.Min(
+            fieldLayout.NaturalAlignmentBytes,
+            GetAlignmentAtOffset(layout.AlignmentBytes, fieldLayout.OffsetBytes));
+        AppendLine($"  {result} = load {MapType(extract.Type)}, ptr {fieldAddress}{GetAlignmentSuffix(alignmentBytes)}{GetValueRangeMetadataSuffix(extract.Type)}");
+        return true;
+    }
+
+    private bool TryEmitLayoutControlledInsertField(string result, SsaInsertFieldRValue insert)
+    {
+        if (!TryResolveLayoutControlledField(
+                insert.Target.Type,
+                insert.FieldIndex,
+                out var namedType,
+                out var layout,
+                out _,
+                out var fieldLayout))
+        {
+            return false;
+        }
+
+        if (LlvmLayoutControlledAggregateFacts.TryGetStorageElementIndex(
+                namedType,
+                layout,
+                insert.FieldIndex,
+                out var storageElementIndex))
+        {
+            AppendLine($"  {result} = insertvalue {MapType(insert.Target.Type)} {FormatAggregateValueUse(insert.Target, insert.Target.Type, "insert_field_target")}, {MapType(insert.Value.Type)} {FormatAggregateValueUse(insert.Value, insert.Value.Type, "insert_field_value")}, {storageElementIndex}");
+            return true;
+        }
+
+        var slotName = $"%{EscapeIdentifier(CreateAbiTempName("layout_insert_slot"))}";
+        QueueStaticAlloca(slotName, insert.Target.Type);
+        var aggregateValue = FormatAggregateValueUse(insert.Target, insert.Target.Type, "layout_insert_target");
+        AppendLine($"  store {MapType(insert.Target.Type)} {aggregateValue}, ptr {slotName}{GetStackObjectAlignmentSuffix(insert.Target.Type)}");
+        var fieldAddress = $"%{EscapeIdentifier(CreateAbiTempName("layout_insert_field"))}";
+        AppendLine($"  {fieldAddress} = getelementptr{GetProvenInObjectGepFlags()} i8, ptr {slotName}, i64 {fieldLayout.OffsetBytes}");
+        var fieldAlignmentBytes = Math.Min(
+            fieldLayout.NaturalAlignmentBytes,
+            GetAlignmentAtOffset(layout.AlignmentBytes, fieldLayout.OffsetBytes));
+        AppendLine($"  store {MapType(insert.Value.Type)} {FormatAggregateValueUse(insert.Value, insert.Value.Type, "insert_field_value")}, ptr {fieldAddress}{GetAlignmentSuffix(fieldAlignmentBytes)}");
+        AppendLine($"  {result} = load {MapType(insert.Target.Type)}, ptr {slotName}{GetStackObjectAlignmentSuffix(insert.Target.Type)}{GetValueRangeMetadataSuffix(insert.Target.Type)}");
+        return true;
+    }
+
+    private bool TryResolveLayoutControlledField(
+        StarkTypeSymbol aggregateType,
+        int fieldIndex,
+        out NamedTypeSymbol namedType,
+        out ConcreteTypeLayout layout,
+        out FieldSymbol field,
+        out ConcreteFieldLayout fieldLayout)
+    {
+        namedType = null!;
+        layout = null!;
+        field = null!;
+        fieldLayout = null!;
+
+        var normalizedType = NormalizeAggregateType(aggregateType);
+        if (normalizedType.Kind != StarkTypeKind.Named
+            || ResolveNamedTypeSymbol(normalizedType) is not { } resolvedNamedType
+            || !LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout(resolvedNamedType)
+            || TryGetConcreteTypeLayout(normalizedType) is not { } resolvedLayout
+            || fieldIndex < 0
+            || fieldIndex >= resolvedNamedType.OrderedFields.Count)
+        {
+            return false;
+        }
+
+        var resolvedField = resolvedNamedType.OrderedFields[fieldIndex];
+        if (!resolvedLayout.TryGetField(resolvedField.Name, out var resolvedFieldLayout))
+        {
+            return false;
+        }
+
+        namedType = resolvedNamedType;
+        layout = resolvedLayout;
+        field = resolvedField;
+        fieldLayout = resolvedFieldLayout;
+        return true;
+    }
+
     private bool TryEmitStructuredAggregateStore(string destinationAddress, StarkTypeSymbol valueType, SsaValue value, int? destinationAlignmentBytes = null)
     {
         return TryEmitStructuredAggregateStore(
@@ -1373,6 +1488,11 @@ internal sealed partial class LlvmFunctionBodyEmitter
                     return false;
                 }
 
+                if (LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout(namedType))
+                {
+                    return false;
+                }
+
                 var sizeBytes = 0;
                 var alignmentBytes = 1;
                 for (var index = 0; index < orderedFields.Count; index++)
@@ -1500,6 +1620,14 @@ internal sealed partial class LlvmFunctionBodyEmitter
         if (indices.Count == 0)
         {
             return baseAddress;
+        }
+
+        if (indices.Count == 1
+            && TryGetLayoutControlledFieldOffsetBytes(rootType, indices[0], out var fieldOffsetBytes))
+        {
+            var fieldAddress = $"%{EscapeIdentifier(CreateAbiTempName(purpose))}";
+            AppendLine($"  {fieldAddress} = getelementptr{GetProvenInObjectGepFlags()} i8, ptr {baseAddress}, i64 {fieldOffsetBytes}");
+            return fieldAddress;
         }
 
         var leafAddress = $"%{EscapeIdentifier(CreateAbiTempName(purpose))}";

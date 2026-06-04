@@ -69,7 +69,9 @@ That's by design for closed-world dispatch, but it forces porting decisions:
       a Stark-side `format!`-style API is impossible without it.
 
 ### Pattern matching
-- [ ] Or-patterns (`case A | B:`).
+- [x] Or-patterns (`case A | B:`). Landed as switch-label alternatives with
+      shared `when` guard/body semantics, compile-time capture consistency
+      checks, and native literal-switch lowering where applicable.
 - [ ] Range patterns (`case 0..10:`).
       The C# compiler has 7548 switch-arm cases — many use `or` patterns
       and range patterns. Without these, every one fans out into multiple
@@ -77,10 +79,11 @@ That's by design for closed-world dispatch, but it forces porting decisions:
 
 ### Control flow & literals
 - [ ] Labeled `break` / `continue` ([Stark.g4:530-539](../../Stark.g4#L530-L539)).
-- [ ] Multiline / raw string literals in
+- [x] Multiline / raw string literals in
       [StarkLexer.cs](../../src/Parsing/StarkLexer.cs). LLVM IR templates
       and diagnostic messages currently use C#'s `@"..."` and `$$"""..."""`
-      forms extensively.
+      forms extensively. Landed syntax: `raw"..."`, `raw"""..."""`, and
+      `$raw` interpolation.
 - [ ] Confirm or extend the source surface for `for-each` over collections.
       Today only the canonical C-style `for (init; cond; step)` form is
       shown in [LanguageReference.md §10.2](../Userfacing/LanguageReference.md);
