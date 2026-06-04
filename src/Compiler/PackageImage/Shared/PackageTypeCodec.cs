@@ -38,6 +38,9 @@ internal static partial class PackageImageBuilder
                 ? type.TypeArguments.Select(argument => BuildPublishedAbiTypeReference(argument, moduleName, localNamedTypes)).ToArray()
                 : null,
             FunctionKind: callableFunctionKind is null ? null : RenderPackageFunctionKind(callableFunctionKind.Value),
+            FunctionAbi: type.Kind == StarkTypeKind.FunctionPointer && type.FunctionPointerAbi is { } functionPointerAbi
+                ? StarkFfiAbiFacts.DisplayName(functionPointerAbi)
+                : null,
             ClosureStorageKind: type.Kind == StarkTypeKind.Closure ? RenderPackageClosureStorageKind(type.ClosureStorageKind) : null,
             ClosureCallCapability: type.Kind == StarkTypeKind.Closure ? RenderPackageClosureCallCapability(type.ClosureCallCapability) : null,
             ReturnType: callableReturnType is null
@@ -153,6 +156,9 @@ internal static partial class PackageImageBuilder
                 ? type.TypeArguments.Select(argument => BuildTypeReference(argument, moduleName, stripCurrentModulePrefix)).ToArray()
                 : null,
             FunctionKind: callableFunctionKind is null ? null : RenderPackageFunctionKind(callableFunctionKind.Value),
+            FunctionAbi: type.Kind == StarkTypeKind.FunctionPointer && type.FunctionPointerAbi is { } functionPointerAbi
+                ? StarkFfiAbiFacts.DisplayName(functionPointerAbi)
+                : null,
             ClosureStorageKind: type.Kind == StarkTypeKind.Closure ? RenderPackageClosureStorageKind(type.ClosureStorageKind) : null,
             ClosureCallCapability: type.Kind == StarkTypeKind.Closure ? RenderPackageClosureCallCapability(type.ClosureCallCapability) : null,
             ReturnType: callableReturnType is null
@@ -448,6 +454,7 @@ internal static partial class PackageImageLoader
             "bool" => StarkTypeSymbols.Bool,
             "ascii" => StarkTypeSymbols.Ascii,
             "unicode" => StarkTypeSymbols.Unicode,
+            "cvoid" => StarkTypeSymbols.CVoid,
             "null" => StarkTypeSymbols.Null,
             "integer" => StarkTypeSymbols.Integer(
                 type.BitWidth ?? 32,
@@ -466,7 +473,8 @@ internal static partial class PackageImageLoader
                 BuildTypeReferenceParameterDisjointGroups(type.DisjointParameterGroups),
                 BuildParameterOverlapGroups(type.OverlapParameterGroups),
                 BuildParameterSameGroups(type.SameParameterGroups),
-                type.ParameterRawPointerElementCountExpressions),
+                type.ParameterRawPointerElementCountExpressions,
+                ParsePackageFfiAbi(type.FunctionAbi)),
             "closure" when type.ReturnType is not null => StarkTypeSymbols.Closure(
                 ParsePackageClosureStorageKind(type.ClosureStorageKind),
                 ParsePackageClosureCallCapability(type.ClosureCallCapability),
@@ -501,6 +509,18 @@ internal static partial class PackageImageLoader
             "finite law" or "finitelaw" => StarkFunctionKind.FiniteLaw,
             _ => StarkFunctionKind.Fn
         };
+    }
+
+    private static StarkFfiAbi? ParsePackageFfiAbi(string? functionAbi)
+    {
+        if (string.IsNullOrWhiteSpace(functionAbi))
+        {
+            return null;
+        }
+
+        return StarkFfiAbiFacts.TryParse(functionAbi, out var abi)
+            ? abi
+            : null;
     }
 
     private static StarkClosureStorageKind ParsePackageClosureStorageKind(string? storageKind)
@@ -569,6 +589,7 @@ internal static partial class PackageImageLoader
             "bool" => "bool",
             "ascii" => "ascii",
             "unicode" => "unicode",
+            "cvoid" => "System.C.c_void",
             "null" => "null",
             "integer" => PackageImageIntegerTypeText.Render(type.BitWidth, type.RangeMin, type.RangeMax, type.IsUnsigned == true),
             "float" => $"f{type.BitWidth}",
@@ -576,7 +597,7 @@ internal static partial class PackageImageLoader
             "fixedarray" => $"{RenderTypeReference(type.ElementType!)}[{(type.FixedLength is { } fixedLength ? fixedLength.ToString() : "?")}]",
             "slice" => $"{RenderTypeReference(type.ElementType!)}[]",
             "dynamic" => $"dynamic {RenderTypeReference(type.ElementType!)}",
-            "functionpointer" => $"fnptr<{RenderTypeReferenceFunctionKind(type.FunctionKind)} {RenderTypeReference(type.ReturnType!)}({string.Join(", ", (type.ParameterTypes ?? []).Select((parameter, index) => RenderFunctionPointerParameterTypeReference(parameter, type.ParameterRawPointerElementCountExpressions, index)))}){RenderFunctionPointerMemoryContracts(type)}>",
+            "functionpointer" => $"fnptr<{RenderTypeReferenceFunctionAbi(type.FunctionAbi)}{RenderTypeReferenceFunctionKind(type.FunctionKind)} {RenderTypeReference(type.ReturnType!)}({string.Join(", ", (type.ParameterTypes ?? []).Select((parameter, index) => RenderFunctionPointerParameterTypeReference(parameter, type.ParameterRawPointerElementCountExpressions, index)))}){RenderFunctionPointerMemoryContracts(type)}>",
             "closure" => $"{RenderClosureStoragePrefix(type.ClosureStorageKind)}closure<{RenderClosureCallCapabilityPrefix(type.ClosureCallCapability)}{RenderTypeReferenceFunctionKind(type.FunctionKind)} {RenderTypeReference(type.ReturnType!)}({string.Join(", ", (type.ParameterTypes ?? []).Select((parameter, index) => RenderFunctionPointerParameterTypeReference(parameter, type.ParameterRawPointerElementCountExpressions, index)))}){RenderFunctionPointerMemoryContracts(type)}>",
             "named" when type.TypeArguments is { Count: > 0 } => $"{type.Name}<{string.Join(", ", type.TypeArguments.Select(RenderTypeReference))}>",
             "named" => type.Name ?? "<unnamed>",
@@ -597,6 +618,13 @@ internal static partial class PackageImageLoader
             "finite law" or "finitelaw" => "finite law",
             _ => "fn"
         };
+    }
+
+    private static string RenderTypeReferenceFunctionAbi(string? functionAbi)
+    {
+        return string.IsNullOrWhiteSpace(functionAbi)
+            ? string.Empty
+            : $"ffi({functionAbi}) ";
     }
 
     private static string RenderClosureStoragePrefix(string? storageKind)

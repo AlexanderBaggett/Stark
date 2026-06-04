@@ -152,6 +152,13 @@ internal sealed class LlvmModuleSurfaceEmitter
             var fieldsSource = namedType.Kind == DeclarationKind.Enum
                 ? _context.EnumLayouts[namedType.Name].OrderedFields
                 : namedType.OrderedFields;
+            if (namedType.Kind is DeclarationKind.Struct or DeclarationKind.Record
+                && TryBuildLayoutControlledTypeDefinition(namedType, out var layoutControlledDefinition))
+            {
+                builder.AppendLine($"%{EscapeIdentifier(namedType.Name)} = type {layoutControlledDefinition}");
+                continue;
+            }
+
             var fields = fieldsSource.Count == 0
                 ? string.Empty
                 : string.Join(", ", fieldsSource.Select(field => _context.MapType(field.Type)));
@@ -162,6 +169,36 @@ internal sealed class LlvmModuleSurfaceEmitter
         {
             builder.AppendLine();
         }
+    }
+
+    private bool TryBuildLayoutControlledTypeDefinition(NamedTypeSymbol namedType, out string definition)
+    {
+        definition = string.Empty;
+        if (!LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout(namedType)
+            || _context.TryGetConcreteTypeLayout(StarkTypeSymbols.Named(namedType.Name)) is not { } layout)
+        {
+            return false;
+        }
+
+        if (!LlvmLayoutControlledAggregateFacts.TryBuildPhysicalElements(
+                namedType,
+                layout,
+                out var elements,
+                out var hasOverlappingFields)
+            || hasOverlappingFields)
+        {
+            definition = $"{{ [{layout.SizeBytes} x i8] }}";
+            return true;
+        }
+
+        var fields = elements
+            .Where(static element => element.SizeBytes > 0)
+            .Select(element => element.FieldType is { } fieldType
+                ? _context.MapType(fieldType)
+                : $"[{element.SizeBytes} x i8]")
+            .ToArray();
+        definition = $"<{{ {string.Join(", ", fields)} }}>";
+        return true;
     }
 
     private void EmitStringConstants(StringBuilder builder)

@@ -327,6 +327,27 @@ public sealed class TypeTypingDiagnosticsTests
     }
 
     [Fact]
+    public void FfiAbiModifiersRejectUnsupportedTargetsDuringCompilation()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe ffi(stdcall) fn void Bad();
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => (diagnostic.Code == "STK2111" || diagnostic.Code == "STK3046")
+                && diagnostic.Message.Contains("stdcall", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("is not supported for target", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void AsmFunctionsRejectUnsupportedParameterAndReturnTypes()
     {
         var result = Compile(
@@ -582,6 +603,66 @@ public sealed class TypeTypingDiagnosticsTests
 
         Assert.False(result.Succeeded);
         AssertDiagnostic(result, "STK3008", "Field 'Text'", "cannot currently be captured", "scalar and text-view field types");
+    }
+
+    [Fact]
+    public void SwitchOrPatternsRejectInconsistentSharedCaptures()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token
+            {
+                Number(i32[min max]),
+                Flag(bool),
+                End,
+            }
+
+            fn i32[min max] Run(Token token)
+            {
+                switch (token)
+                {
+                    case Token.Number(var value) | Token.End:
+                        return 1;
+                    case Token.Flag(_):
+                        return 0;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(
+            result,
+            "STK3008",
+            "Switch labels that share a body must bind the same capture names with the same types",
+            "Earlier label binds 'value: i32'",
+            "this label binds no captures");
+    }
+
+    [Fact]
+    public void SwitchPatternsRejectDuplicateCapturesInOneAlternative()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            record Pair(i32[min max] Left, i32[min max] Right)
+            {
+            }
+
+            fn i32[min max] Run(Pair pair)
+            {
+                switch (pair)
+                {
+                    case Pair(var value, var value):
+                        return value;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3008", "Switch pattern capture 'value' is bound more than once in the same pattern");
     }
 
     [Fact]

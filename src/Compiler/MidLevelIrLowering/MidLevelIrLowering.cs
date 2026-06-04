@@ -1497,7 +1497,7 @@ internal sealed partial class MidLevelIrLowerer
                         parameter.parameterContractPrefix().Any(static prefix => prefix.Start.Type == StarkParser.CONST),
                         rawPointerElementCountExpression))
                     .ToArray();
-                var isFfi = declaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "ffi", StringComparison.Ordinal));
+                var isFfi = declaration.Modifiers.Any(FfiAbiSyntaxFacts.IsFfiModifier);
                 var isAsm = declarationModel?.Function?.Asm is not null;
                 var overlapGroups = declarationModel?.Function?.OverlapGroups ?? [];
                 var sameGroups = declarationModel?.Function?.SameGroups ?? [];
@@ -1516,6 +1516,7 @@ internal sealed partial class MidLevelIrLowerer
                     IsStatic: declaration.IsStatic,
                     IsUnsafe: declaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "unsafe", StringComparison.Ordinal)),
                     IsVarargs: declaration.Modifiers.Any(static modifier => string.Equals(modifier.GetText(), "varargs", StringComparison.Ordinal)),
+                    FfiAbi: declarationModel?.Function?.Modifiers.FfiAbi,
                     DisjointParameterGroups: disjointGroups,
                     OverlapParameterGroups: overlapGroups,
                     SameParameterGroups: sameGroups);

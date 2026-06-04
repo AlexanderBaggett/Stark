@@ -49,10 +49,10 @@ internal unsafe ffi fn void ExitProcess(i32[min max] exitCode);
 internal unsafe ffi fn i32[min max] GetCurrentProcessId();
 internal unsafe ffi fn i32[min max] SwitchToThread();
 internal unsafe ffi fn void Sleep(i32[min max] milliseconds);
-internal unsafe ffi fn rawmutptr<i8[min max]> CreateThread(
+internal unsafe ffi(platform(windows.x86: stdcall, windows.x64: win64, default: c)) fn rawmutptr<i8[min max]> CreateThread(
     rawptr<i8[min max]> threadAttributes,
     u64[0 2 ** 63 - 1] stackSize,
-    fnptr<fn i32[min max](fnptr<fn i32[min max]()>)> startAddress,
+    fnptr<ffi(platform(windows.x86: stdcall, windows.x64: win64, default: c)) fn i32[min max](fnptr<fn i32[min max]()>)> startAddress,
     fnptr<fn i32[min max]()> parameter,
     i32[min max] creationFlags,
     rawmutptr<i32[min max]> threadId);
@@ -85,9 +85,9 @@ internal unsafe ffi fn i32[min max] WaitOnAddress(
     i32[min max] milliseconds);
 internal unsafe ffi fn void WakeByAddressSingle(rawmutptr<i32[min max]> address);
 internal unsafe ffi fn void WakeByAddressAll(rawmutptr<i32[min max]> address);
-internal unsafe ffi fn i32[min max] InitOnceExecuteOnce(
+internal unsafe ffi(platform(windows.x86: stdcall, windows.x64: win64, default: c)) fn i32[min max] InitOnceExecuteOnce(
     rawmutptr<WinInitOnce> initOnce,
-    fnptr<fn i32[min max](rawmutptr<WinInitOnce>, rawptr<i8[min max]>, rawmutptr<rawptr<i8[min max]>>) where overlap(arg0, arg1, arg2)> callback,
+    fnptr<ffi(platform(windows.x86: stdcall, windows.x64: win64, default: c)) fn i32[min max](rawmutptr<WinInitOnce>, rawptr<i8[min max]>, rawmutptr<rawptr<i8[min max]>>) where overlap(arg0, arg1, arg2)> callback,
     rawptr<i8[min max]> parameter,
     rawmutptr<rawptr<i8[min max]>> context);
 internal unsafe ffi fn i32[min max] WSAStartup(u16[0 max] versionRequested, rawmutptr<i8[min max]> data);
@@ -284,7 +284,7 @@ internal fn i32[min max] ProcessId()
     }
 }
 
-internal unsafe ffi fn i32[min max] ThreadEntryThunk(fnptr<fn i32[min max]()> entry)
+internal unsafe ffi(platform(windows.x86: stdcall, windows.x64: win64, default: c)) fn i32[min max] ThreadEntryThunk(fnptr<fn i32[min max]()> entry)
 {
     return entry();
 }
@@ -354,7 +354,7 @@ internal fn i32[min max] NegativeSocketError()
     }
 }
 
-internal unsafe ffi fn i32[min max] WinSockStartupOnce(
+internal unsafe ffi(platform(windows.x86: stdcall, windows.x64: win64, default: c)) fn i32[min max] WinSockStartupOnce(
     rawmutptr<WinInitOnce> initOnce,
     rawptr<i8[min max]> parameter,
     rawmutptr<rawptr<i8[min max]>> context)

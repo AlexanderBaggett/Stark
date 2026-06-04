@@ -1550,6 +1550,89 @@ public sealed class SemanticValidationTests
     }
 
     [Fact]
+    public void BaseListRejectsMissingTraitMethodFromImportedTrait()
+    {
+        var result = Compile(
+            """
+            import Contracts
+            module Demo
+
+            struct Widget : Contracts.Drawable
+            {
+                i32[min max] W;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "semantic-validate",
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Contracts", "/virtual/Contracts.stark", IsExternal: false),
+                        """
+                        module Contracts
+
+                        public trait Drawable
+                        {
+                            finite law i32[min max] Width(borrow Self self);
+                        }
+                        """,
+                        "/virtual/Contracts.stark"
+                    )
+                ])));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3032"
+                && diagnostic.Message.Contains("Contracts.Drawable.Width", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("Widget", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void BaseListRejectsImportedTraitMethodSignatureMismatch()
+    {
+        var result = Compile(
+            """
+            import Contracts
+            module Demo
+
+            struct Widget : Contracts.Drawable
+            {
+                i32[min max] W;
+
+                finite law u8[0 max] Width(borrow Widget self)
+                {
+                    return 1;
+                }
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "semantic-validate",
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Contracts", "/virtual/Contracts.stark", IsExternal: false),
+                        """
+                        module Contracts
+
+                        public trait Drawable
+                        {
+                            finite law i32[min max] Width(borrow Self self);
+                        }
+                        """,
+                        "/virtual/Contracts.stark"
+                    )
+                ])));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3033"
+                && diagnostic.Message.Contains("Contracts.Drawable.Width", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("Widget.Width", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void DynTraitObjectRejectsStaticOnlyTrait()
     {
         var result = Compile(

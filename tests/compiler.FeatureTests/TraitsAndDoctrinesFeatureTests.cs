@@ -182,6 +182,60 @@ public sealed class TraitsAndDoctrinesFeatureTests : FeatureLlvmTestBase
     }
 
     [Fact]
+    public void ImportedGenericTraitBoundDispatchLowersToDirectConcreteCall()
+    {
+        var llvm = CompileToLlvm(
+            """
+            import Contracts
+            module Demo
+
+            struct Widget : Contracts.Drawable
+            {
+                i32[min max] W;
+
+                finite law i32[min max] Width(borrow Widget self)
+                {
+                    return self.W;
+                }
+            }
+
+            finite law i32[min max] DoubleWidth<T>(borrow T value) where T: Contracts.Drawable
+            {
+                return value.Width() + value.Width();
+            }
+
+            export fn i32[min max] main()
+            {
+                stack Widget w = new Widget() { W = 5 };
+                return DoubleWidth(w);
+            }
+            """,
+            new CompilerOptions(
+                OptimizationLevel: CompilerOptimizationLevel.O0,
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("Contracts", "/virtual/Contracts.stark", IsExternal: false),
+                        """
+                        module Contracts
+
+                        public trait Drawable
+                        {
+                            finite law i32[min max] Width(borrow Self self);
+                        }
+                        """,
+                        "/virtual/Contracts.stark"
+                    )
+                ])));
+
+        Assert.Contains("call fastcc i32 @Widget_Width(", llvm);
+        Assert.DoesNotContain("call fastcc i32 @Contracts_Drawable_Width", llvm);
+        Assert.DoesNotContain("vtable", llvm, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("dispatch", llvm, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("fnptr", llvm, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void TraitDefaultMethodsDispatchToMonomorphizedDirectCalls()
     {
         var llvm = CompileToLlvm(

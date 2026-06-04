@@ -55,6 +55,349 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void FunctionPointerAbiIsPartOfTypeIdentity()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe ffi(c) fn i32[min max] CRead();
+            unsafe ffi(win64) fn i32[min max] WinRead();
+
+            unsafe fn void Run()
+            {
+                stack mut fnptr<ffi(c) fn i32[min max]()> cReader = CRead;
+                stack fnptr<ffi(win64) fn i32[min max]()> winReader = WinRead;
+                cReader = winReader;
+                return;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null)));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3002"
+                && diagnostic.Message.Contains("fnptr<ffi(c) fn", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("fnptr<ffi(win64) fn", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ExplicitFfiFunctionPointerAbiPromotesMatchingForeignFunctionItems()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe ffi(win64) fn i32[min max] Read(i32[min max] value);
+
+            unsafe fn i32[min max] Run(i32[min max] value)
+            {
+                stack fnptr<ffi(win64) fn i32[min max](i32[min max])> reader = Read;
+                return reader(value);
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null)));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        var promotion = Assert.Single(typeCheckModel.FunctionPointerPromotions);
+        Assert.Equal("Read", promotion.Signature.Name);
+        Assert.Equal(StarkFfiAbi.Win64, promotion.TargetType.FunctionPointerAbi);
+        var indirectCall = Assert.Single(typeCheckModel.IndirectCalls);
+        Assert.Equal(StarkFfiAbi.Win64, indirectCall.FunctionPointerType.FunctionPointerAbi);
+    }
+
+    [Fact]
+    public void StructLayoutAttributesProduceConcreteFieldLayoutFacts()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C), Pack(1), Align(4)]
+            struct Packet
+            {
+                u8[0 max] Tag;
+                u32[0 max] Length;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+
+        var packet = typeCheckModel.NamedTypes["Packet"];
+        Assert.Equal(StructLayoutKind.C, packet.Layout?.Kind);
+        Assert.Equal(1, packet.Layout?.PackBytes);
+        Assert.Equal(4, packet.Layout?.AlignBytes);
+
+        var layout = ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(
+            StarkTypeSymbols.Named("Packet"),
+            typeCheckModel.NamedTypes);
+        Assert.NotNull(layout);
+        Assert.Equal(8, layout.SizeBytes);
+        Assert.Equal(4, layout.AlignmentBytes);
+
+        var tag = Assert.Single(layout.Fields, static field => field.Name == "Tag");
+        Assert.Equal(0, tag.OffsetBytes);
+        Assert.Equal(1, tag.EffectiveAlignmentBytes);
+        Assert.False(tag.IsMisaligned);
+
+        var length = Assert.Single(layout.Fields, static field => field.Name == "Length");
+        Assert.Equal(1, length.OffsetBytes);
+        Assert.Equal(4, length.NaturalAlignmentBytes);
+        Assert.Equal(1, length.EffectiveAlignmentBytes);
+        Assert.True(length.IsMisaligned);
+    }
+
+    [Theory]
+    [InlineData("x86_64-unknown-linux-gnu", 64, 64, 64, true)]
+    [InlineData("x86_64-pc-windows-msvc", 32, 64, 64, true)]
+    [InlineData("i686-unknown-linux-gnu", 32, 32, 32, true)]
+    [InlineData("aarch64-unknown-linux-gnu", 64, 64, 64, false)]
+    public void SystemCPrimitiveAliasesResolveForTargetDataModel(
+        string targetTriple,
+        int expectedLongWidth,
+        int expectedSizeTWidth,
+        int expectedPtrDiffWidth,
+        bool expectedPlainCharSigned)
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe ffi(c) fn System.C.c_int Read(
+                System.C.c_long value,
+                System.C.c_ulong flags,
+                System.C.c_size_t bytes,
+                System.C.c_ptrdiff_t delta,
+                rawptr<System.C.c_char> text);
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                TargetInfo: new LlvmTargetInfo(targetTriple, null)));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+
+        var read = typeCheckModel.Functions["Read"];
+        AssertFullIntegerRange(read.ReturnType, 32, isUnsigned: false);
+        AssertFullIntegerRange(read.Parameters[0].Type, expectedLongWidth, isUnsigned: false);
+        AssertFullIntegerRange(read.Parameters[1].Type, expectedLongWidth, isUnsigned: true);
+        AssertFullIntegerRange(read.Parameters[2].Type, expectedSizeTWidth, isUnsigned: true);
+        AssertFullIntegerRange(read.Parameters[3].Type, expectedPtrDiffWidth, isUnsigned: false);
+
+        var text = read.Parameters[4].Type;
+        Assert.Equal(StarkTypeKind.RawPointer, text.Kind);
+        Assert.False(text.IsMutablePointer);
+        Assert.NotNull(text.ElementType);
+        AssertFullIntegerRange(text.ElementType!, 8, isUnsigned: !expectedPlainCharSigned);
+    }
+
+    [Theory]
+    [InlineData("x86_64-unknown-linux-gnu", 24, 8, 8, 16)]
+    [InlineData("x86_64-pc-windows-msvc", 16, 8, 4, 8)]
+    [InlineData("i686-unknown-linux-gnu", 12, 4, 4, 8)]
+    public void SystemCAliasesParticipateInCStructLayout(
+        string targetTriple,
+        int expectedSize,
+        int expectedAlignment,
+        int expectedCountOffset,
+        int expectedBytesOffset)
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C)]
+            struct NativeRecord
+            {
+                System.C.c_char Tag;
+                System.C.c_long Count;
+                System.C.c_size_t Bytes;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                TargetInfo: new LlvmTargetInfo(targetTriple, null)));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+
+        var layout = ConcreteTypeLayoutHelper.TryGetConcreteTypeLayout(
+            StarkTypeSymbols.Named("NativeRecord"),
+            typeCheckModel.NamedTypes);
+        Assert.NotNull(layout);
+        Assert.Equal(expectedSize, layout.SizeBytes);
+        Assert.Equal(expectedAlignment, layout.AlignmentBytes);
+        Assert.Equal(0, Assert.Single(layout.Fields, static field => field.Name == "Tag").OffsetBytes);
+        Assert.Equal(expectedCountOffset, Assert.Single(layout.Fields, static field => field.Name == "Count").OffsetBytes);
+        Assert.Equal(expectedBytesOffset, Assert.Single(layout.Fields, static field => field.Name == "Bytes").OffsetBytes);
+    }
+
+    [Fact]
+    public void SystemCCVoidIsValidOnlyBehindRawPointers()
+    {
+        var good = Compile(
+            """
+            module Demo
+
+            unsafe ffi(c) fn rawmutptr<System.C.c_void> Allocate(System.C.c_size_t bytes);
+            unsafe ffi(c) fn void Free(rawmutptr<System.C.c_void> ptr);
+
+            unsafe fn rawptr<System.C.c_void> Identity(rawptr<System.C.c_void> ptr)
+            {
+                return ptr;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(good.Succeeded, string.Join(", ", good.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(good.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+        AssertRawPointerToCVoid(typeCheckModel.Functions["Allocate"].ReturnType, isMutable: true);
+        AssertRawPointerToCVoid(typeCheckModel.Functions["Free"].Parameters[0].Type, isMutable: true);
+        AssertRawPointerToCVoid(typeCheckModel.Functions["Identity"].ReturnType, isMutable: false);
+        AssertRawPointerToCVoid(typeCheckModel.Functions["Identity"].Parameters[0].Type, isMutable: false);
+
+        var bad = Compile(
+            """
+            module Demo
+
+            unsafe ffi(c) fn System.C.c_void BadReturn();
+
+            struct BadField
+            {
+                System.C.c_void Value;
+            }
+
+            unsafe fn void BadLocal()
+            {
+                stack System.C.c_void value;
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(bad.Succeeded);
+        Assert.Contains(
+            bad.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3050"
+                && diagnostic.Message.Contains("System.C.c_void", StringComparison.Ordinal)
+                && diagnostic.Message.Contains("rawptr<System.C.c_void>", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("x86_64-unknown-linux-gnu", true)]
+    [InlineData("aarch64-unknown-linux-gnu", false)]
+    public void SystemCCharSignednessIsCompileTimeTargetFact(string targetTriple, bool expectedSigned)
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            const bool PlainCharSigned = System.C.c_char_is_signed;
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                TargetInfo: new LlvmTargetInfo(targetTriple, null)));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+
+        var constant = typeCheckModel.Globals["PlainCharSigned"];
+        Assert.True(constant.IsConst);
+        Assert.Equal(StarkTypeSymbols.Bool, constant.Type);
+        Assert.Equal(expectedSigned, constant.ConstantInitializer?.BoolValue);
+    }
+
+    [Fact]
+    public void StructLayoutDiagnosticsRejectInvalidLayoutShapes()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C), Pack(3)]
+            struct BadPack
+            {
+                u32[0 max] Value;
+            }
+
+            [StructLayout(C)]
+            struct BadField
+            {
+                ascii Text;
+            }
+
+            [StructLayout(Explicit)]
+            struct MissingOffset
+            {
+                u32[0 max] Value;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3048"
+                && diagnostic.Message.Contains("[Pack(N)] requires a positive power-of-two integer literal", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3049"
+                && diagnostic.Message.Contains("not FFI-layout safe", StringComparison.Ordinal));
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3048"
+                && diagnostic.Message.Contains("Every field in [StructLayout(Explicit)]", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void SafeBorrowsRejectMisalignedPackedFields()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C), Pack(1)]
+            struct Packet
+            {
+                u8[0 max] Tag;
+                u32[0 max] Value;
+            }
+
+            fn void Touch(borrow u32[0 max] value)
+            {
+                return;
+            }
+
+            fn void Run(borrow Packet packet)
+            {
+                Touch(packet.Value);
+                return;
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3049"
+                && diagnostic.Message.Contains("cannot form a safe borrow to member 'Value'", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void FunctionPointerOverlapContractsAllowAliasingIndirectCalls()
     {
         var result = Compile(
@@ -1974,6 +2317,164 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void DictionaryAllowsExplicitStaticHashEqualsKeyContract()
+    {
+        var result = Compile(
+            """
+            import System.Collections
+            module Demo
+
+            struct Symbol
+            {
+                u32[0 max] Id;
+
+                static finite law u64[0 max] Hash(borrow Symbol value)
+                {
+                    return (u64[0 max])value.Id;
+                }
+
+                static finite law bool Equals(borrow Symbol left, borrow Symbol right)
+                    where overlap(left, right)
+                {
+                    return left.Id == right.Id;
+                }
+            }
+
+            fn void Use(Dictionary<Symbol, i32[0 max]> symbols)
+            {
+                return;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("System.Collections", "System/Collections.stark"),
+                        """
+                        module System.Collections
+
+                        public struct Dictionary<K, V>
+                        {
+                            K Key;
+                            V Value;
+                        }
+                        """,
+                        "System/Collections.stark")
+                ])));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.DoesNotContain(result.Diagnostics, static diagnostic => diagnostic.Code == "STK3023");
+    }
+
+    [Fact]
+    public void DictionaryRejectsStaticHashEqualsContractWithoutOverlap()
+    {
+        var result = Compile(
+            """
+            import System.Collections
+            module Demo
+
+            struct Symbol
+            {
+                u32[0 max] Id;
+
+                static finite law u64[0 max] Hash(borrow Symbol value)
+                {
+                    return (u64[0 max])value.Id;
+                }
+
+                static finite law bool Equals(borrow Symbol left, borrow Symbol right)
+                {
+                    return left.Id == right.Id;
+                }
+            }
+
+            fn void Use(Dictionary<Symbol, i32[0 max]> symbols)
+            {
+                return;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("System.Collections", "System/Collections.stark"),
+                        """
+                        module System.Collections
+
+                        public struct Dictionary<K, V>
+                        {
+                            K Key;
+                            V Value;
+                        }
+                        """,
+                        "System/Collections.stark")
+                ])));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3023"
+                && diagnostic.Message.Contains("where overlap(left, right)", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void DictionaryRejectsStaticHashEqualsContractWithWrongHashReturn()
+    {
+        var result = Compile(
+            """
+            import System.Collections
+            module Demo
+
+            struct Symbol
+            {
+                u32[0 max] Id;
+
+                static finite law i64[min max] Hash(borrow Symbol value)
+                {
+                    return (i64[min max])value.Id;
+                }
+
+                static finite law bool Equals(borrow Symbol left, borrow Symbol right)
+                    where overlap(left, right)
+                {
+                    return left.Id == right.Id;
+                }
+            }
+
+            fn void Use(Dictionary<Symbol, i32[0 max]> symbols)
+            {
+                return;
+            }
+            """,
+            new CompilerOptions(
+                StopAfterPassId: "type-check",
+                ModuleResolver: new InMemoryModuleResolver(
+                [
+                    (
+                        new ResolvedModuleReference("System.Collections", "System/Collections.stark"),
+                        """
+                        module System.Collections
+
+                        public struct Dictionary<K, V>
+                        {
+                            K Key;
+                            V Value;
+                        }
+                        """,
+                        "System/Collections.stark")
+                ])));
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(
+            result.Diagnostics,
+            static diagnostic => diagnostic.Code == "STK3023"
+                && diagnostic.Message.Contains("u64[0 max] Hash", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void DictionaryRejectsUnprovenKeyTypesAfterGenericMonomorphization()
     {
         var result = Compile(
@@ -2500,6 +3001,41 @@ public sealed class TypeCheckingTests
             new CompilerOptions(StopAfterPassId: "type-check"));
 
         Assert.True(result.Succeeded);
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+    }
+
+    [Fact]
+    public void RawAndMultilineTextLiteralsTypeCheckAsTextLiterals()
+    {
+        var result = Compile(
+            """""
+            module Demo
+
+            finite law ascii RawPath()
+            {
+                return raw"c:\compiler\stage1";
+            }
+
+            finite law ascii Multiline()
+            {
+                return raw"""alpha
+                beta""";
+            }
+
+            finite law ascii Interpolated()
+            {
+                return $raw"Score: {100}\n";
+            }
+
+            finite law unicode Wide()
+            {
+                return (unicode)raw"\u03B1";
+            }
+            """"",
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
         Assert.NotNull(typeCheckModel);
     }
@@ -4470,6 +5006,26 @@ public sealed class TypeCheckingTests
         Assert.Equal((BigInteger?)min, type.RangeMin);
         Assert.Equal((BigInteger?)max, type.RangeMax);
         Assert.Equal(isUnsigned, type.IsUnsigned);
+    }
+
+    private static void AssertFullIntegerRange(StarkTypeSymbol type, int bitWidth, bool isUnsigned)
+    {
+        var min = isUnsigned
+            ? BigInteger.Zero
+            : -(BigInteger.One << (bitWidth - 1));
+        var max = isUnsigned
+            ? (BigInteger.One << bitWidth) - BigInteger.One
+            : (BigInteger.One << (bitWidth - 1)) - BigInteger.One;
+
+        AssertIntegerRange(type, bitWidth, min, max, isUnsigned);
+    }
+
+    private static void AssertRawPointerToCVoid(StarkTypeSymbol type, bool isMutable)
+    {
+        Assert.Equal(StarkTypeKind.RawPointer, type.Kind);
+        Assert.Equal(isMutable, type.IsMutablePointer);
+        Assert.NotNull(type.ElementType);
+        Assert.Equal(StarkTypeSymbols.CVoid, type.ElementType);
     }
 
     private static void AssertCapture(TypeCheckModel typeCheckModel, string name, string mode, bool isUnsafe)

@@ -2660,6 +2660,103 @@ public sealed class SystemCollectionsStandardLibraryTests : StandardLibraryTestS
     }
 
     [Fact]
+    public void StdLibSourceDictionaryCustomKeysUseExplicitStaticHashAndEqualsContract()
+    {
+        var repositoryRoot = FindRepositoryRoot();
+        var sourceRoot = Path.Combine(repositoryRoot, "stdlib", "src");
+        var appPath = Path.Combine(repositoryRoot, "tests", "tmp", "StdLibDictionaryCustomKey.stark");
+        var result = DefaultCompilerPipeline.Create().Run(
+            new CompilationInput(
+                """
+                import System.Collections
+                import System.Memory
+                module Demo
+
+                struct Symbol
+                {
+                    u32[0 max] Id;
+
+                    static finite law u64[0 max] Hash(borrow Symbol value)
+                    {
+                        return (u64[0 max])value.Id;
+                    }
+
+                    static finite law bool Equals(borrow Symbol left, borrow Symbol right)
+                        where overlap(left, right)
+                    {
+                        return left.Id == right.Id;
+                    }
+                }
+
+                fn bool Ok(MemoryStatus status)
+                {
+                    switch (status)
+                    {
+                        case MemoryStatus.Ok:
+                            return true;
+                        case MemoryStatus.Err(var error):
+                            return false;
+                    }
+                }
+
+                fn bool UseCustomKeyDictionary()
+                {
+                    stack mut Dictionary<Symbol, u32[0 max]> dictionary = new();
+                    stack Symbol first = new()
+                    {
+                        Id = 7
+                    };
+                    stack Symbol sameKey = new()
+                    {
+                        Id = 7
+                    };
+                    stack Symbol missing = new()
+                    {
+                        Id = 9
+                    };
+                    if (!Ok(dictionary.Set(first, 41)))
+                    {
+                        return false;
+                    }
+
+                    stack mut u32[0 max] found = 0;
+                    return dictionary.TryGet(sameKey, found)
+                        && found == 41
+                        && !dictionary.TryGet(missing, found);
+                }
+                """,
+                appPath),
+            new CompilerOptions(
+                ModuleResolver: new FileSystemModuleResolver(sourceRoot),
+                StopAfterPassId: "emit-llvm",
+                OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+        Assert.NotNull(llvm);
+        Assert.Contains("@Symbol_Hash", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("@Symbol_Equals", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i64 @Symbol_Hash", llvm.Text, StringComparison.Ordinal);
+        Assert.Contains("call fastcc i1 @Symbol_Equals", llvm.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i64 @__stark_mono_fn_System_Collections__System_Collections_DictionaryKey_Hash__Symbol", llvm.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i1 @__stark_mono_fn_System_Collections__System_Collections_DictionaryKey_Equals__Symbol", llvm.Text, StringComparison.Ordinal);
+
+        var tryGetBody = ExtractDefinedFunctionText(
+            llvm.Text,
+            "define linkonce_odr dso_local fastcc noundef i1 @__stark_mono_fn_System_Collections__System_Collections_Dictionary_TryGet__Symbol__u32",
+            "Expected custom-key Dictionary.TryGet specialization to be emitted.");
+        var findIndexBody = ExtractDefinedFunctionText(
+            llvm.Text,
+            "define linkonce_odr dso_local fastcc noundef range(i64 0, -9223372036854775808) i64 @__stark_mono_fn_System_Collections__System_Collections_Dictionary_FindIndex__Symbol__u32",
+            "Expected custom-key Dictionary.FindIndex specialization to be emitted.");
+        Assert.Contains("@Symbol_Equals", findIndexBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("DictionaryKey_Hash", tryGetBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("DictionaryKey_Equals", tryGetBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("DictionaryKey_Hash", findIndexBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("DictionaryKey_Equals", findIndexBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task SourceStdLibCollectionsGrowMoveDropExecutableRuns()
     {
         if (!NativeToolchain.TryDetectDefaultTargetInfo(out var targetInfo))

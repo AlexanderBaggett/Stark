@@ -579,7 +579,7 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
 
         Assert.Contains("declare i32 @WSAStartup(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @WSAGetLastError(", llvm, StringComparison.Ordinal);
-        Assert.Contains("declare i32 @InitOnceExecuteOnce(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare win64cc i32 @InitOnceExecuteOnce(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare ptr @WSASocketW(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @connect(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @bind(", llvm, StringComparison.Ordinal);
@@ -606,7 +606,7 @@ public sealed class SystemNetTcpStandardLibraryTests : StandardLibraryTestSuite
         Assert.Contains("define fastcc noundef i32 @CloseSocket(", llvm, StringComparison.Ordinal);
 
         Assert.Contains("call i32 @WSAStartup(", llvm, StringComparison.Ordinal);
-        Assert.Contains("call i32 @InitOnceExecuteOnce(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call win64cc i32 @InitOnceExecuteOnce(", llvm, StringComparison.Ordinal);
         Assert.Contains("call ptr @WSASocketW(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @connect(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @bind(", llvm, StringComparison.Ordinal);

@@ -928,7 +928,7 @@ internal sealed class LoweringContractValidator
         {
             foreach (var label in section.switchLabel())
             {
-                if (label.pattern() is { } pattern)
+                foreach (var pattern in label.pattern())
                 {
                     ValidatePatternFacts(pattern, functionName, filePath);
                 }
@@ -1949,54 +1949,52 @@ internal sealed class LoweringContractValidator
         {
             foreach (var label in section.switchLabel())
             {
-                labelCount++;
                 if (label.DEFAULT() is not null)
                 {
+                    labelCount++;
                     explicitDefaultLabelCount++;
                     loweredDefaultLabelCount++;
                     continue;
                 }
 
-                if (label.whenClause() is not null)
+                foreach (var pattern in label.pattern())
                 {
-                    guardedLabelCount++;
-                }
-
-                var pattern = label.pattern();
-                if (pattern is null)
-                {
-                    continue;
-                }
-
-                if (pattern.literal() is not null)
-                {
-                    literalLabelCount++;
-                    continue;
-                }
-
-                if (pattern.DISCARD() is not null)
-                {
-                    matchAllLabelCount++;
-                    if (label.whenClause() is null)
+                    labelCount++;
+                    if (label.whenClause() is not null)
                     {
-                        loweredDefaultLabelCount++;
+                        guardedLabelCount++;
                     }
 
-                    continue;
-                }
+                    if (pattern.literal() is not null)
+                    {
+                        literalLabelCount++;
+                        continue;
+                    }
 
-                if (pattern.VAR() is not null)
-                {
-                    matchAllLabelCount++;
-                    captureLabelCount++;
-                    continue;
-                }
+                    if (pattern.DISCARD() is not null)
+                    {
+                        matchAllLabelCount++;
+                        if (label.whenClause() is null)
+                        {
+                            loweredDefaultLabelCount++;
+                        }
 
-                if (pattern.aggregatePattern() is not null
-                    || pattern.enumNamedFieldPattern() is not null
-                    || pattern.genericEnumAggregatePattern() is not null)
-                {
-                    structuredPatternLabelCount++;
+                        continue;
+                    }
+
+                    if (pattern.VAR() is not null)
+                    {
+                        matchAllLabelCount++;
+                        captureLabelCount++;
+                        continue;
+                    }
+
+                    if (pattern.aggregatePattern() is not null
+                        || pattern.enumNamedFieldPattern() is not null
+                        || pattern.genericEnumAggregatePattern() is not null)
+                    {
+                        structuredPatternLabelCount++;
+                    }
                 }
             }
         }

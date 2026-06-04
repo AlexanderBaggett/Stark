@@ -900,7 +900,43 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
     private void EmitFieldAddress(string result, SsaFieldAddressRValue fieldAddress)
     {
+        if (TryGetLayoutControlledFieldOffsetBytes(
+                fieldAddress.AggregateType,
+                fieldAddress.FieldIndex,
+                out var fieldOffsetBytes))
+        {
+            AppendLine($"  {result} = getelementptr{GetProvenInObjectGepFlags()} i8, ptr {FormatValue(fieldAddress.Address)}, i64 {fieldOffsetBytes}");
+            return;
+        }
+
         AppendLine($"  {result} = getelementptr{GetProvenInObjectGepFlags()} {MapType(fieldAddress.AggregateType)}, ptr {FormatValue(fieldAddress.Address)}, i32 0, i32 {fieldAddress.FieldIndex}");
+    }
+
+    private bool TryGetLayoutControlledFieldOffsetBytes(
+        StarkTypeSymbol aggregateType,
+        int fieldIndex,
+        out int fieldOffsetBytes)
+    {
+        fieldOffsetBytes = 0;
+        var normalizedType = NormalizeAggregateType(aggregateType);
+        if (normalizedType.Kind != StarkTypeKind.Named
+            || ResolveNamedTypeSymbol(normalizedType) is not { } namedType
+            || !LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout(namedType)
+            || TryGetConcreteTypeLayout(normalizedType) is not { } layout
+            || fieldIndex < 0
+            || fieldIndex >= namedType.OrderedFields.Count)
+        {
+            return false;
+        }
+
+        var fieldName = namedType.OrderedFields[fieldIndex].Name;
+        if (!layout.TryGetField(fieldName, out var fieldLayout))
+        {
+            return false;
+        }
+
+        fieldOffsetBytes = fieldLayout.OffsetBytes;
+        return true;
     }
 
     private void EmitElementAddress(string result, SsaElementAddressRValue elementAddress)

@@ -541,6 +541,34 @@ internal sealed class LlvmGlobalInitializerPlanner
         NamedTypeSymbol namedType,
         IReadOnlyDictionary<string, string> fieldValues)
     {
+        if (LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout(namedType)
+            && _context.TryGetConcreteTypeLayout(StarkTypeSymbols.Named(namedType.Name)) is { } layout)
+        {
+            if (!LlvmLayoutControlledAggregateFacts.TryBuildPhysicalElements(
+                    namedType,
+                    layout,
+                    out var physicalElements,
+                    out var hasOverlappingFields)
+                || hasOverlappingFields)
+            {
+                return "zeroinitializer";
+            }
+
+            var physicalInitializers = physicalElements
+                .Where(static element => element.SizeBytes > 0)
+                .Select(element =>
+                {
+                    if (element.SourceFieldName is { } fieldName
+                        && element.FieldType is { } fieldType)
+                    {
+                        return $"{_context.MapType(fieldType)} {(fieldValues.TryGetValue(fieldName, out var value) ? value : FormatZeroInitializer(fieldType))}";
+                    }
+
+                    return $"[{element.SizeBytes} x i8] zeroinitializer";
+                });
+            return $"{{ {string.Join(", ", physicalInitializers)} }}";
+        }
+
         var fieldInitializers = namedType.OrderedFields
             .Select(field => $"{_context.MapType(field.Type)} {(fieldValues.TryGetValue(field.Name, out var value) ? value : FormatZeroInitializer(field.Type))}");
         return $"{{ {string.Join(", ", fieldInitializers)} }}";

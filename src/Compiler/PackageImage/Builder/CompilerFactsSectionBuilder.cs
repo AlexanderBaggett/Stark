@@ -34,6 +34,7 @@ internal static partial class PackageImageBuilder
             InlinePreference: RenderInlinePreference(effects.InlinePreference),
             IsStrictFp: effects.IsStrictFp,
             IsVarargs: effects.IsVarargs,
+            FfiAbi: effects.FfiAbi is { } ffiAbi ? StarkFfiAbiFacts.DisplayName(ffiAbi) : null,
             BackendOptimizationMode: RenderBackendOptimizationMode(effects.BackendOptimizationMode));
         return true;
     }
@@ -74,7 +75,8 @@ internal static partial class PackageImageBuilder
             IsFfi: abiFunction.IsFfi,
             SourceName: abiFunction.SourceName,
             UsesFastCallingConvention: abiFunction.UsesFastCallingConvention,
-            IsVarargs: abiFunction.IsVarargs);
+            IsVarargs: abiFunction.IsVarargs,
+            FfiAbi: abiFunction.FfiAbi is { } ffiAbi ? StarkFfiAbiFacts.DisplayName(ffiAbi) : null);
         return true;
     }
 
@@ -96,7 +98,18 @@ internal static partial class PackageImageBuilder
         manifest = new StarkPackageConcreteTypeLayoutManifest(
             qualifiedTypeName,
             layout.SizeBytes,
-            layout.AlignmentBytes);
+            layout.AlignmentBytes,
+            layout.Fields.Count == 0
+                ? null
+                : layout.Fields
+                    .Select(field => new StarkPackageConcreteFieldLayoutManifest(
+                        field.Name,
+                        field.OffsetBytes,
+                        field.SizeBytes,
+                        field.NaturalAlignmentBytes,
+                        field.EffectiveAlignmentBytes,
+                        field.IsMisaligned))
+                    .ToArray());
         return true;
     }
 

@@ -530,9 +530,24 @@ internal static class LlvmSpecializationEmissionPlanner
         bool isFfi,
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
         IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts,
-        bool isVarargs = false)
+        bool isVarargs = false,
+        StarkFfiAbi? ffiAbi = null,
+        LlvmTargetInfo? targetInfo = null,
+        IReadOnlyDictionary<string, ConcreteTypeLayout>? publishedConcreteLayouts = null)
     {
-        var returnsIndirect = !isFfi && AbiLoweringHeuristics.RequiresIndirectReturnAbi(function.ReturnType, namedTypes, enumLayouts);
+        CAbiAggregateClassification? ffiReturnClassification = null;
+        var hasFfiReturnClassification = isFfi
+            && CAbiAggregateClassifier.TryClassify(
+                function.ReturnType,
+                ffiAbi,
+                targetInfo,
+                namedTypes,
+                enumLayouts,
+                publishedConcreteLayouts,
+                out ffiReturnClassification);
+        var returnsIndirect = hasFfiReturnClassification
+            ? ffiReturnClassification!.PassKind == CAbiAggregatePassKind.Indirect
+            : !isFfi && AbiLoweringHeuristics.RequiresIndirectReturnAbi(function.ReturnType, namedTypes, enumLayouts);
         var parameters = new List<AbiParameterSymbol>();
 
         if (returnsIndirect)
@@ -547,16 +562,32 @@ internal static class LlvmSpecializationEmissionPlanner
 
         foreach (var parameter in function.Parameters)
         {
-            var kind = !isFfi && AbiLoweringHeuristics.RequiresIndirectParameterAbi(parameter.Type, namedTypes, enumLayouts)
-                ? AbiParameterKind.IndirectIn
-                : AbiParameterKind.Direct;
+            CAbiAggregateClassification? ffiParameterClassification = null;
+            var hasFfiParameterClassification = isFfi
+                && CAbiAggregateClassifier.TryClassify(
+                    parameter.Type,
+                    ffiAbi,
+                    targetInfo,
+                    namedTypes,
+                    enumLayouts,
+                    publishedConcreteLayouts,
+                    out ffiParameterClassification);
+            var kind = hasFfiParameterClassification
+                ? ffiParameterClassification!.PassKind == CAbiAggregatePassKind.Indirect
+                    ? AbiParameterKind.IndirectIn
+                    : AbiParameterKind.Direct
+                : !isFfi && AbiLoweringHeuristics.RequiresIndirectParameterAbi(parameter.Type, namedTypes, enumLayouts)
+                    ? AbiParameterKind.IndirectIn
+                    : AbiParameterKind.Direct;
 
             parameters.Add(new AbiParameterSymbol(
                 SourceName: parameter.Name,
                 LlvmName: $"arg_{parameter.Name}",
                 SourceType: parameter.Type,
                 LlvmType: kind == AbiParameterKind.Direct
-                    ? SyntheticLowerAbiValueType(parameter.Type, isFfi, forReturnValue: false)
+                    ? hasFfiParameterClassification
+                        ? ffiParameterClassification!.LlvmType
+                        : SyntheticLowerAbiValueType(parameter.Type, isFfi, forReturnValue: false)
                     : StarkTypeSymbols.RawPointer(parameter.Type, isMutable: false),
                 Kind: kind,
                 RawPointerElementCountExpression: parameter.RawPointerElementCountExpression));
@@ -568,12 +599,15 @@ internal static class LlvmSpecializationEmissionPlanner
             function.ReturnType,
             returnsIndirect
                 ? StarkTypeSymbols.Void
-                : SyntheticLowerAbiValueType(function.ReturnType, isFfi, forReturnValue: true),
+                : hasFfiReturnClassification
+                    ? ffiReturnClassification!.LlvmType
+                    : SyntheticLowerAbiValueType(function.ReturnType, isFfi, forReturnValue: true),
             parameters,
             isFfi,
             SourceName: function.SourceName,
             UsesFastCallingConvention: !isFfi,
-            IsVarargs: isVarargs);
+            IsVarargs: isVarargs,
+            FfiAbi: ffiAbi);
     }
 
     private static IReadOnlyDictionary<string, ImportedFunctionSemanticSummary> BuildPublishedFunctionSemantics(LoadedModuleSet loadedModules)

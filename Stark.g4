@@ -63,11 +63,33 @@ functionModifier
     | INLINEHINT
     | HOT
     | COLD
-    | FFI
+    | ffiModifier
     | VARARGS
     | UNSAFE
     | STRICTFP
     | STATIC
+    ;
+
+ffiModifier
+    : FFI ffiAbiSpecifier?
+    ;
+
+ffiAbiSpecifier
+    : LPAREN ffiAbi RPAREN
+    ;
+
+ffiAbi
+    : Identifier
+    | Identifier LPAREN ffiPlatformAbiEntry (COMMA ffiPlatformAbiEntry)* COMMA? RPAREN
+    ;
+
+ffiPlatformAbiEntry
+    : ffiPlatformKey COLON Identifier
+    ;
+
+ffiPlatformKey
+    : DEFAULT
+    | qualifiedName
     ;
 
 returnType
@@ -370,7 +392,11 @@ functionPointerType
     ;
 
 functionPointerSignature
-    : functionKind returnType functionPointerParameterList parameterMemoryContractClause*
+    : functionPointerAbiModifier? functionKind returnType functionPointerParameterList parameterMemoryContractClause*
+    ;
+
+functionPointerAbiModifier
+    : FFI ffiAbiSpecifier?
     ;
 
 closureType
@@ -494,7 +520,7 @@ switchSection
     ;
 
 switchLabel
-    : CASE pattern whenClause? COLON
+    : CASE pattern (OR pattern)* whenClause? COLON
     | DEFAULT COLON
     ;
 
@@ -1044,7 +1070,9 @@ CharacterLiteral
     ;
 
 StringLiteral
-    : '"' (LiteralEscapeSequence | ~["\\\r\n])* '"'
+    : 'raw"""' .*? '"""'
+    | 'raw"' ~["\r\n]* '"'
+    | '"' (LiteralEscapeSequence | ~["\\\r\n])* '"'
     ;
 
 fragment ExponentPart

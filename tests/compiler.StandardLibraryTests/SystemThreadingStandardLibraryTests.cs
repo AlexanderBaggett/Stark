@@ -359,7 +359,7 @@ public sealed class SystemThreadingStandardLibraryTests : StandardLibraryTestSui
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var llvm = result.Artifacts.GetRequired(CompilerArtifactKeys.LlvmIrModule).Text;
 
-        Assert.Contains("declare ptr @CreateThread(", llvm, StringComparison.Ordinal);
+        Assert.Contains("declare win64cc ptr @CreateThread(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @WaitForSingleObject(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @GetExitCodeThread(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare i32 @CloseHandle(", llvm, StringComparison.Ordinal);
@@ -368,7 +368,7 @@ public sealed class SystemThreadingStandardLibraryTests : StandardLibraryTestSui
         Assert.Contains("declare i32 @WaitOnAddress(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare void @WakeByAddressSingle(", llvm, StringComparison.Ordinal);
         Assert.Contains("declare void @WakeByAddressAll(", llvm, StringComparison.Ordinal);
-        Assert.Contains("define i32 @ThreadEntryThunk(", llvm, StringComparison.Ordinal);
+        Assert.Contains("define win64cc i32 @ThreadEntryThunk(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef ptr @StartThread(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @JoinThread(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @DetachThread(", llvm, StringComparison.Ordinal);
@@ -376,7 +376,7 @@ public sealed class SystemThreadingStandardLibraryTests : StandardLibraryTestSui
         Assert.Contains("define fastcc void @SleepThreadMilliseconds(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @FutexWait(", llvm, StringComparison.Ordinal);
         Assert.Contains("define fastcc noundef i32 @FutexWake(", llvm, StringComparison.Ordinal);
-        Assert.Contains("call ptr @CreateThread(", llvm, StringComparison.Ordinal);
+        Assert.Contains("call win64cc ptr @CreateThread(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @WaitForSingleObject(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @GetExitCodeThread(", llvm, StringComparison.Ordinal);
         Assert.Contains("call i32 @CloseHandle(", llvm, StringComparison.Ordinal);

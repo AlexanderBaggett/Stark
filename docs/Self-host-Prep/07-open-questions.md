@@ -31,8 +31,6 @@ Each item is phrased as a concrete decision with options and trade-offs.
 
 | Item | Why It Matters |
 |---|---|
-| Exact VS Code extension location | No extension source was audited in tracked `src`, `tests`, `stdlib`, or `docs`; T13 may need a separate repo/app audit. |
-| Exact public `System.Math` surface | Docs/source were not exhaustively checked for every math helper; S05 covers BigInt and compile-time integer needs regardless. |
 | Final package image stability policy | `docs/Internals/PackageImage.md` says no embedded format version for v1.1 and compiler/source evolve together. Dropping the host may require stronger snapshot compatibility rules. |
 | Final definition of "alias class" terminology | Current repo uses type aliases and scoped noalias groups; no distinct user-facing "alias class" feature was found. If Alexander means a separate alias-class concept, it needs a language/design decision before L13 is closed. |
 

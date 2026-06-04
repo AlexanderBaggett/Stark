@@ -8,10 +8,10 @@ runtime costs, dispatch, allocation, aliasing, and failure explicit.
 
 ## Compile-time Reuse
 
-- [ ] Strengthen compile-time-only `trait` and `doctrine` support.
-- [ ] Add default method bodies for compile-time-only traits/doctrines.
+- [~] Strengthen compile-time-only `trait` and `doctrine` support.
+- [x] Add default method bodies for compile-time-only traits/doctrines.
 - [ ] Add associated types for compile-time contracts.
-- [ ] Define doctrine-based `Hash`, `Eq`, `Ord`, and `Format` style contracts.
+- [~] Define doctrine-based `Hash`, `Eq`, `Ord`, and `Format` style contracts.
 - [ ] Keep traits/doctrines as compile-time contracts, not runtime objects.
 - [ ] Do not add hidden trait objects, hidden vtables, or implicit dynamic dispatch.
 
@@ -22,9 +22,16 @@ Default method bodies, associated types, and doctrine-based `Hash`, `Eq`,
 write without adding trait objects. The compiler can still resolve these
 contracts statically and emit concrete code.
 
+Landed slice: `Dictionary<K, V>` now accepts non-primitive key types when the key
+type declares explicit static `finite law` methods:
+`u64[0 max] Hash(borrow K value)` and
+`bool Equals(borrow K left, borrow K right) where overlap(left, right)`. Bool
+and integer keys still use the compiler-known scalar fast path.
+
 Useful self-hosting targets:
 
-- `Dictionary<K, V>` keys for `ascii`, `unicode`, symbols, and interned names.
+- `Dictionary<K, V>` keys for symbols and interned-name structs via explicit
+  static `Hash`/`Equals`; `ascii`/`unicode` helpers still need stdlib contracts.
 - Generic equality and ordering for deterministic compiler output.
 - Generic formatting for diagnostics, logging, package images, and LLVM text.
 - Reusable collection algorithms without a runtime dispatch layer.
@@ -92,6 +99,22 @@ enum ModuleResolver
 
 This keeps dispatch visible and gives the compiler exhaustiveness checks.
 
+## Pattern Matching
+
+- [x] Add switch-label or-pattern alternatives: `case A | B:`.
+- [x] Require alternatives that share a switch body to bind the same capture
+      names with the same types.
+- [x] Preserve native literal-switch lowering for literal-only or-patterns.
+- [ ] Add range patterns for dense numeric/compiler-token classification.
+- [ ] Decide whether list and property patterns are needed before self-hosting.
+
+Notes:
+
+Or-patterns are section-local alternatives: `case A | B when guard:` tests
+`A`, then `B`, and either successful alternative flows into the same guarded
+body. Capture-bearing alternatives must agree on names and types so the body's
+locals are definitely initialized regardless of which alternative matched.
+
 ## Error And Optional Values
 
 - [ ] Define shared `Option<T>` and `Result<T, E>` conventions.
@@ -101,6 +124,27 @@ This keeps dispatch visible and gives the compiler exhaustiveness checks.
 Self-hosting needs a replacement for C# nullability, exceptions, and
 `TryGet(... out value)` patterns. Recoverable failures should remain values.
 Internal compiler bugs should have an explicit, documented failure path.
+
+## Compiler Text Literals
+
+- [x] Add exact-preserving single-line raw string literals: `raw"..."`.
+- [x] Add exact-preserving multiline raw string literals: `raw"""..."""`.
+- [x] Compose raw literals with interpolation: `$raw"..."` and
+      `$raw"""..."""`.
+- [x] Keep raw literals in the existing `StringLiteral` token family so
+      parser, typing, lowering, and package-image code continue to use the
+      ordinary text-literal pipeline.
+- [ ] Add Stark-side text escaping/decoding helpers in `System.Text` for
+      diagnostics, LLVM text, golden files, and source snippets. Track this
+      as stdlib gap S03.
+
+Rules landed in the host compiler:
+
+- raw literals do not interpret escape sequences
+- multiline raw literals preserve content exactly between the delimiters
+- raw single-line literals cannot contain an unescaped `"` or a line break
+- raw multiline literals close at the next `"""`
+- interpolation holes still use `{...}`, with `{{` and `}}` for literal braces
 
 ## Compiler-grade Standard Library
 

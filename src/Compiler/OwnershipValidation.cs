@@ -292,7 +292,7 @@ internal sealed class OwnershipValidator
                 var sectionScope = sectionState.EnterScope();
                 foreach (var label in section.switchLabel())
                 {
-                    if (label.pattern() is { } pattern)
+                    foreach (var pattern in label.pattern())
                     {
                         BindSwitchPattern(pattern, switchValue, sectionState, summary);
                     }

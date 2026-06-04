@@ -4,6 +4,7 @@ import System.Testing
 export import System.Console
 export import System.BitOperations
 export import System.Collections
+export import System.C
 export import System.FileSystem
 export import System.IO
 export import System.IO.File

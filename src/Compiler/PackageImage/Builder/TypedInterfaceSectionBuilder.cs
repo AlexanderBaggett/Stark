@@ -51,6 +51,7 @@ internal static partial class PackageImageBuilder
             HasExplicitInlinePreference: declarationFunction.Modifiers.HasExplicitInlinePreference,
             IsUnsafe: declarationFunction.Modifiers.IsUnsafe,
             IsVarargs: effects.IsVarargs,
+            FfiAbi: effects.FfiAbi is { } ffiAbi ? StarkFfiAbiFacts.DisplayName(ffiAbi) : null,
             BackendOptimizationMode: RenderBackendOptimizationMode(declarationFunction.BackendOptimizationMode),
             DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups),
             OverlapParameterGroups: BuildParameterOverlapGroupManifests(function.OverlapGroups),
@@ -99,10 +100,12 @@ internal static partial class PackageImageBuilder
             HasExplicitInlinePreference: manifest.HasExplicitInlinePreference,
             IsUnsafe: manifest.IsUnsafe,
             IsVarargs: manifest.IsVarargs,
+            FfiAbi: manifest.FfiAbi,
             BackendOptimizationMode: manifest.BackendOptimizationMode,
             DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups),
             OverlapParameterGroups: BuildParameterOverlapGroupManifests(function.OverlapGroups),
-            SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups));
+            SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups),
+            HasBody: declarationFunction.HasBody);
     }
 
     private static StarkPackageTypeManifest BuildTypeManifest(
@@ -126,7 +129,8 @@ internal static partial class PackageImageBuilder
                     .Select(field => new StarkPackageFieldManifest(
                         field.Name,
                         RenderManifestTypeText(field.Type, module.SyntaxModel.ModuleName),
-                        RenderFieldVisibility(field.Visibility)))
+                        RenderFieldVisibility(field.Visibility),
+                        field.ExplicitOffsetBytes))
                     .ToArray(),
             GenericParameters: namedType.GenericParams.Count == 0 ? null : namedType.GenericParams.ToArray(),
             PrimaryConstructorParameters: BuildTypePrimaryConstructorParameters(module, declaration.Name, namedType),
@@ -152,7 +156,11 @@ internal static partial class PackageImageBuilder
             Destructor: declaration.Kind == DeclarationKind.Enum
                 ? null
                 : BuildTypeDestructorManifest(module, declaration.Name),
-            BackendOptimizationMode: RenderBackendOptimizationMode(declaration.BackendOptimizationMode));
+            BackendOptimizationMode: RenderBackendOptimizationMode(declaration.BackendOptimizationMode),
+            StructLayout: RenderStructLayoutKind(namedType.Layout?.Kind),
+            PackBytes: namedType.Layout?.PackBytes,
+            AlignBytes: namedType.Layout?.AlignBytes,
+            ImplementedTraits: BuildImplementedTraitManifestNames(namedType));
     }
 
     private static StarkPackageTypedTypeManifest BuildTypedTypeManifest(
@@ -177,7 +185,8 @@ internal static partial class PackageImageBuilder
                     .Select(field => new StarkPackageTypedFieldManifest(
                         field.Name,
                         BuildTypeReference(field.Type, module.SyntaxModel.ModuleName),
-                        RenderFieldVisibility(field.Visibility)))
+                        RenderFieldVisibility(field.Visibility),
+                        field.ExplicitOffsetBytes))
                     .ToArray(),
             GenericParameters: namedType.GenericParams.Count == 0 ? null : namedType.GenericParams.ToArray(),
             PrimaryConstructorParameters: BuildTypedTypePrimaryConstructorParameters(module, declaration.Name, namedType),
@@ -206,7 +215,21 @@ internal static partial class PackageImageBuilder
             Constructors: declaration.Kind is DeclarationKind.Struct or DeclarationKind.Record
                 ? BuildTypedTypeConstructors(module, declaration.Name, namedType, typeModel, moduleGraph)
                 : null,
-            BackendOptimizationMode: RenderBackendOptimizationMode(declaration.BackendOptimizationMode));
+            BackendOptimizationMode: RenderBackendOptimizationMode(declaration.BackendOptimizationMode),
+            StructLayout: RenderStructLayoutKind(namedType.Layout?.Kind),
+            PackBytes: namedType.Layout?.PackBytes,
+            AlignBytes: namedType.Layout?.AlignBytes,
+            ImplementedTraits: BuildImplementedTraitManifestNames(namedType));
+    }
+
+    private static IReadOnlyList<string>? BuildImplementedTraitManifestNames(NamedTypeSymbol namedType)
+    {
+        return namedType.ImplementedTraits.Count == 0
+            ? null
+            : namedType.ImplementedTraits
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(static traitName => traitName, StringComparer.Ordinal)
+                .ToArray();
     }
 
     private static IReadOnlyList<StarkPackageParameterManifest>? BuildTypePrimaryConstructorParameters(
@@ -416,6 +439,7 @@ internal static partial class PackageImageBuilder
                     IsStatic: declaration.Function.IsStatic,
                     IsUnsafe: declaration.Function.Modifiers.IsUnsafe,
                     IsVarargs: effects.IsVarargs,
+                    FfiAbi: effects.FfiAbi is { } ffiAbi ? StarkFfiAbiFacts.DisplayName(ffiAbi) : null,
                     Visibility: declaration.Visibility.ToString().ToLowerInvariant(),
                     BackendOptimizationMode: RenderBackendOptimizationMode(declaration.Function.BackendOptimizationMode),
                     DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups),
@@ -485,10 +509,12 @@ internal static partial class PackageImageBuilder
                     Visibility: declaration.Visibility.ToString().ToLowerInvariant(),
                     IsUnsafe: declaration.Function.Modifiers.IsUnsafe,
                     IsVarargs: effects.IsVarargs,
+                    FfiAbi: effects.FfiAbi is { } ffiAbi ? StarkFfiAbiFacts.DisplayName(ffiAbi) : null,
                     BackendOptimizationMode: RenderBackendOptimizationMode(declaration.Function.BackendOptimizationMode),
                     DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups),
                     OverlapParameterGroups: BuildParameterOverlapGroupManifests(function.OverlapGroups),
-                    SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups));
+                    SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups),
+                    HasBody: declaration.Function.HasBody);
             })
             .Where(static manifest => manifest is not null)
             .Cast<StarkPackageTypedMethodManifest>()
@@ -543,6 +569,16 @@ internal static partial class PackageImageBuilder
         return visibility == StarkVisibility.Public
             ? null
             : visibility.ToString().ToLowerInvariant();
+    }
+
+    private static string? RenderStructLayoutKind(StructLayoutKind? layoutKind)
+    {
+        return layoutKind switch
+        {
+            StructLayoutKind.C => "C",
+            StructLayoutKind.Explicit => "Explicit",
+            _ => null
+        };
     }
 
     private static bool ParameterHasPrefix(StarkParser.ParameterContext parameter, int tokenType)

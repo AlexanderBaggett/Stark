@@ -99,6 +99,36 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitFunctionModifier([NotNull] StarkParser.FunctionModifierContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.ffiModifier"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitFfiModifier([NotNull] StarkParser.FfiModifierContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.ffiAbiSpecifier"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitFfiAbiSpecifier([NotNull] StarkParser.FfiAbiSpecifierContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.ffiAbi"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitFfiAbi([NotNull] StarkParser.FfiAbiContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.ffiPlatformAbiEntry"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitFfiPlatformAbiEntry([NotNull] StarkParser.FfiPlatformAbiEntryContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.ffiPlatformKey"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitFfiPlatformKey([NotNull] StarkParser.FfiPlatformKeyContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.returnType"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
@@ -488,6 +518,12 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <param name="context">The parse tree.</param>
 	/// <return>The visitor result.</return>
 	Result VisitFunctionPointerSignature([NotNull] StarkParser.FunctionPointerSignatureContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.functionPointerAbiModifier"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitFunctionPointerAbiModifier([NotNull] StarkParser.FunctionPointerAbiModifierContext context);
 	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.closureType"/>.
 	/// </summary>

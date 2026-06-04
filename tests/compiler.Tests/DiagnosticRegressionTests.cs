@@ -275,11 +275,16 @@ public sealed class DiagnosticRegressionTests
                     default:
                         return 0;
                 }
-            }
-            """);
+        }
+        """);
 
         Assert.False(result.Succeeded);
-        AssertDiagnostic(result, "STK3008", "Switch capture patterns must currently appear as the only label in their section");
+        AssertDiagnostic(
+            result,
+            "STK3008",
+            "Switch labels that share a body must bind the same capture names with the same types",
+            "Earlier label binds 'capture: i32'",
+            "this label binds no captures");
     }
 
     [Fact]

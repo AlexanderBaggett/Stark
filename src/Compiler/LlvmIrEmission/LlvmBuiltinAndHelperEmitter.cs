@@ -49,6 +49,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
 
     private readonly LlvmEmissionContext _context;
     private readonly Func<bool, TypedFunctionSignature, AbiFunctionSignature, FunctionEffectProfile, FunctionMemoryEffectSummary?, IReadOnlyDictionary<string, ParameterMemoryEffectSummary>?, string> _buildDefinitionSignature;
+    private readonly Func<TypedFunctionSignature, AbiFunctionSignature?> _resolveFunctionAbi;
     private readonly Func<IEnumerable<SsaBinaryRValue>> _enumerateBinaryOperations;
     private readonly Func<IEnumerable<SsaFunction>> _enumerateSsaFunctions;
     private readonly Func<string, string> _escapeInlineAsmString;
@@ -66,6 +67,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     public LlvmBuiltinAndHelperEmitter(
         LlvmEmissionContext context,
         Func<bool, TypedFunctionSignature, AbiFunctionSignature, FunctionEffectProfile, FunctionMemoryEffectSummary?, IReadOnlyDictionary<string, ParameterMemoryEffectSummary>?, string> buildDefinitionSignature,
+        Func<TypedFunctionSignature, AbiFunctionSignature?> resolveFunctionAbi,
         Func<IEnumerable<SsaBinaryRValue>> enumerateBinaryOperations,
         Func<IEnumerable<SsaFunction>> enumerateSsaFunctions,
         Func<string, string> escapeInlineAsmString,
@@ -82,6 +84,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     {
         _context = context;
         _buildDefinitionSignature = buildDefinitionSignature;
+        _resolveFunctionAbi = resolveFunctionAbi;
         _enumerateBinaryOperations = enumerateBinaryOperations;
         _enumerateSsaFunctions = enumerateSsaFunctions;
         _escapeInlineAsmString = escapeInlineAsmString;
@@ -2041,6 +2044,11 @@ internal sealed class LlvmBuiltinAndHelperEmitter
                         return false;
                     }
 
+                    if (LlvmLayoutControlledAggregateFacts.RequiresPhysicalLayout(namedType))
+                    {
+                        return false;
+                    }
+
                     var sizeBytes = 0;
                     var alignmentBytes = 1;
                     for (var index = 0; index < orderedFields.Count; index++)
@@ -3614,10 +3622,17 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         TypedFunctionSignature function,
         AbiFunctionSignature abiFunction)
     {
-        var keyType = ValidateSystemCollectionsDictionaryKeySignature(function, expectedParameterCount: 2);
+        var contract = ValidateSystemCollectionsDictionaryKeySignature(function, expectedParameterCount: 2);
+        var keyType = contract.KeyType;
         if (abiFunction.UserParameters.Count != 2)
         {
             throw new InvalidOperationException($"System.Collections builtin '{function.Name}' expects exactly two key parameters.");
+        }
+
+        if (contract.UsesExplicitStaticMethods)
+        {
+            EmitDictionaryKeyContractForwardingCall(builder, abiFunction, contract.EqualsFunction!, "dict_key_equal");
+            return;
         }
 
         var llvmType = MapType(keyType);
@@ -3633,10 +3648,17 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         TypedFunctionSignature function,
         AbiFunctionSignature abiFunction)
     {
-        var keyType = ValidateSystemCollectionsDictionaryKeySignature(function, expectedParameterCount: 1);
+        var contract = ValidateSystemCollectionsDictionaryKeySignature(function, expectedParameterCount: 1);
+        var keyType = contract.KeyType;
         if (abiFunction.UserParameters.Count != 1)
         {
             throw new InvalidOperationException($"System.Collections builtin '{function.Name}' expects exactly one key parameter.");
+        }
+
+        if (contract.UsesExplicitStaticMethods)
+        {
+            EmitDictionaryKeyContractForwardingCall(builder, abiFunction, contract.HashFunction!, "dict_key_hash");
+            return;
         }
 
         var llvmType = MapType(keyType);
@@ -3649,6 +3671,45 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             _ => throw new InvalidOperationException($"System.Collections DictionaryKey.Hash does not support key type '{keyType.DisplayName}'.")
         };
         builder.AppendLine($"  ret i64 {hashValue}");
+    }
+
+    private void EmitDictionaryKeyContractForwardingCall(
+        StringBuilder builder,
+        AbiFunctionSignature wrapperAbi,
+        TypedFunctionSignature targetFunction,
+        string localName)
+    {
+        var targetAbi = _resolveFunctionAbi(targetFunction)
+            ?? throw new InvalidOperationException($"Missing ABI lowering for dictionary key contract method '{targetFunction.Name}'.");
+        if (targetAbi.ReturnsIndirect)
+        {
+            throw new InvalidOperationException($"Dictionary key contract method '{targetFunction.Name}' must return directly.");
+        }
+
+        if (targetAbi.UserParameters.Count != wrapperAbi.UserParameters.Count)
+        {
+            throw new InvalidOperationException($"Dictionary key contract method '{targetFunction.Name}' has ABI parameter count {targetAbi.UserParameters.Count}, expected {wrapperAbi.UserParameters.Count}.");
+        }
+
+        var arguments = new List<string>(targetAbi.UserParameters.Count);
+        for (var index = 0; index < targetAbi.UserParameters.Count; index++)
+        {
+            var targetParameter = targetAbi.UserParameters[index];
+            var wrapperParameter = wrapperAbi.UserParameters[index];
+            if (targetParameter.Kind != wrapperParameter.Kind)
+            {
+                throw new InvalidOperationException($"Dictionary key contract method '{targetFunction.Name}' ABI parameter '{targetParameter.SourceName}' does not match wrapper parameter '{wrapperParameter.SourceName}'.");
+            }
+
+            arguments.Add($"{MapType(targetParameter.LlvmType)} %{EscapeIdentifier(wrapperParameter.LlvmName)}");
+        }
+
+        var callConvention = GetCallConventionPrefix(targetAbi);
+        var resultType = MapType(targetAbi.LlvmReturnType);
+        var result = $"%{EscapeIdentifier(localName)}";
+        builder.AppendLine("entry:");
+        builder.AppendLine($"  {result} = call {callConvention}{resultType} @{EscapeIdentifier(targetAbi.SymbolName)}({string.Join(", ", arguments)})");
+        builder.AppendLine($"  ret {MapType(wrapperAbi.LlvmReturnType)} {result}");
     }
 
     private string EmitDictionaryKeyParameterLoad(
@@ -3690,6 +3751,18 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         var opcode = bitWidth < 64 ? "zext" : "trunc";
         builder.AppendLine($"  {converted} = {opcode} {llvmType} {value} to i64");
         return converted;
+    }
+
+    private static string GetCallConventionPrefix(AbiFunctionSignature abiFunction)
+    {
+        if (abiFunction.UsesFastCallingConvention)
+        {
+            return "fastcc ";
+        }
+
+        return StarkFfiAbiFacts.LlvmCallingConventionName(abiFunction.FfiAbi) is { } callingConvention
+            ? $"{callingConvention} "
+            : string.Empty;
     }
 
     private void EmitSystemMemoryAllocateBuiltin(
@@ -5501,7 +5574,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             ItemsFieldType: null);
     }
 
-    private static StarkTypeSymbol ValidateSystemCollectionsDictionaryKeySignature(
+    private SystemCollectionsDictionaryKeyContract ValidateSystemCollectionsDictionaryKeySignature(
         TypedFunctionSignature function,
         int expectedParameterCount)
     {
@@ -5522,12 +5595,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             throw new InvalidOperationException($"System.Collections builtin '{function.Name}' must return 'bool'.");
         }
 
-        var keyType = StarkTypeSymbols.WithQualifiers(
-            function.Parameters[0].Type,
-            borrowKind: StarkBorrowKind.None,
-            accessKind: StarkAccessKind.None,
-            initializationKind: StarkInitializationKind.None,
-            isMutableView: false);
+        var keyType = SystemCollectionsDictionaryKeyFacts.NormalizeType(function.Parameters[0].Type);
         if (function.Parameters[0].Type.BorrowKind == StarkBorrowKind.None)
         {
             throw new InvalidOperationException($"System.Collections builtin '{function.Name}' key parameters must use 'borrow'.");
@@ -5535,12 +5603,7 @@ internal sealed class LlvmBuiltinAndHelperEmitter
 
         for (var index = 1; index < function.Parameters.Count; index++)
         {
-            var parameterType = StarkTypeSymbols.WithQualifiers(
-                function.Parameters[index].Type,
-                borrowKind: StarkBorrowKind.None,
-                accessKind: StarkAccessKind.None,
-                initializationKind: StarkInitializationKind.None,
-                isMutableView: false);
+            var parameterType = SystemCollectionsDictionaryKeyFacts.NormalizeType(function.Parameters[index].Type);
             if (function.Parameters[index].Type.BorrowKind == StarkBorrowKind.None
                 || parameterType != keyType)
             {
@@ -5548,12 +5611,16 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             }
         }
 
-        if (keyType.Kind is not (StarkTypeKind.Bool or StarkTypeKind.Integer))
+        if (!SystemCollectionsDictionaryKeyFacts.TryResolveContract(
+                keyType,
+                _context.TypeModel.Overloads,
+                out var contract,
+                out _))
         {
             throw new InvalidOperationException($"System.Collections DictionaryKey builtin '{function.Name}' does not support key type '{keyType.DisplayName}'.");
         }
 
-        return keyType;
+        return contract;
     }
 
     private static FunctionMemoryEffectSummary GetSystemMemoryBuiltinMemoryEffects(SystemMemoryBuiltinKind builtinKind)

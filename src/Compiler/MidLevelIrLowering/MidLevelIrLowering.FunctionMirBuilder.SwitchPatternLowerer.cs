@@ -1205,24 +1205,27 @@ internal sealed partial class MidLevelIrLowerer
                         continue;
                     }
 
-                    var pattern = label.pattern();
-                    if (pattern is null)
+                    var patterns = label.pattern();
+                    if (patterns.Length == 0)
                     {
                         return false;
                     }
 
-                    if (!TryBuildSwitchLabelFromPattern(pattern, label.whenClause()?.expression(), out var builtLabel)
-                        || builtLabel is null)
+                    foreach (var pattern in patterns)
                     {
-                        return false;
-                    }
+                        if (!TryBuildSwitchLabelFromPattern(pattern, label.whenClause()?.expression(), out var builtLabel)
+                            || builtLabel is null)
+                        {
+                            return false;
+                        }
 
-                    if (builtLabel.IsDefault)
-                    {
-                        defaultSectionCount++;
-                    }
+                        if (builtLabel.IsDefault)
+                        {
+                            defaultSectionCount++;
+                        }
 
-                    labels.Add(builtLabel);
+                        labels.Add(builtLabel);
+                    }
                 }
 
                 sections.Add(new LowerableSwitchSection(section, labels));
@@ -1369,116 +1372,222 @@ internal sealed partial class MidLevelIrLowerer
             StarkTypeSymbol switchType,
             out IReadOnlyList<LowerableSwitchLabel> registeredLabels)
         {
-            var rewrittenLabels = labels.ToArray();
+            registeredLabels = [];
+            var expectedCaptures = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+            var hasExpectedCaptures = false;
+
+            foreach (var label in labels)
+            {
+                if (!TryCollectLowerableLabelCaptures(label, switchType, out var captures))
+                {
+                    return false;
+                }
+
+                if (!hasExpectedCaptures)
+                {
+                    expectedCaptures = captures;
+                    hasExpectedCaptures = true;
+                    continue;
+                }
+
+                if (!HaveSameLowerableCaptures(expectedCaptures, captures))
+                {
+                    return false;
+                }
+            }
+
+            if (!hasExpectedCaptures || expectedCaptures.Count == 0)
+            {
+                registeredLabels = labels;
+                return true;
+            }
+
             var seenCaptures = new HashSet<string>(StringComparer.Ordinal);
-
-            var aggregateLabels = labels.Where(static label => label.AggregatePattern is not null).ToArray();
-            if (aggregateLabels.Length != 0)
+            var storageNames = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var capture in expectedCaptures.OrderBy(static capture => capture.Key, StringComparer.Ordinal))
             {
-                if (aggregateLabels.Length != 1 || labels.Count != 1)
+                if (!TryRegisterSwitchCaptureLocal(capture.Key, capture.Value, seenCaptures, out var storageName))
                 {
-                    registeredLabels = [];
                     return false;
                 }
 
-                var aggregatePattern = aggregateLabels[0].AggregatePattern!;
-                if (!TryRegisterAggregatePatternCaptureLocals(
-                        aggregatePattern,
-                        switchType,
-                        seenCaptures,
-                        out var registeredAggregatePattern))
+                storageNames[capture.Key] = storageName;
+            }
+
+            var rewrittenLabels = new LowerableSwitchLabel[labels.Count];
+            for (var index = 0; index < labels.Count; index++)
+            {
+                if (!TryApplySwitchCaptureStorageNames(labels[index], storageNames, out rewrittenLabels[index]))
                 {
-                    registeredLabels = [];
                     return false;
                 }
-
-                rewrittenLabels[0] = labels[0] with { AggregatePattern = registeredAggregatePattern };
-                registeredLabels = rewrittenLabels;
-                return true;
             }
 
-            var captureLabels = labels.Where(static label => label.CaptureName is not null).ToArray();
-            if (captureLabels.Length == 0)
-            {
-                registeredLabels = rewrittenLabels;
-                return true;
-            }
-
-            if (captureLabels.Length != 1 || labels.Count != 1)
-            {
-                registeredLabels = [];
-                return false;
-            }
-
-            var captureName = captureLabels[0].CaptureName!;
-            if (!TryRegisterSwitchCaptureLocal(captureName, switchType, seenCaptures, out var storageName))
-            {
-                registeredLabels = [];
-                return false;
-            }
-
-            rewrittenLabels[0] = labels[0] with { CaptureStorageName = storageName };
             registeredLabels = rewrittenLabels;
             return true;
         }
 
-        private bool TryRegisterAggregatePatternCaptureLocals(
+        private bool TryCollectLowerableLabelCaptures(
+            LowerableSwitchLabel label,
+            StarkTypeSymbol switchType,
+            out Dictionary<string, StarkTypeSymbol> captures)
+        {
+            captures = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
+            if (label.CaptureName is { } captureName
+                && !TryAddLowerableCapture(captures, captureName, switchType))
+            {
+                return false;
+            }
+
+            return label.AggregatePattern is null
+                || TryCollectLowerableAggregateCaptures(label.AggregatePattern, switchType, captures);
+        }
+
+        private bool TryCollectLowerableAggregateCaptures(
             LowerableAggregatePattern aggregatePattern,
             StarkTypeSymbol aggregateValueType,
-            HashSet<string> seenCaptures,
-            out LowerableAggregatePattern registeredPattern)
+            Dictionary<string, StarkTypeSymbol> captures)
         {
-            registeredPattern = aggregatePattern;
-            string? wholeCaptureStorageName = null;
-            if (aggregatePattern.WholeCaptureName is { } wholeCaptureName)
+            if (aggregatePattern.WholeCaptureName is { } wholeCaptureName
+                && !TryAddLowerableCapture(captures, wholeCaptureName, aggregateValueType))
             {
-                if (!TryRegisterSwitchCaptureLocal(
-                        wholeCaptureName,
-                        aggregateValueType,
-                        seenCaptures,
-                        out wholeCaptureStorageName))
+                return false;
+            }
+
+            foreach (var fieldPattern in aggregatePattern.FieldPatterns)
+            {
+                if (fieldPattern.Kind == AggregatePatternFieldKind.Capture)
+                {
+                    if (fieldPattern.CaptureName is null
+                        || !TryAddLowerableCapture(captures, fieldPattern.CaptureName, fieldPattern.FieldType))
+                    {
+                        return false;
+                    }
+                }
+
+                if (fieldPattern.Kind == AggregatePatternFieldKind.Nested
+                    && (fieldPattern.NestedPattern is null
+                        || !TryCollectLowerableAggregateCaptures(fieldPattern.NestedPattern, fieldPattern.FieldType, captures)))
                 {
                     return false;
                 }
             }
 
-            var rewrittenFields = aggregatePattern.FieldPatterns.ToArray();
-            foreach (var fieldPattern in aggregatePattern.FieldPatterns)
+            return true;
+        }
+
+        private static bool TryAddLowerableCapture(
+            Dictionary<string, StarkTypeSymbol> captures,
+            string name,
+            StarkTypeSymbol type)
+        {
+            if (captures.ContainsKey(name))
             {
-                var fieldIndex = Array.IndexOf(rewrittenFields, fieldPattern);
+                return false;
+            }
+
+            captures.Add(name, type);
+            return true;
+        }
+
+        private static bool HaveSameLowerableCaptures(
+            IReadOnlyDictionary<string, StarkTypeSymbol> expected,
+            IReadOnlyDictionary<string, StarkTypeSymbol> actual)
+        {
+            if (expected.Count != actual.Count)
+            {
+                return false;
+            }
+
+            foreach (var (name, expectedType) in expected)
+            {
+                if (!actual.TryGetValue(name, out var actualType)
+                    || !HasSameLowerableCaptureType(expectedType, actualType))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static bool HasSameLowerableCaptureType(StarkTypeSymbol left, StarkTypeSymbol right)
+        {
+            return left == right
+                || string.Equals(left.DisplayName, right.DisplayName, StringComparison.Ordinal)
+                && string.Equals(left.NamedType, right.NamedType, StringComparison.Ordinal);
+        }
+
+        private bool TryApplySwitchCaptureStorageNames(
+            LowerableSwitchLabel label,
+            IReadOnlyDictionary<string, string> storageNames,
+            out LowerableSwitchLabel rewrittenLabel)
+        {
+            rewrittenLabel = label;
+            string? captureStorageName = null;
+            if (label.CaptureName is { } captureName
+                && !storageNames.TryGetValue(captureName, out captureStorageName))
+            {
+                return false;
+            }
+
+            LowerableAggregatePattern? aggregatePattern = null;
+            if (label.AggregatePattern is { } originalAggregatePattern
+                && !TryApplyAggregateCaptureStorageNames(originalAggregatePattern, storageNames, out aggregatePattern))
+            {
+                return false;
+            }
+
+            rewrittenLabel = label with
+            {
+                CaptureStorageName = captureStorageName,
+                AggregatePattern = aggregatePattern ?? label.AggregatePattern
+            };
+            return true;
+        }
+
+        private bool TryApplyAggregateCaptureStorageNames(
+            LowerableAggregatePattern aggregatePattern,
+            IReadOnlyDictionary<string, string> storageNames,
+            out LowerableAggregatePattern rewrittenPattern)
+        {
+            rewrittenPattern = aggregatePattern;
+            string? wholeCaptureStorageName = null;
+            if (aggregatePattern.WholeCaptureName is { } wholeCaptureName
+                && !storageNames.TryGetValue(wholeCaptureName, out wholeCaptureStorageName))
+            {
+                return false;
+            }
+
+            var rewrittenFields = aggregatePattern.FieldPatterns.ToArray();
+            for (var index = 0; index < rewrittenFields.Length; index++)
+            {
+                var fieldPattern = rewrittenFields[index];
                 if (fieldPattern.Kind == AggregatePatternFieldKind.Capture)
                 {
                     if (fieldPattern.CaptureName is null
-                        || !TryRegisterSwitchCaptureLocal(
-                            fieldPattern.CaptureName,
-                            fieldPattern.FieldType,
-                            seenCaptures,
-                            out var fieldStorageName))
+                        || !storageNames.TryGetValue(fieldPattern.CaptureName, out var fieldStorageName))
                     {
                         return false;
                     }
 
-                    rewrittenFields[fieldIndex] = fieldPattern with { CaptureStorageName = fieldStorageName };
+                    rewrittenFields[index] = fieldPattern with { CaptureStorageName = fieldStorageName };
                     continue;
                 }
 
                 if (fieldPattern.Kind == AggregatePatternFieldKind.Nested)
                 {
                     if (fieldPattern.NestedPattern is null
-                        || !TryRegisterAggregatePatternCaptureLocals(
-                            fieldPattern.NestedPattern,
-                            fieldPattern.FieldType,
-                            seenCaptures,
-                            out var registeredNestedPattern))
+                        || !TryApplyAggregateCaptureStorageNames(fieldPattern.NestedPattern, storageNames, out var nestedPattern))
                     {
                         return false;
                     }
 
-                    rewrittenFields[fieldIndex] = fieldPattern with { NestedPattern = registeredNestedPattern };
+                    rewrittenFields[index] = fieldPattern with { NestedPattern = nestedPattern };
                 }
             }
 
-            registeredPattern = aggregatePattern with
+            rewrittenPattern = aggregatePattern with
             {
                 FieldPatterns = rewrittenFields,
                 WholeCaptureStorageName = wholeCaptureStorageName

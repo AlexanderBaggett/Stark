@@ -44,10 +44,12 @@ internal static partial class PackageImageLoader
                 Kind: functionKind,
                 IsUnsafe: function.IsUnsafe,
                 IsVarargs: function.IsVarargs,
+                FfiAbi: ParsePackageFunctionFfiAbi(function.FfiAbi),
                 BackendOptimizationMode: functionBackendOptimizationMode,
                 DisjointParameterGroups: BuildParameterDisjointGroups(function.Parameters, function.DisjointParameterGroups),
                 OverlapParameterGroups: BuildParameterOverlapGroups(function.OverlapParameterGroups),
-                SameParameterGroups: BuildParameterSameGroups(function.SameParameterGroups));
+                SameParameterGroups: BuildParameterSameGroups(function.SameParameterGroups),
+                HasBody: function.HasBody);
         }
 
         foreach (var type in module.Module.EffectiveTypedInterface?.Types ?? [])
@@ -86,10 +88,12 @@ internal static partial class PackageImageLoader
                     Kind: methodKind,
                     IsUnsafe: method.IsUnsafe,
                     IsVarargs: method.IsVarargs,
+                    FfiAbi: ParsePackageFunctionFfiAbi(method.FfiAbi),
                     BackendOptimizationMode: methodBackendOptimizationMode,
                     DisjointParameterGroups: BuildParameterDisjointGroups(method.Parameters, method.DisjointParameterGroups),
                     OverlapParameterGroups: BuildParameterOverlapGroups(method.OverlapParameterGroups),
-                    SameParameterGroups: BuildParameterSameGroups(method.SameParameterGroups));
+                    SameParameterGroups: BuildParameterSameGroups(method.SameParameterGroups),
+                    HasBody: method.HasBody);
             }
         }
 
@@ -161,7 +165,11 @@ internal static partial class PackageImageLoader
                     new Dictionary<string, FieldSymbol>(StringComparer.Ordinal),
                     [],
                     EnumVariants: variants,
-                    GenericParameterNames: genericParameterNames);
+                    GenericParameterNames: genericParameterNames,
+                    ImplementedTraitNames: QualifyImplementedTraitNames(
+                        type.ImplementedTraits,
+                        module.Module.ModuleName,
+                        localNamedTypes));
             }
             else
             {
@@ -178,7 +186,8 @@ internal static partial class PackageImageLoader
                         field.Name,
                         BuildTypeSymbol(field.Type, module.Module.ModuleName, localNamedTypes),
                         fieldVisibility,
-                        module.Module.ModuleName);
+                        module.Module.ModuleName,
+                        field.ExplicitOffsetBytes);
                     fields[field.Name] = fieldSymbol;
                     orderedFields.Add(fieldSymbol);
                 }
@@ -188,7 +197,12 @@ internal static partial class PackageImageLoader
                     declarationKind,
                     fields,
                     orderedFields,
-                    GenericParameterNames: genericParameterNames);
+                    GenericParameterNames: genericParameterNames,
+                    ImplementedTraitNames: QualifyImplementedTraitNames(
+                        type.ImplementedTraits,
+                        module.Module.ModuleName,
+                        localNamedTypes),
+                    Layout: BuildStructLayoutMetadata(type.StructLayout, type.PackBytes, type.AlignBytes));
             }
 
             var constructors = new List<TypedConstructorShape>();
@@ -270,7 +284,8 @@ internal static partial class PackageImageLoader
                     IsCold: functionEffect.IsCold,
                     InlinePreference: inlinePreference,
                     IsStrictFp: functionEffect.IsStrictFp,
-                    BackendOptimizationMode: functionBackendOptimizationMode);
+                    BackendOptimizationMode: functionBackendOptimizationMode,
+                    FfiAbi: ParsePackageFunctionFfiAbi(functionEffect.FfiAbi));
             }
 
             foreach (var abiFunction in compilerFacts.AbiFunctions ?? [])
@@ -287,7 +302,16 @@ internal static partial class PackageImageLoader
             {
                 loadedConcreteLayouts[concreteLayout.QualifiedTypeName] = new ConcreteTypeLayout(
                     concreteLayout.SizeBytes,
-                    concreteLayout.AlignmentBytes);
+                    concreteLayout.AlignmentBytes,
+                    concreteLayout.Fields?
+                        .Select(field => new ConcreteFieldLayout(
+                            field.Name,
+                            field.OffsetBytes,
+                            field.SizeBytes,
+                            field.NaturalAlignmentBytes,
+                            field.EffectiveAlignmentBytes,
+                            field.IsMisaligned))
+                        .ToArray());
             }
 
             foreach (var enumLayout in compilerFacts.EnumLayouts ?? [])
@@ -724,7 +748,11 @@ internal static partial class PackageImageLoader
                 new Dictionary<string, FieldSymbol>(StringComparer.Ordinal),
                 [],
                 EnumVariants: variants,
-                GenericParameterNames: genericParameterNames);
+                GenericParameterNames: genericParameterNames,
+                ImplementedTraitNames: QualifyImplementedTraitNames(
+                    type.ImplementedTraits,
+                    moduleName,
+                    localNamedTypes));
         }
         else
         {
@@ -741,7 +769,8 @@ internal static partial class PackageImageLoader
                     field.Name,
                     BuildTypeSymbol(field.Type, moduleName, localNamedTypes),
                     fieldVisibility,
-                    moduleName);
+                    moduleName,
+                    field.ExplicitOffsetBytes);
                 fields[field.Name] = fieldSymbol;
                 orderedFields.Add(fieldSymbol);
             }
@@ -751,7 +780,12 @@ internal static partial class PackageImageLoader
                 declarationKind,
                 fields,
                 orderedFields,
-                GenericParameterNames: genericParameterNames);
+                GenericParameterNames: genericParameterNames,
+                ImplementedTraitNames: QualifyImplementedTraitNames(
+                    type.ImplementedTraits,
+                    moduleName,
+                    localNamedTypes),
+                Layout: BuildStructLayoutMetadata(type.StructLayout, type.PackBytes, type.AlignBytes));
         }
 
         var constructors = new List<TypedConstructorShape>();
@@ -794,6 +828,24 @@ internal static partial class PackageImageLoader
             parameter.IsDisjoint,
             parameter.IsConst,
             parameter.RawPointerElementCountExpression);
+    }
+
+    private static IReadOnlyList<string>? QualifyImplementedTraitNames(
+        IReadOnlyList<string>? implementedTraits,
+        string moduleName,
+        ISet<string> localNamedTypes)
+    {
+        if (implementedTraits is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var qualified = implementedTraits
+            .Select(traitName => QualifyLoadedNamedType(traitName, moduleName, localNamedTypes))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static traitName => traitName, StringComparer.Ordinal)
+            .ToArray();
+        return qualified.Length == 0 ? null : qualified;
     }
 
     private static TypedParameterSymbol BuildTypedParameterSymbol(StarkPackageTypedParameterManifest parameter)
@@ -1207,8 +1259,16 @@ internal static partial class PackageImageLoader
             abiFunction.IsFfi,
             SourceName: abiFunction.SourceName,
             UsesFastCallingConvention: abiFunction.UsesFastCallingConvention,
-            IsVarargs: abiFunction.IsVarargs);
+            IsVarargs: abiFunction.IsVarargs,
+            FfiAbi: ParsePackageFunctionFfiAbi(abiFunction.FfiAbi));
         return true;
+    }
+
+    private static StarkFfiAbi? ParsePackageFunctionFfiAbi(string? abiText)
+    {
+        return StarkFfiAbiFacts.TryParse(abiText, out var abi)
+            ? abi
+            : null;
     }
 
     private static bool TryBuildImportedFunctionSemanticSummary(

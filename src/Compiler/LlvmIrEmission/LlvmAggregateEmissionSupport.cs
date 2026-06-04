@@ -260,12 +260,9 @@ internal static class LlvmAggregateEmissionSupport
 
         try
         {
-            return TryGetTargetAwareAggregateLayout(
-                namedType.OrderedFields.Select(static field => field.Type),
-                targetInfo,
-                namedTypes,
-                enumLayouts,
-                activeNamedTypes);
+            return namedType.Layout?.Kind == StructLayoutKind.Explicit
+                ? TryGetTargetAwareExplicitNamedTypeLayout(namedType, targetInfo, namedTypes, enumLayouts, activeNamedTypes)
+                : TryGetTargetAwareSequentialNamedTypeLayout(namedType, targetInfo, namedTypes, enumLayouts, activeNamedTypes);
         }
         finally
         {
@@ -287,8 +284,10 @@ internal static class LlvmAggregateEmissionSupport
 
         try
         {
-            return TryGetTargetAwareAggregateLayout(
-                enumLayout.OrderedFields.Select(static field => field.Type),
+            return TryGetTargetAwareSequentialAggregateLayout(
+                enumLayout.OrderedFields,
+                packBytes: null,
+                alignBytes: null,
                 targetInfo,
                 namedTypes,
                 enumLayouts,
@@ -300,8 +299,27 @@ internal static class LlvmAggregateEmissionSupport
         }
     }
 
-    private static ConcreteTypeLayout? TryGetTargetAwareAggregateLayout(
-        IEnumerable<StarkTypeSymbol> fieldTypes,
+    private static ConcreteTypeLayout? TryGetTargetAwareSequentialNamedTypeLayout(
+        NamedTypeSymbol namedType,
+        LlvmTargetInfo? targetInfo,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts,
+        ISet<string> activeNamedTypes)
+    {
+        return TryGetTargetAwareSequentialAggregateLayout(
+            namedType.OrderedFields,
+            namedType.Layout?.Kind == StructLayoutKind.C ? namedType.Layout.PackBytes : null,
+            namedType.Layout?.AlignBytes,
+            targetInfo,
+            namedTypes,
+            enumLayouts,
+            activeNamedTypes);
+    }
+
+    private static ConcreteTypeLayout? TryGetTargetAwareSequentialAggregateLayout(
+        IReadOnlyList<FieldSymbol> fields,
+        int? packBytes,
+        int? alignBytes,
         LlvmTargetInfo? targetInfo,
         IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
         IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts,
@@ -311,22 +329,92 @@ internal static class LlvmAggregateEmissionSupport
         {
             var sizeBytes = 0;
             var alignmentBytes = 1;
+            var fieldLayouts = new List<ConcreteFieldLayout>(fields.Count);
 
-            foreach (var fieldType in fieldTypes)
+            foreach (var field in fields)
             {
-                var fieldLayout = TryGetTargetAwareTypeLayout(fieldType, targetInfo, namedTypes, enumLayouts, activeNamedTypes);
+                var fieldLayout = TryGetTargetAwareTypeLayout(field.Type, targetInfo, namedTypes, enumLayouts, activeNamedTypes);
                 if (fieldLayout is null)
                 {
                     return null;
                 }
 
-                sizeBytes = AlignTo(sizeBytes, fieldLayout.AlignmentBytes);
-                sizeBytes = checked(sizeBytes + fieldLayout.SizeBytes);
-                alignmentBytes = Math.Max(alignmentBytes, fieldLayout.AlignmentBytes);
+                var naturalAlignmentBytes = fieldLayout.AlignmentBytes;
+                var effectiveAlignmentBytes = packBytes is { } pack
+                    ? Math.Min(naturalAlignmentBytes, pack)
+                    : naturalAlignmentBytes;
+                var fieldOffsetBytes = AlignTo(sizeBytes, effectiveAlignmentBytes);
+                fieldLayouts.Add(new ConcreteFieldLayout(
+                    field.Name,
+                    fieldOffsetBytes,
+                    fieldLayout.SizeBytes,
+                    naturalAlignmentBytes,
+                    effectiveAlignmentBytes,
+                    fieldOffsetBytes % naturalAlignmentBytes != 0));
+                sizeBytes = checked(fieldOffsetBytes + fieldLayout.SizeBytes);
+                alignmentBytes = Math.Max(alignmentBytes, effectiveAlignmentBytes);
+            }
+
+            if (alignBytes is { } explicitAlignmentBytes)
+            {
+                alignmentBytes = Math.Max(alignmentBytes, explicitAlignmentBytes);
             }
 
             sizeBytes = AlignTo(sizeBytes, alignmentBytes);
-            return new ConcreteTypeLayout(sizeBytes, alignmentBytes);
+            return new ConcreteTypeLayout(sizeBytes, alignmentBytes, fieldLayouts);
+        }
+        catch (OverflowException)
+        {
+            return null;
+        }
+    }
+
+    private static ConcreteTypeLayout? TryGetTargetAwareExplicitNamedTypeLayout(
+        NamedTypeSymbol namedType,
+        LlvmTargetInfo? targetInfo,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes,
+        IReadOnlyDictionary<string, EnumLayoutSymbol> enumLayouts,
+        ISet<string> activeNamedTypes)
+    {
+        try
+        {
+            var sizeBytes = 0;
+            var alignmentBytes = 1;
+            var fieldLayouts = new List<ConcreteFieldLayout>(namedType.OrderedFields.Count);
+
+            foreach (var field in namedType.OrderedFields)
+            {
+                if (field.ExplicitOffsetBytes is not { } fieldOffsetBytes)
+                {
+                    return null;
+                }
+
+                var fieldLayout = TryGetTargetAwareTypeLayout(field.Type, targetInfo, namedTypes, enumLayouts, activeNamedTypes);
+                if (fieldLayout is null)
+                {
+                    return null;
+                }
+
+                fieldLayouts.Add(new ConcreteFieldLayout(
+                    field.Name,
+                    fieldOffsetBytes,
+                    fieldLayout.SizeBytes,
+                    fieldLayout.AlignmentBytes,
+                    fieldOffsetBytes % fieldLayout.AlignmentBytes == 0
+                        ? fieldLayout.AlignmentBytes
+                        : GreatestPowerOfTwoDivisor(fieldOffsetBytes),
+                    fieldOffsetBytes % fieldLayout.AlignmentBytes != 0));
+                sizeBytes = Math.Max(sizeBytes, checked(fieldOffsetBytes + fieldLayout.SizeBytes));
+                alignmentBytes = Math.Max(alignmentBytes, fieldLayout.AlignmentBytes);
+            }
+
+            if (namedType.Layout?.AlignBytes is { } explicitAlignmentBytes)
+            {
+                alignmentBytes = Math.Max(alignmentBytes, explicitAlignmentBytes);
+            }
+
+            sizeBytes = AlignTo(sizeBytes, alignmentBytes);
+            return new ConcreteTypeLayout(sizeBytes, alignmentBytes, fieldLayouts);
         }
         catch (OverflowException)
         {
@@ -545,6 +633,11 @@ internal static class LlvmAggregateEmissionSupport
 
         var remainder = value % alignment;
         return remainder == 0 ? value : checked(value + alignment - remainder);
+    }
+
+    private static int GreatestPowerOfTwoDivisor(int value)
+    {
+        return value == 0 ? 1 : value & -value;
     }
 
     private static bool IsScalarNumericArrayData(StarkTypeSymbol type)

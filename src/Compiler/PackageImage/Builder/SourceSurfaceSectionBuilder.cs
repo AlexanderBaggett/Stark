@@ -143,7 +143,11 @@ internal static partial class PackageImageBuilder
             {
                 return manifest with
                 {
-                    Fields = BuildSourceSurfaceFields(module, structDeclaration.structBody().structMember().Select(static member => member.fieldDeclaration())),
+                    Fields = BuildSourceSurfaceFields(module, structDeclaration.structBody().structMember()),
+                    StructLayout = TryGetAttributeArgument(declaration.attributeList(), "StructLayout"),
+                    PackBytes = TryGetIntegerAttributeArgument(declaration.attributeList(), "Pack"),
+                    AlignBytes = TryGetIntegerAttributeArgument(declaration.attributeList(), "Align"),
+                    ImplementedTraits = BuildSourceSurfaceImplementedTraits(module, structDeclaration.baseTraitList()),
                     Constructors = BuildSourceSurfaceConstructorManifests(
                         module,
                         structDeclaration.Identifier().GetText(),
@@ -168,7 +172,7 @@ internal static partial class PackageImageBuilder
             {
                 return manifest with
                 {
-                    Fields = BuildSourceSurfaceFields(module, recordDeclaration.recordBody().recordMember().Select(static member => member.fieldDeclaration())),
+                    Fields = BuildSourceSurfaceFields(module, recordDeclaration.recordBody().recordMember()),
                     PrimaryConstructorParameters = recordDeclaration.primaryConstructorParameters()?.parameterList().parameter()
                         .Select(parameter => new StarkPackageParameterManifest(
                             parameter.Identifier().GetText(),
@@ -176,6 +180,7 @@ internal static partial class PackageImageBuilder
                             ParameterHasPrefix(parameter, StarkParser.DISJOINT),
                             ParameterHasPrefix(parameter, StarkParser.CONST)))
                         .ToArray(),
+                    ImplementedTraits = BuildSourceSurfaceImplementedTraits(module, recordDeclaration.baseTraitList()),
                     Constructors = BuildSourceSurfaceConstructorManifests(
                         module,
                         recordDeclaration.Identifier().GetText(),
@@ -242,20 +247,72 @@ internal static partial class PackageImageBuilder
         return manifest;
     }
 
+    private static IReadOnlyList<string>? BuildSourceSurfaceImplementedTraits(
+        LoadedModuleDocument module,
+        StarkParser.BaseTraitListContext? baseTraitList)
+    {
+        return baseTraitList is null
+            ? null
+            : baseTraitList.type_()
+                .Select(type => GetContextSourceText(module.ParseResult, type))
+                .ToArray();
+    }
+
     private static IReadOnlyList<StarkPackageFieldManifest> BuildSourceSurfaceFields(
         LoadedModuleDocument module,
-        IEnumerable<StarkParser.FieldDeclarationContext?> fieldDeclarations)
+        IEnumerable<StarkParser.StructMemberContext> members)
     {
-        return fieldDeclarations
-            .Where(static declaration => declaration is not null)
-            .Cast<StarkParser.FieldDeclarationContext>()
+        return members
+            .Where(static member => member.fieldDeclaration() is not null)
             .SelectMany(fieldDeclaration =>
-                fieldDeclaration.variableDeclarators().variableDeclarator()
+                fieldDeclaration.fieldDeclaration()!.variableDeclarators().variableDeclarator()
                     .Select(variable => new StarkPackageFieldManifest(
                         variable.Identifier().GetText(),
-                        GetContextSourceText(module.ParseResult, fieldDeclaration.type_()),
-                        fieldDeclaration.visibilityModifier()?.GetText())))
+                        GetContextSourceText(module.ParseResult, fieldDeclaration.fieldDeclaration()!.type_()),
+                        fieldDeclaration.fieldDeclaration()!.visibilityModifier()?.GetText(),
+                        TryGetIntegerAttributeArgument(fieldDeclaration.attributeList(), "FieldOffset"))))
             .ToArray();
+    }
+
+    private static IReadOnlyList<StarkPackageFieldManifest> BuildSourceSurfaceFields(
+        LoadedModuleDocument module,
+        IEnumerable<StarkParser.RecordMemberContext> members)
+    {
+        return members
+            .Where(static member => member.fieldDeclaration() is not null)
+            .SelectMany(fieldDeclaration =>
+                fieldDeclaration.fieldDeclaration()!.variableDeclarators().variableDeclarator()
+                    .Select(variable => new StarkPackageFieldManifest(
+                        variable.Identifier().GetText(),
+                        GetContextSourceText(module.ParseResult, fieldDeclaration.fieldDeclaration()!.type_()),
+                        fieldDeclaration.fieldDeclaration()!.visibilityModifier()?.GetText(),
+                        TryGetIntegerAttributeArgument(fieldDeclaration.attributeList(), "FieldOffset"))))
+            .ToArray();
+    }
+
+    private static string? TryGetAttributeArgument(
+        IEnumerable<StarkParser.AttributeListContext> attributeLists,
+        string attributeName)
+    {
+        foreach (var attribute in attributeLists.SelectMany(static list => list.attribute()))
+        {
+            if (string.Equals(attribute.qualifiedName().GetText(), attributeName, StringComparison.Ordinal)
+                && attribute.attributeArgument() is [var argument])
+            {
+                return argument.GetText();
+            }
+        }
+
+        return null;
+    }
+
+    private static int? TryGetIntegerAttributeArgument(
+        IEnumerable<StarkParser.AttributeListContext> attributeLists,
+        string attributeName)
+    {
+        return int.TryParse(TryGetAttributeArgument(attributeLists, attributeName), out var value)
+            ? value
+            : null;
     }
 
     private static IReadOnlyList<StarkPackageConstructorManifest>? BuildSourceSurfaceConstructorManifests(

@@ -75,6 +75,7 @@ internal static partial class PackageImageLoader
         foreach (var type in types.OrderBy(static item => item.Name, StringComparer.Ordinal))
         {
             EmitBackendAttribute(builder, string.Empty, type.BackendOptimizationMode);
+            EmitStructLayoutAttributes(builder, type);
             builder.Append(type.Visibility);
             builder.Append(' ');
             builder.Append(type.Kind);
@@ -95,6 +96,7 @@ internal static partial class PackageImageLoader
                 builder.Append(')');
             }
 
+            AppendImplementedTraits(builder, type);
             builder.AppendLine(" {");
 
             if (string.Equals(type.Kind, "enum", StringComparison.Ordinal))
@@ -152,6 +154,13 @@ internal static partial class PackageImageLoader
                 foreach (var field in type.Fields.Where(field => primaryConstructorParameterNames?.Contains(field.Name) != true))
                 {
                     builder.Append("    ");
+                    if (field.ExplicitOffsetBytes is { } explicitOffsetBytes)
+                    {
+                        builder.Append("[FieldOffset(");
+                        builder.Append(explicitOffsetBytes);
+                        builder.Append(")] ");
+                    }
+
                     if (!string.IsNullOrWhiteSpace(field.Visibility)
                         && !string.Equals(field.Visibility, "public", StringComparison.Ordinal))
                     {
@@ -250,7 +259,7 @@ internal static partial class PackageImageLoader
 
                     if (method.IsFfi)
                     {
-                        builder.Append("ffi ");
+                        builder.Append(RenderFfiModifier(method.FfiAbi, isAsm: false));
                     }
 
                     builder.Append(RenderFunctionKind(method.Kind));
@@ -340,6 +349,42 @@ internal static partial class PackageImageLoader
 
         sourceText = builder.ToString();
         return true;
+    }
+
+    private static void EmitStructLayoutAttributes(StringBuilder builder, StarkPackageTypeManifest type)
+    {
+        if (string.IsNullOrWhiteSpace(type.StructLayout))
+        {
+            return;
+        }
+
+        var attributes = new List<string> { $"StructLayout({type.StructLayout})" };
+        if (type.PackBytes is { } packBytes)
+        {
+            attributes.Add($"Pack({packBytes})");
+        }
+
+        if (type.AlignBytes is { } alignBytes)
+        {
+            attributes.Add($"Align({alignBytes})");
+        }
+
+        builder.Append('[');
+        builder.Append(string.Join(", ", attributes));
+        builder.AppendLine("]");
+    }
+
+    private static void AppendImplementedTraits(StringBuilder builder, StarkPackageTypeManifest type)
+    {
+        if (type.ImplementedTraits is not { Count: > 0 }
+            || !string.Equals(type.Kind, "struct", StringComparison.Ordinal)
+               && !string.Equals(type.Kind, "record", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        builder.Append(" : ");
+        builder.Append(string.Join(", ", type.ImplementedTraits));
     }
 
     private static IReadOnlyList<StarkPackageImportManifest> GetImports(
@@ -460,7 +505,11 @@ internal static partial class PackageImageLoader
             Fields = sourceType.Fields.Count == typedType.Fields.Count
                 ? sourceType.Fields
                 : typedType.Fields,
-            Variants = sourceType.Variants ?? typedType.Variants
+            Variants = sourceType.Variants ?? typedType.Variants,
+            StructLayout = sourceType.StructLayout ?? typedType.StructLayout,
+            PackBytes = sourceType.PackBytes ?? typedType.PackBytes,
+            AlignBytes = sourceType.AlignBytes ?? typedType.AlignBytes,
+            ImplementedTraits = sourceType.ImplementedTraits ?? typedType.ImplementedTraits
         };
     }
 
@@ -506,6 +555,16 @@ internal static partial class PackageImageLoader
             InlinePreference.NoInline => "noinline",
             _ => "inlinehint"
         };
+    }
+
+    private static string RenderFfiModifier(string? ffiAbi, bool isAsm)
+    {
+        if (isAsm || string.IsNullOrWhiteSpace(ffiAbi))
+        {
+            return "ffi ";
+        }
+
+        return $"ffi({ffiAbi}) ";
     }
 
     private static string RenderParameter(StarkPackageParameterManifest parameter, bool emitDisjointPrefix)
@@ -645,7 +704,7 @@ internal static partial class PackageImageLoader
 
         if (function.IsFfi)
         {
-            builder.Append("ffi ");
+            builder.Append(RenderFfiModifier(function.FfiAbi, function.Asm is not null));
         }
 
         if (function.IsVarargs)
@@ -767,6 +826,7 @@ internal static partial class PackageImageLoader
         bool isStatic = false,
         string? publishedOverloadKey = null,
         bool isUnsafe = false,
+        string? ffiAbi = null,
         ModuleBackendOptimizationMode backendOptimizationMode = ModuleBackendOptimizationMode.Default,
         IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? disjointParameterGroups = null,
         IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? overlapParameterGroups = null,
@@ -793,7 +853,8 @@ internal static partial class PackageImageLoader
                 IsFfi: isFfi,
                 IsVarargs: isVarargs,
                 IsStrictFp: isStrictFp,
-                IsUnsafe: isUnsafe),
+                IsUnsafe: isUnsafe,
+                FfiAbi: ParsePackageFfiAbi(ffiAbi)),
             HasBody: hasBody,
             Asm: CreateAsmModel(asm),
             GenericParameterNames: genericParameters ?? [],
@@ -2095,6 +2156,26 @@ internal static partial class PackageImageLoader
         }
     }
 
+    private static StructLayoutMetadata? BuildStructLayoutMetadata(
+        string? structLayout,
+        int? packBytes,
+        int? alignBytes)
+    {
+        var kind = structLayout switch
+        {
+            "C" => StructLayoutKind.C,
+            "Explicit" => StructLayoutKind.Explicit,
+            _ => StructLayoutKind.Auto
+        };
+
+        return kind == StructLayoutKind.Auto
+            ? null
+            : new StructLayoutMetadata(
+                kind,
+                kind == StructLayoutKind.C ? packBytes : null,
+                alignBytes);
+    }
+
     private static bool TryParseGlobalDeclarationKind(string kind, out DeclarationKind parsed)
     {
         switch (kind)
@@ -2231,6 +2312,7 @@ internal static partial class PackageImageLoader
             function.HasExplicitInlinePreference,
             function.IsUnsafe,
             function.IsVarargs,
+            function.FfiAbi,
             function.BackendOptimizationMode,
             DisjointParameterGroups: function.DisjointParameterGroups,
             OverlapParameterGroups: function.OverlapParameterGroups,
@@ -2245,7 +2327,11 @@ internal static partial class PackageImageLoader
             type.Visibility,
             type.Kind,
             type.Fields
-                .Select(field => new StarkPackageFieldManifest(field.Name, RenderTypeReference(field.Type), field.Visibility))
+                .Select(field => new StarkPackageFieldManifest(
+                    field.Name,
+                    RenderTypeReference(field.Type),
+                    field.Visibility,
+                    field.ExplicitOffsetBytes))
                 .ToArray(),
             type.GenericParameters,
             type.PrimaryConstructorParameters?.Select(parameter => new StarkPackageParameterManifest(
@@ -2292,13 +2378,18 @@ internal static partial class PackageImageLoader
                 method.Visibility,
                 method.IsUnsafe,
                 method.IsVarargs,
+                method.FfiAbi,
                 method.BackendOptimizationMode,
                 DisjointParameterGroups: method.DisjointParameterGroups,
                 OverlapParameterGroups: method.OverlapParameterGroups,
                 SameParameterGroups: method.SameParameterGroups))
                 .ToArray(),
             type.Destructor,
-            BackendOptimizationMode: type.BackendOptimizationMode);
+            BackendOptimizationMode: type.BackendOptimizationMode,
+            StructLayout: type.StructLayout,
+            PackBytes: type.PackBytes,
+            AlignBytes: type.AlignBytes,
+            ImplementedTraits: type.ImplementedTraits);
     }
 
     private static StarkPackageGlobalManifest ConvertGlobalManifest(StarkPackageTypedGlobalManifest global)

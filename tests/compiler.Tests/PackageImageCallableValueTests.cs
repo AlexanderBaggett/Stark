@@ -24,6 +24,8 @@ public sealed class PackageImageCallableValueTests
                 }
 
                 public fn void Register(fnptr<fn void()> callback);
+                public fn void RegisterC(fnptr<ffi(c) fn void()> callback);
+                public fn void RegisterWin64(fnptr<ffi(win64) fn void()> callback);
                 public fn void RegisterOverlap(fnptr<fn void(borrow mut Token, borrow mut Token) where overlap(arg0, arg1)> callback);
                 public fn void RegisterSame(fnptr<fn void(borrow mut Token, borrow mut Token) where same(arg0, arg1)> callback);
                 public fn void RegisterFinite(fnptr<finite u32[0 2 ** 31 - 1]()> callback);
@@ -31,8 +33,10 @@ public sealed class PackageImageCallableValueTests
                 public fn void RegisterFiniteLaw(fnptr<finite law u32[0 2 ** 31 - 1]()> callback);
                 public unsafe fn void RegisterBounded(fnptr<fn void(rawptr<i32[min max]>[arg1], u8[1 10])> callback);
                 public unsafe fn void Dangerous();
+                public unsafe ffi(win64) fn void NativeWin64();
                 """,
-                sourcePath));
+                sourcePath),
+                new CompilerOptions(TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null)));
 
             Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
 
@@ -47,6 +51,10 @@ public sealed class PackageImageCallableValueTests
             Assert.Equal("fn", callbackType.FunctionKind);
             Assert.Equal("void", callbackType.ReturnType!.Kind);
             Assert.Empty(callbackType.ParameterTypes ?? []);
+            var cCallbackType = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "RegisterC").Parameters.Single().Type;
+            Assert.Equal("c", cCallbackType.FunctionAbi);
+            var win64CallbackType = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "RegisterWin64").Parameters.Single().Type;
+            Assert.Equal("win64", win64CallbackType.FunctionAbi);
             var overlapCallbackType = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "RegisterOverlap").Parameters.Single().Type;
             var overlapGroup = Assert.Single(overlapCallbackType.OverlapParameterGroups ?? []);
             Assert.Equal(["arg0", "arg1"], overlapGroup.ParameterNames);
@@ -61,6 +69,8 @@ public sealed class PackageImageCallableValueTests
 
             var dangerous = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "Dangerous");
             Assert.True(dangerous.IsUnsafe);
+            var nativeWin64 = Assert.Single(module.EffectiveTypedInterface!.Functions, static function => function.Name == "NativeWin64");
+            Assert.Equal("win64", nativeWin64.FfiAbi);
 
             Assert.True(PackageImageLoader.TryBuildModuleSource(
                 new ResolvedPackageModule(
@@ -70,6 +80,9 @@ public sealed class PackageImageCallableValueTests
                     module),
                 out var sourceText));
             Assert.Contains("public unsafe fn void Dangerous();", sourceText, StringComparison.Ordinal);
+            Assert.Contains("RegisterC(fnptr<ffi(c) fn void()> callback)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("RegisterWin64(fnptr<ffi(win64) fn void()> callback)", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public unsafe ffi(win64) fn void NativeWin64();", sourceText, StringComparison.Ordinal);
             Assert.Contains("RegisterOverlap", sourceText, StringComparison.Ordinal);
             Assert.Contains("where overlap(arg0, arg1)", sourceText, StringComparison.Ordinal);
             Assert.Contains("RegisterSame", sourceText, StringComparison.Ordinal);

@@ -5042,6 +5042,73 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void OrPatternLiteralSwitchPreservesNativeSwitchLowering()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn i32[min max] Run(u8[0 3] value)
+            {
+                switch (value)
+                {
+                    case 0 | 2:
+                        return 10;
+                    case 1 | 3:
+                        return 20;
+                }
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("switch i8 %arg_value", llvm, StringComparison.Ordinal);
+        Assert.Contains("i8 0, label", llvm, StringComparison.Ordinal);
+        Assert.Contains("i8 1, label", llvm, StringComparison.Ordinal);
+        Assert.Contains("i8 2, label", llvm, StringComparison.Ordinal);
+        Assert.Contains("i8 3, label", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("declare fastcc i32 @Run(i8)", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OrPatternEnumCapturesShareBodyLocal()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token
+            {
+                Left(i32[min max]),
+                Right(i32[min max]),
+                End,
+            }
+
+            unsafe fn i32[min max] Run(Token token)
+            {
+                switch (token)
+                {
+                    case Token.Left(var value) | Token.Right(var value):
+                        return value;
+                    case Token.End:
+                        return 0;
+                }
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("@Run(%Token", llvm, StringComparison.Ordinal);
+        Assert.Contains("icmp eq i8", llvm, StringComparison.Ordinal);
+        Assert.Contains("ret i32", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("declare fastcc i32 @Run(%Token)", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ComparisonChainEmitsShortCircuitBranchesAndSingleSharedEvaluation()
     {
         var result = Compile(
@@ -5293,6 +5360,38 @@ public sealed class LlvmIrEmissionTests
 
         Assert.Contains("private unnamed_addr constant [11 x i8] c\"Score: 100\\00\"", llvm);
         Assert.DoesNotContain("Score: {100}", llvm);
+    }
+
+    [Fact]
+    public void RawAndMultilineTextLiteralsEmitExactTextConstants()
+    {
+        var result = Compile(
+            """""
+            module Demo
+
+            unsafe fn ascii RawPath()
+            {
+                return raw"c:\temp\next";
+            }
+
+            unsafe fn ascii Multiline()
+            {
+                return raw"""first
+            second""";
+            }
+
+            unsafe fn ascii Interpolated()
+            {
+                return $raw"Score: {100}\n";
+            }
+            """"");
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("private unnamed_addr constant [13 x i8] c\"c:\\5Ctemp\\5Cnext\\00\"", llvm);
+        Assert.Contains("private unnamed_addr constant [13 x i8] c\"first\\0Asecond\\00\"", llvm);
+        Assert.Contains("private unnamed_addr constant [13 x i8] c\"Score: 100\\5Cn\\00\"", llvm);
     }
 
     [Fact]
@@ -6263,6 +6362,116 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("define i32 @main()", llvm);
         Assert.Contains("call i32 @puts(ptr getelementptr inbounds nuw ([15 x i8], ptr @.str.0, i32 0, i32 0))", llvm);
         Assert.DoesNotContain("invoke i32 @puts", llvm);
+    }
+
+    [Fact]
+    public void ExplicitFfiAbiModifiersEmitLlvmCallingConventions()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe ffi(win64) fn i32[min max] NativeRead(i32[min max] value);
+
+            export unsafe fn i32[min max] main(i32[min max] value)
+            {
+                return NativeRead(value);
+            }
+            """,
+            new CompilerOptions(
+                OptimizationLevel: CompilerOptimizationLevel.O0,
+                TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare win64cc i32 @NativeRead(i32) nounwind", llvm);
+        Assert.Contains("define i32 @main(i32 %arg_value)", llvm);
+        Assert.Contains("call win64cc i32 @NativeRead(i32 %arg_value)", llvm);
+        Assert.DoesNotContain("call fastcc i32 @NativeRead", llvm);
+    }
+
+    [Fact]
+    public void PlatformSelectedFfiAbiModifiersResolvePerTarget()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe ffi(platform(windows.x64: win64, linux.x64: sysv, default: c)) fn i32[min max] NativeRead(i32[min max] value);
+
+            export unsafe fn i32[min max] main(i32[min max] value)
+            {
+                return NativeRead(value);
+            }
+            """,
+            new CompilerOptions(
+                OptimizationLevel: CompilerOptimizationLevel.O0,
+                TargetInfo: new LlvmTargetInfo("x86_64-unknown-linux-gnu", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare x86_64_sysvcc i32 @NativeRead(i32) nounwind", llvm);
+        Assert.Contains("call x86_64_sysvcc i32 @NativeRead(i32 %arg_value)", llvm);
+        Assert.DoesNotContain("call fastcc i32 @NativeRead", llvm);
+    }
+
+    [Theory]
+    [InlineData("x86_64-unknown-linux-gnu", "declare i64 @NativeLong(i64) nounwind", "call i64 @NativeLong(i64 1)")]
+    [InlineData("x86_64-pc-windows-msvc", "declare i32 @NativeLong(i64) nounwind", "call i32 @NativeLong(i64 1)")]
+    public void SystemCPrimitiveAliasesLowerToTargetLlvmTypes(
+        string targetTriple,
+        string expectedNativeLongDeclaration,
+        string expectedNativeLongCall)
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe ffi(c) fn System.C.c_long NativeLong(System.C.c_size_t bytes);
+            unsafe ffi(c) fn void NativeFree(rawmutptr<System.C.c_void> ptr);
+
+            unsafe fn i32[min max] Run(rawmutptr<System.C.c_void> ptr)
+            {
+                NativeFree(ptr);
+                return (i32[min max])NativeLong(1);
+            }
+            """,
+            new CompilerOptions(
+                OptimizationLevel: CompilerOptimizationLevel.O0,
+                TargetInfo: new LlvmTargetInfo(targetTriple, null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains(expectedNativeLongDeclaration, llvm);
+        Assert.Contains(expectedNativeLongCall, llvm);
+        Assert.Contains("declare void @NativeFree(ptr) nounwind", llvm);
+        Assert.Contains("call void @NativeFree(ptr %arg_ptr)", llvm);
+    }
+
+    [Fact]
+    public void ExplicitFfiFunctionPointerAbiEmitsIndirectCallConvention()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn i32[min max] Apply(fnptr<ffi(win64) fn i32[min max](i32[min max])> op, i32[min max] value)
+            {
+                return op(value);
+            }
+            """,
+            new CompilerOptions(
+                OptimizationLevel: CompilerOptimizationLevel.O0,
+                TargetInfo: new LlvmTargetInfo("x86_64-pc-windows-msvc", null)));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var applyBody = ExtractDefinitionBody(GetLlvmRaw(result), "Apply");
+
+        Assert.Contains("call win64cc i32 %arg_op(i32 %arg_value)", applyBody, StringComparison.Ordinal);
+        Assert.DoesNotContain("call fastcc i32 %arg_op", applyBody, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -8633,6 +8842,154 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvm(result);
 
         Assert.Contains("define fastcc void @Touch(ptr nonnull noalias readonly nocapture dereferenceable(8) align 4 %arg_pair)", llvm);
+    }
+
+    [Fact]
+    public void PackedCStructLayoutEmitsPackedPhysicalTypeAndUnalignedFieldAccess()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C), Pack(1)]
+            struct Packet
+            {
+                u8[0 max] Tag;
+                i32[min max] Value;
+            }
+
+            unsafe fn i32[min max] Read(borrow Packet packet)
+            {
+                return packet.Value;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var header = ExtractDefinitionHeader(llvm, "Read");
+        var readBody = ExtractDefinitionBody(llvm, "Read");
+
+        Assert.Contains("%Packet = type <{ i8, i32 }>", llvm, StringComparison.Ordinal);
+        Assert.Contains("dereferenceable(5)", header, StringComparison.Ordinal);
+        Assert.Contains("getelementptr inbounds nuw i8, ptr %", readBody, StringComparison.Ordinal);
+        Assert.Contains(", i64 1", readBody, StringComparison.Ordinal);
+        Assert.Contains("load i32, ptr", readBody, StringComparison.Ordinal);
+        Assert.Contains("align 1", readBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ExplicitStructLayoutEmitsByteStorageAndFieldOffsetAccess()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(Explicit), Align(4)]
+            struct WordParts
+            {
+                [FieldOffset(0)] u32[0 max] Whole;
+                [FieldOffset(0)] u16[0 max] Low;
+                [FieldOffset(2)] u16[0 max] High;
+            }
+
+            unsafe fn u16[0 max] ReadHigh(borrow WordParts value)
+            {
+                return value.High;
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var header = ExtractDefinitionHeader(llvm, "ReadHigh");
+        var readBody = ExtractDefinitionBody(llvm, "ReadHigh");
+
+        Assert.Contains("%WordParts = type { [4 x i8] }", llvm, StringComparison.Ordinal);
+        Assert.Contains("dereferenceable(4)", header, StringComparison.Ordinal);
+        Assert.Contains("align 4", header, StringComparison.Ordinal);
+        Assert.Contains("getelementptr inbounds nuw i8, ptr %", readBody, StringComparison.Ordinal);
+        Assert.Contains(", i64 2", readBody, StringComparison.Ordinal);
+        Assert.Contains("load i16, ptr", readBody, StringComparison.Ordinal);
+        Assert.Contains("align 2", readBody, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void FfiCStructLayoutArgumentsUseX64SysVCAbiCarriers()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            [StructLayout(C)]
+            struct NormalRecord
+            {
+                u8[0 max] Tag;
+                u32[0 max] Length;
+                u16[0 max] Code;
+            }
+
+            [StructLayout(C), Pack(1), Align(4)]
+            struct PackedRecord
+            {
+                u8[0 max] Tag;
+                u32[0 max] Length;
+                u16[0 max] Code;
+            }
+
+            [StructLayout(Explicit), Align(4)]
+            struct WordParts
+            {
+                [FieldOffset(0)] u32[0 max] Whole;
+                [FieldOffset(0)] u16[0 max] Low;
+                [FieldOffset(2)] u16[0 max] High;
+            }
+
+            unsafe ffi(c) fn i32[min max] stark_check_layout(
+                NormalRecord normal,
+                PackedRecord packed,
+                WordParts word);
+
+            export unsafe fn i32[min max] main()
+            {
+                stack NormalRecord normal = new NormalRecord()
+                {
+                    Tag = 17,
+                    Length = 287454020,
+                    Code = 21862
+                };
+                stack PackedRecord packed = new PackedRecord()
+                {
+                    Tag = 34,
+                    Length = 1432778632,
+                    Code = 30600
+                };
+                stack WordParts word = new WordParts()
+                {
+                    Whole = 305419896
+                };
+
+                return stark_check_layout(normal, packed, word);
+            }
+            """,
+            new CompilerOptions(
+                OptimizationLevel: CompilerOptimizationLevel.O0,
+                TargetInfo: new LlvmTargetInfo(
+                    "x86_64-unknown-linux-gnu",
+                    "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128")));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+        var mainBody = ExtractDefinitionBody(llvm, "main");
+
+        Assert.Contains("declare i32 @stark_check_layout([2 x i64], ptr", llvm, StringComparison.Ordinal);
+        Assert.Contains("byval(%PackedRecord)", llvm, StringComparison.Ordinal);
+        Assert.Contains(", i32)", llvm, StringComparison.Ordinal);
+        Assert.Matches(@"alloca \[2 x i64\], align (8|16)", mainBody);
+        Assert.Contains("call void @llvm.memset.inline.p0.i64(ptr align", mainBody, StringComparison.Ordinal);
+        Assert.Contains("call void @llvm.memcpy.inline.p0.p0.i64(ptr align", mainBody, StringComparison.Ordinal);
+        Assert.Contains("i64 12", mainBody, StringComparison.Ordinal);
+        Assert.Contains("call i32 @stark_check_layout([2 x i64]", mainBody, StringComparison.Ordinal);
     }
 
     [Fact]

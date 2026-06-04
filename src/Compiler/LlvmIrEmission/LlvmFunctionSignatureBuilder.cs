@@ -30,6 +30,10 @@ internal sealed class LlvmFunctionSignatureBuilder
         {
             segments.Add("fastcc");
         }
+        else if (StarkFfiAbiFacts.LlvmCallingConventionName(abiFunction.FfiAbi) is { } callingConvention)
+        {
+            segments.Add(callingConvention);
+        }
 
         segments.Add(_attributeBuilder.RenderAbiReturnType(abiFunction));
         segments.Add($"@{EscapeIdentifier(abiFunction.SymbolName)}({RenderAbiParameterList(abiFunction, includeNames: false, parameterEffects)})");
@@ -68,6 +72,10 @@ internal sealed class LlvmFunctionSignatureBuilder
         if (effects.UseFastCallingConvention)
         {
             segments.Add("fastcc");
+        }
+        else if (StarkFfiAbiFacts.LlvmCallingConventionName(abiFunction.FfiAbi) is { } callingConvention)
+        {
+            segments.Add(callingConvention);
         }
 
         segments.Add(_attributeBuilder.RenderAbiReturnType(abiFunction, returnRange));
