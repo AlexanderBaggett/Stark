@@ -45,19 +45,19 @@ unless we add one of the following:
       `throw new InvalidOperationException(...)`).
 
 ### Traits
-Stark traits are **type-requirement bundles only** — no default bodies, no
-trait objects ([LanguageReference.md §8.5](../Userfacing/LanguageReference.md)).
-That's by design for closed-world dispatch, but it forces porting decisions:
+Stark traits now support required/default methods, `Self`, associated types, and
+static constrained-generic dispatch. Ordinary traits remain compile-time
+contracts; `dyn trait` is explicit runtime dispatch.
 
-- [ ] Add default method bodies in `traitMember` at
+- [x] Add default method bodies in `traitMember` at
       [Stark.g4:201](../../Stark.g4#L201), **or** publish the convention of
       shipping default impls as free functions in the same module.
-- [ ] Add associated types and `Self`-type reference.
-- [ ] Operator-overloading traits (`Add`, `Sub`, `Mul`, `Eq`, `Ord`, `Hash`).
+- [x] Add associated types and `Self`-type reference.
+- [~] Operator-overloading traits (`Add`, `Sub`, `Mul`, `Eq`, `Ord`, `Hash`).
       Their absence is why [Text.stark:3534-4744](../../stdlib/src/System/Text.stark#L3534-L4744)
-      reimplements `TryFormatI8`…`TryFormatI1024` for every width. Doctrines
-      ([LanguageReference.md §8.6](../Userfacing/LanguageReference.md)) may
-      be the right vehicle for these.
+      reimplements `TryFormatI8`…`TryFormatI1024` for every width. Canonical
+      `Eq`, `Hash`, `Ord`, and `Format` contract names exist; arithmetic
+      operator contracts and stdlib implementations are still broader work.
 
 ### Generics
 - [ ] Generic const parameters (e.g. `struct FixedArray<T, const N>`).
@@ -72,10 +72,11 @@ That's by design for closed-world dispatch, but it forces porting decisions:
 - [x] Or-patterns (`case A | B:`). Landed as switch-label alternatives with
       shared `when` guard/body semantics, compile-time capture consistency
       checks, and native literal-switch lowering where applicable.
-- [ ] Range patterns (`case 0..10:`).
-      The C# compiler has 7548 switch-arm cases — many use `or` patterns
-      and range patterns. Without these, every one fans out into multiple
-      arms.
+- [x] Inclusive integer range patterns (`case 0..10:`). Landed for switch
+      labels and enum/aggregate field subpatterns with interval coverage,
+      optimized guarded lowering, and typed package-image support.
+- [ ] Decide whether list/property patterns are still needed before the
+      self-hosted compiler port.
 
 ### Control flow & literals
 - [ ] Labeled `break` / `continue` ([Stark.g4:530-539](../../Stark.g4#L530-L539)).

@@ -238,6 +238,7 @@ structMember
     | methodDeclaration
     | constructorDeclaration
     | destructorDeclaration
+    | associatedTypeDeclaration
       )
     ;
 
@@ -247,6 +248,7 @@ recordMember
     | methodDeclaration
     | constructorDeclaration
     | destructorDeclaration
+    | associatedTypeDeclaration
       )
     ;
 
@@ -265,11 +267,21 @@ enumVariantFieldDeclaration
     ;
 
 traitMember
-    : attributeList* traitMethodDeclaration
+    : attributeList* (
+          traitMethodDeclaration
+    | associatedTypeDeclaration
+      )
     ;
 
 doctrineMember
-    : attributeList* doctrineMethodDeclaration
+    : attributeList* (
+          doctrineMethodDeclaration
+    | associatedTypeDeclaration
+      )
+    ;
+
+associatedTypeDeclaration
+    : ALIAS Identifier (ASSIGN type_)? SEMI
     ;
 
 fieldDeclaration
@@ -589,11 +601,16 @@ emptyStatement
 
 pattern
     : DISCARD
+    | rangePattern
     | literal
     | VAR Identifier
     | enumNamedFieldPattern
     | genericEnumAggregatePattern
     | aggregatePattern
+    ;
+
+rangePattern
+    : signedIntegerLiteral RANGE signedIntegerLiteral
     ;
 
 aggregatePattern
@@ -1042,6 +1059,7 @@ ARROW       : '=>';
 COLON       : ':';
 SEMI        : ';';
 COMMA       : ',';
+RANGE       : '..';
 DOT         : '.';
 DOLLAR      : '$';
 LPAREN      : '(';

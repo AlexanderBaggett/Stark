@@ -2,6 +2,39 @@ import System.Memory
 import System.BitOperations
 module System.Collections
 
+public enum Ordering
+{
+    Less,
+    Equal,
+    Greater,
+}
+
+public trait Eq
+{
+    finite law bool Equals(borrow Self left, borrow Self right)
+        where overlap(left, right);
+}
+
+public trait Hash
+{
+    alias Code = u64[0 max];
+
+    finite law Self.Code Hash(borrow Self value);
+}
+
+public trait Ord
+{
+    finite law Ordering Compare(borrow Self left, borrow Self right)
+        where overlap(left, right);
+}
+
+public trait Format
+{
+    alias Writer;
+
+    finite law System.Memory.MemoryStatus Format(borrow Self value, mut borrow Self.Writer writer);
+}
+
 public trait Equatable<T>
 {
     finite law bool Equals(borrow T left, borrow T right)

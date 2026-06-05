@@ -5073,6 +5073,73 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void RangePatternIntegerSwitchEmitsGuardedComparisons()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe fn i32[min max] Run(u8[0 20] value)
+            {
+                switch (value)
+                {
+                    case 0..9:
+                        return 10;
+                    case 10..20:
+                        return 20;
+                }
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.DoesNotContain("switch i8 %arg_value", llvm, StringComparison.Ordinal);
+        Assert.Contains("icmp ule i8 %arg_value, 9", llvm, StringComparison.Ordinal);
+        Assert.Contains("icmp uge i8 %arg_value, 10", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("declare fastcc i32 @Run(i8)", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void RangePatternEnumPayloadSwitchEmitsPayloadComparison()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            enum Token
+            {
+                Number(i32[min max]),
+                End,
+            }
+
+            unsafe fn i32[min max] Run(Token token)
+            {
+                switch (token)
+                {
+                    case Token.Number(0..9):
+                        return 1;
+                    case Token.Number(_):
+                        return 2;
+                    case Token.End:
+                        return 0;
+                }
+            }
+            """,
+            options: new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0, EmitLlvmIr: true));
+
+        Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvmRaw(result);
+
+        Assert.Contains("@Run(%Token", llvm, StringComparison.Ordinal);
+        Assert.Contains("icmp eq i8", llvm, StringComparison.Ordinal);
+        Assert.Contains("icmp sge i32", llvm, StringComparison.Ordinal);
+        Assert.Contains("icmp sle i32", llvm, StringComparison.Ordinal);
+        Assert.DoesNotContain("declare fastcc i32 @Run(%Token)", llvm, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void OrPatternEnumCapturesShareBodyLocal()
     {
         var result = Compile(

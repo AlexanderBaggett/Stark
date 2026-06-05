@@ -330,4 +330,144 @@ public sealed class TraitsAndDoctrinesFeatureTests : FeatureLlvmTestBase
         Assert.Contains("getelementptr ptr,", llvm);
         Assert.Matches(@"call fastcc i32 %\w+\(ptr[^\n]*nounwind willreturn mustprogress nosync nofree", llvm);
     }
+
+    [Fact]
+    public void TraitAssociatedTypeRequirementSubstitutesIntoConcreteImplementation()
+    {
+        var llvm = CompileToLlvm(
+            """
+            module Demo
+
+            trait Reader
+            {
+                alias Item;
+
+                finite law Self.Item Read(borrow Self self);
+            }
+
+            struct Counter : Reader
+            {
+                alias Item = i32[min max];
+
+                i32[min max] Value;
+
+                finite law i32[min max] Read(borrow Counter self)
+                {
+                    return self.Value;
+                }
+            }
+
+            finite law T.Item ReadGeneric<T>(borrow T value) where T: Reader
+            {
+                return value.Read();
+            }
+
+            export fn i32[min max] main()
+            {
+                stack Counter c = new Counter() { Value = 41 };
+                return ReadGeneric(c) + 1;
+            }
+            """,
+            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.Contains("call fastcc i32 @Counter_Read(", llvm);
+        Assert.Contains("__stark_mono_fn_Demo__ReadGeneric__Counter", llvm);
+        Assert.DoesNotContain("vtable", llvm, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("fnptr", llvm, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void TraitAssociatedTypeRequirementMustBeDefinedByImplementer()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            trait Reader
+            {
+                alias Item;
+
+                finite law Self.Item Read(borrow Self self);
+            }
+
+            struct Counter : Reader
+            {
+                i32[min max] Value;
+
+                finite law i32[min max] Read(borrow Counter self)
+                {
+                    return self.Value;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Code == "STK3052");
+    }
+
+    [Fact]
+    public void TraitAssociatedTypeMismatchIsAConformanceError()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            trait Reader
+            {
+                alias Item;
+
+                finite law Self.Item Read(borrow Self self);
+            }
+
+            struct Counter : Reader
+            {
+                alias Item = i64[min max];
+
+                i32[min max] Value;
+
+                finite law i32[min max] Read(borrow Counter self)
+                {
+                    return self.Value;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        Assert.Contains(result.Diagnostics, static diagnostic => diagnostic.Code == "STK3033");
+    }
+
+    [Fact]
+    public void TraitDefaultAssociatedTypeDoesNotRequireImplementationAlias()
+    {
+        var llvm = CompileToLlvm(
+            """
+            module Demo
+
+            trait HasHash
+            {
+                alias Code = u64[0 max];
+
+                finite law Self.Code Hash(borrow Self self);
+            }
+
+            struct Key : HasHash
+            {
+                u64[0 max] Value;
+
+                finite law u64[0 max] Hash(borrow Key self)
+                {
+                    return self.Value;
+                }
+            }
+
+            export fn u64[0 max] main()
+            {
+                stack Key key = new Key() { Value = 99 };
+                return key.Hash();
+            }
+            """,
+            new CompilerOptions(OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.Contains("call fastcc i64 @Key_Hash(", llvm);
+    }
 }

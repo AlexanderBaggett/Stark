@@ -86,6 +86,34 @@ finite law i32[min max] Clamp(i32[min max] value)
 }
 ```
 
+## Traits And Associated Types
+
+```stark
+trait Reader
+{
+    alias Item;
+
+    finite law Self.Item Read(borrow Self self);
+}
+
+struct Counter : Reader
+{
+    alias Item = i32[min max];
+
+    finite law i32[min max] Read(borrow Counter self)
+    {
+        return 0;
+    }
+}
+```
+
+- `alias Name;` is a required associated type in a trait.
+- `alias Name = Type;` defines a concrete/default associated type in a trait,
+  doctrine, struct, or record.
+- Use `Self.Name` or `T.Name` in type positions.
+- Ordinary trait dispatch is static; `dyn trait` is explicit runtime dispatch
+  and currently cannot declare associated types.
+
 ## Visibility
 
 | Spelling | Meaning |
@@ -204,6 +232,8 @@ switch (token)
 {
     case Token.End:
         return 0;
+    case Token.Integer(0..9) | Token.Integer(10..19):
+        return 1;
     case Token.Integer(var value):
         return value;
     case Token.Move
@@ -215,10 +245,13 @@ switch (token)
 ```
 
 Supported patterns include literals, enum cases, aggregate fields, `_`,
-`var` captures, `default`, and `when` guards.
+`var` captures, switch-label or-patterns (`case A | B:`), inclusive integer
+range patterns (`case 0..10:`), `default`, and `when` guards. Range patterns
+are integer-only and can appear inside enum/aggregate field patterns.
 
 Switches must be exhaustive (cover every enum variant / bool value / ranged-integer
-value, or add `default`), and non-`void` functions must return on every path.
+value, for example with `case 0..3:`, or add `default`), and non-`void`
+functions must return on every path.
 `when`-guarded arms do not count toward coverage.
 
 ## Error Propagation And Pattern Conditions

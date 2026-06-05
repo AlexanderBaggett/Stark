@@ -23,6 +23,14 @@ form (`heap dyn Trait`, which boxes the value on the heap, owns it, and drops + 
 and to add an explicit dynamic-dispatch surface, in service of self-hosting
 (see `08-stark-feature-roadmap.md` and `09-self-hosted-compiler-architecture.md`).
 
+**Associated types are now implemented for compile-time contracts.** Trait,
+doctrine, struct, and record bodies accept associated aliases. `alias Name;`
+declares a required associated type in a trait; `alias Name = Type;` defines a
+concrete/default associated type. `Self.Name` and `T.Name` work in type
+positions, conformance substitutes them before signature comparison, package
+images preserve them, and `dyn trait` rejects associated types until Stark has
+an explicit object spelling for associated-type bindings.
+
 The guiding constraint is Stark's cost-transparency principle: no hidden
 allocation, no hidden dispatch. Every dispatch cost must be visible in source.
 
@@ -396,7 +404,8 @@ One follow-up remains (tracked below): **dyn-call devirt / DSE-precision** (perf
 |---|---|---|---|
 | TD22 | User-facing docs: `LanguageReference.md` (§6.5 trait bounds, §8.5 impl/`Self`/required+default/static dispatch) + `skills/stark-language/SKILL.md` | **done** | both updated for implemented traits/generics/defaults; examples verified compile+run (`dyn` documented when it lands) |
 | TD23 | Update `01-language-feature-gaps.md` L06 and `09-self-hosted-compiler-architecture.md` to reflect the chosen design | A-D | gap docs consistent |
-| TD24 | Revisit `Dictionary<K,V>` keys: migrate the special-cased bool/integer `DictionaryKey` doctrine toward general compile-time hashing/equality | **partial** | Explicit static key-type `Hash`/`Equals` contracts landed for custom keys; bool/integer scalar fast path preserved. Remaining: stdlib `ascii`/`unicode` contracts and broader `Hash`/`Eq` doctrine/trait surface. |
+| TD24 | Revisit `Dictionary<K,V>` keys: migrate the special-cased bool/integer `DictionaryKey` doctrine toward general compile-time hashing/equality | **partial** | Explicit static key-type `Hash`/`Equals` contracts landed for custom keys; bool/integer scalar fast path preserved. Canonical `Eq`/`Hash`/`Ord`/`Format` trait names now exist; remaining collection work is teaching more stdlib types (`ascii`, `unicode`, etc.) to provide reusable contracts. |
+| TD25 | Associated types for compile-time contracts | **done** | `alias Name;` trait requirements, `alias Name = Type;` defaults/definitions, `Self.Name`/`T.Name` type references, required-associated-type diagnostics (STK3052), conformance substitution, typed package-image/source bridge/facts preservation, and `dyn trait` rejection for associated-type contracts landed. |
 
 ## 7. Open Questions
 

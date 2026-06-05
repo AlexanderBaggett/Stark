@@ -169,6 +169,10 @@ internal static partial class PackageImageLoader
                     ImplementedTraitNames: QualifyImplementedTraitNames(
                         type.ImplementedTraits,
                         module.Module.ModuleName,
+                        localNamedTypes),
+                    AssociatedTypeMembers: BuildAssociatedTypeSymbols(
+                        type.AssociatedTypes,
+                        module.Module.ModuleName,
                         localNamedTypes));
             }
             else
@@ -200,6 +204,10 @@ internal static partial class PackageImageLoader
                     GenericParameterNames: genericParameterNames,
                     ImplementedTraitNames: QualifyImplementedTraitNames(
                         type.ImplementedTraits,
+                        module.Module.ModuleName,
+                        localNamedTypes),
+                    AssociatedTypeMembers: BuildAssociatedTypeSymbols(
+                        type.AssociatedTypes,
                         module.Module.ModuleName,
                         localNamedTypes),
                     Layout: BuildStructLayoutMetadata(type.StructLayout, type.PackBytes, type.AlignBytes));
@@ -752,6 +760,10 @@ internal static partial class PackageImageLoader
                 ImplementedTraitNames: QualifyImplementedTraitNames(
                     type.ImplementedTraits,
                     moduleName,
+                    localNamedTypes),
+                AssociatedTypeMembers: BuildAssociatedTypeSymbols(
+                    type.AssociatedTypes,
+                    moduleName,
                     localNamedTypes));
         }
         else
@@ -783,6 +795,10 @@ internal static partial class PackageImageLoader
                 GenericParameterNames: genericParameterNames,
                 ImplementedTraitNames: QualifyImplementedTraitNames(
                     type.ImplementedTraits,
+                    moduleName,
+                    localNamedTypes),
+                AssociatedTypeMembers: BuildAssociatedTypeSymbols(
+                    type.AssociatedTypes,
                     moduleName,
                     localNamedTypes),
                 Layout: BuildStructLayoutMetadata(type.StructLayout, type.PackBytes, type.AlignBytes));
@@ -828,6 +844,29 @@ internal static partial class PackageImageLoader
             parameter.IsDisjoint,
             parameter.IsConst,
             parameter.RawPointerElementCountExpression);
+    }
+
+    private static IReadOnlyDictionary<string, AssociatedTypeSymbol>? BuildAssociatedTypeSymbols(
+        IReadOnlyList<StarkPackageTypedAssociatedTypeManifest>? associatedTypes,
+        string moduleName,
+        ISet<string> localNamedTypes)
+    {
+        if (associatedTypes is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        var result = new Dictionary<string, AssociatedTypeSymbol>(StringComparer.Ordinal);
+        foreach (var associatedType in associatedTypes)
+        {
+            result[associatedType.Name] = new AssociatedTypeSymbol(
+                associatedType.Name,
+                associatedType.TargetType is null
+                    ? null
+                    : BuildTypeSymbol(associatedType.TargetType, moduleName, localNamedTypes));
+        }
+
+        return result;
     }
 
     private static IReadOnlyList<string>? QualifyImplementedTraitNames(

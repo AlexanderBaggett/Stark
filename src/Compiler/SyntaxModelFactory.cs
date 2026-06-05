@@ -1057,6 +1057,16 @@ internal static class SyntaxModelFactory
             foreach (var member in traitDeclaration.traitBody().traitMember())
             {
                 var method = member.traitMethodDeclaration();
+                if (method is null)
+                {
+                    AddUnsupportedAttributeDiagnostics(
+                        CreateAttributes(member.attributeList()),
+                        member.attributeList().SelectMany(static attributeList => attributeList.attribute()).ToArray(),
+                        $"associated type '{traitDeclaration.Identifier().GetText()}.{member.associatedTypeDeclaration().Identifier().GetText()}'",
+                        diagnostics);
+                    continue;
+                }
+
                 var memberAttributes = CreateAttributes(member.attributeList());
                 var memberAttributeContexts = member.attributeList()
                     .SelectMany(static attributeList => attributeList.attribute())
@@ -1111,6 +1121,16 @@ internal static class SyntaxModelFactory
             foreach (var member in doctrineDeclaration.doctrineBody().doctrineMember())
             {
                 var method = member.doctrineMethodDeclaration();
+                if (method is null)
+                {
+                    AddUnsupportedAttributeDiagnostics(
+                        CreateAttributes(member.attributeList()),
+                        member.attributeList().SelectMany(static attributeList => attributeList.attribute()).ToArray(),
+                        $"associated type '{doctrineDeclaration.Identifier().GetText()}.{member.associatedTypeDeclaration().Identifier().GetText()}'",
+                        diagnostics);
+                    continue;
+                }
+
                 var memberAttributes = CreateAttributes(member.attributeList());
                 var memberAttributeContexts = member.attributeList()
                     .SelectMany(static attributeList => attributeList.attribute())
@@ -1222,6 +1242,12 @@ internal static class SyntaxModelFactory
             return;
         }
 
+        if (member.associatedTypeDeclaration() is not null)
+        {
+            AddUnsupportedAttributeDiagnostics(attributes, attributeContexts, "struct associated type", diagnostics);
+            return;
+        }
+
         AddUnsupportedAttributeDiagnostics(attributes, attributeContexts, "struct member", diagnostics);
     }
 
@@ -1246,6 +1272,12 @@ internal static class SyntaxModelFactory
         if (member.fieldDeclaration() is not null)
         {
             ValidateFieldMemberAttributes(attributes, attributeContexts, "record field", diagnostics);
+            return;
+        }
+
+        if (member.associatedTypeDeclaration() is not null)
+        {
+            AddUnsupportedAttributeDiagnostics(attributes, attributeContexts, "record associated type", diagnostics);
             return;
         }
 

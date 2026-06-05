@@ -113,6 +113,14 @@ internal static class TypeCompatibilityFacts
                 && CanAssign(source.ElementType, target.ElementType);
         }
 
+        if (target.Kind == StarkTypeKind.AssociatedType && source.Kind == StarkTypeKind.AssociatedType)
+        {
+            return string.Equals(target.AssociatedTypeName, source.AssociatedTypeName, StringComparison.Ordinal)
+                && target.AssociatedTypeOwner is not null
+                && source.AssociatedTypeOwner is not null
+                && CanAssign(target.AssociatedTypeOwner, source.AssociatedTypeOwner);
+        }
+
         return target.Kind == StarkTypeKind.Named
             && source.Kind == StarkTypeKind.Named
             && string.Equals(target.NamedType, source.NamedType, StringComparison.Ordinal);

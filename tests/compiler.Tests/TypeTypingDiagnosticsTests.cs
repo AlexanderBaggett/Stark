@@ -5,6 +5,78 @@ namespace compiler.Tests;
 public sealed class TypeTypingDiagnosticsTests
 {
     [Fact]
+    public void RangePatternRequiresIntegerTarget()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] Run(bool flag)
+            {
+                switch (flag)
+                {
+                    case 0..1:
+                        return 1;
+                    default:
+                        return 0;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3008", "Range pattern '0..1' requires an integer target", "bool");
+    }
+
+    [Fact]
+    public void RangePatternRejectsLowerBoundGreaterThanUpperBound()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] Run(u8[0 10] value)
+            {
+                switch (value)
+                {
+                    case 10..0:
+                        return 1;
+                    default:
+                        return 0;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3008", "Range pattern '10..0' has lower bound 10 greater than upper bound 0");
+    }
+
+    [Fact]
+    public void RangePatternRejectsNonOverlappingIntegerDomain()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] Run(u8[0 3] value)
+            {
+                switch (value)
+                {
+                    case 10..20:
+                        return 1;
+                    default:
+                        return 0;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3008", "Range pattern '10..20' cannot match 'u8[0 3]'", "[0, 3]");
+    }
+
+    [Fact]
     public void VarargsModifierRequiresFfiDeclaration()
     {
         var result = Compile(

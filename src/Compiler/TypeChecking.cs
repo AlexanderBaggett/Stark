@@ -26,6 +26,7 @@ internal sealed class TypeChecker
     {
         MatchAll,
         Literal,
+        Range,
         Aggregate,
         EnumCase
     }
@@ -34,15 +35,19 @@ internal sealed class TypeChecker
     {
         Wildcard,
         Literal,
+        Range,
         NestedAggregate,
         NestedEnum
     }
+
+    private readonly record struct RangeCoverageInterval(BigInteger Min, BigInteger Max);
 
     private sealed record AggregateCoverageField(
         AggregateCoverageFieldKind Kind,
         string? LiteralKey,
         AggregateCoveragePattern? NestedAggregatePattern,
-        EnumCoveragePattern? NestedEnumPattern);
+        EnumCoveragePattern? NestedEnumPattern,
+        RangeCoverageInterval? RangeInterval = null);
 
     private sealed record AggregateCoveragePattern(
         string TypeName,
@@ -59,7 +64,8 @@ internal sealed class TypeChecker
         ParserRuleContext Context,
         string? LiteralKey,
         AggregateCoveragePattern? AggregatePattern,
-        EnumCoveragePattern? EnumPattern);
+        EnumCoveragePattern? EnumPattern,
+        RangeCoverageInterval? RangeInterval = null);
 
     private readonly record struct SwitchSourceShape(
         int SectionCount,
@@ -453,7 +459,13 @@ internal sealed class TypeChecker
                         fields,
                         orderedFields,
                         GenericParameterNames: genericParameters?.ToList(),
-                        ImplementedTraitNames: ResolveBaseTraitNames(recordDeclaration.baseTraitList(), genericParameters, module.SyntaxModel.ModuleName));
+                        ImplementedTraitNames: ResolveBaseTraitNames(recordDeclaration.baseTraitList(), genericParameters, module.SyntaxModel.ModuleName),
+                        AssociatedTypeMembers: BuildRecordAssociatedTypes(
+                            recordName,
+                            recordDeclaration.recordBody().recordMember(),
+                            genericParameters,
+                            module.SyntaxModel.ModuleName,
+                            requireTargetType: true));
                     continue;
                 }
 
@@ -493,6 +505,11 @@ internal sealed class TypeChecker
                         new Dictionary<string, FieldSymbol>(StringComparer.Ordinal),
                         [],
                         GenericParameterNames: genericParameters?.ToList(),
+                        AssociatedTypeMembers: BuildTraitAssociatedTypes(
+                            traitName,
+                            traitDeclaration.traitBody().traitMember(),
+                            genericParameters,
+                            module.SyntaxModel.ModuleName),
                         IsDynTrait: traitDeclaration.DYN() is not null);
                     continue;
                 }
@@ -513,7 +530,12 @@ internal sealed class TypeChecker
                         DeclarationKind.Doctrine,
                         new Dictionary<string, FieldSymbol>(StringComparer.Ordinal),
                         [],
-                        GenericParameterNames: genericParameters?.ToList());
+                        GenericParameterNames: genericParameters?.ToList(),
+                        AssociatedTypeMembers: BuildDoctrineAssociatedTypes(
+                            doctrineName,
+                            doctrineDeclaration.doctrineBody().doctrineMember(),
+                            genericParameters,
+                            module.SyntaxModel.ModuleName));
                 }
             }
         }
@@ -532,6 +554,12 @@ internal sealed class TypeChecker
         var fields = new Dictionary<string, FieldSymbol>(StringComparer.Ordinal);
         var orderedFields = new List<FieldSymbol>();
         var genericParameterNames = genericParameters?.ToList();
+        var associatedTypes = BuildStructAssociatedTypes(
+            name,
+            members,
+            genericParameters,
+            currentModuleName,
+            requireTargetType: true);
         _namedTypes[name] = new NamedTypeSymbol(
             name,
             kind,
@@ -539,6 +567,7 @@ internal sealed class TypeChecker
             orderedFields,
             GenericParameterNames: genericParameterNames,
             ImplementedTraitNames: implementedTraitNames,
+            AssociatedTypeMembers: associatedTypes,
             Layout: layout);
 
         foreach (var member in members)
@@ -561,9 +590,131 @@ internal sealed class TypeChecker
         var namedType = new NamedTypeSymbol(name, kind, fields, orderedFields,
             GenericParameterNames: genericParameterNames,
             ImplementedTraitNames: implementedTraitNames,
+            AssociatedTypeMembers: associatedTypes,
             Layout: layout);
         RefreshConcreteInstantiationsForTemplate(namedType);
         return namedType;
+    }
+
+    private IReadOnlyDictionary<string, AssociatedTypeSymbol>? BuildStructAssociatedTypes(
+        string ownerName,
+        IEnumerable<StarkParser.StructMemberContext> members,
+        ISet<string>? genericParameters,
+        string currentModuleName,
+        bool requireTargetType)
+    {
+        return BuildAssociatedTypes(
+            ownerName,
+            members
+                .Select(static member => member.associatedTypeDeclaration())
+                .Where(static declaration => declaration is not null)!
+                .Cast<StarkParser.AssociatedTypeDeclarationContext>(),
+            genericParameters,
+            currentModuleName,
+            allowBareRequirements: !requireTargetType);
+    }
+
+    private IReadOnlyDictionary<string, AssociatedTypeSymbol>? BuildRecordAssociatedTypes(
+        string ownerName,
+        IEnumerable<StarkParser.RecordMemberContext> members,
+        ISet<string>? genericParameters,
+        string currentModuleName,
+        bool requireTargetType)
+    {
+        return BuildAssociatedTypes(
+            ownerName,
+            members
+                .Select(static member => member.associatedTypeDeclaration())
+                .Where(static declaration => declaration is not null)!
+                .Cast<StarkParser.AssociatedTypeDeclarationContext>(),
+            genericParameters,
+            currentModuleName,
+            allowBareRequirements: !requireTargetType);
+    }
+
+    private IReadOnlyDictionary<string, AssociatedTypeSymbol>? BuildTraitAssociatedTypes(
+        string ownerName,
+        IEnumerable<StarkParser.TraitMemberContext> members,
+        ISet<string>? genericParameters,
+        string currentModuleName)
+    {
+        var traitGenericParameters = ExtendGenericParameters(genericParameters, "Self");
+        return BuildAssociatedTypes(
+            ownerName,
+            members
+                .Select(static member => member.associatedTypeDeclaration())
+                .Where(static declaration => declaration is not null)!
+                .Cast<StarkParser.AssociatedTypeDeclarationContext>(),
+            traitGenericParameters,
+            currentModuleName,
+            allowBareRequirements: true);
+    }
+
+    private IReadOnlyDictionary<string, AssociatedTypeSymbol>? BuildDoctrineAssociatedTypes(
+        string ownerName,
+        IEnumerable<StarkParser.DoctrineMemberContext> members,
+        ISet<string>? genericParameters,
+        string currentModuleName)
+    {
+        return BuildAssociatedTypes(
+            ownerName,
+            members
+                .Select(static member => member.associatedTypeDeclaration())
+                .Where(static declaration => declaration is not null)!
+                .Cast<StarkParser.AssociatedTypeDeclarationContext>(),
+            genericParameters,
+            currentModuleName,
+            allowBareRequirements: false);
+    }
+
+    private IReadOnlyDictionary<string, AssociatedTypeSymbol>? BuildAssociatedTypes(
+        string ownerName,
+        IEnumerable<StarkParser.AssociatedTypeDeclarationContext> declarations,
+        ISet<string>? genericParameters,
+        string currentModuleName,
+        bool allowBareRequirements)
+    {
+        var result = new Dictionary<string, AssociatedTypeSymbol>(StringComparer.Ordinal);
+        foreach (var declaration in declarations)
+        {
+            var name = declaration.Identifier().GetText();
+            if (result.ContainsKey(name))
+            {
+                ReportError(
+                    "STK3051",
+                    $"Type '{ownerName}' declares associated type '{name}' more than once.",
+                    declaration);
+                continue;
+            }
+
+            if (declaration.type_() is not { } targetTypeSyntax)
+            {
+                if (!allowBareRequirements)
+                {
+                    ReportError(
+                        "STK3051",
+                        $"Type '{ownerName}' must define associated type '{name}' with '= <type>'; only traits may declare bare associated type requirements.",
+                        declaration);
+                }
+
+                result[name] = new AssociatedTypeSymbol(name);
+                continue;
+            }
+
+            var targetType = ResolveType(targetTypeSyntax, genericParameters, currentModuleName);
+            result[name] = new AssociatedTypeSymbol(name, targetType);
+        }
+
+        return result.Count == 0 ? null : result;
+    }
+
+    private static ISet<string>? ExtendGenericParameters(ISet<string>? genericParameters, string name)
+    {
+        var result = genericParameters is null
+            ? new HashSet<string>(StringComparer.Ordinal)
+            : new HashSet<string>(genericParameters, StringComparer.Ordinal);
+        result.Add(name);
+        return result;
     }
 
     // Resolves each base-list entry to the qualified name of the trait it
@@ -4806,7 +4957,7 @@ internal sealed class TypeChecker
         StarkTypeSymbol valueType,
         Dictionary<string, StarkTypeSymbol> captures)
     {
-        if (pattern.literal() is not null || pattern.DISCARD() is not null)
+        if (pattern.literal() is not null || pattern.rangePattern() is not null || pattern.DISCARD() is not null)
         {
             return true;
         }
@@ -5254,7 +5405,8 @@ internal sealed class TypeChecker
         var exhaustiveEnumVariants = new HashSet<string>(StringComparer.Ordinal);
         var enumVariantCount = 0;
         NamedTypeSymbol? switchEnumType = null;
-        var coveredIntegerValues = new HashSet<BigInteger>();
+        var coveredIntegerIntervals = new List<RangeCoverageInterval>();
+        var coveredIntegerValueCount = BigInteger.Zero;
 
         if (switchType.Kind == StarkTypeKind.Named
             && switchType.NamedType is not null
@@ -5366,17 +5518,18 @@ internal sealed class TypeChecker
                     }
 
                     // Integer switches can be exhaustive by covering every value of the
-                    // scrutinee's (possibly ranged) type, e.g. `u8[0 3]` with cases 0..3.
-                    if (currentPattern.Kind == SwitchCoveragePatternKind.Literal
+                    // scrutinee's (possibly ranged) type, e.g. `u8[0 3]` with cases 0..3
+                    // or a range pattern such as `case 0..3:`.
+                    if ((currentPattern.Kind is SwitchCoveragePatternKind.Literal or SwitchCoveragePatternKind.Range)
                         && switchType.Kind == StarkTypeKind.Integer
-                        && currentPattern.LiteralKey is { } literalKey
-                        && literalKey.StartsWith(IntegerCoverageKeyPrefix, StringComparison.Ordinal)
-                        && BigInteger.TryParse(literalKey[IntegerCoverageKeyPrefix.Length..], out var literalValue)
-                        && StarkTypeSymbols.IntegerValueFitsEffectiveRange(literalValue, switchType)
+                        && currentPattern.RangeInterval is { } currentIntegerInterval
                         && StarkTypeSymbols.TryGetEffectiveIntegerBounds(switchType, out var rangeMin, out var rangeMax))
                     {
-                        coveredIntegerValues.Add(literalValue);
-                        if (coveredIntegerValues.Count == rangeMax - rangeMin + 1)
+                        AddIntegerCoverageInterval(
+                            coveredIntegerIntervals,
+                            ClipRangeToDomain(currentIntegerInterval, rangeMin, rangeMax));
+                        coveredIntegerValueCount = CountIntegerCoverageValues(coveredIntegerIntervals);
+                        if (coveredIntegerValueCount == rangeMax - rangeMin + 1)
                         {
                             exhaustivePattern = currentPattern;
                         }
@@ -5397,7 +5550,7 @@ internal sealed class TypeChecker
 
         ReportError(
             "STK3044",
-            BuildNonExhaustiveSwitchMessage(switchType, switchEnumType, exhaustiveEnumVariants, coveredIntegerValues, boolTrueCovered, boolFalseCovered),
+            BuildNonExhaustiveSwitchMessage(switchType, switchEnumType, exhaustiveEnumVariants, coveredIntegerValueCount, boolTrueCovered, boolFalseCovered),
             switchStatement.expression());
     }
 
@@ -5405,7 +5558,7 @@ internal sealed class TypeChecker
         StarkTypeSymbol switchType,
         NamedTypeSymbol? switchEnumType,
         IReadOnlySet<string> coveredEnumVariants,
-        IReadOnlyCollection<BigInteger> coveredIntegerValues,
+        BigInteger coveredIntegerValueCount,
         bool boolTrueCovered,
         bool boolFalseCovered)
     {
@@ -5432,12 +5585,78 @@ internal sealed class TypeChecker
             && StarkTypeSymbols.TryGetEffectiveIntegerBounds(switchType, out var rangeMin, out var rangeMax))
         {
             var rangeSize = rangeMax - rangeMin + 1;
-            return $"Switch over '{switchType.DisplayName}' is not exhaustive: {coveredIntegerValues.Count} of {rangeSize} possible value(s) covered. "
+            return $"Switch over '{switchType.DisplayName}' is not exhaustive: {coveredIntegerValueCount} of {rangeSize} possible value(s) covered. "
                 + "Cover the full range or add a `default` arm.";
         }
 
         return $"Switch over '{switchType.DisplayName}' is not exhaustive: values of this type cannot be enumerated by cases. "
             + "Add a `default` arm or a match-all pattern (`var`/`_`).";
+    }
+
+    private static RangeCoverageInterval ClipRangeToDomain(
+        RangeCoverageInterval interval,
+        BigInteger domainMin,
+        BigInteger domainMax)
+    {
+        return new RangeCoverageInterval(
+            BigInteger.Max(interval.Min, domainMin),
+            BigInteger.Min(interval.Max, domainMax));
+    }
+
+    private static void AddIntegerCoverageInterval(
+        List<RangeCoverageInterval> intervals,
+        RangeCoverageInterval interval)
+    {
+        if (interval.Min > interval.Max)
+        {
+            return;
+        }
+
+        intervals.Add(interval);
+        intervals.Sort(static (left, right) =>
+        {
+            var minComparison = left.Min.CompareTo(right.Min);
+            return minComparison != 0 ? minComparison : left.Max.CompareTo(right.Max);
+        });
+
+        var writeIndex = 0;
+        for (var readIndex = 0; readIndex < intervals.Count; readIndex++)
+        {
+            var current = intervals[readIndex];
+            if (writeIndex == 0)
+            {
+                intervals[writeIndex++] = current;
+                continue;
+            }
+
+            var previous = intervals[writeIndex - 1];
+            if (current.Min <= previous.Max + BigInteger.One)
+            {
+                intervals[writeIndex - 1] = previous with
+                {
+                    Max = BigInteger.Max(previous.Max, current.Max)
+                };
+                continue;
+            }
+
+            intervals[writeIndex++] = current;
+        }
+
+        if (writeIndex < intervals.Count)
+        {
+            intervals.RemoveRange(writeIndex, intervals.Count - writeIndex);
+        }
+    }
+
+    private static BigInteger CountIntegerCoverageValues(IReadOnlyList<RangeCoverageInterval> intervals)
+    {
+        var count = BigInteger.Zero;
+        foreach (var interval in intervals)
+        {
+            count += interval.Max - interval.Min + BigInteger.One;
+        }
+
+        return count;
     }
 
     /// <summary>
@@ -5611,16 +5830,34 @@ internal sealed class TypeChecker
             return true;
         }
 
+        if (switchPattern.rangePattern() is { } rangePattern
+            && TryCreateRangeCoverageInterval(rangePattern, switchType, out var rangeInterval))
+        {
+            pattern = new SwitchCoveragePattern(
+                SwitchCoveragePatternKind.Range,
+                rangePattern.GetText(),
+                switchPattern,
+                LiteralKey: null,
+                AggregatePattern: null,
+                EnumPattern: null,
+                rangeInterval);
+            return true;
+        }
+
         if (switchPattern.literal() is { } literal
             && TryCreateLiteralCoverageKey(literal, switchType, out var literalKey))
         {
+            var integerInterval = TryCreateIntegerLiteralCoverageInterval(literal, switchType, out var literalInterval)
+                ? literalInterval
+                : (RangeCoverageInterval?)null;
             pattern = new SwitchCoveragePattern(
                 SwitchCoveragePatternKind.Literal,
                 literal.GetText(),
                 switchPattern,
                 literalKey,
                 AggregatePattern: null,
-                EnumPattern: null);
+                EnumPattern: null,
+                integerInterval);
             return true;
         }
 
@@ -6039,15 +6276,31 @@ internal sealed class TypeChecker
             return true;
         }
 
+        if (pattern.rangePattern() is { } rangePattern
+            && TryCreateRangeCoverageInterval(rangePattern, fieldType, out var rangeInterval))
+        {
+            coverageField = new AggregateCoverageField(
+                AggregateCoverageFieldKind.Range,
+                LiteralKey: null,
+                NestedAggregatePattern: null,
+                NestedEnumPattern: null,
+                rangeInterval);
+            return true;
+        }
+
         if (pattern.literal() is { } literal
             && SupportsAggregateFieldSubpattern(fieldType)
             && TryCreateLiteralCoverageKey(literal, fieldType, out var literalKey))
         {
+            var integerInterval = TryCreateIntegerLiteralCoverageInterval(literal, fieldType, out var literalInterval)
+                ? literalInterval
+                : (RangeCoverageInterval?)null;
             coverageField = new AggregateCoverageField(
                 AggregateCoverageFieldKind.Literal,
                 literalKey,
                 NestedAggregatePattern: null,
-                NestedEnumPattern: null);
+                NestedEnumPattern: null,
+                integerInterval);
             return true;
         }
 
@@ -6147,6 +6400,46 @@ internal sealed class TypeChecker
         return false;
     }
 
+    private bool TryCreateRangeCoverageInterval(
+        StarkParser.RangePatternContext rangePattern,
+        StarkTypeSymbol targetType,
+        out RangeCoverageInterval interval)
+    {
+        interval = default;
+        if (targetType.Kind != StarkTypeKind.Integer
+            || !TryGetRangePatternBounds(rangePattern, out var min, out var max)
+            || min > max)
+        {
+            return false;
+        }
+
+        if (StarkTypeSymbols.TryGetEffectiveIntegerBounds(targetType, out var targetMin, out var targetMax)
+            && (max < targetMin || min > targetMax))
+        {
+            return false;
+        }
+
+        interval = new RangeCoverageInterval(min, max);
+        return true;
+    }
+
+    private static bool TryCreateIntegerLiteralCoverageInterval(
+        StarkParser.LiteralContext literal,
+        StarkTypeSymbol targetType,
+        out RangeCoverageInterval interval)
+    {
+        interval = default;
+        if (targetType.Kind != StarkTypeKind.Integer
+            || literal.signedIntegerLiteral() is not { } integerLiteral)
+        {
+            return false;
+        }
+
+        var value = ParseSignedIntegerLiteral(integerLiteral);
+        interval = new RangeCoverageInterval(value, value);
+        return true;
+    }
+
     private static bool TryCreateLiteralCoverageKey(
         StarkParser.LiteralContext literal,
         StarkTypeSymbol targetType,
@@ -6227,6 +6520,12 @@ internal sealed class TypeChecker
             return true;
         }
 
+        if (existing.RangeInterval is { } existingRange
+            && current.RangeInterval is { } currentRange)
+        {
+            return existingRange.Min <= currentRange.Min && existingRange.Max >= currentRange.Max;
+        }
+
         if (existing.Kind != current.Kind)
         {
             return false;
@@ -6293,6 +6592,12 @@ internal sealed class TypeChecker
         if (existing.Kind == AggregateCoverageFieldKind.Wildcard)
         {
             return true;
+        }
+
+        if (existing.RangeInterval is { } existingRange
+            && current.RangeInterval is { } currentRange)
+        {
+            return existingRange.Min <= currentRange.Min && existingRange.Max >= currentRange.Max;
         }
 
         if (existing.Kind != current.Kind)
@@ -6363,6 +6668,12 @@ internal sealed class TypeChecker
 
     private void BindPattern(StarkParser.PatternContext pattern, StarkTypeSymbol switchType, Scope scope)
     {
+        if (pattern.rangePattern() is { } rangePattern)
+        {
+            BindRangePattern(rangePattern, switchType, "switch expression");
+            return;
+        }
+
         if (pattern.literal() is { } literal)
         {
             var literalBinding = EvaluateLiteral(literal);
@@ -6412,6 +6723,45 @@ internal sealed class TypeChecker
             }
 
             BindAggregatePattern(aggregatePattern, switchType, scope);
+        }
+    }
+
+    private void BindRangePattern(
+        StarkParser.RangePatternContext rangePattern,
+        StarkTypeSymbol targetType,
+        string targetDescription)
+    {
+        if (targetType.Kind != StarkTypeKind.Integer)
+        {
+            ReportError(
+                "STK3008",
+                $"Range pattern '{rangePattern.GetText()}' requires an integer target, but the {targetDescription} has type '{targetType.DisplayName}'.",
+                rangePattern);
+            return;
+        }
+
+        if (!TryGetRangePatternBounds(rangePattern, out var min, out var max))
+        {
+            ReportError("STK3008", $"Range pattern '{rangePattern.GetText()}' could not resolve its integer endpoints.", rangePattern);
+            return;
+        }
+
+        if (min > max)
+        {
+            ReportError(
+                "STK3008",
+                $"Range pattern '{rangePattern.GetText()}' has lower bound {min} greater than upper bound {max}.",
+                rangePattern);
+            return;
+        }
+
+        if (StarkTypeSymbols.TryGetEffectiveIntegerBounds(targetType, out var targetMin, out var targetMax)
+            && (max < targetMin || min > targetMax))
+        {
+            ReportError(
+                "STK3008",
+                $"Range pattern '{rangePattern.GetText()}' cannot match '{targetType.DisplayName}' because it does not overlap the target range [{targetMin}, {targetMax}].",
+                rangePattern);
         }
     }
 
@@ -6779,6 +7129,12 @@ internal sealed class TypeChecker
             return;
         }
 
+        if (pattern.rangePattern() is { } rangePattern)
+        {
+            BindRangePattern(rangePattern, field.Type, $"enum case payload field '{fieldName}'");
+            return;
+        }
+
         if (pattern.VAR() is not null)
         {
             scope.Declare(new VariableSymbol(pattern.Identifier().GetText(), field.Type, IsMutable: false, IsConstant: false));
@@ -6826,6 +7182,12 @@ internal sealed class TypeChecker
     {
         if (pattern.DISCARD() is not null)
         {
+            return;
+        }
+
+        if (pattern.rangePattern() is { } rangePattern)
+        {
+            BindRangePattern(rangePattern, field.Type, $"field '{field.Name}'");
             return;
         }
 
@@ -11159,7 +11521,12 @@ internal sealed class TypeChecker
 
             argumentBindings = EvaluateArguments(arguments, expectedParameters: null, scope);
             argumentTypes = argumentBindings.Select(static argument => argument.Type).ToArray();
-            var resolution = FunctionOverloadFacts.Resolve(overloads, target.Receiver?.Type, argumentTypes, CanAssign);
+            var resolution = FunctionOverloadFacts.Resolve(
+                overloads,
+                target.Receiver?.Type,
+                argumentTypes,
+                CanAssign,
+                ResolveAssociatedTypeForSubstitution);
             if (!resolution.Succeeded)
             {
                 ReportOverloadResolutionFailure(overloadSourceName, argumentTypes, resolution, arguments);
@@ -13711,9 +14078,9 @@ internal sealed class TypeChecker
 
         var resolvedMethod = traitMethod with
         {
-            ReturnType = FunctionOverloadFacts.SubstituteType(traitMethod.ReturnType, substitution),
+            ReturnType = FunctionOverloadFacts.SubstituteType(traitMethod.ReturnType, substitution, ResolveAssociatedTypeForSubstitution),
             Parameters = traitMethod.Parameters
-                .Select(parameter => parameter with { Type = FunctionOverloadFacts.SubstituteType(parameter.Type, substitution) })
+                .Select(parameter => parameter with { Type = FunctionOverloadFacts.SubstituteType(parameter.Type, substitution, ResolveAssociatedTypeForSubstitution) })
                 .ToArray(),
             GenericParameterNames = null,
         };
@@ -13805,9 +14172,9 @@ internal sealed class TypeChecker
 
                 var resolvedMethod = traitMethod with
                 {
-                    ReturnType = FunctionOverloadFacts.SubstituteType(traitMethod.ReturnType, substitution),
+                    ReturnType = FunctionOverloadFacts.SubstituteType(traitMethod.ReturnType, substitution, ResolveAssociatedTypeForSubstitution),
                     Parameters = traitMethod.Parameters
-                        .Select(parameter => parameter with { Type = FunctionOverloadFacts.SubstituteType(parameter.Type, substitution) })
+                        .Select(parameter => parameter with { Type = FunctionOverloadFacts.SubstituteType(parameter.Type, substitution, ResolveAssociatedTypeForSubstitution) })
                         .ToArray(),
                     GenericParameterNames = null,
                 };
@@ -14755,6 +15122,13 @@ internal sealed class TypeChecker
             Location(genericQualifiedName));
     }
 
+    private StarkTypeSymbol? ResolveAssociatedTypeForSubstitution(StarkTypeSymbol ownerType, string associatedTypeName)
+    {
+        return AssociatedTypeFacts.TryResolveAssociatedType(ownerType, associatedTypeName, _namedTypes, out var targetType)
+            ? EnsureMonomorphizedType(targetType)
+            : null;
+    }
+
     private ExpressionBinding ResolveGenericMemberReferenceValue(
         StarkParser.GenericEnumCaseReferenceContext genericEnumCaseReference,
         bool allowFunctionReference)
@@ -15289,6 +15663,24 @@ internal sealed class TypeChecker
             {
                 substitutedCore = coreType;
             }
+        }
+        else if (coreType.Kind == StarkTypeKind.AssociatedType
+            && coreType.AssociatedTypeOwner is not null
+            && coreType.AssociatedTypeName is not null)
+        {
+            var substitutedOwner = SubstituteType(coreType.AssociatedTypeOwner, substitution);
+            substitutedCore = AssociatedTypeFacts.TryResolveAssociatedType(
+                    substitutedOwner,
+                    coreType.AssociatedTypeName,
+                    _namedTypes,
+                    out var associatedTarget)
+                ? StarkTypeSymbols.WithQualifiers(
+                    EnsureMonomorphizedType(associatedTarget),
+                    borrowKind: StarkBorrowKind.None,
+                    accessKind: StarkAccessKind.None,
+                    initializationKind: StarkInitializationKind.None,
+                    isMutableView: false)
+                : StarkTypeSymbols.AssociatedType(substitutedOwner, coreType.AssociatedTypeName);
         }
         else if (coreType.ElementType is not null)
         {
@@ -15921,7 +16313,8 @@ internal sealed class TypeChecker
             overloads,
             receiverType: null,
             [left.Type, NonNegativeI64Type, right.Type],
-            CanAssign);
+            CanAssign,
+            ResolveAssociatedTypeForSubstitution);
         if (!resolution.Succeeded)
         {
             return false;
@@ -17215,7 +17608,8 @@ internal sealed class TypeChecker
             overloads,
             receiverType: null,
             [StarkTypeSymbols.RawPointer(destination, isMutable: true), source],
-            CanAssign);
+            CanAssign,
+            ResolveAssociatedTypeForSubstitution);
         if (resolution.Succeeded)
         {
             return true;
@@ -17552,6 +17946,24 @@ internal sealed class TypeChecker
     {
         var value = BigInteger.Parse(literal.IntegerLiteral().GetText());
         return literal.MINUS() is null ? value : -value;
+    }
+
+    private static bool TryGetRangePatternBounds(
+        StarkParser.RangePatternContext rangePattern,
+        out BigInteger min,
+        out BigInteger max)
+    {
+        var endpoints = rangePattern.signedIntegerLiteral();
+        if (endpoints.Length != 2)
+        {
+            min = BigInteger.Zero;
+            max = BigInteger.Zero;
+            return false;
+        }
+
+        min = ParseSignedIntegerLiteral(endpoints[0]);
+        max = ParseSignedIntegerLiteral(endpoints[1]);
+        return true;
     }
 
     private static StarkTypeSymbol InferIntegerLiteralType(BigInteger value)
@@ -18310,6 +18722,11 @@ internal sealed class TypeChecker
                 && TypeContainsOpenCurrentFunctionGenericParameter(coreType.ClosureReturnType)
                 || coreType.ClosureParameterTypes is { Count: > 0 }
                 && coreType.ClosureParameterTypes.Any(TypeContainsOpenCurrentFunctionGenericParameter);
+        }
+
+        if (coreType.Kind == StarkTypeKind.AssociatedType)
+        {
+            return true;
         }
 
         return coreType.ElementType is not null
