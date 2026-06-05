@@ -151,6 +151,25 @@ internal static partial class PackageImageLoader
                     ? type.PrimaryConstructorParameters.Select(static parameter => parameter.Name).ToHashSet(StringComparer.Ordinal)
                     : null;
 
+                foreach (var associatedType in (type.AssociatedTypes ?? []).OrderBy(static item => item.Name, StringComparer.Ordinal))
+                {
+                    builder.Append("    alias ");
+                    builder.Append(associatedType.Name);
+                    if (!string.IsNullOrWhiteSpace(associatedType.TargetType))
+                    {
+                        builder.Append(" = ");
+                        builder.Append(associatedType.TargetType);
+                    }
+
+                    builder.AppendLine(";");
+                }
+
+                if (type.AssociatedTypes is { Count: > 0 }
+                    && (type.Fields.Count > 0 || type.Methods is { Count: > 0 } || type.Constructors is { Count: > 0 } || type.Destructor is not null))
+                {
+                    builder.AppendLine();
+                }
+
                 foreach (var field in type.Fields.Where(field => primaryConstructorParameterNames?.Contains(field.Name) != true))
                 {
                     builder.Append("    ");
@@ -2389,7 +2408,11 @@ internal static partial class PackageImageLoader
             StructLayout: type.StructLayout,
             PackBytes: type.PackBytes,
             AlignBytes: type.AlignBytes,
-            ImplementedTraits: type.ImplementedTraits);
+            ImplementedTraits: type.ImplementedTraits,
+            AssociatedTypes: type.AssociatedTypes?.Select(associatedType => new StarkPackageAssociatedTypeManifest(
+                associatedType.Name,
+                associatedType.TargetType is null ? null : RenderTypeReference(associatedType.TargetType)))
+                .ToArray());
     }
 
     private static StarkPackageGlobalManifest ConvertGlobalManifest(StarkPackageTypedGlobalManifest global)

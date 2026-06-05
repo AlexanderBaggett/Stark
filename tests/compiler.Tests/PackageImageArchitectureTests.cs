@@ -72,6 +72,103 @@ public sealed class PackageImageArchitectureTests
     }
 
     [Fact]
+    public void PackageImagePreservesAssociatedTypesAcrossTypedInterfaceSourceBridgeAndFacts()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-associated-types-");
+
+        try
+        {
+            var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    module Facade
+
+                    public trait Reader
+                    {
+                        alias Item;
+
+                        finite law Self.Item Read(borrow Self self);
+                    }
+
+                    public trait HasHash
+                    {
+                        alias Code = u64[0 max];
+
+                        finite law Self.Code Hash(borrow Self self);
+                    }
+
+                    public struct Counter : Reader, HasHash
+                    {
+                        alias Item = i32[min max];
+
+                        i32[min max] Value;
+
+                        public finite law i32[min max] Read(borrow Counter self)
+                        {
+                            return self.Value;
+                        }
+
+                        public finite law u64[0 max] Hash(borrow Counter self)
+                        {
+                            return (u64[0 max])self.Value;
+                        }
+                    }
+                    """,
+                    sourcePath),
+                new CompilerOptions(StopAfterPassId: "lower-abi"));
+
+            Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                result,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = Assert.Single(manifest.Modules, static module => module.ModuleName == "Facade");
+            var typedInterface = facadeModule.CompilerSections?.TypedInterface;
+            Assert.NotNull(typedInterface);
+
+            var reader = Assert.Single(typedInterface!.Types, static type => type.Name == "Reader");
+            var readerItem = Assert.Single(reader.AssociatedTypes ?? [], static associatedType => associatedType.Name == "Item");
+            Assert.Null(readerItem.TargetType);
+
+            var hasHash = Assert.Single(typedInterface.Types, static type => type.Name == "HasHash");
+            var hashCode = Assert.Single(hasHash.AssociatedTypes ?? [], static associatedType => associatedType.Name == "Code");
+            Assert.Equal("integer", hashCode.TargetType?.Kind);
+            Assert.Equal(64, hashCode.TargetType?.BitWidth);
+
+            var counter = Assert.Single(typedInterface.Types, static type => type.Name == "Counter");
+            var counterItem = Assert.Single(counter.AssociatedTypes ?? [], static associatedType => associatedType.Name == "Item");
+            Assert.Equal("integer", counterItem.TargetType?.Kind);
+            Assert.Equal(32, counterItem.TargetType?.BitWidth);
+
+            var resolvedModule = CreateResolvedPackageModule(facadeModule);
+            Assert.True(PackageImageLoader.TryBuildModuleSource(resolvedModule, out var sourceText));
+            Assert.Contains("alias Item;", sourceText, StringComparison.Ordinal);
+            Assert.Contains("alias Code = ", sourceText, StringComparison.Ordinal);
+            Assert.Contains("alias Item = ", sourceText, StringComparison.Ordinal);
+
+            Assert.True(PackageImageLoader.TryBuildLoadedPackageImageFacts(resolvedModule, out var facts));
+            var readerFacts = facts.NamedTypes["Facade.Reader"];
+            Assert.True(readerFacts.AssociatedTypes["Item"].IsRequired);
+            var hashFacts = facts.NamedTypes["Facade.HasHash"];
+            Assert.Equal(StarkTypeKind.Integer, hashFacts.AssociatedTypes["Code"].TargetType?.Kind);
+            var counterFacts = facts.NamedTypes["Facade.Counter"];
+            Assert.Equal(StarkTypeKind.Integer, counterFacts.AssociatedTypes["Item"].TargetType?.Kind);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
     public void PackageImagePreservesFineGrainedBackendOpaqueBoundaries()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-fine-backend-opaque-");

@@ -160,7 +160,8 @@ internal static partial class PackageImageBuilder
             StructLayout: RenderStructLayoutKind(namedType.Layout?.Kind),
             PackBytes: namedType.Layout?.PackBytes,
             AlignBytes: namedType.Layout?.AlignBytes,
-            ImplementedTraits: BuildImplementedTraitManifestNames(namedType));
+            ImplementedTraits: BuildImplementedTraitManifestNames(namedType),
+            AssociatedTypes: BuildAssociatedTypeManifests(namedType, module.SyntaxModel.ModuleName));
     }
 
     private static StarkPackageTypedTypeManifest BuildTypedTypeManifest(
@@ -219,7 +220,36 @@ internal static partial class PackageImageBuilder
             StructLayout: RenderStructLayoutKind(namedType.Layout?.Kind),
             PackBytes: namedType.Layout?.PackBytes,
             AlignBytes: namedType.Layout?.AlignBytes,
-            ImplementedTraits: BuildImplementedTraitManifestNames(namedType));
+            ImplementedTraits: BuildImplementedTraitManifestNames(namedType),
+            AssociatedTypes: BuildTypedAssociatedTypeManifests(namedType, module.SyntaxModel.ModuleName));
+    }
+
+    private static IReadOnlyList<StarkPackageAssociatedTypeManifest>? BuildAssociatedTypeManifests(
+        NamedTypeSymbol namedType,
+        string moduleName)
+    {
+        return namedType.AssociatedTypes.Count == 0
+            ? null
+            : namedType.AssociatedTypes.Values
+                .OrderBy(static associatedType => associatedType.Name, StringComparer.Ordinal)
+                .Select(associatedType => new StarkPackageAssociatedTypeManifest(
+                    associatedType.Name,
+                    associatedType.TargetType is null ? null : RenderManifestTypeText(associatedType.TargetType, moduleName)))
+                .ToArray();
+    }
+
+    private static IReadOnlyList<StarkPackageTypedAssociatedTypeManifest>? BuildTypedAssociatedTypeManifests(
+        NamedTypeSymbol namedType,
+        string moduleName)
+    {
+        return namedType.AssociatedTypes.Count == 0
+            ? null
+            : namedType.AssociatedTypes.Values
+                .OrderBy(static associatedType => associatedType.Name, StringComparer.Ordinal)
+                .Select(associatedType => new StarkPackageTypedAssociatedTypeManifest(
+                    associatedType.Name,
+                    associatedType.TargetType is null ? null : BuildTypeReference(associatedType.TargetType, moduleName)))
+                .ToArray();
     }
 
     private static IReadOnlyList<string>? BuildImplementedTraitManifestNames(NamedTypeSymbol namedType)

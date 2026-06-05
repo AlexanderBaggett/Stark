@@ -246,6 +246,11 @@ internal sealed class StarkTypeResolver
             return aliasType;
         }
 
+        if (TryResolveAssociatedTypeName(qualifiedName, genericParameters, currentModuleName, out var associatedType))
+        {
+            return associatedType;
+        }
+
         if (!qualifiedName.Contains('.', StringComparison.Ordinal))
         {
             ReportError("STK3004", $"Unknown type '{qualifiedName}'.", token);
@@ -1056,6 +1061,12 @@ internal sealed class StarkTypeResolver
                 return aliasType;
             }
 
+            if (TryResolveAssociatedTypeName(qualifiedName, genericParameters, currentModuleName, out _))
+            {
+                ReportError("STK3019", $"Associated type '{qualifiedName}' is not generic and does not accept type arguments.", simpleType.Start);
+                return StarkTypeSymbols.Error;
+            }
+
             var baseType = ResolveQualifiedType(qualifiedName, genericParameters: null, simpleType.Start, currentModuleName);
             if (baseType.Kind == StarkTypeKind.Error)
             {
@@ -1066,6 +1077,95 @@ internal sealed class StarkTypeResolver
         }
 
         return ResolveQualifiedType(qualifiedName, genericParameters, simpleType.Start, currentModuleName);
+    }
+
+    private bool TryResolveAssociatedTypeName(
+        string qualifiedName,
+        ISet<string>? genericParameters,
+        string? currentModuleName,
+        out StarkTypeSymbol associatedType)
+    {
+        associatedType = StarkTypeSymbols.Error;
+        var dot = qualifiedName.LastIndexOf('.');
+        if (dot <= 0 || dot == qualifiedName.Length - 1)
+        {
+            return false;
+        }
+
+        var ownerName = qualifiedName[..dot];
+        var associatedTypeName = qualifiedName[(dot + 1)..];
+        if (!TryResolveAssociatedTypeOwner(ownerName, genericParameters, currentModuleName, out var ownerType))
+        {
+            return false;
+        }
+
+        if (AssociatedTypeFacts.TryResolveAssociatedType(ownerType, associatedTypeName, _namedTypes, out var targetType))
+        {
+            associatedType = targetType;
+            return true;
+        }
+
+        if (ownerType.Kind == StarkTypeKind.Named
+            && ownerType.NamedType is { } ownerNamedType
+            && genericParameters?.Contains(ownerNamedType) == true)
+        {
+            associatedType = StarkTypeSymbols.AssociatedType(ownerType, associatedTypeName);
+            return true;
+        }
+
+        if (ownerType.Kind == StarkTypeKind.Named
+            && ownerType.NamedType is { } namedTypeName
+            && _namedTypes.TryGetValue(StarkTypeSymbols.GetGenericBaseName(namedTypeName), out var namedType)
+            && namedType.AssociatedTypes.TryGetValue(associatedTypeName, out var associatedMember)
+            && associatedMember.IsRequired)
+        {
+            associatedType = StarkTypeSymbols.AssociatedType(ownerType, associatedTypeName);
+            return true;
+        }
+
+        return false;
+    }
+
+    private bool TryResolveAssociatedTypeOwner(
+        string ownerName,
+        ISet<string>? genericParameters,
+        string? currentModuleName,
+        out StarkTypeSymbol ownerType)
+    {
+        if (genericParameters?.Contains(ownerName) == true)
+        {
+            ownerType = StarkTypeSymbols.Named(ownerName);
+            return true;
+        }
+
+        if (!ownerName.Contains('.', StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(currentModuleName))
+        {
+            var moduleQualifiedName = $"{currentModuleName}.{ownerName}";
+            if (_namedTypes.ContainsKey(moduleQualifiedName))
+            {
+                ownerType = StarkTypeSymbols.Named(moduleQualifiedName);
+                return true;
+            }
+
+            var importedMatches = _moduleGraph.EnumerateAccessibleModuleQualifiedNames(currentModuleName, ownerName)
+                .Where(_namedTypes.ContainsKey)
+                .ToArray();
+            if (importedMatches.Length == 1)
+            {
+                ownerType = StarkTypeSymbols.Named(importedMatches[0]);
+                return true;
+            }
+        }
+
+        if (_namedTypes.ContainsKey(ownerName))
+        {
+            ownerType = StarkTypeSymbols.Named(ownerName);
+            return true;
+        }
+
+        ownerType = StarkTypeSymbols.Error;
+        return false;
     }
 
     private StarkTypeSymbol ResolveIntegerType(StarkParser.IntegerTypeContext integerType)
@@ -1884,6 +1984,14 @@ internal sealed class StarkTypeResolver
             {
                 substitutedCore = coreType;
             }
+        }
+        else if (coreType.Kind == StarkTypeKind.AssociatedType
+            && coreType.AssociatedTypeOwner is not null
+            && coreType.AssociatedTypeName is not null)
+        {
+            substitutedCore = StarkTypeSymbols.AssociatedType(
+                SubstituteType(coreType.AssociatedTypeOwner, substitution),
+                coreType.AssociatedTypeName);
         }
         else if (coreType.ElementType is not null)
         {

@@ -669,6 +669,16 @@ internal sealed class SemanticValidator
             }
 
             var traitName = traitDeclaration.Identifier().GetText();
+            if (_typeModel.NamedTypes.TryGetValue(traitName, out var traitSymbol)
+                && traitSymbol.AssociatedTypes.Count > 0)
+            {
+                _context.Diagnostics.Error(
+                    "STK3036",
+                    $"Dyn trait '{traitName}' declares associated types. Trait objects cannot hide associated-type bindings; keep the trait static-only or add an explicit dyn-object contract first.",
+                    "semantic-validate",
+                    Location(traitDeclaration));
+            }
+
             foreach (var member in traitDeclaration.traitBody().traitMember())
             {
                 if (member.traitMethodDeclaration() is not { } method)
@@ -750,6 +760,21 @@ internal sealed class SemanticValidator
                         "semantic-validate",
                         Location(entry));
                     continue;
+                }
+
+                _typeModel.NamedTypes.TryGetValue(ownerName, out var ownerType);
+                foreach (var requiredAssociatedType in named.AssociatedTypes.Values.Where(static associatedType => associatedType.IsRequired))
+                {
+                    if (ownerType is null
+                        || !ownerType.AssociatedTypes.TryGetValue(requiredAssociatedType.Name, out var implementationAssociatedType)
+                        || implementationAssociatedType.TargetType is null)
+                    {
+                        _context.Diagnostics.Error(
+                            "STK3052",
+                            $"'{ownerName}' does not define associated type '{requiredAssociatedType.Name}' required by trait '{named.Name}'. Add 'alias {requiredAssociatedType.Name} = <type>;' to '{ownerName}'.",
+                            "semantic-validate",
+                            Location(entry));
+                    }
                 }
 
                 // Member conformance is model-driven so imported source modules
@@ -879,7 +904,7 @@ internal sealed class SemanticValidator
     // trait method's after substituting the trait's type parameters with the
     // base-list type arguments and `Self` with the implementing type (taken from
     // the impl's own receiver, so name/qualifier forms stay consistent).
-    private static bool TraitMethodSignatureConforms(
+    private bool TraitMethodSignatureConforms(
         TypedFunctionSignature traitSignature,
         TypedFunctionSignature implSignature,
         NamedTypeSymbol traitType,
@@ -900,16 +925,41 @@ internal sealed class SemanticValidator
             substitution["Self"] = implSignature.Parameters[0].Type;
         }
 
+        StarkTypeSymbol? ResolveAssociatedType(StarkTypeSymbol ownerType, string associatedTypeName)
+        {
+            if (AssociatedTypeFacts.TryResolveAssociatedType(ownerType, associatedTypeName, _typeModel.NamedTypes, out var targetType))
+            {
+                return targetType;
+            }
+
+            if (traitType.AssociatedTypes.TryGetValue(associatedTypeName, out var traitAssociatedType)
+                && traitAssociatedType.TargetType is not null)
+            {
+                return FunctionOverloadFacts.SubstituteType(
+                    traitAssociatedType.TargetType,
+                    substitution,
+                    ResolveAssociatedType);
+            }
+
+            return null;
+        }
+
         for (var index = 0; index < traitSignature.Parameters.Count; index++)
         {
-            var expected = FunctionOverloadFacts.SubstituteType(traitSignature.Parameters[index].Type, substitution);
+            var expected = FunctionOverloadFacts.SubstituteType(
+                traitSignature.Parameters[index].Type,
+                substitution,
+                ResolveAssociatedType);
             if (!TraitTypesEquivalent(expected, implSignature.Parameters[index].Type))
             {
                 return false;
             }
         }
 
-        var expectedReturn = FunctionOverloadFacts.SubstituteType(traitSignature.ReturnType, substitution);
+        var expectedReturn = FunctionOverloadFacts.SubstituteType(
+            traitSignature.ReturnType,
+            substitution,
+            ResolveAssociatedType);
         return TraitTypesEquivalent(expectedReturn, implSignature.ReturnType);
     }
 
@@ -940,14 +990,16 @@ internal sealed class SemanticValidator
             || left.FunctionPointerAbi != right.FunctionPointerAbi
             || left.ClosureFunctionKind != right.ClosureFunctionKind
             || left.ClosureStorageKind != right.ClosureStorageKind
-            || left.ClosureCallCapability != right.ClosureCallCapability)
+            || left.ClosureCallCapability != right.ClosureCallCapability
+            || !string.Equals(left.AssociatedTypeName, right.AssociatedTypeName, StringComparison.Ordinal))
         {
             return false;
         }
 
         if (!OptionalTypeEquivalent(left.ElementType, right.ElementType)
             || !OptionalTypeEquivalent(left.FunctionPointerReturnType, right.FunctionPointerReturnType)
-            || !OptionalTypeEquivalent(left.ClosureReturnType, right.ClosureReturnType))
+            || !OptionalTypeEquivalent(left.ClosureReturnType, right.ClosureReturnType)
+            || !OptionalTypeEquivalent(left.AssociatedTypeOwner, right.AssociatedTypeOwner))
         {
             return false;
         }
@@ -1681,7 +1733,8 @@ internal sealed class SemanticValidator
             overloads,
             receiverType: null,
             argumentTypes,
-            TypeCompatibilityFacts.CanAssign);
+            TypeCompatibilityFacts.CanAssign,
+            ResolveAssociatedTypeForSubstitution);
         if (!resolution.Succeeded)
         {
             return false;
@@ -2157,7 +2210,8 @@ internal sealed class SemanticValidator
                 concatOverloads,
                 receiverType: null,
                 [StarkTypeSymbols.RawPointer(destinationType, isMutable: true), viewType, viewType],
-                TypeCompatibilityFacts.CanAssign);
+                TypeCompatibilityFacts.CanAssign,
+                ResolveAssociatedTypeForSubstitution);
             if (!concatResolution.Succeeded)
             {
                 return false;
@@ -2191,7 +2245,8 @@ internal sealed class SemanticValidator
             overloads,
             receiverType: null,
             [left.Type, NonNegativeI64Type, right.Type],
-            TypeCompatibilityFacts.CanAssign);
+            TypeCompatibilityFacts.CanAssign,
+            ResolveAssociatedTypeForSubstitution);
         if (!resolution.Succeeded)
         {
             return false;
@@ -3388,7 +3443,8 @@ internal sealed class SemanticValidator
                 overloads,
                 target.Receiver?.Type,
                 argumentValues.Select(static argument => argument.Type).ToArray(),
-                TypeCompatibilityFacts.CanAssign);
+                TypeCompatibilityFacts.CanAssign,
+                ResolveAssociatedTypeForSubstitution);
             if (!resolution.Succeeded)
             {
                 return new ValidationValue(StarkTypeSymbols.Error);
@@ -4004,9 +4060,9 @@ internal sealed class SemanticValidator
 
         var resolvedMethod = traitMethod with
         {
-            ReturnType = FunctionOverloadFacts.SubstituteType(traitMethod.ReturnType, substitution),
+            ReturnType = FunctionOverloadFacts.SubstituteType(traitMethod.ReturnType, substitution, ResolveAssociatedTypeForSubstitution),
             Parameters = traitMethod.Parameters
-                .Select(parameter => parameter with { Type = FunctionOverloadFacts.SubstituteType(parameter.Type, substitution) })
+                .Select(parameter => parameter with { Type = FunctionOverloadFacts.SubstituteType(parameter.Type, substitution, ResolveAssociatedTypeForSubstitution) })
                 .ToArray(),
             GenericParameterNames = null,
         };
@@ -4016,6 +4072,13 @@ internal sealed class SemanticValidator
             Function: resolvedMethod,
             NamedType: ResolveNamedTypeSymbol(resolvedMethod.ReturnType),
             Receiver: target);
+    }
+
+    private StarkTypeSymbol? ResolveAssociatedTypeForSubstitution(StarkTypeSymbol ownerType, string associatedTypeName)
+    {
+        return AssociatedTypeFacts.TryResolveAssociatedType(ownerType, associatedTypeName, _typeModel.NamedTypes, out var targetType)
+            ? targetType
+            : null;
     }
 
     private bool TryApplyValueTextConversionMemberAccess(

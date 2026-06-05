@@ -361,11 +361,25 @@ internal sealed class SsaIrValidator
                 functions[strategy.SymbolName] = FunctionOverloadFacts.InstantiateSignature(
                     templateSignature,
                     strategy.TypeArguments,
-                    strategy.SymbolName);
+                    strategy.SymbolName,
+                    ResolveAssociatedTypeForValidation);
             }
         }
 
         return functions;
+    }
+
+    private StarkTypeSymbol? ResolveAssociatedTypeForValidation(
+        StarkTypeSymbol ownerType,
+        string associatedTypeName)
+    {
+        return AssociatedTypeFacts.TryResolveAssociatedType(
+            ownerType,
+            associatedTypeName,
+            _namedTypes,
+            out var targetType)
+                ? targetType
+                : null;
     }
 
     private bool IsOpenGenericBuiltinSignature(TypedFunctionSignature function)
@@ -3424,8 +3438,13 @@ internal sealed class SsaIrValidator
             return true;
         }
 
-        return normalized.ClosureParameterTypes is { Count: > 0 }
-            && normalized.ClosureParameterTypes.Any(ContainsUnboundGenericPlaceholder);
+        if (normalized.ClosureParameterTypes is { Count: > 0 }
+            && normalized.ClosureParameterTypes.Any(ContainsUnboundGenericPlaceholder))
+        {
+            return true;
+        }
+
+        return normalized.Kind == StarkTypeKind.AssociatedType;
     }
 
     private string CurrentModuleName => _typeModel?.ModuleName ?? _ssa.ModuleName;

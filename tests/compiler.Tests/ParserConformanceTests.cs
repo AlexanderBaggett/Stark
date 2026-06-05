@@ -400,6 +400,41 @@ public sealed class ParserConformanceTests
             """
         },
         {
+            "switch labels may contain inclusive integer range patterns",
+            """
+            module Branching
+
+            enum Token
+            {
+                Number(i32[min max]),
+                End,
+            }
+
+            fn i32[min max] Pick(Token token, u8[0 40] state, bool allow)
+            {
+                switch (state)
+                {
+                    case 0..9:
+                        return 10;
+                    case 10..20 | 30..40 when allow:
+                        return 20;
+                    default:
+                        return 0;
+                }
+
+                switch (token)
+                {
+                    case Token.Number(0..9):
+                        return 1;
+                    case Token.Number(_):
+                        return 2;
+                    case Token.End:
+                        return 0;
+                }
+            }
+            """
+        },
+        {
             "postfix chains and trailing comma argument lists parse",
             """
             module Access

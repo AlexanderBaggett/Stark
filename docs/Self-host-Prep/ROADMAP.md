@@ -94,7 +94,7 @@ user-facing examples consistent.
 
 ## Language Work
 
-- [~] Finish the compile-time-only reuse surface: default method bodies, associated types, and doctrine-based `Hash`, `Eq`, `Ord`, and `Format` contracts. Default members and the explicit static `Dictionary<K,V>` key `Hash`/`Equals` contract have landed; associated types, `Ord`, and `Format` remain open. See [08-stark-feature-roadmap.md](08-stark-feature-roadmap.md) and [10-traits-and-dynamic-dispatch.md](10-traits-and-dynamic-dispatch.md).
+- [x] Finish the compile-time-only reuse surface: default method bodies, associated types, and canonical `Eq`, `Hash`, `Ord`, and `Format` contracts. Default members, associated type requirements/defaults, package-image preservation, explicit static `Dictionary<K,V>` key `Hash`/`Equals`, and the stdlib contract names have landed. See [08-stark-feature-roadmap.md](08-stark-feature-roadmap.md) and [10-traits-and-dynamic-dispatch.md](10-traits-and-dynamic-dispatch.md).
 - [x] Finish cross-module trait conformance checks and generic-dispatch coverage. See [10-traits-and-dynamic-dispatch.md](10-traits-and-dynamic-dispatch.md).
 - [ ] Decide how optional values replace host nullability and nullable C# APIs. See [01-language-feature-gaps.md](01-language-feature-gaps.md) and [07-open-questions.md](07-open-questions.md).
 - [ ] Define alias/noalias proof carriers and require wrong-alias usage to be a compile-time diagnostic. See [01-language-feature-gaps.md](01-language-feature-gaps.md) and [07-open-questions.md](07-open-questions.md).
@@ -103,7 +103,7 @@ user-facing examples consistent.
 - [x] Implement explicit FFI ABI spelling and ABI-bearing function pointer types. Track detailed items in [15-ffi-abi.md](15-ffi-abi.md#9-implementation-work-items).
 - [x] Add C-compatible struct layout attributes, packing, aggregate alignment, and packed-field safety rules. Track detailed items in [17-ffi-struct-layout.md](17-ffi-struct-layout.md#11-implementation-work-items).
 - [x] Implement raw, multiline, and raw-interpolated string literal syntax for compiler text. See L08 in [01-language-feature-gaps.md](01-language-feature-gaps.md) and [08-stark-feature-roadmap.md](08-stark-feature-roadmap.md#compiler-text-literals).
-- [~] Implement richer switch-pattern ergonomics needed by the compiler port. Switch-label or-patterns (`case A | B:`) have landed with capture-consistency diagnostics and native literal-switch lowering; range, list, and property patterns remain open. See L04 in [01-language-feature-gaps.md](01-language-feature-gaps.md) and [08-stark-feature-roadmap.md](08-stark-feature-roadmap.md#pattern-matching).
+- [~] Implement richer switch-pattern ergonomics needed by the compiler port. Switch-label or-patterns (`case A | B:`) and inclusive integer range patterns (`case 0..10:`) have landed, including capture-consistency diagnostics, interval coverage, optimized guarded range lowering, and typed package-image support. List and property patterns remain open. See L04 in [01-language-feature-gaps.md](01-language-feature-gaps.md) and [08-stark-feature-roadmap.md](08-stark-feature-roadmap.md#pattern-matching).
 - [ ] Decide which iterator, traversal, and const-generic ergonomics are needed before the compiler port. See [01-language-feature-gaps.md](01-language-feature-gaps.md).
 - [ ] Keep concurrency language work scoped to what self-hosting actually needs first. See [14-thread-safety-laws.md](14-thread-safety-laws.md).
 

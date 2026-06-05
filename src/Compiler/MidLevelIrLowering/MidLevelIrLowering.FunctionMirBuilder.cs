@@ -21,9 +21,12 @@ internal sealed partial class MidLevelIrLowerer
         {
             Discard,
             Literal,
+            Range,
             Capture,
             Nested
         }
+
+        private readonly record struct LowerableIntegerRangePattern(BigInteger Min, BigInteger Max);
 
         private sealed record LowerableAggregateFieldPattern(
             string FieldName,
@@ -36,6 +39,7 @@ internal sealed partial class MidLevelIrLowerer
             string? CaptureName,
             LowerableAggregatePattern? NestedPattern,
             ImportedTemplateTypedBodyExpressionSummary? ImportedLiteralExpression,
+            LowerableIntegerRangePattern? RangePattern = null,
             string? CaptureStorageName = null);
 
         private sealed record LowerableAggregatePattern(
@@ -61,6 +65,7 @@ internal sealed partial class MidLevelIrLowerer
             LowerableAggregatePattern? AggregatePattern,
             ImportedTemplateTypedBodyExpressionSummary? ImportedLiteralExpression = null,
             ImportedTemplateTypedBodyExpressionSummary? ImportedGuardExpression = null,
+            LowerableIntegerRangePattern? RangePattern = null,
             string? CaptureStorageName = null);
 
         private sealed record LowerableSwitchSection(

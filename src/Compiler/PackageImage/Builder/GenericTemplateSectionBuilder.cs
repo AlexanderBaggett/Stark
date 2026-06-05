@@ -1,4 +1,5 @@
 using Antlr4.Runtime;
+using System.Numerics;
 using System.Text;
 using Stark.Parsing;
 
@@ -1611,6 +1612,26 @@ internal static partial class PackageImageBuilder
                 return true;
             }
 
+            if (pattern.rangePattern() is { } rangePattern)
+            {
+                if (!TryBuildPublishedTypedTemplateRangeEndpointExpressions(
+                        module,
+                        rangePattern,
+                        out var startExpression,
+                        out var endExpression))
+                {
+                    return false;
+                }
+
+                switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                    Kind: "range",
+                    Expression: startExpression,
+                    EndExpression: endExpression,
+                    GuardExpression: guardExpression,
+                    Statements: statements);
+                return true;
+            }
+
             if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
             {
                 if (!enumPatternOrdinals.TryGetValue(enumNamedFieldPattern, out var ordinal)
@@ -1716,6 +1737,59 @@ internal static partial class PackageImageBuilder
 
             return false;
         }
+    }
+
+    private static bool TryBuildPublishedTypedTemplateRangeEndpointExpressions(
+        LoadedModuleDocument module,
+        StarkParser.RangePatternContext rangePattern,
+        out StarkPackageTypedTemplateExpressionManifest startExpression,
+        out StarkPackageTypedTemplateExpressionManifest endExpression)
+    {
+        startExpression = null!;
+        endExpression = null!;
+
+        var endpoints = rangePattern.signedIntegerLiteral();
+        if (endpoints.Length != 2)
+        {
+            return false;
+        }
+
+        startExpression = BuildPublishedTypedTemplateRangeEndpointExpression(module, endpoints[0]);
+        endExpression = BuildPublishedTypedTemplateRangeEndpointExpression(module, endpoints[1]);
+        return true;
+    }
+
+    private static StarkPackageTypedTemplateExpressionManifest BuildPublishedTypedTemplateRangeEndpointExpression(
+        LoadedModuleDocument module,
+        StarkParser.SignedIntegerLiteralContext endpoint)
+    {
+        var value = ParsePublishedSignedIntegerLiteral(endpoint);
+        return new StarkPackageTypedTemplateExpressionManifest(
+            Kind: "literal",
+            LiteralText: endpoint.GetText(),
+            Type: BuildPublishedAbiTypeReference(InferPublishedIntegerLiteralType(value), module));
+    }
+
+    private static BigInteger ParsePublishedSignedIntegerLiteral(StarkParser.SignedIntegerLiteralContext literal)
+    {
+        var value = BigInteger.Parse(literal.IntegerLiteral().GetText());
+        return literal.MINUS() is null ? value : -value;
+    }
+
+    private static StarkTypeSymbol InferPublishedIntegerLiteralType(BigInteger value)
+    {
+        var widths = new[] { 8, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384, 512, 768, 1024 };
+        foreach (var width in widths)
+        {
+            var min = -(BigInteger.One << (width - 1));
+            var max = (BigInteger.One << (width - 1)) - BigInteger.One;
+            if (value >= min && value <= max)
+            {
+                return StarkTypeSymbols.Integer(width, value, value);
+            }
+        }
+
+        return StarkTypeSymbols.CompileTimeInteger;
     }
 
     private static bool TryBuildPublishedTypedTemplateLiteralExpression(
@@ -1831,6 +1905,24 @@ internal static partial class PackageImageBuilder
             member = new StarkPackageTypedTemplatePatternManifest(
                 "literal",
                 Expression: literalExpression);
+            return true;
+        }
+
+        if (pattern.rangePattern() is { } rangePattern)
+        {
+            if (!TryBuildPublishedTypedTemplateRangeEndpointExpressions(
+                    module,
+                    rangePattern,
+                    out var startExpression,
+                    out var endExpression))
+            {
+                return false;
+            }
+
+            member = new StarkPackageTypedTemplatePatternManifest(
+                "range",
+                Expression: startExpression,
+                EndExpression: endExpression);
             return true;
         }
 

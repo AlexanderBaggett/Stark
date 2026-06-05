@@ -603,7 +603,14 @@ internal sealed partial class MidLevelIrLowerer
                 }
 
                 MidLevelIrOperand? condition;
-                if (label.Literal is not null)
+                if (label.RangePattern is { } rangePattern)
+                {
+                    condition = EmitIntegerRangePatternComparison(
+                        switchValue,
+                        rangePattern,
+                        $"switch {switchText} in {label.LabelText}");
+                }
+                else if (label.Literal is not null)
                 {
                     condition = EmitSwitchLiteralComparison(
                         switchValue,
@@ -1111,6 +1118,23 @@ internal sealed partial class MidLevelIrLowerer
                 return true;
             }
 
+            if (pattern.rangePattern() is { } rangePattern)
+            {
+                parsedFieldPattern = new LowerableAggregateFieldPattern(
+                    fieldName,
+                    storageFieldName,
+                    fieldIndex,
+                    fieldType,
+                    AggregatePatternFieldKind.Range,
+                    rangePattern.GetText(),
+                    Literal: null,
+                    CaptureName: null,
+                    NestedPattern: null,
+                    ImportedLiteralExpression: null,
+                    RangePattern: ParseLowerableIntegerRangePattern(rangePattern));
+                return true;
+            }
+
             if (pattern.enumNamedFieldPattern() is { } nestedEnumNamedFieldPattern)
             {
                 if (!TryParseEnumNamedFieldPattern(nestedEnumNamedFieldPattern, out var parsedNestedPattern)
@@ -1327,6 +1351,20 @@ internal sealed partial class MidLevelIrLowerer
                     IsMatchAll: false,
                     CaptureName: null,
                     AggregatePattern: parsedAggregatePattern);
+                return true;
+            }
+
+            if (pattern.rangePattern() is { } rangePattern)
+            {
+                label = new LowerableSwitchLabel(
+                    rangePattern.GetText(),
+                    Literal: null,
+                    GuardExpression: guardExpression,
+                    IsDefault: false,
+                    IsMatchAll: false,
+                    CaptureName: null,
+                    AggregatePattern: null,
+                    RangePattern: ParseLowerableIntegerRangePattern(rangePattern));
                 return true;
             }
 
@@ -1743,6 +1781,30 @@ internal sealed partial class MidLevelIrLowerer
                     continue;
                 }
 
+                if (fieldPattern.Kind == AggregatePatternFieldKind.Range)
+                {
+                    if (fieldPattern.RangePattern is not { } rangePattern)
+                    {
+                        return false;
+                    }
+
+                    var rangeCondition = EmitIntegerRangePatternComparison(
+                        fieldValue,
+                        rangePattern,
+                        $"switch {switchValue.Text}.{fieldPattern.FieldName} in {fieldPattern.Text}");
+                    if (rangeCondition is null)
+                    {
+                        return false;
+                    }
+
+                    CurrentBlock.Terminator = new MidLevelIrTerminator(
+                        MidLevelIrTerminatorKind.Branch,
+                        [nextTarget, failureTarget],
+                        ConditionText: fieldPattern.Text,
+                        Condition: rangeCondition);
+                    continue;
+                }
+
                 if (fieldPattern.Kind == AggregatePatternFieldKind.Nested)
                 {
                     if (fieldPattern.NestedPattern is null
@@ -1782,6 +1844,84 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             return true;
+        }
+
+        private MidLevelIrOperand? EmitIntegerRangePatternComparison(
+            MidLevelIrOperand value,
+            LowerableIntegerRangePattern range,
+            string text)
+        {
+            if (!StarkTypeSymbols.TryGetEffectiveIntegerBounds(value.Type, out var typeMin, out var typeMax))
+            {
+                return null;
+            }
+
+            var min = BigInteger.Max(range.Min, typeMin);
+            var max = BigInteger.Min(range.Max, typeMax);
+            if (min > max)
+            {
+                return new MidLevelIrBoolConstantOperand(false);
+            }
+
+            if (min == typeMin && max == typeMax)
+            {
+                return new MidLevelIrBoolConstantOperand(true);
+            }
+
+            if (min == max)
+            {
+                return EmitEqualityComparison(
+                    value,
+                    new MidLevelIrIntegerConstantOperand(min, value.Type),
+                    text);
+            }
+
+            MidLevelIrOperand? lowerCondition = null;
+            if (min > typeMin)
+            {
+                lowerCondition = EmitRequiredTemporary(
+                    new MidLevelIrBinaryRValue(
+                        MidLevelIrBinaryOperator.GreaterThanOrEqual,
+                        value,
+                        new MidLevelIrIntegerConstantOperand(min, value.Type),
+                        StarkTypeSymbols.Bool,
+                        $"{value.Text} >= {min}"),
+                    "range_min");
+            }
+
+            MidLevelIrOperand? upperCondition = null;
+            if (max < typeMax)
+            {
+                upperCondition = EmitRequiredTemporary(
+                    new MidLevelIrBinaryRValue(
+                        MidLevelIrBinaryOperator.LessThanOrEqual,
+                        value,
+                        new MidLevelIrIntegerConstantOperand(max, value.Type),
+                        StarkTypeSymbols.Bool,
+                        $"{value.Text} <= {max}"),
+                    "range_max");
+            }
+
+            return (lowerCondition, upperCondition) switch
+            {
+                (not null, not null) => EmitBooleanBinary(
+                    MidLevelIrBinaryOperator.BitwiseAnd,
+                    lowerCondition,
+                    upperCondition,
+                    text,
+                    "range_match"),
+                (not null, null) => lowerCondition,
+                (null, not null) => upperCondition,
+                _ => new MidLevelIrBoolConstantOperand(true)
+            };
+        }
+
+        private static LowerableIntegerRangePattern ParseLowerableIntegerRangePattern(StarkParser.RangePatternContext rangePattern)
+        {
+            var endpoints = rangePattern.signedIntegerLiteral();
+            return endpoints.Length == 2
+                ? new LowerableIntegerRangePattern(ParseIntegerLiteral(endpoints[0]), ParseIntegerLiteral(endpoints[1]))
+                : new LowerableIntegerRangePattern(BigInteger.Zero, BigInteger.Zero);
         }
 
         private bool EmitSwitchBindingsAndGuard(

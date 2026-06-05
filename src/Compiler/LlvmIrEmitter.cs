@@ -951,10 +951,25 @@ internal sealed class LlvmIrEmitter
             functions[strategy.SymbolName] = FunctionOverloadFacts.InstantiateSignature(
                 templateSignature,
                 strategy.TypeArguments,
-                strategy.SymbolName);
+                strategy.SymbolName,
+                (ownerType, associatedTypeName) => ResolveAssociatedTypeForEmission(ownerType, associatedTypeName, typeModel.NamedTypes));
         }
 
         return functions;
+    }
+
+    private static StarkTypeSymbol? ResolveAssociatedTypeForEmission(
+        StarkTypeSymbol ownerType,
+        string associatedTypeName,
+        IReadOnlyDictionary<string, NamedTypeSymbol> namedTypes)
+    {
+        return AssociatedTypeFacts.TryResolveAssociatedType(
+            ownerType,
+            associatedTypeName,
+            namedTypes,
+            out var targetType)
+                ? targetType
+                : null;
     }
 
     private static IReadOnlyDictionary<string, AbiFunctionSignature> BuildAllAbiFunctions(

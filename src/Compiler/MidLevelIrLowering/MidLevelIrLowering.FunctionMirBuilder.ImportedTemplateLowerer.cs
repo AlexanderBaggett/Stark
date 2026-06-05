@@ -1188,6 +1188,27 @@ internal sealed partial class MidLevelIrLowerer
                         ImportedGuardExpression: switchCase.GuardExpression);
                     return true;
 
+                case ImportedTemplateTypedSwitchCaseKind.Range:
+                    if (!TryBuildImportedIntegerRangePattern(
+                            switchCase.Expression,
+                            switchCase.EndExpression,
+                            out var rangePattern))
+                    {
+                        return false;
+                    }
+
+                    label = new LowerableSwitchLabel(
+                        $"{RenderImportedTypedTemplateExpressionCore(switchCase.Expression!)}..{RenderImportedTypedTemplateExpressionCore(switchCase.EndExpression!)}",
+                        Literal: null,
+                        GuardExpression: null,
+                        IsDefault: false,
+                        IsMatchAll: false,
+                        CaptureName: null,
+                        AggregatePattern: null,
+                        ImportedGuardExpression: switchCase.GuardExpression,
+                        RangePattern: rangePattern);
+                    return true;
+
                 case ImportedTemplateTypedSwitchCaseKind.MatchAll:
                     label = new LowerableSwitchLabel(
                         switchCase.Name is null ? "_" : $"var {switchCase.Name}",
@@ -1204,6 +1225,7 @@ internal sealed partial class MidLevelIrLowerer
                 case ImportedTemplateTypedSwitchCaseKind.Default:
                     if (switchCase.Name is not null
                         || switchCase.Expression is not null
+                        || switchCase.EndExpression is not null
                         || switchCase.GuardExpression is not null)
                     {
                         return false;
@@ -1524,6 +1546,27 @@ internal sealed partial class MidLevelIrLowerer
                 return true;
             }
 
+            if (fieldPattern.Kind == ImportedTemplateTypedSwitchFieldPatternKind.Range
+                && TryBuildImportedIntegerRangePattern(
+                    fieldPattern.Expression,
+                    fieldPattern.EndExpression,
+                    out var rangePattern))
+            {
+                parsedFieldPattern = new LowerableAggregateFieldPattern(
+                    fieldName,
+                    storageFieldName,
+                    fieldIndex,
+                    fieldType,
+                    AggregatePatternFieldKind.Range,
+                    $"{RenderImportedTypedTemplateExpressionCore(fieldPattern.Expression!)}..{RenderImportedTypedTemplateExpressionCore(fieldPattern.EndExpression!)}",
+                    Literal: null,
+                    CaptureName: null,
+                    NestedPattern: null,
+                    ImportedLiteralExpression: null,
+                    RangePattern: rangePattern);
+                return true;
+            }
+
             if (fieldPattern.Kind == ImportedTemplateTypedSwitchFieldPatternKind.EnumPattern
                 && fieldPattern.Ordinal is { } enumOrdinal
                 && TryBuildImportedTypedTemplateEnumSwitchPattern(enumOrdinal, fieldPattern.Name, fieldPattern.Members, out var nestedEnumPattern)
@@ -1564,6 +1607,31 @@ internal sealed partial class MidLevelIrLowerer
 
             parsedFieldPattern = default!;
             return false;
+        }
+
+        private static bool TryBuildImportedIntegerRangePattern(
+            ImportedTemplateTypedBodyExpressionSummary? startExpression,
+            ImportedTemplateTypedBodyExpressionSummary? endExpression,
+            out LowerableIntegerRangePattern rangePattern)
+        {
+            rangePattern = default;
+            if (!TryParseImportedIntegerLiteralValue(startExpression, out var start)
+                || !TryParseImportedIntegerLiteralValue(endExpression, out var end))
+            {
+                return false;
+            }
+
+            rangePattern = new LowerableIntegerRangePattern(start, end);
+            return true;
+        }
+
+        private static bool TryParseImportedIntegerLiteralValue(
+            ImportedTemplateTypedBodyExpressionSummary? expression,
+            out BigInteger value)
+        {
+            value = BigInteger.Zero;
+            return expression is { Kind: ImportedTemplateTypedBodyExpressionKind.Literal, LiteralText: { } literalText }
+                && BigInteger.TryParse(literalText, out value);
         }
 
         private bool TryLowerImportedTypedTemplateIf(ImportedTemplateTypedBodyStatementSummary statement)

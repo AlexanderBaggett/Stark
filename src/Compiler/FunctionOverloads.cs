@@ -236,13 +236,14 @@ internal static class FunctionOverloadFacts
         IReadOnlyList<TypedFunctionSignature> candidates,
         StarkTypeSymbol? receiverType,
         IReadOnlyList<StarkTypeSymbol> argumentTypes,
-        Func<StarkTypeSymbol, StarkTypeSymbol, bool> canAssign)
+        Func<StarkTypeSymbol, StarkTypeSymbol, bool> canAssign,
+        Func<StarkTypeSymbol, string, StarkTypeSymbol?>? associatedTypeResolver = null)
     {
         var matches = new List<(TypedFunctionSignature Signature, int ExactMatches, int ConversionCost, int GenericPenalty)>();
 
         foreach (var candidate in candidates)
         {
-            if (TryResolveCandidate(candidate, receiverType, argumentTypes, canAssign, out var resolvedCandidate, out var exactMatches, out var conversionCost, out var genericPenalty))
+            if (TryResolveCandidate(candidate, receiverType, argumentTypes, canAssign, associatedTypeResolver, out var resolvedCandidate, out var exactMatches, out var conversionCost, out var genericPenalty))
             {
                 matches.Add((resolvedCandidate, exactMatches, conversionCost, genericPenalty));
             }
@@ -317,6 +318,9 @@ internal static class FunctionOverloadFacts
                 => $"{BuildCanonicalTypeKey(coreType.ElementType)}[{(coreType.FixedLength is { } fixedLength ? fixedLength.ToString() : "?")}]",
             StarkTypeKind.Slice when coreType.ElementType is not null
                 => $"{BuildCanonicalTypeKey(coreType.ElementType)}[]",
+            StarkTypeKind.AssociatedType when coreType.AssociatedTypeOwner is not null
+                                              && coreType.AssociatedTypeName is not null
+                => $"{BuildCanonicalTypeKey(coreType.AssociatedTypeOwner)}.{coreType.AssociatedTypeName}",
             _ => coreType.DisplayName
         };
     }
@@ -349,17 +353,18 @@ internal static class FunctionOverloadFacts
     public static TypedFunctionSignature InstantiateSignature(
         TypedFunctionSignature template,
         IReadOnlyList<StarkTypeSymbol> typeArguments,
-        string materializedName)
+        string materializedName,
+        Func<StarkTypeSymbol, string, StarkTypeSymbol?>? associatedTypeResolver = null)
     {
         var substitution = BuildGenericSubstitution(template, typeArguments);
         return template with
         {
             Name = materializedName,
-            ReturnType = SubstituteType(template.ReturnType, substitution),
+            ReturnType = SubstituteType(template.ReturnType, substitution, associatedTypeResolver),
             Parameters = template.Parameters
                 .Select(parameter => new TypedParameterSymbol(
                     parameter.Name,
-                    SubstituteType(parameter.Type, substitution),
+                    SubstituteType(parameter.Type, substitution, associatedTypeResolver),
                     parameter.IsDisjoint,
                     parameter.IsConst,
                     parameter.RawPointerElementCountExpression))
@@ -421,6 +426,7 @@ internal static class FunctionOverloadFacts
         StarkTypeSymbol? receiverType,
         IReadOnlyList<StarkTypeSymbol> argumentTypes,
         Func<StarkTypeSymbol, StarkTypeSymbol, bool> canAssign,
+        Func<StarkTypeSymbol, string, StarkTypeSymbol?>? associatedTypeResolver,
         out TypedFunctionSignature resolvedCandidate,
         out int exactMatches,
         out int conversionCost,
@@ -452,7 +458,7 @@ internal static class FunctionOverloadFacts
 
         if (candidate.IsGeneric)
         {
-            if (!TryInstantiateGenericCandidate(candidate, receiverType, argumentTypes, out resolvedCandidate))
+            if (!TryInstantiateGenericCandidate(candidate, receiverType, argumentTypes, associatedTypeResolver, out resolvedCandidate))
             {
                 return false;
             }
@@ -547,6 +553,7 @@ internal static class FunctionOverloadFacts
         TypedFunctionSignature candidate,
         StarkTypeSymbol? receiverType,
         IReadOnlyList<StarkTypeSymbol> argumentTypes,
+        Func<StarkTypeSymbol, string, StarkTypeSymbol?>? associatedTypeResolver,
         out TypedFunctionSignature instantiated)
     {
         instantiated = candidate;
@@ -562,7 +569,7 @@ internal static class FunctionOverloadFacts
 
         if (receiverType is not null)
         {
-            var receiverParameterType = SubstituteType(GetOverloadArgumentParameterType(candidate.Parameters[0]), substitution);
+            var receiverParameterType = SubstituteType(GetOverloadArgumentParameterType(candidate.Parameters[0]), substitution, associatedTypeResolver);
             if (ContainsGenericParameter(receiverParameterType, genericParameters)
                 && !TryInferTypeArguments(receiverParameterType, receiverType, genericParameters, substitution))
             {
@@ -573,7 +580,7 @@ internal static class FunctionOverloadFacts
         for (var index = 0; index < argumentTypes.Count; index++)
         {
             var parameter = candidate.Parameters[index + receiverOffset];
-            var parameterType = SubstituteType(GetOverloadArgumentParameterType(parameter), substitution);
+            var parameterType = SubstituteType(GetOverloadArgumentParameterType(parameter), substitution, associatedTypeResolver);
             if (ContainsGenericParameter(parameterType, genericParameters)
                 && !TryInferTypeArguments(
                     parameterType,
@@ -592,11 +599,11 @@ internal static class FunctionOverloadFacts
 
         instantiated = candidate with
         {
-            ReturnType = SubstituteType(candidate.ReturnType, substitution),
+            ReturnType = SubstituteType(candidate.ReturnType, substitution, associatedTypeResolver),
             Parameters = candidate.Parameters
                 .Select(parameter => new TypedParameterSymbol(
                     parameter.Name,
-                    SubstituteType(parameter.Type, substitution),
+                    SubstituteType(parameter.Type, substitution, associatedTypeResolver),
                     parameter.IsDisjoint,
                     parameter.IsConst,
                     parameter.RawPointerElementCountExpression))
@@ -876,6 +883,12 @@ internal static class FunctionOverloadFacts
                    && strippedType.ClosureParameterTypes.Any(parameter => ContainsGenericParameter(parameter, genericParameters));
         }
 
+        if (strippedType.Kind == StarkTypeKind.AssociatedType)
+        {
+            return strippedType.AssociatedTypeOwner is not null
+                && ContainsGenericParameter(strippedType.AssociatedTypeOwner, genericParameters);
+        }
+
         return strippedType.ElementType is not null
             && ContainsGenericParameter(strippedType.ElementType, genericParameters);
     }
@@ -896,7 +909,8 @@ internal static class FunctionOverloadFacts
 
     public static StarkTypeSymbol SubstituteType(
         StarkTypeSymbol type,
-        IReadOnlyDictionary<string, StarkTypeSymbol> substitution)
+        IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
+        Func<StarkTypeSymbol, string, StarkTypeSymbol?>? associatedTypeResolver = null)
     {
         var coreType = StripTopLevelQualifiers(type);
         StarkTypeSymbol substitutedCore;
@@ -910,7 +924,7 @@ internal static class FunctionOverloadFacts
             else if (StarkTypeSymbols.IsGenericInstantiation(coreType) && coreType.TypeArguments is not null)
             {
                 var substitutedArguments = coreType.TypeArguments
-                    .Select(argument => SubstituteType(argument, substitution))
+                    .Select(argument => SubstituteType(argument, substitution, associatedTypeResolver))
                     .ToArray();
                 substitutedCore = StarkTypeSymbols.GenericInstantiation(
                     StarkTypeSymbols.GetGenericBaseName(name),
@@ -921,9 +935,19 @@ internal static class FunctionOverloadFacts
                 substitutedCore = coreType;
             }
         }
+        else if (coreType.Kind == StarkTypeKind.AssociatedType
+            && coreType.AssociatedTypeOwner is not null
+            && coreType.AssociatedTypeName is not null)
+        {
+            var substitutedOwner = SubstituteType(coreType.AssociatedTypeOwner, substitution, associatedTypeResolver);
+            var resolvedAssociated = associatedTypeResolver?.Invoke(substitutedOwner, coreType.AssociatedTypeName);
+            substitutedCore = resolvedAssociated is not null
+                ? StripTopLevelQualifiers(resolvedAssociated)
+                : StarkTypeSymbols.AssociatedType(substitutedOwner, coreType.AssociatedTypeName);
+        }
         else if (coreType.ElementType is not null)
         {
-            var substitutedElement = SubstituteType(coreType.ElementType, substitution);
+            var substitutedElement = SubstituteType(coreType.ElementType, substitution, associatedTypeResolver);
             substitutedCore = coreType.Kind switch
             {
                 StarkTypeKind.FixedArray => StarkTypeSymbols.FixedArray(substitutedElement, coreType.FixedLength),
@@ -940,8 +964,8 @@ internal static class FunctionOverloadFacts
         {
             substitutedCore = StarkTypeSymbols.FunctionPointer(
                 functionKind,
-                SubstituteType(returnType, substitution),
-                parameterTypes.Select(parameter => SubstituteType(parameter, substitution)).ToArray(),
+                SubstituteType(returnType, substitution, associatedTypeResolver),
+                parameterTypes.Select(parameter => SubstituteType(parameter, substitution, associatedTypeResolver)).ToArray(),
                 coreType.FunctionPointerDisjointParameterGroups,
                 coreType.FunctionPointerOverlapParameterGroups,
                 coreType.FunctionPointerSameParameterGroups,
@@ -957,8 +981,8 @@ internal static class FunctionOverloadFacts
                 coreType.ClosureStorageKind,
                 coreType.ClosureCallCapability,
                 closureFunctionKind,
-                SubstituteType(closureReturnType, substitution),
-                closureParameterTypes.Select(parameter => SubstituteType(parameter, substitution)).ToArray(),
+                SubstituteType(closureReturnType, substitution, associatedTypeResolver),
+                closureParameterTypes.Select(parameter => SubstituteType(parameter, substitution, associatedTypeResolver)).ToArray(),
                 coreType.ClosureDisjointParameterGroups,
                 coreType.ClosureOverlapParameterGroups,
                 coreType.ClosureSameParameterGroups,

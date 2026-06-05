@@ -51,7 +51,11 @@ internal static partial class PackageImageBuilder
                 : null,
             ParameterRawPointerElementCountExpressions: GetCallableRawPointerElementCountExpressions(type),
             OverlapParameterGroups: BuildParameterOverlapGroupManifests(GetCallableOverlapParameterGroups(type)),
-            SameParameterGroups: BuildParameterSameGroupManifests(GetCallableSameParameterGroups(type)));
+            SameParameterGroups: BuildParameterSameGroupManifests(GetCallableSameParameterGroups(type)),
+            AssociatedOwnerType: type.AssociatedTypeOwner is null
+                ? null
+                : BuildPublishedAbiTypeReference(type.AssociatedTypeOwner, moduleName, localNamedTypes),
+            AssociatedTypeName: type.AssociatedTypeName);
     }
 
     private static string ComputePublishedPackageAbiSymbolName(
@@ -169,7 +173,11 @@ internal static partial class PackageImageBuilder
                 : null,
             ParameterRawPointerElementCountExpressions: GetCallableRawPointerElementCountExpressions(type),
             OverlapParameterGroups: BuildParameterOverlapGroupManifests(GetCallableOverlapParameterGroups(type)),
-            SameParameterGroups: BuildParameterSameGroupManifests(GetCallableSameParameterGroups(type)));
+            SameParameterGroups: BuildParameterSameGroupManifests(GetCallableSameParameterGroups(type)),
+            AssociatedOwnerType: type.AssociatedTypeOwner is null
+                ? null
+                : BuildTypeReference(type.AssociatedTypeOwner, moduleName, stripCurrentModulePrefix),
+            AssociatedTypeName: type.AssociatedTypeName);
     }
 
     private static StarkFunctionKind? GetPackageCallableFunctionKind(StarkTypeSymbol type)
@@ -489,6 +497,11 @@ internal static partial class PackageImageLoader
                 normalizedNamedType ?? "<unnamed>",
                 type.TypeArguments.Select(argument => BuildTypeSymbol(argument, currentModuleName, localNamedTypes)).ToArray()),
             "named" => StarkTypeSymbols.Named(normalizedNamedType ?? "<unnamed>"),
+            "associatedtype" when type.AssociatedOwnerType is not null
+                                    && type.AssociatedTypeName is not null
+                => StarkTypeSymbols.AssociatedType(
+                    BuildTypeSymbol(type.AssociatedOwnerType, currentModuleName, localNamedTypes),
+                    type.AssociatedTypeName),
             _ => StarkTypeSymbols.Error
         };
 
@@ -601,6 +614,9 @@ internal static partial class PackageImageLoader
             "closure" => $"{RenderClosureStoragePrefix(type.ClosureStorageKind)}closure<{RenderClosureCallCapabilityPrefix(type.ClosureCallCapability)}{RenderTypeReferenceFunctionKind(type.FunctionKind)} {RenderTypeReference(type.ReturnType!)}({string.Join(", ", (type.ParameterTypes ?? []).Select((parameter, index) => RenderFunctionPointerParameterTypeReference(parameter, type.ParameterRawPointerElementCountExpressions, index)))}){RenderFunctionPointerMemoryContracts(type)}>",
             "named" when type.TypeArguments is { Count: > 0 } => $"{type.Name}<{string.Join(", ", type.TypeArguments.Select(RenderTypeReference))}>",
             "named" => type.Name ?? "<unnamed>",
+            "associatedtype" when type.AssociatedOwnerType is not null
+                                    && type.AssociatedTypeName is not null
+                => $"{RenderTypeReference(type.AssociatedOwnerType)}.{type.AssociatedTypeName}",
             _ => type.Name ?? type.Kind
         };
 

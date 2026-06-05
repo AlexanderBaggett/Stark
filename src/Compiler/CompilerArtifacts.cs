@@ -668,6 +668,13 @@ public sealed record TypeAliasSymbol(
     public bool IsGeneric => GenericParameterNames is { Count: > 0 };
 }
 
+public sealed record AssociatedTypeSymbol(
+    string Name,
+    StarkTypeSymbol? TargetType = null)
+{
+    public bool IsRequired => TargetType is null;
+}
+
 public sealed record TopLevelDeclarationModel(
     string Name,
     DeclarationKind Kind,
@@ -947,6 +954,7 @@ public enum ImportedTemplateTypedBodyStatementKind
 public enum ImportedTemplateTypedSwitchCaseKind
 {
     Literal,
+    Range,
     MatchAll,
     Default,
     EnumPattern,
@@ -958,6 +966,7 @@ public enum ImportedTemplateTypedSwitchFieldPatternKind
     Discard,
     Capture,
     Literal,
+    Range,
     EnumPattern,
     AggregatePattern
 }
@@ -1017,6 +1026,7 @@ public sealed record ImportedTemplateTypedSwitchFieldPatternSummary(
     string? Name = null,
     int? Ordinal = null,
     ImportedTemplateTypedBodyExpressionSummary? Expression = null,
+    ImportedTemplateTypedBodyExpressionSummary? EndExpression = null,
     IReadOnlyList<ImportedTemplateTypedSwitchFieldPatternSummary>? MemberPatterns = null)
 {
     public IReadOnlyList<ImportedTemplateTypedSwitchFieldPatternSummary> Members =>
@@ -1029,6 +1039,7 @@ public sealed record ImportedTemplateTypedSwitchCaseSummary(
     string? Name = null,
     ImportedTemplateTypedBodyExpressionSummary? Expression = null,
     ImportedTemplateTypedBodyExpressionSummary? GuardExpression = null,
+    ImportedTemplateTypedBodyExpressionSummary? EndExpression = null,
     IReadOnlyList<ImportedTemplateTypedSwitchFieldPatternSummary>? MemberPatterns = null,
     IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? StatementSummaries = null)
 {
@@ -1381,7 +1392,8 @@ public enum StarkTypeKind
     Closure,
     Named,
     Null,
-    DynTrait
+    DynTrait,
+    AssociatedType
 }
 
 public sealed record StarkTypeSymbol(
@@ -1418,7 +1430,9 @@ public sealed record StarkTypeSymbol(
     bool IsMutableView = false,
     IReadOnlyList<StarkTypeSymbol>? TypeArguments = null,
     string? DynTraitName = null,
-    StarkDynTraitStorageKind DynTraitStorageKind = StarkDynTraitStorageKind.View);
+    StarkDynTraitStorageKind DynTraitStorageKind = StarkDynTraitStorageKind.View,
+    StarkTypeSymbol? AssociatedTypeOwner = null,
+    string? AssociatedTypeName = null);
 
 public static class StarkTypeSymbols
 {
@@ -1767,6 +1781,21 @@ public static class StarkTypeSymbols
 
     public static StarkTypeSymbol Named(string name) => new(StarkTypeKind.Named, name, NamedType: name);
 
+    public static StarkTypeSymbol AssociatedType(StarkTypeSymbol ownerType, string associatedTypeName)
+    {
+        var ownerCore = WithQualifiers(
+            ownerType,
+            borrowKind: StarkBorrowKind.None,
+            accessKind: StarkAccessKind.None,
+            initializationKind: StarkInitializationKind.None,
+            isMutableView: false);
+        return new StarkTypeSymbol(
+            StarkTypeKind.AssociatedType,
+            $"{ownerCore.DisplayName}.{associatedTypeName}",
+            AssociatedTypeOwner: ownerCore,
+            AssociatedTypeName: associatedTypeName);
+    }
+
     public static StarkTypeSymbol GenericInstantiation(string templateName, IReadOnlyList<StarkTypeSymbol> typeArgs)
     {
         var displayName = $"{templateName}<{string.Join(", ", typeArgs.Select(static t => t.DisplayName))}>";
@@ -2042,6 +2071,9 @@ public static class StarkTypeSymbols
             StarkTypeKind.Named when type.TypeArguments is { Count: > 0 } && type.NamedType is not null
                 => GenericInstantiation(GetGenericBaseName(type.NamedType), type.TypeArguments),
             StarkTypeKind.Named when type.NamedType is not null => Named(type.NamedType),
+            StarkTypeKind.AssociatedType when type.AssociatedTypeOwner is not null
+                                               && type.AssociatedTypeName is not null
+                => AssociatedType(type.AssociatedTypeOwner, type.AssociatedTypeName),
             _ => type
         };
     }
@@ -2130,6 +2162,7 @@ public sealed record NamedTypeSymbol(
     IReadOnlyList<EnumVariantSymbol>? EnumVariants = null,
     IReadOnlyList<string>? GenericParameterNames = null,
     IReadOnlyList<string>? ImplementedTraitNames = null,
+    IReadOnlyDictionary<string, AssociatedTypeSymbol>? AssociatedTypeMembers = null,
     bool IsDynTrait = false,
     StructLayoutMetadata? Layout = null)
 {
@@ -2158,6 +2191,12 @@ public sealed record NamedTypeSymbol(
     public bool IsGeneric => GenericParameterNames is { Count: > 0 };
 
     public IReadOnlyList<string> ImplementedTraits => ImplementedTraitNames ?? [];
+
+    public IReadOnlyDictionary<string, AssociatedTypeSymbol> AssociatedTypes =>
+        AssociatedTypeMembers ?? EmptyAssociatedTypes;
+
+    private static IReadOnlyDictionary<string, AssociatedTypeSymbol> EmptyAssociatedTypes { get; } =
+        new Dictionary<string, AssociatedTypeSymbol>(StringComparer.Ordinal);
 
     public IReadOnlyList<EnumVariantSymbol> Variants => EnumVariants ?? [];
 

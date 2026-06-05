@@ -102,6 +102,44 @@ public static class DefaultCompilerPipeline
         return emittedAny;
     }
 
+    private static TypedFunctionSignature InstantiateSignatureForInstantiation(
+        TypedFunctionSignature template,
+        IReadOnlyList<StarkTypeSymbol> typeArguments,
+        string materializedName,
+        TypeCheckModel typeModel)
+    {
+        return FunctionOverloadFacts.InstantiateSignature(
+            template,
+            typeArguments,
+            materializedName,
+            (ownerType, associatedTypeName) => ResolveAssociatedTypeForSubstitution(ownerType, associatedTypeName, typeModel));
+    }
+
+    private static StarkTypeSymbol SubstituteTypeForInstantiation(
+        StarkTypeSymbol type,
+        IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
+        TypeCheckModel typeModel)
+    {
+        return FunctionOverloadFacts.SubstituteType(
+            type,
+            substitution,
+            (ownerType, associatedTypeName) => ResolveAssociatedTypeForSubstitution(ownerType, associatedTypeName, typeModel));
+    }
+
+    private static StarkTypeSymbol? ResolveAssociatedTypeForSubstitution(
+        StarkTypeSymbol ownerType,
+        string associatedTypeName,
+        TypeCheckModel typeModel)
+    {
+        return AssociatedTypeFacts.TryResolveAssociatedType(
+            ownerType,
+            associatedTypeName,
+            typeModel.NamedTypes,
+            out var targetType)
+                ? targetType
+                : null;
+    }
+
     private sealed class ParsePass : ICompilerPass
     {
         public string Id => "parse";
@@ -1007,17 +1045,18 @@ public static class DefaultCompilerPipeline
                     }
 
                     var concreteTypeArguments = openTypeArguments
-                        .Select(typeArgument => FunctionOverloadFacts.SubstituteType(typeArgument, substitution))
+                        .Select(typeArgument => SubstituteTypeForInstantiation(typeArgument, substitution, typeModel))
                         .ToArray();
                     if (concreteTypeArguments.Any(typeArgument => ContainsUnboundGenericParameter(typeArgument, typeModel)))
                     {
                         continue;
                     }
 
-                    var instantiatedSignature = FunctionOverloadFacts.InstantiateSignature(
+                    var instantiatedSignature = InstantiateSignatureForInstantiation(
                         calleeTemplateSignature,
                         concreteTypeArguments,
-                        calleeTemplateSignature.Name);
+                        calleeTemplateSignature.Name,
+                        typeModel);
                     var expandedTrigger = new FunctionInstantiationTriggerRecord(
                         calleeTemplateSignature.DisplaySourceName,
                         concreteTypeArguments,
@@ -1075,7 +1114,8 @@ public static class DefaultCompilerPipeline
                         instanceOverloads,
                         receiverType,
                         [],
-                        TypeCompatibilityFacts.CanAssign);
+                        TypeCompatibilityFacts.CanAssign,
+                        (ownerType, associatedTypeName) => ResolveAssociatedTypeForSubstitution(ownerType, associatedTypeName, typeModel));
                     if (!resolution.Succeeded
                         || resolution.Match is not { IsGenericInstantiation: true } signature
                         || signature.TypeArguments is not { Count: > 0 } typeArguments
@@ -1085,10 +1125,11 @@ public static class DefaultCompilerPipeline
                         continue;
                     }
 
-                    var instantiatedSignature = FunctionOverloadFacts.InstantiateSignature(
+                    var instantiatedSignature = InstantiateSignatureForInstantiation(
                         templateSignature,
                         typeArguments,
-                        templateSignature.Name);
+                        templateSignature.Name,
+                        typeModel);
                     var key = $"{instantiatedSignature.TemplateName ?? instantiatedSignature.Name}|{FunctionOverloadFacts.BuildTypeArgumentKey(typeArguments)}";
                     if (!seen.Add(key))
                     {
@@ -1228,7 +1269,7 @@ public static class DefaultCompilerPipeline
 
                 foreach (var deferredType in deferredTypes)
                 {
-                    var concreteType = FunctionOverloadFacts.SubstituteType(deferredType.Type, substitution);
+                    var concreteType = SubstituteTypeForInstantiation(deferredType.Type, substitution, typeModel);
                     if (ContainsUnboundGenericParameter(concreteType, typeModel))
                     {
                         continue;
@@ -1315,17 +1356,18 @@ public static class DefaultCompilerPipeline
             Queue<FunctionInstantiationTriggerRecord> pending)
         {
             var concreteTypeArguments = openTypeArguments
-                .Select(typeArgument => FunctionOverloadFacts.SubstituteType(typeArgument, substitution))
+                .Select(typeArgument => SubstituteTypeForInstantiation(typeArgument, substitution, typeModel))
                 .ToArray();
             if (concreteTypeArguments.Any(typeArgument => ContainsUnboundGenericParameter(typeArgument, typeModel)))
             {
                 return;
             }
 
-            var instantiatedSignature = FunctionOverloadFacts.InstantiateSignature(
+            var instantiatedSignature = InstantiateSignatureForInstantiation(
                 calleeTemplateSignature,
                 concreteTypeArguments,
-                calleeTemplateSignature.Name);
+                calleeTemplateSignature.Name,
+                typeModel);
             var expandedTrigger = new FunctionInstantiationTriggerRecord(
                 calleeTemplateSignature.DisplaySourceName,
                 concreteTypeArguments,
@@ -1347,7 +1389,7 @@ public static class DefaultCompilerPipeline
         {
             foreach (var deferredType in importedTemplate.DeferredTypes)
             {
-                var concreteType = FunctionOverloadFacts.SubstituteType(deferredType.Type, substitution);
+                var concreteType = SubstituteTypeForInstantiation(deferredType.Type, substitution, typeModel);
                 if (ContainsUnboundGenericParameter(concreteType, typeModel))
                 {
                     continue;
@@ -1358,7 +1400,7 @@ public static class DefaultCompilerPipeline
 
             foreach (var objectCreation in importedTemplate.ObjectCreations)
             {
-                var concreteCreatedType = FunctionOverloadFacts.SubstituteType(objectCreation.CreatedType, substitution);
+                var concreteCreatedType = SubstituteTypeForInstantiation(objectCreation.CreatedType, substitution, typeModel);
                 if (!ContainsUnboundGenericParameter(concreteCreatedType, typeModel))
                 {
                     AddExpandedTypeTriggers(concreteCreatedType, location, typeModel, seen, expanded);
@@ -1371,7 +1413,7 @@ public static class DefaultCompilerPipeline
 
                 foreach (var parameter in constructor.Parameters)
                 {
-                    var concreteParameterType = FunctionOverloadFacts.SubstituteType(parameter.Type, substitution);
+                    var concreteParameterType = SubstituteTypeForInstantiation(parameter.Type, substitution, typeModel);
                     if (ContainsUnboundGenericParameter(concreteParameterType, typeModel))
                     {
                         continue;
@@ -1383,7 +1425,7 @@ public static class DefaultCompilerPipeline
 
             foreach (var localDeclaration in importedTemplate.LocalDeclarations)
             {
-                var concreteLocalType = FunctionOverloadFacts.SubstituteType(localDeclaration.Type, substitution);
+                var concreteLocalType = SubstituteTypeForInstantiation(localDeclaration.Type, substitution, typeModel);
                 if (ContainsUnboundGenericParameter(concreteLocalType, typeModel))
                 {
                     continue;
@@ -1394,7 +1436,7 @@ public static class DefaultCompilerPipeline
 
             foreach (var conversion in importedTemplate.Conversions)
             {
-                var concreteTargetType = FunctionOverloadFacts.SubstituteType(conversion.TargetType, substitution);
+                var concreteTargetType = SubstituteTypeForInstantiation(conversion.TargetType, substitution, typeModel);
                 if (ContainsUnboundGenericParameter(concreteTargetType, typeModel))
                 {
                     continue;
@@ -1708,7 +1750,7 @@ public static class DefaultCompilerPipeline
             ISet<string> seen,
             ICollection<TypeInstantiationTriggerRecord> expanded)
         {
-            var concreteType = FunctionOverloadFacts.SubstituteType(type, substitution);
+            var concreteType = SubstituteTypeForInstantiation(type, substitution, typeModel);
             if (ContainsUnboundGenericParameter(concreteType, typeModel))
             {
                 return;
@@ -1781,7 +1823,7 @@ public static class DefaultCompilerPipeline
         {
             foreach (var typeArgument in signature.TypeArguments ?? [])
             {
-                var concreteTypeArgument = FunctionOverloadFacts.SubstituteType(typeArgument, substitution);
+                var concreteTypeArgument = SubstituteTypeForInstantiation(typeArgument, substitution, typeModel);
                 if (ContainsUnboundGenericParameter(concreteTypeArgument, typeModel))
                 {
                     continue;
@@ -1790,7 +1832,7 @@ public static class DefaultCompilerPipeline
                 AddExpandedTypeTriggers(concreteTypeArgument, location, typeModel, seen, expanded);
             }
 
-            var concreteReturnType = FunctionOverloadFacts.SubstituteType(signature.ReturnType, substitution);
+            var concreteReturnType = SubstituteTypeForInstantiation(signature.ReturnType, substitution, typeModel);
             if (!ContainsUnboundGenericParameter(concreteReturnType, typeModel))
             {
                 AddExpandedTypeTriggers(concreteReturnType, location, typeModel, seen, expanded);
@@ -1798,7 +1840,7 @@ public static class DefaultCompilerPipeline
 
             foreach (var parameter in signature.Parameters)
             {
-                var concreteParameterType = FunctionOverloadFacts.SubstituteType(parameter.Type, substitution);
+                var concreteParameterType = SubstituteTypeForInstantiation(parameter.Type, substitution, typeModel);
                 if (ContainsUnboundGenericParameter(concreteParameterType, typeModel))
                 {
                     continue;
@@ -1969,7 +2011,7 @@ public static class DefaultCompilerPipeline
                 {
                     var nestedFieldType = substitution is null
                         ? field.Type
-                        : FunctionOverloadFacts.SubstituteType(field.Type, substitution);
+                        : SubstituteTypeForInstantiation(field.Type, substitution, typeModel);
                     AddExpandedTypeTriggers(nestedFieldType, location, typeModel, seen, expanded, activeNamedTypes);
                 }
 
@@ -1979,7 +2021,7 @@ public static class DefaultCompilerPipeline
                     {
                         var nestedFieldType = substitution is null
                             ? field.Type
-                            : FunctionOverloadFacts.SubstituteType(field.Type, substitution);
+                            : SubstituteTypeForInstantiation(field.Type, substitution, typeModel);
                         AddExpandedTypeTriggers(nestedFieldType, location, typeModel, seen, expanded, activeNamedTypes);
                     }
                 }
@@ -2011,6 +2053,11 @@ public static class DefaultCompilerPipeline
 
             if (coreType.TypeArguments is { Count: > 0 }
                 && coreType.TypeArguments.Any(typeArgument => ContainsUnboundGenericParameter(typeArgument, typeModel)))
+            {
+                return true;
+            }
+
+            if (coreType.Kind == StarkTypeKind.AssociatedType)
             {
                 return true;
             }
@@ -2366,10 +2413,11 @@ public static class DefaultCompilerPipeline
                 return false;
             }
 
-            var instantiatedSignature = FunctionOverloadFacts.InstantiateSignature(
+            var instantiatedSignature = InstantiateSignatureForInstantiation(
                 templateSignature,
                 function.TypeArguments,
-                function.TemplateName);
+                function.TemplateName,
+                typeModel);
 
             if (RequiresIndirectAggregateReturnAbi(
                     instantiatedSignature.ReturnType,
@@ -3827,7 +3875,8 @@ public static class DefaultCompilerPipeline
                 declarationsByQualifiedName,
                 effects,
                 types.Functions,
-                fallbackSignatures);
+                fallbackSignatures,
+                types);
             var functions = declaredFunctions
                 .Concat(lambdaFunctions)
                 .Concat(closureLambdaFunctions)
@@ -3976,7 +4025,8 @@ public static class DefaultCompilerPipeline
             IReadOnlyDictionary<string, FunctionDeclarationModel> declarationsByQualifiedName,
             FunctionEffectModel effects,
             IReadOnlyDictionary<string, TypedFunctionSignature> signatures,
-            IReadOnlyDictionary<string, TypedFunctionSignature> fallbackSignatures)
+            IReadOnlyDictionary<string, TypedFunctionSignature> fallbackSignatures,
+            TypeCheckModel typeModel)
         {
             var functions = new List<HighLevelIrFunction>();
 
@@ -4005,7 +4055,7 @@ public static class DefaultCompilerPipeline
                 }
 
                 var substitution = FunctionOverloadFacts.BuildGenericSubstitution(templateSignature, strategy.TypeArguments);
-                var specializedSignature = FunctionOverloadFacts.InstantiateSignature(templateSignature, strategy.TypeArguments, strategy.SymbolName);
+                var specializedSignature = InstantiateSignatureForInstantiation(templateSignature, strategy.TypeArguments, strategy.SymbolName, typeModel);
                 functions.Add(new HighLevelIrFunction(
                     strategy.SymbolName,
                     specializedSignature,

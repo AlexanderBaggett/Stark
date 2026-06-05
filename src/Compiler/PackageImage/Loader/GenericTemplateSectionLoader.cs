@@ -310,6 +310,10 @@ internal static partial class PackageImageLoader
         {
             kind = ImportedTemplateTypedSwitchCaseKind.Literal;
         }
+        else if (string.Equals(manifest.Kind, "range", StringComparison.Ordinal))
+        {
+            kind = ImportedTemplateTypedSwitchCaseKind.Range;
+        }
         else if (string.Equals(manifest.Kind, "match-all", StringComparison.Ordinal))
         {
             kind = ImportedTemplateTypedSwitchCaseKind.MatchAll;
@@ -338,6 +342,13 @@ internal static partial class PackageImageLoader
             return false;
         }
 
+        ImportedTemplateTypedBodyExpressionSummary? endExpression = null;
+        if (manifest.EndExpression is not null
+            && !TryBuildImportedTypedTemplateExpression(manifest.EndExpression, out endExpression))
+        {
+            return false;
+        }
+
         ImportedTemplateTypedBodyExpressionSummary? guardExpression = null;
         if (manifest.GuardExpression is not null
             && !TryBuildImportedTypedTemplateExpression(manifest.GuardExpression, out guardExpression))
@@ -352,6 +363,15 @@ internal static partial class PackageImageLoader
         }
 
         if (kind == ImportedTemplateTypedSwitchCaseKind.Literal && expression is null)
+        {
+            return false;
+        }
+
+        if (kind == ImportedTemplateTypedSwitchCaseKind.Range
+            && (expression is null
+                || endExpression is null
+                || expression.Kind != ImportedTemplateTypedBodyExpressionKind.Literal
+                || endExpression.Kind != ImportedTemplateTypedBodyExpressionKind.Literal))
         {
             return false;
         }
@@ -384,6 +404,7 @@ internal static partial class PackageImageLoader
             manifest.Name,
             expression,
             guardExpression,
+            EndExpression: endExpression,
             MemberPatterns: members,
             StatementSummaries: statements);
         return true;
@@ -422,6 +443,25 @@ internal static partial class PackageImageLoader
             summary = new ImportedTemplateTypedSwitchFieldPatternSummary(
                 ImportedTemplateTypedSwitchFieldPatternKind.Literal,
                 Expression: literalExpression);
+            return true;
+        }
+
+        if (string.Equals(manifest.Kind, "range", StringComparison.Ordinal))
+        {
+            if (manifest.Expression is null
+                || manifest.EndExpression is null
+                || !TryBuildImportedTypedTemplateExpression(manifest.Expression, out var startExpression)
+                || !TryBuildImportedTypedTemplateExpression(manifest.EndExpression, out var endExpression)
+                || startExpression.Kind != ImportedTemplateTypedBodyExpressionKind.Literal
+                || endExpression.Kind != ImportedTemplateTypedBodyExpressionKind.Literal)
+            {
+                return false;
+            }
+
+            summary = new ImportedTemplateTypedSwitchFieldPatternSummary(
+                ImportedTemplateTypedSwitchFieldPatternKind.Range,
+                Expression: startExpression,
+                EndExpression: endExpression);
             return true;
         }
 

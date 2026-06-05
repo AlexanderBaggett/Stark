@@ -369,6 +369,12 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitDoctrineMember([NotNull] StarkParser.DoctrineMemberContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.associatedTypeDeclaration"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitAssociatedTypeDeclaration([NotNull] StarkParser.AssociatedTypeDeclarationContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.fieldDeclaration"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
@@ -758,6 +764,12 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <param name="context">The parse tree.</param>
 	/// <return>The visitor result.</return>
 	Result VisitPattern([NotNull] StarkParser.PatternContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.rangePattern"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitRangePattern([NotNull] StarkParser.RangePatternContext context);
 	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.aggregatePattern"/>.
 	/// </summary>

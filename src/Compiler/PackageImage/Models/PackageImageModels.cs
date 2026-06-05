@@ -191,7 +191,12 @@ internal sealed record StarkPackageTypeManifest(
     string? StructLayout = null,
     int? PackBytes = null,
     int? AlignBytes = null,
-    IReadOnlyList<string>? ImplementedTraits = null);
+    IReadOnlyList<string>? ImplementedTraits = null,
+    IReadOnlyList<StarkPackageAssociatedTypeManifest>? AssociatedTypes = null);
+
+internal sealed record StarkPackageAssociatedTypeManifest(
+    string Name,
+    string? TargetType = null);
 
 internal sealed record StarkPackageEnumVariantManifest(
     string Name,
@@ -253,7 +258,9 @@ internal sealed record StarkPackageTypeReference(
     IReadOnlyList<string?>? ParameterRawPointerElementCountExpressions = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? DisjointParameterGroups = null,
     IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? OverlapParameterGroups = null,
-    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null);
+    IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? SameParameterGroups = null,
+    StarkPackageTypeReference? AssociatedOwnerType = null,
+    string? AssociatedTypeName = null);
 
 internal sealed record StarkPackageTypedParameterManifest(
     string Name,
@@ -352,7 +359,12 @@ internal sealed record StarkPackageTypedTypeManifest(
     string? StructLayout = null,
     int? PackBytes = null,
     int? AlignBytes = null,
-    IReadOnlyList<string>? ImplementedTraits = null);
+    IReadOnlyList<string>? ImplementedTraits = null,
+    IReadOnlyList<StarkPackageTypedAssociatedTypeManifest>? AssociatedTypes = null);
+
+internal sealed record StarkPackageTypedAssociatedTypeManifest(
+    string Name,
+    StarkPackageTypeReference? TargetType = null);
 
 internal sealed record StarkPackageTypedGlobalManifest(
     string Name,
@@ -457,6 +469,7 @@ internal sealed record StarkPackageTypedTemplatePatternManifest(
     string? Name = null,
     int? Ordinal = null,
     StarkPackageTypedTemplateExpressionManifest? Expression = null,
+    StarkPackageTypedTemplateExpressionManifest? EndExpression = null,
     IReadOnlyList<StarkPackageTypedTemplatePatternManifest>? Members = null);
 
 internal sealed record StarkPackageTypedTemplateSwitchCaseManifest(
@@ -465,6 +478,7 @@ internal sealed record StarkPackageTypedTemplateSwitchCaseManifest(
     string? Name = null,
     StarkPackageTypedTemplateExpressionManifest? Expression = null,
     StarkPackageTypedTemplateExpressionManifest? GuardExpression = null,
+    StarkPackageTypedTemplateExpressionManifest? EndExpression = null,
     IReadOnlyList<StarkPackageTypedTemplatePatternManifest>? Members = null,
     IReadOnlyList<StarkPackageTypedTemplateStatementManifest>? Statements = null);
 

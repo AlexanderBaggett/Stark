@@ -8,19 +8,35 @@ runtime costs, dispatch, allocation, aliasing, and failure explicit.
 
 ## Compile-time Reuse
 
-- [~] Strengthen compile-time-only `trait` and `doctrine` support.
+- [x] Strengthen compile-time-only `trait` and `doctrine` support.
 - [x] Add default method bodies for compile-time-only traits/doctrines.
-- [ ] Add associated types for compile-time contracts.
-- [~] Define doctrine-based `Hash`, `Eq`, `Ord`, and `Format` style contracts.
-- [ ] Keep traits/doctrines as compile-time contracts, not runtime objects.
-- [ ] Do not add hidden trait objects, hidden vtables, or implicit dynamic dispatch.
+- [x] Add associated types for compile-time contracts.
+- [x] Define canonical `Hash`, `Eq`, `Ord`, and `Format` style contracts.
+- [x] Keep ordinary traits/doctrines as compile-time contracts, not runtime objects.
+- [x] Do not add hidden trait objects, hidden vtables, or implicit dynamic dispatch.
 
 Notes:
 
-Default method bodies, associated types, and doctrine-based `Hash`, `Eq`,
-`Ord`, and `Format` contracts would make generic compiler code much easier to
-write without adding trait objects. The compiler can still resolve these
-contracts statically and emit concrete code.
+Default method bodies, associated type requirements/defaults, and canonical
+`Eq`, `Hash`, `Ord`, and `Format` contracts make generic compiler code much
+easier to write without hidden trait objects. The compiler resolves ordinary
+trait/doctrine contracts statically and emits concrete code.
+
+Landed associated-type slice:
+
+- Traits, doctrines, structs, and records may declare associated aliases inside
+  their body.
+- `alias Name;` is a required associated type in a trait.
+- `alias Name = Type;` defines a concrete/default associated type.
+- Implementers must define every required trait associated type; missing
+  definitions are compile-time diagnostics.
+- `Self.Name` and `T.Name` are valid type positions for associated types.
+- Generic instantiation resolves concrete associated aliases before SSA/LLVM
+  validation and emission, preserving direct static dispatch.
+- Package images preserve associated type requirements/defaults in the typed
+  interface, source bridge, and compiler facts.
+- `dyn trait` currently rejects associated types until Stark has an explicit
+  object spelling for associated-type bindings.
 
 Landed slice: `Dictionary<K, V>` now accepts non-primitive key types when the key
 type declares explicit static `finite law` methods:
@@ -32,8 +48,11 @@ Useful self-hosting targets:
 
 - `Dictionary<K, V>` keys for symbols and interned-name structs via explicit
   static `Hash`/`Equals`; `ascii`/`unicode` helpers still need stdlib contracts.
-- Generic equality and ordering for deterministic compiler output.
-- Generic formatting for diagnostics, logging, package images, and LLVM text.
+- Generic equality and ordering for deterministic compiler output via
+  `System.Collections.Eq` and `System.Collections.Ord`.
+- Generic hashing via `System.Collections.Hash` with associated `Code`.
+- Generic formatting via `System.Collections.Format` with required associated
+  `Writer`.
 - Reusable collection algorithms without a runtime dispatch layer.
 
 ## Explicit Runtime Dispatch
@@ -105,7 +124,10 @@ This keeps dispatch visible and gives the compiler exhaustiveness checks.
 - [x] Require alternatives that share a switch body to bind the same capture
       names with the same types.
 - [x] Preserve native literal-switch lowering for literal-only or-patterns.
-- [ ] Add range patterns for dense numeric/compiler-token classification.
+- [x] Add inclusive integer range patterns for dense numeric/compiler-token
+      classification: `case 0..10:`.
+- [x] Support range patterns inside enum/aggregate field patterns and typed
+      package-image templates.
 - [ ] Decide whether list and property patterns are needed before self-hosting.
 
 Notes:
@@ -114,6 +136,11 @@ Or-patterns are section-local alternatives: `case A | B when guard:` tests
 `A`, then `B`, and either successful alternative flows into the same guarded
 body. Capture-bearing alternatives must agree on names and types so the body's
 locals are definitely initialized regardless of which alternative matched.
+
+Range patterns are inclusive and integer-only. Type checking rejects empty or
+non-overlapping ranges, coverage uses intervals rather than value expansion,
+and lowering emits equality, one-sided, or two-sided comparisons depending on
+the target type bounds.
 
 ## Error And Optional Values
 

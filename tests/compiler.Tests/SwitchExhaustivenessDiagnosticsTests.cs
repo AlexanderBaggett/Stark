@@ -98,6 +98,41 @@ public sealed class SwitchExhaustivenessDiagnosticsTests
     }
 
     [Fact]
+    public void ExhaustiveRangedIntegerSwitchWithRangePatternTypeChecks()
+    {
+        var result = Compile(Prelude +
+            """
+            fn i32[min max] Pick(u8[0 3] tag)
+            {
+                switch (tag)
+                {
+                    case -10..10: return 10;
+                }
+            }
+            """);
+
+        AssertSucceeded(result);
+    }
+
+    [Fact]
+    public void LiteralCoveredByEarlierRangePatternIsRejectedAsUnreachable()
+    {
+        var result = Compile(Prelude +
+            """
+            fn i32[min max] Pick(u8[0 3] tag)
+            {
+                switch (tag)
+                {
+                    case 0..3: return 10;
+                    case 2: return 20;
+                }
+            }
+            """);
+
+        AssertDiagnostic(result, "STK3019", "already exhaustive after the earlier unguarded label '0..3'");
+    }
+
+    [Fact]
     public void WideIntegerSwitchWithDefaultArmTypeChecks()
     {
         var result = Compile(Prelude +
