@@ -752,11 +752,23 @@ internal sealed partial class MidLevelIrLowerer
         {
             var previousModuleName = _moduleNameOverride;
             var previousGenericTypeSubstitution = _activeGenericTypeSubstitution;
+            var previousGenericValueSubstitution = _activeGenericValueSubstitution;
+            var previousComptimeGenericParameters = _activeComptimeGenericParameters;
             var hadAlias = _nameAliases.TryGetValue(aliasName, out var previousAlias);
             _moduleNameOverride = moduleName;
+            _activeComptimeGenericParameters = BuildNamedTypeComptimeGenericParameters(selfType);
+            _activeGenericValueSubstitution = BuildNamedTypeComptimeValueSubstitution(selfType);
             _activeGenericTypeSubstitution = BuildNamedTypeGenericSubstitution(selfType);
             _nameAliases[aliasName] = localName;
-            return new DestructorContext(this, previousModuleName, previousGenericTypeSubstitution, aliasName, previousAlias, hadAlias);
+            return new DestructorContext(
+                this,
+                previousModuleName,
+                previousGenericTypeSubstitution,
+                previousGenericValueSubstitution,
+                previousComptimeGenericParameters,
+                aliasName,
+                previousAlias,
+                hadAlias);
         }
 
         private void EmitStorageDeadCore(ScopeFrame scope)

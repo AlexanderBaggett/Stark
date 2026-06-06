@@ -167,17 +167,24 @@ internal static class FunctionOptimizationSummaryBuilder
         if (statement.forStatement() is { } forStatement)
         {
             accumulator.LoopStatementCount++;
-            CountForInitializer(forStatement.forInitializer(), accumulator);
-            if (forStatement.forCondition()?.expression() is { } condition)
+            if (forStatement.forTraversal() is { } forTraversal)
             {
-                CountExpression(condition, accumulator);
+                CountExpression(forTraversal.expression(), accumulator);
             }
-
-            if (forStatement.forIterator()?.expressionList() is { } iterator)
+            else
             {
-                foreach (var expression in iterator.expression())
+                CountForInitializer(forStatement.forInitializer(), accumulator);
+                if (forStatement.forCondition()?.expression() is { } condition)
                 {
-                    CountExpression(expression, accumulator);
+                    CountExpression(condition, accumulator);
+                }
+
+                if (forStatement.forIterator()?.expressionList() is { } iterator)
+                {
+                    foreach (var expression in iterator.expression())
+                    {
+                        CountExpression(expression, accumulator);
+                    }
                 }
             }
 

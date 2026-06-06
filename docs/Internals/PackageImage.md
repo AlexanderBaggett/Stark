@@ -1,15 +1,34 @@
 # Stark Package Image
 
-This document defines Stark's package image model for the `v1.1` package-boundary work.
+This document defines Stark's package image model for the `v1.1`
+package-boundary work and records the self-hosting format direction.
 
-The `.starkpkg.json` artifact is a compiler-owned package image, not a narrow hand-authored distribution manifest.
-It is the package-boundary source artifact the compiler emits, inspects, diffs, validates, and loads directly.
+The package image is a compiler-owned package-boundary artifact, not a narrow
+hand-authored distribution manifest. It preserves structured package facts for
+downstream compilation and inspection.
+
+Current host status:
+
+- the C# host emits and loads `.starkpkg.json`
+- the JSON artifact is compiler-owned and not intended to be hand-authored
+- current tests and tooling often inspect or diff that JSON directly
+
+Self-hosting direction:
+
+- the normal compiler load artifact becomes a binary package image
+- deterministic JSON/text forms remain inspection and export views
+- builds may emit binary, JSON, text, or any requested combination
+- JSON/text sidecars are views of the package image, not independent sources of
+  truth
 
 Historical note:
 
-- some internal type names and older comments still use `Manifest` because the feature started as a smaller package-manifest slice
-- the file extension remains `.starkpkg.json`
-- user-facing docs and tooling should treat that file as a package image
+- some internal type names and older comments still use `Manifest` because the
+  feature started as a smaller package-manifest slice
+- the current host file extension remains `.starkpkg.json`
+- self-hosting format work is tracked in `docs/Self-host-Prep/20-package-image-format.md`
+- user-facing docs and tooling should treat package images as compiler-owned
+  artifacts regardless of the concrete file format
 
 ## Goals
 
@@ -19,20 +38,26 @@ The package image exists so Stark can preserve enough package-boundary informati
 - type-check and lower imported declarations directly from structured compiler facts
 - specialize imported generics without reparsing lossy source text
 - preserve richer interprocedural optimization facts for future package-aware optimization work
-- keep the artifact readable and diffable in Git
+- keep inspection output readable and diffable in Git
 
 ## Principles
 
 The package image contract is:
 
-- text-based and diffable
-- compiler-owned rather than routinely hand-edited
+- structured and compiler-owned rather than routinely hand-edited
+- binary-loadable on the normal compiler hot path
+- inspectable through deterministic JSON/text views
 - sectioned so new compiler data can be added without flattening everything into one record
-- loaded directly by the compiler when structured sections are available
-- allowed to evolve with the compiler source tree without an embedded format-version field
+- loaded directly by the compiler from the binary artifact when structured
+  sections are available
+- compatible with explicit format/schema/version checks before the host is
+  dropped
 
-Stark intentionally does not treat the package image as a permanently stable third-party interchange format in `v1.1`.
-The compiler and image format evolve together in source control.
+Stark intentionally does not treat the package image as a permanently stable
+third-party interchange format in `v1.1`. The compiler and image format evolve
+together in source control. The binary self-hosted format still needs enough
+explicit compatibility data to reject mismatched package images cleanly across
+bootstrap stages and releases.
 
 ## Artifact Shape
 
@@ -238,15 +263,20 @@ The current user-facing commands are:
 - `--emit-lib`:
   emits a static library plus a sidecar package image
 - `--emit-pkg` or `--emit-package`:
-  emits the package image JSON without linker or archiver steps
+  currently emits the host JSON package image without linker or archiver steps;
+  self-hosting should let builds choose binary, JSON, text, or any requested
+  combination
 - `--inspect-pkg` or `--inspect-package`:
-  validates and renders a readable summary of a package image
+  validates a package image and renders deterministic text or JSON inspection
+  output
 
 ## Compatibility Note
 
 The repository still contains some legacy uses of the word `manifest` in internal identifiers and compatibility paths.
 That legacy naming does not change the intended model:
 
-- `.starkpkg.json` is Stark's compiler-owned package image
+- `.starkpkg.json` is the current host's compiler-owned JSON package image
+- binary package images are the self-hosted compiler's normal load path
+- JSON/text inspection output remains compiler-owned and deterministic
 - direct structured loading is the primary path
 - legacy manifest-style reconstruction is temporary bridge behavior, not the semantic source of truth for imported package handling

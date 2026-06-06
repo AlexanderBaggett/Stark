@@ -25,6 +25,7 @@ internal sealed class SemanticValidator
     private readonly Dictionary<string, FunctionValidationBuilder> _summaries = new(StringComparer.Ordinal);
     private readonly Dictionary<string, FunctionValidationBuilder> _destructorSummaries = new(StringComparer.Ordinal);
     private ISet<string>? _currentFunctionGenericParameters;
+    private IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? _currentFunctionComptimeGenericParameters;
     private string? _currentFunctionName;
     private string? _currentModuleName;
 
@@ -418,12 +419,62 @@ internal sealed class SemanticValidator
 
     private StarkTypeSymbol ResolveType(StarkParser.Type_Context type)
     {
-        return ResolveType(type, _currentFunctionGenericParameters);
+        return ResolveType(type, _currentFunctionGenericParameters, _currentFunctionComptimeGenericParameters);
     }
 
     private StarkTypeSymbol ResolveType(StarkParser.Type_Context type, ISet<string>? genericParameters)
     {
-        return _typeResolver.ResolveType(type, genericParameters, CurrentModuleName);
+        return ResolveType(type, genericParameters, _currentFunctionComptimeGenericParameters);
+    }
+
+    private StarkTypeSymbol ResolveType(
+        StarkParser.Type_Context type,
+        ISet<string>? genericParameters,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters)
+    {
+        return _typeResolver.ResolveType(type, genericParameters, CurrentModuleName, comptimeGenericParameters);
+    }
+
+    private IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? GetNamedTypeComptimeGenericParameterMap(string localName)
+    {
+        return TryGetCurrentModuleNamedType(localName, out var namedType)
+            ? ToComptimeGenericParameterMap(namedType.ComptimeGenericParams)
+            : null;
+    }
+
+    private IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? GetTypeAliasComptimeGenericParameterMap(string localName)
+    {
+        return TryGetCurrentModuleTypeAlias(localName, out var typeAlias)
+            ? ToComptimeGenericParameterMap(typeAlias.ComptimeGenericParams)
+            : null;
+    }
+
+    private bool TryGetCurrentModuleNamedType(string localName, out NamedTypeSymbol namedType)
+    {
+        if (_typeModel.NamedTypes.TryGetValue(localName, out namedType!))
+        {
+            return true;
+        }
+
+        return _typeModel.NamedTypes.TryGetValue($"{CurrentModuleName}.{localName}", out namedType!);
+    }
+
+    private bool TryGetCurrentModuleTypeAlias(string localName, out TypeAliasSymbol typeAlias)
+    {
+        if (_typeModel.TypeAliases.TryGetValue(localName, out typeAlias!))
+        {
+            return true;
+        }
+
+        return _typeModel.TypeAliases.TryGetValue($"{CurrentModuleName}.{localName}", out typeAlias!);
+    }
+
+    private static IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? ToComptimeGenericParameterMap(
+        IReadOnlyList<ComptimeGenericParameterSymbol> parameters)
+    {
+        return parameters.Count == 0
+            ? null
+            : parameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
     }
 
     private bool TypeContainsOpenCurrentFunctionGenericParameter(StarkTypeSymbol type)
@@ -531,9 +582,13 @@ internal sealed class SemanticValidator
         summary.SetOptimizationSummary(FunctionOptimizationSummaryBuilder.Build(block));
 
         var previousGenericParameters = _currentFunctionGenericParameters;
+        var previousComptimeGenericParameters = _currentFunctionComptimeGenericParameters;
         var previousFunctionName = _currentFunctionName;
         _currentFunctionGenericParameters = signature.IsGeneric
             ? signature.GenericParams.ToHashSet(StringComparer.Ordinal)
+            : null;
+        _currentFunctionComptimeGenericParameters = signature.ComptimeGenericParams is { Count: > 0 }
+            ? signature.ComptimeGenericParams.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal)
             : null;
         _currentFunctionName = name;
 
@@ -562,6 +617,7 @@ internal sealed class SemanticValidator
         finally
         {
             _currentFunctionGenericParameters = previousGenericParameters;
+            _currentFunctionComptimeGenericParameters = previousComptimeGenericParameters;
             _currentFunctionName = previousFunctionName;
         }
     }
@@ -578,7 +634,8 @@ internal sealed class SemanticValidator
             if (declaration.typeAliasDeclaration() is { } typeAliasDeclaration)
             {
                 var genericParameters = _typeResolver.GetGenericParameterNames(typeAliasDeclaration.typeParameterList());
-                var aliasedType = ResolveType(typeAliasDeclaration.type_(), genericParameters);
+                var comptimeGenericParameters = GetTypeAliasComptimeGenericParameterMap(typeAliasDeclaration.Identifier().GetText());
+                var aliasedType = ResolveType(typeAliasDeclaration.type_(), genericParameters, comptimeGenericParameters);
                 ValidateTypeUsage(typeAliasDeclaration.type_(), aliasedType, TypeUsage.Alias);
                 continue;
             }
@@ -586,12 +643,13 @@ internal sealed class SemanticValidator
             if (declaration.structDeclaration() is { } structDeclaration)
             {
                 var genericParameters = _typeResolver.GetGenericParameterNames(structDeclaration.typeParameterList());
+                var comptimeGenericParameters = GetNamedTypeComptimeGenericParameterMap(structDeclaration.Identifier().GetText());
                 var isPlatformAbiBoundary = IsPlatformAbiDeclaration(structDeclaration.Identifier().GetText());
                 foreach (var field in structDeclaration.structBody().structMember()
                              .Select(static member => member.fieldDeclaration())
                              .Where(static field => field is not null)!)
                 {
-                    ValidateFieldDeclarationType(field, genericParameters, isPlatformAbiBoundary);
+                    ValidateFieldDeclarationType(field, genericParameters, comptimeGenericParameters, isPlatformAbiBoundary);
                 }
 
                 continue;
@@ -600,13 +658,14 @@ internal sealed class SemanticValidator
             if (declaration.recordDeclaration() is { } recordDeclaration)
             {
                 var genericParameters = _typeResolver.GetGenericParameterNames(recordDeclaration.typeParameterList());
+                var comptimeGenericParameters = GetNamedTypeComptimeGenericParameterMap(recordDeclaration.Identifier().GetText());
                 var isPlatformAbiBoundary = IsPlatformAbiDeclaration(recordDeclaration.Identifier().GetText());
 
                 if (recordDeclaration.primaryConstructorParameters() is { } primaryConstructor)
                 {
                     foreach (var parameter in primaryConstructor.parameterList().parameter())
                     {
-                        var parameterType = ResolveType(parameter.type_(), genericParameters);
+                        var parameterType = ResolveType(parameter.type_(), genericParameters, comptimeGenericParameters);
                         ValidateTypeUsage(parameter.type_(), parameterType, TypeUsage.Field, isPlatformAbiBoundary: isPlatformAbiBoundary);
                     }
                 }
@@ -615,7 +674,7 @@ internal sealed class SemanticValidator
                              .Select(static member => member.fieldDeclaration())
                              .Where(static field => field is not null)!)
                 {
-                    ValidateFieldDeclarationType(field, genericParameters, isPlatformAbiBoundary);
+                    ValidateFieldDeclarationType(field, genericParameters, comptimeGenericParameters, isPlatformAbiBoundary);
                 }
 
                 continue;
@@ -624,6 +683,7 @@ internal sealed class SemanticValidator
             if (declaration.enumDeclaration() is { } enumDeclaration)
             {
                 var genericParameters = _typeResolver.GetGenericParameterNames(enumDeclaration.typeParameterList());
+                var comptimeGenericParameters = GetNamedTypeComptimeGenericParameterMap(enumDeclaration.Identifier().GetText());
                 foreach (var variant in enumDeclaration.enumBody().enumVariantDeclaration())
                 {
                     var payload = variant.enumVariantPayload();
@@ -634,13 +694,13 @@ internal sealed class SemanticValidator
 
                     foreach (var field in payload.enumVariantFieldDeclaration())
                     {
-                        var fieldType = ResolveType(field.type_(), genericParameters);
+                        var fieldType = ResolveType(field.type_(), genericParameters, comptimeGenericParameters);
                         ValidateTypeUsage(field.type_(), fieldType, TypeUsage.Field);
                     }
 
                     foreach (var fieldTypeContext in payload.type_())
                     {
-                        var fieldType = ResolveType(fieldTypeContext, genericParameters);
+                        var fieldType = ResolveType(fieldTypeContext, genericParameters, comptimeGenericParameters);
                         ValidateTypeUsage(fieldTypeContext, fieldType, TypeUsage.Field);
                     }
                 }
@@ -1052,9 +1112,10 @@ internal sealed class SemanticValidator
     private void ValidateFieldDeclarationType(
         StarkParser.FieldDeclarationContext field,
         ISet<string>? genericParameters,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters,
         bool isPlatformAbiBoundary)
     {
-        var fieldType = ResolveType(field.type_(), genericParameters);
+        var fieldType = ResolveType(field.type_(), genericParameters, comptimeGenericParameters);
         ValidateTypeUsage(field.type_(), fieldType, TypeUsage.Field, isPlatformAbiBoundary: isPlatformAbiBoundary);
     }
 
@@ -1483,7 +1544,8 @@ internal sealed class SemanticValidator
 
         if (statement.forStatement() is { } forStatement)
         {
-            ValidateLoopContract(function.Name, forStatement.loopBehavior().GetText(), forStatement.forCondition()?.expression(), forStatement.statement(), forStatement.loopBehavior(), summary);
+            var forTraversal = forStatement.forTraversal();
+            ValidateLoopContract(function.Name, forStatement.loopBehavior().GetText(), forTraversal?.expression() ?? forStatement.forCondition()?.expression(), forStatement.statement(), forStatement.loopBehavior(), summary);
 
             if (forStatement.loopBehavior().GetText() != "willexit")
             {
@@ -1497,7 +1559,11 @@ internal sealed class SemanticValidator
 
             var loopScope = new ValidationScope(scope);
 
-            if (forStatement.forInitializer()?.localForVariableDeclaration() is { } localForDeclaration)
+            if (forTraversal is not null)
+            {
+                CheckForTraversal(forTraversal, loopScope, function, effects, summary);
+            }
+            else if (forStatement.forInitializer()?.localForVariableDeclaration() is { } localForDeclaration)
             {
                 var storageClass = ParseStorageClass(localForDeclaration.storageClass());
                 ValidateLocalVariableStorageClass(storageClass, localForDeclaration.storageClass());
@@ -1544,12 +1610,12 @@ internal sealed class SemanticValidator
                 }
             }
 
-            if (forStatement.forCondition() is { } condition)
+            if (forTraversal is null && forStatement.forCondition() is { } condition)
             {
                 EvaluateExpression(condition.expression(), loopScope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
             }
 
-            if (forStatement.forIterator() is { } iterator)
+            if (forTraversal is null && forStatement.forIterator() is { } iterator)
             {
                 foreach (var expression in iterator.expressionList().expression())
                 {
@@ -1610,6 +1676,51 @@ internal sealed class SemanticValidator
                 allowFunctionReference: false,
                 ExpressionObservation.Read);
         }
+    }
+
+    private void CheckForTraversal(
+        StarkParser.ForTraversalContext traversal,
+        ValidationScope loopScope,
+        FunctionDeclarationModel function,
+        FunctionEffectProfile effects,
+        FunctionValidationBuilder summary)
+    {
+        EvaluateExpression(traversal.expression(), loopScope, function, effects, summary, allowFunctionReference: false, ExpressionObservation.Read);
+
+        if (traversal.traversalIndexBinding() is { } indexBinding)
+        {
+            var storageClass = ParseStorageClass(indexBinding.storageClass());
+            ValidateLocalVariableStorageClass(storageClass, indexBinding.storageClass());
+            var indexType = ResolveType(indexBinding.type_());
+            ValidateTypeUsage(indexBinding.type_(), indexType, TypeUsage.Local);
+
+            DeclareVariable(
+                loopScope,
+                new VariableSymbol(
+                    indexBinding.Identifier().GetText(),
+                    indexType,
+                    SymbolOrigin.Local,
+                    storageClass,
+                    IsMutable: false,
+                    IsConstant: false),
+                summary,
+                indexBinding.Identifier().Symbol);
+        }
+
+        var elementBinding = traversal.traversalElementBinding();
+        var elementType = ResolveType(elementBinding.type_());
+        ValidateTypeUsage(elementBinding.type_(), elementType, TypeUsage.Local);
+        DeclareVariable(
+            loopScope,
+            new VariableSymbol(
+                elementBinding.Identifier().GetText(),
+                elementType,
+                SymbolOrigin.Local,
+                LocalStorageClass.None,
+                IsMutable: false,
+                IsConstant: false),
+            summary,
+            elementBinding.Identifier().Symbol);
     }
 
     private bool CheckVariableInitializer(
@@ -2540,6 +2651,11 @@ internal sealed class SemanticValidator
                 observation);
         }
 
+        if (expression.genericQualifiedName() is { } genericQualifiedName)
+        {
+            return ResolveGenericQualifiedNameValue(genericQualifiedName, allowFunctionReference);
+        }
+
         if (expression.qualifiedName() is { } qualifiedName)
         {
             return ResolveValue(qualifiedName.GetText(), scope, function, effects, summary, allowFunctionReference, observation, qualifiedName.Start);
@@ -3242,7 +3358,7 @@ internal sealed class SemanticValidator
         }
 
         var seenMembers = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var member in enumNamedFieldPattern.enumNamedFieldPatternPayload().namedPatternMember())
+        foreach (var member in enumNamedFieldPattern.namedPatternPayload().namedPatternMember())
         {
             var memberName = member.Identifier().GetText();
             var field = variant.Fields.FirstOrDefault(candidate => string.Equals(candidate.Name, memberName, StringComparison.Ordinal));
@@ -3432,9 +3548,15 @@ internal sealed class SemanticValidator
                 ExpressionObservation.Read))
             .ToArray();
 
-        if (target.OverloadSourceName is { } overloadSourceName)
+        var overloadSourceName = target.OverloadSourceName;
+        if (overloadSourceName is not null || target.OverloadCandidates is { Count: > 0 })
         {
-            if (!TryGetFunctionOverloads(overloadSourceName, out var overloads))
+            IReadOnlyList<TypedFunctionSignature> overloads;
+            if (target.OverloadCandidates is { Count: > 0 } overloadCandidates)
+            {
+                overloads = overloadCandidates;
+            }
+            else if (!TryGetFunctionOverloads(overloadSourceName!, out overloads))
             {
                 return new ValidationValue(StarkTypeSymbols.Error);
             }
@@ -3454,6 +3576,7 @@ internal sealed class SemanticValidator
             {
                 Function = resolution.Match,
                 OverloadSourceName = null,
+                OverloadCandidates = null,
                 Type = resolution.Match!.ReturnType,
                 NamedType = ResolveNamedTypeSymbol(resolution.Match.ReturnType)
             };
@@ -4326,15 +4449,105 @@ internal sealed class SemanticValidator
             return StarkTypeSymbols.Error;
         }
 
-        var typeArguments = genericQualifiedName.typeArgumentList().type_()
-            .Select(typeArgument => ResolveType(typeArgument))
-            .ToArray();
-        if (typeArguments.Any(static type => type.Kind == StarkTypeKind.Error))
+        if (!_typeModel.NamedTypes.TryGetValue(baseType.NamedType ?? baseName, out var namedType))
         {
             return StarkTypeSymbols.Error;
         }
 
-        return StarkTypeSymbols.GenericInstantiation(baseType.NamedType ?? baseName, typeArguments);
+        var arguments = GenericArgumentSyntaxFacts.Resolve(
+            genericQualifiedName.typeArgumentList(),
+            namedType.GenericParams,
+            namedType.ComptimeGenericParams,
+            ResolveType,
+            static (_, _, _) => { });
+        if (arguments.TypeArguments.Any(static type => type.Kind == StarkTypeKind.Error))
+        {
+            return StarkTypeSymbols.Error;
+        }
+
+        return StarkTypeSymbols.GenericInstantiation(
+            baseType.NamedType ?? baseName,
+            arguments.TypeArguments,
+            arguments.ComptimeValueArguments);
+    }
+
+    private ValidationValue ResolveGenericQualifiedNameValue(
+        StarkParser.GenericQualifiedNameContext genericQualifiedName,
+        bool allowFunctionReference)
+    {
+        var baseName = genericQualifiedName.qualifiedName().GetText();
+        if (allowFunctionReference && TryGetFunctionOverloads(baseName, out var overloads))
+        {
+            var syntaxArgumentCount = genericQualifiedName.typeArgumentList().genericArgument().Length;
+            var instantiatedCandidates = new List<TypedFunctionSignature>(overloads.Count);
+            foreach (var candidate in overloads)
+            {
+                if (candidate.GenericParams.Count + candidate.ComptimeGenericParams.Count != syntaxArgumentCount)
+                {
+                    continue;
+                }
+
+                var arguments = GenericArgumentSyntaxFacts.Resolve(
+                    genericQualifiedName.typeArgumentList(),
+                    candidate.GenericParams,
+                    candidate.ComptimeGenericParams,
+                    ResolveType,
+                    static (_, _, _) => { },
+                    visibleComptimeParameters: _currentFunctionComptimeGenericParameters);
+                if (arguments.TypeArguments.Count != candidate.GenericParams.Count
+                    || arguments.ComptimeValueArguments.Count != candidate.ComptimeGenericParams.Count
+                    || arguments.TypeArguments.Any(static type => type.Kind == StarkTypeKind.Error))
+                {
+                    continue;
+                }
+
+                instantiatedCandidates.Add(FunctionOverloadFacts.InstantiateSignature(
+                    candidate,
+                    arguments.TypeArguments,
+                    candidate.Name,
+                    ResolveAssociatedTypeForSubstitution,
+                    arguments.ComptimeValueArguments));
+            }
+
+            if (instantiatedCandidates.Count == 1)
+            {
+                var signature = instantiatedCandidates[0];
+                return new ValidationValue(
+                    signature.ReturnType,
+                    Function: signature,
+                    NamedType: ResolveNamedTypeSymbol(signature.ReturnType));
+            }
+
+            if (instantiatedCandidates.Count > 1)
+            {
+                return new ValidationValue(
+                    StarkTypeSymbols.Error,
+                    OverloadSourceName: baseName,
+                    OverloadCandidates: instantiatedCandidates);
+            }
+
+            return new ValidationValue(StarkTypeSymbols.Error, OverloadSourceName: baseName);
+        }
+
+        var targetType = ResolveGenericQualifiedName(genericQualifiedName);
+        var namedType = ResolveNamedTypeSymbol(targetType);
+        if (namedType?.Kind is DeclarationKind.Struct or DeclarationKind.Record)
+        {
+            return new ValidationValue(
+                StarkTypeSymbols.Error,
+                NamespaceName: targetType.NamedType,
+                NamedType: namedType);
+        }
+
+        if (namedType?.Kind == DeclarationKind.Enum)
+        {
+            return new ValidationValue(
+                StarkTypeSymbols.Error,
+                NamespaceName: targetType.NamedType,
+                NamedType: namedType);
+        }
+
+        return new ValidationValue(targetType, NamedType: namedType);
     }
 
     private bool TryResolveGlobalBySourceName(string name, out TypedGlobalSymbol global)
@@ -6772,6 +6985,7 @@ internal sealed class SemanticValidator
         VariableSymbol? RootSymbol = null,
         TypedFunctionSignature? Function = null,
         string? OverloadSourceName = null,
+        IReadOnlyList<TypedFunctionSignature>? OverloadCandidates = null,
         NamedTypeSymbol? NamedType = null,
         bool IsIndirectStorageAccess = false,
         string? NamespaceName = null,

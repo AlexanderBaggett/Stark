@@ -11,6 +11,7 @@ internal sealed record TypeAliasResolutionSource(
     StarkVisibility Visibility,
     bool IsExternal,
     IReadOnlyList<string> GenericParameters,
+    IReadOnlyList<ComptimeGenericParameterSymbol> ComptimeGenericParameters,
     StarkParser.Type_Context TargetType,
     IToken NameToken);
 
@@ -89,16 +90,24 @@ internal sealed class StarkTypeResolver
     private static IReadOnlyDictionary<string, TypeAliasResolutionSource> EmptyTypeAliasSources { get; } =
         new Dictionary<string, TypeAliasResolutionSource>(StringComparer.Ordinal);
 
-    public StarkTypeSymbol ResolveReturnType(StarkParser.ReturnTypeContext returnType, ISet<string>? genericParameters = null, string? currentModuleName = null)
+    public StarkTypeSymbol ResolveReturnType(
+        StarkParser.ReturnTypeContext returnType,
+        ISet<string>? genericParameters = null,
+        string? currentModuleName = null,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters = null)
     {
         return returnType.VOID() is not null
             ? StarkTypeSymbols.Void
-            : ResolveType(returnType.type_(), genericParameters, currentModuleName);
+            : ResolveType(returnType.type_(), genericParameters, currentModuleName, comptimeGenericParameters);
     }
 
-    public StarkTypeSymbol ResolveType(StarkParser.Type_Context type, ISet<string>? genericParameters = null, string? currentModuleName = null)
+    public StarkTypeSymbol ResolveType(
+        StarkParser.Type_Context type,
+        ISet<string>? genericParameters = null,
+        string? currentModuleName = null,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters = null)
     {
-        var result = ResolveNonArrayType(type.nonArrayType(), genericParameters, currentModuleName);
+        var result = ResolveNonArrayType(type.nonArrayType(), genericParameters, currentModuleName, comptimeGenericParameters);
 
         foreach (var suffix in type.arraySuffix())
         {
@@ -111,6 +120,12 @@ internal sealed class StarkTypeResolver
             var length = TryEvaluateConstantInteger(suffix.expression());
             if (length is null)
             {
+                if (TryResolveComptimeArrayLengthParameter(suffix.expression(), comptimeGenericParameters, out var parameterName))
+                {
+                    result = StarkTypeSymbols.FixedArray(result, fixedLength: null, parameterName);
+                    continue;
+                }
+
                 ReportError("STK3014", "Fixed array lengths must currently be constant integer expressions.", suffix.expression());
                 result = StarkTypeSymbols.FixedArray(result, fixedLength: null);
                 continue;
@@ -133,7 +148,8 @@ internal sealed class StarkTypeResolver
         StarkParser.Type_Context type,
         ISet<string>? genericParameters,
         string? currentModuleName,
-        out string? rawPointerElementCountExpression)
+        out string? rawPointerElementCountExpression,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters = null)
     {
         rawPointerElementCountExpression = null;
 
@@ -142,17 +158,22 @@ internal sealed class StarkTypeResolver
                 genericParameters,
                 currentModuleName,
                 out var rawPointerType,
-                out rawPointerElementCountExpression))
+                out rawPointerElementCountExpression,
+                comptimeGenericParameters))
         {
             return rawPointerType;
         }
 
-        return ResolveType(type, genericParameters, currentModuleName);
+        return ResolveType(type, genericParameters, currentModuleName, comptimeGenericParameters);
     }
 
-    public StarkTypeSymbol ResolveConversionType(StarkParser.ConversionTypeContext type, ISet<string>? genericParameters = null, string? currentModuleName = null)
+    public StarkTypeSymbol ResolveConversionType(
+        StarkParser.ConversionTypeContext type,
+        ISet<string>? genericParameters = null,
+        string? currentModuleName = null,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters = null)
     {
-        var result = ResolveConversionNonArrayType(type.conversionNonArrayType(), genericParameters, currentModuleName);
+        var result = ResolveConversionNonArrayType(type.conversionNonArrayType(), genericParameters, currentModuleName, comptimeGenericParameters);
 
         foreach (var suffix in type.arraySuffix())
         {
@@ -165,6 +186,12 @@ internal sealed class StarkTypeResolver
             var length = TryEvaluateConstantInteger(suffix.expression());
             if (length is null)
             {
+                if (TryResolveComptimeArrayLengthParameter(suffix.expression(), comptimeGenericParameters, out var parameterName))
+                {
+                    result = StarkTypeSymbols.FixedArray(result, fixedLength: null, parameterName);
+                    continue;
+                }
+
                 ReportError("STK3014", "Fixed array lengths must currently be constant integer expressions.", suffix.expression());
                 result = StarkTypeSymbols.FixedArray(result, fixedLength: null);
                 continue;
@@ -191,7 +218,8 @@ internal sealed class StarkTypeResolver
         }
 
         return typeParameterList.typeParameter()
-            .Select(static parameter => parameter.GetText())
+            .Where(static parameter => parameter.COMPTIME() is null)
+            .Select(static parameter => parameter.Identifier().GetText())
             .ToHashSet(StringComparer.Ordinal);
     }
 
@@ -241,7 +269,13 @@ internal sealed class StarkTypeResolver
             return StarkTypeSymbols.Named(qualifiedName);
         }
 
-        if (TryResolveTypeAlias(qualifiedName, currentModuleName, token, typeArguments: null, out var aliasType))
+        if (TryResolveTypeAlias(
+                qualifiedName,
+                currentModuleName,
+                token,
+                typeArguments: null,
+                comptimeValueArguments: null,
+                out var aliasType))
         {
             return aliasType;
         }
@@ -266,33 +300,37 @@ internal sealed class StarkTypeResolver
         return TryResolveTypeAliasSymbol(lookupName, currentModuleName, out alias);
     }
 
-    private StarkTypeSymbol ResolveNonArrayType(StarkParser.NonArrayTypeContext type, ISet<string>? genericParameters, string? currentModuleName)
+    private StarkTypeSymbol ResolveNonArrayType(
+        StarkParser.NonArrayTypeContext type,
+        ISet<string>? genericParameters,
+        string? currentModuleName,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters)
     {
         if (type.dynamicType() is { } dynamicType)
         {
-            var elementType = ResolveType(dynamicType.type_(), genericParameters, currentModuleName);
+            var elementType = ResolveType(dynamicType.type_(), genericParameters, currentModuleName, comptimeGenericParameters);
             return StarkTypeSymbols.Dynamic(elementType);
         }
 
         if (type.rawPointerType() is { } rawPointerType)
         {
-            var elementType = ResolveType(rawPointerType.type_(), genericParameters, currentModuleName);
+            var elementType = ResolveType(rawPointerType.type_(), genericParameters, currentModuleName, comptimeGenericParameters);
             return StarkTypeSymbols.RawPointer(elementType, rawPointerType.RAWMUTPTR() is not null);
         }
 
         if (type.functionPointerType() is { } functionPointerType)
         {
-            return ResolveFunctionPointerType(functionPointerType, genericParameters, currentModuleName);
+            return ResolveFunctionPointerType(functionPointerType, genericParameters, currentModuleName, comptimeGenericParameters);
         }
 
         if (type.closureType() is { } closureType)
         {
-            return ResolveClosureType(closureType, genericParameters, currentModuleName);
+            return ResolveClosureType(closureType, genericParameters, currentModuleName, comptimeGenericParameters);
         }
 
         if (type.dynTraitType() is { } dynTraitType)
         {
-            return ResolveDynTraitType(dynTraitType, genericParameters, currentModuleName);
+            return ResolveDynTraitType(dynTraitType, genericParameters, currentModuleName, comptimeGenericParameters);
         }
 
         if (type.integerType() is { } integerType)
@@ -300,7 +338,7 @@ internal sealed class StarkTypeResolver
             return ResolveIntegerType(integerType);
         }
 
-        return ResolveSimpleType(type.simpleType(), genericParameters, currentModuleName);
+        return ResolveSimpleType(type.simpleType(), genericParameters, currentModuleName, comptimeGenericParameters);
     }
 
     // Resolves a `dyn Trait` trait-object type (optionally `heap dyn Trait`).
@@ -312,9 +350,10 @@ internal sealed class StarkTypeResolver
     private StarkTypeSymbol ResolveDynTraitType(
         StarkParser.DynTraitTypeContext type,
         ISet<string>? genericParameters,
-        string? currentModuleName)
+        string? currentModuleName,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters)
     {
-        var traitType = ResolveSimpleType(type.simpleType(), genericParameters, currentModuleName);
+        var traitType = ResolveSimpleType(type.simpleType(), genericParameters, currentModuleName, comptimeGenericParameters);
         if (traitType.Kind == StarkTypeKind.Error)
         {
             return StarkTypeSymbols.Error;
@@ -355,7 +394,8 @@ internal sealed class StarkTypeResolver
         ISet<string>? genericParameters,
         string? currentModuleName,
         out StarkTypeSymbol rawPointerType,
-        out string? elementCountExpression)
+        out string? elementCountExpression,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters)
     {
         rawPointerType = StarkTypeSymbols.Error;
         elementCountExpression = null;
@@ -367,7 +407,7 @@ internal sealed class StarkTypeResolver
             return false;
         }
 
-        var elementType = ResolveType(rawPointerSyntax.type_(), genericParameters, currentModuleName);
+        var elementType = ResolveType(rawPointerSyntax.type_(), genericParameters, currentModuleName, comptimeGenericParameters);
         rawPointerType = ApplyQualifiers(
             StarkTypeSymbols.RawPointer(elementType, rawPointerSyntax.RAWMUTPTR() is not null),
             type.typeQualifier());
@@ -377,11 +417,15 @@ internal sealed class StarkTypeResolver
         return true;
     }
 
-    private StarkTypeSymbol ResolveConversionNonArrayType(StarkParser.ConversionNonArrayTypeContext type, ISet<string>? genericParameters, string? currentModuleName)
+    private StarkTypeSymbol ResolveConversionNonArrayType(
+        StarkParser.ConversionNonArrayTypeContext type,
+        ISet<string>? genericParameters,
+        string? currentModuleName,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters)
     {
         if (type.rawPointerType() is { } rawPointerType)
         {
-            var elementType = ResolveType(rawPointerType.type_(), genericParameters, currentModuleName);
+            var elementType = ResolveType(rawPointerType.type_(), genericParameters, currentModuleName, comptimeGenericParameters);
             return StarkTypeSymbols.RawPointer(elementType, rawPointerType.RAWMUTPTR() is not null);
         }
 
@@ -396,7 +440,8 @@ internal sealed class StarkTypeResolver
     private StarkTypeSymbol ResolveFunctionPointerType(
         StarkParser.FunctionPointerTypeContext type,
         ISet<string>? genericParameters,
-        string? currentModuleName)
+        string? currentModuleName,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters)
     {
         var signature = type.functionPointerSignature();
         StarkFfiAbi? ffiAbi = null;
@@ -421,7 +466,7 @@ internal sealed class StarkTypeResolver
             }
         }
 
-        var returnType = ResolveReturnType(signature.returnType(), genericParameters, currentModuleName);
+        var returnType = ResolveReturnType(signature.returnType(), genericParameters, currentModuleName, comptimeGenericParameters);
         var parameterTypeSyntaxes = signature.functionPointerParameterList().type_();
         var parameterTypes = new List<StarkTypeSymbol>(parameterTypeSyntaxes.Length);
         var rawPointerElementCountExpressions = new List<string?>(parameterTypeSyntaxes.Length);
@@ -431,7 +476,8 @@ internal sealed class StarkTypeResolver
                 parameterTypeSyntax,
                 genericParameters,
                 currentModuleName,
-                out var rawPointerElementCountExpression));
+                out var rawPointerElementCountExpression,
+                comptimeGenericParameters));
             rawPointerElementCountExpressions.Add(rawPointerElementCountExpression);
         }
 
@@ -466,10 +512,11 @@ internal sealed class StarkTypeResolver
     private StarkTypeSymbol ResolveClosureType(
         StarkParser.ClosureTypeContext type,
         ISet<string>? genericParameters,
-        string? currentModuleName)
+        string? currentModuleName,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters)
     {
         var signature = type.closureSignature();
-        var returnType = ResolveReturnType(signature.returnType(), genericParameters, currentModuleName);
+        var returnType = ResolveReturnType(signature.returnType(), genericParameters, currentModuleName, comptimeGenericParameters);
         var parameterTypeSyntaxes = signature.functionPointerParameterList().type_();
         var parameterTypes = new List<StarkTypeSymbol>(parameterTypeSyntaxes.Length);
         var rawPointerElementCountExpressions = new List<string?>(parameterTypeSyntaxes.Length);
@@ -479,7 +526,8 @@ internal sealed class StarkTypeResolver
                 parameterTypeSyntax,
                 genericParameters,
                 currentModuleName,
-                out var rawPointerElementCountExpression));
+                out var rawPointerElementCountExpression,
+                comptimeGenericParameters));
             rawPointerElementCountExpressions.Add(rawPointerElementCountExpression);
         }
 
@@ -1036,7 +1084,11 @@ internal sealed class StarkTypeResolver
             signature.closureCallCapability() ?? (ParserRuleContext)signature);
     }
 
-    public StarkTypeSymbol ResolveSimpleType(StarkParser.SimpleTypeContext simpleType, ISet<string>? genericParameters = null, string? currentModuleName = null)
+    public StarkTypeSymbol ResolveSimpleType(
+        StarkParser.SimpleTypeContext simpleType,
+        ISet<string>? genericParameters = null,
+        string? currentModuleName = null,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters = null)
     {
         if (simpleType.builtinType() is { } builtinType)
         {
@@ -1047,16 +1099,14 @@ internal sealed class StarkTypeResolver
 
         if (simpleType.typeArgumentList() is { } typeArgList)
         {
-            var typeArgs = typeArgList.type_()
-                .Select(typeArg => ResolveType(typeArg, genericParameters, currentModuleName))
-                .ToArray();
-
-            if (typeArgs.Any(static t => t.Kind == StarkTypeKind.Error))
-            {
-                return StarkTypeSymbols.Error;
-            }
-
-            if (TryResolveTypeAlias(qualifiedName, currentModuleName, simpleType.Start, typeArgs, out var aliasType))
+            if (TryResolveTypeAlias(
+                    qualifiedName,
+                    currentModuleName,
+                    simpleType.Start,
+                    typeArgList,
+                    genericParameters,
+                    comptimeGenericParameters,
+                    out var aliasType))
             {
                 return aliasType;
             }
@@ -1073,7 +1123,29 @@ internal sealed class StarkTypeResolver
                 return StarkTypeSymbols.Error;
             }
 
-            return StarkTypeSymbols.GenericInstantiation(baseType.NamedType ?? qualifiedName, typeArgs);
+            var resolvedBaseName = baseType.NamedType ?? qualifiedName;
+            if (!_namedTypes.TryGetValue(resolvedBaseName, out var namedType))
+            {
+                ReportError("STK3004", $"Unknown generic type '{qualifiedName}'.", simpleType.Start);
+                return StarkTypeSymbols.Error;
+            }
+
+            var genericArguments = GenericArgumentSyntaxFacts.Resolve(
+                typeArgList,
+                namedType.GenericParams,
+                namedType.ComptimeGenericParams,
+                typeArg => ResolveType(typeArg, genericParameters, currentModuleName, comptimeGenericParameters),
+                ReportError,
+                visibleComptimeParameters: comptimeGenericParameters);
+            if (genericArguments.TypeArguments.Any(static t => t.Kind == StarkTypeKind.Error))
+            {
+                return StarkTypeSymbols.Error;
+            }
+
+            return StarkTypeSymbols.GenericInstantiation(
+                resolvedBaseName,
+                genericArguments.TypeArguments,
+                genericArguments.ComptimeValueArguments);
         }
 
         return ResolveQualifiedType(qualifiedName, genericParameters, simpleType.Start, currentModuleName);
@@ -1733,11 +1805,18 @@ internal sealed class StarkTypeResolver
         string? currentModuleName,
         IToken token,
         IReadOnlyList<StarkTypeSymbol>? typeArguments,
+        IReadOnlyList<ComptimeValueArgumentSymbol>? comptimeValueArguments,
         out StarkTypeSymbol aliasType)
     {
         foreach (var candidate in EnumerateLocalAliasLookupNames(qualifiedName, currentModuleName))
         {
-            if (TryResolveCompilerKnownCTypeAlias(candidate, qualifiedName, typeArguments, token, out aliasType))
+            if (TryResolveCompilerKnownCTypeAlias(
+                    candidate,
+                    qualifiedName,
+                    typeArguments,
+                    comptimeValueArguments,
+                    token,
+                    out aliasType))
             {
                 return true;
             }
@@ -1747,7 +1826,7 @@ internal sealed class StarkTypeResolver
                 continue;
             }
 
-            aliasType = InstantiateTypeAlias(alias, qualifiedName, typeArguments, token);
+            aliasType = InstantiateTypeAlias(alias, qualifiedName, typeArguments, comptimeValueArguments, token);
             return true;
         }
 
@@ -1758,7 +1837,13 @@ internal sealed class StarkTypeResolver
             var importedCompilerKnownAliases = new List<(string Name, StarkTypeSymbol Type)>();
             foreach (var candidate in _moduleGraph.EnumerateAccessibleModuleQualifiedNames(currentModuleName, qualifiedName))
             {
-                if (TryResolveCompilerKnownCTypeAlias(candidate, qualifiedName, typeArguments, token, out var compilerKnownAliasType))
+                if (TryResolveCompilerKnownCTypeAlias(
+                        candidate,
+                        qualifiedName,
+                        typeArguments,
+                        comptimeValueArguments,
+                        token,
+                        out var compilerKnownAliasType))
                 {
                     importedCompilerKnownAliases.Add((candidate, compilerKnownAliasType));
                     continue;
@@ -1791,7 +1876,7 @@ internal sealed class StarkTypeResolver
 
             if (importedAliases.Count == 1)
             {
-                aliasType = InstantiateTypeAlias(importedAliases[0], qualifiedName, typeArguments, token);
+                aliasType = InstantiateTypeAlias(importedAliases[0], qualifiedName, typeArguments, comptimeValueArguments, token);
                 return true;
             }
 
@@ -1810,10 +1895,133 @@ internal sealed class StarkTypeResolver
         return false;
     }
 
+    private bool TryResolveTypeAlias(
+        string qualifiedName,
+        string? currentModuleName,
+        IToken token,
+        StarkParser.TypeArgumentListContext typeArgumentList,
+        ISet<string>? genericParameters,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters,
+        out StarkTypeSymbol aliasType)
+    {
+        foreach (var candidate in EnumerateLocalAliasLookupNames(qualifiedName, currentModuleName))
+        {
+            if (StarkCDataModelFacts.TryResolveAlias(
+                    candidate,
+                    _context.Options.TargetInfo,
+                    out _,
+                    out _))
+            {
+                ReportError("STK3019", $"Type alias '{qualifiedName}' is not generic and does not accept generic arguments.", token);
+                aliasType = StarkTypeSymbols.Error;
+                return true;
+            }
+
+            if (!TryResolveTypeAliasSymbol(candidate, currentModuleName, out var alias))
+            {
+                continue;
+            }
+
+            var genericArguments = ResolveTypeAliasGenericArguments(
+                alias,
+                typeArgumentList,
+                genericParameters,
+                currentModuleName,
+                comptimeGenericParameters);
+            aliasType = InstantiateTypeAlias(
+                alias,
+                qualifiedName,
+                genericArguments.TypeArguments,
+                genericArguments.ComptimeValueArguments,
+                token);
+            return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(currentModuleName)
+            && !qualifiedName.Contains('.', StringComparison.Ordinal))
+        {
+            var importedAliases = new List<TypeAliasSymbol>();
+            var importedCompilerKnownAliases = new List<string>();
+            foreach (var candidate in _moduleGraph.EnumerateAccessibleModuleQualifiedNames(currentModuleName, qualifiedName))
+            {
+                if (StarkCDataModelFacts.TryResolveAlias(
+                        candidate,
+                        _context.Options.TargetInfo,
+                        out _,
+                        out _))
+                {
+                    importedCompilerKnownAliases.Add(candidate);
+                    continue;
+                }
+
+                if (TryResolveTypeAliasSymbol(candidate, currentModuleName, out var alias))
+                {
+                    importedAliases.Add(alias);
+                }
+            }
+
+            if (importedCompilerKnownAliases.Count + importedAliases.Count > 1)
+            {
+                var aliasNames = importedCompilerKnownAliases.Concat(importedAliases.Select(static alias => alias.Name));
+                ReportError(
+                    "STK3004",
+                    $"Imported type alias '{qualifiedName}' is ambiguous between {string.Join(", ", aliasNames)}. Use a fully qualified name.",
+                    token);
+                aliasType = StarkTypeSymbols.Error;
+                return true;
+            }
+
+            if (importedCompilerKnownAliases.Count == 1)
+            {
+                ReportError("STK3019", $"Type alias '{qualifiedName}' is not generic and does not accept generic arguments.", token);
+                aliasType = StarkTypeSymbols.Error;
+                return true;
+            }
+
+            if (importedAliases.Count == 1)
+            {
+                var alias = importedAliases[0];
+                var genericArguments = ResolveTypeAliasGenericArguments(
+                    alias,
+                    typeArgumentList,
+                    genericParameters,
+                    currentModuleName,
+                    comptimeGenericParameters);
+                aliasType = InstantiateTypeAlias(
+                    alias,
+                    qualifiedName,
+                    genericArguments.TypeArguments,
+                    genericArguments.ComptimeValueArguments,
+                    token);
+                return true;
+            }
+        }
+
+        aliasType = StarkTypeSymbols.Error;
+        return false;
+    }
+
+    private ResolvedGenericArgumentList ResolveTypeAliasGenericArguments(
+        TypeAliasSymbol alias,
+        StarkParser.TypeArgumentListContext typeArgumentList,
+        ISet<string>? genericParameters,
+        string? currentModuleName,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters)
+    {
+        return GenericArgumentSyntaxFacts.Resolve(
+            typeArgumentList,
+            alias.GenericParams,
+            alias.ComptimeGenericParams,
+            typeArg => ResolveType(typeArg, genericParameters, currentModuleName, comptimeGenericParameters),
+            ReportError,
+            visibleComptimeParameters: comptimeGenericParameters);
+    }
+
     private bool TryResolveCompilerKnownCTypeAlias(
         string lookupName,
         string diagnosticName,
         IReadOnlyList<StarkTypeSymbol>? typeArguments,
+        IReadOnlyList<ComptimeValueArgumentSymbol>? comptimeValueArguments,
         IToken token,
         out StarkTypeSymbol aliasType)
     {
@@ -1826,9 +2034,10 @@ internal sealed class StarkTypeResolver
             return false;
         }
 
-        if (typeArguments is not null)
+        if (typeArguments is { Count: > 0 }
+            || comptimeValueArguments is { Count: > 0 })
         {
-            ReportError("STK3019", $"Type alias '{diagnosticName}' is not generic and does not accept type arguments.", token);
+            ReportError("STK3019", $"Type alias '{diagnosticName}' is not generic and does not accept generic arguments.", token);
             aliasType = StarkTypeSymbols.Error;
             return true;
         }
@@ -1882,7 +2091,10 @@ internal sealed class StarkTypeResolver
             var genericParameters = source.GenericParameters.Count == 0
                 ? null
                 : source.GenericParameters.ToHashSet(StringComparer.Ordinal);
-            var targetType = ResolveType(source.TargetType, genericParameters, source.ModuleName);
+            var comptimeGenericParameters = source.ComptimeGenericParameters.Count == 0
+                ? null
+                : source.ComptimeGenericParameters.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+            var targetType = ResolveType(source.TargetType, genericParameters, source.ModuleName, comptimeGenericParameters);
             return CacheResolvedTypeAlias(source, targetType);
         }
         finally
@@ -1899,7 +2111,8 @@ internal sealed class StarkTypeResolver
             source.Visibility,
             targetType,
             source.GenericParameters.Count == 0 ? null : source.GenericParameters.ToArray(),
-            source.IsExternal);
+            source.ComptimeGenericParameters.Count == 0 ? null : source.ComptimeGenericParameters.ToArray(),
+            IsExternal: source.IsExternal);
         _mutableTypeAliases?[source.LookupName] = alias;
         return alias;
     }
@@ -1908,33 +2121,28 @@ internal sealed class StarkTypeResolver
         TypeAliasSymbol alias,
         string diagnosticName,
         IReadOnlyList<StarkTypeSymbol>? typeArguments,
+        IReadOnlyList<ComptimeValueArgumentSymbol>? comptimeValueArguments,
         IToken token)
     {
+        var providedTypeArguments = typeArguments ?? [];
+        var providedComptimeValueArguments = comptimeValueArguments ?? [];
         if (!alias.IsGeneric)
         {
-            if (typeArguments is not null)
+            if (providedTypeArguments.Count > 0 || providedComptimeValueArguments.Count > 0)
             {
-                ReportError("STK3019", $"Type alias '{diagnosticName}' is not generic and does not accept type arguments.", token);
+                ReportError("STK3019", $"Type alias '{diagnosticName}' is not generic and does not accept generic arguments.", token);
                 return StarkTypeSymbols.Error;
             }
 
             return alias.TargetType;
         }
 
-        if (typeArguments is null)
+        if (alias.GenericParams.Count != providedTypeArguments.Count
+            || alias.ComptimeGenericParams.Count != providedComptimeValueArguments.Count)
         {
             ReportError(
                 "STK3019",
-                $"Generic type alias '{diagnosticName}' expects {alias.GenericParams.Count} type argument(s) but 0 were provided.",
-                token);
-            return StarkTypeSymbols.Error;
-        }
-
-        if (alias.GenericParams.Count != typeArguments.Count)
-        {
-            ReportError(
-                "STK3019",
-                $"Generic type alias '{diagnosticName}' expects {alias.GenericParams.Count} type argument(s) but {typeArguments.Count} were provided.",
+                $"Generic type alias '{diagnosticName}' expects {alias.GenericParams.Count} type argument(s) and {alias.ComptimeGenericParams.Count} comptime value argument(s), but received {providedTypeArguments.Count} type argument(s) and {providedComptimeValueArguments.Count} comptime value argument(s).",
                 token);
             return StarkTypeSymbols.Error;
         }
@@ -1942,15 +2150,22 @@ internal sealed class StarkTypeResolver
         var substitution = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
         for (var index = 0; index < alias.GenericParams.Count; index++)
         {
-            substitution[alias.GenericParams[index]] = typeArguments[index];
+            substitution[alias.GenericParams[index]] = providedTypeArguments[index];
         }
 
-        return SubstituteType(alias.TargetType, substitution);
+        var comptimeValueSubstitution = new Dictionary<string, ComptimeValueArgumentSymbol>(StringComparer.Ordinal);
+        for (var index = 0; index < alias.ComptimeGenericParams.Count; index++)
+        {
+            comptimeValueSubstitution[alias.ComptimeGenericParams[index].Name] = providedComptimeValueArguments[index];
+        }
+
+        return SubstituteType(alias.TargetType, substitution, comptimeValueSubstitution);
     }
 
     private static StarkTypeSymbol SubstituteType(
         StarkTypeSymbol type,
-        IReadOnlyDictionary<string, StarkTypeSymbol> substitution)
+        IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
+        IReadOnlyDictionary<string, ComptimeValueArgumentSymbol>? comptimeValueSubstitution)
     {
         var coreType = StarkTypeSymbols.WithQualifiers(
             type,
@@ -1971,14 +2186,18 @@ internal sealed class StarkTypeResolver
                     initializationKind: StarkInitializationKind.None,
                     isMutableView: false);
             }
-            else if (StarkTypeSymbols.IsGenericInstantiation(coreType) && coreType.TypeArguments is not null)
+            else if (StarkTypeSymbols.IsGenericInstantiation(coreType))
             {
-                var substitutedArguments = coreType.TypeArguments
-                    .Select(argument => SubstituteType(argument, substitution))
+                var substitutedArguments = (coreType.TypeArguments ?? [])
+                    .Select(argument => SubstituteType(argument, substitution, comptimeValueSubstitution))
                     .ToArray();
+                var substitutedValueArguments = SubstituteComptimeValueArguments(
+                    coreType.ComptimeValueArguments,
+                    comptimeValueSubstitution);
                 substitutedCore = StarkTypeSymbols.GenericInstantiation(
                     StarkTypeSymbols.GetGenericBaseName(name),
-                    substitutedArguments);
+                    substitutedArguments,
+                    substitutedValueArguments);
             }
             else
             {
@@ -1990,15 +2209,33 @@ internal sealed class StarkTypeResolver
             && coreType.AssociatedTypeName is not null)
         {
             substitutedCore = StarkTypeSymbols.AssociatedType(
-                SubstituteType(coreType.AssociatedTypeOwner, substitution),
+                SubstituteType(coreType.AssociatedTypeOwner, substitution, comptimeValueSubstitution),
                 coreType.AssociatedTypeName);
         }
         else if (coreType.ElementType is not null)
         {
-            var substitutedElement = SubstituteType(coreType.ElementType, substitution);
+            var substitutedElement = SubstituteType(coreType.ElementType, substitution, comptimeValueSubstitution);
+            var fixedLength = coreType.FixedLength;
+            var fixedLengthParameterName = coreType.FixedLengthParameterName;
+            if (fixedLengthParameterName is not null
+                && comptimeValueSubstitution is not null
+                && comptimeValueSubstitution.TryGetValue(fixedLengthParameterName, out var substitutedLength))
+            {
+                if (substitutedLength.IsSymbolic)
+                {
+                    fixedLength = null;
+                    fixedLengthParameterName = substitutedLength.SourceName;
+                }
+                else if (substitutedLength.IntegerValue >= 0 && substitutedLength.IntegerValue <= int.MaxValue)
+                {
+                    fixedLength = (int)substitutedLength.IntegerValue;
+                    fixedLengthParameterName = null;
+                }
+            }
+
             substitutedCore = coreType.Kind switch
             {
-                StarkTypeKind.FixedArray => StarkTypeSymbols.FixedArray(substitutedElement, coreType.FixedLength),
+                StarkTypeKind.FixedArray => StarkTypeSymbols.FixedArray(substitutedElement, fixedLength, fixedLengthParameterName),
                 StarkTypeKind.Slice => StarkTypeSymbols.Slice(substitutedElement),
                 StarkTypeKind.RawPointer => StarkTypeSymbols.RawPointer(substitutedElement, coreType.IsMutablePointer),
                 StarkTypeKind.Dynamic => StarkTypeSymbols.Dynamic(substitutedElement),
@@ -2012,8 +2249,8 @@ internal sealed class StarkTypeResolver
         {
             substitutedCore = StarkTypeSymbols.FunctionPointer(
                 functionKind,
-                SubstituteType(returnType, substitution),
-                parameterTypes.Select(parameter => SubstituteType(parameter, substitution)).ToArray(),
+                SubstituteType(returnType, substitution, comptimeValueSubstitution),
+                parameterTypes.Select(parameter => SubstituteType(parameter, substitution, comptimeValueSubstitution)).ToArray(),
                 coreType.FunctionPointerDisjointParameterGroups,
                 coreType.FunctionPointerOverlapParameterGroups,
                 coreType.FunctionPointerSameParameterGroups,
@@ -2029,8 +2266,8 @@ internal sealed class StarkTypeResolver
                 coreType.ClosureStorageKind,
                 coreType.ClosureCallCapability,
                 closureFunctionKind,
-                SubstituteType(closureReturnType, substitution),
-                closureParameterTypes.Select(parameter => SubstituteType(parameter, substitution)).ToArray(),
+                SubstituteType(closureReturnType, substitution, comptimeValueSubstitution),
+                closureParameterTypes.Select(parameter => SubstituteType(parameter, substitution, comptimeValueSubstitution)).ToArray(),
                 coreType.ClosureDisjointParameterGroups,
                 coreType.ClosureOverlapParameterGroups,
                 coreType.ClosureSameParameterGroups,
@@ -2047,6 +2284,38 @@ internal sealed class StarkTypeResolver
             accessKind: type.AccessKind,
             initializationKind: type.InitializationKind,
             isMutableView: type.IsMutableView);
+    }
+
+    private static IReadOnlyList<ComptimeValueArgumentSymbol>? SubstituteComptimeValueArguments(
+        IReadOnlyList<ComptimeValueArgumentSymbol>? values,
+        IReadOnlyDictionary<string, ComptimeValueArgumentSymbol>? comptimeValueSubstitution)
+    {
+        if (values is not { Count: > 0 } || comptimeValueSubstitution is not { Count: > 0 })
+        {
+            return values;
+        }
+
+        var changed = false;
+        var substituted = new ComptimeValueArgumentSymbol[values.Count];
+        for (var index = 0; index < values.Count; index++)
+        {
+            var value = values[index];
+            if (!comptimeValueSubstitution.TryGetValue(value.SourceName, out var replacement))
+            {
+                substituted[index] = value;
+                continue;
+            }
+
+            substituted[index] = value with
+            {
+                IntegerValue = replacement.IntegerValue,
+                IsSymbolic = replacement.IsSymbolic,
+                SymbolicSourceName = replacement.IsSymbolic ? replacement.SourceName : null
+            };
+            changed = true;
+        }
+
+        return changed ? substituted : values;
     }
 
     private static IEnumerable<string> EnumerateLocalAliasLookupNames(string qualifiedName, string? currentModuleName)
@@ -2255,5 +2524,23 @@ internal sealed class StarkTypeResolver
         return CompileTimeExpressionEvaluator.TryEvaluateInteger(expression, out var value)
             ? value
             : null;
+    }
+
+    private static bool TryResolveComptimeArrayLengthParameter(
+        StarkParser.ExpressionContext expression,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters,
+        out string parameterName)
+    {
+        parameterName = expression.GetText();
+        if (comptimeGenericParameters is null
+            || string.IsNullOrWhiteSpace(parameterName)
+            || !comptimeGenericParameters.TryGetValue(parameterName, out var parameter)
+            || parameter.Type.Kind != StarkTypeKind.Integer)
+        {
+            parameterName = string.Empty;
+            return false;
+        }
+
+        return true;
     }
 }

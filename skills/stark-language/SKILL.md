@@ -186,6 +186,35 @@ Aggregate and view forms:
 
 `void` is valid only as a function return type.
 
+Generic parameter lists can contain ordinary type parameters and typed
+compile-time value parameters. Stark spells const generics as `comptime` because
+`const` means deep interior immutability:
+
+```stark
+finite law u8[0 max] Probe<T, comptime u8[1 4] N>(borrow T[N] values)
+{
+    return 1;
+}
+```
+
+Current compiler support covers range-typed integer `comptime` parameters used
+as fixed-array lengths (`T[N]`) and inferred from concrete fixed-array
+arguments. Explicit integer value arguments participate in generic identity:
+write literal values directly after type arguments, and use `comptime N` when
+forwarding an enclosing comptime value parameter.
+Package images preserve these parameters, symbolic values, and imported generic
+template substitutions for the self-hosting integer slice.
+
+```stark
+finite law u8[0 max] Length<T, comptime u8[1 8] N>(borrow T[N] values)
+{
+    return N;
+}
+
+stack i32[min max][3] values = { 1, 2, 3 };
+stack u8[0 max] size = Length<i32[min max], 3>(values);
+```
+
 ## Data Declarations
 
 Use `struct` for ordinary named data with methods and constructors. Use `record` for data-oriented named aggregates. Neither supports inheritance.
@@ -259,6 +288,8 @@ Safe Stark has no garbage collector. Owned is the default.
 - Assignment to an initialized owned place drops the previous value first.
 - Safe borrows are non-owning and never null.
 - Raw pointers are the only null-capable pointer forms.
+- Safe optional values use `System.Option<T>` (`Some(T)` / `None`), not nullable
+  safe references.
 
 Borrow escape classes:
 
@@ -431,6 +462,31 @@ Loops require a behavior keyword:
 - `non-deterministic`: may or may not exit, not allowed in `finite`
 - `willexit`: expected to make progress and finish; required in `finite`
 
+`for ... in ...` traversal is explicit and borrow-based. It supports fixed
+arrays, slices, and dynamic storage, and lowers to a counted loop without an
+iterator object or hidden runtime dispatch:
+
+```stark
+for willexit (borrow Token token in tokens)
+{
+    Process(token);
+}
+
+for willexit (borrow mut Token token in tokens)
+{
+    Normalize(token);
+}
+
+for willexit (stack u64[0 max] index, borrow Token token in tokens)
+{
+    Record(index, token);
+}
+```
+
+The element binding must be `borrow T` or `borrow mut T`; mutable traversal
+requires mutable element storage. The optional index binding uses `stack` or
+`register` storage and an integer range wide enough for every source index.
+
 Use `independent` only when iterations have no loop-carried memory dependency:
 
 ```stark
@@ -440,7 +496,7 @@ for willexit independent (stack mut i64[0 max] index = 0; index < length; index 
 }
 ```
 
-`switch` supports literal cases, `default`, `when` guards, `case var capture`, `_`, enum case patterns, exact aggregate patterns, switch-label or-patterns (`case A | B:`), and inclusive integer range patterns (`case 0..10:`). Range patterns are integer-only, work at top level and inside enum/aggregate field patterns, and are checked as intervals rather than expanded into individual values. Every `switch` must be **exhaustive**: cover all enum variants / both bools / every value of a ranged integer (e.g. `u8[0 3]` with cases `0..3`), or include a `default`. `when`-guarded arms never count toward coverage. Relatedly, a non-`void` function must **return on every path** (end paths with `return`, an `if`/`else` that returns on both sides, an exhaustive `switch` whose sections all return, or a break-free `infinite` loop) — falling off the end is a compile error, not a runtime trap.
+`switch` supports literal cases, `default`, `when` guards, `case var capture`, `_`, enum case patterns, exact aggregate patterns, aggregate property patterns (`case Box { Field: pattern }:`), exact-length list patterns over fixed arrays/slices/dynamic storage (`case [first, second]:`), switch-label or-patterns (`case A | B:`), and inclusive integer range patterns (`case 0..10:`). Property patterns must name every aggregate field exactly once. List patterns are exact-length only: fixed-array length mismatches are compile-time errors; slice/dynamic list patterns lower to a length check plus direct element tests, with no iterator protocol or hidden allocation. Range patterns are integer-only, work at top level and inside enum/aggregate/list field patterns, and are checked as intervals rather than expanded into individual values. Every `switch` must be **exhaustive**: cover all enum variants / both bools / every value of a ranged integer (e.g. `u8[0 3]` with cases `0..3`), or include a `default`. `when`-guarded arms never count toward coverage. Relatedly, a non-`void` function must **return on every path** (end paths with `return`, an `if`/`else` that returns on both sides, an exhaustive `switch` whose sections all return, or a break-free `infinite` loop) — falling off the end is a compile error, not a runtime trap.
 
 ```stark
 switch (token)
@@ -456,7 +512,7 @@ switch (token)
 
 `if` and `while` conditions also take a pattern-match form, `expr is pattern`, using the same `switch case` pattern surface: `if (Lookup(k) is Option<V>.Some(var value)) { Use(value); }` binds `value` in the then-branch only; `while willexit (next() is Option<T>.Some(var x)) { ... }` is the `while let` drain idiom (captures re-bind each iteration, loop exits on the first non-match). Move-only captures move out of the matched value (dropped at branch/body exit) exactly as in `switch`. With `is pattern` the condition is the scrutinee, not a `bool`.
 
-Errors are values, never exceptions. Any two-variant enum becomes **propagatable** by marking its variants with the innate role attributes `[Ok]` and `[Err]`: `enum Result<T, E> { [Ok] Ok(T), [Err] Err(E) }`, `enum Option<T> { [Ok] Some(T), [Err] None }` — the stdlib result/option/status enums are annotated this way, and user enums with any names work identically (`enum FetchOutcome { [Ok] Got(Data), [Err] Failed(FetchError) }`). Roles are recognized only from the attributes, never from type names, variant names, or stdlib identity. Role rules: exactly two variants, one of each role, each carrying at most one payload; `[Ok]`/`[Err]` take no arguments. `try expr` propagates a propagatable value: it yields the `[Ok]` payload and continues, or **early-returns** the `[Err]` from the enclosing function (rewrapped in the enclosing return type's `[Err]` variant), running the same drops a `return` would. Requirements: the operand's type is a propagatable enum; the enclosing function's return type is a propagatable enum (it need not be the same enum or the same generic family); and the failure payloads are connected — both unit-like, both the same error type, or the enclosing `[Err]` payload type has a `from` funnel for the operand's error type (otherwise compile error; unit-vs-payload mixing is rejected — `try` never invents or discards an error value). The success payloads are independent; only the failure path ties the two signatures together. `try` is a visible, greppable leading keyword — not a trailing sigil — and is restricted to statement-boundary positions (a binding initializer, an assignment right side, the operand of `return`, or a bare expression statement); it may not be nested inside a larger expression. When the enclosing error type differs from the operand's, an error `enum` declares the conversion once by marking the absorbing variant with `from` (`enum LoadError { Io from IoError, Parse from ParseError }`); `try` then wraps automatically (zero-cost variant wrap) and the call sites stay bare — including across families, e.g. a stdlib `IOResult<T>` operand inside a function returning `Result<T, LoadError>` converts through `LoadError`'s `Io from IOError` funnel. Same error type needs no `from`; a cross-family `try` with no matching funnel is a compile error.
+Errors and absence are values, never exceptions or nullable safe references. The blessed optional-value shape is `System.Option<T>` with `[Ok] Some(T)` / `[Err] None`. Any two-variant enum becomes **propagatable** by marking its variants with the innate role attributes `[Ok]` and `[Err]`: `enum Result<T, E> { [Ok] Ok(T), [Err] Err(E) }`, `enum Option<T> { [Ok] Some(T), [Err] None }` — the stdlib result/option/status enums are annotated this way, and user enums with any names work identically (`enum FetchOutcome { [Ok] Got(Data), [Err] Failed(FetchError) }`). Roles are recognized only from the attributes, never from type names, variant names, or stdlib identity. Role rules: exactly two variants, one of each role, each carrying at most one payload; `[Ok]`/`[Err]` take no arguments. `try expr` propagates a propagatable value: it yields the `[Ok]` payload and continues, or **early-returns** the `[Err]` from the enclosing function (rewrapped in the enclosing return type's `[Err]` variant), running the same drops a `return` would. Requirements: the operand's type is a propagatable enum; the enclosing function's return type is a propagatable enum (it need not be the same enum or the same generic family); and the failure payloads are connected — both unit-like, both the same error type, or the enclosing `[Err]` payload type has a `from` funnel for the operand's error type (otherwise compile error; unit-vs-payload mixing is rejected — `try` never invents or discards an error value). The success payloads are independent; only the failure path ties the two signatures together. `try` is a visible, greppable leading keyword — not a trailing sigil — and is restricted to statement-boundary positions (a binding initializer, an assignment right side, the operand of `return`, or a bare expression statement); it may not be nested inside a larger expression. When the enclosing error type differs from the operand's, an error `enum` declares the conversion once by marking the absorbing variant with `from` (`enum LoadError { Io from IoError, Parse from ParseError }`); `try` then wraps automatically (zero-cost variant wrap) and the call sites stay bare — including across families, e.g. a stdlib `IOResult<T>` operand inside a function returning `Result<T, LoadError>` converts through `LoadError`'s `Io from IOError` funnel. Same error type needs no `from`; a cross-family `try` with no matching funnel is a compile error.
 
 ```stark
 fn Result<Module, LoadError> LoadModule(ascii path)

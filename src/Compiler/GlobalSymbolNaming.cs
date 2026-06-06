@@ -22,29 +22,37 @@ internal static class GlobalSymbolNaming
     public static string ComputeMonomorphizedFunctionSymbolName(
         string ownerModuleName,
         string templateName,
-        IReadOnlyList<StarkTypeSymbol> typeArguments)
+        IReadOnlyList<StarkTypeSymbol> typeArguments,
+        IReadOnlyList<ComptimeValueArgumentSymbol>? valueArguments = null)
     {
-        return ComputeMonomorphizedSymbolName("fn", ownerModuleName, templateName, typeArguments);
+        return ComputeMonomorphizedSymbolName("fn", ownerModuleName, templateName, typeArguments, valueArguments);
     }
 
     public static string ComputeMonomorphizedTypeSymbolName(
         string ownerModuleName,
         string templateName,
-        IReadOnlyList<StarkTypeSymbol> typeArguments)
+        IReadOnlyList<StarkTypeSymbol> typeArguments,
+        IReadOnlyList<ComptimeValueArgumentSymbol>? valueArguments = null)
     {
-        return ComputeMonomorphizedSymbolName("ty", ownerModuleName, templateName, typeArguments);
+        return ComputeMonomorphizedSymbolName("ty", ownerModuleName, templateName, typeArguments, valueArguments);
     }
 
     private static string ComputeMonomorphizedSymbolName(
         string kind,
         string ownerModuleName,
         string templateName,
-        IReadOnlyList<StarkTypeSymbol> typeArguments)
+        IReadOnlyList<StarkTypeSymbol> typeArguments,
+        IReadOnlyList<ComptimeValueArgumentSymbol>? valueArguments)
     {
         var builder = $"__stark_mono_{kind}_{SanitizeSymbolComponent(ownerModuleName)}__{SanitizeSymbolComponent(templateName)}";
         foreach (var typeArgument in typeArguments)
         {
             builder += $"__{SanitizeSymbolComponent(FunctionOverloadFacts.BuildCanonicalTypeKey(typeArgument))}";
+        }
+
+        foreach (var valueArgument in valueArguments ?? [])
+        {
+            builder += $"__{SanitizeSymbolComponent(valueArgument.ParameterName)}_{valueArgument.IntegerValue}";
         }
 
         return builder;

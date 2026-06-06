@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Numerics;
 using Stark.Compiler.LlvmIrEmission;
 using Stark.Parsing;
 
@@ -106,24 +107,28 @@ public static class DefaultCompilerPipeline
         TypedFunctionSignature template,
         IReadOnlyList<StarkTypeSymbol> typeArguments,
         string materializedName,
-        TypeCheckModel typeModel)
+        TypeCheckModel typeModel,
+        IReadOnlyList<ComptimeValueArgumentSymbol>? valueArguments = null)
     {
         return FunctionOverloadFacts.InstantiateSignature(
             template,
             typeArguments,
             materializedName,
-            (ownerType, associatedTypeName) => ResolveAssociatedTypeForSubstitution(ownerType, associatedTypeName, typeModel));
+            (ownerType, associatedTypeName) => ResolveAssociatedTypeForSubstitution(ownerType, associatedTypeName, typeModel),
+            valueArguments);
     }
 
     private static StarkTypeSymbol SubstituteTypeForInstantiation(
         StarkTypeSymbol type,
         IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
-        TypeCheckModel typeModel)
+        TypeCheckModel typeModel,
+        IReadOnlyDictionary<string, BigInteger>? valueSubstitution = null)
     {
         return FunctionOverloadFacts.SubstituteType(
             type,
             substitution,
-            (ownerType, associatedTypeName) => ResolveAssociatedTypeForSubstitution(ownerType, associatedTypeName, typeModel));
+            (ownerType, associatedTypeName) => ResolveAssociatedTypeForSubstitution(ownerType, associatedTypeName, typeModel),
+            valueSubstitution);
     }
 
     private static StarkTypeSymbol? ResolveAssociatedTypeForSubstitution(
@@ -898,7 +903,7 @@ public static class DefaultCompilerPipeline
                 var templateName = trigger.Signature.TemplateName ?? trigger.FunctionName;
                 var declaringModuleName = ResolveDeclaringModuleName(templateName, loadedModules.RootModuleName, moduleNames);
                 var ownerModuleName = ResolveOwnerModuleName(declaringModuleName, loadedModules);
-                var key = $"{ownerModuleName}|{templateName}|{FunctionOverloadFacts.BuildTypeArgumentKey(trigger.TypeArguments)}";
+                var key = $"{ownerModuleName}|{templateName}|{FunctionOverloadFacts.BuildInstantiationArgumentKey(trigger.TypeArguments, trigger.ComptimeValueArguments)}";
                 if (functionOwnership.ContainsKey(key))
                 {
                     continue;
@@ -907,6 +912,7 @@ public static class DefaultCompilerPipeline
                 functionOwnership[key] = new FunctionInstantiationOwnership(
                     templateName,
                     trigger.TypeArguments.ToArray(),
+                    trigger.ComptimeValueArguments?.ToArray(),
                     trigger.Signature,
                     declaringModuleName,
                     ownerModuleName,
@@ -929,6 +935,7 @@ public static class DefaultCompilerPipeline
                     templateName,
                     trigger.TypeName,
                     trigger.TypeArguments.ToArray(),
+                    trigger.ComptimeValueArguments?.ToArray(),
                     declaringModuleName,
                     ownerModuleName,
                     IsSourceBackedModule(declaringModuleName, loadedModules),
@@ -1006,11 +1013,13 @@ public static class DefaultCompilerPipeline
                 }
 
                 var substitution = FunctionOverloadFacts.BuildGenericSubstitution(enclosingTemplateSignature, trigger.TypeArguments);
+                var valueSubstitution = FunctionOverloadFacts.BuildComptimeValueSubstitution(enclosingTemplateSignature, trigger.ComptimeValueArguments);
                 if (importedDeferredByTemplate.TryGetValue(enclosingTemplateName, out var importedTemplate))
                 {
                     ExpandImportedDeferredFunctionTriggers(
                         importedTemplate,
                         substitution,
+                        valueSubstitution,
                         trigger.Location,
                         typeModel,
                         availableFunctionSignatures,
@@ -1020,6 +1029,7 @@ public static class DefaultCompilerPipeline
                     ExpandImportedTemplateCallSummaryTriggers(
                         GetImportedTemplateReachableCallSignatures(importedTemplate),
                         substitution,
+                        valueSubstitution,
                         trigger.Location,
                         typeModel,
                         availableFunctionSignatures,
@@ -1038,16 +1048,27 @@ public static class DefaultCompilerPipeline
                 foreach (var deferredTrigger in deferredTriggers)
                 {
                     if (deferredTrigger.Signature.TemplateName is not { } calleeTemplateName
-                        || deferredTrigger.Signature.TypeArguments is not { Count: > 0 } openTypeArguments
                         || !typeModel.Functions.TryGetValue(calleeTemplateName, out var calleeTemplateSignature))
                     {
                         continue;
                     }
 
+                    var openTypeArguments = deferredTrigger.Signature.TypeArguments ?? [];
+                    var openValueArguments = deferredTrigger.Signature.ComptimeValueArguments;
+                    if (openTypeArguments.Count == 0 && openValueArguments is not { Count: > 0 })
+                    {
+                        continue;
+                    }
+
                     var concreteTypeArguments = openTypeArguments
-                        .Select(typeArgument => SubstituteTypeForInstantiation(typeArgument, substitution, typeModel))
+                        .Select(typeArgument => SubstituteTypeForInstantiation(typeArgument, substitution, typeModel, valueSubstitution))
                         .ToArray();
                     if (concreteTypeArguments.Any(typeArgument => ContainsUnboundGenericParameter(typeArgument, typeModel)))
+                    {
+                        continue;
+                    }
+                    var concreteValueArguments = FunctionOverloadFacts.SubstituteComptimeValues(openValueArguments, valueSubstitution);
+                    if (concreteValueArguments is { Count: > 0 } && concreteValueArguments.Any(static value => value.IsSymbolic))
                     {
                         continue;
                     }
@@ -1056,10 +1077,12 @@ public static class DefaultCompilerPipeline
                         calleeTemplateSignature,
                         concreteTypeArguments,
                         calleeTemplateSignature.Name,
-                        typeModel);
+                        typeModel,
+                        concreteValueArguments);
                     var expandedTrigger = new FunctionInstantiationTriggerRecord(
                         calleeTemplateSignature.DisplaySourceName,
                         concreteTypeArguments,
+                        concreteValueArguments?.ToArray(),
                         instantiatedSignature,
                         deferredTrigger.Location);
                     if (TryAddExpandedTrigger(expandedTrigger, seen, expanded))
@@ -1071,7 +1094,7 @@ public static class DefaultCompilerPipeline
 
             return expanded
                 .OrderBy(static trigger => trigger.Signature.TemplateName ?? trigger.FunctionName, StringComparer.Ordinal)
-                .ThenBy(static trigger => FunctionOverloadFacts.BuildTypeArgumentKey(trigger.TypeArguments), StringComparer.Ordinal)
+                .ThenBy(static trigger => FunctionOverloadFacts.BuildInstantiationArgumentKey(trigger.TypeArguments, trigger.ComptimeValueArguments), StringComparer.Ordinal)
                 .ToArray();
         }
 
@@ -1139,6 +1162,7 @@ public static class DefaultCompilerPipeline
                     triggers.Add(new FunctionInstantiationTriggerRecord(
                         templateSignature.DisplaySourceName,
                         typeArguments.ToArray(),
+                        null,
                         instantiatedSignature,
                         typeTrigger.Location));
                 }
@@ -1146,7 +1170,7 @@ public static class DefaultCompilerPipeline
 
             return triggers
                 .OrderBy(static trigger => trigger.Signature.TemplateName ?? trigger.FunctionName, StringComparer.Ordinal)
-                .ThenBy(static trigger => FunctionOverloadFacts.BuildTypeArgumentKey(trigger.TypeArguments), StringComparer.Ordinal)
+                .ThenBy(static trigger => FunctionOverloadFacts.BuildInstantiationArgumentKey(trigger.TypeArguments, trigger.ComptimeValueArguments), StringComparer.Ordinal)
                 .ToArray();
         }
 
@@ -1281,13 +1305,14 @@ public static class DefaultCompilerPipeline
 
             return expanded
                 .OrderBy(static trigger => trigger.TypeName, StringComparer.Ordinal)
-                .ThenBy(static trigger => FunctionOverloadFacts.BuildTypeArgumentKey(trigger.TypeArguments), StringComparer.Ordinal)
+                .ThenBy(static trigger => FunctionOverloadFacts.BuildInstantiationArgumentKey(trigger.TypeArguments, trigger.ComptimeValueArguments), StringComparer.Ordinal)
                 .ToArray();
         }
 
         private static void ExpandImportedDeferredFunctionTriggers(
             ImportedFunctionTemplateSummary importedTemplate,
             IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
+            IReadOnlyDictionary<string, BigInteger> valueSubstitution,
             SourceLocation location,
             TypeCheckModel typeModel,
             IReadOnlyDictionary<string, TypedFunctionSignature> availableFunctionSignatures,
@@ -1305,7 +1330,9 @@ public static class DefaultCompilerPipeline
                 TryEnqueueFunctionTriggerFromOpenTypeArguments(
                     calleeTemplateSignature,
                     deferredTrigger.TypeArguments,
+                    deferredTrigger.ComptimeValueArguments,
                     substitution,
+                    valueSubstitution,
                     location,
                     typeModel,
                     seen,
@@ -1317,6 +1344,7 @@ public static class DefaultCompilerPipeline
         private static void ExpandImportedTemplateCallSummaryTriggers(
             IEnumerable<TypedFunctionSignature> callSignatures,
             IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
+            IReadOnlyDictionary<string, BigInteger> valueSubstitution,
             SourceLocation location,
             TypeCheckModel typeModel,
             IReadOnlyDictionary<string, TypedFunctionSignature> availableFunctionSignatures,
@@ -1327,8 +1355,14 @@ public static class DefaultCompilerPipeline
             foreach (var callSignature in callSignatures)
             {
                 if (callSignature.TemplateName is not { } calleeTemplateName
-                    || callSignature.TypeArguments is not { Count: > 0 } openTypeArguments
                     || !availableFunctionSignatures.TryGetValue(calleeTemplateName, out var calleeTemplateSignature))
+                {
+                    continue;
+                }
+
+                var openTypeArguments = callSignature.TypeArguments ?? [];
+                var openValueArguments = callSignature.ComptimeValueArguments;
+                if (openTypeArguments.Count == 0 && openValueArguments is not { Count: > 0 })
                 {
                     continue;
                 }
@@ -1336,7 +1370,9 @@ public static class DefaultCompilerPipeline
                 TryEnqueueFunctionTriggerFromOpenTypeArguments(
                     calleeTemplateSignature,
                     openTypeArguments,
+                    openValueArguments,
                     substitution,
+                    valueSubstitution,
                     location,
                     typeModel,
                     seen,
@@ -1348,7 +1384,9 @@ public static class DefaultCompilerPipeline
         private static void TryEnqueueFunctionTriggerFromOpenTypeArguments(
             TypedFunctionSignature calleeTemplateSignature,
             IReadOnlyList<StarkTypeSymbol> openTypeArguments,
+            IReadOnlyList<ComptimeValueArgumentSymbol>? openValueArguments,
             IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
+            IReadOnlyDictionary<string, BigInteger> valueSubstitution,
             SourceLocation location,
             TypeCheckModel typeModel,
             ISet<string> seen,
@@ -1356,9 +1394,14 @@ public static class DefaultCompilerPipeline
             Queue<FunctionInstantiationTriggerRecord> pending)
         {
             var concreteTypeArguments = openTypeArguments
-                .Select(typeArgument => SubstituteTypeForInstantiation(typeArgument, substitution, typeModel))
+                .Select(typeArgument => SubstituteTypeForInstantiation(typeArgument, substitution, typeModel, valueSubstitution))
                 .ToArray();
             if (concreteTypeArguments.Any(typeArgument => ContainsUnboundGenericParameter(typeArgument, typeModel)))
+            {
+                return;
+            }
+            var concreteValueArguments = FunctionOverloadFacts.SubstituteComptimeValues(openValueArguments, valueSubstitution);
+            if (concreteValueArguments is { Count: > 0 } && concreteValueArguments.Any(static value => value.IsSymbolic))
             {
                 return;
             }
@@ -1367,10 +1410,12 @@ public static class DefaultCompilerPipeline
                 calleeTemplateSignature,
                 concreteTypeArguments,
                 calleeTemplateSignature.Name,
-                typeModel);
+                typeModel,
+                concreteValueArguments);
             var expandedTrigger = new FunctionInstantiationTriggerRecord(
                 calleeTemplateSignature.DisplaySourceName,
                 concreteTypeArguments,
+                concreteValueArguments?.ToArray(),
                 instantiatedSignature,
                 location);
             if (TryAddExpandedTrigger(expandedTrigger, seen, expanded))
@@ -1856,7 +1901,7 @@ public static class DefaultCompilerPipeline
             ICollection<FunctionInstantiationTriggerRecord> expanded)
         {
             var templateName = trigger.Signature.TemplateName ?? trigger.FunctionName;
-            var key = $"{templateName}|{FunctionOverloadFacts.BuildTypeArgumentKey(trigger.TypeArguments)}";
+            var key = $"{templateName}|{FunctionOverloadFacts.BuildInstantiationArgumentKey(trigger.TypeArguments, trigger.ComptimeValueArguments)}";
             if (!seen.Add(key))
             {
                 return false;
@@ -1912,10 +1957,9 @@ public static class DefaultCompilerPipeline
             }
 
             if (StarkTypeSymbols.IsGenericInstantiation(coreType)
-                && coreType.TypeArguments is { Count: > 0 }
                 && !ContainsUnboundGenericParameter(coreType, typeModel))
             {
-                var key = $"{StarkTypeSymbols.GetGenericBaseName(coreType.NamedType)}|{FunctionOverloadFacts.BuildTypeArgumentKey(coreType.TypeArguments)}";
+                var key = $"{StarkTypeSymbols.GetGenericBaseName(coreType.NamedType)}|{FunctionOverloadFacts.BuildInstantiationArgumentKey(coreType.TypeArguments, coreType.ComptimeValueArguments)}";
                 if (!seen.Add(key))
                 {
                     return;
@@ -1923,7 +1967,8 @@ public static class DefaultCompilerPipeline
 
                 expanded.Add(new TypeInstantiationTriggerRecord(
                     coreType.NamedType,
-                    coreType.TypeArguments.ToArray(),
+                    (coreType.TypeArguments ?? []).ToArray(),
+                    coreType.ComptimeValueArguments?.ToArray(),
                     location));
             }
 
@@ -2057,6 +2102,12 @@ public static class DefaultCompilerPipeline
                 return true;
             }
 
+            if (coreType.ComptimeValueArguments is { Count: > 0 }
+                && coreType.ComptimeValueArguments.Any(static value => value.IsSymbolic))
+            {
+                return true;
+            }
+
             if (coreType.Kind == StarkTypeKind.AssociatedType)
             {
                 return true;
@@ -2167,6 +2218,7 @@ public static class DefaultCompilerPipeline
                     return new MonomorphizedFunctionPlan(
                         function.TemplateName,
                         function.TypeArguments.ToArray(),
+                        function.ComptimeValueArguments?.ToArray(),
                         function.DeclaringModuleName,
                         function.OwnerModuleName,
                         function.IsDeclaringModuleSourceBacked,
@@ -2177,7 +2229,8 @@ public static class DefaultCompilerPipeline
                         GlobalSymbolNaming.ComputeMonomorphizedFunctionSymbolName(
                             function.OwnerModuleName,
                             function.TemplateName,
-                            function.TypeArguments),
+                            function.TypeArguments,
+                            function.ComptimeValueArguments),
                         function.FirstUseLocation);
                 })
                 .OrderBy(static function => function.SymbolName, StringComparer.Ordinal)
@@ -2188,6 +2241,7 @@ public static class DefaultCompilerPipeline
                     type.TemplateName,
                     type.InstantiatedTypeName,
                     type.TypeArguments.ToArray(),
+                    type.ComptimeValueArguments?.ToArray(),
                     type.DeclaringModuleName,
                     type.OwnerModuleName,
                     type.IsDeclaringModuleSourceBacked,
@@ -2195,7 +2249,8 @@ public static class DefaultCompilerPipeline
                     GlobalSymbolNaming.ComputeMonomorphizedTypeSymbolName(
                         type.OwnerModuleName,
                         type.TemplateName,
-                        type.TypeArguments),
+                        type.TypeArguments,
+                        type.ComptimeValueArguments),
                     type.FirstUseLocation))
                 .OrderBy(static type => type.SymbolName, StringComparer.Ordinal)
                 .ToArray();
@@ -2417,7 +2472,8 @@ public static class DefaultCompilerPipeline
                 templateSignature,
                 function.TypeArguments,
                 function.TemplateName,
-                typeModel);
+                typeModel,
+                function.ComptimeValueArguments);
 
             if (RequiresIndirectAggregateReturnAbi(
                     instantiatedSignature.ReturnType,
@@ -2634,6 +2690,7 @@ public static class DefaultCompilerPipeline
             return new FunctionSpecializationPlan(
                 function.TemplateName,
                 function.TypeArguments.ToArray(),
+                function.ComptimeValueArguments?.ToArray(),
                 function.DeclaringModuleName,
                 function.OwnerModuleName,
                 function.SymbolName,
@@ -2652,7 +2709,7 @@ public static class DefaultCompilerPipeline
             {
                 var candidates = collision
                     .OrderBy(static function => function.TemplateName, StringComparer.Ordinal)
-                    .ThenBy(static function => FormatConcreteTypeArguments(function.TypeArguments), StringComparer.Ordinal)
+                    .ThenBy(static function => FormatConcreteArguments(function.TypeArguments, function.ComptimeValueArguments), StringComparer.Ordinal)
                     .ToArray();
                 var first = candidates[0];
 
@@ -2721,12 +2778,17 @@ public static class DefaultCompilerPipeline
 
         private static string FormatFunctionInstance(FunctionSpecializationPlan plan)
         {
-            return $"{plan.TemplateName}<{FormatConcreteTypeArguments(plan.TypeArguments)}>";
+            return $"{plan.TemplateName}<{FormatConcreteArguments(plan.TypeArguments, plan.ComptimeValueArguments)}>";
         }
 
-        private static string FormatConcreteTypeArguments(IReadOnlyList<StarkTypeSymbol> typeArguments)
+        private static string FormatConcreteArguments(
+            IReadOnlyList<StarkTypeSymbol> typeArguments,
+            IReadOnlyList<ComptimeValueArgumentSymbol>? valueArguments)
         {
-            return string.Join(", ", typeArguments.Select(static argument => argument.DisplayName));
+            return string.Join(
+                ", ",
+                typeArguments.Select(static argument => argument.DisplayName)
+                    .Concat((valueArguments ?? []).Select(static argument => argument.IntegerValue.ToString())));
         }
 
         private static string FormatSelectionOrder(IReadOnlyList<FunctionSpecializationStrategy> selectionOrder)
@@ -2810,6 +2872,7 @@ public static class DefaultCompilerPipeline
                     return new FunctionSpecializationCodegenStrategy(
                         function.TemplateName,
                         function.TypeArguments.ToArray(),
+                        function.ComptimeValueArguments?.ToArray(),
                         function.DeclaringModuleName,
                         function.OwnerModuleName,
                         monomorphized.IsDeclaringModuleSourceBacked,
@@ -4055,7 +4118,13 @@ public static class DefaultCompilerPipeline
                 }
 
                 var substitution = FunctionOverloadFacts.BuildGenericSubstitution(templateSignature, strategy.TypeArguments);
-                var specializedSignature = InstantiateSignatureForInstantiation(templateSignature, strategy.TypeArguments, strategy.SymbolName, typeModel);
+                var valueSubstitution = FunctionOverloadFacts.BuildComptimeValueSubstitution(templateSignature, strategy.ComptimeValueArguments);
+                var specializedSignature = InstantiateSignatureForInstantiation(
+                    templateSignature,
+                    strategy.TypeArguments,
+                    strategy.SymbolName,
+                    typeModel,
+                    strategy.ComptimeValueArguments);
                 functions.Add(new HighLevelIrFunction(
                     strategy.SymbolName,
                     specializedSignature,
@@ -4063,7 +4132,8 @@ public static class DefaultCompilerPipeline
                     DetermineBodyLoweringKind(declaration),
                     templateEffects with { Name = strategy.SymbolName },
                     BodyTemplateName: strategy.TemplateName,
-                    GenericTypeSubstitution: substitution));
+                    GenericTypeSubstitution: substitution,
+                    GenericValueSubstitution: valueSubstitution));
             }
 
             return functions

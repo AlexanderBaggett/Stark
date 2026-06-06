@@ -56,7 +56,7 @@ stack heap register arena borrow retborrow storeborrow frozen shared out init mu
 Control flow and patterns:
 
 ```text
-if else switch case default when while for infinite non-deterministic willexit return break continue where var try is
+if else switch case default when while for infinite non-deterministic willexit return break continue where var try is comptime
 ```
 
 Builtins and literals:
@@ -225,6 +225,58 @@ stack i32[min max][3] values =
 stack i32[min max][] view = values;
 ```
 
+Generic parameter lists can include typed compile-time value parameters. The
+implemented slice supports range-typed integer `comptime` parameters in
+fixed-array lengths, infers them from fixed-array arguments, and accepts
+explicit integer value arguments at generic type/function use sites. Package
+images preserve these declarations and imported-template substitutions:
+
+```stark
+finite law u8[0 max] Probe<T, comptime u8[1 4] N>(borrow T[N] values)
+{
+    return N;
+}
+
+stack i32[min max][3] values = { 1, 2, 3 };
+stack u8[0 max] count = Probe<i32[min max], 3>(values);
+```
+
+## Loop Shapes
+
+Loops require an explicit behavior keyword: `infinite`, `non-deterministic`,
+or `willexit`.
+
+```stark
+while willexit (keepGoing)
+{
+    Step();
+}
+
+for willexit (stack mut u64[0 max] index = 0; index < count; index += 1)
+{
+    Visit(index);
+}
+
+for willexit (borrow Item item in items)
+{
+    Visit(item);
+}
+
+for willexit (borrow mut Item item in items)
+{
+    Mutate(item);
+}
+
+for willexit (stack u64[0 max] index, borrow Item item in items)
+{
+    Visit(index, item);
+}
+```
+
+`for ... in ...` traverses fixed arrays, slices, and dynamic storage as a
+counted loop. The element binding must be `borrow T` or `borrow mut T`;
+mutable traversal requires mutable element storage.
+
 ## Switch Shapes
 
 ```stark
@@ -246,8 +298,13 @@ switch (token)
 
 Supported patterns include literals, enum cases, aggregate fields, `_`,
 `var` captures, switch-label or-patterns (`case A | B:`), inclusive integer
-range patterns (`case 0..10:`), `default`, and `when` guards. Range patterns
-are integer-only and can appear inside enum/aggregate field patterns.
+range patterns (`case 0..10:`), aggregate property patterns
+(`case Box { Field: pattern }:`), exact-length list patterns
+(`case [first, second]:`), `default`, and `when` guards. Range patterns are
+integer-only and can appear inside enum/aggregate/list field patterns.
+Property patterns must name every aggregate field exactly once. List patterns
+match fixed arrays, slices, and dynamic storage by exact length; fixed-array
+length mismatches are compile-time errors.
 
 Switches must be exhaustive (cover every enum variant / bool value / ranged-integer
 value, for example with `case 0..3:`, or add `default`), and non-`void`
@@ -255,6 +312,10 @@ functions must return on every path.
 `when`-guarded arms do not count toward coverage.
 
 ## Error Propagation And Pattern Conditions
+
+Safe optional values use `System.Option<T>` with `Some(T)` / `None`; safe
+references and borrows are never nullable. Raw `null` is only for raw pointers
+and FFI.
 
 ```stark
 enum Outcome<T>

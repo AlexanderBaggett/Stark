@@ -3531,6 +3531,88 @@ public sealed class TypeCheckingTests
     }
 
     [Fact]
+    public void AggregatePropertySwitchPatternsTypeCheckOnNamedFields()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            struct Boxed
+            {
+                i32[min max] Value;
+                bool Enabled;
+            }
+
+            finite law i32[min max] Run(Boxed value)
+            {
+                switch (value)
+                {
+                    case Boxed { Enabled: true, Value: var found }:
+                        return found;
+                    case Boxed { Value: _, Enabled: _ }:
+                        return 0;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+    }
+
+    [Fact]
+    public void ListSwitchPatternsTypeCheckOnFixedArrays()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            finite law i32[min max] Run(i32[min max][2] values)
+            {
+                switch (values)
+                {
+                    case [1, var right]:
+                        return right;
+                    case [_, _]:
+                        return 0;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+    }
+
+    [Fact]
+    public void ListSwitchPatternsTypeCheckOnSlices()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            unsafe finite law i32[min max] Run(i32[min max][2] source)
+            {
+                stack i32[min max][] values = source;
+                switch (values)
+                {
+                    case [var left, var right]:
+                        return left + right;
+                    default:
+                        return 0;
+                }
+            }
+            """,
+            new CompilerOptions(StopAfterPassId: "type-check"));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        Assert.True(result.Artifacts.TryGet(CompilerArtifactKeys.TypeCheckModel, out TypeCheckModel? typeCheckModel));
+        Assert.NotNull(typeCheckModel);
+    }
+
+    [Fact]
     public void NamedAggregateWholeValueSwitchCapturesTypeCheck()
     {
         var result = Compile(

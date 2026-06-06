@@ -55,7 +55,10 @@ internal static partial class PackageImageBuilder
             BackendOptimizationMode: RenderBackendOptimizationMode(declarationFunction.BackendOptimizationMode),
             DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups),
             OverlapParameterGroups: BuildParameterOverlapGroupManifests(function.OverlapGroups),
-            SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups));
+            SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups),
+            ComptimeGenericParameters: BuildComptimeGenericParameterManifests(
+                function.ComptimeGenericParams,
+                moduleName: ModuleNameFromQualifiedName(qualifiedName)));
         return true;
     }
 
@@ -105,7 +108,8 @@ internal static partial class PackageImageBuilder
             DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups),
             OverlapParameterGroups: BuildParameterOverlapGroupManifests(function.OverlapGroups),
             SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups),
-            HasBody: declarationFunction.HasBody);
+            HasBody: declarationFunction.HasBody,
+            ComptimeGenericParameters: BuildComptimeGenericParameterManifests(function.ComptimeGenericParams, moduleName));
     }
 
     private static StarkPackageTypeManifest BuildTypeManifest(
@@ -161,7 +165,10 @@ internal static partial class PackageImageBuilder
             PackBytes: namedType.Layout?.PackBytes,
             AlignBytes: namedType.Layout?.AlignBytes,
             ImplementedTraits: BuildImplementedTraitManifestNames(namedType),
-            AssociatedTypes: BuildAssociatedTypeManifests(namedType, module.SyntaxModel.ModuleName));
+            AssociatedTypes: BuildAssociatedTypeManifests(namedType, module.SyntaxModel.ModuleName),
+            ComptimeGenericParameters: BuildComptimeGenericParameterManifests(
+                namedType.ComptimeGenericParams,
+                module.SyntaxModel.ModuleName));
     }
 
     private static StarkPackageTypedTypeManifest BuildTypedTypeManifest(
@@ -221,7 +228,10 @@ internal static partial class PackageImageBuilder
             PackBytes: namedType.Layout?.PackBytes,
             AlignBytes: namedType.Layout?.AlignBytes,
             ImplementedTraits: BuildImplementedTraitManifestNames(namedType),
-            AssociatedTypes: BuildTypedAssociatedTypeManifests(namedType, module.SyntaxModel.ModuleName));
+            AssociatedTypes: BuildTypedAssociatedTypeManifests(namedType, module.SyntaxModel.ModuleName),
+            ComptimeGenericParameters: BuildComptimeGenericParameterManifests(
+                namedType.ComptimeGenericParams,
+                module.SyntaxModel.ModuleName));
     }
 
     private static IReadOnlyList<StarkPackageAssociatedTypeManifest>? BuildAssociatedTypeManifests(
@@ -474,7 +484,10 @@ internal static partial class PackageImageBuilder
                     BackendOptimizationMode: RenderBackendOptimizationMode(declaration.Function.BackendOptimizationMode),
                     DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups),
                     OverlapParameterGroups: BuildParameterOverlapGroupManifests(function.OverlapGroups),
-                    SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups));
+                    SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups),
+                    ComptimeGenericParameters: BuildComptimeGenericParameterManifests(
+                        function.ComptimeGenericParams,
+                        module.SyntaxModel.ModuleName));
             })
             .Where(static manifest => manifest is not null)
             .Cast<StarkPackageMethodManifest>()
@@ -544,7 +557,10 @@ internal static partial class PackageImageBuilder
                     DisjointParameterGroups: BuildParameterDisjointGroupManifests(function.DisjointGroups),
                     OverlapParameterGroups: BuildParameterOverlapGroupManifests(function.OverlapGroups),
                     SameParameterGroups: BuildParameterSameGroupManifests(function.SameGroups),
-                    HasBody: declaration.Function.HasBody);
+                    HasBody: declaration.Function.HasBody,
+                    ComptimeGenericParameters: BuildComptimeGenericParameterManifests(
+                        function.ComptimeGenericParams,
+                        module.SyntaxModel.ModuleName));
             })
             .Where(static manifest => manifest is not null)
             .Cast<StarkPackageTypedMethodManifest>()

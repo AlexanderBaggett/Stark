@@ -48,6 +48,13 @@ internal static partial class PackageImageLoader
             return false;
         }
 
+        ImportedTemplateTypedBodyExpressionSummary? traversalSource = null;
+        if (manifest.TraversalSource is not null
+            && !TryBuildImportedTypedTemplateExpression(manifest.TraversalSource, out traversalSource))
+        {
+            return false;
+        }
+
         if (string.Equals(manifest.Kind, "block", StringComparison.Ordinal))
         {
             var bodyStatements = new List<ImportedTemplateTypedBodyStatementSummary>((manifest.BodyStatements ?? []).Count);
@@ -199,6 +206,53 @@ internal static partial class PackageImageLoader
             return true;
         }
 
+        if (string.Equals(manifest.Kind, "for-traversal", StringComparison.Ordinal))
+        {
+            if (traversalSource is null
+                || string.IsNullOrWhiteSpace(manifest.LoopBehavior)
+                || string.IsNullOrWhiteSpace(manifest.TraversalElementName)
+                || manifest.TraversalElementType is null)
+            {
+                return false;
+            }
+
+            var hasIndexBinding =
+                manifest.TraversalIndexName is not null
+                || manifest.TraversalIndexStorageClass is not null
+                || manifest.TraversalIndexType is not null;
+            if (hasIndexBinding
+                && (string.IsNullOrWhiteSpace(manifest.TraversalIndexName)
+                    || string.IsNullOrWhiteSpace(manifest.TraversalIndexStorageClass)
+                    || manifest.TraversalIndexType is null))
+            {
+                return false;
+            }
+
+            var bodyStatements = new List<ImportedTemplateTypedBodyStatementSummary>((manifest.BodyStatements ?? []).Count);
+            foreach (var bodyStatement in manifest.BodyStatements ?? [])
+            {
+                if (!TryBuildImportedTypedTemplateStatement(bodyStatement, out var builtBodyStatement))
+                {
+                    return false;
+                }
+
+                bodyStatements.Add(builtBodyStatement);
+            }
+
+            summary = new ImportedTemplateTypedBodyStatementSummary(
+                ImportedTemplateTypedBodyStatementKind.ForTraversal,
+                LoopBehavior: manifest.LoopBehavior,
+                BodyStatements: bodyStatements,
+                LoopContracts: manifest.LoopContracts,
+                TraversalSourceExpression: traversalSource,
+                TraversalIndexName: manifest.TraversalIndexName,
+                TraversalIndexStorageClass: manifest.TraversalIndexStorageClass,
+                TraversalIndexType: manifest.TraversalIndexType is null ? null : BuildTypeSymbol(manifest.TraversalIndexType),
+                TraversalElementName: manifest.TraversalElementName,
+                TraversalElementType: BuildTypeSymbol(manifest.TraversalElementType));
+            return true;
+        }
+
         if (string.Equals(manifest.Kind, "while", StringComparison.Ordinal))
         {
             if (expression is null)
@@ -329,6 +383,10 @@ internal static partial class PackageImageLoader
         else if (string.Equals(manifest.Kind, "aggregate-pattern", StringComparison.Ordinal))
         {
             kind = ImportedTemplateTypedSwitchCaseKind.AggregatePattern;
+        }
+        else if (string.Equals(manifest.Kind, "list-pattern", StringComparison.Ordinal))
+        {
+            kind = ImportedTemplateTypedSwitchCaseKind.ListPattern;
         }
         else
         {
@@ -513,6 +571,25 @@ internal static partial class PackageImageLoader
                 ImportedTemplateTypedSwitchFieldPatternKind.AggregatePattern,
                 manifest.Name,
                 Ordinal: ordinal,
+                MemberPatterns: members);
+            return true;
+        }
+
+        if (string.Equals(manifest.Kind, "list-pattern", StringComparison.Ordinal))
+        {
+            var members = new List<ImportedTemplateTypedSwitchFieldPatternSummary>((manifest.Members ?? []).Count);
+            foreach (var member in manifest.Members ?? [])
+            {
+                if (!TryBuildImportedTypedTemplateSwitchFieldPattern(member, out var builtMember))
+                {
+                    return false;
+                }
+
+                members.Add(builtMember);
+            }
+
+            summary = new ImportedTemplateTypedSwitchFieldPatternSummary(
+                ImportedTemplateTypedSwitchFieldPatternKind.ListPattern,
                 MemberPatterns: members);
             return true;
         }

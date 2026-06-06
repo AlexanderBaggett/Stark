@@ -259,12 +259,24 @@ internal static partial class PackageImageBuilder
                     TypedBody: typedBody,
                     DeferredFunctionInstantiations: deferredTriggers is { Count: > 0 }
                         ? deferredTriggers
-                            .Where(static trigger => trigger.Signature.TemplateName is not null && trigger.Signature.TypeArguments is { Count: > 0 })
+                            .Where(static trigger => trigger.Signature.TemplateName is not null
+                                                     && (trigger.Signature.TypeArguments is { Count: > 0 }
+                                                         || trigger.Signature.ComptimeValueArguments is { Count: > 0 }))
                             .Select(trigger => new StarkPackageDeferredFunctionInstantiationManifest(
                                 QualifyPublishedCalledFunctionName(module, trigger.Signature.TemplateName!),
-                                trigger.Signature.TypeArguments!
-                                    .Select(typeArgument => BuildPublishedAbiTypeReference(typeArgument, module))
-                                    .ToArray()))
+                                trigger.Signature.TypeArguments is { Count: > 0 }
+                                    ? trigger.Signature.TypeArguments
+                                        .Select(typeArgument => BuildPublishedAbiTypeReference(typeArgument, module))
+                                        .ToArray()
+                                    : null,
+                                trigger.Signature.ComptimeValueArguments is { Count: > 0 }
+                                    ? trigger.Signature.ComptimeValueArguments
+                                        .Select(argument => BuildPublishedAbiComptimeValueArgument(
+                                            argument,
+                                            module.SyntaxModel.ModuleName,
+                                            GetModuleLocalNamedTypes(module)))
+                                        .ToArray()
+                                    : null))
                             .ToArray()
                         : null,
                     DeferredTypeInstantiations: deferredTypeTriggers is { Count: > 0 }
@@ -600,6 +612,7 @@ internal static partial class PackageImageBuilder
                 && !string.Equals(publishedStatements[index].Kind, "assignment", StringComparison.Ordinal)
                 && !string.Equals(publishedStatements[index].Kind, "switch", StringComparison.Ordinal)
                 && !string.Equals(publishedStatements[index].Kind, "for", StringComparison.Ordinal)
+                && !string.Equals(publishedStatements[index].Kind, "for-traversal", StringComparison.Ordinal)
                 && !string.Equals(publishedStatements[index].Kind, "while", StringComparison.Ordinal)
                 && !string.Equals(publishedStatements[index].Kind, "if", StringComparison.Ordinal))
             {
@@ -620,6 +633,7 @@ internal static partial class PackageImageBuilder
             || string.Equals(statement.Kind, "assignment", StringComparison.Ordinal)
             || string.Equals(statement.Kind, "switch", StringComparison.Ordinal)
             || string.Equals(statement.Kind, "for", StringComparison.Ordinal)
+            || string.Equals(statement.Kind, "for-traversal", StringComparison.Ordinal)
             || string.Equals(statement.Kind, "while", StringComparison.Ordinal)
             || string.Equals(statement.Kind, "if", StringComparison.Ordinal);
     }
@@ -1000,7 +1014,89 @@ internal static partial class PackageImageBuilder
             return true;
         }
 
+        if (statement.forStatement() is { } traversalForStatement
+            && traversalForStatement.forTraversal() is { } forTraversal
+            && TryBuildPublishedTypedTemplateExpression(
+                module,
+                forTraversal.expression(),
+                namedTypes,
+                literalsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                functionAddressOrdinals,
+                directCallOrdinals,
+                dynamicStorageOperationOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var traversalSource)
+            && TryBuildPublishedTypedTemplateTraversalBindingType(
+                module,
+                localDeclarationsByLocation,
+                TemplateLocalDeclarationFacts.TraversalElementKind,
+                forTraversal.traversalElementBinding(),
+                forTraversal.traversalElementBinding().type_(),
+                out var traversalElementType)
+            && TryBuildPublishedTypedTemplateBranchStatement(
+                module,
+                traversalForStatement.statement(),
+                namedTypes,
+                literalsByLocation,
+                localDeclarationsByLocation,
+                conversionsByLocation,
+                objectCreationOrdinals,
+                enumConstructorOrdinals,
+                enumCallOrdinals,
+                enumValueOrdinals,
+                enumPatternOrdinals,
+                aggregatePatternOrdinals,
+                localStorageCapacitiesByLocation,
+                functionAddressOrdinals,
+                directCallOrdinals,
+                dynamicStorageOperationOrdinals,
+                memberCallOrdinals,
+                fieldAccessOrdinals,
+                out var traversalBodyStatements))
+        {
+            string? traversalIndexName = null;
+            string? traversalIndexStorageClass = null;
+            StarkPackageTypeReference? traversalIndexType = null;
+            if (forTraversal.traversalIndexBinding() is { } indexBinding)
+            {
+                if (!TryBuildPublishedTypedTemplateTraversalBindingType(
+                        module,
+                        localDeclarationsByLocation,
+                        TemplateLocalDeclarationFacts.TraversalIndexKind,
+                        indexBinding,
+                        indexBinding.type_(),
+                        out traversalIndexType))
+                {
+                    publishedStatement = null!;
+                    return false;
+                }
+
+                traversalIndexName = indexBinding.Identifier().GetText();
+                traversalIndexStorageClass = indexBinding.storageClass().GetText();
+            }
+
+            publishedStatement = new StarkPackageTypedTemplateStatementManifest(
+                Kind: "for-traversal",
+                LoopBehavior: traversalForStatement.loopBehavior().GetText(),
+                BodyStatements: traversalBodyStatements,
+                LoopContracts: BuildLoopContracts(traversalForStatement.loopContract()),
+                TraversalSource: traversalSource,
+                TraversalIndexName: traversalIndexName,
+                TraversalIndexStorageClass: traversalIndexStorageClass,
+                TraversalIndexType: traversalIndexType,
+                TraversalElementName: forTraversal.traversalElementBinding().Identifier().GetText(),
+                TraversalElementType: traversalElementType);
+            return true;
+        }
+
         if (statement.forStatement() is { } forStatement
+            && forStatement.forTraversal() is null
             && TryBuildPublishedTypedTemplateForInitializerStatements(
                 module,
                 forStatement.forInitializer(),
@@ -1336,6 +1432,28 @@ internal static partial class PackageImageBuilder
             .ToArray();
     }
 
+    private static bool TryBuildPublishedTypedTemplateTraversalBindingType(
+        LoadedModuleDocument module,
+        IReadOnlyDictionary<string, LocalDeclarationTypingRecord> localDeclarationsByLocation,
+        string declarationKind,
+        ParserRuleContext bindingContext,
+        StarkParser.Type_Context typeSyntax,
+        out StarkPackageTypeReference typeReference)
+    {
+        if (localDeclarationsByLocation.TryGetValue(
+                TemplateLocalDeclarationFacts.BuildLookupKey(
+                    declarationKind,
+                    bindingContext.Start.Line,
+                    bindingContext.Start.Column + 1),
+                out var localDeclaration))
+        {
+            typeReference = BuildPublishedAbiTypeReference(localDeclaration.Type, module);
+            return true;
+        }
+
+        return TryBuildPublishedAbiTypeReferenceFromSyntax(module, typeSyntax, out typeReference);
+    }
+
     private static bool CanUseTypedTemplateStatementAsTerminal(
         StarkPackageTypedTemplateStatementManifest statement,
         StarkTypeSymbol returnType)
@@ -1632,27 +1750,74 @@ internal static partial class PackageImageBuilder
                 return true;
             }
 
-            if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
+            if (pattern.listPattern() is { } listPattern)
             {
-                if (!enumPatternOrdinals.TryGetValue(enumNamedFieldPattern, out var ordinal)
-                    || !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                if (!TryBuildPublishedTypedTemplateSwitchFieldPatterns(
                         module,
                         literalsByLocation,
                         enumPatternOrdinals,
                         aggregatePatternOrdinals,
-                        enumNamedFieldPattern.enumNamedFieldPatternPayload().namedPatternMember().Select(static member => member.pattern()).ToArray(),
+                        listPattern.pattern(),
                         out var members))
                 {
                     return false;
                 }
 
                 switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
-                    Kind: "enum-pattern",
-                    Ordinal: ordinal,
+                    Kind: "list-pattern",
                     Members: members,
                     GuardExpression: guardExpression,
                     Statements: statements);
                 return true;
+            }
+
+            if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
+            {
+                if (enumPatternOrdinals.TryGetValue(enumNamedFieldPattern, out var ordinal))
+                {
+                    if (!TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                        module,
+                        literalsByLocation,
+                        enumPatternOrdinals,
+                        aggregatePatternOrdinals,
+                        enumNamedFieldPattern.namedPatternPayload().namedPatternMember().Select(static member => member.pattern()).ToArray(),
+                        out var members))
+                    {
+                        return false;
+                    }
+
+                    switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                        Kind: "enum-pattern",
+                        Ordinal: ordinal,
+                        Members: members,
+                        GuardExpression: guardExpression,
+                        Statements: statements);
+                    return true;
+                }
+
+                if (aggregatePatternOrdinals.TryGetValue(enumNamedFieldPattern, out var aggregateOrdinal))
+                {
+                    if (!TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                            module,
+                            literalsByLocation,
+                            enumPatternOrdinals,
+                            aggregatePatternOrdinals,
+                            enumNamedFieldPattern.namedPatternPayload().namedPatternMember().Select(static member => member.pattern()).ToArray(),
+                            out var members))
+                    {
+                        return false;
+                    }
+
+                    switchCase = new StarkPackageTypedTemplateSwitchCaseManifest(
+                        Kind: "aggregate-pattern",
+                        Ordinal: aggregateOrdinal,
+                        Members: members,
+                        GuardExpression: guardExpression,
+                        Statements: statements);
+                    return true;
+                }
+
+                return false;
             }
 
             if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern)
@@ -1834,6 +1999,17 @@ internal static partial class PackageImageBuilder
             return false;
         }
 
+        if (suffix.namedPatternPayload() is { } namedPayload)
+        {
+            return TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                module,
+                literalsByLocation,
+                enumPatternOrdinals,
+                aggregatePatternOrdinals,
+                namedPayload.namedPatternMember().Select(static member => member.pattern()).ToArray(),
+                out members);
+        }
+
         return TryBuildPublishedTypedTemplateSwitchFieldPatterns(
             module,
             literalsByLocation,
@@ -1926,25 +2102,68 @@ internal static partial class PackageImageBuilder
             return true;
         }
 
-        if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
+        if (pattern.listPattern() is { } listPattern)
         {
-            if (!enumPatternOrdinals.TryGetValue(enumNamedFieldPattern, out var ordinal)
-                || !TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+            if (!TryBuildPublishedTypedTemplateSwitchFieldPatterns(
                     module,
                     literalsByLocation,
                     enumPatternOrdinals,
                     aggregatePatternOrdinals,
-                    enumNamedFieldPattern.enumNamedFieldPatternPayload().namedPatternMember().Select(static nestedMember => nestedMember.pattern()).ToArray(),
+                    listPattern.pattern(),
                     out var members))
             {
                 return false;
             }
 
             member = new StarkPackageTypedTemplatePatternManifest(
-                "enum-pattern",
-                Ordinal: ordinal,
+                "list-pattern",
                 Members: members);
             return true;
+        }
+
+        if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
+        {
+            if (enumPatternOrdinals.TryGetValue(enumNamedFieldPattern, out var ordinal))
+            {
+                if (!TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                        module,
+                        literalsByLocation,
+                        enumPatternOrdinals,
+                        aggregatePatternOrdinals,
+                        enumNamedFieldPattern.namedPatternPayload().namedPatternMember().Select(static nestedMember => nestedMember.pattern()).ToArray(),
+                        out var members))
+                {
+                    return false;
+                }
+
+                member = new StarkPackageTypedTemplatePatternManifest(
+                    "enum-pattern",
+                    Ordinal: ordinal,
+                    Members: members);
+                return true;
+            }
+
+            if (aggregatePatternOrdinals.TryGetValue(enumNamedFieldPattern, out var aggregateOrdinal))
+            {
+                if (!TryBuildPublishedTypedTemplateSwitchFieldPatterns(
+                        module,
+                        literalsByLocation,
+                        enumPatternOrdinals,
+                        aggregatePatternOrdinals,
+                        enumNamedFieldPattern.namedPatternPayload().namedPatternMember().Select(static nestedMember => nestedMember.pattern()).ToArray(),
+                        out var members))
+                {
+                    return false;
+                }
+
+                member = new StarkPackageTypedTemplatePatternManifest(
+                    "aggregate-pattern",
+                    Ordinal: aggregateOrdinal,
+                    Members: members);
+                return true;
+            }
+
+            return false;
         }
 
         if (pattern.genericEnumAggregatePattern() is { } genericEnumAggregatePattern)
@@ -3205,7 +3424,8 @@ internal static partial class PackageImageBuilder
 
         if (baseExpression is null)
         {
-            var name = primaryExpression?.Identifier()?.GetText()
+            var name = primaryExpression?.genericQualifiedName()?.qualifiedName().GetText()
+                ?? primaryExpression?.Identifier()?.GetText()
                 ?? primaryExpression?.qualifiedName()?.GetText();
             if (name is null)
             {
@@ -4659,13 +4879,20 @@ internal static partial class PackageImageBuilder
             .GroupBy(static record => TemplateDirectCallFacts.BuildLookupKey(record.Location))
             .ToDictionary(static group => group.Key, static group => group.Last(), StringComparer.Ordinal);
         var published = CollectTemplateEnumPatternContexts(functionBody)
-            .Select((patternContext, ordinal) => patternContext is StarkParser.AggregatePatternContext aggregatePattern
-                    && aggregatePatternsByLocation.TryGetValue(
-                        TemplateDirectCallFacts.BuildLookupKey(aggregatePattern.Start.Line, aggregatePattern.Start.Column + 1),
+            .Select((patternContext, ordinal) => aggregatePatternsByLocation.TryGetValue(
+                        TemplateDirectCallFacts.BuildLookupKey(patternContext.Start.Line, patternContext.Start.Column + 1),
                         out var record)
                 ? new StarkPackageTemplateAggregatePatternManifest(
                     ordinal,
-                    BuildPublishedAbiTypeReference(record.Type, module))
+                    BuildPublishedAbiTypeReference(record.Type, module),
+                    record.Members.Count == 0
+                        ? null
+                        : record.Members
+                            .Select(member => new StarkPackageTemplateEnumPatternMemberManifest(
+                                member.FieldName,
+                                member.FieldIndex,
+                                BuildPublishedAbiTypeReference(member.FieldType, module)))
+                            .ToArray())
                 : null)
             .Where(static aggregatePattern => aggregatePattern is not null)
             .Cast<StarkPackageTemplateAggregatePatternManifest>()
@@ -4790,6 +5017,14 @@ internal static partial class PackageImageBuilder
                             .Select(typeArgument => BuildPublishedAbiTypeReference(typeArgument, module))
                             .ToArray()
                         : null,
+                    ComptimeValueArguments: record.Signature.ComptimeValueArguments is { Count: > 0 }
+                        ? record.Signature.ComptimeValueArguments
+                            .Select(argument => BuildPublishedAbiComptimeValueArgument(
+                                argument,
+                                module.SyntaxModel.ModuleName,
+                                GetModuleLocalNamedTypes(module)))
+                            .ToArray()
+                        : null,
                     DisjointParameterGroups: BuildParameterDisjointGroupManifests(record.Signature.DisjointGroups),
                     OverlapParameterGroups: BuildParameterOverlapGroupManifests(record.Signature.OverlapGroups),
                     SameParameterGroups: BuildParameterSameGroupManifests(record.Signature.SameGroups))
@@ -4871,6 +5106,14 @@ internal static partial class PackageImageBuilder
                             .Select(typeArgument => BuildPublishedAbiTypeReference(typeArgument, module))
                             .ToArray()
                         : null,
+                    ComptimeValueArguments: record.Signature.ComptimeValueArguments is { Count: > 0 }
+                        ? record.Signature.ComptimeValueArguments
+                            .Select(argument => BuildPublishedAbiComptimeValueArgument(
+                                argument,
+                                module.SyntaxModel.ModuleName,
+                                GetModuleLocalNamedTypes(module)))
+                            .ToArray()
+                        : null,
                     DisjointParameterGroups: BuildParameterDisjointGroupManifests(record.Signature.DisjointGroups),
                     OverlapParameterGroups: BuildParameterOverlapGroupManifests(record.Signature.OverlapGroups),
                     SameParameterGroups: BuildParameterSameGroupManifests(record.Signature.SameGroups))
@@ -4927,6 +5170,14 @@ internal static partial class PackageImageBuilder
                 TypeArguments: promotion.Signature.TypeArguments is { Count: > 0 }
                     ? promotion.Signature.TypeArguments
                         .Select(typeArgument => BuildPublishedAbiTypeReference(typeArgument, module))
+                        .ToArray()
+                    : null,
+                ComptimeValueArguments: promotion.Signature.ComptimeValueArguments is { Count: > 0 }
+                    ? promotion.Signature.ComptimeValueArguments
+                        .Select(argument => BuildPublishedAbiComptimeValueArgument(
+                            argument,
+                            module.SyntaxModel.ModuleName,
+                            GetModuleLocalNamedTypes(module)))
                         .ToArray()
                     : null,
                 DisjointParameterGroups: BuildParameterDisjointGroupManifests(promotion.Signature.DisjointGroups),
@@ -5270,6 +5521,14 @@ internal static partial class PackageImageBuilder
             TypeArguments: signature.TypeArguments is { Count: > 0 }
                 ? signature.TypeArguments
                     .Select(typeArgument => BuildPublishedAbiTypeReference(typeArgument, module))
+                    .ToArray()
+                : null,
+            ComptimeValueArguments: signature.ComptimeValueArguments is { Count: > 0 }
+                ? signature.ComptimeValueArguments
+                    .Select(argument => BuildPublishedAbiComptimeValueArgument(
+                        argument,
+                        module.SyntaxModel.ModuleName,
+                        GetModuleLocalNamedTypes(module)))
                     .ToArray()
                 : null,
             DisjointParameterGroups: BuildParameterDisjointGroupManifests(signature.DisjointGroups),
@@ -5648,21 +5907,123 @@ internal static partial class PackageImageBuilder
             ? name
             : $"{module.SyntaxModel.ModuleName}.{name}";
         var typeArguments = new List<StarkPackageTypeReference>();
-        var typeArgumentSyntax = type.typeArgumentList()?.type_() ?? Array.Empty<StarkParser.Type_Context>();
-        foreach (var typeArgument in typeArgumentSyntax)
+        var comptimeValueArguments = new List<StarkPackageComptimeValueArgumentManifest>();
+        var genericArgumentSyntax = type.typeArgumentList()?.genericArgument() ?? Array.Empty<StarkParser.GenericArgumentContext>();
+        var declaredComptimeParameters = genericArgumentSyntax.Length == 0
+            ? []
+            : GetPublishedAbiComptimeParameters(module, qualifiedName);
+        foreach (var genericArgument in genericArgumentSyntax)
         {
-            if (!TryBuildPublishedAbiTypeReferenceFromSyntax(module, typeArgument, out var publishedTypeArgument))
+            if (genericArgument.type_() is { } typeArgument)
+            {
+                if (!TryBuildPublishedAbiTypeReferenceFromSyntax(module, typeArgument, out var publishedTypeArgument))
+                {
+                    return false;
+                }
+
+                typeArguments.Add(publishedTypeArgument);
+                continue;
+            }
+
+            var valueParameterIndex = comptimeValueArguments.Count;
+            if (valueParameterIndex >= declaredComptimeParameters.Count
+                || !TryBuildPublishedAbiComptimeValueArgumentFromSyntax(
+                    module,
+                    genericArgument,
+                    declaredComptimeParameters[valueParameterIndex],
+                    out var publishedValueArgument))
             {
                 return false;
             }
 
-            typeArguments.Add(publishedTypeArgument);
+            comptimeValueArguments.Add(publishedValueArgument);
         }
 
         typeReference = new StarkPackageTypeReference(
             "named",
             Name: qualifiedName,
-            TypeArguments: typeArguments.Count == 0 ? null : typeArguments);
+            TypeArguments: typeArguments.Count == 0 ? null : typeArguments,
+            ComptimeValueArguments: comptimeValueArguments.Count == 0 ? null : comptimeValueArguments);
+        return true;
+    }
+
+    private static IReadOnlyList<(string Name, StarkParser.Type_Context Type)> GetPublishedAbiComptimeParameters(
+        LoadedModuleDocument module,
+        string qualifiedName)
+    {
+        var localName = qualifiedName.Contains('.', StringComparison.Ordinal)
+            ? qualifiedName[(qualifiedName.LastIndexOf('.') + 1)..]
+            : qualifiedName;
+        if (qualifiedName.Contains('.', StringComparison.Ordinal)
+            && !qualifiedName.StartsWith($"{module.SyntaxModel.ModuleName}.", StringComparison.Ordinal))
+        {
+            return [];
+        }
+
+        foreach (var declaration in module.ParseResult.Root.topLevelDeclaration())
+        {
+            var typeParameterList =
+                declaration.structDeclaration() is { } structDeclaration
+                    && string.Equals(structDeclaration.Identifier().GetText(), localName, StringComparison.Ordinal)
+                    ? structDeclaration.typeParameterList()
+                : declaration.recordDeclaration() is { } recordDeclaration
+                    && string.Equals(recordDeclaration.Identifier().GetText(), localName, StringComparison.Ordinal)
+                    ? recordDeclaration.typeParameterList()
+                : declaration.enumDeclaration() is { } enumDeclaration
+                    && string.Equals(enumDeclaration.Identifier().GetText(), localName, StringComparison.Ordinal)
+                    ? enumDeclaration.typeParameterList()
+                : declaration.traitDeclaration() is { } traitDeclaration
+                    && string.Equals(traitDeclaration.Identifier().GetText(), localName, StringComparison.Ordinal)
+                    ? traitDeclaration.typeParameterList()
+                : declaration.typeAliasDeclaration() is { } typeAliasDeclaration
+                    && string.Equals(typeAliasDeclaration.Identifier().GetText(), localName, StringComparison.Ordinal)
+                    ? typeAliasDeclaration.typeParameterList()
+                : null;
+            if (typeParameterList is null)
+            {
+                continue;
+            }
+
+            return typeParameterList.typeParameter()
+                .Where(static parameter => parameter.COMPTIME() is not null)
+                .Select(static parameter => (parameter.Identifier().GetText(), parameter.type_()))
+                .ToArray();
+        }
+
+        return [];
+    }
+
+    private static bool TryBuildPublishedAbiComptimeValueArgumentFromSyntax(
+        LoadedModuleDocument module,
+        StarkParser.GenericArgumentContext argument,
+        (string Name, StarkParser.Type_Context Type) parameter,
+        out StarkPackageComptimeValueArgumentManifest valueArgument)
+    {
+        valueArgument = null!;
+
+        BigInteger value;
+        if (argument.signedIntegerLiteral() is { } literal)
+        {
+            value = ParsePublishedSignedIntegerLiteral(literal);
+        }
+        else if (argument.expression() is { } expression
+                 && CompileTimeExpressionEvaluator.TryEvaluateInteger(expression, out value))
+        {
+        }
+        else
+        {
+            return false;
+        }
+
+        if (!TryBuildPublishedAbiTypeReferenceFromSyntax(module, parameter.Type, out var parameterType))
+        {
+            return false;
+        }
+
+        valueArgument = new StarkPackageComptimeValueArgumentManifest(
+            parameter.Name,
+            value.ToString(),
+            parameterType);
         return true;
     }
 

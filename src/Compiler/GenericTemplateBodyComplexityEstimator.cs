@@ -96,9 +96,11 @@ internal static class GenericTemplateBodyComplexityEstimator
         if (statement.forStatement() is { } forStatement)
         {
             return 4
-                + EstimateForInitializer(forStatement.forInitializer())
-                + EstimateForCondition(forStatement.forCondition())
-                + EstimateForIterator(forStatement.forIterator())
+                + (forStatement.forTraversal() is { } forTraversal
+                    ? EstimateExpression(forTraversal.expression())
+                    : EstimateForInitializer(forStatement.forInitializer())
+                        + EstimateForCondition(forStatement.forCondition())
+                        + EstimateForIterator(forStatement.forIterator()))
                 + EstimateStatement(forStatement.statement());
         }
 

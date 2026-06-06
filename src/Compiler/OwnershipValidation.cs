@@ -20,6 +20,7 @@ internal sealed class OwnershipValidator
     private readonly Dictionary<string, bool> _mutableGlobals = new(StringComparer.Ordinal);
     private readonly List<DynamicInitSliceLoopContext> _dynamicInitSliceLoopContexts = [];
     private ISet<string>? _currentFunctionGenericParameters;
+    private IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? _currentFunctionComptimeGenericParameters;
     private IReadOnlyDictionary<string, ClosureWriteContract>? _activeClosureWriteContracts;
     private int _unsafeDepth;
 
@@ -84,10 +85,14 @@ internal sealed class OwnershipValidator
         var functionScope = state.EnterScope();
         var parameterDeclarations = functionDeclaration.ParameterList.parameter();
         var previousGenericParameters = _currentFunctionGenericParameters;
+        var previousComptimeGenericParameters = _currentFunctionComptimeGenericParameters;
         var previousUnsafeDepth = _unsafeDepth;
         var previousDynamicInitSliceLoopContextCount = _dynamicInitSliceLoopContexts.Count;
         _currentFunctionGenericParameters = signature.IsGeneric
             ? signature.GenericParams.ToHashSet(StringComparer.Ordinal)
+            : null;
+        _currentFunctionComptimeGenericParameters = signature.ComptimeGenericParams is { Count: > 0 }
+            ? signature.ComptimeGenericParams.ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal)
             : null;
 
         try
@@ -135,6 +140,7 @@ internal sealed class OwnershipValidator
         finally
         {
             _currentFunctionGenericParameters = previousGenericParameters;
+            _currentFunctionComptimeGenericParameters = previousComptimeGenericParameters;
             _unsafeDepth = previousUnsafeDepth;
             if (_dynamicInitSliceLoopContexts.Count > previousDynamicInitSliceLoopContextCount)
             {
@@ -329,8 +335,13 @@ internal sealed class OwnershipValidator
         {
             var loopState = state.Clone();
             var loopScope = loopState.EnterScope();
+            var forTraversal = forStatement.forTraversal();
 
-            if (forStatement.forInitializer()?.localForVariableDeclaration() is { } localForVariableDeclaration)
+            if (forTraversal is not null)
+            {
+                CheckForTraversal(forTraversal, loopState, signature, summary);
+            }
+            else if (forStatement.forInitializer()?.localForVariableDeclaration() is { } localForVariableDeclaration)
             {
                 CheckForVariableDeclaration(localForVariableDeclaration, loopState, signature, summary);
             }
@@ -342,12 +353,14 @@ internal sealed class OwnershipValidator
                 }
             }
 
-            if (forStatement.forCondition() is { } condition)
+            if (forTraversal is null && forStatement.forCondition() is { } condition)
             {
                 EvaluateExpression(condition.expression(), loopState, signature, summary, ValueUse.Read, allowFunctionReference: false);
             }
 
-            var dynamicInitSliceLoopContext = TryCreateDynamicInitSliceLoopContext(forStatement);
+            var dynamicInitSliceLoopContext = forTraversal is null
+                ? TryCreateDynamicInitSliceLoopContext(forStatement)
+                : null;
             if (dynamicInitSliceLoopContext is not null)
             {
                 _dynamicInitSliceLoopContexts.Add(dynamicInitSliceLoopContext);
@@ -365,7 +378,7 @@ internal sealed class OwnershipValidator
                 }
             }
 
-            if (forStatement.forIterator() is { } iterator)
+            if (forTraversal is null && forStatement.forIterator() is { } iterator)
             {
                 foreach (var expression in iterator.expressionList().expression())
                 {
@@ -453,6 +466,54 @@ internal sealed class OwnershipValidator
             state,
             signature,
             summary);
+    }
+
+    private void CheckForTraversal(
+        StarkParser.ForTraversalContext traversal,
+        FlowState state,
+        TypedFunctionSignature signature,
+        FunctionOwnershipBuilder summary)
+    {
+        var source = EvaluateExpression(
+            traversal.expression(),
+            state,
+            signature,
+            summary,
+            ValueUse.Read,
+            allowFunctionReference: false);
+
+        if (traversal.traversalIndexBinding() is { } indexBinding)
+        {
+            var indexType = ResolveType(indexBinding.type_());
+            var indexVariable = state.Declare(new VariableInfo(
+                indexBinding.Identifier().GetText(),
+                indexType,
+                ParseStorageClass(indexBinding.storageClass()),
+                VariableOrigin.Local,
+                IsMutable: false,
+                IsConstant: false,
+                BorrowLifetime.None,
+                DeclarationLocation: Location(indexBinding.Identifier().Symbol)),
+                isInitialized: true);
+            summary.DeclareRoot(indexVariable, requiresDrop: IsAutomaticallyDropped(indexVariable.Type, indexVariable.StorageClass));
+        }
+
+        var elementBinding = traversal.traversalElementBinding();
+        var elementType = ResolveType(elementBinding.type_());
+        var borrowLifetime = elementType.BorrowKind == StarkBorrowKind.None
+            ? BorrowLifetime.None
+            : InferBorrowLifetimeFromValue(source, traversal.expression().Start);
+        var elementVariable = state.Declare(new VariableInfo(
+            elementBinding.Identifier().GetText(),
+            elementType,
+            StorageClass.None,
+            VariableOrigin.Local,
+            IsMutable: false,
+            IsConstant: false,
+            borrowLifetime,
+            DeclarationLocation: Location(elementBinding.Identifier().Symbol)),
+            isInitialized: true);
+        summary.DeclareRoot(elementVariable, requiresDrop: IsAutomaticallyDropped(elementVariable.Type, elementVariable.StorageClass));
     }
 
     private static DynamicInitSliceLoopContext? TryCreateDynamicInitSliceLoopContext(
@@ -2329,6 +2390,11 @@ internal sealed class OwnershipValidator
             return ResolveGenericMemberReference(genericEnumCaseReference, state, summary, use, allowFunctionReference);
         }
 
+        if (expression.genericQualifiedName() is { } genericQualifiedName)
+        {
+            return ResolveGenericQualifiedNameValue(genericQualifiedName, allowFunctionReference);
+        }
+
         if (expression.qualifiedName() is { } qualifiedName)
         {
             return ResolveValue(qualifiedName.GetText(), qualifiedName.Start, state, summary, use, allowFunctionReference);
@@ -3328,7 +3394,7 @@ internal sealed class OwnershipValidator
         NarrowSwitchValueToEnumCase(switchValue, state, enumType, variant);
 
         var seenMembers = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var member in enumNamedFieldPattern.enumNamedFieldPatternPayload().namedPatternMember())
+        foreach (var member in enumNamedFieldPattern.namedPatternPayload().namedPatternMember())
         {
             var memberName = member.Identifier().GetText();
             var field = variant.Fields.FirstOrDefault(candidate => string.Equals(candidate.Name, memberName, StringComparison.Ordinal));
@@ -3515,9 +3581,15 @@ internal sealed class OwnershipValidator
                 allowFunctionReference: false))
             .ToArray();
 
-        if (target.OverloadSourceName is { } overloadSourceName)
+        var overloadSourceName = target.OverloadSourceName;
+        if (overloadSourceName is not null || target.OverloadCandidates is { Count: > 0 })
         {
-            if (!TryGetFunctionOverloads(overloadSourceName, out var overloads))
+            IReadOnlyList<TypedFunctionSignature> overloads;
+            if (target.OverloadCandidates is { Count: > 0 } overloadCandidates)
+            {
+                overloads = overloadCandidates;
+            }
+            else if (!TryGetFunctionOverloads(overloadSourceName!, out overloads))
             {
                 return new ExpressionInfo(StarkTypeSymbols.Error);
             }
@@ -3536,6 +3608,7 @@ internal sealed class OwnershipValidator
             {
                 Function = resolution.Match,
                 OverloadSourceName = null,
+                OverloadCandidates = null,
                 Type = resolution.Match!.ReturnType
             };
         }
@@ -4642,15 +4715,99 @@ internal sealed class OwnershipValidator
             return StarkTypeSymbols.Error;
         }
 
-        var typeArguments = genericQualifiedName.typeArgumentList().type_()
-            .Select(ResolveType)
-            .ToArray();
-        if (typeArguments.Any(static type => type.Kind == StarkTypeKind.Error))
+        if (!_typeModel.NamedTypes.TryGetValue(baseType.NamedType ?? baseName, out var namedType))
         {
             return StarkTypeSymbols.Error;
         }
 
-        return StarkTypeSymbols.GenericInstantiation(baseType.NamedType ?? baseName, typeArguments);
+        var arguments = GenericArgumentSyntaxFacts.Resolve(
+            genericQualifiedName.typeArgumentList(),
+            namedType.GenericParams,
+            namedType.ComptimeGenericParams,
+            ResolveType,
+            static (_, _, _) => { });
+        if (arguments.TypeArguments.Any(static type => type.Kind == StarkTypeKind.Error))
+        {
+            return StarkTypeSymbols.Error;
+        }
+
+        return StarkTypeSymbols.GenericInstantiation(
+            baseType.NamedType ?? baseName,
+            arguments.TypeArguments,
+            arguments.ComptimeValueArguments);
+    }
+
+    private ExpressionInfo ResolveGenericQualifiedNameValue(
+        StarkParser.GenericQualifiedNameContext genericQualifiedName,
+        bool allowFunctionReference)
+    {
+        var baseName = genericQualifiedName.qualifiedName().GetText();
+        if (allowFunctionReference && TryGetFunctionOverloads(baseName, out var overloads))
+        {
+            var syntaxArgumentCount = genericQualifiedName.typeArgumentList().genericArgument().Length;
+            var instantiatedCandidates = new List<TypedFunctionSignature>(overloads.Count);
+            foreach (var candidate in overloads)
+            {
+                if (candidate.GenericParams.Count + candidate.ComptimeGenericParams.Count != syntaxArgumentCount)
+                {
+                    continue;
+                }
+
+                var arguments = GenericArgumentSyntaxFacts.Resolve(
+                    genericQualifiedName.typeArgumentList(),
+                    candidate.GenericParams,
+                    candidate.ComptimeGenericParams,
+                    ResolveType,
+                    static (_, _, _) => { },
+                    visibleComptimeParameters: _currentFunctionComptimeGenericParameters);
+                if (arguments.TypeArguments.Count != candidate.GenericParams.Count
+                    || arguments.ComptimeValueArguments.Count != candidate.ComptimeGenericParams.Count
+                    || arguments.TypeArguments.Any(static type => type.Kind == StarkTypeKind.Error))
+                {
+                    continue;
+                }
+
+                instantiatedCandidates.Add(FunctionOverloadFacts.InstantiateSignature(
+                    candidate,
+                    arguments.TypeArguments,
+                    candidate.Name,
+                    valueArguments: arguments.ComptimeValueArguments));
+            }
+
+            if (instantiatedCandidates.Count == 1)
+            {
+                var signature = instantiatedCandidates[0];
+                return new ExpressionInfo(signature.ReturnType, Function: signature);
+            }
+
+            if (instantiatedCandidates.Count > 1)
+            {
+                return new ExpressionInfo(
+                    StarkTypeSymbols.Error,
+                    OverloadSourceName: baseName,
+                    OverloadCandidates: instantiatedCandidates);
+            }
+
+            return new ExpressionInfo(StarkTypeSymbols.Error, OverloadSourceName: baseName);
+        }
+
+        var targetType = ResolveGenericQualifiedName(genericQualifiedName);
+        var namedType = ResolveNamedTypeSymbol(targetType);
+        if (namedType?.Kind is DeclarationKind.Struct or DeclarationKind.Record)
+        {
+            return new ExpressionInfo(
+                StarkTypeSymbols.Error,
+                NamespaceName: targetType.NamedType);
+        }
+
+        if (namedType?.Kind == DeclarationKind.Enum)
+        {
+            return new ExpressionInfo(
+                StarkTypeSymbols.Error,
+                NamespaceName: targetType.NamedType);
+        }
+
+        return new ExpressionInfo(targetType);
     }
 
     private NamedTypeSymbol? ResolveNamedTypeSymbol(StarkTypeSymbol type)
@@ -5170,6 +5327,7 @@ internal sealed class OwnershipValidator
         VariableInfo? Variable = null,
         TypedFunctionSignature? Function = null,
         string? OverloadSourceName = null,
+        IReadOnlyList<TypedFunctionSignature>? OverloadCandidates = null,
         BorrowLifetime BorrowLifetime = null!,
         bool IsPlace = false,
         bool IsDirectVariable = false,

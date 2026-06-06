@@ -7,6 +7,10 @@ diagnostics); those resolutions are proposed and need Alexander's confirmation a
 part of the lock. Original draft preserved in git history
 (`stark-thread-safety-laws.md`, commit `b6c2fec`).
 
+Coordination consumer note: doc `22` locks the self-hosting-facing consumers of
+these laws as captured thread payloads, `System.Threading.Synchronized<T>` /
+`Locked<T>`, and MPSC channels. That does not imply a broader thread framework.
+
 This phase specifies how Stark guarantees memory safety across thread boundaries:
 two compiler-proven properties — the **`Transferable`** and **`Shareable`** laws —
 that govern whether a value may be moved to, or shared with, another thread. The
@@ -29,14 +33,14 @@ Give Stark the type-level vocabulary that every future concurrency feature consu
 3. structural derivation + field-level overrides + `where`-predicate consumption,
 
 so that when the parked thread-ownership model (doc `12` pre-atomics revision),
-`Mutex<T>`, or channels land, their safety rules are one-line `where` constraints
+`Synchronized<T>`, or channels land, their safety rules are one-line `where` constraints
 instead of bespoke machinery.
 
 ## 2. Current State (verified)
 
 - **No enforcement point exists yet.** Today's `Thread` entry is a non-capturing
   `fnptr`, so no user value ever crosses a thread boundary; the laws have nothing
-  to check until closure-entry threads, channels, or `Mutex<T>` exist. This design
+  to check until closure-entry threads, channels, or `Synchronized<T>` exist. This design
   is deliberately specification-ahead-of-need.
 - **The attribute machinery exists.** Struct/record members already accept
   attribute lists in the grammar (`structMember : attributeList* (...)`), and the
@@ -214,7 +218,7 @@ not verify; all other paths are mechanically checked.
 | `fnptr<...>` | structural (holds) | structural (holds) | Code addresses carry no state. |
 | Closures | structural over the **captured environment** | structural over captures | A closure is as safe as what it captured. |
 | Atomics (doc `12`) | **grant** (intrinsic) | **grant** (intrinsic) | Their operations are the definition of safe shared mutation. |
-| `Mutex<T>` / sync containers (future) | structural | **conditional grant** (§9) | The canonical conditional case. |
+| `Synchronized<T>` / sync containers (future) | structural | **conditional grant** (§9) | The canonical conditional case. |
 
 The practical effect: the worked example's `Connection` (§14) needs **no
 attributes** to be correctly non-transferable — the raw pointer field already
@@ -228,13 +232,13 @@ auditable overrides (`[Grant]`) and semantic denials on innocent-looking fields
 > canonical synchronization container cannot be expressed without them. Syntax:
 > the grant attribute takes a `where` law predicate.
 
-A `Mutex<T>` makes concurrent shared access safe **only if** `T` itself may be
+A `Synchronized<T>` makes concurrent shared access safe **only if** `T` itself may be
 owned by whichever thread holds the lock (a locking thread can swap the payload
 out, which is a transfer). Unconditional `[Grant(Shareable)]` would be unsound;
-no grant at all makes `Mutex` useless. The grant must be conditional:
+no grant at all makes `Synchronized` useless. The grant must be conditional:
 
 ```stark
-public struct Mutex<T>
+public struct Synchronized<T>
 {
     // Concurrent shared access is safe because the lock serializes it —
     // provided T can be owned by whichever thread acquires the lock.
@@ -243,13 +247,13 @@ public struct Mutex<T>
 
     // lock state fields...
 }
-// Shareable(Mutex<T>) iff Transferable(T).
-// Transferable(Mutex<T>) is structural: iff Transferable(T).
+// Shareable(Synchronized<T>) iff Transferable(T).
+// Transferable(Synchronized<T>) is structural: iff Transferable(T).
 ```
 
 Resolution-rule integration (§7, rule 3): a conditional `[Grant(L) where P(U)]` on
 a field counts as a grant exactly when `P(U)` holds for the concrete instantiation;
-otherwise the field falls back to structural derivation (which for `Mutex`'s
+otherwise the field falls back to structural derivation (which for `Synchronized`'s
 payload field means the law fails — the safe default).
 
 This composes with §5's generic propagation with no extra rules: the condition is
@@ -293,7 +297,7 @@ with the features that consume this design:
 | Closure-entry owning threads (`Thread<T>.Start(heap capture(move x) ...)`) | every moved capture: `Transferable` |
 | Scoped threads (borrowing) | borrowed captures: `Shareable` for shared borrows; exclusive mutable borrows rely on the borrow checker's existing exclusivity, lifetimes bounded by the scope |
 | Channels (`Send(value)`) | `Transferable(T)` |
-| `Mutex<T>` / sync containers as statics | container itself `Shareable` (via §9) |
+| `Synchronized<T>` / sync containers as statics | container itself `Shareable` (via §9) |
 | `static` declarations reachable by multiple threads | `Shareable` of the static's type |
 
 Until one of these lands, the laws are still independently useful: library authors
@@ -352,7 +356,7 @@ error STK3050 [type-check]: field 'Cache.Inner' both grants and denies Shareable
 | Raw pointers | `!Send`/`!Sync` by default | auto-deny (§8) |
 | Opt out | `impl !Send for T` (type-level) | `[Deny(Transferable)]` (field-level) |
 | Unsafe assertion | `unsafe impl Sync for T` (type-level) | `[Grant(Shareable)]` (field-level) |
-| Conditional impl | `unsafe impl<T: Send> Sync for Mutex<T>` | `[Grant(Shareable) where Transferable(T)]` (§9) |
+| Conditional impl | `unsafe impl<T: Send> Sync for Mutex<T>` | `[Grant(Shareable) where Transferable(T)]` on `Synchronized<T>` (§9) |
 | Require in a function | `where T: Send` | `where Transferable(T)` |
 | Conceptual model | marker trait the type implements | law the compiler discharges |
 | Override location | type | responsible field |
@@ -380,11 +384,11 @@ public struct Connection
 }
 
 // A connection pool that makes concurrent shared access safe via a lock.
-// Mutex's own conditional grant (§9) does the work; Pool needs no attributes —
+// Synchronized's own conditional grant (§9) does the work; Pool needs no attributes —
 // but Shareable(Pool) requires Transferable(Connection), which fails...
 public struct Pool
 {
-    Mutex<Connection> Guard;
+    Synchronized<Connection> Guard;
 }
 
 // ...so the author audits the platform contract and grants it on the
@@ -399,9 +403,9 @@ public struct AuditedConnection
 
 public struct AuditedPool
 {
-    Mutex<AuditedConnection> Guard;
+    Synchronized<AuditedConnection> Guard;
 }
-// Shareable(AuditedPool): structural -> Shareable(Mutex<AuditedConnection>)
+// Shareable(AuditedPool): structural -> Shareable(Synchronized<AuditedConnection>)
 //   -> conditional grant -> Transferable(AuditedConnection) -> holds via the
 //   field-level grant. The full justification chain is readable in source.
 
@@ -444,7 +448,7 @@ end-to-end, but TS01–TS05 are independently implementable and testable.
 | TS04 | Built-in defaults (§8): auto-deny for raw pointers and stored borrows; intrinsic grants for atomics | not started |
 | TS05 | Conditional grants (`[Grant(L) where P(T)]`, §9) + instantiation-time discharge | not started |
 | TS06 | `where` law predicates on functions: call-site checking + STK3049 field-chain diagnostics | not started |
-| TS07 | Enforcement wiring at thread boundaries as consumer features land (parked thread model / channels / Mutex / shareable statics) | blocked on consumers |
+| TS07 | Enforcement wiring at thread boundaries as consumer features land (parked thread model / channels / Synchronized / shareable statics) | blocked on consumers |
 | TS08 | Tests (derivation, overrides, conditional grants, diagnostics) + user-facing docs + doc/roadmap sync | not started |
 
 ## 16. Open Questions (OQ-TS*)

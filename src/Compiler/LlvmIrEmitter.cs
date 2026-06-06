@@ -892,19 +892,26 @@ internal sealed class LlvmIrEmitter
 
         if (!signature.IsGenericInstantiation
             || signature.TemplateName is not { } templateName
-            || signature.TypeArguments is not { Count: > 0 } typeArguments)
+            || ((signature.TypeArguments is null || signature.TypeArguments.Count == 0)
+                && (signature.ComptimeValueArguments is null || signature.ComptimeValueArguments.Count == 0)))
         {
             return null;
         }
 
-        var typeArgumentKey = FunctionOverloadFacts.BuildTypeArgumentKey(typeArguments);
+        var instantiationKey = FunctionOverloadFacts.BuildInstantiationArgumentKey(
+            signature.TypeArguments,
+            signature.ComptimeValueArguments);
         foreach (var candidate in _allFunctionSignatures.Values)
         {
             if (!candidate.IsGenericInstantiation
                 || candidate.TemplateName is null
                 || !string.Equals(candidate.TemplateName, templateName, StringComparison.Ordinal)
-                || candidate.TypeArguments is not { Count: > 0 } candidateTypeArguments
-                || !string.Equals(FunctionOverloadFacts.BuildTypeArgumentKey(candidateTypeArguments), typeArgumentKey, StringComparison.Ordinal))
+                || !string.Equals(
+                    FunctionOverloadFacts.BuildInstantiationArgumentKey(
+                        candidate.TypeArguments,
+                        candidate.ComptimeValueArguments),
+                    instantiationKey,
+                    StringComparison.Ordinal))
             {
                 continue;
             }
@@ -952,7 +959,8 @@ internal sealed class LlvmIrEmitter
                 templateSignature,
                 strategy.TypeArguments,
                 strategy.SymbolName,
-                (ownerType, associatedTypeName) => ResolveAssociatedTypeForEmission(ownerType, associatedTypeName, typeModel.NamedTypes));
+                (ownerType, associatedTypeName) => ResolveAssociatedTypeForEmission(ownerType, associatedTypeName, typeModel.NamedTypes),
+                strategy.ComptimeValueArguments);
         }
 
         return functions;
