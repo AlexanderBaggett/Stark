@@ -603,6 +603,12 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitTypeArgumentList([NotNull] StarkParser.TypeArgumentListContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.genericArgument"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitGenericArgument([NotNull] StarkParser.GenericArgumentContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.block"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
@@ -686,6 +692,24 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <param name="context">The parse tree.</param>
 	/// <return>The visitor result.</return>
 	Result VisitForStatement([NotNull] StarkParser.ForStatementContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.forTraversal"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitForTraversal([NotNull] StarkParser.ForTraversalContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.traversalIndexBinding"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitTraversalIndexBinding([NotNull] StarkParser.TraversalIndexBindingContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.traversalElementBinding"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitTraversalElementBinding([NotNull] StarkParser.TraversalElementBindingContext context);
 	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.forInitializer"/>.
 	/// </summary>
@@ -771,6 +795,12 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitRangePattern([NotNull] StarkParser.RangePatternContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.listPattern"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitListPattern([NotNull] StarkParser.ListPatternContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.aggregatePattern"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
@@ -795,11 +825,11 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitEnumNamedFieldPattern([NotNull] StarkParser.EnumNamedFieldPatternContext context);
 	/// <summary>
-	/// Visit a parse tree produced by <see cref="StarkParser.enumNamedFieldPatternPayload"/>.
+	/// Visit a parse tree produced by <see cref="StarkParser.namedPatternPayload"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
 	/// <return>The visitor result.</return>
-	Result VisitEnumNamedFieldPatternPayload([NotNull] StarkParser.EnumNamedFieldPatternPayloadContext context);
+	Result VisitNamedPatternPayload([NotNull] StarkParser.NamedPatternPayloadContext context);
 	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.namedPatternMember"/>.
 	/// </summary>

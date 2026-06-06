@@ -133,7 +133,7 @@ internal static class AssociatedTypeFacts
             var resolvedElement = ResolveOpenAssociatedTypes(coreType.ElementType, namedTypes, resolving);
             resolvedCore = coreType.Kind switch
             {
-                StarkTypeKind.FixedArray => StarkTypeSymbols.FixedArray(resolvedElement, coreType.FixedLength),
+                StarkTypeKind.FixedArray => StarkTypeSymbols.FixedArray(resolvedElement, coreType.FixedLength, coreType.FixedLengthParameterName),
                 StarkTypeKind.Slice => StarkTypeSymbols.Slice(resolvedElement),
                 StarkTypeKind.RawPointer => StarkTypeSymbols.RawPointer(resolvedElement, coreType.IsMutablePointer),
                 StarkTypeKind.Dynamic => StarkTypeSymbols.Dynamic(resolvedElement),
@@ -232,7 +232,7 @@ internal static class AssociatedTypeFacts
             var substitutedElement = SubstituteType(coreType.ElementType, substitution, namedTypes);
             substitutedCore = coreType.Kind switch
             {
-                StarkTypeKind.FixedArray => StarkTypeSymbols.FixedArray(substitutedElement, coreType.FixedLength),
+                StarkTypeKind.FixedArray => StarkTypeSymbols.FixedArray(substitutedElement, coreType.FixedLength, coreType.FixedLengthParameterName),
                 StarkTypeKind.Slice => StarkTypeSymbols.Slice(substitutedElement),
                 StarkTypeKind.RawPointer => StarkTypeSymbols.RawPointer(substitutedElement, coreType.IsMutablePointer),
                 StarkTypeKind.Dynamic => StarkTypeSymbols.Dynamic(substitutedElement),

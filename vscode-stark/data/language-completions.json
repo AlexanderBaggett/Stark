@@ -154,6 +154,13 @@
     "documentation": "Declares a compile-time constant."
   },
   {
+    "label": "comptime",
+    "insertText": "comptime ${1:u64[0 max]} ${2:N}",
+    "kind": "keyword",
+    "detail": "Comptime generic value parameter",
+    "documentation": "Declares a typed compile-time value parameter in a generic parameter list."
+  },
+  {
     "label": "borrow",
     "kind": "keyword",
     "detail": "Borrow type qualifier",

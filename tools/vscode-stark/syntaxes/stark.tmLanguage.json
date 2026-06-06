@@ -154,7 +154,7 @@
         },
         {
           "name": "keyword.control.stark",
-          "match": "\\b(?:if|else|switch|case|default|when|while|for|return|break|continue|new|where|var|infinite|non-deterministic|willexit)\\b"
+          "match": "\\b(?:if|else|switch|case|default|when|while|for|return|break|continue|new|where|var|try|is|infinite|non-deterministic|willexit)\\b"
         },
         {
           "name": "keyword.control.import-export.stark",
@@ -162,15 +162,15 @@
         },
         {
           "name": "storage.modifier.stark",
-          "match": "\\b(?:inline|noinline|inlinehint|hot|cold|ffi|varargs|unsafe|strictfp|static|asm|clobber|in)\\b"
+          "match": "\\b(?:inline|noinline|inlinehint|hot|cold|ffi|varargs|unsafe|strictfp|static|asm|clobber|in|once|assume)\\b"
         },
         {
           "name": "storage.modifier.storage-class.stark",
-          "match": "\\b(?:stack|heap|register|arena)\\b"
+          "match": "\\b(?:stack|heap|register|arena|dynamic|dyn|closure)\\b"
         },
         {
           "name": "storage.modifier.memory.stark",
-          "match": "\\b(?:borrow|retborrow|storeborrow|frozen|shared|out|init|mut|disjoint|const|independent)\\b"
+          "match": "\\b(?:borrow|retborrow|storeborrow|frozen|shared|out|init|mut|disjoint|overlap|same|const|comptime|from|independent)\\b"
         },
         {
           "name": "keyword.declaration.destructor.stark",

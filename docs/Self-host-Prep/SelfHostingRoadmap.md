@@ -60,9 +60,14 @@ contracts; `dyn trait` is explicit runtime dispatch.
       operator contracts and stdlib implementations are still broader work.
 
 ### Generics
-- [ ] Generic const parameters (e.g. `struct FixedArray<T, const N>`).
-      Without them, the stdlib's fixed-array surface has to be duplicated per
-      size or fall back to `dynamic T`.
+- [x] Decide generic value parameter spelling: typed `comptime` generic
+      parameters, e.g. `struct FixedArray<T, comptime u64[0 max] N>`.
+      This avoids overloading Stark's `const`, which means deep interior
+      immutability, while still giving fixed-size stdlib/compiler abstractions
+      a reusable compile-time value parameter.
+- [ ] Implement comptime generic parameters, including monomorphization
+      identity, diagnostics, package-image preservation, and fixed-array use
+      sites.
 - [ ] User-definable variadics for ordinary Stark functions. `VARARGS`
       ([Stark.g4:831](../../Stark.g4#L831)) is currently FFI-only
       ([LanguageReference.md §13.1](../Userfacing/LanguageReference.md));
@@ -103,10 +108,11 @@ contracts; `dyn trait` is explicit runtime dispatch.
 Stark has no async/await. This is consistent with the rest of the design
 (no unwinding, explicit storage classes) and probably should stay that way:
 
-- [ ] **Decision:** port [ProjectCliDriver.cs](../../src/Compiler/ProjectCliDriver.cs)
-      (260+ `async Task<T>` use sites) to synchronous code on top of explicit
-      thread + channel primitives. Do **not** add an `async` keyword unless a
-      strong second use case appears.
+- [x] **Decision:** port [ProjectCliDriver.cs](../../src/Compiler/ProjectCliDriver.cs)
+      (260+ `async Task<T>` use sites) synchronously first. Do **not** add an
+      `async` keyword for self-hosting. If build/test execution later becomes
+      parallel, use the narrow doc `22` coordination surface: captured thread
+      payloads, `Synchronized<T>` / `Locked<T>`, and MPSC channels.
 
 ### Syntactic-burden items (no language change required — but big translation cost)
 These are not gaps; they are deliberate features that make the C# → Stark
@@ -132,10 +138,12 @@ These unblock writing data structures, text manipulation, and the build
 driver in Stark.
 
 ### Numerics
-- [ ] Wrap the existing fixed-width 1024-bit integers behind a `BigInt`-style
-      facade with the operations the compiler needs (`Max`, shift-and-mask
-      for bit-width range checks, signed/unsigned conversion). The raw
-      types exist
+- [ ] Build bounded compiler integer-fact helpers over the existing
+      `i1024`/`u1024` ceiling, not a public `BigInt` or arbitrary-precision
+      type. Include the operations the compiler needs (`Max`, shift-and-mask
+      for bit-width range checks, signed/unsigned conversion) and diagnostics
+      for oversized literals or compile-time integer overflow. The raw types
+      exist
       ([LanguageReference.md §6.1](../Userfacing/LanguageReference.md));
       the helpers used in
       [IntegerRangeStorageFacts.cs:40-46](../../src/Compiler/IntegerRangeStorageFacts.cs#L40-L46)
@@ -145,21 +153,25 @@ driver in Stark.
       [Math.stark](../../stdlib/src/System/Math.stark) (currently trig + PRNG only).
 
 ### Collections
-- [ ] Built-in string hashing so `Dictionary<Ascii, T>` / `Dictionary<Unicode, T>`
-      work without per-call-site trait impl. Today
+- [ ] Generic text-key contracts so `Dictionary<Ascii, T>` /
+      `Dictionary<Unicode, T>` work through the blessed `Hash` + `Eq` surface,
+      with exact ordinal equality/hash/order semantics. Today
       [Collections.stark:742](../../stdlib/src/System/Collections.stark#L742)
-      requires every key type to satisfy `DictionaryKey`. The compiler keys
-      ~20 dictionaries on `string`
+      requires every key type to satisfy `DictionaryKey`; the self-hosted
+      design treats that as the concrete hook under the canonical contracts.
+      The compiler keys ~20 dictionaries on `string`
       ([TypeChecking.cs:72-119](../../src/Compiler/TypeChecking.cs#L72-L119)).
 - [ ] `HashSet<T>`. None exists in
       [Collections.stark](../../stdlib/src/System/Collections.stark);
       [DefaultCompilerPipeline.cs:842](../../src/Compiler/DefaultCompilerPipeline.cs#L842)
       depends on one for generic-instantiation deduplication.
-- [ ] String / symbol interner. The C# compiler relies on .NET string
-      equality; Stark `Ascii`/`Unicode` are byte/codepoint storage and a
-      compiler-grade symbol table needs interning.
+- [ ] Strongly typed compiler interning. The C# compiler relies on .NET string
+      equality; the Stark compiler should intern stable names at
+      front-end/package boundaries and use typed IDs such as `SymbolId`,
+      `TypeId`, `ModuleId`, and `PackageId` in hot paths.
 - [ ] Sorted map or ordered set (used in pass artifacts that need
-      deterministic iteration order).
+      deterministic iteration order). Hash-table iteration must not define
+      package image, diagnostic, or golden output order.
 
 ### Text
 - [ ] `format!`-style variadic formatter. Blocked on user-definable variadics
@@ -175,22 +187,25 @@ driver in Stark.
 - [ ] `Allocator` trait with at least `alloc`, `realloc`, `free`. Today
       [Memory.stark:23](../../stdlib/src/System/Memory.stark#L23) exposes
       `Allocator.IsDefault()` only.
-- [ ] Arena allocator. The `arena` storage class is reserved in
+- [ ] Arena/table allocator support for compiler-owned IR storage. The `arena`
+      storage class is reserved in
       [LanguageReference.md §9](../Userfacing/LanguageReference.md) but
       explicitly not yet a valid executable local storage class, and called
       out as future work in [CompilerPipeline.md:258](./CompilerPipeline.md#L258).
-- [ ] Shared-ownership wrapper. The C# compiler relies on GC for shared
-      MIR/SSA references. Stark must either pick an `Rc`/`Arc` equivalent
-      or refactor the IR to use arena ownership + handle indices. The
-      latter is more idiomatic for Stark; pick the strategy explicitly.
+- [ ] Typed handle and fact-table support. The self-hosted compiler uses
+      arena/table ownership plus typed handles for MIR, SSA, artifacts, package
+      imports, and backend state. Backend facts attach through first-class fact
+      tables with explicit lowering policies and validation; durable facts flow
+      through package images. See [24-ir-memory-and-fact-model.md](24-ir-memory-and-fact-model.md).
 
 ### Concurrency
-- [ ] `Mutex`, `RwLock`, `Once`. [Threading.stark](../../stdlib/src/System/Threading.stark)
-      (154 lines) has only `Thread.Start/Join/Detach`.
-- [ ] Atomic integer + pointer types.
-- [ ] Channel / bounded queue.
-- [ ] Work-stealing pool for pass-level parallelism (or accept single-threaded
-      v1; see Non-Goals).
+- [x] Atomic integer types are implemented as the first safe-sharing primitive.
+- [ ] Captured/payload thread starts checked by `Transferable`.
+- [ ] `System.Threading.Synchronized<T>` / `Locked<T>` as the easy guarded
+      shared-state primitive.
+- [ ] MPSC channels for build/test progress and result publication.
+- [ ] Accept single-threaded compiler/build-driver v1 unless the doc `22`
+      coordination surface is explicitly scheduled.
 
 ---
 
@@ -221,22 +236,31 @@ outermost layers. Without them, a Stark-hosted compiler cannot drive a build.
 - [ ] Symlink read/create (lower priority).
 
 ### Serialization
-- [ ] JSON parser + emitter — or a decision to migrate
-      `.starkpkg.json` ([PackageImage/](../../src/Compiler/PackageImage/))
-      to a Stark-native binary format. The current package model lives in
+- [x] Decide TOML strategy: add reusable `System.Toml`; do not change manifest
+      format and do not bless a manifest-only parser.
+- [ ] Implement `System.Toml` parser/emitter and use typed manifest decoding for
+      `Stark.toml`, `Stark.solution.toml`, and `Stark.user.toml`.
+- [x] Decide package-image format: binary package images are the normal compiler
+      load path; deterministic JSON/text are inspection and export views.
+      `stark inspect-pkg` renders those views on demand; build-time sidecars are
+      deferred unless repeated debug/test usage proves they are worth it.
+- [ ] Implement the binary package-image codec and deterministic JSON/text
+      `stark inspect-pkg` output for the logical package model in
       [PackageImage/Models/PackageImageModels.cs](../../src/Compiler/PackageImage/Models/PackageImageModels.cs).
 
 ### LLVM integration
-- [ ] Decide: keep emitting textual LLVM IR and shell out to `llc` / `opt`,
-      or bind `libLLVM` directly. Textual IR keeps Phase 2 scope smaller but
-      locks in the printing cost. The current emitter
-      ([LlvmIrEmitter.cs](../../src/Compiler/LlvmIrEmitter.cs), 3096 lines)
-      already emits text — porting it forward as text is the obvious path.
-- [ ] If binding `libLLVM`: a C FFI surface broad enough to construct a
-      module, type, function, basic block, and IR builder. Stark's
-      `unsafe ffi asm` and `unsafe ffi varargs`
-      ([LanguageReference.md §13](../Userfacing/LanguageReference.md))
-      give the boundary; the bindings themselves do not yet exist.
+- [x] Decide: use libLLVM as the primary backend integration through the LLVM C
+      API. Textual LLVM remains only for debug, diagnostics, golden/artifact
+      inspection, and stage comparison.
+- [ ] Implement the required FFI support for libLLVM: `System.C` C strings,
+      LLVM-style out-pointer patterns, typed opaque-handle wrappers, deterministic
+      dispose/drop wrappers, and C enum/bitflag constants.
+- [ ] Add the first libLLVM backend slice: discover/load pinned libLLVM, verify
+      version/API availability, construct a narrow LLVM module directly through
+      typed C API wrappers, verify it, emit object bytes in-process, and print
+      textual LLVM only as an optional inspection artifact.
+- [ ] Expand direct LLVM module construction until it replaces the current
+      textual emitter as the full backend implementation.
 
 ---
 
@@ -253,25 +277,26 @@ Decisions that need to be made before code starts moving.
         us drop the Antlr dependency entirely).
       - Generate a parser via a Stark-native parser generator (does not
         exist yet — would itself need to be built; not recommended).
-- [ ] **Stage-zero compiler.** The first Stark-hosted compiler must be
-      buildable by the current C# compiler. Plan for at least one
-      release-gated "stage transition" PR.
+- [x] **Stage-zero compiler.** Keep it simple: the current C# compiler is
+      Stage0 until Stark can build itself. Stage0 builds Stage1; Stage1 builds
+      Stage2; when Stage2 passes the ported tests and comparisons, cut over.
 - [ ] **Pass-by-pass migration vs. clean rewrite.** A clean rewrite is
       simpler given the accepted-program contract
       ([CompilerPipeline.md:19-56](./CompilerPipeline.md#L19-L56)) —
       front-end validation cannot be partially ported because lowering has
       no fallbacks once code reaches `lower-mir`.
-- [ ] **LINQ replacement.** ~1989 LINQ method-chain calls in C# drive most
-      pipeline transformations. Build an iterator-trait surface
-      (`map` / `filter` / `collect` / `group_by` / `sort_by`) or accept
-      that every chain becomes an explicit `willexit` loop with intermediate
-      `dynamic T` allocations.
-- [ ] **IR ownership model.** Pick one of:
-      - shared-pointer wrapper (`Rc`/`Arc`) — closest to C# semantics but
-        needs the Phase 1 shared-ownership type and accepts refcount cost;
-      - arena + 32-bit handle indices — more idiomatic for Stark, plays
-        nicely with the deterministic-output goal, but is a structural
-        refactor of every IR pass.
+- [x] **LINQ replacement direction.** Do not build a broad iterator-trait
+      surface before self-hosting. Use exactly three explicit traversal loop
+      forms: borrowed element, mutable borrowed element, and indexed borrowed
+      traversal.
+- [ ] Implement the traversal loop forms and keep hot pipeline transformations
+      on explicit `Length` / index / slice APIs where that is clearer or faster.
+- [x] **IR ownership model.** Use arena/table ownership with typed handle
+      indices, first-class extensible fact tables, explicit fact lowering
+      policies, package-image durable facts, and phase-boundary validation. This
+      is a structural refactor of the C# object graph, but it keeps storage
+      explicit, deterministic, and fast while preventing backend facts from
+      disappearing during lowering. See [24-ir-memory-and-fact-model.md](24-ir-memory-and-fact-model.md).
 - [ ] **String-symbol stability policy.** Several SSA passes — e.g.
       `SsaConstStdlibHelperSpecializer`, `SsaConstantTextFormatSpecializer`
       ([src/Compiler/SsaOptimization/](../../src/Compiler/SsaOptimization/))
@@ -318,7 +343,7 @@ rough sizing hint.
 - [ ] [AbiLowering.cs](../../src/Compiler/AbiLowering.cs) +
       [LlvmIrEmitter.cs](../../src/Compiler/LlvmIrEmitter.cs) (3096 lines) +
       [LlvmIrEmission/](../../src/Compiler/LlvmIrEmission/).
-- [ ] Package image read/write
+- [ ] Binary package image read/write plus JSON/text inspection export
       ([src/Compiler/PackageImage/](../../src/Compiler/PackageImage/)).
 - [ ] CLI driver + project driver
       ([CompilerCli.cs](../../src/Compiler/CompilerCli.cs) (4051 lines),
@@ -330,12 +355,13 @@ rough sizing hint.
 
 - [ ] Differential testing: every test in [tests/](../../tests/) must
       pass under both the C# host and the Stark host before cutover.
-- [ ] Bit-for-bit identical `.starkpkg.json` output between hosts (or a
-      published manifest schema change).
+- [ ] Deterministic package-image comparison between hosts: binary codec tests
+      plus stable JSON/text inspection output for human-readable diffs.
 - [ ] Performance budget: stage-1 compile time within an agreed multiple
       (e.g. ≤ 3x) of the C# compiler before we commit.
-- [ ] Reproducible build of the Stark compiler **by itself** for one full
-      release cycle before deleting the C# implementation.
+- [ ] Stage2 builds the Stark compiler and passes the ported tests before the
+      C# implementation is removed from the normal build path. Keep `/old_src`
+      for reference/emergency recovery during cutover.
 
 ---
 
@@ -352,8 +378,9 @@ Documenting these so they do not creep into the critical path:
   ([LanguageReference.md §14](../Userfacing/LanguageReference.md)) is that
   recoverable errors are values and unrecoverable failure traps. The port
   follows that contract.
-- **GC for IR nodes.** Pick arena-and-handles or shared-pointer wrapper in
-  Phase 3; do not retrofit a GC.
+- **GC for IR nodes.** The accepted model is arena/table storage with typed
+  handles and first-class fact tables; do not retrofit a GC or make shared
+  pointers the default IR representation.
 - **Incremental compilation in v1 of the self-hosted compiler.** Requires
   file-stat APIs (Phase 2) but is not on the cutover path.
 - **A Stark-native parser generator.** Decide between hand-written parser

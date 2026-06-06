@@ -46,7 +46,11 @@ internal static partial class PackageImageLoader
                 TypeAlias: new TypeAliasDeclarationModel(
                     typeAlias.Name,
                     RenderTypeReference(typeAlias.TargetType),
-                    typeAlias.GenericParameters ?? [])));
+                    typeAlias.GenericParameters ?? [],
+                    BuildComptimeGenericParameterSymbols(
+                        typeAlias.ComptimeGenericParameters,
+                        module.Module.ModuleName,
+                        null))));
         }
 
         foreach (var type in typedInterface.Types.OrderBy(static item => item.Name, StringComparer.Ordinal))
@@ -109,6 +113,7 @@ internal static partial class PackageImageLoader
                         method.HasExplicitInlinePreference,
                         asm: null,
                         method.GenericParameters,
+                        comptimeGenericParameters: method.ComptimeGenericParameters,
                         hasBody: method.HasGenericTemplateBody
                         || HasPublishedGenericTemplateBody(
                             module.Module,
@@ -179,6 +184,7 @@ internal static partial class PackageImageLoader
                     function.HasExplicitInlinePreference,
                     function.Asm,
                     function.GenericParameters,
+                    comptimeGenericParameters: function.ComptimeGenericParameters,
                     hasBody: function.HasGenericTemplateBody
                     || HasPublishedGenericTemplateBody(
                         module.Module,

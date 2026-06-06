@@ -15,7 +15,7 @@ linked low-level work has landed but the detailed list still has open items.
 
 - Host inventory and gap audit: [00-host-compiler-inventory.md](00-host-compiler-inventory.md), [01-language-feature-gaps.md](01-language-feature-gaps.md), [02-stdlib-gaps.md](02-stdlib-gaps.md), [03-tooling-gaps.md](03-tooling-gaps.md), [04-test-infrastructure-audit.md](04-test-infrastructure-audit.md)
 - Port plan and milestones: [05-port-checklist.md](05-port-checklist.md), [06-roadmap.md](06-roadmap.md), [07-open-questions.md](07-open-questions.md)
-- Feature and architecture drafts: [08-stark-feature-roadmap.md](08-stark-feature-roadmap.md), [09-self-hosted-compiler-architecture.md](09-self-hosted-compiler-architecture.md), [10-traits-and-dynamic-dispatch.md](10-traits-and-dynamic-dispatch.md), [11-error-propagation.md](11-error-propagation.md), [12-atomics.md](12-atomics.md), [13-comptime.md](13-comptime.md), [14-thread-safety-laws.md](14-thread-safety-laws.md), [15-ffi-abi.md](15-ffi-abi.md), [16-ffi-c-types.md](16-ffi-c-types.md), [17-ffi-struct-layout.md](17-ffi-struct-layout.md), [18-ffi-c-strings.md](18-ffi-c-strings.md)
+- Feature and architecture drafts: [08-stark-feature-roadmap.md](08-stark-feature-roadmap.md), [09-self-hosted-compiler-architecture.md](09-self-hosted-compiler-architecture.md), [10-traits-and-dynamic-dispatch.md](10-traits-and-dynamic-dispatch.md), [11-error-propagation.md](11-error-propagation.md), [12-atomics.md](12-atomics.md), [13-comptime.md](13-comptime.md), [14-thread-safety-laws.md](14-thread-safety-laws.md), [15-ffi-abi.md](15-ffi-abi.md), [16-ffi-c-types.md](16-ffi-c-types.md), [17-ffi-struct-layout.md](17-ffi-struct-layout.md), [18-ffi-c-strings.md](18-ffi-c-strings.md), [19-generic-collections-and-interning.md](19-generic-collections-and-interning.md), [20-package-image-format.md](20-package-image-format.md), [21-system-toml.md](21-system-toml.md), [22-threading-coordination.md](22-threading-coordination.md), [23-libllvm-integration.md](23-libllvm-integration.md), [24-ir-memory-and-fact-model.md](24-ir-memory-and-fact-model.md), [25-build-artifact-layout.md](25-build-artifact-layout.md)
 - Packaging and release planning: [SelfHostingRoadmap.md](SelfHostingRoadmap.md), [ToolchainPackagingRoadmap.md](ToolchainPackagingRoadmap.md)
 
 ## Detailed Task Lists
@@ -29,6 +29,13 @@ linked low-level work has landed but the detailed list still has open items.
 - FFI C primitive alias work items: [16-ffi-c-types.md](16-ffi-c-types.md#10-work-items)
 - FFI struct layout implementation work items: [17-ffi-struct-layout.md](17-ffi-struct-layout.md#11-implementation-work-items)
 - FFI C string work items: [18-ffi-c-strings.md](18-ffi-c-strings.md#11-work-items)
+- Generic collections and interning work items: [19-generic-collections-and-interning.md](19-generic-collections-and-interning.md#8-work-items)
+- Package image format work items: [20-package-image-format.md](20-package-image-format.md#8-work-items)
+- `System.Toml` work items: [21-system-toml.md](21-system-toml.md#7-work-items)
+- Threading coordination work items: [22-threading-coordination.md](22-threading-coordination.md#8-work-items)
+- libLLVM integration work items: [23-libllvm-integration.md](23-libllvm-integration.md#8-work-items)
+- IR memory and fact model work items: [24-ir-memory-and-fact-model.md](24-ir-memory-and-fact-model.md#9-work-items)
+- `.stark/build` artifact layout work items: [25-build-artifact-layout.md](25-build-artifact-layout.md#7-work-items)
 - FFI syntax design checklist: [stark-ffi-syntax-checklist.md](stark-ffi-syntax-checklist.md)
 - Release packaging checklist: [ToolchainPackagingRoadmap.md](ToolchainPackagingRoadmap.md)
 
@@ -45,7 +52,13 @@ user-facing examples consistent.
 - [ ] Update the book and user-facing FFI docs for `System.C.CStr`, `OwnedCStr`, `CCharBuffer`, explicit C-string conversions, and `%s` varargs rules. Source work items: [18-ffi-c-strings.md](18-ffi-c-strings.md#11-work-items).
 - [ ] Update the Stark language skill references and FFI syntax checklist for the batched FFI surface. Source checklist: [stark-ffi-syntax-checklist.md](stark-ffi-syntax-checklist.md).
 - [ ] Update the book and user-facing language reference for `raw"..."`, `raw"""..."""`, and `$raw` text literals. Source item: L08 in [01-language-feature-gaps.md](01-language-feature-gaps.md).
+- [ ] Update the book and user-facing stdlib docs for generic collection contracts, text key equality/hash/order semantics, `HashSet<T>`, ordered collections, and explicit interning guidance. Source work items: [19-generic-collections-and-interning.md](19-generic-collections-and-interning.md#9-book-and-reference-work).
+- [ ] Update user-facing project/build docs once binary package-image and `stark inspect-pkg` spelling are finalized. Source work items: [20-package-image-format.md](20-package-image-format.md#9-documentation-work).
+- [ ] Update user-facing project/build docs for the formal `.stark/build/<profile>/<target-triple>/<stage>/` layout after command spelling and artifact names are implemented. Source work items: [25-build-artifact-layout.md](25-build-artifact-layout.md#7-work-items).
+- [ ] Update the standard library reference and project/build docs for `System.Toml` once the public API is finalized. Source work items: [21-system-toml.md](21-system-toml.md#8-documentation-work).
 - [ ] Update the book and user-facing docs for `Transferable` / `Shareable` thread-safety laws when that design lands. Source spec: [14-thread-safety-laws.md](14-thread-safety-laws.md).
+- [ ] Update the standard library reference and book threading chapter for captured thread starts, `Synchronized<T>`, `Locked<T>`, and channels after the API lands. Source work items: [22-threading-coordination.md](22-threading-coordination.md#9-documentation-work).
+- [ ] Update build/toolchain, compiler-internals, and FFI docs for libLLVM-primary backend integration after the API lands. Source work items: [23-libllvm-integration.md](23-libllvm-integration.md#9-documentation-work).
 
 ## Current Priorities
 
@@ -69,16 +82,23 @@ user-facing examples consistent.
 - [x] Draft the target-mapped C primitive alias spec for FFI. See [16-ffi-c-types.md](16-ffi-c-types.md).
 - [x] Draft the C-style struct layout, packing, and alignment spec for FFI. See [17-ffi-struct-layout.md](17-ffi-struct-layout.md).
 - [x] Draft the null-terminated C string interop spec for `System.C`. See [18-ffi-c-strings.md](18-ffi-c-strings.md).
+- [x] Decide the minimal threading coordination scope for future parallel build/test work: captured thread payloads, easy guarded shared state, and channels. See [22-threading-coordination.md](22-threading-coordination.md).
+- [x] Decide LLVM integration: use libLLVM through direct LLVM C API module construction, with textual LLVM retained only as printed debug/artifact inspection output. See [23-libllvm-integration.md](23-libllvm-integration.md).
+- [x] Decide bootstrap policy: use the existing C# host compiler as Stage0 until the Stark compiler can build itself; do not add a separate blessed snapshot compiler artifact. See [07-open-questions.md](07-open-questions.md).
+- [x] Decide editor/tooling blocking status: track syntax/editor updates, but do not block bootstrap on full editor parity. See [07-open-questions.md](07-open-questions.md) and [03-tooling-gaps.md](03-tooling-gaps.md).
+- [x] Decide the compiler IR memory model: arena/table storage with typed handles, first-class extensible fact tables, explicit fact lowering policies, package-image durable facts, and phase-boundary verification. See [24-ir-memory-and-fact-model.md](24-ir-memory-and-fact-model.md).
+- [x] Decide the `.stark/build` layout: use `.stark/build/<profile>/<target-triple>/<stage>/` with stable artifact subdirectories. See [25-build-artifact-layout.md](25-build-artifact-layout.md).
 
 ## Test Infrastructure
 
-- [ ] Decide and implement test discovery for Stark tests without relying on runtime reflection. See [04-test-infrastructure-audit.md](04-test-infrastructure-audit.md) and [07-open-questions.md](07-open-questions.md).
+- [x] Decide test discovery for Stark tests: generate an explicit `main` runner from `[Fact]` metadata, with no runtime reflection. See [04-test-infrastructure-audit.md](04-test-infrastructure-audit.md) and [07-open-questions.md](07-open-questions.md).
+- [ ] Implement generated Stark test runners, including fact enumeration, selected-test filters, and stable result reporting. See [04-test-infrastructure-audit.md](04-test-infrastructure-audit.md), [03-tooling-gaps.md](03-tooling-gaps.md), and [05-port-checklist.md](05-port-checklist.md).
 - [ ] Add rich assertions for diagnostics, collections, ranges, null/option-like values, and type checks. See [04-test-infrastructure-audit.md](04-test-infrastructure-audit.md).
 - [ ] Add golden-file and snapshot helpers for diagnostics, LLVM, MIR, SSA, and package text. See [04-test-infrastructure-audit.md](04-test-infrastructure-audit.md).
 - [ ] Add temp directory, temp file, cleanup, and fixture-editing helpers. See [04-test-infrastructure-audit.md](04-test-infrastructure-audit.md) and [02-stdlib-gaps.md](02-stdlib-gaps.md).
 - [ ] Add process execution with stdout, stderr, exit-code, argv, environment, and working-directory capture. See [04-test-infrastructure-audit.md](04-test-infrastructure-audit.md) and [02-stdlib-gaps.md](02-stdlib-gaps.md).
 - [ ] Add a host-compiler target mode so Stark tests can run against the current C# compiler. See [04-test-infrastructure-audit.md](04-test-infrastructure-audit.md).
-- [ ] Add machine-readable compiler artifact and diagnostic inspection for deep pipeline tests. See [04-test-infrastructure-audit.md](04-test-infrastructure-audit.md), [03-tooling-gaps.md](03-tooling-gaps.md), and [07-open-questions.md](07-open-questions.md).
+- [ ] Implement fast compiler artifact and diagnostic inspection for deep pipeline tests: typed in-process compiler test API first, persistent/batched compiler runner with structured results for host and cross-stage tests, and selective full artifact export for targeted golden/stage/debug tests. See [04-test-infrastructure-audit.md](04-test-infrastructure-audit.md), [03-tooling-gaps.md](03-tooling-gaps.md), and [07-open-questions.md](07-open-questions.md).
 - [ ] Add parameterized tests, platform gates, serial-test groups, and regression harness support. See [04-test-infrastructure-audit.md](04-test-infrastructure-audit.md).
 - [ ] Expand `System.Testing` to support the ported host test suite. See [02-stdlib-gaps.md](02-stdlib-gaps.md) and [04-test-infrastructure-audit.md](04-test-infrastructure-audit.md).
 
@@ -96,55 +116,58 @@ user-facing examples consistent.
 
 - [x] Finish the compile-time-only reuse surface: default method bodies, associated types, and canonical `Eq`, `Hash`, `Ord`, and `Format` contracts. Default members, associated type requirements/defaults, package-image preservation, explicit static `Dictionary<K,V>` key `Hash`/`Equals`, and the stdlib contract names have landed. See [08-stark-feature-roadmap.md](08-stark-feature-roadmap.md) and [10-traits-and-dynamic-dispatch.md](10-traits-and-dynamic-dispatch.md).
 - [x] Finish cross-module trait conformance checks and generic-dispatch coverage. See [10-traits-and-dynamic-dispatch.md](10-traits-and-dynamic-dispatch.md).
-- [ ] Decide how optional values replace host nullability and nullable C# APIs. See [01-language-feature-gaps.md](01-language-feature-gaps.md) and [07-open-questions.md](07-open-questions.md).
-- [ ] Define alias/noalias proof carriers and require wrong-alias usage to be a compile-time diagnostic. See [01-language-feature-gaps.md](01-language-feature-gaps.md) and [07-open-questions.md](07-open-questions.md).
-- [ ] Decide the parser strategy for the self-hosted compiler. See [01-language-feature-gaps.md](01-language-feature-gaps.md), [03-tooling-gaps.md](03-tooling-gaps.md), and [07-open-questions.md](07-open-questions.md).
-- [ ] Finalize the `comptime` design and implementation scope. See [13-comptime.md](13-comptime.md).
+- [x] Decide how optional values replace host nullability and nullable C# APIs: use `System.Option<T>` with `[Ok] Some(T)` / `[Err] None` as the blessed porting convention. See [01-language-feature-gaps.md](01-language-feature-gaps.md), [07-open-questions.md](07-open-questions.md), and [11-error-propagation.md](11-error-propagation.md).
+- [x] Decide alias/noalias proof model: use explicit compile-time-only proof carriers for APIs that need alias facts, erase those carriers before codegen, reject wrong proof use as a compile-time diagnostic, and allow external facts only through narrow `unsafe assume disjoint(...)` construction with explicit root checks. See [01-language-feature-gaps.md](01-language-feature-gaps.md), [07-open-questions.md](07-open-questions.md), and [09-self-hosted-compiler-architecture.md](09-self-hosted-compiler-architecture.md).
+- [ ] Implement alias/noalias proof carriers, package-image preservation, root validation, lowering validation, and diagnostics. See [01-language-feature-gaps.md](01-language-feature-gaps.md), [05-port-checklist.md](05-port-checklist.md), and [09-self-hosted-compiler-architecture.md](09-self-hosted-compiler-architecture.md).
+- [x] Decide the parser strategy for the self-hosted compiler: keep `Stark.g4` as the canonical grammar reference, but implement a handwritten self-hosted parser instead of porting ANTLR runtime/generated parsers. See [01-language-feature-gaps.md](01-language-feature-gaps.md), [03-tooling-gaps.md](03-tooling-gaps.md), [07-open-questions.md](07-open-questions.md), and [09-self-hosted-compiler-architecture.md](09-self-hosted-compiler-architecture.md).
+- [x] Decide `comptime` scope: CTFE plus broad compile-time branching over explicit program-structure facts, with compile-time-only structural facts erased before backend lowering. See [13-comptime.md](13-comptime.md).
+- [ ] Implement `comptime` CTFE, structural-fact queries, compile-time branching, package-image preservation, diagnostics, and erasure. Track detailed items in [13-comptime.md](13-comptime.md#6-work-items).
 - [x] Implement explicit FFI ABI spelling and ABI-bearing function pointer types. Track detailed items in [15-ffi-abi.md](15-ffi-abi.md#9-implementation-work-items).
 - [x] Add C-compatible struct layout attributes, packing, aggregate alignment, and packed-field safety rules. Track detailed items in [17-ffi-struct-layout.md](17-ffi-struct-layout.md#11-implementation-work-items).
 - [x] Implement raw, multiline, and raw-interpolated string literal syntax for compiler text. See L08 in [01-language-feature-gaps.md](01-language-feature-gaps.md) and [08-stark-feature-roadmap.md](08-stark-feature-roadmap.md#compiler-text-literals).
-- [~] Implement richer switch-pattern ergonomics needed by the compiler port. Switch-label or-patterns (`case A | B:`) and inclusive integer range patterns (`case 0..10:`) have landed, including capture-consistency diagnostics, interval coverage, optimized guarded range lowering, and typed package-image support. List and property patterns remain open. See L04 in [01-language-feature-gaps.md](01-language-feature-gaps.md) and [08-stark-feature-roadmap.md](08-stark-feature-roadmap.md#pattern-matching).
-- [ ] Decide which iterator, traversal, and const-generic ergonomics are needed before the compiler port. See [01-language-feature-gaps.md](01-language-feature-gaps.md).
-- [ ] Keep concurrency language work scoped to what self-hosting actually needs first. See [14-thread-safety-laws.md](14-thread-safety-laws.md).
+- [x] Implement richer switch-pattern ergonomics needed by the compiler port. Switch-label or-patterns (`case A | B:`), inclusive integer range patterns (`case 0..10:`), aggregate property patterns (`case Box { Field: pattern }:`), and exact-length list patterns (`case [first, second]:`) have landed with capture-consistency diagnostics, coverage/unreachable checks, guarded lowering, and typed package-image support. See L04 in [01-language-feature-gaps.md](01-language-feature-gaps.md) and [08-stark-feature-roadmap.md](08-stark-feature-roadmap.md#pattern-matching).
+- [x] Decide traversal and comptime-generic scope before the compiler port: add three explicit `for ... in ...` loop forms for borrowed element traversal, mutable borrowed element traversal, and indexed borrowed traversal; add typed `comptime` generic value parameters as Stark's const-generic spelling; do not add a general iterator protocol, `yield`, LINQ-style APIs, hidden iterator allocation, or hidden runtime dispatch. See [01-language-feature-gaps.md](01-language-feature-gaps.md), [07-open-questions.md](07-open-questions.md), [08-stark-feature-roadmap.md](08-stark-feature-roadmap.md#traversal-loops), and [13-comptime.md](13-comptime.md#23-comptime-generic-parameters).
+- [x] Implement the three explicit traversal loop forms and keep collection APIs optimized for explicit count/index/slice access. See [01-language-feature-gaps.md](01-language-feature-gaps.md) and [08-stark-feature-roadmap.md](08-stark-feature-roadmap.md#traversal-loops).
+- [x] Implement typed `comptime` generic value parameters for the self-hosting integer slice: monomorphization identity, type/package-image preservation, diagnostics, fixed-array use sites, source bridge rendering, and imported-template substitution. Range-typed integer parameters support symbolic fixed-array lengths, fixed-array inference/type-checking, explicit integer value arguments at type/function call sites, symbolic forwarding with `comptime N`, scalar body materialization (`return N`), and package-image round trips through typed bodies and generated source. See [01-language-feature-gaps.md](01-language-feature-gaps.md), [08-stark-feature-roadmap.md](08-stark-feature-roadmap.md#comptime-generics), and [13-comptime.md](13-comptime.md#23-comptime-generic-parameters).
 
 ## Standard Library Work
 
-- [ ] Standardize ordinary `Option<T>` and `Result<T, E>` usage across the stdlib and compiler port. See [02-stdlib-gaps.md](02-stdlib-gaps.md) and [11-error-propagation.md](11-error-propagation.md).
+- [ ] Migrate stdlib and compiler-port APIs to ordinary `Option<T>` and `Result<T, E>` where they replace nullable values, `Try*` out patterns, and recoverable failures. See [02-stdlib-gaps.md](02-stdlib-gaps.md) and [11-error-propagation.md](11-error-propagation.md).
 - [ ] Add compiler-grade text building, formatting, escaping, and diagnostic rendering helpers. See [02-stdlib-gaps.md](02-stdlib-gaps.md).
-- [ ] Add string-key dictionaries, hash sets, deterministic maps/sets, sorting, searching, and symbol interning. See [02-stdlib-gaps.md](02-stdlib-gaps.md) and [08-stark-feature-roadmap.md](08-stark-feature-roadmap.md).
-- [ ] Decide and implement the BigInt/range-facts support needed by the type checker. See [02-stdlib-gaps.md](02-stdlib-gaps.md) and [07-open-questions.md](07-open-questions.md).
+- [~] Implement the blessed generic collections and interning model: public `Hash` + `Eq` / `Ord` contracts for collections, text-key support, `HashSet<T>`, deterministic map/set or sorting paths, borrowed lookups, and compiler-internal typed interned IDs. Track detailed items in [19-generic-collections-and-interning.md](19-generic-collections-and-interning.md#8-work-items); see also [02-stdlib-gaps.md](02-stdlib-gaps.md) and [08-stark-feature-roadmap.md](08-stark-feature-roadmap.md).
+- [ ] Implement bounded `i1024`/`u1024` compiler integer-fact helpers for range facts, enum tags, CTFE integer folding, SSA facts, known-bit masks, and overflow diagnostics. See [02-stdlib-gaps.md](02-stdlib-gaps.md) and [07-open-questions.md](07-open-questions.md).
 - [ ] Add file read/write, filesystem metadata, recursive walk, temp directory, and path manipulation APIs. See [02-stdlib-gaps.md](02-stdlib-gaps.md).
 - [ ] Add process spawning, environment, argv, working-directory, and output-capture APIs. See [02-stdlib-gaps.md](02-stdlib-gaps.md).
-- [ ] Add TOML support for `Stark.toml` and `Stark.solution.toml`. See [02-stdlib-gaps.md](02-stdlib-gaps.md), [03-tooling-gaps.md](03-tooling-gaps.md), and [07-open-questions.md](07-open-questions.md).
-- [ ] Add JSON support for package images unless the package format changes. See [02-stdlib-gaps.md](02-stdlib-gaps.md), [03-tooling-gaps.md](03-tooling-gaps.md), and [07-open-questions.md](07-open-questions.md).
+- [ ] Add reusable `System.Toml` parser/emitter support and use it for `Stark.toml`, `Stark.solution.toml`, and `Stark.user.toml` manifest decoding. Track detailed items in [21-system-toml.md](21-system-toml.md#7-work-items); see also [02-stdlib-gaps.md](02-stdlib-gaps.md), [03-tooling-gaps.md](03-tooling-gaps.md), and [07-open-questions.md](07-open-questions.md).
+- [ ] Add package inspection/export text support and the JSON writer/reader pieces still needed for `stark inspect-pkg`, tests, and tooling. Binary remains the compiler load path. See [02-stdlib-gaps.md](02-stdlib-gaps.md), [03-tooling-gaps.md](03-tooling-gaps.md), [07-open-questions.md](07-open-questions.md), and [20-package-image-format.md](20-package-image-format.md#8-work-items).
 - [~] Add `System.C` target-mapped C primitive aliases and `c_void` for FFI declarations. Track detailed items in [16-ffi-c-types.md](16-ffi-c-types.md#10-work-items).
-- [ ] Add `System.C` null-terminated C string helpers: borrowed views, owned strings, mutable output buffers, and explicit text conversions. Track detailed items in [18-ffi-c-strings.md](18-ffi-c-strings.md#11-work-items).
-- [ ] Decide the compiler IR memory strategy: arenas and handles, owned trees, or another explicit ownership model. See [02-stdlib-gaps.md](02-stdlib-gaps.md), [07-open-questions.md](07-open-questions.md), and [09-self-hosted-compiler-architecture.md](09-self-hosted-compiler-architecture.md).
-- [ ] Add the synchronization pieces needed after atomics, such as mutex, once, channels, and thread locals if they remain part of the chosen design. See [02-stdlib-gaps.md](02-stdlib-gaps.md), [12-atomics.md](12-atomics.md), and [14-thread-safety-laws.md](14-thread-safety-laws.md).
+- [ ] Add `System.C` null-terminated C string helpers: borrowed views, owned strings, mutable output buffers, and explicit text conversions. This is required for libLLVM. Track detailed items in [18-ffi-c-strings.md](18-ffi-c-strings.md#11-work-items) and [23-libllvm-integration.md](23-libllvm-integration.md#8-work-items).
+- [ ] Implement the compiler IR memory and fact model: typed handles, arena/table ownership scopes, fact categories, lowering policies, fact-transfer helpers, package-image durable facts, and phase-boundary verification. Track detailed items in [24-ir-memory-and-fact-model.md](24-ir-memory-and-fact-model.md#9-work-items); see also [02-stdlib-gaps.md](02-stdlib-gaps.md), [07-open-questions.md](07-open-questions.md), and [09-self-hosted-compiler-architecture.md](09-self-hosted-compiler-architecture.md).
+- [ ] Add the minimal threading coordination surface for future parallel build/test work: captured thread payloads, `System.Threading.Synchronized<T>` / `Locked<T>`, and MPSC channels. Track detailed items in [22-threading-coordination.md](22-threading-coordination.md#8-work-items); see also [02-stdlib-gaps.md](02-stdlib-gaps.md), [12-atomics.md](12-atomics.md), and [14-thread-safety-laws.md](14-thread-safety-laws.md).
 
 ## Tooling Work
 
-- [ ] Add bootstrap staging and snapshot compiler policy. See [03-tooling-gaps.md](03-tooling-gaps.md), [06-roadmap.md](06-roadmap.md), and [ToolchainPackagingRoadmap.md](ToolchainPackagingRoadmap.md).
+- [ ] Add bootstrap staging around the existing C# host, Stage1 Stark compiler, and Stage2 Stark compiler. See [03-tooling-gaps.md](03-tooling-gaps.md) and [06-roadmap.md](06-roadmap.md).
 - [ ] Make `stark build`, `stark run`, and `stark test` stage-aware. See [03-tooling-gaps.md](03-tooling-gaps.md).
-- [ ] Formalize the `.stark/build/` artifact layout by profile, target, and stage. See [03-tooling-gaps.md](03-tooling-gaps.md).
-- [ ] Add package-image generation and loading in Stark. See [03-tooling-gaps.md](03-tooling-gaps.md) and [02-stdlib-gaps.md](02-stdlib-gaps.md).
-- [ ] Add stdlib package build and discovery for self-hosting. See [03-tooling-gaps.md](03-tooling-gaps.md).
-- [ ] Decide LLVM integration for the self-hosted compiler. See [03-tooling-gaps.md](03-tooling-gaps.md), [07-open-questions.md](07-open-questions.md), and [ToolchainPackagingRoadmap.md](ToolchainPackagingRoadmap.md).
-- [ ] Add native toolchain discovery, bundled-toolchain support, and target information, including C data-model and aggregate layout facts. Track target-specific detail in [16-ffi-c-types.md](16-ffi-c-types.md#10-work-items), [17-ffi-struct-layout.md](17-ffi-struct-layout.md#11-implementation-work-items), and [ToolchainPackagingRoadmap.md](ToolchainPackagingRoadmap.md).
-- [ ] Add machine-readable diagnostics, logs, metrics, and artifact output where tests and tooling need them. See [03-tooling-gaps.md](03-tooling-gaps.md) and [04-test-infrastructure-audit.md](04-test-infrastructure-audit.md).
-- [ ] Keep VS Code and editor tooling in sync with syntax that has landed. See [03-tooling-gaps.md](03-tooling-gaps.md).
+- [ ] Implement the formal `.stark/build/<profile>/<target-triple>/<stage>/` artifact layout and route package images, stdlib artifacts, native outputs, tests, diagnostics, and requested compiler artifacts into the stable subdirectories. Track detailed items in [25-build-artifact-layout.md](25-build-artifact-layout.md#7-work-items); see also [03-tooling-gaps.md](03-tooling-gaps.md).
+- [ ] Implement binary package-image generation/loading in Stark plus `stark inspect-pkg` JSON/text inspection output. Track detailed items in [20-package-image-format.md](20-package-image-format.md#8-work-items); see also [03-tooling-gaps.md](03-tooling-gaps.md) and [02-stdlib-gaps.md](02-stdlib-gaps.md).
+- [ ] Implement the blessed stdlib discovery order: explicit override, stage/build-local artifacts, repo source or `stdlib/dist` for development, then installed bundled stdlib next to the compiler. Track low-level tasks in [ToolchainPackagingRoadmap.md](ToolchainPackagingRoadmap.md#phase-5-standard-library-bundling); see also [03-tooling-gaps.md](03-tooling-gaps.md).
+- [ ] Implement libLLVM backend integration through direct LLVM C API module construction, keeping textual LLVM only as a printed debug/inspection artifact. Track detailed items in [23-libllvm-integration.md](23-libllvm-integration.md#8-work-items); see also [03-tooling-gaps.md](03-tooling-gaps.md), [07-open-questions.md](07-open-questions.md), and [ToolchainPackagingRoadmap.md](ToolchainPackagingRoadmap.md).
+- [ ] Add native/libLLVM toolchain discovery, bundled-toolchain support, and target information, including C data-model and aggregate layout facts. Track target-specific detail in [16-ffi-c-types.md](16-ffi-c-types.md#10-work-items), [17-ffi-struct-layout.md](17-ffi-struct-layout.md#11-implementation-work-items), [23-libllvm-integration.md](23-libllvm-integration.md#8-work-items), and [ToolchainPackagingRoadmap.md](ToolchainPackagingRoadmap.md).
+- [ ] Add targeted diagnostic/artifact output for tests and debugging; keep broad logs, metrics, timings, and machine-readable CLI output out of the self-hosting critical path unless a concrete workflow needs them. See [03-tooling-gaps.md](03-tooling-gaps.md) and [04-test-infrastructure-audit.md](04-test-infrastructure-audit.md).
+- [ ] Keep VS Code and editor syntax/completions in sync when source syntax changes land. See [03-tooling-gaps.md](03-tooling-gaps.md).
 - [ ] Add release packaging, `stark doctor`, and clean-machine verification. See [03-tooling-gaps.md](03-tooling-gaps.md) and [ToolchainPackagingRoadmap.md](ToolchainPackagingRoadmap.md).
 
 ## Compiler Port
 
-- [ ] Port grammar, parsing, syntax models, visitors, and text literal handling after the parser strategy is decided. See [05-port-checklist.md](05-port-checklist.md).
+- [ ] Implement the handwritten parser, parser facade, syntax model bridge, and text literal handling against canonical `Stark.g4`. See [05-port-checklist.md](05-port-checklist.md).
 - [ ] Port diagnostics, compiler artifacts, pipeline orchestration, and artifact rendering. See [05-port-checklist.md](05-port-checklist.md) and [09-self-hosted-compiler-architecture.md](09-self-hosted-compiler-architecture.md).
 - [ ] Port module resolution, name binding, type resolution, overload resolution, and type compatibility facts. See [05-port-checklist.md](05-port-checklist.md).
 - [ ] Port type checking, semantic validation, ownership validation, borrow liveness, range facts, enum facts, and compile-time evaluation. See [05-port-checklist.md](05-port-checklist.md).
 - [ ] Port HIR/MIR lowering, drop lowering, switch lowering, imported-template handling, and related function-body builders. See [05-port-checklist.md](05-port-checklist.md).
 - [ ] Port SSA lowering, SSA validation, and optimization passes. See [05-port-checklist.md](05-port-checklist.md).
 - [ ] Port ABI lowering, LLVM IR emission, and native output support. See [05-port-checklist.md](05-port-checklist.md); track FFI detail in [15-ffi-abi.md](15-ffi-abi.md#9-implementation-work-items), [16-ffi-c-types.md](16-ffi-c-types.md#10-work-items), [17-ffi-struct-layout.md](17-ffi-struct-layout.md#11-implementation-work-items), and [18-ffi-c-strings.md](18-ffi-c-strings.md#11-work-items).
-- [ ] Port package-image models, builders, loaders, bridge code, and shared codecs. See [05-port-checklist.md](05-port-checklist.md).
+- [ ] Port package-image models, builders, loaders, bridge code, and shared codecs to the logical section model, with binary as the normal load format and JSON/text as inspection outputs. See [05-port-checklist.md](05-port-checklist.md) and [20-package-image-format.md](20-package-image-format.md).
 - [ ] Port CLI, project driver, manifest handling, native-toolchain driver, and build entry points. See [05-port-checklist.md](05-port-checklist.md) and [03-tooling-gaps.md](03-tooling-gaps.md).
 - [ ] Port small fact helpers and assembly metadata helpers as leaf modules. See [05-port-checklist.md](05-port-checklist.md).
 
@@ -154,32 +177,34 @@ user-facing examples consistent.
 - [ ] Build the next Stark compiler with the first Stark compiler. See [06-roadmap.md](06-roadmap.md).
 - [ ] Compare stage outputs, package images, diagnostics, and native artifacts for determinism. See [06-roadmap.md](06-roadmap.md).
 - [ ] Run the ported Stark test suite against the self-hosted compiler. See [06-roadmap.md](06-roadmap.md).
-- [ ] Define snapshot compiler storage, provenance, checksums, and rollback policy. See [06-roadmap.md](06-roadmap.md) and [ToolchainPackagingRoadmap.md](ToolchainPackagingRoadmap.md).
-- [ ] Update release archives to ship the snapshot compiler, stdlib package, and required native tooling. See [ToolchainPackagingRoadmap.md](ToolchainPackagingRoadmap.md).
-- [ ] Document source bootstrap from a snapshot compiler. See [ToolchainPackagingRoadmap.md](ToolchainPackagingRoadmap.md).
-- [ ] Remove or demote the C# host compiler from the normal build path while keeping an emergency recovery path. See [06-roadmap.md](06-roadmap.md).
+- [ ] Keep the C# host compiler as the Stage0 builder until the Stark compiler can build itself. See [06-roadmap.md](06-roadmap.md).
+- [ ] Update release archives to ship the Stark compiler, stdlib package, and required native tooling after cutover. See [ToolchainPackagingRoadmap.md](ToolchainPackagingRoadmap.md).
+- [ ] Document the migration bootstrap flow: C# host builds Stage1, Stage1 builds Stage2, then Stage2 becomes the trusted self-hosted compiler once tests and comparisons pass. See [06-roadmap.md](06-roadmap.md).
+- [ ] During cutover, move the C# host compiler from `/src` to `/old_src`, let the Stark compiler own `/src`, and remove or demote the C# host from the normal build path while keeping an emergency recovery path. See [06-roadmap.md](06-roadmap.md).
 
 ## Open Decisions To Close
 
 Keep the detailed options and trade-offs in [07-open-questions.md](07-open-questions.md). The decisions that most affect scheduling are:
 
-- [ ] Self-hosted source location.
-- [ ] Parser strategy.
-- [ ] Test-runner model.
-- [ ] Compiler artifact and diagnostic access for tests.
-- [ ] Optional/null replacement.
-- [ ] BigInt scope.
-- [ ] Generic hashing and equality.
-- [ ] Package-image format.
-- [ ] TOML strategy.
-- [ ] Build-driver concurrency scope.
-- [ ] LLVM integration.
-- [ ] Bootstrap snapshot policy.
-- [ ] IR memory model.
-- [ ] Alias/noalias misuse policy.
-- [ ] `.stark/build/` layout.
-- [ ] Stdlib/package discovery.
-- [ ] VS Code/editor cutover requirements.
+- [x] Self-hosted source location.
+- [x] Parser strategy.
+- [x] Test-runner model.
+- [x] Compiler artifact and diagnostic access for tests.
+- [x] Optional/null replacement.
+- [x] Comptime scope.
+- [x] Traversal and comptime-generic scope.
+- [x] Compiler integer fact domain.
+- [x] Generic hashing and equality.
+- [x] Package-image format.
+- [x] TOML strategy.
+- [x] Build-driver concurrency scope.
+- [x] LLVM integration.
+- [x] Bootstrap policy.
+- [x] IR memory model.
+- [x] Alias/noalias misuse policy.
+- [x] `.stark/build/` layout.
+- [x] Stdlib/package discovery.
+- [x] VS Code/editor blocking status.
 
 ## Maintenance Rule
 

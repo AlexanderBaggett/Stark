@@ -362,7 +362,8 @@ internal sealed class SsaIrValidator
                     templateSignature,
                     strategy.TypeArguments,
                     strategy.SymbolName,
-                    ResolveAssociatedTypeForValidation);
+                    ResolveAssociatedTypeForValidation,
+                    strategy.ComptimeValueArguments);
             }
         }
 

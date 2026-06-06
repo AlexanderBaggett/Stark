@@ -678,6 +678,29 @@ public sealed class TypeTypingDiagnosticsTests
     }
 
     [Fact]
+    public void FixedArrayListSwitchPatternsRejectWrongLength()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            fn i32[min max] Run(i32[min max][2] values)
+            {
+                switch (values)
+                {
+                    case [1]:
+                        return 1;
+                    default:
+                        return 0;
+                }
+            }
+            """);
+
+        Assert.False(result.Succeeded);
+        AssertDiagnostic(result, "STK3008", "expects exactly 2 element subpatterns", "found 1");
+    }
+
+    [Fact]
     public void SwitchOrPatternsRejectInconsistentSharedCaptures()
     {
         var result = Compile(

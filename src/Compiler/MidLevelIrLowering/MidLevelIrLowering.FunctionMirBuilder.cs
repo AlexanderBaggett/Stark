@@ -14,6 +14,8 @@ internal sealed partial class MidLevelIrLowerer
         private static readonly StarkTypeSymbol BytePointerType = StarkTypeSymbols.RawPointer(ByteType, isMutable: false);
         private static readonly StarkTypeSymbol I64Type = StarkTypeSymbols.Integer(64);
         private static readonly StarkTypeSymbol NonNegativeI64Type = StarkTypeSymbols.Integer(64, BigInteger.Zero, (BigInteger.One << 63) - 1);
+        private static readonly IReadOnlyDictionary<string, StarkTypeSymbol> EmptyGenericTypeSubstitution =
+            new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
         private const int LargeAggregateProjectionAddressThresholdBytes = 128;
         private const string ClosureCaptureDropStatePrefix = "$closure_capture$";
 
@@ -23,10 +25,17 @@ internal sealed partial class MidLevelIrLowerer
             Literal,
             Range,
             Capture,
-            Nested
+            Nested,
+            List
         }
 
         private readonly record struct LowerableIntegerRangePattern(BigInteger Min, BigInteger Max);
+
+        private sealed record LowerableListPattern(
+            StarkTypeSymbol ListType,
+            StarkTypeSymbol ElementType,
+            IReadOnlyList<LowerableAggregateFieldPattern> ElementPatterns,
+            string Text);
 
         private sealed record LowerableAggregateFieldPattern(
             string FieldName,
@@ -38,7 +47,8 @@ internal sealed partial class MidLevelIrLowerer
             StarkParser.LiteralContext? Literal,
             string? CaptureName,
             LowerableAggregatePattern? NestedPattern,
-            ImportedTemplateTypedBodyExpressionSummary? ImportedLiteralExpression,
+            LowerableListPattern? ListPattern = null,
+            ImportedTemplateTypedBodyExpressionSummary? ImportedLiteralExpression = null,
             LowerableIntegerRangePattern? RangePattern = null,
             string? CaptureStorageName = null);
 
@@ -63,6 +73,7 @@ internal sealed partial class MidLevelIrLowerer
             bool IsMatchAll,
             string? CaptureName,
             LowerableAggregatePattern? AggregatePattern,
+            LowerableListPattern? ListPattern = null,
             ImportedTemplateTypedBodyExpressionSummary? ImportedLiteralExpression = null,
             ImportedTemplateTypedBodyExpressionSummary? ImportedGuardExpression = null,
             LowerableIntegerRangePattern? RangePattern = null,
@@ -150,6 +161,8 @@ internal sealed partial class MidLevelIrLowerer
             private readonly FunctionMirBuilder _builder;
             private readonly string? _previousModuleName;
             private readonly IReadOnlyDictionary<string, StarkTypeSymbol>? _previousGenericTypeSubstitution;
+            private readonly IReadOnlyDictionary<string, BigInteger>? _previousGenericValueSubstitution;
+            private readonly IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? _previousComptimeGenericParameters;
             private readonly string _aliasName;
             private readonly string? _previousAlias;
             private readonly bool _hadAlias;
@@ -158,6 +171,8 @@ internal sealed partial class MidLevelIrLowerer
                 FunctionMirBuilder builder,
                 string? previousModuleName,
                 IReadOnlyDictionary<string, StarkTypeSymbol>? previousGenericTypeSubstitution,
+                IReadOnlyDictionary<string, BigInteger>? previousGenericValueSubstitution,
+                IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? previousComptimeGenericParameters,
                 string aliasName,
                 string? previousAlias,
                 bool hadAlias)
@@ -165,6 +180,8 @@ internal sealed partial class MidLevelIrLowerer
                 _builder = builder;
                 _previousModuleName = previousModuleName;
                 _previousGenericTypeSubstitution = previousGenericTypeSubstitution;
+                _previousGenericValueSubstitution = previousGenericValueSubstitution;
+                _previousComptimeGenericParameters = previousComptimeGenericParameters;
                 _aliasName = aliasName;
                 _previousAlias = previousAlias;
                 _hadAlias = hadAlias;
@@ -174,6 +191,8 @@ internal sealed partial class MidLevelIrLowerer
             {
                 _builder._moduleNameOverride = _previousModuleName;
                 _builder._activeGenericTypeSubstitution = _previousGenericTypeSubstitution;
+                _builder._activeGenericValueSubstitution = _previousGenericValueSubstitution;
+                _builder._activeComptimeGenericParameters = _previousComptimeGenericParameters;
                 if (_hadAlias)
                 {
                     _builder._nameAliases[_aliasName] = _previousAlias!;
@@ -190,17 +209,23 @@ internal sealed partial class MidLevelIrLowerer
             private readonly FunctionMirBuilder _builder;
             private readonly string? _previousModuleName;
             private readonly IReadOnlyDictionary<string, StarkTypeSymbol>? _previousGenericTypeSubstitution;
+            private readonly IReadOnlyDictionary<string, BigInteger>? _previousGenericValueSubstitution;
+            private readonly IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? _previousComptimeGenericParameters;
             private readonly List<(string AliasName, string? PreviousAlias, bool HadAlias)> _previousAliases;
 
             public ConstructorBodyContext(
                 FunctionMirBuilder builder,
                 string? previousModuleName,
                 IReadOnlyDictionary<string, StarkTypeSymbol>? previousGenericTypeSubstitution,
+                IReadOnlyDictionary<string, BigInteger>? previousGenericValueSubstitution,
+                IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? previousComptimeGenericParameters,
                 List<(string AliasName, string? PreviousAlias, bool HadAlias)> previousAliases)
             {
                 _builder = builder;
                 _previousModuleName = previousModuleName;
                 _previousGenericTypeSubstitution = previousGenericTypeSubstitution;
+                _previousGenericValueSubstitution = previousGenericValueSubstitution;
+                _previousComptimeGenericParameters = previousComptimeGenericParameters;
                 _previousAliases = previousAliases;
             }
 
@@ -208,6 +233,8 @@ internal sealed partial class MidLevelIrLowerer
             {
                 _builder._moduleNameOverride = _previousModuleName;
                 _builder._activeGenericTypeSubstitution = _previousGenericTypeSubstitution;
+                _builder._activeGenericValueSubstitution = _previousGenericValueSubstitution;
+                _builder._activeComptimeGenericParameters = _previousComptimeGenericParameters;
 
                 foreach (var (aliasName, previousAlias, hadAlias) in _previousAliases)
                 {
@@ -273,7 +300,11 @@ internal sealed partial class MidLevelIrLowerer
         private readonly IReadOnlyDictionary<string, string> _materializedSpecializationSymbols;
         private readonly ISet<string>? _genericParameterNames;
         private readonly IReadOnlyDictionary<string, StarkTypeSymbol>? _genericTypeSubstitution;
+        private readonly IReadOnlyDictionary<string, BigInteger>? _genericValueSubstitution;
+        private readonly IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? _genericComptimeParameters;
         private IReadOnlyDictionary<string, StarkTypeSymbol>? _activeGenericTypeSubstitution;
+        private IReadOnlyDictionary<string, BigInteger>? _activeGenericValueSubstitution;
+        private IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? _activeComptimeGenericParameters;
         private readonly IDisposable _logScope;
         private readonly List<MidLevelIrLocal> _locals = [];
         private readonly Dictionary<string, MidLevelIrLocal> _localsByName = new(StringComparer.Ordinal);
@@ -343,6 +374,7 @@ internal sealed partial class MidLevelIrLowerer
             ImportedFunctionTemplateSummary? importedTemplateSummary,
             IReadOnlyDictionary<string, string> materializedSpecializationSymbols,
             IReadOnlyDictionary<string, StarkTypeSymbol>? genericTypeSubstitution,
+            IReadOnlyDictionary<string, BigInteger>? genericValueSubstitution,
             bool useImportedTemplateLocalDeclarationFacts)
         {
             _function = function;
@@ -447,7 +479,15 @@ internal sealed partial class MidLevelIrLowerer
                 ? new Dictionary<string, StarkTypeSymbol>(genericTypeSubstitution, StringComparer.Ordinal)
                 : null;
             _activeGenericTypeSubstitution = _genericTypeSubstitution;
+            _genericValueSubstitution = genericValueSubstitution is { Count: > 0 }
+                ? new Dictionary<string, BigInteger>(genericValueSubstitution, StringComparer.Ordinal)
+                : null;
+            _activeGenericValueSubstitution = _genericValueSubstitution;
+            _genericComptimeParameters = BuildSignatureComptimeParameterMap(function.Signature);
+            _activeComptimeGenericParameters = _genericComptimeParameters;
             _compileTimeEvaluator = new CompileTimeEvaluator(this);
+            DeclareComptimeGenericConstants(function.Signature.ComptimeValues);
+            DeclareComptimeGenericSubstitutionConstants(_genericValueSubstitution);
             _importedTemplateLowerer = new ImportedTemplateLowerer(this);
             _placeLowerer = new PlaceLowerer(this);
             _runtimeDropLowerer = new RuntimeDropLowerer(this);
@@ -929,6 +969,63 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             _compileTimeConstantState.Declare(name, coerced, isMutable: false);
+        }
+
+        private void DeclareComptimeGenericConstants(IReadOnlyList<ComptimeValueArgumentSymbol> values)
+        {
+            foreach (var value in values)
+            {
+                if (value.IsSymbolic)
+                {
+                    continue;
+                }
+
+                _compileTimeConstantState.Declare(
+                    value.ParameterName,
+                    CompileTimeConstant.Integer(value.IntegerValue, value.Type),
+                    isMutable: false);
+            }
+        }
+
+        private void DeclareComptimeGenericSubstitutionConstants(IReadOnlyDictionary<string, BigInteger>? values)
+        {
+            if (values is not { Count: > 0 })
+            {
+                return;
+            }
+
+            foreach (var (name, value) in values)
+            {
+                if (_genericComptimeParameters is not { Count: > 0 }
+                    || !_genericComptimeParameters.TryGetValue(name, out var parameter))
+                {
+                    continue;
+                }
+
+                _compileTimeConstantState.Declare(
+                    name,
+                    CompileTimeConstant.Integer(value, parameter.Type),
+                    isMutable: false);
+            }
+        }
+
+        private static IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? BuildSignatureComptimeParameterMap(
+            TypedFunctionSignature signature)
+        {
+            Dictionary<string, ComptimeGenericParameterSymbol>? parameters = null;
+            foreach (var parameter in signature.ComptimeGenericParams)
+            {
+                parameters ??= new Dictionary<string, ComptimeGenericParameterSymbol>(StringComparer.Ordinal);
+                parameters[parameter.Name] = parameter;
+            }
+
+            foreach (var value in signature.ComptimeValues)
+            {
+                parameters ??= new Dictionary<string, ComptimeGenericParameterSymbol>(StringComparer.Ordinal);
+                parameters.TryAdd(value.ParameterName, new ComptimeGenericParameterSymbol(value.ParameterName, value.Type));
+            }
+
+            return parameters;
         }
 
         private void LowerVariableDeclaration(StarkParser.LocalVariableDeclarationContext declaration)
@@ -2525,7 +2622,7 @@ internal sealed partial class MidLevelIrLowerer
                 throw LoweringInvariantViolation(ifStatement.expression(), "if-pattern condition expression was accepted but did not lower to an operand.");
             }
 
-            if (!TryBuildSwitchLabelFromPattern(pattern, guardExpression: null, out var builtLabel) || builtLabel is null)
+            if (!TryBuildSwitchLabelFromPattern(pattern, guardExpression: null, switchValue.Type, out var builtLabel) || builtLabel is null)
             {
                 throw LoweringInvariantViolation(pattern, "if-pattern was accepted but could not be lowered.");
             }
@@ -3328,7 +3425,7 @@ internal sealed partial class MidLevelIrLowerer
                 throw LoweringInvariantViolation(whileStatement.expression(), "while-pattern condition expression was accepted but did not lower to an operand.");
             }
 
-            if (!TryBuildSwitchLabelFromPattern(pattern, guardExpression: null, out var builtLabel) || builtLabel is null)
+            if (!TryBuildSwitchLabelFromPattern(pattern, guardExpression: null, switchValue.Type, out var builtLabel) || builtLabel is null)
             {
                 throw LoweringInvariantViolation(pattern, "while-pattern was accepted but could not be lowered.");
             }
@@ -3404,6 +3501,12 @@ internal sealed partial class MidLevelIrLowerer
 
             try
             {
+                if (forStatement.forTraversal() is { } forTraversal)
+                {
+                    LowerForTraversal(forStatement, forTraversal);
+                    return;
+                }
+
                 if (forStatement.forInitializer()?.localForVariableDeclaration() is { } localForVariableDeclaration)
                 {
                     var declaredType = TryResolveLocalDeclarationType(TemplateLocalDeclarationFacts.ForVariableKind, localForVariableDeclaration, out var publishedType)
@@ -3515,6 +3618,309 @@ internal sealed partial class MidLevelIrLowerer
                 EmitStorageDead(scope);
                 RestoreScopedNameAliases(scope);
             }
+        }
+
+        private void LowerForTraversal(
+            StarkParser.ForStatementContext forStatement,
+            StarkParser.ForTraversalContext traversal)
+        {
+            var source = LowerExpressionToRequiredOperand(
+                traversal.expression(),
+                expectedType: null,
+                reason: "for-in traversal source");
+            source = MaterializeTraversalSource(source, traversal.expression());
+
+            if (source.Type.Kind is not (StarkTypeKind.FixedArray or StarkTypeKind.Slice or StarkTypeKind.Dynamic)
+                || source.Type.ElementType is null)
+            {
+                throw LoweringInvariantViolation(
+                    traversal.expression(),
+                    $"for-in traversal source '{traversal.expression().GetText()}' is not a fixed array, slice, or dynamic storage value.");
+            }
+
+            var length = LowerTraversalLength(source, traversal.expression());
+            var hiddenIndex = CreateTemporaryLocal(NonNegativeI64Type, "for_index");
+            EmitOperandAssignment(
+                hiddenIndex,
+                new MidLevelIrIntegerConstantOperand(BigInteger.Zero, NonNegativeI64Type),
+                "0");
+
+            MidLevelIrLocalOperand? userIndex = null;
+            if (traversal.traversalIndexBinding() is { } indexBinding)
+            {
+                var indexType = ResolveTypeWithGenericSubstitution(indexBinding.type_(), CurrentModuleName);
+                var indexName = DeclareLocal(
+                    indexBinding.Identifier().GetText(),
+                    indexType,
+                    indexBinding.storageClass().GetText(),
+                    isMutable: false,
+                    isConstant: false);
+                Emit(MidLevelIrStatementKind.StorageLive, indexName, indexName, indexType);
+                InitializeRuntimeDropState(indexName, indexType, isActive: false);
+                userIndex = new MidLevelIrLocalOperand(indexName, indexType);
+            }
+
+            var elementBinding = traversal.traversalElementBinding();
+            var elementBindingType = ResolveTypeWithGenericSubstitution(elementBinding.type_(), CurrentModuleName);
+            var elementName = DeclareLocal(
+                elementBinding.Identifier().GetText(),
+                elementBindingType,
+                storageClass: "stack",
+                isMutable: false,
+                isConstant: false);
+            Emit(MidLevelIrStatementKind.StorageLive, elementName, elementName, elementBindingType);
+            InitializeRuntimeDropState(elementName, elementBindingType, isActive: false);
+            var elementLocal = new MidLevelIrLocalOperand(elementName, elementBindingType);
+
+            var loopBehavior = forStatement.loopBehavior().GetText();
+            var conditionBlock = CreateBlock($"forin_{loopBehavior}_cond");
+            var bodyBlock = CreateBlock("forin_body");
+            var iteratorBlock = CreateBlock("forin_iter");
+            var exitBlock = CreateBlock("forin_exit");
+            var loopContracts = GetLoopContractNames(forStatement.loopContract());
+            var loopAccessGroups = CreateIndependentLoopAccessGroups(loopContracts);
+
+            EnsureGoto(conditionBlock.Id);
+
+            CurrentBlock = conditionBlock;
+            var hasElement = EmitRequiredTemporary(
+                new MidLevelIrBinaryRValue(
+                    MidLevelIrBinaryOperator.LessThan,
+                    hiddenIndex,
+                    length,
+                    StarkTypeSymbols.Bool,
+                    $"{hiddenIndex.Text} < {length.Text}"),
+                "cmp");
+            CurrentBlock.Terminator = new MidLevelIrTerminator(
+                MidLevelIrTerminatorKind.Branch,
+                [bodyBlock.Id, exitBlock.Id],
+                ConditionText: $"{hiddenIndex.Text} < {length.Text}",
+                Condition: hasElement);
+
+            _loops.Push(new LoopTargets(iteratorBlock.Id, exitBlock.Id, _scopes.Count, null, null, null));
+            _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
+            CurrentBlock = bodyBlock;
+            try
+            {
+                if (loopAccessGroups is { Count: > 0 })
+                {
+                    foreach (var loopAccessGroup in loopAccessGroups.Reverse())
+                    {
+                        _activeLoopAccessGroups.Push(loopAccessGroup);
+                    }
+                }
+
+                if (userIndex is not null)
+                {
+                    var visibleIndex = CoerceOperand(hiddenIndex, userIndex.Type) ?? hiddenIndex;
+                    Emit(
+                        MidLevelIrStatementKind.Assign,
+                        $"{userIndex.Name} = {hiddenIndex.Text}",
+                        userIndex.Name,
+                        userIndex.Type,
+                        new MidLevelIrUseRValue(visibleIndex),
+                        writeKind: MemoryWriteKind.Initialization);
+                    SetRuntimeDropState(userIndex.Name, isActive: true);
+                }
+
+                var elementValue = LowerTraversalElementBindingValue(source, hiddenIndex, elementBindingType, traversal);
+                Emit(
+                    MidLevelIrStatementKind.Assign,
+                    $"{elementLocal.Name} = {source.Text}[{hiddenIndex.Text}]",
+                    elementLocal.Name,
+                    elementLocal.Type,
+                    new MidLevelIrUseRValue(elementValue),
+                    writeKind: MemoryWriteKind.Initialization);
+                SetRuntimeDropState(elementLocal.Name, isActive: true);
+
+                LowerStatement(forStatement.statement());
+            }
+            finally
+            {
+                if (loopAccessGroups is { Count: > 0 })
+                {
+                    for (var index = 0; index < loopAccessGroups.Count; index++)
+                    {
+                        _activeLoopAccessGroups.Pop();
+                    }
+                }
+
+                _breakTargets.Pop();
+                _loops.Pop();
+            }
+            EnsureGoto(iteratorBlock.Id);
+
+            CurrentBlock = iteratorBlock;
+            var nextIndex = EmitRequiredTemporary(
+                new MidLevelIrBinaryRValue(
+                    MidLevelIrBinaryOperator.Add,
+                    hiddenIndex,
+                    new MidLevelIrIntegerConstantOperand(BigInteger.One, NonNegativeI64Type),
+                    NonNegativeI64Type,
+                    $"{hiddenIndex.Text} + 1"),
+                "for_index");
+            EmitOperandAssignment(hiddenIndex, nextIndex, nextIndex.Text);
+            EnsureGoto(conditionBlock.Id, loopContracts, loopAccessGroups, loopBehavior);
+            CurrentBlock = exitBlock;
+        }
+
+        private MidLevelIrOperand MaterializeTraversalSource(
+            MidLevelIrOperand source,
+            ParserRuleContext context)
+        {
+            return MaterializeTraversalSource(source, context, context.GetText());
+        }
+
+        private MidLevelIrOperand MaterializeTraversalSource(
+            MidLevelIrOperand source,
+            ParserRuleContext? context,
+            string sourceText)
+        {
+            if (source is MidLevelIrLocalOperand
+                or MidLevelIrParameterOperand
+                or MidLevelIrGlobalOperand
+                or MidLevelIrGlobalAddressOperand)
+            {
+                return source;
+            }
+
+            var localName = AllocateTemporaryName("for_source");
+            RegisterLocal(
+                localName,
+                source.Type,
+                storageClass: "temp",
+                isMutable: false,
+                isConstant: false,
+                hasConstProvenance: OperandHasConstProvenance(source),
+                constProvenance: ConstProvenanceFacts.FromPermanentConst(OperandHasConstProvenance(source)));
+            TrackDeclaredLocal(localName, source.Type);
+            Emit(MidLevelIrStatementKind.StorageLive, localName, localName, source.Type);
+            InitializeRuntimeDropState(localName, source.Type, isActive: false);
+            Emit(
+                MidLevelIrStatementKind.Assign,
+                $"{localName} = {sourceText}",
+                localName,
+                source.Type,
+                new MidLevelIrUseRValue(source),
+                writeKind: MemoryWriteKind.Initialization);
+            RecordMoveFromOperand(source, source.Type);
+            SetRuntimeDropState(localName, isActive: true);
+            return new MidLevelIrLocalOperand(localName, source.Type);
+        }
+
+        private MidLevelIrOperand LowerTraversalLength(MidLevelIrOperand source, ParserRuleContext context)
+        {
+            switch (source.Type.Kind)
+            {
+                case StarkTypeKind.FixedArray when source.Type.FixedLength is int fixedLength:
+                    return new MidLevelIrIntegerConstantOperand(new BigInteger(fixedLength), NonNegativeI64Type);
+                case StarkTypeKind.Dynamic:
+                    return LowerKnownFieldAccess(source, "Length", 1, NonNegativeI64Type, "Length");
+                case StarkTypeKind.Slice:
+                {
+                    var rawLength = EmitRequiredTemporary(
+                        new MidLevelIrExtractIndexRValue(
+                            source,
+                            1,
+                            IndexedElementOperationFamily.ViewComponent,
+                            I64Type,
+                            $"{source.Text}:len"),
+                        "len");
+                    return CoerceOperand(rawLength, NonNegativeI64Type) ?? rawLength;
+                }
+                default:
+                    throw LoweringInvariantViolation(
+                        context,
+                        $"for-in traversal source '{source.Text}' does not expose a compiler-known length.");
+            }
+        }
+
+        private MidLevelIrOperand LowerTraversalElementBindingValue(
+            MidLevelIrOperand source,
+            MidLevelIrOperand index,
+            StarkTypeSymbol elementBindingType,
+            ParserRuleContext context)
+        {
+            var address = LowerTraversalElementAddress(source, index, elementBindingType, context);
+            var runtimeType = StarkTypeSymbols.BorrowReturnRuntimeType(elementBindingType);
+            if (runtimeType.Kind == StarkTypeKind.RawPointer)
+            {
+                return CoerceOperand(address, runtimeType) ?? address;
+            }
+
+            var loaded = EmitRequiredTemporary(
+                new MidLevelIrLoadIndirectRValue(
+                    address,
+                    address.Type.ElementType ?? runtimeType,
+                    $"{source.Text}[{index.Text}]"),
+                "load");
+            return CoerceOperand(loaded, runtimeType) ?? loaded;
+        }
+
+        private MidLevelIrOperand LowerTraversalElementAddress(
+            MidLevelIrOperand source,
+            MidLevelIrOperand index,
+            StarkTypeSymbol elementBindingType,
+            ParserRuleContext context)
+        {
+            var sourceElementType = source.Type.ElementType is { } elementType
+                ? ProjectProjectionType(source, elementType)
+                : throw LoweringInvariantViolation(context, $"for-in traversal source '{source.Text}' has no element type.");
+            var elementAddressType = AddressType(sourceElementType, elementBindingType.IsMutableView);
+            return source.Type.Kind switch
+            {
+                StarkTypeKind.FixedArray => LowerFixedArrayTraversalElementAddress(source, index, sourceElementType, elementAddressType, context),
+                StarkTypeKind.Dynamic => LowerDynamicTraversalElementAddress(source, index, sourceElementType, elementAddressType),
+                StarkTypeKind.Slice => EmitRequiredTemporary(
+                    new MidLevelIrSliceElementAddressRValue(
+                        source,
+                        index,
+                        elementAddressType,
+                        $"{source.Text}[{index.Text}]"),
+                    "addr"),
+                _ => throw LoweringInvariantViolation(context, $"for-in traversal source '{source.Text}' is not index-addressable.")
+            };
+        }
+
+        private MidLevelIrOperand LowerFixedArrayTraversalElementAddress(
+            MidLevelIrOperand source,
+            MidLevelIrOperand index,
+            StarkTypeSymbol sourceElementType,
+            StarkTypeSymbol elementAddressType,
+            ParserRuleContext context)
+        {
+            var arrayAddress = TryCreateFixedArrayAddress(source)
+                ?? throw LoweringInvariantViolation(
+                    context,
+                    $"for-in traversal source '{source.Text}' could not be materialized as addressable fixed-array storage.");
+            return EmitRequiredTemporary(
+                new MidLevelIrElementAddressRValue(
+                    arrayAddress,
+                    source.Type,
+                    index,
+                    ConstantIndex: null,
+                    elementAddressType,
+                    $"{source.Text}[{index.Text}]"),
+                "addr");
+        }
+
+        private MidLevelIrOperand LowerDynamicTraversalElementAddress(
+            MidLevelIrOperand source,
+            MidLevelIrOperand index,
+            StarkTypeSymbol sourceElementType,
+            StarkTypeSymbol elementAddressType)
+        {
+            var dataPointerType = StarkTypeSymbols.RawPointer(source.Type.ElementType!, isMutable: true);
+            var dataPointer = LowerKnownFieldAccess(source, "Data", 0, dataPointerType, "Data");
+            return EmitRequiredTemporary(
+                new MidLevelIrElementAddressRValue(
+                    dataPointer,
+                    sourceElementType,
+                    index,
+                    ConstantIndex: null,
+                    elementAddressType,
+                    $"{source.Text}[{index.Text}]"),
+                "addr");
         }
 
         private MidLevelIrOperand? LowerExpressionToOperand(StarkParser.ExpressionContext expression, StarkTypeSymbol? expectedType = null)
@@ -3873,7 +4279,11 @@ internal sealed partial class MidLevelIrLowerer
             {
                 var targetType = TryResolvePublishedConversionType(expression, out var publishedTargetType)
                     ? publishedTargetType
-                    : ApplyGenericSubstitution(_typeResolver.ResolveConversionType(conversionType, ActiveGenericParameterNames(), CurrentModuleName));
+                    : ApplyGenericSubstitution(_typeResolver.ResolveConversionType(
+                        conversionType,
+                        ActiveGenericParameterNames(),
+                        CurrentModuleName,
+                        ActiveComptimeGenericParameters()));
                 var convertedOperand = LowerUnaryExpression(expression.unaryExpression(), expectedType: null);
                 if (convertedOperand is null)
                 {
@@ -4525,6 +4935,7 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             PlaceTarget? currentPlace = currentValue is null ? null : CreateRootPlaceTarget(currentValue);
+            var currentGenericQualifiedName = expression.primaryExpression().genericQualifiedName();
             for (var index = firstUnhandledPostfixIndex; index < expression.postfixPart().Length; index++)
             {
                 var postfixPart = expression.postfixPart()[index];
@@ -4548,10 +4959,31 @@ internal sealed partial class MidLevelIrLowerer
                         return false;
                     }
 
-                    if (TryLowerEnumConstructorCall(currentName, argumentList, $"{currentName}{argumentList.GetText()}", out var enumConstructorValue))
+                    var text = $"{currentName}{argumentList.GetText()}";
+                    if (currentGenericQualifiedName is not null
+                        && TryBuildExplicitGenericCall(
+                            currentGenericQualifiedName,
+                            receiver: null,
+                            receiverPlace: null,
+                            argumentList,
+                            text,
+                            out var explicitCall))
                     {
-                        currentValue = enumConstructorValue;
+                        if (!TryCreateValueCall(explicitCall, out var explicitValueCall))
+                        {
+                            throw LoweringInvariantViolation(argumentList, "Void direct calls cannot be lowered as value expressions.");
+                        }
+
+                        currentValue = EmitTemporary(explicitValueCall, "call");
                         currentName = null;
+                        currentGenericQualifiedName = null;
+                        currentPlace = null;
+                        if (currentValue is null)
+                        {
+                            return false;
+                        }
+
+                        currentValue = LoadPointerBackedBorrowReturnIfNeeded(explicitValueCall, currentValue);
                         if (currentValue is null)
                         {
                             return false;
@@ -4560,7 +4992,20 @@ internal sealed partial class MidLevelIrLowerer
                         continue;
                     }
 
-                    if (!TryBuildCall(currentName, argumentList, $"{currentName}{argumentList.GetText()}", out var directCall))
+                    if (TryLowerEnumConstructorCall(currentName, argumentList, text, out var enumConstructorValue))
+                    {
+                        currentValue = enumConstructorValue;
+                        currentName = null;
+                        currentGenericQualifiedName = null;
+                        if (currentValue is null)
+                        {
+                            return false;
+                        }
+
+                        continue;
+                    }
+
+                    if (!TryBuildCall(currentName, argumentList, text, out var directCall))
                     {
                         return false;
                     }
@@ -4572,6 +5017,7 @@ internal sealed partial class MidLevelIrLowerer
 
                     currentValue = EmitTemporary(directCall, "call");
                     currentName = null;
+                    currentGenericQualifiedName = null;
                     currentPlace = null;
                     if (currentValue is null)
                     {
@@ -4766,6 +5212,13 @@ internal sealed partial class MidLevelIrLowerer
                 return true;
             }
 
+            if (expression.genericQualifiedName() is { } genericQualifiedName)
+            {
+                currentValue = null;
+                currentName = genericQualifiedName.qualifiedName().GetText();
+                return true;
+            }
+
             currentValue = LowerPrimaryExpression(expression, expectedType: null);
             return currentValue is not null;
         }
@@ -4812,6 +5265,11 @@ internal sealed partial class MidLevelIrLowerer
                 return !TryBuildGenericEnumCaseName(genericEnumCaseReference, out var genericEnumCaseName)
                     ? null
                     : ResolveNamedOperand(genericEnumCaseName, expectedType, expression);
+            }
+
+            if (expression.genericQualifiedName() is { } genericQualifiedName)
+            {
+                return ResolveNamedOperand(genericQualifiedName.qualifiedName().GetText(), expectedType, expression);
             }
 
             if (expression.qualifiedName() is { } qualifiedName)
@@ -5575,6 +6033,8 @@ internal sealed partial class MidLevelIrLowerer
         {
             var previousModuleName = _moduleNameOverride;
             var previousGenericTypeSubstitution = _activeGenericTypeSubstitution;
+            var previousGenericValueSubstitution = _activeGenericValueSubstitution;
+            var previousComptimeGenericParameters = _activeComptimeGenericParameters;
             var previousAliases = new List<(string AliasName, string? PreviousAlias, bool HadAlias)>(aliases.Count);
 
             foreach (var (aliasName, targetName) in aliases)
@@ -5587,11 +6047,16 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             _moduleNameOverride = constructorContext.ModuleName;
+            _activeComptimeGenericParameters = BuildNamedTypeComptimeGenericParameters(createdType);
+            var namedTypeValueSubstitution = BuildNamedTypeComptimeValueSubstitution(createdType);
             _activeGenericTypeSubstitution = BuildNamedTypeGenericSubstitution(createdType);
+            _activeGenericValueSubstitution = namedTypeValueSubstitution;
             return new ConstructorBodyContext(
                 this,
                 previousModuleName,
                 previousGenericTypeSubstitution,
+                previousGenericValueSubstitution,
+                previousComptimeGenericParameters,
                 previousAliases);
         }
 
@@ -5618,6 +6083,74 @@ internal sealed partial class MidLevelIrLowerer
             for (var index = 0; index < template.GenericParams.Count && index < typeArguments.Count; index++)
             {
                 substitution[template.GenericParams[index]] = ApplyGenericSubstitution(typeArguments[index]);
+            }
+
+            return substitution;
+        }
+
+        private IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? BuildNamedTypeComptimeGenericParameters(
+            StarkTypeSymbol createdType)
+        {
+            Dictionary<string, ComptimeGenericParameterSymbol>? parameters = _activeComptimeGenericParameters is { Count: > 0 }
+                ? new Dictionary<string, ComptimeGenericParameterSymbol>(_activeComptimeGenericParameters, StringComparer.Ordinal)
+                : null;
+
+            if (createdType.NamedType is null)
+            {
+                return parameters;
+            }
+
+            var baseTypeName = StarkTypeSymbols.GetGenericBaseName(createdType.NamedType);
+            if (!_typeModel.NamedTypes.TryGetValue(baseTypeName, out var template)
+                || template.ComptimeGenericParams.Count == 0)
+            {
+                return parameters;
+            }
+
+            parameters ??= new Dictionary<string, ComptimeGenericParameterSymbol>(StringComparer.Ordinal);
+            foreach (var parameter in template.ComptimeGenericParams)
+            {
+                parameters[parameter.Name] = parameter;
+            }
+
+            return parameters;
+        }
+
+        private IReadOnlyDictionary<string, BigInteger>? BuildNamedTypeComptimeValueSubstitution(StarkTypeSymbol createdType)
+        {
+            Dictionary<string, BigInteger>? substitution = _activeGenericValueSubstitution is { Count: > 0 }
+                ? new Dictionary<string, BigInteger>(_activeGenericValueSubstitution, StringComparer.Ordinal)
+                : null;
+
+            if (createdType.NamedType is null
+                || createdType.ComptimeValueArguments is not { Count: > 0 } valueArguments)
+            {
+                return substitution;
+            }
+
+            var baseTypeName = StarkTypeSymbols.GetGenericBaseName(createdType.NamedType);
+            if (!_typeModel.NamedTypes.TryGetValue(baseTypeName, out var template)
+                || template.ComptimeGenericParams.Count == 0)
+            {
+                return substitution;
+            }
+
+            substitution ??= new Dictionary<string, BigInteger>(StringComparer.Ordinal);
+            for (var index = 0; index < template.ComptimeGenericParams.Count && index < valueArguments.Count; index++)
+            {
+                var argument = valueArguments[index];
+                if (argument.IsSymbolic)
+                {
+                    if (_activeGenericValueSubstitution?.TryGetValue(argument.SourceName, out var resolvedValue) != true)
+                    {
+                        continue;
+                    }
+
+                    substitution[template.ComptimeGenericParams[index].Name] = resolvedValue;
+                    continue;
+                }
+
+                substitution[template.ComptimeGenericParams[index].Name] = argument.IntegerValue;
             }
 
             return substitution;
@@ -6589,6 +7122,7 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             PlaceTarget? currentPlace = currentValue is null ? null : CreateRootPlaceTarget(currentValue);
+            var currentGenericQualifiedName = expression.primaryExpression().genericQualifiedName();
             for (var index = 0; index < expression.postfixPart().Length; index++)
             {
                 var postfixPart = expression.postfixPart()[index];
@@ -6601,6 +7135,43 @@ internal sealed partial class MidLevelIrLowerer
                     }
 
                     var text = $"{currentName}{argumentList.GetText()}";
+                    if (currentGenericQualifiedName is not null
+                        && TryBuildExplicitGenericCall(
+                            currentGenericQualifiedName,
+                            receiver: null,
+                            receiverPlace: null,
+                            argumentList,
+                            text,
+                            out var explicitCall))
+                    {
+                        if (index == expression.postfixPart().Length - 1)
+                        {
+                            call = ToStatementCall(explicitCall);
+                            return true;
+                        }
+
+                        if (explicitCall.SourceReturnType.Kind == StarkTypeKind.Void)
+                        {
+                            return false;
+                        }
+
+                        if (!TryCreateValueCall(explicitCall, out var explicitValueCall))
+                        {
+                            return false;
+                        }
+
+                        currentValue = EmitTemporary(explicitValueCall, "call");
+                        currentName = null;
+                        currentGenericQualifiedName = null;
+                        currentPlace = null;
+                        if (currentValue is null)
+                        {
+                            return false;
+                        }
+
+                        continue;
+                    }
+
                     if (index == expression.postfixPart().Length - 1)
                     {
                         return TryBuildCallStatement(currentName, argumentList, text, out call);
@@ -6614,6 +7185,7 @@ internal sealed partial class MidLevelIrLowerer
 
                     currentValue = EmitTemporary(directCall, "call");
                     currentName = null;
+                    currentGenericQualifiedName = null;
                     if (currentValue is null)
                     {
                         return false;
@@ -6693,6 +7265,7 @@ internal sealed partial class MidLevelIrLowerer
                 }
 
                 currentName = $"{currentName}.{memberName}";
+                currentGenericQualifiedName = null;
             }
 
             return false;
@@ -6714,14 +7287,56 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             PlaceTarget? currentPlace = currentValue is null ? null : CreateRootPlaceTarget(currentValue);
+            var currentGenericQualifiedName = expression.primaryExpression().genericQualifiedName();
             for (var index = 0; index < expression.postfixPart().Length; index++)
             {
                 var postfixPart = expression.postfixPart()[index];
 
                 if (postfixPart.argumentList() is { } argumentList)
                 {
-                    if (currentName is null
-                        || !TryBuildCall(currentName, argumentList, $"{currentName}{argumentList.GetText()}", out var directCall))
+                    if (currentName is null)
+                    {
+                        return false;
+                    }
+
+                    var text = $"{currentName}{argumentList.GetText()}";
+                    if (currentGenericQualifiedName is not null
+                        && TryBuildExplicitGenericCall(
+                            currentGenericQualifiedName,
+                            receiver: null,
+                            receiverPlace: null,
+                            argumentList,
+                            text,
+                            out var explicitCall))
+                    {
+                        if (index == expression.postfixPart().Length - 1)
+                        {
+                            return TryCreateValueCall(explicitCall, out call);
+                        }
+
+                        if (explicitCall.SourceReturnType.Kind == StarkTypeKind.Void)
+                        {
+                            return false;
+                        }
+
+                        if (!TryCreateValueCall(explicitCall, out var explicitValueCall))
+                        {
+                            return false;
+                        }
+
+                        currentValue = EmitTemporary(explicitValueCall, "call");
+                        currentName = null;
+                        currentGenericQualifiedName = null;
+                        currentPlace = null;
+                        if (currentValue is null)
+                        {
+                            return false;
+                        }
+
+                        continue;
+                    }
+
+                    if (!TryBuildCall(currentName, argumentList, text, out var directCall))
                     {
                         return false;
                     }
@@ -6739,6 +7354,7 @@ internal sealed partial class MidLevelIrLowerer
 
                     currentValue = EmitTemporary(directCall, "call");
                     currentName = null;
+                    currentGenericQualifiedName = null;
                     if (currentValue is null)
                     {
                         return false;
@@ -6822,6 +7438,7 @@ internal sealed partial class MidLevelIrLowerer
                 }
 
                 currentName = $"{currentName}.{memberName}";
+                currentGenericQualifiedName = null;
             }
 
             return false;
@@ -7944,6 +8561,150 @@ internal sealed partial class MidLevelIrLowerer
             return TryBuildCall(signature.Name, signature, receiver, receiverPlace, arguments, text, out call);
         }
 
+        private bool TryBuildExplicitGenericCall(
+            StarkParser.GenericQualifiedNameContext genericQualifiedName,
+            MidLevelIrOperand? receiver,
+            PlaceTarget? receiverPlace,
+            StarkParser.ArgumentListContext arguments,
+            string text,
+            out LoweredDirectCallParts call)
+        {
+            call = default!;
+
+            var baseName = genericQualifiedName.qualifiedName().GetText();
+            if (!TryGetFunctionOverloads(baseName, out var overloads))
+            {
+                if (!TryResolveFunctionSignature(baseName, out var signature))
+                {
+                    return false;
+                }
+
+                overloads = [signature];
+            }
+
+            overloads = FilterDirectCallableTypeMemberFunctions(baseName, overloads);
+            var syntaxArgumentCount = genericQualifiedName.typeArgumentList().genericArgument().Length;
+            var instantiatedCandidates = new List<TypedFunctionSignature>();
+            foreach (var candidate in overloads)
+            {
+                if (candidate.GenericParams.Count + candidate.ComptimeGenericParams.Count != syntaxArgumentCount)
+                {
+                    continue;
+                }
+
+                var genericArguments = GenericArgumentSyntaxFacts.Resolve(
+                    genericQualifiedName.typeArgumentList(),
+                    candidate.GenericParams,
+                    candidate.ComptimeGenericParams,
+                    typeArgument => ResolveTypeWithGenericSubstitution(typeArgument, CurrentModuleName),
+                    static (_, _, _) => { },
+                    CreateCompileTimeEvaluationServices(),
+                    ActiveComptimeGenericParameters());
+                if (genericArguments.TypeArguments.Count != candidate.GenericParams.Count
+                    || genericArguments.TypeArguments.Any(static type => type.Kind == StarkTypeKind.Error)
+                    || genericArguments.ComptimeValueArguments.Count != candidate.ComptimeGenericParams.Count)
+                {
+                    continue;
+                }
+
+                var valueArguments = FunctionOverloadFacts.SubstituteComptimeValues(
+                    genericArguments.ComptimeValueArguments,
+                    _activeGenericValueSubstitution);
+                instantiatedCandidates.Add(FunctionOverloadFacts.InstantiateSignature(
+                    candidate,
+                    genericArguments.TypeArguments,
+                    candidate.Name,
+                    ResolveAssociatedTypeForSubstitution,
+                    valueArguments));
+            }
+
+            if (instantiatedCandidates.Count == 0)
+            {
+                return false;
+            }
+
+            if (instantiatedCandidates.Count == 1)
+            {
+                var signature = instantiatedCandidates[0];
+                if (!TryLowerCallArgumentsForSignature(signature, receiver, arguments, out var loweredUniqueArguments))
+                {
+                    return false;
+                }
+
+                return TryBuildCallParts(
+                    signature.Name,
+                    signature,
+                    receiver,
+                    receiverPlace,
+                    text,
+                    out call,
+                    loweredUniqueArguments,
+                    syntaxArguments: arguments);
+            }
+
+            var loweredArguments = new List<MidLevelIrOperand>(arguments.argument().Length);
+            foreach (var argument in arguments.argument())
+            {
+                var lowered = LowerExpressionToOperand(argument.expression(), expectedType: null);
+                if (lowered is null)
+                {
+                    return false;
+                }
+
+                loweredArguments.Add(lowered);
+            }
+
+            var resolution = FunctionOverloadFacts.Resolve(
+                instantiatedCandidates,
+                receiver?.Type,
+                loweredArguments.Select(static argument => argument.Type).ToArray(),
+                TypeCompatibilityFacts.CanAssign,
+                ResolveAssociatedTypeForSubstitution);
+            if (!resolution.Succeeded)
+            {
+                return false;
+            }
+
+            return TryBuildCallParts(
+                resolution.Match!.Name,
+                resolution.Match,
+                receiver,
+                receiverPlace,
+                text,
+                out call,
+                loweredArguments,
+                arguments);
+        }
+
+        private bool TryLowerCallArgumentsForSignature(
+            TypedFunctionSignature signature,
+            MidLevelIrOperand? receiver,
+            StarkParser.ArgumentListContext arguments,
+            out IReadOnlyList<MidLevelIrOperand> loweredArguments)
+        {
+            var explicitArguments = new List<MidLevelIrOperand>(arguments.argument().Length);
+            var receiverOffset = receiver is null ? 0 : 1;
+            var explicitParameterCount = Math.Max(0, signature.Parameters.Count - receiverOffset);
+            for (var index = 0; index < arguments.argument().Length; index++)
+            {
+                var expectedArgumentType = !signature.IsGeneric && index < explicitParameterCount
+                    ? signature.Parameters[index + receiverOffset].Type
+                    : null;
+                var lowered = LowerExpressionToOperand(arguments.argument(index).expression(), expectedArgumentType);
+                if (lowered is null)
+                {
+                    loweredArguments = [];
+                    _lastCallBuildFailureReason = $"Argument {index + 1} '{arguments.argument(index).expression().GetText()}' could not be lowered with expected type '{expectedArgumentType?.DisplayName ?? "<none>"}'.";
+                    return false;
+                }
+
+                explicitArguments.Add(lowered);
+            }
+
+            loweredArguments = explicitArguments;
+            return true;
+        }
+
         private bool TryBuildOverloadedCall(
             IReadOnlyList<TypedFunctionSignature> overloads,
             MidLevelIrOperand? receiver,
@@ -8621,12 +9382,16 @@ internal sealed partial class MidLevelIrLowerer
         {
             if (!signature.IsGenericInstantiation
                 || signature.TemplateName is not { } templateName
-                || signature.TypeArguments is not { Count: > 0 } typeArguments)
+                || (signature.TypeArguments is not { Count: > 0 }
+                    && signature.ComptimeValueArguments is not { Count: > 0 }))
             {
                 return fallbackFunctionName;
             }
 
-            var specializationKey = MidLevelIrLowerer.BuildMaterializedSpecializationKey(templateName, typeArguments);
+            var specializationKey = MidLevelIrLowerer.BuildMaterializedSpecializationKey(
+                templateName,
+                signature.TypeArguments,
+                signature.ComptimeValueArguments);
             return _materializedSpecializationSymbols.TryGetValue(specializationKey, out var materializedSymbol)
                 ? materializedSymbol
                 : fallbackFunctionName;
@@ -9302,7 +10067,11 @@ internal sealed partial class MidLevelIrLowerer
             string? moduleName)
         {
             return ApplyGenericSubstitution(
-                _typeResolver.ResolveType(type, ActiveGenericParameterNames(), moduleName));
+                _typeResolver.ResolveType(
+                    type,
+                    ActiveGenericParameterNames(),
+                    moduleName,
+                    ActiveComptimeGenericParameters()));
         }
 
         private ISet<string>? ActiveGenericParameterNames()
@@ -9322,6 +10091,11 @@ internal sealed partial class MidLevelIrLowerer
             }
 
             return names;
+        }
+
+        private IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? ActiveComptimeGenericParameters()
+        {
+            return _activeComptimeGenericParameters;
         }
 
         private bool TryResolveLocalDeclarationType(
@@ -9711,15 +10485,24 @@ internal sealed partial class MidLevelIrLowerer
 
         private static bool FunctionIdentityNameMatchesDirect(string functionName, string sourceName)
         {
-            var overloadMarker = functionName.IndexOf("#(", StringComparison.Ordinal);
-            if (overloadMarker >= 0)
-            {
-                functionName = functionName[..overloadMarker];
-            }
+            functionName = StripCallableIdentitySuffix(functionName);
+            sourceName = StripCallableIdentitySuffix(sourceName);
 
             return string.Equals(functionName, sourceName, StringComparison.Ordinal)
                 || !sourceName.Contains('.', StringComparison.Ordinal)
                     && functionName.EndsWith($".{sourceName}", StringComparison.Ordinal);
+        }
+
+        private static string StripCallableIdentitySuffix(string name)
+        {
+            var overloadMarker = name.IndexOf("#(", StringComparison.Ordinal);
+            if (overloadMarker >= 0)
+            {
+                name = name[..overloadMarker];
+            }
+
+            var genericMarker = name.IndexOf('<');
+            return genericMarker >= 0 ? name[..genericMarker] : name;
         }
 
         private bool TryResolvePublishedEnumCallSummary(
@@ -9825,16 +10608,42 @@ internal sealed partial class MidLevelIrLowerer
             return true;
         }
 
+        private CompileTimeEvaluationServices CreateCompileTimeEvaluationServices()
+        {
+            var activeCalls = new HashSet<string>(StringComparer.Ordinal);
+            return new CompileTimeEvaluationServices(
+                TryResolveIdentifier: _compileTimeConstantState.TryResolve,
+                TryEvaluatePostfixExpression: (StarkParser.PostfixExpressionContext postfix, CompileTimeEvaluationServices _, out CompileTimeConstant constant) =>
+                    _compileTimeEvaluator.TryEvaluateExpressionNode(
+                        postfix,
+                        CurrentModuleName,
+                        _compileTimeConstantState,
+                        activeCalls,
+                        out constant));
+        }
+
+        private StarkTypeSymbol? ResolveAssociatedTypeForSubstitution(StarkTypeSymbol ownerType, string associatedTypeName)
+        {
+            var substitutedOwnerType = ApplyGenericSubstitution(ownerType);
+            return AssociatedTypeFacts.TryResolveAssociatedType(substitutedOwnerType, associatedTypeName, _namedTypes, out var targetType)
+                ? ApplyGenericSubstitution(targetType)
+                : null;
+        }
+
         private StarkTypeSymbol ApplyGenericSubstitution(StarkTypeSymbol type)
         {
-            return _activeGenericTypeSubstitution is { Count: > 0 }
-                ? FunctionOverloadFacts.SubstituteType(type, _activeGenericTypeSubstitution)
+            return _activeGenericTypeSubstitution is { Count: > 0 } || _activeGenericValueSubstitution is { Count: > 0 }
+                ? FunctionOverloadFacts.SubstituteType(
+                    type,
+                    _activeGenericTypeSubstitution ?? EmptyGenericTypeSubstitution,
+                    comptimeValueSubstitution: _activeGenericValueSubstitution)
                 : type;
         }
 
         private TypedFunctionSignature ApplyGenericSubstitution(TypedFunctionSignature signature)
         {
-            if (_activeGenericTypeSubstitution is not { Count: > 0 })
+            if (_activeGenericTypeSubstitution is not { Count: > 0 }
+                && _activeGenericValueSubstitution is not { Count: > 0 })
             {
                 return signature;
             }
@@ -9852,13 +10661,17 @@ internal sealed partial class MidLevelIrLowerer
                     .ToArray(),
                 TypeArguments = signature.TypeArguments is { Count: > 0 }
                     ? signature.TypeArguments.Select(ApplyGenericSubstitution).ToArray()
-                    : null
+                    : null,
+                ComptimeValueArguments = FunctionOverloadFacts.SubstituteComptimeValues(
+                    signature.ComptimeValueArguments,
+                    _activeGenericValueSubstitution)
             };
         }
 
         private TypedConstructorShape ApplyGenericSubstitution(TypedConstructorShape constructor)
         {
-            if (_activeGenericTypeSubstitution is not { Count: > 0 })
+            if (_activeGenericTypeSubstitution is not { Count: > 0 }
+                && _activeGenericValueSubstitution is not { Count: > 0 })
             {
                 return constructor;
             }
@@ -9886,15 +10699,27 @@ internal sealed partial class MidLevelIrLowerer
                 return StarkTypeSymbols.Error;
             }
 
-            var typeArguments = genericQualifiedName.typeArgumentList().type_()
-                .Select(typeArgument => ResolveTypeWithGenericSubstitution(typeArgument, CurrentModuleName))
-                .ToArray();
-            if (typeArguments.Any(static type => type.Kind == StarkTypeKind.Error))
+            if (!_typeModel.NamedTypes.TryGetValue(baseType.NamedType ?? baseName, out var namedType))
             {
                 return StarkTypeSymbols.Error;
             }
 
-            return StarkTypeSymbols.GenericInstantiation(baseType.NamedType ?? baseName, typeArguments);
+            var arguments = GenericArgumentSyntaxFacts.Resolve(
+                genericQualifiedName.typeArgumentList(),
+                namedType.GenericParams,
+                namedType.ComptimeGenericParams,
+                typeArgument => ResolveTypeWithGenericSubstitution(typeArgument, CurrentModuleName),
+                static (_, _, _) => { },
+                visibleComptimeParameters: ActiveComptimeGenericParameters());
+            if (arguments.TypeArguments.Any(static type => type.Kind == StarkTypeKind.Error))
+            {
+                return StarkTypeSymbols.Error;
+            }
+
+            return StarkTypeSymbols.GenericInstantiation(
+                baseType.NamedType ?? baseName,
+                arguments.TypeArguments,
+                FunctionOverloadFacts.SubstituteComptimeValues(arguments.ComptimeValueArguments, _activeGenericValueSubstitution));
         }
 
         private bool TryBuildGenericEnumCaseName(
@@ -12528,9 +13353,15 @@ internal sealed partial class MidLevelIrLowerer
             {
                 MidLevelIrObjectConstructionOperand construction => IsBorrowParameterRoot(construction.Value),
                 MidLevelIrEnumConstructionOperand construction => IsBorrowParameterRoot(construction.Value),
+                MidLevelIrLocalOperand local =>
+                    _localsByName.TryGetValue(local.Name, out var localBinding)
+                    && StarkTypeSymbols.IsPointerBackedBorrowReturn(localBinding.Type),
                 MidLevelIrParameterOperand parameter =>
                     _parametersByName.TryGetValue(parameter.Name, out var parameterBinding)
                     && RequiresIndirectArgument(parameterBinding.Type),
+                MidLevelIrGlobalOperand global =>
+                    TryResolveGlobal(global.Name, out var globalBinding)
+                    && StarkTypeSymbols.IsPointerBackedBorrowReturn(globalBinding.Type),
                 _ => false
             };
         }
@@ -12829,7 +13660,10 @@ internal sealed partial class MidLevelIrLowerer
                 or StarkTypeKind.RawPointer
                 or StarkTypeKind.Ascii
                 or StarkTypeKind.Unicode
-                or StarkTypeKind.Named;
+                or StarkTypeKind.Named
+                or StarkTypeKind.FixedArray
+                or StarkTypeKind.Slice
+                or StarkTypeKind.Dynamic;
         }
 
         private static bool CanUsePartitionedTextSwitchType(StarkTypeSymbol type)

@@ -41,6 +41,10 @@ internal static partial class PackageImageLoader
                     .ToArray(),
                 SourceName: function.QualifiedName,
                 GenericParameterNames: function.GenericParameters?.Count > 0 ? function.GenericParameters.ToArray() : null,
+                ComptimeGenericParameterNames: BuildComptimeGenericParameterSymbols(
+                    function.ComptimeGenericParameters,
+                    module.Module.ModuleName,
+                    localNamedTypes),
                 Kind: functionKind,
                 IsUnsafe: function.IsUnsafe,
                 IsVarargs: function.IsVarargs,
@@ -65,6 +69,9 @@ internal static partial class PackageImageLoader
                 var genericParameterNames = FunctionGenericParameterFacts.CombineGenericParameterNames(
                     type.GenericParameters,
                     method.GenericParameters);
+                var comptimeGenericParameterNames = CombineComptimeGenericParameterSymbols(
+                    BuildComptimeGenericParameterSymbols(type.ComptimeGenericParameters, module.Module.ModuleName, localNamedTypes),
+                    BuildComptimeGenericParameterSymbols(method.ComptimeGenericParameters, module.Module.ModuleName, localNamedTypes));
                 if (!TryParseBackendOptimizationMode(method.BackendOptimizationMode, out var methodBackendOptimizationMode))
                 {
                     return false;
@@ -84,6 +91,7 @@ internal static partial class PackageImageLoader
                     .ToArray(),
                     SourceName: method.QualifiedName,
                     GenericParameterNames: genericParameterNames.Count == 0 ? null : genericParameterNames.ToArray(),
+                    ComptimeGenericParameterNames: comptimeGenericParameterNames.Count == 0 ? null : comptimeGenericParameterNames,
                     IsStatic: method.IsStatic,
                     Kind: methodKind,
                     IsUnsafe: method.IsUnsafe,
@@ -110,6 +118,7 @@ internal static partial class PackageImageLoader
                 visibility,
                 BuildTypeSymbol(typeAlias.TargetType, module.Module.ModuleName, localNamedTypes),
                 typeAlias.GenericParameters?.Count > 0 ? typeAlias.GenericParameters.ToArray() : null,
+                BuildComptimeGenericParameterSymbols(typeAlias.ComptimeGenericParameters, module.Module.ModuleName, localNamedTypes),
                 IsExternal: true);
         }
 
@@ -142,6 +151,10 @@ internal static partial class PackageImageLoader
 
             var qualifiedName = type.QualifiedName;
             var genericParameterNames = type.GenericParameters?.Count > 0 ? type.GenericParameters.ToList() : null;
+            var comptimeGenericParameterNames = BuildComptimeGenericParameterSymbols(
+                type.ComptimeGenericParameters,
+                module.Module.ModuleName,
+                localNamedTypes);
             if (declarationKind == DeclarationKind.Enum)
             {
                 var variants = (type.Variants ?? [])
@@ -166,6 +179,7 @@ internal static partial class PackageImageLoader
                     [],
                     EnumVariants: variants,
                     GenericParameterNames: genericParameterNames,
+                    ComptimeGenericParameterNames: comptimeGenericParameterNames,
                     ImplementedTraitNames: QualifyImplementedTraitNames(
                         type.ImplementedTraits,
                         module.Module.ModuleName,
@@ -202,6 +216,7 @@ internal static partial class PackageImageLoader
                     fields,
                     orderedFields,
                     GenericParameterNames: genericParameterNames,
+                    ComptimeGenericParameterNames: comptimeGenericParameterNames,
                     ImplementedTraitNames: QualifyImplementedTraitNames(
                         type.ImplementedTraits,
                         module.Module.ModuleName,
@@ -388,7 +403,8 @@ internal static partial class PackageImageLoader
                 DeferredFunctionInstantiations: functionTemplate.DeferredFunctionInstantiations?
                     .Select(trigger => new ImportedDeferredFunctionInstantiationSummary(
                         trigger.CalleeTemplateName,
-                        trigger.TypeArguments.Select(BuildTypeSymbol).ToArray()))
+                        (trigger.TypeArguments ?? []).Select(BuildTypeSymbol).ToArray(),
+                        BuildComptimeValueArgumentSymbols(trigger.ComptimeValueArguments, null, null)))
                     .ToArray(),
                 DeferredTypeInstantiations: functionTemplate.DeferredTypeInstantiations?
                     .Select(trigger => new ImportedDeferredTypeInstantiationSummary(
@@ -451,7 +467,13 @@ internal static partial class PackageImageLoader
                 AggregatePatternSummaries: functionTemplate.AggregatePatterns?
                     .Select(aggregatePattern => new ImportedTemplateAggregatePatternSummary(
                         aggregatePattern.Ordinal,
-                        BuildTypeSymbol(aggregatePattern.Type)))
+                        BuildTypeSymbol(aggregatePattern.Type),
+                        aggregatePattern.Members?
+                            .Select(member => new ImportedTemplateAggregatePatternMemberSummary(
+                                member.FieldName,
+                                member.FieldIndex,
+                                BuildTypeSymbol(member.FieldType)))
+                            .ToArray()))
                     .ToArray(),
                 LocalDeclarationSummaries: functionTemplate.LocalDeclarations?
                     .Select(local => new ImportedTemplateLocalDeclarationSummary(
@@ -477,6 +499,7 @@ internal static partial class PackageImageLoader
                             SourceName: directCall.QualifiedSourceName,
                             TemplateName: directCall.QualifiedTemplateName,
                             TypeArguments: directCall.TypeArguments?.Select(BuildTypeSymbol).ToArray(),
+                            ComptimeValueArguments: BuildComptimeValueArgumentSymbols(directCall.ComptimeValueArguments, null, null),
                             DisjointParameterGroups: BuildParameterDisjointGroups(directCall.Parameters, directCall.DisjointParameterGroups),
                             OverlapParameterGroups: BuildParameterOverlapGroups(directCall.OverlapParameterGroups),
                             SameParameterGroups: BuildParameterSameGroups(directCall.SameParameterGroups))))
@@ -500,6 +523,7 @@ internal static partial class PackageImageLoader
                             SourceName: memberCall.QualifiedSourceName,
                             TemplateName: memberCall.QualifiedTemplateName,
                             TypeArguments: memberCall.TypeArguments?.Select(BuildTypeSymbol).ToArray(),
+                            ComptimeValueArguments: BuildComptimeValueArgumentSymbols(memberCall.ComptimeValueArguments, null, null),
                             DisjointParameterGroups: BuildParameterDisjointGroups(memberCall.Parameters, memberCall.DisjointParameterGroups),
                             OverlapParameterGroups: BuildParameterOverlapGroups(memberCall.OverlapParameterGroups),
                             SameParameterGroups: BuildParameterSameGroups(memberCall.SameParameterGroups))))
@@ -516,6 +540,7 @@ internal static partial class PackageImageLoader
                             SourceName: functionAddress.QualifiedSourceName,
                             TemplateName: functionAddress.QualifiedTemplateName,
                             TypeArguments: functionAddress.TypeArguments?.Select(BuildTypeSymbol).ToArray(),
+                            ComptimeValueArguments: BuildComptimeValueArgumentSymbols(functionAddress.ComptimeValueArguments, null, null),
                             DisjointParameterGroups: BuildParameterDisjointGroups(functionAddress.Parameters, functionAddress.DisjointParameterGroups),
                             OverlapParameterGroups: BuildParameterOverlapGroups(functionAddress.OverlapParameterGroups),
                             SameParameterGroups: BuildParameterSameGroups(functionAddress.SameParameterGroups)),
@@ -733,6 +758,10 @@ internal static partial class PackageImageLoader
 
         var qualifiedName = type.QualifiedName;
         var genericParameterNames = type.GenericParameters?.Count > 0 ? type.GenericParameters.ToList() : null;
+        var comptimeGenericParameterNames = BuildComptimeGenericParameterSymbols(
+            type.ComptimeGenericParameters,
+            moduleName,
+            localNamedTypes);
         if (declarationKind == DeclarationKind.Enum)
         {
             var variants = (type.Variants ?? [])
@@ -757,6 +786,7 @@ internal static partial class PackageImageLoader
                 [],
                 EnumVariants: variants,
                 GenericParameterNames: genericParameterNames,
+                ComptimeGenericParameterNames: comptimeGenericParameterNames,
                 ImplementedTraitNames: QualifyImplementedTraitNames(
                     type.ImplementedTraits,
                     moduleName,
@@ -793,6 +823,7 @@ internal static partial class PackageImageLoader
                 fields,
                 orderedFields,
                 GenericParameterNames: genericParameterNames,
+                ComptimeGenericParameterNames: comptimeGenericParameterNames,
                 ImplementedTraitNames: QualifyImplementedTraitNames(
                     type.ImplementedTraits,
                     moduleName,
@@ -1205,6 +1236,7 @@ internal static partial class PackageImageLoader
             SourceName: operation.QualifiedSourceName,
             TemplateName: operation.QualifiedTemplateName,
             TypeArguments: operation.TypeArguments?.Select(BuildTypeSymbol).ToArray(),
+            ComptimeValueArguments: BuildComptimeValueArgumentSymbols(operation.ComptimeValueArguments, null, null),
             DisjointParameterGroups: BuildParameterDisjointGroups(parameters, operation.DisjointParameterGroups),
             OverlapParameterGroups: BuildParameterOverlapGroups(operation.OverlapParameterGroups),
             SameParameterGroups: BuildParameterSameGroups(operation.SameParameterGroups));
@@ -1546,5 +1578,22 @@ internal static partial class PackageImageLoader
             _ => default
         };
         return availability is "initialized" or "uninitialized" or "partially-initialized" or "moved" or "control-flow" or "unknown";
+    }
+
+    private static IReadOnlyList<ComptimeGenericParameterSymbol> CombineComptimeGenericParameterSymbols(
+        IReadOnlyList<ComptimeGenericParameterSymbol>? containingTypeParameters,
+        IReadOnlyList<ComptimeGenericParameterSymbol>? methodParameters)
+    {
+        if (containingTypeParameters is not { Count: > 0 })
+        {
+            return methodParameters?.ToArray() ?? [];
+        }
+
+        if (methodParameters is not { Count: > 0 })
+        {
+            return containingTypeParameters.ToArray();
+        }
+
+        return containingTypeParameters.Concat(methodParameters).ToArray();
     }
 }

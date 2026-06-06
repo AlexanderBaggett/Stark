@@ -25,8 +25,9 @@ smallest possible scope:
 - They work with today's `fnptr`-entry threads and struct statics (both verified).
 - The LLVM emitter already produces atomic instructions (the heap allocator's
   spinlock uses `atomicrmw`/`store atomic` in every Stark executable today).
-- They are the foundation everything else in the parked model (Mutex, channels)
-  builds on — nothing here is throwaway.
+- They are the foundation the doc `22` coordination layer
+  (`Synchronized<T>`, captured thread payloads, and channels) builds on — nothing
+  here is throwaway.
 
 ## 2. Locked Design Decisions
 
@@ -197,14 +198,15 @@ The implementation matches §2-§5 with these refinements discovered during the 
 |---|---|
 | Full thread-ownership model (execution roots, scoped threads, `threadlocal`, `static mut` rules, owning `Thread<T>`) | Git history: doc 12 prior to this revision (commit `1f8ee74`) |
 | `Transferable` / `Shareable` laws + `[Grant]`/`[Deny]` field attributes | `stark-thread-safety-laws.md` (Alexander's draft) |
-| `Mutex<T>` / `RwLock<T>` / `Once<T>` / channels | Build on these atomics + existing platform futex when needed (S16 remainder) |
+| Captured thread payloads, `Synchronized<T>` / `Locked<T>`, and MPSC channels | Doc `22`; build on these atomics + existing platform wait/wake hooks where needed |
 | Memory orderings beyond seq-cst | S16 follow-up, only with profiling justification |
 | Consuming `Join`/`Detach` + `ThreadStartResult` API fix | Ride along whenever Threading.stark is next opened |
 
 ## 8. Relationship to the Roadmap
 
-- **S16** (threading/sync primitives): atomics are the first delivered slice; mutex/
-  once/channels remain open and now have their foundation.
+- **S16** (threading coordination): atomics are the first delivered slice; doc
+  `22` limits the follow-up to captured thread payloads, `Synchronized<T>` /
+  `Locked<T>`, and MPSC channels.
 - **L10** (concurrency replacement): unaffected — confirmed that self-hosting needs
   no concurrency (the host compiler is single-threaded; its `async` is I/O idiom).
   The synchronous port path stands.

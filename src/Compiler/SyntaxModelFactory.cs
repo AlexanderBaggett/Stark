@@ -1311,6 +1311,7 @@ internal static class SyntaxModelFactory
     {
         var genericParameters = typeAliasDeclaration.typeParameterList() is { } typeParameterList
             ? typeParameterList.typeParameter()
+                .Where(static parameter => parameter.COMPTIME() is null)
                 .Select(static parameter => parameter.Identifier().GetText())
                 .ToArray()
             : [];
@@ -1390,6 +1391,7 @@ internal static class SyntaxModelFactory
         var genericParameters = typeParameterList is null
             ? []
             : typeParameterList.typeParameter()
+                .Where(static parameter => parameter.COMPTIME() is null)
                 .Select(static parameter => parameter.Identifier().GetText())
                 .ToArray();
 

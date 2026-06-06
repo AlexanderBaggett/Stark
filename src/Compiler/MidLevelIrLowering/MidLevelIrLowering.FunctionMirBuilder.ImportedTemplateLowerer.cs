@@ -1067,7 +1067,7 @@ internal sealed partial class MidLevelIrLowerer
             for (var index = 0; index < statement.SwitchCases.Count; index++)
             {
                 var switchCase = statement.SwitchCases[index];
-                if (!TryBuildImportedTypedTemplateSwitchLabel(switchCase, out var label))
+                if (!TryBuildImportedTypedTemplateSwitchLabel(switchCase, switchValue.Type, out var label))
                 {
                     return false;
                 }
@@ -1164,6 +1164,7 @@ internal sealed partial class MidLevelIrLowerer
 
         private bool TryBuildImportedTypedTemplateSwitchLabel(
             ImportedTemplateTypedSwitchCaseSummary switchCase,
+            StarkTypeSymbol switchType,
             out LowerableSwitchLabel label)
         {
             label = null!;
@@ -1275,6 +1276,26 @@ internal sealed partial class MidLevelIrLowerer
                         IsMatchAll: false,
                         CaptureName: null,
                         AggregatePattern: aggregatePattern,
+                        ImportedLiteralExpression: null,
+                        ImportedGuardExpression: switchCase.GuardExpression);
+                    return true;
+
+                case ImportedTemplateTypedSwitchCaseKind.ListPattern:
+                    if (!TryBuildImportedTypedTemplateListSwitchPattern(switchType, switchCase.Members, out var listPattern)
+                        || listPattern is null)
+                    {
+                        return false;
+                    }
+
+                    label = new LowerableSwitchLabel(
+                        "typed-list-pattern",
+                        Literal: null,
+                        GuardExpression: null,
+                        IsDefault: false,
+                        IsMatchAll: false,
+                        CaptureName: null,
+                        AggregatePattern: null,
+                        ListPattern: listPattern,
                         ImportedLiteralExpression: null,
                         ImportedGuardExpression: switchCase.GuardExpression);
                     return true;
@@ -1464,6 +1485,44 @@ internal sealed partial class MidLevelIrLowerer
                 return false;
             }
 
+            if (publishedAggregatePattern.Members.Count > 0)
+            {
+                if (publishedAggregatePattern.Members.Count != namedType.OrderedFields.Count
+                    || memberPatterns.Count != publishedAggregatePattern.Members.Count)
+                {
+                    return false;
+                }
+
+                var namedFieldPatterns = new LowerableAggregateFieldPattern[memberPatterns.Count];
+                for (var memberOrdinal = 0; memberOrdinal < memberPatterns.Count; memberOrdinal++)
+                {
+                    var publishedMember = publishedAggregatePattern.Members[memberOrdinal];
+                    if (publishedMember.FieldIndex < 0 || publishedMember.FieldIndex >= namedType.OrderedFields.Count)
+                    {
+                        return false;
+                    }
+
+                    var field = namedType.OrderedFields[publishedMember.FieldIndex];
+                    if (!TryBuildImportedTypedTemplateSwitchFieldPattern(
+                            memberPatterns[memberOrdinal],
+                            publishedMember.FieldName,
+                            field.Name,
+                            publishedMember.FieldIndex,
+                            ApplyGenericSubstitution(publishedMember.FieldType),
+                            out namedFieldPatterns[publishedMember.FieldIndex]))
+                    {
+                        return false;
+                    }
+                }
+
+                aggregatePattern = new LowerableAggregatePattern(
+                    aggregateType.NamedType,
+                    EnumVariantName: null,
+                    namedFieldPatterns,
+                    WholeCaptureName: wholeCaptureName);
+                return true;
+            }
+
             var fieldPatterns = new LowerableAggregateFieldPattern[memberPatterns.Count];
             for (var fieldIndex = 0; fieldIndex < memberPatterns.Count; fieldIndex++)
             {
@@ -1605,8 +1664,65 @@ internal sealed partial class MidLevelIrLowerer
                 return true;
             }
 
+            if (fieldPattern.Kind == ImportedTemplateTypedSwitchFieldPatternKind.ListPattern
+                && TryBuildImportedTypedTemplateListSwitchPattern(fieldType, fieldPattern.Members, out var nestedListPattern)
+                && nestedListPattern is not null)
+            {
+                parsedFieldPattern = new LowerableAggregateFieldPattern(
+                    fieldName,
+                    storageFieldName,
+                    fieldIndex,
+                    fieldType,
+                    AggregatePatternFieldKind.List,
+                    "typed-list-pattern",
+                    Literal: null,
+                    CaptureName: null,
+                    NestedPattern: null,
+                    ListPattern: nestedListPattern);
+                return true;
+            }
+
             parsedFieldPattern = default!;
             return false;
+        }
+
+        private bool TryBuildImportedTypedTemplateListSwitchPattern(
+            StarkTypeSymbol listType,
+            IReadOnlyList<ImportedTemplateTypedSwitchFieldPatternSummary> memberPatterns,
+            out LowerableListPattern? listPattern)
+        {
+            listPattern = null;
+            if (!TryGetListPatternElementType(listType, out var elementType, out var fixedLength))
+            {
+                return false;
+            }
+
+            if (fixedLength is int requiredLength && memberPatterns.Count != requiredLength)
+            {
+                return false;
+            }
+
+            var elementPatterns = new LowerableAggregateFieldPattern[memberPatterns.Count];
+            for (var index = 0; index < memberPatterns.Count; index++)
+            {
+                if (!TryBuildImportedTypedTemplateSwitchFieldPattern(
+                        memberPatterns[index],
+                        $"#{index}",
+                        $"#{index}",
+                        index,
+                        elementType,
+                        out elementPatterns[index]))
+                {
+                    return false;
+                }
+            }
+
+            listPattern = new LowerableListPattern(
+                listType,
+                elementType,
+                elementPatterns,
+                "typed-list-pattern");
+            return true;
         }
 
         private static bool TryBuildImportedIntegerRangePattern(
@@ -1902,6 +2018,204 @@ internal sealed partial class MidLevelIrLowerer
             {
                 var scope = _scopes.Pop();
                 EmitStorageDead(scope);
+                RestoreScopedNameAliases(scope);
+            }
+        }
+
+        private bool TryLowerImportedTypedTemplateForTraversal(ImportedTemplateTypedBodyStatementSummary statement)
+        {
+            if (statement.TraversalSourceExpression is null
+                || string.IsNullOrWhiteSpace(statement.LoopBehavior)
+                || string.IsNullOrWhiteSpace(statement.TraversalElementName)
+                || statement.TraversalElementType is null)
+            {
+                return false;
+            }
+
+            var hasIndexBinding = statement.TraversalIndexName is not null
+                || statement.TraversalIndexStorageClass is not null
+                || statement.TraversalIndexType is not null;
+            if (hasIndexBinding
+                && (string.IsNullOrWhiteSpace(statement.TraversalIndexName)
+                    || string.IsNullOrWhiteSpace(statement.TraversalIndexStorageClass)
+                    || statement.TraversalIndexType is null))
+            {
+                return false;
+            }
+
+            _scopes.Push(new ScopeFrame());
+            try
+            {
+                var source = LowerImportedTypedTemplateExpressionCore(statement.TraversalSourceExpression, expectedType: null);
+                if (source is null)
+                {
+                    return false;
+                }
+
+                var sourceText = RenderImportedTypedTemplateExpressionCore(statement.TraversalSourceExpression);
+                source = MaterializeTraversalSource(source, context: null, sourceText: sourceText);
+                if (source.Type.Kind is not (StarkTypeKind.FixedArray or StarkTypeKind.Slice or StarkTypeKind.Dynamic)
+                    || source.Type.ElementType is null)
+                {
+                    throw LoweringInvariantViolation(
+                        null,
+                        $"Imported for-in traversal source '{sourceText}' is not a fixed array, slice, or dynamic storage value.");
+                }
+
+                var length = LowerTraversalLength(source, context: null!);
+                var hiddenIndex = CreateTemporaryLocal(NonNegativeI64Type, "typed_for_index");
+                EmitOperandAssignment(
+                    hiddenIndex,
+                    new MidLevelIrIntegerConstantOperand(BigInteger.Zero, NonNegativeI64Type),
+                    "0");
+
+                MidLevelIrLocalOperand? userIndex = null;
+                if (hasIndexBinding)
+                {
+                    var indexType = ApplyGenericSubstitution(statement.TraversalIndexType!);
+                    var indexName = DeclareLocal(
+                        statement.TraversalIndexName!,
+                        indexType,
+                        statement.TraversalIndexStorageClass!,
+                        isMutable: false,
+                        isConstant: false);
+                    Emit(MidLevelIrStatementKind.StorageLive, indexName, indexName, indexType);
+                    InitializeRuntimeDropState(indexName, indexType, isActive: false);
+                    userIndex = new MidLevelIrLocalOperand(indexName, indexType);
+                }
+
+                var elementBindingType = ApplyGenericSubstitution(statement.TraversalElementType);
+                var elementName = DeclareLocal(
+                    statement.TraversalElementName,
+                    elementBindingType,
+                    storageClass: "stack",
+                    isMutable: false,
+                    isConstant: false);
+                Emit(MidLevelIrStatementKind.StorageLive, elementName, elementName, elementBindingType);
+                InitializeRuntimeDropState(elementName, elementBindingType, isActive: false);
+                var elementLocal = new MidLevelIrLocalOperand(elementName, elementBindingType);
+
+                var loopBehavior = statement.LoopBehavior;
+                var loopContracts = statement.LoopContracts is { Count: > 0 } ? statement.LoopContracts : null;
+                var loopAccessGroups = CreateIndependentLoopAccessGroups(loopContracts);
+                var conditionBlock = CreateBlock($"typed_forin_{loopBehavior}_cond");
+                var bodyBlock = CreateBlock("typed_forin_body");
+                var iteratorBlock = CreateBlock("typed_forin_iter");
+                var exitBlock = CreateBlock("typed_forin_exit");
+
+                EnsureGoto(conditionBlock.Id);
+
+                CurrentBlock = conditionBlock;
+                var hasElement = EmitRequiredTemporary(
+                    new MidLevelIrBinaryRValue(
+                        MidLevelIrBinaryOperator.LessThan,
+                        hiddenIndex,
+                        length,
+                        StarkTypeSymbols.Bool,
+                        $"{hiddenIndex.Text} < {length.Text}"),
+                    "cmp");
+                CurrentBlock.Terminator = new MidLevelIrTerminator(
+                    MidLevelIrTerminatorKind.Branch,
+                    [bodyBlock.Id, exitBlock.Id],
+                    ConditionText: $"{hiddenIndex.Text} < {length.Text}",
+                    Condition: hasElement);
+
+                _loops.Push(new LoopTargets(iteratorBlock.Id, exitBlock.Id, _scopes.Count, null, null, null));
+                _breakTargets.Push(new BreakTargets(exitBlock.Id, _scopes.Count));
+                CurrentBlock = bodyBlock;
+                var loopAccessGroupsPushed = false;
+                try
+                {
+                    if (loopAccessGroups is { Count: > 0 })
+                    {
+                        foreach (var loopAccessGroup in loopAccessGroups.Reverse())
+                        {
+                            _activeLoopAccessGroups.Push(loopAccessGroup);
+                        }
+
+                        loopAccessGroupsPushed = true;
+                    }
+
+                    if (userIndex is not null)
+                    {
+                        var visibleIndex = CoerceOperand(hiddenIndex, userIndex.Type) ?? hiddenIndex;
+                        Emit(
+                            MidLevelIrStatementKind.Assign,
+                            $"{userIndex.Name} = {hiddenIndex.Text}",
+                            userIndex.Name,
+                            userIndex.Type,
+                            new MidLevelIrUseRValue(visibleIndex),
+                            writeKind: MemoryWriteKind.Initialization);
+                        SetRuntimeDropState(userIndex.Name, isActive: true);
+                    }
+
+                    var elementValue = LowerTraversalElementBindingValue(source, hiddenIndex, elementBindingType, context: null!);
+                    Emit(
+                        MidLevelIrStatementKind.Assign,
+                        $"{elementLocal.Name} = {source.Text}[{hiddenIndex.Text}]",
+                        elementLocal.Name,
+                        elementLocal.Type,
+                        new MidLevelIrUseRValue(elementValue),
+                        writeKind: MemoryWriteKind.Initialization);
+                    SetRuntimeDropState(elementLocal.Name, isActive: true);
+
+                    if (!TryLowerImportedTypedTemplateStatementList(statement.Body, createScope: true))
+                    {
+                        return false;
+                    }
+
+                    if (loopAccessGroups is { Count: > 0 })
+                    {
+                        for (var index = 0; index < loopAccessGroups.Count; index++)
+                        {
+                            _activeLoopAccessGroups.Pop();
+                        }
+
+                        loopAccessGroupsPushed = false;
+                    }
+
+                    if (!CurrentBlock.HasTerminator)
+                    {
+                        EnsureGoto(iteratorBlock.Id);
+                    }
+
+                    CurrentBlock = iteratorBlock;
+                    var nextIndex = EmitRequiredTemporary(
+                        new MidLevelIrBinaryRValue(
+                            MidLevelIrBinaryOperator.Add,
+                            hiddenIndex,
+                            new MidLevelIrIntegerConstantOperand(BigInteger.One, NonNegativeI64Type),
+                            NonNegativeI64Type,
+                            $"{hiddenIndex.Text} + 1"),
+                        "typed_for_index");
+                    EmitOperandAssignment(hiddenIndex, nextIndex, nextIndex.Text);
+                    if (!CurrentBlock.HasTerminator)
+                    {
+                        EnsureGoto(conditionBlock.Id, loopContracts, loopAccessGroups, loopBehavior);
+                    }
+                }
+                finally
+                {
+                    if (loopAccessGroupsPushed && loopAccessGroups is { Count: > 0 })
+                    {
+                        for (var index = 0; index < loopAccessGroups.Count; index++)
+                        {
+                            _activeLoopAccessGroups.Pop();
+                        }
+                    }
+
+                    _breakTargets.Pop();
+                    _loops.Pop();
+                }
+
+                CurrentBlock = exitBlock;
+                return true;
+            }
+            finally
+            {
+                var scope = _scopes.Pop();
+                EmitStorageDead(scope);
+                RestoreScopedNameAliases(scope);
             }
         }
 
@@ -1981,6 +2295,20 @@ internal sealed partial class MidLevelIrLowerer
                             throw LoweringInvariantViolation(
                                 null,
                                 "Imported typed-template name reference is missing its symbol name.");
+                        }
+
+                        if (_compileTimeConstantState.TryResolve(expression.Name, out var constant))
+                        {
+                            if (expectedType is not null
+                                && CompileTimeExpressionEvaluator.TryCoerce(constant, expectedType, out var coerced))
+                            {
+                                return CreateCompileTimeOperand(coerced);
+                            }
+
+                            var constantOperand = CreateCompileTimeOperand(constant);
+                            return expectedType is null
+                                ? constantOperand
+                                : CoerceOperand(constantOperand, expectedType);
                         }
 
                         var result = ResolveNamedOperand(expression.Name, expectedType);
@@ -4161,6 +4489,7 @@ internal sealed partial class MidLevelIrLowerer
                     {
                         var scope = _builder._scopes.Pop();
                         _builder.EmitStorageDead(scope);
+                        _builder.RestoreScopedNameAliases(scope);
                     }
                 }
 
@@ -4215,6 +4544,8 @@ internal sealed partial class MidLevelIrLowerer
                             return _builder.TryLowerImportedTypedTemplateSwitch(statement);
                         case ImportedTemplateTypedBodyStatementKind.For:
                             return _builder.TryLowerImportedTypedTemplateFor(statement);
+                        case ImportedTemplateTypedBodyStatementKind.ForTraversal:
+                            return _builder.TryLowerImportedTypedTemplateForTraversal(statement);
                         case ImportedTemplateTypedBodyStatementKind.While:
                             return _builder.TryLowerImportedTypedTemplateWhile(statement);
                         case ImportedTemplateTypedBodyStatementKind.If:

@@ -84,6 +84,7 @@ internal static partial class PackageImageBuilder
                             TargetType = GetContextSourceText(module.ParseResult, typeAliasSyntax.type_()),
                             GenericParameters = typeAliasSyntax.typeParameterList() is { } typeParameterList
                                 ? typeParameterList.typeParameter()
+                                    .Where(static parameter => parameter.COMPTIME() is null)
                                     .Select(static parameter => parameter.Identifier().GetText())
                                     .ToArray()
                                 : null
@@ -120,6 +121,7 @@ internal static partial class PackageImageBuilder
                 .ToArray(),
             GenericParameters = functionDeclaration.typeParameterList() is { } typeParameterList
                 ? typeParameterList.typeParameter()
+                    .Where(static parameter => parameter.COMPTIME() is null)
                     .Select(static parameter => parameter.Identifier().GetText())
                     .ToArray()
                 : null,
@@ -377,6 +379,7 @@ internal static partial class PackageImageBuilder
                     .ToArray(),
                 GenericParameters = method.typeParameterList() is { } typeParameterList
                     ? typeParameterList.typeParameter()
+                        .Where(static parameter => parameter.COMPTIME() is null)
                         .Select(static parameter => parameter.Identifier().GetText())
                         .ToArray()
                     : null,
@@ -432,6 +435,7 @@ internal static partial class PackageImageBuilder
                     .ToArray(),
                 GenericParameters = method.typeParameterList() is { } typeParameterList
                     ? typeParameterList.typeParameter()
+                        .Where(static parameter => parameter.COMPTIME() is null)
                         .Select(static parameter => parameter.Identifier().GetText())
                         .ToArray()
                     : null,
@@ -487,6 +491,7 @@ internal static partial class PackageImageBuilder
                     .ToArray(),
                 GenericParameters = method.typeParameterList() is { } typeParameterList
                     ? typeParameterList.typeParameter()
+                        .Where(static parameter => parameter.COMPTIME() is null)
                         .Select(static parameter => parameter.Identifier().GetText())
                         .ToArray()
                     : null,

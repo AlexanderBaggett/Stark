@@ -289,6 +289,23 @@ unsafe
 The FFI docs should be updated so `%s` examples use `System.C` C strings rather
 than plain `ascii`.
 
+## 8.5 libLLVM Requirement
+
+`System.C` C strings are required by the libLLVM-primary backend decision in
+doc `23`.
+
+Verified libLLVM uses:
+
+- passing module names, target triples, CPU names, feature strings, pass names,
+  and file paths as `const char*`,
+- receiving LLVM-owned diagnostic/error strings that must be copied into Stark
+  text and released with the matching LLVM dispose function,
+- bounded validation of any raw C string returned by a foreign API before it is
+  converted to Stark text.
+
+No implicit Stark text to C string conversion is added for libLLVM. Backend code
+must explicitly create `OwnedCStr` or use a validated `CStr`.
+
 ## 9. Relationship To `c_char`
 
 C string storage uses `System.C.c_char` because it mirrors C headers that spell
@@ -331,6 +348,8 @@ Recommended diagnostics:
 - [ ] Implement bounded scanning for raw C string validation.
 - [ ] Add diagnostics that reject implicit Stark text / C string conversions.
 - [ ] Update FFI varargs validation and docs so `%s` uses `System.C` C strings.
+- [ ] Add libLLVM-oriented tests for `const char*` inputs, LLVM-owned error
+      message adoption/copying, and correct foreign-message disposal wrappers.
 - [ ] Add tests for interior zeros, missing terminators, bounded scans, invalid
       UTF-8, allocation failure paths, output buffers, and destructor behavior.
 - [ ] Update user-facing FFI docs and Stark language skill references.

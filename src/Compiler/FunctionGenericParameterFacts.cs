@@ -96,7 +96,8 @@ internal static class FunctionGenericParameterFacts
 
         AddGenericParameterNames(
             typeParameterList.typeParameter()
-                .Select(static parameter => parameter.GetText())
+                .Where(static parameter => parameter.COMPTIME() is null)
+                .Select(static parameter => parameter.Identifier().GetText())
                 .ToArray(),
             orderedNames,
             seenNames);

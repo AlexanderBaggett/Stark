@@ -940,10 +940,35 @@ internal sealed class LoweringContractValidator
     {
         if (pattern.enumNamedFieldPattern() is { } enumNamedFieldPattern)
         {
-            ValidateEnumPatternContext(enumNamedFieldPattern, functionName, filePath);
-            foreach (var member in enumNamedFieldPattern.enumNamedFieldPatternPayload().namedPatternMember())
+            if (TryGetRecord(_enumPatterns, enumNamedFieldPattern, functionName, out var enumPattern))
+            {
+                ValidateEnumPatternFact(enumPattern, enumNamedFieldPattern, filePath);
+            }
+            else if (TryGetRecord(_aggregatePatterns, enumNamedFieldPattern, functionName, out var aggregateFact))
+            {
+                ValidateAggregatePatternFact(aggregateFact, enumNamedFieldPattern, filePath);
+            }
+            else
+            {
+                ReportMissing(
+                    enumNamedFieldPattern,
+                    filePath,
+                    "Lowering contract is missing typed enum or aggregate-pattern facts. Type checking must record whether this named-field switch pattern is an enum case or aggregate property pattern before MIR lowering.");
+            }
+
+            foreach (var member in enumNamedFieldPattern.namedPatternPayload().namedPatternMember())
             {
                 ValidatePatternFacts(member.pattern(), functionName, filePath);
+            }
+
+            return;
+        }
+
+        if (pattern.listPattern() is { } listPattern)
+        {
+            foreach (var elementPattern in listPattern.pattern())
+            {
+                ValidatePatternFacts(elementPattern, functionName, filePath);
             }
 
             return;
@@ -970,6 +995,16 @@ internal sealed class LoweringContractValidator
     {
         if (suffix is null || suffix.Identifier() is not null)
         {
+            return;
+        }
+
+        if (suffix.namedPatternPayload() is { } namedPayload)
+        {
+            foreach (var member in namedPayload.namedPatternMember())
+            {
+                ValidatePatternFacts(member.pattern(), functionName, filePath);
+            }
+
             return;
         }
 
@@ -1040,7 +1075,7 @@ internal sealed class LoweringContractValidator
                     $"Typed enum-pattern fact for '{record.EnumType.DisplayName}.{record.VariantName}' was attached to a named-field pattern, but the variant is not named-field shaped.");
             }
 
-            var sourceMemberCount = namedFieldPattern.enumNamedFieldPatternPayload().namedPatternMember().Length;
+            var sourceMemberCount = namedFieldPattern.namedPatternPayload().namedPatternMember().Length;
             if (record.Members.Count != sourceMemberCount)
             {
                 ReportInvalid(
@@ -1121,7 +1156,7 @@ internal sealed class LoweringContractValidator
 
     private void ValidateAggregatePatternFact(
         AggregatePatternTypingRecord record,
-        StarkParser.AggregatePatternContext context,
+        ParserRuleContext context,
         string? filePath)
     {
         if (record.Type.Kind != StarkTypeKind.Named
@@ -1144,9 +1179,35 @@ internal sealed class LoweringContractValidator
             return;
         }
 
-        var suffix = context.aggregatePatternSuffix();
+        StarkParser.NamedPatternPayloadContext? namedPayload = null;
+        var suffix = context switch
+        {
+            StarkParser.AggregatePatternContext aggregatePattern => aggregatePattern.aggregatePatternSuffix(),
+            StarkParser.EnumNamedFieldPatternContext enumNamedFieldPattern => null,
+            _ => null
+        };
+        if (context is StarkParser.EnumNamedFieldPatternContext enumNamedField)
+        {
+            namedPayload = enumNamedField.namedPatternPayload();
+        }
+        else if (suffix?.namedPatternPayload() is { } suffixNamedPayload)
+        {
+            namedPayload = suffixNamedPayload;
+        }
+
         if (suffix is null || suffix.Identifier() is not null)
         {
+            if (namedPayload is not null)
+            {
+                ValidateAggregatePatternMemberFact(record, namedType, namedPayload, context, filePath);
+            }
+
+            return;
+        }
+
+        if (namedPayload is not null)
+        {
+            ValidateAggregatePatternMemberFact(record, namedType, namedPayload, context, filePath);
             return;
         }
 
@@ -1156,6 +1217,38 @@ internal sealed class LoweringContractValidator
                 context,
                 filePath,
                 $"Typed aggregate-pattern fact for '{record.Type.DisplayName}' has a field-count mismatch: the named type has {namedType.OrderedFields.Count} field(s), but the source pattern has {suffix.pattern().Length}.");
+        }
+    }
+
+    private void ValidateAggregatePatternMemberFact(
+        AggregatePatternTypingRecord record,
+        NamedTypeSymbol namedType,
+        StarkParser.NamedPatternPayloadContext namedPayload,
+        ParserRuleContext context,
+        string? filePath)
+    {
+        var sourceMemberCount = namedPayload.namedPatternMember().Length;
+        if (record.Members.Count != sourceMemberCount)
+        {
+            ReportInvalid(
+                context,
+                filePath,
+                $"Typed aggregate-pattern fact for '{record.Type.DisplayName}' has a member-count mismatch: recorded {record.Members.Count}, but the source pattern has {sourceMemberCount}.");
+            return;
+        }
+
+        foreach (var member in record.Members)
+        {
+            if (member.FieldIndex < 0
+                || member.FieldIndex >= namedType.OrderedFields.Count
+                || !string.Equals(namedType.OrderedFields[member.FieldIndex].Name, member.FieldName, StringComparison.Ordinal)
+                || !Equals(namedType.OrderedFields[member.FieldIndex].Type, member.FieldType))
+            {
+                ReportInvalid(
+                    context,
+                    filePath,
+                    $"Typed aggregate-pattern fact for '{record.Type.DisplayName}.{member.FieldName}' does not match the aggregate field layout.");
+            }
         }
     }
 
@@ -1896,7 +1989,10 @@ internal sealed class LoweringContractValidator
             or StarkTypeKind.RawPointer
             or StarkTypeKind.Ascii
             or StarkTypeKind.Unicode
-            or StarkTypeKind.Named;
+            or StarkTypeKind.Named
+            or StarkTypeKind.FixedArray
+            or StarkTypeKind.Slice
+            or StarkTypeKind.Dynamic;
     }
 
     private static bool RequiresAddressableCallArgument(TypedParameterSymbol parameter, bool isReceiver)
@@ -1991,7 +2087,8 @@ internal sealed class LoweringContractValidator
 
                     if (pattern.aggregatePattern() is not null
                         || pattern.enumNamedFieldPattern() is not null
-                        || pattern.genericEnumAggregatePattern() is not null)
+                        || pattern.genericEnumAggregatePattern() is not null
+                        || pattern.listPattern() is not null)
                     {
                         structuredPatternLabelCount++;
                     }

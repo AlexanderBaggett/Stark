@@ -605,6 +605,363 @@ public sealed class PackageImageArchitectureTests
     }
 
     [Fact]
+    public void PackageImageConsumerLowersImportedGenericForTraversalTypedBody()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-for-traversal-template-");
+
+        try
+        {
+            var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+            var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+            var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    module Facade
+
+                    public struct Box<T>
+                    {
+                        T Value;
+                    }
+
+                    public fn u64[0 max] CountIndexed<T>(Box<T>[] boxes, T tag)
+                    {
+                        stack mut u64[0 max] total = 0;
+                        for willexit (stack u64[0 max] index, borrow Box<T> box in boxes)
+                        {
+                            total += index;
+                            total += 1;
+                        }
+
+                        return total;
+                    }
+                    """,
+                    sourcePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            var facadeModule = Assert.Single(manifest.Modules, static item => item.ModuleName == "Facade");
+            var template = Assert.Single(
+                facadeModule.EffectiveGenericTemplates!.Functions,
+                static item => item.QualifiedResolvedName == "Facade.CountIndexed");
+            Assert.NotNull(template.TypedBody);
+            var traversalManifest = Assert.Single(template.TypedBody!.Statements, static statement => statement.Kind == "for-traversal");
+            Assert.Equal("index", traversalManifest.TraversalIndexName);
+            Assert.Equal("stack", traversalManifest.TraversalIndexStorageClass);
+            Assert.Equal("box", traversalManifest.TraversalElementName);
+            Assert.NotNull(traversalManifest.TraversalSource);
+
+            Assert.True(PackageImageLoader.TryBuildLoadedPackageImageFacts(CreateResolvedPackageModule(facadeModule), out var facts));
+            var importedTemplate = facts.FunctionTemplates["Facade.CountIndexed"];
+            Assert.NotNull(importedTemplate.TypedBody);
+            var traversalSummary = Assert.Single(
+                importedTemplate.TypedBody!.Statements,
+                static statement => statement.Kind == ImportedTemplateTypedBodyStatementKind.ForTraversal);
+            Assert.Equal("index", traversalSummary.TraversalIndexName);
+            Assert.Equal("box", traversalSummary.TraversalElementName);
+            Assert.NotNull(traversalSummary.TraversalSourceExpression);
+
+            var corruptedTemplates = new StarkPackageGenericTemplateSection(
+                facadeModule.EffectiveGenericTemplates!.Functions
+                    .Select(static item => item.QualifiedResolvedName == "Facade.CountIndexed"
+                        ? item with { BodyText = "{ return this is not valid Stark; }" }
+                        : item)
+                    .ToArray());
+            var corruptedModule = facadeModule with
+            {
+                GenericTemplates = corruptedTemplates,
+                CompilerSections = facadeModule.CompilerSections is null
+                    ? null
+                    : facadeModule.CompilerSections with { GenericTemplates = corruptedTemplates }
+            };
+            var corruptedManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(item => item.ModuleName == "Facade" ? corruptedModule : item)
+                    .ToArray()
+            };
+            File.WriteAllText(manifestPath, corruptedManifest.ToJson());
+            Assert.True(PackageImageLoader.TryBuildModuleSource(
+                new ResolvedPackageModule(manifestPath, libraryPath, corruptedManifest, corruptedModule),
+                out var sourceText));
+            Assert.DoesNotContain("this is not valid Stark", sourceText, StringComparison.Ordinal);
+            File.Delete(sourcePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    unsafe fn u64[0 max] Run()
+                    {
+                        stack mut Facade.Box<i32[min max]>[2] boxes =
+                        {
+                            new Facade.Box<i32[min max]>() { Value = 1 },
+                            new Facade.Box<i32[min max]>() { Value = 2 }
+                        };
+                        stack mut Facade.Box<i32[min max]>[] view = boxes;
+                        return Facade.CountIndexed(view, 0);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "emit-llvm"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(consumerResult, "Imported for-traversal generic typed body builds");
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.MidLevelIr, out MidLevelIrModule? mir));
+            Assert.NotNull(mir);
+            MidLevelIrLoweringTests.AssertMirHasNoNullLoweringArtifacts(mir);
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+            Assert.NotNull(llvm);
+            Assert.DoesNotContain("this is not valid Stark", llvm!.Text, StringComparison.Ordinal);
+            Assert.Contains("__stark_mono_fn_Demo__Facade_CountIndexed__", llvm.Text, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImagePreservesComptimeGenericDeclarationsAndSymbolicTemplateCalls()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-comptime-generics-");
+
+        try
+        {
+            var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    module Facade
+
+                    public struct Bytes<comptime u8[1 8] N>
+                    {
+                        u8[0 max][N] Items;
+                    }
+
+                    public alias ByteArray<comptime u8[1 8] N> = u8[0 max][N];
+
+                    public finite law u8[0 max] Pick<comptime u8[1 8] N>()
+                    {
+                        return N;
+                    }
+
+                    public finite law u8[0 max] Forward<comptime u8[1 8] N>()
+                    {
+                        return Pick<comptime N>();
+                    }
+                    """,
+                    sourcePath),
+                new CompilerOptions(StopAfterPassId: "lower-abi"));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            var facadeModule = Assert.Single(manifest.Modules, static item => item.ModuleName == "Facade");
+            var typedInterface = facadeModule.EffectiveTypedInterface!;
+
+            var bytes = Assert.Single(typedInterface.Types, static type => type.Name == "Bytes");
+            var bytesParameter = Assert.Single(bytes.ComptimeGenericParameters!);
+            Assert.Equal("N", bytesParameter.Name);
+            Assert.Equal("integer", bytesParameter.Type.Kind);
+            Assert.Equal(8, bytesParameter.Type.BitWidth);
+
+            var byteArray = Assert.Single(typedInterface.TypeAliases!, static alias => alias.Name == "ByteArray");
+            var byteArrayParameter = Assert.Single(byteArray.ComptimeGenericParameters!);
+            Assert.Equal("N", byteArrayParameter.Name);
+            Assert.Equal("integer", byteArrayParameter.Type.Kind);
+
+            var forward = Assert.Single(typedInterface.Functions, static function => function.Name == "Forward");
+            var forwardParameter = Assert.Single(forward.ComptimeGenericParameters!);
+            Assert.Equal("N", forwardParameter.Name);
+            Assert.Equal("integer", forwardParameter.Type.Kind);
+            var pick = Assert.Single(typedInterface.Functions, static function => function.Name == "Pick");
+            var pickParameter = Assert.Single(pick.ComptimeGenericParameters!);
+            Assert.Equal("N", pickParameter.Name);
+            Assert.Equal("integer", pickParameter.Type.Kind);
+
+            var forwardTemplate = Assert.Single(
+                facadeModule.EffectiveGenericTemplates!.Functions,
+                static template => template.QualifiedResolvedName == "Facade.Forward");
+            var directCall = Assert.Single(forwardTemplate.DirectCalls!);
+            var directValueArgument = Assert.Single(directCall.ComptimeValueArguments!);
+            Assert.Equal("N", directValueArgument.ParameterName);
+            Assert.True(directValueArgument.IsSymbolic);
+            Assert.Equal("N", directValueArgument.SymbolicSourceName);
+
+            var deferred = Assert.Single(forwardTemplate.DeferredFunctionInstantiations!);
+            Assert.Equal("Facade.Pick", deferred.CalleeTemplateName);
+            var deferredValueArgument = Assert.Single(deferred.ComptimeValueArguments!);
+            Assert.True(deferredValueArgument.IsSymbolic);
+            Assert.Equal("N", deferredValueArgument.SymbolicSourceName);
+
+            Assert.True(PackageImageLoader.TryBuildModuleSource(CreateResolvedPackageModule(facadeModule), out var sourceText));
+            Assert.Contains("public struct Bytes<comptime u8[1 8] N>", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public alias ByteArray<comptime u8[1 8] N> = u8[0 max][N];", sourceText, StringComparison.Ordinal);
+            Assert.Contains("public finite law u8[0 max] Forward<comptime u8[1 8] N>()", sourceText, StringComparison.Ordinal);
+            Assert.Contains("return Facade.Pick<comptime N>();", sourceText, StringComparison.Ordinal);
+
+            Assert.True(PackageImageLoader.TryBuildLoadedPackageImageFacts(CreateResolvedPackageModule(facadeModule), out var facts));
+            var factBytesParameter = Assert.Single(facts.NamedTypes["Facade.Bytes"].ComptimeGenericParams);
+            Assert.Equal("N", factBytesParameter.Name);
+            var factAliasParameter = Assert.Single(facts.TypeAliases["Facade.ByteArray"].ComptimeGenericParams);
+            Assert.Equal("N", factAliasParameter.Name);
+            var factForwardParameter = Assert.Single(facts.FunctionSignatures["Facade.Forward"].ComptimeGenericParams);
+            Assert.Equal("N", factForwardParameter.Name);
+            var factPickParameter = Assert.Single(facts.FunctionSignatures["Facade.Pick"].ComptimeGenericParams);
+            Assert.Equal("N", factPickParameter.Name);
+            var factDirectValueArgument = Assert.Single(facts.FunctionTemplates["Facade.Forward"].DirectCalls[0].Signature.ComptimeValues);
+            Assert.True(factDirectValueArgument.IsSymbolic);
+            Assert.Equal("N", factDirectValueArgument.SymbolicSourceName);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImageConsumerLowersImportedComptimeGenericTemplateTypedBody()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-comptime-template-consumer-");
+
+        try
+        {
+            var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+            var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+            var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    module Facade
+
+                    public finite law u8[0 max] Pick<comptime u8[1 8] N>()
+                    {
+                        return N;
+                    }
+
+                    public finite law u8[0 max] Forward<comptime u8[1 8] N>()
+                    {
+                        return Pick<comptime N>();
+                    }
+                    """,
+                    sourcePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(libraryResult, libraryPath);
+            var facadeModule = Assert.Single(manifest.Modules, static item => item.ModuleName == "Facade");
+            var corruptedTemplates = new StarkPackageGenericTemplateSection(
+                facadeModule.EffectiveGenericTemplates!.Functions
+                    .Select(static item => item.QualifiedResolvedName == "Facade.Forward"
+                        ? item with { BodyText = "{ return this is not valid Stark; }" }
+                        : item)
+                    .ToArray());
+            var corruptedModule = facadeModule with
+            {
+                GenericTemplates = corruptedTemplates,
+                CompilerSections = facadeModule.CompilerSections is null
+                    ? null
+                    : facadeModule.CompilerSections with { GenericTemplates = corruptedTemplates }
+            };
+            var corruptedManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(item => item.ModuleName == "Facade" ? corruptedModule : item)
+                    .ToArray()
+            };
+            File.WriteAllText(manifestPath, corruptedManifest.ToJson());
+            File.Delete(sourcePath);
+
+            var hirProbeResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    finite law u8[0 max] Run()
+                    {
+                        return Facade.Forward<5>();
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "lower-hir"));
+
+            Assert.True(hirProbeResult.Succeeded, string.Join(", ", hirProbeResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            Assert.True(hirProbeResult.Artifacts.TryGet(CompilerArtifactKeys.HighLevelIr, out HighLevelIrModule? hir));
+            Assert.NotNull(hir);
+            var pickSpecialization = Assert.Single(
+                hir!.Functions,
+                static function => function.Name.Contains("Facade_Pick", StringComparison.Ordinal)
+                    && function.Name.Contains("N_5", StringComparison.Ordinal));
+            var pickValue = Assert.Single(pickSpecialization.Signature.ComptimeValues);
+            Assert.Equal("N", pickValue.ParameterName);
+            Assert.Equal(5, pickValue.IntegerValue);
+            Assert.False(pickValue.IsSymbolic);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    finite law u8[0 max] Run()
+                    {
+                        return Facade.Forward<5>();
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "emit-llvm"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(consumerResult, "Imported comptime generic typed body builds");
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvm));
+            Assert.NotNull(llvm);
+            Assert.Contains("__stark_mono_fn_Demo__Facade_Forward__N_5", llvm!.Text, StringComparison.Ordinal);
+            Assert.Contains("ret i8 5", ExtractDefinitionBody(llvm.Text, "__stark_mono_fn_Demo__Facade_Pick__N_5"));
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup.
+            }
+        }
+    }
+
+    [Fact]
     public void PackageImagePublishesEmptyImportedModulesToKeepManifestModuleGraphClosed()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-empty-import-");
@@ -1724,6 +2081,141 @@ public sealed class PackageImageArchitectureTests
             Assert.NotNull(llvm);
             Assert.DoesNotContain("this is not valid Stark", llvm!.Text, StringComparison.Ordinal);
             Assert.Contains("__stark_mono_fn_Demo__System_Text_Run__", llvm.Text, StringComparison.Ordinal);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+    [Fact]
+    public void PackageImageGenericTemplatesPreservePropertyAndListSwitchPatterns()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-package-image-switch-patterns-");
+
+        try
+        {
+            var sourcePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+            var manifestPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.starkpkg.json" : "libFacade.starkpkg.json");
+            var libraryPath = Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a");
+            var result = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    module Facade
+
+                    public struct Boxed
+                    {
+                        i32[min max] Value;
+                        bool Enabled;
+                    }
+
+                    public finite law T Run<T>(T input, Boxed box, i32[min max][2] values)
+                    {
+                        stack mut i32[min max] marker = 0;
+                        switch (box)
+                        {
+                            case Boxed { Enabled: true, Value: var found }:
+                                marker = found;
+                            case Boxed { Value: _, Enabled: _ }:
+                                marker = 1;
+                        }
+
+                        switch (values)
+                        {
+                            case [1, var right]:
+                                marker += right;
+                            case [_, _]:
+                                marker += 0;
+                        }
+
+                        return input;
+                    }
+                    """,
+                    sourcePath),
+                new CompilerOptions(StopAfterPassId: "lower-abi"));
+
+            Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+
+            var manifest = PackageImageBuilder.Create(result, libraryPath);
+            var module = Assert.Single(manifest.Modules, static item => item.ModuleName == "Facade");
+            var template = Assert.Single(
+                module.EffectiveGenericTemplates!.Functions,
+                static item => item.QualifiedResolvedName == "Facade.Run");
+            var json = manifest.ToJson();
+
+            Assert.NotNull(template.TypedBody);
+            Assert.Contains("\"Kind\": \"list-pattern\"", json, StringComparison.Ordinal);
+            Assert.Contains("\"AggregatePatterns\"", json, StringComparison.Ordinal);
+
+            Assert.True(PackageImageLoader.TryBuildLoadedPackageImageFacts(CreateResolvedPackageModule(module), out var facts));
+            var importedTemplate = facts.FunctionTemplates["Facade.Run"];
+            Assert.Contains(
+                importedTemplate.AggregatePatterns,
+                static pattern => pattern.Members.Count == 2
+                    && pattern.Members.Any(static member => member.FieldName == "Enabled" && member.FieldIndex == 1)
+                    && pattern.Members.Any(static member => member.FieldName == "Value" && member.FieldIndex == 0));
+            Assert.Contains(
+                importedTemplate.TypedBody!.Statements
+                    .Where(static statement => statement.SwitchCases.Count > 0)
+                    .SelectMany(static statement => statement.SwitchCases),
+                static switchCase => switchCase.Kind == ImportedTemplateTypedSwitchCaseKind.ListPattern);
+
+            var corruptedTemplates = new StarkPackageGenericTemplateSection(
+                module.EffectiveGenericTemplates!.Functions
+                    .Select(static item => item.QualifiedResolvedName == "Facade.Run"
+                        ? item with { BodyText = "{ return this is not valid Stark; }" }
+                        : item)
+                    .ToArray());
+            var corruptedModule = module with
+            {
+                GenericTemplates = corruptedTemplates,
+                CompilerSections = module.CompilerSections is null
+                    ? null
+                    : module.CompilerSections with { GenericTemplates = corruptedTemplates }
+            };
+            var corruptedManifest = manifest with
+            {
+                Modules = manifest.Modules
+                    .Select(item => item.ModuleName == "Facade" ? corruptedModule : item)
+                    .ToArray()
+            };
+            File.WriteAllText(manifestPath, corruptedManifest.ToJson());
+            File.Delete(sourcePath);
+
+            var consumerResult = DefaultCompilerPipeline.Create().Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    unsafe fn i32[min max] Run()
+                    {
+                        stack Facade.Boxed box = new Facade.Boxed()
+                        {
+                            Value = 3,
+                            Enabled = true
+                        };
+                        stack i32[min max][2] values =
+                        {
+                            1, 2
+                        };
+                        return Facade.Run(7, box, values);
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    StopAfterPassId: "lower-abi"));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+            FallbackLogAssertions.AssertNoFallbackLogs(consumerResult, "Imported generic typed-body switch patterns build");
         }
         finally
         {

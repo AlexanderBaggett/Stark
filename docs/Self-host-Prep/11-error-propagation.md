@@ -451,7 +451,10 @@ TDD-first, in dependency order, mirroring doc `10`. IDs are stable across docs.
   values is exactly what `Result` + `try` make ergonomic across the ported pipeline.
 - `02-stdlib-gaps.md` **S01** — shared `Option`/`Result` conventions; EP01 lands the
   types, this phase makes them usable.
-- `07-open-questions.md` **OQ-04** (propagation surface) resolved here as: `try` +
-  `from` (option A, "approved `Result`/`Option` shapes"), not switch-only.
+- `07-open-questions.md` **OQ-04** (propagation surface) resolved here as leading
+  `try` + `from` over structural `[Ok]`/`[Err]` enums; no `?`-style propagation.
+- `07-open-questions.md` **OQ-06** (optional/null replacement) is resolved as:
+  C# nullable values and `TryGet(... out T?)` port to the blessed
+  `System.Option<T>` convention (`[Ok] Some(T)` / `[Err] None`).
 - `10-traits-and-dynamic-dispatch.md` — the deferred S1 (trait-backed conversion)
   would build on its conformance machinery, extended with target-directed resolution.

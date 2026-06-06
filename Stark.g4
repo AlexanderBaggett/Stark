@@ -138,6 +138,7 @@ typeParameterList
 
 typeParameter
     : Identifier
+    | COMPTIME type_ Identifier
     ;
 
 typeParameterConstraints
@@ -473,7 +474,13 @@ rangeEndpointToken
     ;
 
 typeArgumentList
-    : LT type_ (COMMA type_)* GT
+    : LT genericArgument (COMMA genericArgument)* GT
+    ;
+
+genericArgument
+    : type_
+    | signedIntegerLiteral
+    | COMPTIME expression
     ;
 
 block
@@ -545,7 +552,20 @@ whileStatement
     ;
 
 forStatement
-    : FOR loopBehavior loopContract* LPAREN forInitializer? SEMI forCondition? SEMI forIterator? RPAREN statement
+    : FOR loopBehavior loopContract* LPAREN forTraversal RPAREN statement
+    | FOR loopBehavior loopContract* LPAREN forInitializer? SEMI forCondition? SEMI forIterator? RPAREN statement
+    ;
+
+forTraversal
+    : traversalIndexBinding? traversalElementBinding IN expression
+    ;
+
+traversalIndexBinding
+    : storageClass type_ Identifier COMMA
+    ;
+
+traversalElementBinding
+    : type_ Identifier
     ;
 
 forInitializer
@@ -601,6 +621,7 @@ emptyStatement
 
 pattern
     : DISCARD
+    | listPattern
     | rangePattern
     | literal
     | VAR Identifier
@@ -611,6 +632,10 @@ pattern
 
 rangePattern
     : signedIntegerLiteral RANGE signedIntegerLiteral
+    ;
+
+listPattern
+    : LBRACK (pattern (COMMA pattern)*)? COMMA? RBRACK
     ;
 
 aggregatePattern
@@ -624,13 +649,14 @@ genericEnumAggregatePattern
 aggregatePatternSuffix
     : Identifier
     | LPAREN (pattern (COMMA pattern)*)? COMMA? RPAREN
+    | namedPatternPayload
     ;
 
 enumNamedFieldPattern
-    : enumCaseTarget enumNamedFieldPatternPayload
+    : enumCaseTarget namedPatternPayload
     ;
 
-enumNamedFieldPatternPayload
+namedPatternPayload
     : LBRACE (namedPatternMember (COMMA namedPatternMember)*)? COMMA? RBRACE
     ;
 
@@ -764,6 +790,7 @@ primaryExpression
     | Identifier
     | enumConstructorExpression
     | genericEnumCaseReference
+    | genericQualifiedName
     | qualifiedName
     | objectCreationExpression
     | LPAREN expression RPAREN
@@ -943,6 +970,7 @@ RETURN      : 'return';
 BREAK       : 'break';
 CONTINUE    : 'continue';
 TRY         : 'try';
+COMPTIME    : 'comptime';
 NEW         : 'new';
 CONST       : 'const';
 WHERE       : 'where';

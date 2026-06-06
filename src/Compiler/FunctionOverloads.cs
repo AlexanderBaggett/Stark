@@ -1,3 +1,4 @@
+using System.Numerics;
 using Stark.Parsing;
 
 namespace Stark.Compiler;
@@ -278,10 +279,17 @@ internal static class FunctionOverloadFacts
 
     public static string FormatSignature(TypedFunctionSignature signature)
     {
+        var genericParts = signature.GenericParams
+            .Concat(signature.ComptimeGenericParams.Select(static parameter => $"comptime {parameter.Type.DisplayName} {parameter.Name}"))
+            .ToArray();
+        var instantiationParts = (signature.TypeArguments ?? [])
+            .Select(static argument => argument.DisplayName)
+            .Concat(signature.ComptimeValues.Select(static argument => argument.IntegerValue.ToString()))
+            .ToArray();
         var genericSuffix = signature.IsGeneric
-            ? $"<{string.Join(", ", signature.GenericParams)}>"
-            : signature.IsGenericInstantiation && signature.TypeArguments is { Count: > 0 }
-                ? $"<{string.Join(", ", signature.TypeArguments.Select(static argument => argument.DisplayName))}>"
+            ? $"<{string.Join(", ", genericParts)}>"
+            : signature.IsGenericInstantiation && instantiationParts.Length > 0
+                ? $"<{string.Join(", ", instantiationParts)}>"
                 : string.Empty;
         return $"{signature.DisplaySourceName}{genericSuffix}({string.Join(", ", signature.Parameters.Select(FormatParameter))})";
     }
@@ -298,13 +306,40 @@ internal static class FunctionOverloadFacts
         return string.Join(",", typeArguments.Select(BuildCanonicalTypeKey));
     }
 
+    public static string BuildComptimeValueArgumentKey(IReadOnlyList<ComptimeValueArgumentSymbol>? valueArguments)
+    {
+        return valueArguments is { Count: > 0 }
+            ? string.Join(",", valueArguments.Select(static argument => argument.IsSymbolic
+                ? argument.DisplayName
+                : $"{argument.ParameterName}={argument.IntegerValue}"))
+            : string.Empty;
+    }
+
+    public static string BuildInstantiationArgumentKey(
+        IReadOnlyList<StarkTypeSymbol>? typeArguments,
+        IReadOnlyList<ComptimeValueArgumentSymbol>? valueArguments)
+    {
+        var typeKey = typeArguments is { Count: > 0 }
+            ? BuildTypeArgumentKey(typeArguments)
+            : string.Empty;
+        var valueKey = BuildComptimeValueArgumentKey(valueArguments);
+        return string.IsNullOrEmpty(valueKey)
+            ? typeKey
+            : string.IsNullOrEmpty(typeKey)
+                ? valueKey
+                : $"{typeKey};{valueKey}";
+    }
+
     public static string BuildCanonicalTypeKey(StarkTypeSymbol type)
     {
         var coreType = StripQualifiers(type);
 
         return coreType.Kind switch
         {
-            StarkTypeKind.Named when coreType.NamedType is not null => coreType.NamedType,
+            StarkTypeKind.Named when coreType.NamedType is not null
+                => StarkTypeSymbols.IsGenericInstantiation(coreType)
+                    ? $"{StarkTypeSymbols.GetGenericBaseName(coreType.NamedType)}<{BuildInstantiationArgumentKey(coreType.TypeArguments, coreType.ComptimeValueArguments)}>"
+                    : coreType.NamedType,
             StarkTypeKind.Integer when coreType.BitWidth is int bitWidth
                                         && coreType.IsUnsigned
                                         && StarkTypeSymbols.IsFullUnsignedIntegerRange(bitWidth, coreType.RangeMin, coreType.RangeMax)
@@ -315,7 +350,7 @@ internal static class FunctionOverloadFacts
             StarkTypeKind.RawPointer when coreType.ElementType is not null
                 => $"{(coreType.IsMutablePointer ? "rawmutptr" : "rawptr")}<{BuildCanonicalTypeKey(coreType.ElementType)}>",
             StarkTypeKind.FixedArray when coreType.ElementType is not null
-                => $"{BuildCanonicalTypeKey(coreType.ElementType)}[{(coreType.FixedLength is { } fixedLength ? fixedLength.ToString() : "?")}]",
+                => $"{BuildCanonicalTypeKey(coreType.ElementType)}[{(coreType.FixedLength is { } fixedLength ? fixedLength.ToString() : coreType.FixedLengthParameterName ?? "?")}]",
             StarkTypeKind.Slice when coreType.ElementType is not null
                 => $"{BuildCanonicalTypeKey(coreType.ElementType)}[]",
             StarkTypeKind.AssociatedType when coreType.AssociatedTypeOwner is not null
@@ -350,28 +385,59 @@ internal static class FunctionOverloadFacts
         return substitution;
     }
 
+    public static IReadOnlyDictionary<string, BigInteger> BuildComptimeValueSubstitution(
+        TypedFunctionSignature template,
+        IReadOnlyList<ComptimeValueArgumentSymbol>? valueArguments)
+    {
+        if (template.ComptimeGenericParams.Count == 0)
+        {
+            return new Dictionary<string, BigInteger>(StringComparer.Ordinal);
+        }
+
+        valueArguments ??= [];
+        if (template.ComptimeGenericParams.Count != valueArguments.Count)
+        {
+            throw new InvalidOperationException(
+                $"Generic function '{template.Name}' expects {template.ComptimeGenericParams.Count} comptime value argument(s) but {valueArguments.Count} were provided.");
+        }
+
+        var substitution = new Dictionary<string, BigInteger>(StringComparer.Ordinal);
+        for (var index = 0; index < template.ComptimeGenericParams.Count; index++)
+        {
+            var parameter = template.ComptimeGenericParams[index];
+            var argument = valueArguments[index];
+            substitution[parameter.Name] = argument.IntegerValue;
+        }
+
+        return substitution;
+    }
+
     public static TypedFunctionSignature InstantiateSignature(
         TypedFunctionSignature template,
         IReadOnlyList<StarkTypeSymbol> typeArguments,
         string materializedName,
-        Func<StarkTypeSymbol, string, StarkTypeSymbol?>? associatedTypeResolver = null)
+        Func<StarkTypeSymbol, string, StarkTypeSymbol?>? associatedTypeResolver = null,
+        IReadOnlyList<ComptimeValueArgumentSymbol>? valueArguments = null)
     {
         var substitution = BuildGenericSubstitution(template, typeArguments);
+        var valueSubstitution = BuildComptimeValueSubstitution(template, valueArguments);
         return template with
         {
             Name = materializedName,
-            ReturnType = SubstituteType(template.ReturnType, substitution, associatedTypeResolver),
+            ReturnType = SubstituteType(template.ReturnType, substitution, associatedTypeResolver, valueSubstitution),
             Parameters = template.Parameters
                 .Select(parameter => new TypedParameterSymbol(
                     parameter.Name,
-                    SubstituteType(parameter.Type, substitution, associatedTypeResolver),
+                    SubstituteType(parameter.Type, substitution, associatedTypeResolver, valueSubstitution),
                     parameter.IsDisjoint,
                     parameter.IsConst,
                     parameter.RawPointerElementCountExpression))
                 .ToArray(),
             GenericParameterNames = null,
+            ComptimeGenericParameterNames = null,
             TemplateName = template.TemplateName ?? template.Name,
-            TypeArguments = typeArguments.ToArray()
+            TypeArguments = typeArguments.ToArray(),
+            ComptimeValueArguments = valueArguments?.ToArray()
         };
     }
 
@@ -463,7 +529,7 @@ internal static class FunctionOverloadFacts
                 return false;
             }
 
-            genericPenalty = candidate.GenericParams.Count;
+            genericPenalty = candidate.GenericParams.Count + candidate.ComptimeGenericParams.Count;
         }
 
         if (receiverType is not null)
@@ -565,13 +631,28 @@ internal static class FunctionOverloadFacts
 
         var substitution = new Dictionary<string, StarkTypeSymbol>(StringComparer.Ordinal);
         var genericParameters = candidate.GenericParams.ToHashSet(StringComparer.Ordinal);
+        var valueSubstitution = new Dictionary<string, BigInteger>(StringComparer.Ordinal);
+        var comptimeGenericParameters = candidate.ComptimeGenericParams
+            .ToDictionary(static parameter => parameter.Name, StringComparer.Ordinal);
+        var comptimeGenericParameterNames = comptimeGenericParameters.Keys.ToHashSet(StringComparer.Ordinal);
         var receiverOffset = receiverType is null ? 0 : 1;
 
         if (receiverType is not null)
         {
-            var receiverParameterType = SubstituteType(GetOverloadArgumentParameterType(candidate.Parameters[0]), substitution, associatedTypeResolver);
-            if (ContainsGenericParameter(receiverParameterType, genericParameters)
-                && !TryInferTypeArguments(receiverParameterType, receiverType, genericParameters, substitution))
+            var receiverParameterType = SubstituteType(
+                GetOverloadArgumentParameterType(candidate.Parameters[0]),
+                substitution,
+                associatedTypeResolver,
+                valueSubstitution);
+            if ((ContainsGenericParameter(receiverParameterType, genericParameters)
+                    || ContainsComptimeValueParameter(receiverParameterType, comptimeGenericParameterNames))
+                && !TryInferTypeArguments(
+                    receiverParameterType,
+                    receiverType,
+                    genericParameters,
+                    substitution,
+                    comptimeGenericParameters,
+                    valueSubstitution))
             {
                 return false;
             }
@@ -580,37 +661,53 @@ internal static class FunctionOverloadFacts
         for (var index = 0; index < argumentTypes.Count; index++)
         {
             var parameter = candidate.Parameters[index + receiverOffset];
-            var parameterType = SubstituteType(GetOverloadArgumentParameterType(parameter), substitution, associatedTypeResolver);
-            if (ContainsGenericParameter(parameterType, genericParameters)
+            var parameterType = SubstituteType(
+                GetOverloadArgumentParameterType(parameter),
+                substitution,
+                associatedTypeResolver,
+                valueSubstitution);
+            if ((ContainsGenericParameter(parameterType, genericParameters)
+                    || ContainsComptimeValueParameter(parameterType, comptimeGenericParameterNames))
                 && !TryInferTypeArguments(
                     parameterType,
                     argumentTypes[index],
                     genericParameters,
-                    substitution))
+                    substitution,
+                    comptimeGenericParameters,
+                    valueSubstitution))
             {
                 return false;
             }
         }
 
-        if (candidate.GenericParams.Any(parameter => !substitution.ContainsKey(parameter)))
+        if (candidate.GenericParams.Any(parameter => !substitution.ContainsKey(parameter))
+            || candidate.ComptimeGenericParams.Any(parameter => !valueSubstitution.ContainsKey(parameter.Name)))
         {
             return false;
         }
 
+        var valueArguments = candidate.ComptimeGenericParams
+            .Select(parameter => new ComptimeValueArgumentSymbol(
+                parameter.Name,
+                valueSubstitution[parameter.Name],
+                parameter.Type))
+            .ToArray();
         instantiated = candidate with
         {
-            ReturnType = SubstituteType(candidate.ReturnType, substitution, associatedTypeResolver),
+            ReturnType = SubstituteType(candidate.ReturnType, substitution, associatedTypeResolver, valueSubstitution),
             Parameters = candidate.Parameters
                 .Select(parameter => new TypedParameterSymbol(
                     parameter.Name,
-                    SubstituteType(parameter.Type, substitution, associatedTypeResolver),
+                    SubstituteType(parameter.Type, substitution, associatedTypeResolver, valueSubstitution),
                     parameter.IsDisjoint,
                     parameter.IsConst,
                     parameter.RawPointerElementCountExpression))
                 .ToArray(),
             GenericParameterNames = null,
+            ComptimeGenericParameterNames = null,
             TemplateName = candidate.TemplateName ?? candidate.Name,
-            TypeArguments = candidate.GenericParams.Select(parameter => substitution[parameter]).ToArray()
+            TypeArguments = candidate.GenericParams.Select(parameter => substitution[parameter]).ToArray(),
+            ComptimeValueArguments = valueArguments
         };
         return true;
     }
@@ -666,7 +763,9 @@ internal static class FunctionOverloadFacts
         StarkTypeSymbol parameterType,
         StarkTypeSymbol argumentType,
         ISet<string> genericParameters,
-        IDictionary<string, StarkTypeSymbol> substitution)
+        IDictionary<string, StarkTypeSymbol> substitution,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol> comptimeGenericParameters,
+        IDictionary<string, BigInteger> valueSubstitution)
     {
         var strippedParameterType = StripQualifiers(parameterType);
         var strippedArgumentType = StripQualifiers(argumentType);
@@ -684,7 +783,9 @@ internal static class FunctionOverloadFacts
                 strippedParameterType.ElementType,
                 strippedArgumentType.ElementType,
                 genericParameters,
-                substitution);
+                substitution,
+                comptimeGenericParameters,
+                valueSubstitution);
         }
 
         if (strippedParameterType.Kind != strippedArgumentType.Kind)
@@ -706,20 +807,44 @@ internal static class FunctionOverloadFacts
                         StarkTypeSymbols.GetGenericBaseName(strippedParameterType.NamedType),
                         StarkTypeSymbols.GetGenericBaseName(strippedArgumentType.NamedType),
                         StringComparison.Ordinal)
-                    || strippedParameterType.TypeArguments is null
-                    || strippedArgumentType.TypeArguments is null
-                    || strippedParameterType.TypeArguments.Count != strippedArgumentType.TypeArguments.Count)
+                    || (strippedParameterType.TypeArguments ?? []).Count != (strippedArgumentType.TypeArguments ?? []).Count
+                    || (strippedParameterType.ComptimeValueArguments ?? []).Count != (strippedArgumentType.ComptimeValueArguments ?? []).Count)
                 {
                     return false;
                 }
 
-                for (var index = 0; index < strippedParameterType.TypeArguments.Count; index++)
+                var parameterTypeArguments = strippedParameterType.TypeArguments ?? [];
+                var argumentTypeArguments = strippedArgumentType.TypeArguments ?? [];
+                for (var index = 0; index < parameterTypeArguments.Count; index++)
                 {
                     if (!TryInferTypeArguments(
-                            strippedParameterType.TypeArguments[index],
-                            strippedArgumentType.TypeArguments[index],
+                            parameterTypeArguments[index],
+                            argumentTypeArguments[index],
                             genericParameters,
-                            substitution))
+                            substitution,
+                            comptimeGenericParameters,
+                            valueSubstitution))
+                    {
+                        return false;
+                    }
+                }
+
+                var parameterValueArguments = strippedParameterType.ComptimeValueArguments ?? [];
+                var argumentValueArguments = strippedArgumentType.ComptimeValueArguments ?? [];
+                for (var index = 0; index < parameterValueArguments.Count; index++)
+                {
+                    var parameterValue = parameterValueArguments[index];
+                    var argumentValue = argumentValueArguments[index];
+                    if (!string.Equals(parameterValue.ParameterName, argumentValue.ParameterName, StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+
+                    if (!TryBindComptimeValueParameter(
+                            parameterValue,
+                            argumentValue.IntegerValue,
+                            comptimeGenericParameters,
+                            valueSubstitution))
                     {
                         return false;
                     }
@@ -733,14 +858,20 @@ internal static class FunctionOverloadFacts
 
         if (strippedParameterType.Kind == StarkTypeKind.FixedArray)
         {
-            return strippedParameterType.FixedLength == strippedArgumentType.FixedLength
+            return TryInferFixedArrayLength(
+                    strippedParameterType,
+                    strippedArgumentType,
+                    comptimeGenericParameters,
+                    valueSubstitution)
                 && strippedParameterType.ElementType is not null
                 && strippedArgumentType.ElementType is not null
                 && TryInferTypeArguments(
                     strippedParameterType.ElementType,
                     strippedArgumentType.ElementType,
                     genericParameters,
-                    substitution);
+                    substitution,
+                    comptimeGenericParameters,
+                    valueSubstitution);
         }
 
         if (strippedParameterType.Kind == StarkTypeKind.Slice)
@@ -751,7 +882,9 @@ internal static class FunctionOverloadFacts
                     strippedParameterType.ElementType,
                     strippedArgumentType.ElementType,
                     genericParameters,
-                    substitution);
+                    substitution,
+                    comptimeGenericParameters,
+                    valueSubstitution);
         }
 
         if (strippedParameterType.Kind == StarkTypeKind.RawPointer)
@@ -764,7 +897,9 @@ internal static class FunctionOverloadFacts
                             strippedParameterType.ElementType,
                             strippedArgumentType.ElementType,
                             genericParameters,
-                            substitution)));
+                            substitution,
+                            comptimeGenericParameters,
+                            valueSubstitution)));
         }
 
         if (strippedParameterType.Kind == StarkTypeKind.FunctionPointer)
@@ -780,14 +915,22 @@ internal static class FunctionOverloadFacts
                     strippedParameterType.FunctionPointerReturnType,
                     strippedArgumentType.FunctionPointerReturnType,
                     genericParameters,
-                    substitution))
+                    substitution,
+                    comptimeGenericParameters,
+                    valueSubstitution))
             {
                 return false;
             }
 
             for (var index = 0; index < parameterTypes.Count; index++)
             {
-                if (!TryInferTypeArguments(parameterTypes[index], argumentParameterTypes[index], genericParameters, substitution))
+                if (!TryInferTypeArguments(
+                        parameterTypes[index],
+                        argumentParameterTypes[index],
+                        genericParameters,
+                        substitution,
+                        comptimeGenericParameters,
+                        valueSubstitution))
                 {
                     return false;
                 }
@@ -811,14 +954,22 @@ internal static class FunctionOverloadFacts
                     strippedParameterType.ClosureReturnType,
                     strippedArgumentType.ClosureReturnType,
                     genericParameters,
-                    substitution))
+                    substitution,
+                    comptimeGenericParameters,
+                    valueSubstitution))
             {
                 return false;
             }
 
             for (var index = 0; index < parameterTypes.Count; index++)
             {
-                if (!TryInferTypeArguments(parameterTypes[index], argumentParameterTypes[index], genericParameters, substitution))
+                if (!TryInferTypeArguments(
+                        parameterTypes[index],
+                        argumentParameterTypes[index],
+                        genericParameters,
+                        substitution,
+                        comptimeGenericParameters,
+                        valueSubstitution))
                 {
                     return false;
                 }
@@ -828,6 +979,69 @@ internal static class FunctionOverloadFacts
         }
 
         return strippedParameterType == strippedArgumentType;
+    }
+
+    private static bool TryInferFixedArrayLength(
+        StarkTypeSymbol parameterType,
+        StarkTypeSymbol argumentType,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol> comptimeGenericParameters,
+        IDictionary<string, BigInteger> valueSubstitution)
+    {
+        if (!string.IsNullOrWhiteSpace(parameterType.FixedLengthParameterName))
+        {
+            if (argumentType.FixedLength is not int argumentLength
+                || !comptimeGenericParameters.TryGetValue(parameterType.FixedLengthParameterName, out var parameter))
+            {
+                return false;
+            }
+
+            return TryBindComptimeValueParameter(parameter, argumentLength, valueSubstitution);
+        }
+
+        return parameterType.FixedLength == argumentType.FixedLength;
+    }
+
+    private static bool TryBindComptimeValueParameter(
+        ComptimeValueArgumentSymbol parameterValue,
+        BigInteger inferredValue,
+        IReadOnlyDictionary<string, ComptimeGenericParameterSymbol> comptimeGenericParameters,
+        IDictionary<string, BigInteger> valueSubstitution)
+    {
+        var parameterName = parameterValue.IsSymbolic
+            ? parameterValue.SourceName
+            : parameterValue.ParameterName;
+        if (!comptimeGenericParameters.TryGetValue(parameterName, out var parameter))
+        {
+            return parameterValue.IntegerValue == inferredValue;
+        }
+
+        if (!parameterValue.IsSymbolic
+            && parameterValue.IntegerValue != inferredValue)
+        {
+            return false;
+        }
+
+        return TryBindComptimeValueParameter(parameter, inferredValue, valueSubstitution);
+    }
+
+    private static bool TryBindComptimeValueParameter(
+        ComptimeGenericParameterSymbol parameter,
+        BigInteger inferredValue,
+        IDictionary<string, BigInteger> valueSubstitution)
+    {
+        if (parameter.Type.Kind != StarkTypeKind.Integer
+            || !StarkTypeSymbols.IntegerValueFitsEffectiveRange(inferredValue, parameter.Type))
+        {
+            return false;
+        }
+
+        if (valueSubstitution.TryGetValue(parameter.Name, out var existing))
+        {
+            return existing == inferredValue;
+        }
+
+        valueSubstitution[parameter.Name] = inferredValue;
+        return true;
     }
 
     private static bool TryGetDirectGenericParameterName(
@@ -893,6 +1107,59 @@ internal static class FunctionOverloadFacts
             && ContainsGenericParameter(strippedType.ElementType, genericParameters);
     }
 
+    public static bool ContainsComptimeValueParameter(StarkTypeSymbol type, IEnumerable<string> parameterNames)
+    {
+        var parameterSet = parameterNames as ISet<string> ?? parameterNames.ToHashSet(StringComparer.Ordinal);
+        return ContainsComptimeValueParameterCore(type, parameterSet);
+    }
+
+    private static bool ContainsComptimeValueParameterCore(StarkTypeSymbol type, ISet<string> parameterNames)
+    {
+        var strippedType = StripQualifiers(type);
+        if (!string.IsNullOrWhiteSpace(strippedType.FixedLengthParameterName)
+            && parameterNames.Contains(strippedType.FixedLengthParameterName))
+        {
+            return true;
+        }
+
+        if (strippedType.TypeArguments is { Count: > 0 }
+            && strippedType.TypeArguments.Any(argument => ContainsComptimeValueParameterCore(argument, parameterNames)))
+        {
+            return true;
+        }
+
+        if (strippedType.ComptimeValueArguments is { Count: > 0 }
+            && strippedType.ComptimeValueArguments.Any(argument => argument.IsSymbolic && parameterNames.Contains(argument.SourceName)))
+        {
+            return true;
+        }
+
+        if (strippedType.Kind == StarkTypeKind.FunctionPointer)
+        {
+            return strippedType.FunctionPointerReturnType is not null
+                   && ContainsComptimeValueParameterCore(strippedType.FunctionPointerReturnType, parameterNames)
+                   || strippedType.FunctionPointerParameterTypes is { Count: > 0 }
+                   && strippedType.FunctionPointerParameterTypes.Any(parameter => ContainsComptimeValueParameterCore(parameter, parameterNames));
+        }
+
+        if (strippedType.Kind == StarkTypeKind.Closure)
+        {
+            return strippedType.ClosureReturnType is not null
+                   && ContainsComptimeValueParameterCore(strippedType.ClosureReturnType, parameterNames)
+                   || strippedType.ClosureParameterTypes is { Count: > 0 }
+                   && strippedType.ClosureParameterTypes.Any(parameter => ContainsComptimeValueParameterCore(parameter, parameterNames));
+        }
+
+        if (strippedType.Kind == StarkTypeKind.AssociatedType)
+        {
+            return strippedType.AssociatedTypeOwner is not null
+                && ContainsComptimeValueParameterCore(strippedType.AssociatedTypeOwner, parameterNames);
+        }
+
+        return strippedType.ElementType is not null
+            && ContainsComptimeValueParameterCore(strippedType.ElementType, parameterNames);
+    }
+
     private static bool TryBindGenericParameter(
         string parameterName,
         StarkTypeSymbol inferredType,
@@ -910,7 +1177,8 @@ internal static class FunctionOverloadFacts
     public static StarkTypeSymbol SubstituteType(
         StarkTypeSymbol type,
         IReadOnlyDictionary<string, StarkTypeSymbol> substitution,
-        Func<StarkTypeSymbol, string, StarkTypeSymbol?>? associatedTypeResolver = null)
+        Func<StarkTypeSymbol, string, StarkTypeSymbol?>? associatedTypeResolver = null,
+        IReadOnlyDictionary<string, BigInteger>? comptimeValueSubstitution = null)
     {
         var coreType = StripTopLevelQualifiers(type);
         StarkTypeSymbol substitutedCore;
@@ -921,14 +1189,16 @@ internal static class FunctionOverloadFacts
             {
                 substitutedCore = StripTopLevelQualifiers(substituted);
             }
-            else if (StarkTypeSymbols.IsGenericInstantiation(coreType) && coreType.TypeArguments is not null)
+            else if (StarkTypeSymbols.IsGenericInstantiation(coreType))
             {
-                var substitutedArguments = coreType.TypeArguments
-                    .Select(argument => SubstituteType(argument, substitution, associatedTypeResolver))
+                var substitutedArguments = (coreType.TypeArguments ?? [])
+                    .Select(argument => SubstituteType(argument, substitution, associatedTypeResolver, comptimeValueSubstitution))
                     .ToArray();
+                var substitutedValues = SubstituteComptimeValues(coreType.ComptimeValueArguments, comptimeValueSubstitution);
                 substitutedCore = StarkTypeSymbols.GenericInstantiation(
                     StarkTypeSymbols.GetGenericBaseName(name),
-                    substitutedArguments);
+                    substitutedArguments,
+                    substitutedValues);
             }
             else
             {
@@ -939,7 +1209,7 @@ internal static class FunctionOverloadFacts
             && coreType.AssociatedTypeOwner is not null
             && coreType.AssociatedTypeName is not null)
         {
-            var substitutedOwner = SubstituteType(coreType.AssociatedTypeOwner, substitution, associatedTypeResolver);
+            var substitutedOwner = SubstituteType(coreType.AssociatedTypeOwner, substitution, associatedTypeResolver, comptimeValueSubstitution);
             var resolvedAssociated = associatedTypeResolver?.Invoke(substitutedOwner, coreType.AssociatedTypeName);
             substitutedCore = resolvedAssociated is not null
                 ? StripTopLevelQualifiers(resolvedAssociated)
@@ -947,10 +1217,22 @@ internal static class FunctionOverloadFacts
         }
         else if (coreType.ElementType is not null)
         {
-            var substitutedElement = SubstituteType(coreType.ElementType, substitution, associatedTypeResolver);
+            var substitutedElement = SubstituteType(coreType.ElementType, substitution, associatedTypeResolver, comptimeValueSubstitution);
+            var fixedLength = coreType.FixedLength;
+            var fixedLengthParameterName = coreType.FixedLengthParameterName;
+            if (fixedLengthParameterName is not null
+                && comptimeValueSubstitution is not null
+                && comptimeValueSubstitution.TryGetValue(fixedLengthParameterName, out var substitutedLength)
+                && substitutedLength >= 0
+                && substitutedLength <= int.MaxValue)
+            {
+                fixedLength = (int)substitutedLength;
+                fixedLengthParameterName = null;
+            }
+
             substitutedCore = coreType.Kind switch
             {
-                StarkTypeKind.FixedArray => StarkTypeSymbols.FixedArray(substitutedElement, coreType.FixedLength),
+                StarkTypeKind.FixedArray => StarkTypeSymbols.FixedArray(substitutedElement, fixedLength, fixedLengthParameterName),
                 StarkTypeKind.Slice => StarkTypeSymbols.Slice(substitutedElement),
                 StarkTypeKind.RawPointer => StarkTypeSymbols.RawPointer(substitutedElement, coreType.IsMutablePointer),
                 StarkTypeKind.Dynamic => StarkTypeSymbols.Dynamic(substitutedElement),
@@ -964,8 +1246,8 @@ internal static class FunctionOverloadFacts
         {
             substitutedCore = StarkTypeSymbols.FunctionPointer(
                 functionKind,
-                SubstituteType(returnType, substitution, associatedTypeResolver),
-                parameterTypes.Select(parameter => SubstituteType(parameter, substitution, associatedTypeResolver)).ToArray(),
+                SubstituteType(returnType, substitution, associatedTypeResolver, comptimeValueSubstitution),
+                parameterTypes.Select(parameter => SubstituteType(parameter, substitution, associatedTypeResolver, comptimeValueSubstitution)).ToArray(),
                 coreType.FunctionPointerDisjointParameterGroups,
                 coreType.FunctionPointerOverlapParameterGroups,
                 coreType.FunctionPointerSameParameterGroups,
@@ -981,8 +1263,8 @@ internal static class FunctionOverloadFacts
                 coreType.ClosureStorageKind,
                 coreType.ClosureCallCapability,
                 closureFunctionKind,
-                SubstituteType(closureReturnType, substitution, associatedTypeResolver),
-                closureParameterTypes.Select(parameter => SubstituteType(parameter, substitution, associatedTypeResolver)).ToArray(),
+                SubstituteType(closureReturnType, substitution, associatedTypeResolver, comptimeValueSubstitution),
+                closureParameterTypes.Select(parameter => SubstituteType(parameter, substitution, associatedTypeResolver, comptimeValueSubstitution)).ToArray(),
                 coreType.ClosureDisjointParameterGroups,
                 coreType.ClosureOverlapParameterGroups,
                 coreType.ClosureSameParameterGroups,
@@ -999,6 +1281,44 @@ internal static class FunctionOverloadFacts
             accessKind: type.AccessKind,
             initializationKind: type.InitializationKind,
             isMutableView: type.IsMutableView);
+    }
+
+    public static IReadOnlyList<ComptimeValueArgumentSymbol>? SubstituteComptimeValues(
+        IReadOnlyList<ComptimeValueArgumentSymbol>? values,
+        IReadOnlyDictionary<string, BigInteger>? comptimeValueSubstitution)
+    {
+        if (values is not { Count: > 0 })
+        {
+            return values;
+        }
+
+        if (comptimeValueSubstitution is not { Count: > 0 })
+        {
+            return values;
+        }
+
+        var changed = false;
+        var substituted = new ComptimeValueArgumentSymbol[values.Count];
+        for (var index = 0; index < values.Count; index++)
+        {
+            var value = values[index];
+            if (comptimeValueSubstitution.TryGetValue(value.SourceName, out var concreteValue))
+            {
+                substituted[index] = value with
+                {
+                    IntegerValue = concreteValue,
+                    IsSymbolic = false,
+                    SymbolicSourceName = null
+                };
+                changed = true;
+            }
+            else
+            {
+                substituted[index] = value;
+            }
+        }
+
+        return changed ? substituted : values;
     }
 
     private static StarkTypeSymbol StripTopLevelQualifiers(StarkTypeSymbol type)
@@ -1018,15 +1338,17 @@ internal static class FunctionOverloadFacts
             StarkTypeKind.RawPointer when type.ElementType is not null
                 => StarkTypeSymbols.RawPointer(StripQualifiers(type.ElementType), type.IsMutablePointer),
             StarkTypeKind.FixedArray when type.ElementType is not null
-                => StarkTypeSymbols.FixedArray(StripQualifiers(type.ElementType), type.FixedLength),
+                => StarkTypeSymbols.FixedArray(StripQualifiers(type.ElementType), type.FixedLength, type.FixedLengthParameterName),
             StarkTypeKind.Slice when type.ElementType is not null
                 => StarkTypeSymbols.Slice(StripQualifiers(type.ElementType)),
             StarkTypeKind.Dynamic when type.ElementType is not null
                 => StarkTypeSymbols.Dynamic(StripQualifiers(type.ElementType)),
-            StarkTypeKind.Named when type.TypeArguments is { Count: > 0 } && type.NamedType is not null
+            StarkTypeKind.Named when (type.TypeArguments is { Count: > 0 } || type.ComptimeValueArguments is { Count: > 0 })
+                                     && type.NamedType is not null
                 => StarkTypeSymbols.GenericInstantiation(
                     StarkTypeSymbols.GetGenericBaseName(type.NamedType),
-                    type.TypeArguments.Select(StripQualifiers).ToArray()),
+                    (type.TypeArguments ?? []).Select(StripQualifiers).ToArray(),
+                    type.ComptimeValueArguments),
             StarkTypeKind.Closure when type.ClosureFunctionKind is { } closureFunctionKind
                                        && type.ClosureReturnType is { } closureReturnType
                                        && type.ClosureParameterTypes is { } closureParameterTypes

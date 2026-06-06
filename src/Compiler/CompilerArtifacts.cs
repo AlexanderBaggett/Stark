@@ -589,6 +589,25 @@ public sealed record ParameterModel(
     bool IsConst = false,
     string? RawPointerElementCountExpression = null);
 
+public sealed record ComptimeGenericParameterSymbol(
+    string Name,
+    StarkTypeSymbol Type);
+
+public sealed record ComptimeValueArgumentSymbol(
+    string ParameterName,
+    BigInteger IntegerValue,
+    StarkTypeSymbol Type,
+    bool IsSymbolic = false,
+    string? SymbolicSourceName = null)
+{
+    public string SourceName => SymbolicSourceName ?? ParameterName;
+    public string DisplayName => IsSymbolic
+        ? string.Equals(ParameterName, SourceName, StringComparison.Ordinal)
+            ? ParameterName
+            : $"{ParameterName}={SourceName}"
+        : $"{ParameterName}={IntegerValue}";
+}
+
 public sealed record ParameterMemoryRegion(
     string ParameterName,
     string? StartExpression = null,
@@ -631,6 +650,7 @@ public sealed record FunctionDeclarationModel(
     bool HasBody,
     AsmFunctionModel? Asm = null,
     IReadOnlyList<string>? GenericParameterNames = null,
+    IReadOnlyList<ComptimeGenericParameterSymbol>? ComptimeGenericParameterNames = null,
     string? PublishedOverloadKey = null,
     bool IsStatic = false,
     IReadOnlyList<ModuleAttributeModel>? Attributes = null,
@@ -640,7 +660,8 @@ public sealed record FunctionDeclarationModel(
     IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null)
 {
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
-    public bool IsGeneric => GenericParameterNames is { Count: > 0 };
+    public IReadOnlyList<ComptimeGenericParameterSymbol> ComptimeGenericParams => ComptimeGenericParameterNames ?? [];
+    public bool IsGeneric => GenericParameterNames is { Count: > 0 } || ComptimeGenericParameterNames is { Count: > 0 };
     public IReadOnlyList<ParameterDisjointGroup> DisjointGroups => DisjointParameterGroups ?? [];
     public IReadOnlyList<ParameterOverlapGroup> OverlapGroups => OverlapParameterGroups ?? [];
     public IReadOnlyList<ParameterSameGroup> SameGroups => SameParameterGroups ?? [];
@@ -654,7 +675,11 @@ public sealed record DestructorDeclarationModel(
 public sealed record TypeAliasDeclarationModel(
     string Name,
     string AliasedType,
-    IReadOnlyList<string> GenericParameters);
+    IReadOnlyList<string> GenericParameters,
+    IReadOnlyList<ComptimeGenericParameterSymbol>? ComptimeGenericParameterNames = null)
+{
+    public IReadOnlyList<ComptimeGenericParameterSymbol> ComptimeGenericParams => ComptimeGenericParameterNames ?? [];
+}
 
 public sealed record TypeAliasSymbol(
     string Name,
@@ -662,10 +687,12 @@ public sealed record TypeAliasSymbol(
     StarkVisibility Visibility,
     StarkTypeSymbol TargetType,
     IReadOnlyList<string>? GenericParameterNames = null,
+    IReadOnlyList<ComptimeGenericParameterSymbol>? ComptimeGenericParameterNames = null,
     bool IsExternal = false)
 {
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
-    public bool IsGeneric => GenericParameterNames is { Count: > 0 };
+    public IReadOnlyList<ComptimeGenericParameterSymbol> ComptimeGenericParams => ComptimeGenericParameterNames ?? [];
+    public bool IsGeneric => GenericParameterNames is { Count: > 0 } || ComptimeGenericParameterNames is { Count: > 0 };
 }
 
 public sealed record AssociatedTypeSymbol(
@@ -944,6 +971,7 @@ public enum ImportedTemplateTypedBodyStatementKind
     Assignment,
     Switch,
     For,
+    ForTraversal,
     While,
     If,
     Break,
@@ -958,7 +986,8 @@ public enum ImportedTemplateTypedSwitchCaseKind
     MatchAll,
     Default,
     EnumPattern,
-    AggregatePattern
+    AggregatePattern,
+    ListPattern
 }
 
 public enum ImportedTemplateTypedSwitchFieldPatternKind
@@ -968,7 +997,8 @@ public enum ImportedTemplateTypedSwitchFieldPatternKind
     Literal,
     Range,
     EnumPattern,
-    AggregatePattern
+    AggregatePattern,
+    ListPattern
 }
 
 public enum ImportedTemplateTypedBodyExpressionKind
@@ -1069,7 +1099,13 @@ public sealed record ImportedTemplateTypedBodyStatementSummary(
     IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? ElseStatements = null,
     ImportedTemplateTypedBodyExpressionSummary? TargetExpression = null,
     IReadOnlyList<string>? LoopContracts = null,
-    ConstProvenanceKind ConstProvenance = ConstProvenanceKind.None)
+    ConstProvenanceKind ConstProvenance = ConstProvenanceKind.None,
+    ImportedTemplateTypedBodyExpressionSummary? TraversalSourceExpression = null,
+    string? TraversalIndexName = null,
+    string? TraversalIndexStorageClass = null,
+    StarkTypeSymbol? TraversalIndexType = null,
+    string? TraversalElementName = null,
+    StarkTypeSymbol? TraversalElementType = null)
 {
     public IReadOnlyList<ImportedTemplateTypedBodyStatementSummary> Initializer =>
         InitializerStatements ?? [];
@@ -1098,7 +1134,8 @@ public sealed record ImportedTemplateTypedBodySummary(
 
 public sealed record ImportedDeferredFunctionInstantiationSummary(
     string CalleeTemplateName,
-    IReadOnlyList<StarkTypeSymbol> TypeArguments);
+    IReadOnlyList<StarkTypeSymbol> TypeArguments,
+    IReadOnlyList<ComptimeValueArgumentSymbol>? ComptimeValueArguments = null);
 
 public sealed record ImportedDeferredTypeInstantiationSummary(
     StarkTypeSymbol Type);
@@ -1165,7 +1202,17 @@ public sealed record ImportedTemplateEnumPatternMemberSummary(
 
 public sealed record ImportedTemplateAggregatePatternSummary(
     int Ordinal,
-    StarkTypeSymbol Type);
+    StarkTypeSymbol Type,
+    IReadOnlyList<ImportedTemplateAggregatePatternMemberSummary>? MemberSummaries = null)
+{
+    public IReadOnlyList<ImportedTemplateAggregatePatternMemberSummary> Members =>
+        MemberSummaries ?? [];
+}
+
+public sealed record ImportedTemplateAggregatePatternMemberSummary(
+    string FieldName,
+    int FieldIndex,
+    StarkTypeSymbol FieldType);
 
 public sealed record ImportedTemplateDirectCallSummary(
     int Ordinal,
@@ -1403,6 +1450,7 @@ public sealed record StarkTypeSymbol(
     string? NamedType = null,
     StarkTypeSymbol? ElementType = null,
     int? FixedLength = null,
+    string? FixedLengthParameterName = null,
     StarkFunctionKind? FunctionPointerKind = null,
     StarkFfiAbi? FunctionPointerAbi = null,
     StarkTypeSymbol? FunctionPointerReturnType = null,
@@ -1429,6 +1477,7 @@ public sealed record StarkTypeSymbol(
     StarkInitializationKind InitializationKind = StarkInitializationKind.None,
     bool IsMutableView = false,
     IReadOnlyList<StarkTypeSymbol>? TypeArguments = null,
+    IReadOnlyList<ComptimeValueArgumentSymbol>? ComptimeValueArguments = null,
     string? DynTraitName = null,
     StarkDynTraitStorageKind DynTraitStorageKind = StarkDynTraitStorageKind.View,
     StarkTypeSymbol? AssociatedTypeOwner = null,
@@ -1544,12 +1593,17 @@ public static class StarkTypeSymbols
             ElementType: elementType,
             IsMutablePointer: isMutable);
 
-    public static StarkTypeSymbol FixedArray(StarkTypeSymbol elementType, int? fixedLength) =>
+    public static StarkTypeSymbol FixedArray(StarkTypeSymbol elementType, int? fixedLength, string? fixedLengthParameterName = null) =>
         new(
             StarkTypeKind.FixedArray,
-            fixedLength is null ? $"{elementType.DisplayName}[?]" : $"{elementType.DisplayName}[{fixedLength}]",
+            fixedLength is null
+                ? !string.IsNullOrWhiteSpace(fixedLengthParameterName)
+                    ? $"{elementType.DisplayName}[{fixedLengthParameterName}]"
+                    : $"{elementType.DisplayName}[?]"
+                : $"{elementType.DisplayName}[{fixedLength}]",
             ElementType: elementType,
-            FixedLength: fixedLength);
+            FixedLength: fixedLength,
+            FixedLengthParameterName: fixedLengthParameterName);
 
     public static StarkTypeSymbol Slice(StarkTypeSymbol elementType) =>
         new(StarkTypeKind.Slice, $"{elementType.DisplayName}[]", ElementType: elementType);
@@ -1796,11 +1850,29 @@ public static class StarkTypeSymbols
             AssociatedTypeName: associatedTypeName);
     }
 
-    public static StarkTypeSymbol GenericInstantiation(string templateName, IReadOnlyList<StarkTypeSymbol> typeArgs)
+    public static StarkTypeSymbol GenericInstantiation(
+        string templateName,
+        IReadOnlyList<StarkTypeSymbol>? typeArgs,
+        IReadOnlyList<ComptimeValueArgumentSymbol>? valueArgs = null)
     {
-        var displayName = $"{templateName}<{string.Join(", ", typeArgs.Select(static t => t.DisplayName))}>";
-        var key = $"{templateName}<{string.Join(",", typeArgs.Select(static t => t.NamedType ?? t.DisplayName))}>";
-        return new StarkTypeSymbol(StarkTypeKind.Named, displayName, NamedType: key, TypeArguments: typeArgs);
+        typeArgs ??= [];
+        valueArgs ??= [];
+        var displayParts = typeArgs
+            .Select(static t => t.DisplayName)
+            .Concat(valueArgs.Select(static value => value.IsSymbolic ? value.SourceName : value.IntegerValue.ToString()))
+            .ToArray();
+        var keyParts = typeArgs
+            .Select(static t => t.NamedType ?? t.DisplayName)
+            .Concat(valueArgs.Select(static value => value.IsSymbolic ? value.DisplayName : $"{value.ParameterName}={value.IntegerValue}"))
+            .ToArray();
+        var displayName = $"{templateName}<{string.Join(", ", displayParts)}>";
+        var key = $"{templateName}<{string.Join(",", keyParts)}>";
+        return new StarkTypeSymbol(
+            StarkTypeKind.Named,
+            displayName,
+            NamedType: key,
+            TypeArguments: typeArgs.Count == 0 ? null : typeArgs.ToArray(),
+            ComptimeValueArguments: valueArgs.Count == 0 ? null : valueArgs.ToArray());
     }
 
     public static string GetGenericBaseName(string key)
@@ -1833,7 +1905,8 @@ public static class StarkTypeSymbols
     }
 
     public static bool IsGenericInstantiation(StarkTypeSymbol type)
-        => type.Kind == StarkTypeKind.Named && type.TypeArguments is { Count: > 0 };
+        => type.Kind == StarkTypeKind.Named
+            && (type.TypeArguments is { Count: > 0 } || type.ComptimeValueArguments is { Count: > 0 });
 
     public static bool TryGetBuiltinNamedType(string name, out NamedTypeSymbol namedType)
     {
@@ -2038,7 +2111,7 @@ public static class StarkTypeSymbols
             StarkTypeKind.Integer => Integer(type.BitWidth ?? 32, type.RangeMin, type.RangeMax, type.IsUnsigned),
             StarkTypeKind.Float => Float(type.BitWidth ?? 32),
             StarkTypeKind.RawPointer when type.ElementType is not null => RawPointer(type.ElementType, type.IsMutablePointer),
-            StarkTypeKind.FixedArray when type.ElementType is not null => FixedArray(type.ElementType, type.FixedLength),
+            StarkTypeKind.FixedArray when type.ElementType is not null => FixedArray(type.ElementType, type.FixedLength, type.FixedLengthParameterName),
             StarkTypeKind.Slice when type.ElementType is not null => Slice(type.ElementType),
             StarkTypeKind.Dynamic when type.ElementType is not null => Dynamic(type.ElementType),
             StarkTypeKind.FunctionPointer when type.FunctionPointerKind is { } functionKind
@@ -2068,8 +2141,9 @@ public static class StarkTypeSymbols
                     type.ClosureParameterRawPointerElementCountExpressions),
             StarkTypeKind.Named when type.NamedType == OwnedAsciiName => OwnedAscii,
             StarkTypeKind.Named when type.NamedType == OwnedUnicodeName => OwnedUnicode,
-            StarkTypeKind.Named when type.TypeArguments is { Count: > 0 } && type.NamedType is not null
-                => GenericInstantiation(GetGenericBaseName(type.NamedType), type.TypeArguments),
+            StarkTypeKind.Named when (type.TypeArguments is { Count: > 0 } || type.ComptimeValueArguments is { Count: > 0 })
+                                     && type.NamedType is not null
+                => GenericInstantiation(GetGenericBaseName(type.NamedType), type.TypeArguments, type.ComptimeValueArguments),
             StarkTypeKind.Named when type.NamedType is not null => Named(type.NamedType),
             StarkTypeKind.AssociatedType when type.AssociatedTypeOwner is not null
                                                && type.AssociatedTypeName is not null
@@ -2161,6 +2235,7 @@ public sealed record NamedTypeSymbol(
     IReadOnlyList<FieldSymbol> OrderedFields,
     IReadOnlyList<EnumVariantSymbol>? EnumVariants = null,
     IReadOnlyList<string>? GenericParameterNames = null,
+    IReadOnlyList<ComptimeGenericParameterSymbol>? ComptimeGenericParameterNames = null,
     IReadOnlyList<string>? ImplementedTraitNames = null,
     IReadOnlyDictionary<string, AssociatedTypeSymbol>? AssociatedTypeMembers = null,
     bool IsDynTrait = false,
@@ -2188,7 +2263,8 @@ public sealed record NamedTypeSymbol(
     }
 
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
-    public bool IsGeneric => GenericParameterNames is { Count: > 0 };
+    public IReadOnlyList<ComptimeGenericParameterSymbol> ComptimeGenericParams => ComptimeGenericParameterNames ?? [];
+    public bool IsGeneric => GenericParameterNames is { Count: > 0 } || ComptimeGenericParameterNames is { Count: > 0 };
 
     public IReadOnlyList<string> ImplementedTraits => ImplementedTraitNames ?? [];
 
@@ -2282,8 +2358,10 @@ public sealed record TypedFunctionSignature(
     IReadOnlyList<TypedParameterSymbol> Parameters,
     string? SourceName = null,
     IReadOnlyList<string>? GenericParameterNames = null,
+    IReadOnlyList<ComptimeGenericParameterSymbol>? ComptimeGenericParameterNames = null,
     string? TemplateName = null,
     IReadOnlyList<StarkTypeSymbol>? TypeArguments = null,
+    IReadOnlyList<ComptimeValueArgumentSymbol>? ComptimeValueArguments = null,
     bool IsStatic = false,
     StarkFunctionKind Kind = StarkFunctionKind.Fn,
     bool IsUnsafe = false,
@@ -2298,9 +2376,12 @@ public sealed record TypedFunctionSignature(
 {
     public string DisplaySourceName => SourceName ?? Name;
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
+    public IReadOnlyList<ComptimeGenericParameterSymbol> ComptimeGenericParams => ComptimeGenericParameterNames ?? [];
+    public IReadOnlyList<ComptimeValueArgumentSymbol> ComptimeValues => ComptimeValueArguments ?? [];
     public IReadOnlyList<TypeParameterConstraint> Constraints => TypeParameterConstraints ?? [];
-    public bool IsGeneric => GenericParameterNames is { Count: > 0 };
-    public bool IsGenericInstantiation => TemplateName is not null && TypeArguments is { Count: > 0 };
+    public bool IsGeneric => GenericParameterNames is { Count: > 0 } || ComptimeGenericParameterNames is { Count: > 0 };
+    public bool IsGenericInstantiation => TemplateName is not null
+        && (TypeArguments is { Count: > 0 } || ComptimeValueArguments is { Count: > 0 });
     public IReadOnlyList<ParameterDisjointGroup> DisjointGroups => DisjointParameterGroups ?? [];
     public IReadOnlyList<ParameterOverlapGroup> OverlapGroups => OverlapParameterGroups ?? [];
     public IReadOnlyList<ParameterSameGroup> SameGroups => SameParameterGroups ?? [];
@@ -2857,11 +2938,22 @@ public sealed record EnumPatternMemberTypingRecord(
 public sealed record AggregatePatternTypingRecord(
     StarkTypeSymbol Type,
     SourceLocation Location,
-    string? EnclosingFunctionName = null);
+    string? EnclosingFunctionName = null,
+    IReadOnlyList<AggregatePatternMemberTypingRecord>? MemberRecords = null)
+{
+    public IReadOnlyList<AggregatePatternMemberTypingRecord> Members =>
+        MemberRecords ?? [];
+}
+
+public sealed record AggregatePatternMemberTypingRecord(
+    string FieldName,
+    int FieldIndex,
+    StarkTypeSymbol FieldType);
 
 public sealed record FunctionInstantiationTriggerRecord(
     string FunctionName,
     IReadOnlyList<StarkTypeSymbol> TypeArguments,
+    IReadOnlyList<ComptimeValueArgumentSymbol>? ComptimeValueArguments,
     TypedFunctionSignature Signature,
     SourceLocation Location);
 
@@ -2878,6 +2970,7 @@ public sealed record DeferredTypeInstantiationTriggerRecord(
 public sealed record TypeInstantiationTriggerRecord(
     string TypeName,
     IReadOnlyList<StarkTypeSymbol> TypeArguments,
+    IReadOnlyList<ComptimeValueArgumentSymbol>? ComptimeValueArguments,
     SourceLocation Location);
 
 public sealed record LoweringContractValidationModel(
@@ -3033,6 +3126,8 @@ internal static class TemplateLocalDeclarationFacts
     public const string ConstantKind = "const";
     public const string VariableKind = "var";
     public const string ForVariableKind = "forvar";
+    public const string TraversalIndexKind = "forindex";
+    public const string TraversalElementKind = "forelement";
 
     public static string BuildLookupKey(string kind, int line, int column)
     {
@@ -3074,6 +3169,7 @@ internal static class TemplateFieldAccessFacts
 public sealed record FunctionInstantiationOwnership(
     string TemplateName,
     IReadOnlyList<StarkTypeSymbol> TypeArguments,
+    IReadOnlyList<ComptimeValueArgumentSymbol>? ComptimeValueArguments,
     TypedFunctionSignature Signature,
     string DeclaringModuleName,
     string OwnerModuleName,
@@ -3088,6 +3184,7 @@ public sealed record TypeInstantiationOwnership(
     string TemplateName,
     string InstantiatedTypeName,
     IReadOnlyList<StarkTypeSymbol> TypeArguments,
+    IReadOnlyList<ComptimeValueArgumentSymbol>? ComptimeValueArguments,
     string DeclaringModuleName,
     string OwnerModuleName,
     bool IsDeclaringModuleSourceBacked,
@@ -3105,6 +3202,7 @@ public sealed record InstantiationOwnershipModel(
 public sealed record MonomorphizedFunctionPlan(
     string TemplateName,
     IReadOnlyList<StarkTypeSymbol> TypeArguments,
+    IReadOnlyList<ComptimeValueArgumentSymbol>? ComptimeValueArguments,
     string DeclaringModuleName,
     string OwnerModuleName,
     bool IsDeclaringModuleSourceBacked,
@@ -3119,6 +3217,7 @@ public sealed record MonomorphizedTypePlan(
     string TemplateName,
     string InstantiatedTypeName,
     IReadOnlyList<StarkTypeSymbol> TypeArguments,
+    IReadOnlyList<ComptimeValueArgumentSymbol>? ComptimeValueArguments,
     string DeclaringModuleName,
     string OwnerModuleName,
     bool IsDeclaringModuleSourceBacked,
@@ -3148,6 +3247,7 @@ public enum FunctionSpecializationCodeGenerationMode
 public sealed record FunctionSpecializationPlan(
     string TemplateName,
     IReadOnlyList<StarkTypeSymbol> TypeArguments,
+    IReadOnlyList<ComptimeValueArgumentSymbol>? ComptimeValueArguments,
     string DeclaringModuleName,
     string OwnerModuleName,
     string SymbolName,
@@ -3169,6 +3269,7 @@ public enum FunctionSpecializationCodegenStrategyKind
 public sealed record FunctionSpecializationCodegenStrategy(
     string TemplateName,
     IReadOnlyList<StarkTypeSymbol> TypeArguments,
+    IReadOnlyList<ComptimeValueArgumentSymbol>? ComptimeValueArguments,
     string DeclaringModuleName,
     string OwnerModuleName,
     bool IsDeclaringModuleSourceBacked,
@@ -3885,7 +3986,8 @@ public sealed record HighLevelIrFunction(
     FunctionBodyLoweringKind BodyLoweringKind,
     FunctionEffectProfile Effects,
     string? BodyTemplateName = null,
-    IReadOnlyDictionary<string, StarkTypeSymbol>? GenericTypeSubstitution = null);
+    IReadOnlyDictionary<string, StarkTypeSymbol>? GenericTypeSubstitution = null,
+    IReadOnlyDictionary<string, BigInteger>? GenericValueSubstitution = null);
 
 public sealed record HighLevelIrModule(
     string ModuleName,

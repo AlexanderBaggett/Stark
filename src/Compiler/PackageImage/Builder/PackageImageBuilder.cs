@@ -164,13 +164,19 @@ internal static partial class PackageImageBuilder
                                 qualifiedName,
                                 visibility,
                                 RenderManifestTypeText(aliasType.TargetType, module.SyntaxModel.ModuleName),
-                                GenericParameters: aliasType.GenericParams.Count == 0 ? null : aliasType.GenericParams.ToArray()));
+                                GenericParameters: aliasType.GenericParams.Count == 0 ? null : aliasType.GenericParams.ToArray(),
+                                ComptimeGenericParameters: BuildComptimeGenericParameterManifests(
+                                    aliasType.ComptimeGenericParams,
+                                    module.SyntaxModel.ModuleName)));
                             typedTypeAliases.Add(new StarkPackageTypedTypeAliasManifest(
                                 declaration.Name,
                                 qualifiedName,
                                 visibility,
                                 BuildTypeReference(aliasType.TargetType, module.SyntaxModel.ModuleName),
-                                GenericParameters: aliasType.GenericParams.Count == 0 ? null : aliasType.GenericParams.ToArray()));
+                                GenericParameters: aliasType.GenericParams.Count == 0 ? null : aliasType.GenericParams.ToArray(),
+                                ComptimeGenericParameters: BuildComptimeGenericParameterManifests(
+                                    aliasType.ComptimeGenericParams,
+                                    module.SyntaxModel.ModuleName)));
                         }
 
                         break;

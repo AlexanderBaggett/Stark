@@ -242,6 +242,45 @@ public sealed class ParserSmokeTests
             """
         },
         {
+            "property switch patterns",
+            """
+            module Patterns
+
+            struct Boxed
+            {
+                i32[min max] Value;
+            }
+
+            finite law i32[min max] Run(Boxed value)
+            {
+                switch (value)
+                {
+                    case Boxed { Value: 1 }:
+                        return 1;
+                    case Boxed { Value: var other }:
+                        return other;
+                }
+            }
+            """
+        },
+        {
+            "list switch patterns",
+            """
+            module Patterns
+
+            finite law i32[min max] Run(i32[min max][2] values)
+            {
+                switch (values)
+                {
+                    case [1, var right]:
+                        return right;
+                    case [_, _]:
+                        return 0;
+                }
+            }
+            """
+        },
+        {
             "nested aggregate switch patterns",
             """
             module Patterns
@@ -457,31 +496,6 @@ public sealed class ParserSmokeTests
                 {
                     1, 2, 3
                 };
-            }
-            """
-        },
-        {
-            "property switch patterns are not part of Stark",
-            """
-            module Demo
-
-            struct Boxed
-            {
-                i32[min max] Value;
-            }
-
-            fn i32[min max] Run(Boxed value)
-            {
-                switch (value)
-                {
-                    case Boxed
-                    {
-                        Value: 1
-                    }:
-                        return 1;
-                    default:
-                        return 0;
-                }
             }
             """
         }
