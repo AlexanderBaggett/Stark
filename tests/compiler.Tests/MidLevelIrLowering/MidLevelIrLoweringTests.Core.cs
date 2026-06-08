@@ -364,19 +364,10 @@ public sealed partial class MidLevelIrLoweringTests
 
         Assert.True(result.Succeeded, string.Join(Environment.NewLine, result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
         var function = Assert.Single(GetMir(result).Functions);
-        var statements = function.Blocks.SelectMany(static block => block.Statements).ToArray();
 
         Assert.True(function.SupportsDirectCodeGeneration);
-        Assert.Contains(
-            statements,
-            static statement => statement.Value is MidLevelIrBinaryRValue
-            {
-                Operator: MidLevelIrBinaryOperator.Add,
-                Left: MidLevelIrIntegerConstantOperand { Value: var left },
-                Right: MidLevelIrIntegerConstantOperand { Value: var right }
-            }
-            && left == 4
-            && right == 8);
+        var returned = Assert.IsType<MidLevelIrIntegerConstantOperand>(function.Blocks[function.EntryBlockId].Terminator.Value);
+        Assert.Equal(12, returned.Value);
     }
 
     [Fact]
@@ -706,11 +697,11 @@ public sealed partial class MidLevelIrLoweringTests
                 i32[min max] Value;
             }
 
-            unsafe fn i32[min max] Run()
+            unsafe fn i32[min max] Run(i32[min max] input)
             {
                 stack Box box = new Box()
                 {
-                    Value = 41
+                    Value = input
                 };
                 return box.Value;
             }

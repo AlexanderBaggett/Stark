@@ -271,6 +271,11 @@ internal sealed class LoweringContractValidator
                     continue;
                 }
 
+                if (IsCompileTimeStructuralFactCall(postfix, index))
+                {
+                    continue;
+                }
+
                 ReportMissing(
                     arguments,
                     filePath,
@@ -294,6 +299,15 @@ internal sealed class LoweringContractValidator
                     "Lowering contract is missing typed indexing facts for this index or slice expression. Type checking must record the operation family, arity, source type, and result type before MIR lowering.");
             }
         }
+    }
+
+    private static bool IsCompileTimeStructuralFactCall(StarkParser.PostfixExpressionContext postfix, int argumentPartIndex)
+    {
+        return argumentPartIndex == postfix.postfixPart().Length - 1
+            && postfix.primaryExpression().genericQualifiedName() is { } genericQualifiedName
+            && CompileTimeStructuralFacts.TryGetFactKind(genericQualifiedName.qualifiedName().GetText(), out _)
+            && CompileTimeStructuralFacts.HasValidGenericArgumentShape(genericQualifiedName)
+            && postfix.postfixPart()[argumentPartIndex].argumentList()?.argument().Length == 0;
     }
 
     private void ValidateObjectCreation(

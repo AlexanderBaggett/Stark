@@ -444,6 +444,7 @@ internal sealed class StarkTypeResolver
         IReadOnlyDictionary<string, ComptimeGenericParameterSymbol>? comptimeGenericParameters)
     {
         var signature = type.functionPointerSignature();
+        var isUnsafe = signature.UNSAFE() is not null;
         StarkFfiAbi? ffiAbi = null;
         if (signature.functionPointerAbiModifier() is { } abiModifier)
         {
@@ -506,7 +507,8 @@ internal sealed class StarkTypeResolver
             overlapGroups,
             sameGroups,
             rawPointerElementCountExpressions,
-            ffiAbi);
+            ffiAbi,
+            isUnsafe);
     }
 
     private StarkTypeSymbol ResolveClosureType(
@@ -2255,7 +2257,8 @@ internal sealed class StarkTypeResolver
                 coreType.FunctionPointerOverlapParameterGroups,
                 coreType.FunctionPointerSameParameterGroups,
                 coreType.FunctionPointerParameterRawPointerElementCountExpressions,
-                coreType.FunctionPointerAbi);
+                coreType.FunctionPointerAbi,
+                coreType.FunctionPointerIsUnsafe);
         }
         else if (coreType.Kind == StarkTypeKind.Closure
             && coreType.ClosureFunctionKind is { } closureFunctionKind

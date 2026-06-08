@@ -17,7 +17,11 @@ attributeList
     ;
 
 attribute
-    : qualifiedName (LPAREN (attributeArgument (COMMA attributeArgument)* COMMA?)? RPAREN)?
+    : qualifiedName (LPAREN (attributeArgument (COMMA attributeArgument)* COMMA?)? RPAREN)? attributeCondition?
+    ;
+
+attributeCondition
+    : WHERE lawPredicateContract
     ;
 
 attributeArgument
@@ -118,6 +122,7 @@ parameterMemoryContract
     : disjointContract
     | overlapContract
     | sameContract
+    | lawPredicateContract
     ;
 
 disjointContract
@@ -130,6 +135,10 @@ overlapContract
 
 sameContract
     : SAME LPAREN expressionList RPAREN
+    ;
+
+lawPredicateContract
+    : Identifier LPAREN type_ RPAREN
     ;
 
 typeParameterList
@@ -405,7 +414,7 @@ functionPointerType
     ;
 
 functionPointerSignature
-    : functionPointerAbiModifier? functionKind returnType functionPointerParameterList parameterMemoryContractClause*
+    : UNSAFE? functionPointerAbiModifier? functionKind returnType functionPointerParameterList parameterMemoryContractClause*
     ;
 
 functionPointerAbiModifier
@@ -744,6 +753,7 @@ unaryExpression
     : powerExpression
     | INIT unaryExpression
     | TRY unaryExpression
+    | COMPTIME unaryExpression
     | LPAREN conversionType RPAREN unaryExpression
     | unaryOperator unaryExpression
     ;
@@ -785,6 +795,7 @@ postfixPart
 primaryExpression
     : lambdaExpression
     | literal
+    | COMPTIME block
     | SIZEOF LPAREN type_ RPAREN
     | ALIGNOF LPAREN type_ RPAREN
     | Identifier

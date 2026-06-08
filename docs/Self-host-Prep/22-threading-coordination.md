@@ -190,19 +190,19 @@ These are not part of the locked self-hosting coordination scope:
 
 ## 8. Work Items
 
-- [ ] Add owned/captured thread start support while preserving the existing
-      no-payload `ThreadEntry` constructor.
-- [ ] Enforce `Transferable` for moved thread payload captures.
-- [ ] Add `System.Threading.Synchronized<T>` and `Locked<T>` guard APIs.
-- [ ] Make `Locked<T>` release the lock on `drop` and prevent protected borrows
-      from outliving the guard.
-- [ ] Implement the primitive on top of atomics plus platform wait/wake hooks
-      where useful; avoid busy spinning under normal contention.
-- [ ] Add `System.Threading.Channel<T>` with sender/receiver handles and an MPSC
-      first implementation.
-- [ ] Enforce `Transferable(T)` for channel payloads.
-- [ ] Add tests for captured thread payloads, guard lifetime/release behavior,
-      channel send/receive/close behavior, and contention.
+- [ ] Implement captured thread starts end to end: owned payload capture,
+      compatibility with the existing no-payload `ThreadEntry` constructor, and
+      `Transferable` enforcement for moved payloads.
+- [ ] Implement easy guarded shared state: `System.Threading.Synchronized<T>`,
+      `Locked<T>` guard lifetime, `drop`-based unlock, borrow rules that prevent
+      protected borrows from outliving the guard, and an implementation over
+      atomics plus platform wait/wake hooks where useful.
+- [ ] Implement MPSC channels: `System.Threading.Channel<T>` sender/receiver
+      handles, send/receive/close behavior, contention behavior, and
+      `Transferable(T)` enforcement for channel payloads.
+- [ ] Add tests for captured thread payloads, `Transferable` failures, guard
+      lifetime/release behavior, protected-borrow diagnostics, channel
+      send/receive/close behavior, and contention.
 - [ ] Add build/test-driver integration tasks only after the synchronous driver
       path works.
 

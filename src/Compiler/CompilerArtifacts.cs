@@ -155,6 +155,11 @@ internal static class FunctionKindFacts
         return kind is StarkFunctionKind.Finite or StarkFunctionKind.FiniteLaw;
     }
 
+    public static bool IsCompileTimeCallable(StarkFunctionKind kind)
+    {
+        return IsFinite(kind) || IsLaw(kind);
+    }
+
     public static StarkFunctionKind Combine(bool isLaw, bool isFinite)
     {
         return (isLaw, isFinite) switch
@@ -634,6 +639,21 @@ public sealed record ParameterOverlapGroup(IReadOnlyList<string> ParameterNames)
 
 public sealed record ParameterSameGroup(IReadOnlyList<string> ParameterNames);
 
+public enum ThreadSafetyLawAttributeKind
+{
+    Grant,
+    Deny
+}
+
+public sealed record ThreadSafetyLawPredicateModel(
+    string LawName,
+    string TypeText);
+
+public sealed record ThreadSafetyLawAttributeModel(
+    ThreadSafetyLawAttributeKind Kind,
+    string LawName,
+    ThreadSafetyLawPredicateModel? Condition = null);
+
 public sealed record ImportDeclarationModel(
     string ModuleName,
     bool IsExported)
@@ -657,7 +677,8 @@ public sealed record FunctionDeclarationModel(
     ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default,
     IReadOnlyList<ParameterDisjointGroup>? DisjointParameterGroups = null,
     IReadOnlyList<ParameterOverlapGroup>? OverlapParameterGroups = null,
-    IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null)
+    IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null,
+    IReadOnlyList<ThreadSafetyLawPredicateModel>? ThreadSafetyLawPredicates = null)
 {
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
     public IReadOnlyList<ComptimeGenericParameterSymbol> ComptimeGenericParams => ComptimeGenericParameterNames ?? [];
@@ -665,6 +686,7 @@ public sealed record FunctionDeclarationModel(
     public IReadOnlyList<ParameterDisjointGroup> DisjointGroups => DisjointParameterGroups ?? [];
     public IReadOnlyList<ParameterOverlapGroup> OverlapGroups => OverlapParameterGroups ?? [];
     public IReadOnlyList<ParameterSameGroup> SameGroups => SameParameterGroups ?? [];
+    public IReadOnlyList<ThreadSafetyLawPredicateModel> ThreadSafetyLaws => ThreadSafetyLawPredicates ?? [];
 }
 
 public sealed record DestructorDeclarationModel(
@@ -710,7 +732,11 @@ public sealed record TopLevelDeclarationModel(
     DestructorDeclarationModel? Destructor = null,
     TypeAliasDeclarationModel? TypeAlias = null,
     IReadOnlyList<ModuleAttributeModel>? Attributes = null,
-    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default);
+    ModuleBackendOptimizationMode BackendOptimizationMode = ModuleBackendOptimizationMode.Default,
+    IReadOnlyList<ThreadSafetyLawAttributeModel>? ThreadSafetyLawAttributes = null)
+{
+    public IReadOnlyList<ThreadSafetyLawAttributeModel> ThreadSafetyLaws => ThreadSafetyLawAttributes ?? [];
+}
 
 public enum ModuleBackendOptimizationMode
 {
@@ -1009,10 +1035,12 @@ public enum ImportedTemplateTypedBodyExpressionKind
     ObjectInitializer,
     Assignment,
     Conversion,
+    TryPropagation,
     UnaryOperation,
     BinaryOperation,
     ComparisonChain,
     Conditional,
+    Comptime,
     ObjectCreation,
     EnumConstructor,
     EnumCall,
@@ -1026,7 +1054,8 @@ public enum ImportedTemplateTypedBodyExpressionKind
     DynamicStorageOperation,
     TextInterpolation,
     TextBuild,
-    TypeLayout
+    TypeLayout,
+    StructuralFact
 }
 
 public sealed record ImportedTemplateTypedBodyExpressionSummary(
@@ -1038,6 +1067,8 @@ public sealed record ImportedTemplateTypedBodyExpressionSummary(
     IReadOnlyList<string>? MemberNames = null,
     string? LiteralText = null,
     StarkTypeSymbol? Type = null,
+    IReadOnlyList<StarkTypeSymbol>? TypeArguments = null,
+    IReadOnlyList<ComptimeValueArgumentSymbol>? ComptimeValueArguments = null,
     ImportedTemplateTypedBodyExpressionSummary? TargetExpression = null,
     IReadOnlyList<string>? OperatorNames = null)
 {
@@ -1049,6 +1080,12 @@ public sealed record ImportedTemplateTypedBodyExpressionSummary(
 
     public IReadOnlyList<string> Operators =>
         OperatorNames ?? [];
+
+    public IReadOnlyList<StarkTypeSymbol> TypeArgs =>
+        TypeArguments ?? [];
+
+    public IReadOnlyList<ComptimeValueArgumentSymbol> ComptimeValueArgs =>
+        ComptimeValueArguments ?? [];
 }
 
 public sealed record ImportedTemplateTypedSwitchFieldPatternSummary(
@@ -1097,6 +1134,7 @@ public sealed record ImportedTemplateTypedBodyStatementSummary(
     IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? BodyStatements = null,
     IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? ThenStatements = null,
     IReadOnlyList<ImportedTemplateTypedBodyStatementSummary>? ElseStatements = null,
+    ImportedTemplateTypedSwitchFieldPatternSummary? ConditionPattern = null,
     ImportedTemplateTypedBodyExpressionSummary? TargetExpression = null,
     IReadOnlyList<string>? LoopContracts = null,
     ConstProvenanceKind ConstProvenance = ConstProvenanceKind.None,
@@ -1453,6 +1491,7 @@ public sealed record StarkTypeSymbol(
     string? FixedLengthParameterName = null,
     StarkFunctionKind? FunctionPointerKind = null,
     StarkFfiAbi? FunctionPointerAbi = null,
+    bool FunctionPointerIsUnsafe = false,
     StarkTypeSymbol? FunctionPointerReturnType = null,
     IReadOnlyList<StarkTypeSymbol>? FunctionPointerParameterTypes = null,
     IReadOnlyList<string?>? FunctionPointerParameterRawPointerElementCountExpressions = null,
@@ -1481,7 +1520,8 @@ public sealed record StarkTypeSymbol(
     string? DynTraitName = null,
     StarkDynTraitStorageKind DynTraitStorageKind = StarkDynTraitStorageKind.View,
     StarkTypeSymbol? AssociatedTypeOwner = null,
-    string? AssociatedTypeName = null);
+    string? AssociatedTypeName = null,
+    string? CSourceAliasName = null);
 
 public static class StarkTypeSymbols
 {
@@ -1494,7 +1534,10 @@ public static class StarkTypeSymbols
     public static readonly StarkTypeSymbol CompileTimeInteger = new(StarkTypeKind.Integer, "integer");
     public static readonly StarkTypeSymbol Ascii = new(StarkTypeKind.Ascii, "ascii");
     public static readonly StarkTypeSymbol Unicode = new(StarkTypeKind.Unicode, "unicode");
-    public static readonly StarkTypeSymbol CVoid = new(StarkTypeKind.CVoid, "System.C.c_void");
+    public static readonly StarkTypeSymbol CVoid = new(
+        StarkTypeKind.CVoid,
+        "System.C.c_void",
+        CSourceAliasName: "System.C.c_void");
     public static readonly StarkTypeSymbol OwnedAscii = new(StarkTypeKind.Named, OwnedAsciiName, NamedType: OwnedAsciiName);
     public static readonly StarkTypeSymbol OwnedUnicode = new(StarkTypeKind.Named, OwnedUnicodeName, NamedType: OwnedUnicodeName);
     public static readonly StarkTypeSymbol Null = new(StarkTypeKind.Null, "null");
@@ -1520,6 +1563,16 @@ public static class StarkTypeSymbols
             RangeMin: rangeMin,
             RangeMax: rangeMax,
             IsUnsigned: isUnsigned);
+    }
+
+    public static StarkTypeSymbol WithCSourceAlias(StarkTypeSymbol type, string? aliasName)
+    {
+        if (type.Kind == StarkTypeKind.Error || string.IsNullOrWhiteSpace(aliasName))
+        {
+            return type;
+        }
+
+        return type with { CSourceAliasName = aliasName };
     }
 
     public static bool IsCompileTimeInteger(StarkTypeSymbol type) =>
@@ -1619,12 +1672,14 @@ public static class StarkTypeSymbols
         IReadOnlyList<ParameterOverlapGroup>? overlapGroups = null,
         IReadOnlyList<ParameterSameGroup>? sameGroups = null,
         IReadOnlyList<string?>? parameterRawPointerElementCountExpressions = null,
-        StarkFfiAbi? ffiAbi = null)
+        StarkFfiAbi? ffiAbi = null,
+        bool isUnsafe = false)
     {
         var displayKind = FormatCallableFunctionKind(functionKind);
         var abiPrefix = ffiAbi is { } abi
             ? $"ffi({StarkFfiAbiFacts.DisplayName(abi)}) "
             : string.Empty;
+        var unsafePrefix = isUnsafe ? "unsafe " : string.Empty;
         var effectiveRawPointerElementCountExpressions =
             NormalizeFunctionPointerParameterRawPointerElementCountExpressions(
                 parameterTypes,
@@ -1646,12 +1701,13 @@ public static class StarkTypeSymbols
                 overlapGroups: effectiveOverlapGroups,
                 sameGroups: effectiveSameGroups,
                 applyDefaultNonOverlap: true);
-        var displayName = $"fnptr<{abiPrefix}{displayKind} {returnType.DisplayName}({string.Join(", ", parameterTypes.Select((parameter, index) => FormatFunctionPointerParameterDisplayName(parameter, effectiveRawPointerElementCountExpressions, index)))}){FormatFunctionPointerMemoryContracts(effectiveOverlapGroups, effectiveSameGroups)}>";
+        var displayName = $"fnptr<{unsafePrefix}{abiPrefix}{displayKind} {returnType.DisplayName}({string.Join(", ", parameterTypes.Select((parameter, index) => FormatFunctionPointerParameterDisplayName(parameter, effectiveRawPointerElementCountExpressions, index)))}){FormatFunctionPointerMemoryContracts(effectiveOverlapGroups, effectiveSameGroups)}>";
         return new StarkTypeSymbol(
             StarkTypeKind.FunctionPointer,
             displayName,
             FunctionPointerKind: functionKind,
             FunctionPointerAbi: ffiAbi,
+            FunctionPointerIsUnsafe: isUnsafe,
             FunctionPointerReturnType: returnType,
             FunctionPointerParameterTypes: parameterTypes.ToArray(),
             FunctionPointerParameterRawPointerElementCountExpressions: effectiveRawPointerElementCountExpressions,
@@ -2106,9 +2162,11 @@ public static class StarkTypeSymbols
             StarkTypeKind.Bool => Bool,
             StarkTypeKind.Ascii => Ascii,
             StarkTypeKind.Unicode => Unicode,
-            StarkTypeKind.CVoid => CVoid,
+            StarkTypeKind.CVoid => WithCSourceAlias(CVoid, type.CSourceAliasName),
             StarkTypeKind.Null => Null,
-            StarkTypeKind.Integer => Integer(type.BitWidth ?? 32, type.RangeMin, type.RangeMax, type.IsUnsigned),
+            StarkTypeKind.Integer => WithCSourceAlias(
+                Integer(type.BitWidth ?? 32, type.RangeMin, type.RangeMax, type.IsUnsigned),
+                type.CSourceAliasName),
             StarkTypeKind.Float => Float(type.BitWidth ?? 32),
             StarkTypeKind.RawPointer when type.ElementType is not null => RawPointer(type.ElementType, type.IsMutablePointer),
             StarkTypeKind.FixedArray when type.ElementType is not null => FixedArray(type.ElementType, type.FixedLength, type.FixedLengthParameterName),
@@ -2125,7 +2183,8 @@ public static class StarkTypeSymbols
                     type.FunctionPointerOverlapParameterGroups,
                     type.FunctionPointerSameParameterGroups,
                     type.FunctionPointerParameterRawPointerElementCountExpressions,
-                    type.FunctionPointerAbi),
+                    type.FunctionPointerAbi,
+                    type.FunctionPointerIsUnsafe),
             StarkTypeKind.Closure when type.ClosureFunctionKind is { } closureFunctionKind
                                        && type.ClosureReturnType is { } closureReturnType
                                        && type.ClosureParameterTypes is { } closureParameterTypes
@@ -2176,7 +2235,86 @@ public sealed record FieldSymbol(
     StarkTypeSymbol Type,
     StarkVisibility Visibility = StarkVisibility.Public,
     string? DeclaringModuleName = null,
-    int? ExplicitOffsetBytes = null);
+    int? ExplicitOffsetBytes = null,
+    IReadOnlyList<ThreadSafetyLawAttributeSymbol>? ThreadSafetyLawAttributes = null)
+{
+    public IReadOnlyList<ThreadSafetyLawAttributeSymbol> ThreadSafetyLaws => ThreadSafetyLawAttributes ?? [];
+}
+
+public sealed record ThreadSafetyLawPredicateSymbol(
+    string LawName,
+    StarkTypeSymbol Type);
+
+public sealed record ThreadSafetyLawAttributeSymbol(
+    ThreadSafetyLawAttributeKind Kind,
+    string LawName,
+    ThreadSafetyLawPredicateSymbol? Condition = null);
+
+public enum ThreadSafetyLawFailureKind
+{
+    DeniedByTypeAttribute,
+    DeniedByFieldAttribute,
+    ConflictingAttributes,
+    RawPointer,
+    StoredBorrow,
+    StructuralFieldFailure,
+    UnknownType
+}
+
+public sealed record ThreadSafetyLawRequirement(
+    string LawName,
+    StarkTypeSymbol Type);
+
+public sealed record ThreadSafetyLawFailure(
+    ThreadSafetyLawFailureKind Kind,
+    string Message,
+    StarkTypeSymbol? Type = null,
+    IReadOnlyList<string>? FieldPath = null)
+{
+    public IReadOnlyList<string> Path => FieldPath ?? [];
+}
+
+public sealed record ThreadSafetyLawFact(
+    string LawName,
+    StarkTypeSymbol Type,
+    bool Holds,
+    IReadOnlyList<ThreadSafetyLawRequirement>? Requirements = null,
+    IReadOnlyList<ThreadSafetyLawFailure>? Failures = null)
+{
+    public IReadOnlyList<ThreadSafetyLawRequirement> RequiredPredicates => Requirements ?? [];
+    public IReadOnlyList<ThreadSafetyLawFailure> FailureReasons => Failures ?? [];
+    public bool IsConditional => Holds && RequiredPredicates.Count > 0;
+}
+
+public sealed record ThreadSafetyLawTypeFacts(
+    StarkTypeSymbol Type,
+    ThreadSafetyLawFact Transferable,
+    ThreadSafetyLawFact Shareable)
+{
+    public bool TryGet(string lawName, out ThreadSafetyLawFact fact)
+    {
+        if (string.Equals(lawName, ThreadSafetyLawNames.Transferable, StringComparison.Ordinal))
+        {
+            fact = Transferable;
+            return true;
+        }
+
+        if (string.Equals(lawName, ThreadSafetyLawNames.Shareable, StringComparison.Ordinal))
+        {
+            fact = Shareable;
+            return true;
+        }
+
+        fact = null!;
+        return false;
+    }
+}
+
+public static class ThreadSafetyLawNames
+{
+    public const string Transferable = "Transferable";
+    public const string Shareable = "Shareable";
+}
 
 public enum StructLayoutKind
 {
@@ -2239,7 +2377,9 @@ public sealed record NamedTypeSymbol(
     IReadOnlyList<string>? ImplementedTraitNames = null,
     IReadOnlyDictionary<string, AssociatedTypeSymbol>? AssociatedTypeMembers = null,
     bool IsDynTrait = false,
-    StructLayoutMetadata? Layout = null)
+    StructLayoutMetadata? Layout = null,
+    IReadOnlyList<ThreadSafetyLawAttributeSymbol>? ThreadSafetyLawAttributes = null,
+    string? DeclaringModuleName = null)
 {
     public bool TryGetField(string name, out FieldSymbol field, out int index)
     {
@@ -2275,6 +2415,7 @@ public sealed record NamedTypeSymbol(
         new Dictionary<string, AssociatedTypeSymbol>(StringComparer.Ordinal);
 
     public IReadOnlyList<EnumVariantSymbol> Variants => EnumVariants ?? [];
+    public IReadOnlyList<ThreadSafetyLawAttributeSymbol> ThreadSafetyLaws => ThreadSafetyLawAttributes ?? [];
 
     public bool TryGetVariant(string name, out EnumVariantSymbol variant, out int index)
     {
@@ -2372,7 +2513,8 @@ public sealed record TypedFunctionSignature(
     IReadOnlyList<ParameterOverlapGroup>? OverlapParameterGroups = null,
     IReadOnlyList<ParameterSameGroup>? SameParameterGroups = null,
     IReadOnlyList<TypeParameterConstraint>? TypeParameterConstraints = null,
-    bool HasBody = true)
+    bool HasBody = true,
+    IReadOnlyList<ThreadSafetyLawPredicateSymbol>? ThreadSafetyLawPredicates = null)
 {
     public string DisplaySourceName => SourceName ?? Name;
     public IReadOnlyList<string> GenericParams => GenericParameterNames ?? [];
@@ -2385,6 +2527,7 @@ public sealed record TypedFunctionSignature(
     public IReadOnlyList<ParameterDisjointGroup> DisjointGroups => DisjointParameterGroups ?? [];
     public IReadOnlyList<ParameterOverlapGroup> OverlapGroups => OverlapParameterGroups ?? [];
     public IReadOnlyList<ParameterSameGroup> SameGroups => SameParameterGroups ?? [];
+    public IReadOnlyList<ThreadSafetyLawPredicateSymbol> ThreadSafetyLaws => ThreadSafetyLawPredicates ?? [];
 }
 
 public enum GlobalBindingKind
@@ -2401,7 +2544,9 @@ public enum TypedConstantInitializerKind
     Bool,
     Text,
     Null,
-    FixedArray
+    FixedArray,
+    NamedAggregate,
+    EnumAggregate
 }
 
 public sealed record TypedConstantInitializer(
@@ -2411,6 +2556,7 @@ public sealed record TypedConstantInitializer(
     string? FloatLiteralText = null,
     bool? BoolValue = null,
     string? TextLiteralText = null,
+    string? VariantName = null,
     IReadOnlyList<TypedConstantInitializer>? Elements = null)
 {
     public IReadOnlyList<TypedConstantInitializer> ElementValues => Elements ?? [];
@@ -2579,6 +2725,23 @@ public enum BoundLayoutQueryKind
 {
     SizeOf,
     AlignOf
+}
+
+internal static class TypeLayoutQueryFacts
+{
+    public static StarkTypeSymbol GetResultType(BoundLayoutQueryKind kind)
+    {
+        return kind == BoundLayoutQueryKind.AlignOf
+            ? StarkTypeSymbols.Integer(64, BigInteger.One, new BigInteger(long.MaxValue))
+            : StarkTypeSymbols.Integer(64, BigInteger.Zero, new BigInteger(long.MaxValue));
+    }
+
+    public static BigInteger GetResultValue(BoundLayoutQueryKind kind, ConcreteTypeLayout layout)
+    {
+        return kind == BoundLayoutQueryKind.AlignOf
+            ? layout.AlignmentBytes
+            : layout.SizeBytes;
+    }
 }
 
 public abstract record BoundOperation(
@@ -3022,10 +3185,17 @@ public sealed record TypeCheckModel(
     IReadOnlyList<SwitchTypingRecord>? SwitchRecords = null,
     IReadOnlyList<ClosureFunctionPromotionTypingRecord>? ClosureFunctionPromotionRecords = null,
     IReadOnlyList<BoundOperation>? BoundOperationRecords = null,
-    IReadOnlyList<TryPropagationTypingRecord>? TryPropagationRecords = null)
+    IReadOnlyList<TryPropagationTypingRecord>? TryPropagationRecords = null,
+    IReadOnlyDictionary<string, ThreadSafetyLawTypeFacts>? ThreadSafetyLawFactRecords = null)
 {
     public IReadOnlyList<TryPropagationTypingRecord> TryPropagations =>
         TryPropagationRecords ?? [];
+
+    public IReadOnlyDictionary<string, ThreadSafetyLawTypeFacts> ThreadSafetyLawFacts =>
+        ThreadSafetyLawFactRecords ?? EmptyThreadSafetyLawFacts;
+
+    private static IReadOnlyDictionary<string, ThreadSafetyLawTypeFacts> EmptyThreadSafetyLawFacts { get; } =
+        new Dictionary<string, ThreadSafetyLawTypeFacts>(StringComparer.Ordinal);
 
     public IReadOnlyDictionary<string, IReadOnlyList<TypedFunctionSignature>> Overloads =>
         FunctionOverloads
@@ -4777,9 +4947,22 @@ public sealed record MidLevelIrLoadIndirectRValue(
     string Text)
     : MidLevelIrRValue(Type, Text);
 
+public enum AliasProofCarrierKind
+{
+    RuntimeDisjointCondition,
+    UnsafeAssumeDisjoint
+}
+
+public sealed record AliasProofCarrier(
+    AliasProofCarrierKind Kind,
+    string ProofId,
+    IReadOnlyList<string> RootKeys,
+    SourceLocation? Location = null);
+
 public sealed record ScopedNoAliasGroup(
     string ScopeId,
-    IReadOnlyList<string> RootKeys);
+    IReadOnlyList<string> RootKeys,
+    AliasProofCarrier ProofCarrier);
 
 public sealed record MidLevelIrStatement(
     MidLevelIrStatementKind Kind,

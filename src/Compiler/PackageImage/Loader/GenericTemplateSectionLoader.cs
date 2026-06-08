@@ -55,6 +55,13 @@ internal static partial class PackageImageLoader
             return false;
         }
 
+        ImportedTemplateTypedSwitchFieldPatternSummary? conditionPattern = null;
+        if (manifest.ConditionPattern is not null
+            && !TryBuildImportedTypedTemplateSwitchFieldPattern(manifest.ConditionPattern, out conditionPattern))
+        {
+            return false;
+        }
+
         if (string.Equals(manifest.Kind, "block", StringComparison.Ordinal))
         {
             var bodyStatements = new List<ImportedTemplateTypedBodyStatementSummary>((manifest.BodyStatements ?? []).Count);
@@ -276,6 +283,7 @@ internal static partial class PackageImageLoader
                 expression,
                 LoopBehavior: manifest.LoopBehavior,
                 BodyStatements: bodyStatements,
+                ConditionPattern: conditionPattern,
                 LoopContracts: manifest.LoopContracts);
             return true;
         }
@@ -317,7 +325,8 @@ internal static partial class PackageImageLoader
                 ImportedTemplateTypedBodyStatementKind.If,
                 expression,
                 ThenStatements: thenStatements,
-                ElseStatements: elseStatements);
+                ElseStatements: elseStatements,
+                ConditionPattern: conditionPattern);
             return true;
         }
 
@@ -637,6 +646,38 @@ internal static partial class PackageImageLoader
             return true;
         }
 
+        if (string.Equals(manifest.Kind, "structural-fact", StringComparison.Ordinal))
+        {
+            if (manifest.Name is null
+                || !CompileTimeStructuralFacts.TryGetFactKind(manifest.Name, out _))
+            {
+                return false;
+            }
+
+            summary = new ImportedTemplateTypedBodyExpressionSummary(
+                ImportedTemplateTypedBodyExpressionKind.StructuralFact,
+                Name: manifest.Name,
+                TypeArguments: (manifest.TypeArguments ?? [])
+                    .Select(BuildTypeSymbol)
+                    .ToArray(),
+                ComptimeValueArguments: BuildComptimeValueArgumentSymbols(manifest.ComptimeValueArguments, currentModuleName: null, localNamedTypes: null));
+            return true;
+        }
+
+        if (string.Equals(manifest.Kind, "comptime", StringComparison.Ordinal))
+        {
+            if (manifest.Arguments is not { Count: 1 }
+                || !TryBuildImportedTypedTemplateExpression(manifest.Arguments[0], out var operand))
+            {
+                return false;
+            }
+
+            summary = new ImportedTemplateTypedBodyExpressionSummary(
+                ImportedTemplateTypedBodyExpressionKind.Comptime,
+                Arguments: [operand]);
+            return true;
+        }
+
         if (string.Equals(manifest.Kind, "array-initializer", StringComparison.Ordinal))
         {
             if (manifest.Type is null || manifest.Arguments is null)
@@ -729,6 +770,25 @@ internal static partial class PackageImageLoader
                 ImportedTemplateTypedBodyExpressionKind.Conversion,
                 Arguments: [operand],
                 Type: BuildTypeSymbol(manifest.Type));
+            return true;
+        }
+
+        if (string.Equals(manifest.Kind, "try", StringComparison.Ordinal))
+        {
+            if (manifest.Ordinal is null || manifest.Arguments is not { Count: 1 })
+            {
+                return false;
+            }
+
+            if (!TryBuildImportedTypedTemplateExpression(manifest.Arguments[0], out var operand))
+            {
+                return false;
+            }
+
+            summary = new ImportedTemplateTypedBodyExpressionSummary(
+                ImportedTemplateTypedBodyExpressionKind.TryPropagation,
+                Ordinal: manifest.Ordinal,
+                Arguments: [operand]);
             return true;
         }
 

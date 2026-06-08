@@ -53,7 +53,15 @@ internal static partial class PackageImageLoader
                 DisjointParameterGroups: BuildParameterDisjointGroups(function.Parameters, function.DisjointParameterGroups),
                 OverlapParameterGroups: BuildParameterOverlapGroups(function.OverlapParameterGroups),
                 SameParameterGroups: BuildParameterSameGroups(function.SameParameterGroups),
-                HasBody: function.HasBody);
+                TypeParameterConstraints: BuildTypeParameterConstraints(
+                    function.TypeParameterConstraints,
+                    module.Module.ModuleName,
+                    localNamedTypes),
+                HasBody: function.HasBody,
+                ThreadSafetyLawPredicates: BuildThreadSafetyLawPredicates(
+                    function.ThreadSafetyLawPredicates,
+                    module.Module.ModuleName,
+                    localNamedTypes));
         }
 
         foreach (var type in module.Module.EffectiveTypedInterface?.Types ?? [])
@@ -101,7 +109,15 @@ internal static partial class PackageImageLoader
                     DisjointParameterGroups: BuildParameterDisjointGroups(method.Parameters, method.DisjointParameterGroups),
                     OverlapParameterGroups: BuildParameterOverlapGroups(method.OverlapParameterGroups),
                     SameParameterGroups: BuildParameterSameGroups(method.SameParameterGroups),
-                    HasBody: method.HasBody);
+                    TypeParameterConstraints: BuildTypeParameterConstraints(
+                        method.TypeParameterConstraints,
+                        module.Module.ModuleName,
+                        localNamedTypes),
+                    HasBody: method.HasBody,
+                    ThreadSafetyLawPredicates: BuildThreadSafetyLawPredicates(
+                        method.ThreadSafetyLawPredicates,
+                        module.Module.ModuleName,
+                        localNamedTypes));
             }
         }
 
@@ -144,115 +160,14 @@ internal static partial class PackageImageLoader
 
         foreach (var type in module.Module.EffectiveTypedInterface?.Types ?? [])
         {
-            if (!TryParseTypeDeclarationKind(type.Kind, out var declarationKind))
+            if (!TryLoadTypedTypeManifest(
+                    type,
+                    module.Module.ModuleName,
+                    localNamedTypes,
+                    loadedNamedTypes,
+                    loadedConstructors))
             {
                 return false;
-            }
-
-            var qualifiedName = type.QualifiedName;
-            var genericParameterNames = type.GenericParameters?.Count > 0 ? type.GenericParameters.ToList() : null;
-            var comptimeGenericParameterNames = BuildComptimeGenericParameterSymbols(
-                type.ComptimeGenericParameters,
-                module.Module.ModuleName,
-                localNamedTypes);
-            if (declarationKind == DeclarationKind.Enum)
-            {
-                var variants = (type.Variants ?? [])
-                    .Select(variant => new EnumVariantSymbol(
-                        variant.Name,
-                        variant.UsesNamedFields,
-                        variant.Fields
-                            .Select((field, index) => new EnumVariantFieldSymbol(
-                                index,
-                                variant.UsesNamedFields ? field.Name : null,
-                                BuildTypeSymbol(field.Type, module.Module.ModuleName, localNamedTypes)))
-                            .ToArray(),
-                        AbsorbsErrorType: variant.AbsorbsErrorType is { } absorbedErrorType
-                            ? BuildTypeSymbol(absorbedErrorType, module.Module.ModuleName, localNamedTypes)
-                            : null,
-                        Role: ParseEnumVariantRole(variant.Role)))
-                    .ToArray();
-                loadedNamedTypes[qualifiedName] = new NamedTypeSymbol(
-                    qualifiedName,
-                    declarationKind,
-                    new Dictionary<string, FieldSymbol>(StringComparer.Ordinal),
-                    [],
-                    EnumVariants: variants,
-                    GenericParameterNames: genericParameterNames,
-                    ComptimeGenericParameterNames: comptimeGenericParameterNames,
-                    ImplementedTraitNames: QualifyImplementedTraitNames(
-                        type.ImplementedTraits,
-                        module.Module.ModuleName,
-                        localNamedTypes),
-                    AssociatedTypeMembers: BuildAssociatedTypeSymbols(
-                        type.AssociatedTypes,
-                        module.Module.ModuleName,
-                        localNamedTypes));
-            }
-            else
-            {
-                var fields = new Dictionary<string, FieldSymbol>(StringComparer.Ordinal);
-                var orderedFields = new List<FieldSymbol>(type.Fields.Count);
-                foreach (var field in type.Fields)
-                {
-                    if (!TryParseVisibility(field.Visibility ?? "public", out var fieldVisibility))
-                    {
-                        return false;
-                    }
-
-                    var fieldSymbol = new FieldSymbol(
-                        field.Name,
-                        BuildTypeSymbol(field.Type, module.Module.ModuleName, localNamedTypes),
-                        fieldVisibility,
-                        module.Module.ModuleName,
-                        field.ExplicitOffsetBytes);
-                    fields[field.Name] = fieldSymbol;
-                    orderedFields.Add(fieldSymbol);
-                }
-
-                loadedNamedTypes[qualifiedName] = new NamedTypeSymbol(
-                    qualifiedName,
-                    declarationKind,
-                    fields,
-                    orderedFields,
-                    GenericParameterNames: genericParameterNames,
-                    ComptimeGenericParameterNames: comptimeGenericParameterNames,
-                    ImplementedTraitNames: QualifyImplementedTraitNames(
-                        type.ImplementedTraits,
-                        module.Module.ModuleName,
-                        localNamedTypes),
-                    AssociatedTypeMembers: BuildAssociatedTypeSymbols(
-                        type.AssociatedTypes,
-                        module.Module.ModuleName,
-                        localNamedTypes),
-                    Layout: BuildStructLayoutMetadata(type.StructLayout, type.PackBytes, type.AlignBytes));
-            }
-
-            var constructors = new List<TypedConstructorShape>();
-
-            if (type.PrimaryConstructorParameters is { Count: > 0 })
-            {
-                constructors.Add(new TypedConstructorShape(
-                    type.Name,
-                    type.PrimaryConstructorParameters
-                        .Select(parameter => BuildTypedParameterSymbol(parameter, module.Module.ModuleName, localNamedTypes))
-                        .ToArray(),
-                    IsPrimaryShape: true));
-            }
-
-            foreach (var constructor in type.Constructors ?? [])
-            {
-                constructors.Add(new TypedConstructorShape(
-                    type.Name,
-                    constructor.Parameters
-                        .Select(parameter => BuildTypedParameterSymbol(parameter, module.Module.ModuleName, localNamedTypes))
-                        .ToArray(),
-                    IsPrimaryShape: false));
-            }
-
-            if (constructors.Count > 0)
-            {
-                loadedConstructors[qualifiedName] = constructors;
             }
         }
 
@@ -648,14 +563,33 @@ internal static partial class PackageImageLoader
                 TypedConstantInitializerKind.Null,
                 type),
             "fixedarray" when manifest.Elements is not null
-                => BuildTypedConstantArrayInitializer(manifest, type, moduleName, localNamedTypes),
+                => BuildTypedConstantAggregateInitializer(
+                    manifest,
+                    type,
+                    TypedConstantInitializerKind.FixedArray,
+                    moduleName,
+                    localNamedTypes),
+            "namedaggregate" when manifest.Elements is not null
+                => BuildTypedConstantAggregateInitializer(
+                    manifest,
+                    type,
+                    TypedConstantInitializerKind.NamedAggregate,
+                    moduleName,
+                    localNamedTypes),
+            "enumaggregate" when manifest.Elements is not null && manifest.VariantName is not null
+                => BuildTypedConstantEnumInitializer(
+                    manifest,
+                    type,
+                    moduleName,
+                    localNamedTypes),
             _ => null
         };
     }
 
-    private static TypedConstantInitializer? BuildTypedConstantArrayInitializer(
+    private static TypedConstantInitializer? BuildTypedConstantAggregateInitializer(
         StarkPackageTypedConstantInitializerManifest manifest,
         StarkTypeSymbol type,
+        TypedConstantInitializerKind kind,
         string moduleName,
         ISet<string>? localNamedTypes)
     {
@@ -676,8 +610,37 @@ internal static partial class PackageImageLoader
         }
 
         return new TypedConstantInitializer(
-            TypedConstantInitializerKind.FixedArray,
+            kind,
             type,
+            Elements: elements);
+    }
+
+    private static TypedConstantInitializer? BuildTypedConstantEnumInitializer(
+        StarkPackageTypedConstantInitializerManifest manifest,
+        StarkTypeSymbol type,
+        string moduleName,
+        ISet<string>? localNamedTypes)
+    {
+        if (manifest.Elements is null || manifest.VariantName is null)
+        {
+            return null;
+        }
+
+        var elements = new TypedConstantInitializer[manifest.Elements.Count];
+        for (var index = 0; index < manifest.Elements.Count; index++)
+        {
+            if (BuildTypedConstantInitializer(manifest.Elements[index], moduleName, localNamedTypes) is not { } element)
+            {
+                return null;
+            }
+
+            elements[index] = element;
+        }
+
+        return new TypedConstantInitializer(
+            TypedConstantInitializerKind.EnumAggregate,
+            type,
+            VariantName: manifest.VariantName,
             Elements: elements);
     }
 
@@ -794,7 +757,13 @@ internal static partial class PackageImageLoader
                 AssociatedTypeMembers: BuildAssociatedTypeSymbols(
                     type.AssociatedTypes,
                     moduleName,
-                    localNamedTypes));
+                    localNamedTypes),
+                IsDynTrait: declarationKind == DeclarationKind.Trait && type.IsDynTrait,
+                ThreadSafetyLawAttributes: BuildThreadSafetyLawAttributes(
+                    type.ThreadSafetyLawAttributes,
+                    moduleName,
+                    localNamedTypes),
+                DeclaringModuleName: moduleName);
         }
         else
         {
@@ -812,7 +781,8 @@ internal static partial class PackageImageLoader
                     BuildTypeSymbol(field.Type, moduleName, localNamedTypes),
                     fieldVisibility,
                     moduleName,
-                    field.ExplicitOffsetBytes);
+                    field.ExplicitOffsetBytes,
+                    BuildThreadSafetyLawAttributes(field.ThreadSafetyLawAttributes, moduleName, localNamedTypes));
                 fields[field.Name] = fieldSymbol;
                 orderedFields.Add(fieldSymbol);
             }
@@ -832,7 +802,13 @@ internal static partial class PackageImageLoader
                     type.AssociatedTypes,
                     moduleName,
                     localNamedTypes),
-                Layout: BuildStructLayoutMetadata(type.StructLayout, type.PackBytes, type.AlignBytes));
+                Layout: BuildStructLayoutMetadata(type.StructLayout, type.PackBytes, type.AlignBytes),
+                IsDynTrait: declarationKind == DeclarationKind.Trait && type.IsDynTrait,
+                ThreadSafetyLawAttributes: BuildThreadSafetyLawAttributes(
+                    type.ThreadSafetyLawAttributes,
+                    moduleName,
+                    localNamedTypes),
+                DeclaringModuleName: moduleName);
         }
 
         var constructors = new List<TypedConstructorShape>();
@@ -875,6 +851,71 @@ internal static partial class PackageImageLoader
             parameter.IsDisjoint,
             parameter.IsConst,
             parameter.RawPointerElementCountExpression);
+    }
+
+    private static IReadOnlyList<ThreadSafetyLawPredicateSymbol>? BuildThreadSafetyLawPredicates(
+        IReadOnlyList<StarkPackageTypedThreadSafetyLawPredicateManifest>? predicates,
+        string moduleName,
+        ISet<string> localNamedTypes)
+    {
+        if (predicates is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        return predicates
+            .Select(predicate => new ThreadSafetyLawPredicateSymbol(
+                predicate.LawName,
+                BuildTypeSymbol(predicate.Type, moduleName, localNamedTypes)))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<TypeParameterConstraint>? BuildTypeParameterConstraints(
+        IReadOnlyList<StarkPackageTypedTypeParameterConstraintManifest>? constraints,
+        string moduleName,
+        ISet<string> localNamedTypes)
+    {
+        if (constraints is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        return constraints
+            .Select(constraint => new TypeParameterConstraint(
+                constraint.ParameterName,
+                constraint.BoundTraits
+                    .Select(bound => BuildTypeSymbol(bound, moduleName, localNamedTypes))
+                    .ToArray()))
+            .ToArray();
+    }
+
+    private static IReadOnlyList<ThreadSafetyLawAttributeSymbol>? BuildThreadSafetyLawAttributes(
+        IReadOnlyList<StarkPackageTypedThreadSafetyLawAttributeManifest>? attributes,
+        string moduleName,
+        ISet<string> localNamedTypes)
+    {
+        if (attributes is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        return attributes
+            .Select(attribute => new ThreadSafetyLawAttributeSymbol(
+                ParseThreadSafetyLawAttributeKind(attribute.Kind),
+                attribute.LawName,
+                attribute.Condition is { } condition
+                    ? new ThreadSafetyLawPredicateSymbol(
+                        condition.LawName,
+                        BuildTypeSymbol(condition.Type, moduleName, localNamedTypes))
+                    : null))
+            .ToArray();
+    }
+
+    private static ThreadSafetyLawAttributeKind ParseThreadSafetyLawAttributeKind(string kind)
+    {
+        return string.Equals(kind, "deny", StringComparison.OrdinalIgnoreCase)
+            ? ThreadSafetyLawAttributeKind.Deny
+            : ThreadSafetyLawAttributeKind.Grant;
     }
 
     private static IReadOnlyDictionary<string, AssociatedTypeSymbol>? BuildAssociatedTypeSymbols(

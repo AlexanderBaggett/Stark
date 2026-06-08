@@ -132,22 +132,19 @@ source folders or rely on ad hoc temp paths.
 ## 7. Work Items
 
 - [x] Decide OQ-18/T05: formalize `.stark/build/<profile>/<target-triple>/<stage>/`.
-- [ ] Define the exact target-triple normalization used in path segments.
-- [ ] Define the stage selector accepted by `stark build`, `stark run`, and
-      `stark test`.
-- [ ] Implement build-root selection for project, solution, and compiler
-      bootstrap commands.
-- [ ] Route package images into `pkg/`.
-- [ ] Route stage-local stdlib artifacts into `stdlib/`.
-- [ ] Route native objects/intermediates into `obj/` and final native outputs
-      into `bin/`.
-- [ ] Route generated test runners and test executables into `tests/`.
-- [ ] Route targeted diagnostic and compiler artifact output into
-      `diagnostics/` and `artifacts/`.
-- [ ] Implement clean behavior for profile, target, stage, diagnostics, and
-      artifacts.
-- [ ] Update stdlib discovery to search the stage-local `stdlib/` path.
-- [ ] Update package-image tests and stage-comparison tests to use the formal
-      layout.
+- [ ] Define the build-layout command contract: target-triple normalization,
+      accepted stage selectors for `stark build`, `stark run`, and `stark test`,
+      and build-root selection for project, solution, and compiler bootstrap
+      commands.
+- [ ] Implement artifact routing for the formal layout: package images in
+      `pkg/`, stage-local stdlib artifacts in `stdlib/`, native intermediates
+      in `obj/`, final native outputs in `bin/`, generated test runners and
+      executables in `tests/`, diagnostics in `diagnostics/`, and requested
+      compiler artifacts in `artifacts/`.
+- [ ] Implement clean/discovery behavior for the formal layout, including
+      profile/target/stage/artifact cleanup and stdlib discovery from the
+      stage-local `stdlib/` path.
+- [ ] Update package-image tests, stage-comparison tests, and artifact
+      inspection tests to use the formal layout.
 - [ ] Update user-facing project/build docs after command spelling and final
       artifact names are implemented.

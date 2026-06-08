@@ -620,7 +620,7 @@ internal static partial class PackageImageBuilder
             }
         }
 
-        return new StarkPackageTypedTemplateBodyManifest(publishedStatements);
+        return AssignTypedTemplateTryOrdinals(new StarkPackageTypedTemplateBodyManifest(publishedStatements));
     }
 
     private static bool CanUsePublishedTypedTemplateImplicitVoidReturnStatement(
@@ -636,6 +636,150 @@ internal static partial class PackageImageBuilder
             || string.Equals(statement.Kind, "for-traversal", StringComparison.Ordinal)
             || string.Equals(statement.Kind, "while", StringComparison.Ordinal)
             || string.Equals(statement.Kind, "if", StringComparison.Ordinal);
+    }
+
+    private static StarkPackageTypedTemplateBodyManifest AssignTypedTemplateTryOrdinals(
+        StarkPackageTypedTemplateBodyManifest body)
+    {
+        var nextOrdinal = 0;
+        return body with
+        {
+            Statements = AssignStatements(body.Statements)
+        };
+
+        IReadOnlyList<StarkPackageTypedTemplateStatementManifest> AssignStatements(
+            IReadOnlyList<StarkPackageTypedTemplateStatementManifest>? statements)
+        {
+            return (statements ?? [])
+                .Select(AssignStatement)
+                .ToArray();
+        }
+
+        StarkPackageTypedTemplateStatementManifest AssignStatement(
+            StarkPackageTypedTemplateStatementManifest statement)
+        {
+            return statement.Kind switch
+            {
+                "assignment" => statement with
+                {
+                    TargetExpression = AssignExpression(statement.TargetExpression),
+                    Expression = AssignExpression(statement.Expression)!
+                },
+                "for" => statement with
+                {
+                    InitializerStatements = AssignStatements(statement.InitializerStatements),
+                    Expression = AssignExpression(statement.Expression)!,
+                    IteratorStatements = AssignStatements(statement.IteratorStatements),
+                    BodyStatements = AssignStatements(statement.BodyStatements)
+                },
+                "for-traversal" => statement with
+                {
+                    TraversalSource = AssignExpression(statement.TraversalSource),
+                    BodyStatements = AssignStatements(statement.BodyStatements)
+                },
+                "while" => statement with
+                {
+                    Expression = AssignExpression(statement.Expression)!,
+                    ConditionPattern = AssignPattern(statement.ConditionPattern),
+                    BodyStatements = AssignStatements(statement.BodyStatements)
+                },
+                "if" => statement with
+                {
+                    Expression = AssignExpression(statement.Expression)!,
+                    ConditionPattern = AssignPattern(statement.ConditionPattern),
+                    ThenStatements = AssignStatements(statement.ThenStatements),
+                    ElseStatements = AssignStatements(statement.ElseStatements)
+                },
+                "switch" => statement with
+                {
+                    Expression = AssignExpression(statement.Expression)!,
+                    SwitchCases = AssignSwitchCases(statement.SwitchCases)
+                },
+                "block" => statement with
+                {
+                    BodyStatements = AssignStatements(statement.BodyStatements)
+                },
+                _ => statement with
+                {
+                    Expression = AssignExpression(statement.Expression)!,
+                    TargetExpression = AssignExpression(statement.TargetExpression),
+                    TraversalSource = AssignExpression(statement.TraversalSource),
+                    ConditionPattern = AssignPattern(statement.ConditionPattern),
+                    BodyStatements = AssignStatements(statement.BodyStatements),
+                    InitializerStatements = AssignStatements(statement.InitializerStatements),
+                    IteratorStatements = AssignStatements(statement.IteratorStatements),
+                    SwitchCases = AssignSwitchCases(statement.SwitchCases),
+                    ThenStatements = AssignStatements(statement.ThenStatements),
+                    ElseStatements = AssignStatements(statement.ElseStatements)
+                }
+            };
+        }
+
+        IReadOnlyList<StarkPackageTypedTemplateSwitchCaseManifest>? AssignSwitchCases(
+            IReadOnlyList<StarkPackageTypedTemplateSwitchCaseManifest>? switchCases)
+        {
+            return switchCases?.Select(AssignSwitchCase).ToArray();
+        }
+
+        StarkPackageTypedTemplateSwitchCaseManifest AssignSwitchCase(
+            StarkPackageTypedTemplateSwitchCaseManifest switchCase)
+        {
+            return switchCase with
+            {
+                Expression = AssignExpression(switchCase.Expression),
+                EndExpression = AssignExpression(switchCase.EndExpression),
+                GuardExpression = AssignExpression(switchCase.GuardExpression),
+                Members = switchCase.Members?.Select(AssignPattern).Where(static member => member is not null).Cast<StarkPackageTypedTemplatePatternManifest>().ToArray(),
+                Statements = AssignStatements(switchCase.Statements)
+            };
+        }
+
+        StarkPackageTypedTemplatePatternManifest? AssignPattern(
+            StarkPackageTypedTemplatePatternManifest? pattern)
+        {
+            if (pattern is null)
+            {
+                return null;
+            }
+
+            return pattern with
+            {
+                Expression = AssignExpression(pattern.Expression),
+                EndExpression = AssignExpression(pattern.EndExpression),
+                Members = pattern.Members?.Select(AssignPattern).Where(static member => member is not null).Cast<StarkPackageTypedTemplatePatternManifest>().ToArray()
+            };
+        }
+
+        StarkPackageTypedTemplateExpressionManifest? AssignExpression(
+            StarkPackageTypedTemplateExpressionManifest? expression)
+        {
+            if (expression is null)
+            {
+                return null;
+            }
+
+            if (string.Equals(expression.Kind, "try", StringComparison.Ordinal))
+            {
+                return expression with
+                {
+                    Ordinal = nextOrdinal++,
+                    Arguments = AssignExpressions(expression.Arguments),
+                    TargetExpression = AssignExpression(expression.TargetExpression)
+                };
+            }
+
+            return expression with
+            {
+                Arguments = AssignExpressions(expression.Arguments),
+                TargetExpression = AssignExpression(expression.TargetExpression)
+            };
+        }
+
+        IReadOnlyList<StarkPackageTypedTemplateExpressionManifest>? AssignExpressions(
+            IReadOnlyList<StarkPackageTypedTemplateExpressionManifest>? expressions)
+        {
+            return expressions?.Select(AssignExpression).Where(static expression => expression is not null).Cast<StarkPackageTypedTemplateExpressionManifest>().ToArray();
+        }
     }
 
     private static bool TryBuildPublishedTypedTemplateStatementList(
@@ -1217,11 +1361,25 @@ internal static partial class PackageImageBuilder
                 fieldAccessOrdinals,
                 out var whileBodyStatements))
         {
+            StarkPackageTypedTemplatePatternManifest? conditionPattern = null;
+            if (whileStatement.pattern() is { } whilePattern
+                && !TryBuildPublishedTypedTemplateSwitchFieldPattern(
+                    module,
+                    whilePattern,
+                    literalsByLocation,
+                    enumPatternOrdinals,
+                    aggregatePatternOrdinals,
+                    out conditionPattern))
+            {
+                return false;
+            }
+
             publishedStatement = new StarkPackageTypedTemplateStatementManifest(
                 Kind: "while",
                 Expression: whileCondition,
                 LoopBehavior: whileStatement.loopBehavior().GetText(),
                 BodyStatements: whileBodyStatements,
+                ConditionPattern: conditionPattern,
                 LoopContracts: BuildLoopContracts(whileStatement.loopContract()));
             return true;
         }
@@ -1265,6 +1423,19 @@ internal static partial class PackageImageBuilder
                 fieldAccessOrdinals,
                 out var thenStatements))
         {
+            StarkPackageTypedTemplatePatternManifest? conditionPattern = null;
+            if (ifStatement.pattern() is { } ifPattern
+                && !TryBuildPublishedTypedTemplateSwitchFieldPattern(
+                    module,
+                    ifPattern,
+                    literalsByLocation,
+                    enumPatternOrdinals,
+                    aggregatePatternOrdinals,
+                    out conditionPattern))
+            {
+                return false;
+            }
+
             IReadOnlyList<StarkPackageTypedTemplateStatementManifest>? elseStatements = null;
             if (ifStatement.statement().Length >= 2
                 && !TryBuildPublishedTypedTemplateBranchStatement(
@@ -1295,7 +1466,8 @@ internal static partial class PackageImageBuilder
                 Kind: "if",
                 Expression: condition,
                 ThenStatements: thenStatements,
-                ElseStatements: elseStatements);
+                ElseStatements: elseStatements,
+                ConditionPattern: conditionPattern);
             return true;
         }
 
@@ -4256,14 +4428,68 @@ internal static partial class PackageImageBuilder
             return false;
         }
 
-        // `try` propagation deliberately has no typed-body expression kind yet: the typed
-        // template lowerer (ImportedTemplateLowerer) cannot lower it, so a try-containing
-        // template falls back to BodyText publication. Its propagation semantics still
-        // travel as ordinal-keyed template facts (BuildPublishedTemplateTryPropagations),
-        // which the re-parsed-body MIR lowering consumes.
         if (unaryExpression.TRY() is not null)
         {
-            return false;
+            if (!TryBuildPublishedTypedTemplateUnaryExpression(
+                    module,
+                    operandExpression,
+                    namedTypes,
+                    literalsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    functionAddressOrdinals,
+                    directCallOrdinals,
+                    dynamicStorageOperationOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var publishedOperand))
+            {
+                return false;
+            }
+
+            publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+                Kind: "try",
+                Arguments: [publishedOperand]);
+            return true;
+        }
+
+        if (unaryExpression.COMPTIME() is not null)
+        {
+            if (TryBuildPublishedTypedTemplateStructuralFactExpression(
+                module,
+                operandExpression,
+                out publishedExpression))
+            {
+                return true;
+            }
+
+            if (!TryBuildPublishedTypedTemplateUnaryExpression(
+                    module,
+                    operandExpression,
+                    namedTypes,
+                    literalsByLocation,
+                    conversionsByLocation,
+                    objectCreationOrdinals,
+                    enumConstructorOrdinals,
+                    enumCallOrdinals,
+                    enumValueOrdinals,
+                    functionAddressOrdinals,
+                    directCallOrdinals,
+                    dynamicStorageOperationOrdinals,
+                    memberCallOrdinals,
+                    fieldAccessOrdinals,
+                    out var publishedOperand))
+            {
+                return false;
+            }
+
+            publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+                Kind: "comptime",
+                Arguments: [publishedOperand]);
+            return true;
         }
 
         if (unaryExpression.conversionType() is { } conversionType)
@@ -5679,6 +5905,108 @@ internal static partial class PackageImageBuilder
         return true;
     }
 
+    private static bool TryBuildPublishedTypedTemplateStructuralFactExpression(
+        LoadedModuleDocument module,
+        StarkParser.UnaryExpressionContext operandExpression,
+        out StarkPackageTypedTemplateExpressionManifest publishedExpression)
+    {
+        publishedExpression = null!;
+
+        var postfixExpression = TryGetSimplePostfixExpression(operandExpression);
+        if (postfixExpression?.primaryExpression()?.genericQualifiedName() is not { } genericQualifiedName
+            || postfixExpression.postfixPart().Length != 1
+            || postfixExpression.postfixPart()[0].argumentList() is not { } argumentList
+            || argumentList.argument().Length != 0
+            || !CompileTimeStructuralFacts.TryGetFactKind(
+                genericQualifiedName.qualifiedName().GetText(),
+                out _))
+        {
+            return false;
+        }
+
+        var typeArguments = new List<StarkPackageTypeReference>();
+        var comptimeValueArguments = new List<StarkPackageComptimeValueArgumentManifest>();
+        foreach (var genericArgument in genericQualifiedName.typeArgumentList().genericArgument())
+        {
+            if (genericArgument.type_() is { } typeArgument)
+            {
+                if (!TryBuildPublishedAbiTypeReferenceFromSyntax(module, typeArgument, out var publishedTypeArgument))
+                {
+                    return false;
+                }
+
+                typeArguments.Add(publishedTypeArgument);
+                continue;
+            }
+
+            if (!TryBuildPublishedStructuralFactComptimeValueArgument(
+                    module,
+                    genericArgument,
+                    comptimeValueArguments.Count,
+                    out var valueArgument))
+            {
+                return false;
+            }
+
+            comptimeValueArguments.Add(valueArgument);
+        }
+
+        publishedExpression = new StarkPackageTypedTemplateExpressionManifest(
+            Kind: "structural-fact",
+            Name: genericQualifiedName.qualifiedName().GetText(),
+            TypeArguments: typeArguments.Count == 0 ? null : typeArguments,
+            ComptimeValueArguments: comptimeValueArguments.Count == 0 ? null : comptimeValueArguments);
+        return true;
+    }
+
+    private static bool TryBuildPublishedStructuralFactComptimeValueArgument(
+        LoadedModuleDocument module,
+        StarkParser.GenericArgumentContext argument,
+        int valueIndex,
+        out StarkPackageComptimeValueArgumentManifest valueArgument)
+    {
+        valueArgument = null!;
+        var parameterType = BuildPublishedAbiTypeReference(StarkTypeSymbols.CompileTimeInteger, module);
+
+        if (argument.signedIntegerLiteral() is { } literal)
+        {
+            valueArgument = new StarkPackageComptimeValueArgumentManifest(
+                $"value{valueIndex}",
+                ParsePublishedSignedIntegerLiteral(literal).ToString(),
+                parameterType);
+            return true;
+        }
+
+        if (argument.COMPTIME() is null || argument.expression() is not { } expression)
+        {
+            return false;
+        }
+
+        if (CompileTimeExpressionEvaluator.TryEvaluateInteger(expression, out var value))
+        {
+            valueArgument = new StarkPackageComptimeValueArgumentManifest(
+                $"value{valueIndex}",
+                value.ToString(),
+                parameterType);
+            return true;
+        }
+
+        if (TryGetSimplePostfixExpression(expression) is not { } symbolicPostfix
+            || symbolicPostfix.primaryExpression().Identifier()?.GetText() is not { } symbolicName
+            || symbolicPostfix.postfixPart().Length != 0)
+        {
+            return false;
+        }
+
+        valueArgument = new StarkPackageComptimeValueArgumentManifest(
+            $"value{valueIndex}",
+            "0",
+            parameterType,
+            IsSymbolic: true,
+            SymbolicSourceName: symbolicName);
+        return true;
+    }
+
     private static bool TryBuildPublishedAbiTypeReferenceFromSyntax(
         LoadedModuleDocument module,
         StarkParser.Type_Context type,
@@ -5801,6 +6129,7 @@ internal static partial class PackageImageBuilder
                 "functionpointer",
                 FunctionKind: RenderPublishedFunctionPointerKind(signature.functionKind().GetText()),
                 FunctionAbi: functionAbi,
+                FunctionIsUnsafe: signature.UNSAFE() is not null ? true : null,
                 ReturnType: returnType,
                 ParameterTypes: parameterTypes.Count == 0 ? null : parameterTypes.ToArray(),
                 OverlapParameterGroups: BuildParameterOverlapGroupManifests(signature.parameterMemoryContractClause()),

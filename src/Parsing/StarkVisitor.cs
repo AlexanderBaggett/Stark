@@ -63,6 +63,12 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <return>The visitor result.</return>
 	Result VisitAttribute([NotNull] StarkParser.AttributeContext context);
 	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.attributeCondition"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitAttributeCondition([NotNull] StarkParser.AttributeConditionContext context);
+	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.attributeArgument"/>.
 	/// </summary>
 	/// <param name="context">The parse tree.</param>
@@ -182,6 +188,12 @@ public interface IStarkVisitor<Result> : IParseTreeVisitor<Result> {
 	/// <param name="context">The parse tree.</param>
 	/// <return>The visitor result.</return>
 	Result VisitSameContract([NotNull] StarkParser.SameContractContext context);
+	/// <summary>
+	/// Visit a parse tree produced by <see cref="StarkParser.lawPredicateContract"/>.
+	/// </summary>
+	/// <param name="context">The parse tree.</param>
+	/// <return>The visitor result.</return>
+	Result VisitLawPredicateContract([NotNull] StarkParser.LawPredicateContractContext context);
 	/// <summary>
 	/// Visit a parse tree produced by <see cref="StarkParser.typeParameterList"/>.
 	/// </summary>

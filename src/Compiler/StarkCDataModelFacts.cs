@@ -57,7 +57,9 @@ internal static class StarkCDataModelFacts
 
         if (string.Equals(localAliasName, "c_void", StringComparison.Ordinal))
         {
-            type = StarkTypeSymbols.CVoid;
+            type = StarkTypeSymbols.WithCSourceAlias(
+                StarkTypeSymbols.CVoid,
+                QualifyAliasName(localAliasName));
             return true;
         }
 
@@ -84,7 +86,15 @@ internal static class StarkCDataModelFacts
             "c_ptrdiff_t" => Integer(dataModel.PtrDiffTBitWidth, isUnsigned: false),
             _ => StarkTypeSymbols.Error
         };
+        type = StarkTypeSymbols.WithCSourceAlias(type, QualifyAliasName(localAliasName));
         return true;
+    }
+
+    public static string QualifyAliasName(string aliasName)
+    {
+        return aliasName.StartsWith($"{ModuleName}.", StringComparison.Ordinal)
+            ? aliasName
+            : $"{ModuleName}.{aliasName}";
     }
 
     public static bool TryResolve(LlvmTargetInfo? targetInfo, out StarkCDataModel dataModel)

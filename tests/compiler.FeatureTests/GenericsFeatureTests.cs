@@ -129,7 +129,9 @@ public sealed class GenericsFeatureTests : FeatureLlvmTestBase
 
         var specializationBody = ExtractDefinitionBody(llvm, "__stark_mono_fn_Demo__Pick__N_5");
         Assert.Contains("ret i8 5", specializationBody);
-        Assert.Contains("call fastcc i8 @__stark_mono_fn_Demo__Pick__N_5(", ExtractDefinitionBody(llvm, "Run"));
+        var runBody = ExtractDefinitionBody(llvm, "Run");
+        Assert.Contains("ret i8 5", runBody);
+        Assert.DoesNotContain("call fastcc i8 @__stark_mono_fn_Demo__Pick__N_5(", runBody);
     }
 
     [Fact]

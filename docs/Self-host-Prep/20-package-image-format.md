@@ -63,10 +63,11 @@ efficient binary encoding for those typed sections.
 Compiler facts in package images are durable facts only. They must preserve
 package-boundary information such as public type layout, ABI/calling convention,
 extern signatures, struct layout, C alias mappings, doctrine/trait satisfaction,
-associated types, exported symbol metadata, generic-template planning facts, and
-downstream constant facts. Transient pass-local MIR/SSA facts stay in compiler
-IR fact tables unless a package-image section explicitly defines a stable
-summary. See [24-ir-memory-and-fact-model.md](24-ir-memory-and-fact-model.md).
+associated types, function/method generic type-parameter constraints, exported
+symbol metadata, generic-template planning facts, and downstream constant facts.
+Transient pass-local MIR/SSA facts stay in compiler IR fact tables unless a
+package-image section explicitly defines a stable summary. See
+[24-ir-memory-and-fact-model.md](24-ir-memory-and-fact-model.md).
 
 ## 4. Binary Load Requirements
 
@@ -134,33 +135,24 @@ format always evolve together without a durable format marker.
 
 - [x] Decide package-image format policy: binary for normal compiler loading,
       JSON/text through `stark inspect-pkg` for inspection/export.
-- [ ] Define the canonical binary file extension and `stark inspect-pkg` output
-      conventions.
-- [ ] Define the `stark inspect-pkg --format json|text` surface.
-- [ ] Design the binary header, magic, format version, target/profile facts, and
-      section directory.
-- [ ] Define stable section IDs for source-surface, typed-interface,
-      compiler-facts, generic-templates, native metadata, and future sections.
-- [ ] Define which compiler facts are durable package facts, which are transient
-      pass-local facts, and which package sections validate each durable fact.
-- [ ] Design string/name tables and typed index tables that cooperate with the
-      compiler interner model.
-- [ ] Implement binary package-image writer and reader in Stark.
-- [ ] Port package-image models, builders, loaders, bridge code, and shared
-      codecs to Stark against the logical section model.
-- [ ] Implement `stark inspect-pkg` rendering from binary package images to
-      deterministic JSON and deterministic text.
-- [ ] Keep a legacy `.starkpkg.json` load path only as long as bootstrap or
-      migration requires it, with tests proving the normal path uses binary.
-- [ ] Update package-image tests so normal dependency-load tests use binary,
-      while golden/debug tests compare deterministic JSON/text inspection
-      output.
-- [ ] Add compatibility diagnostics for malformed headers, unknown required
-      sections, bad offsets/lengths, format mismatches, and target/profile
-      mismatches.
-- [ ] Place package-image outputs under the accepted
-      `.stark/build/<profile>/<target-triple>/<stage>/pkg/` layout from
-      [25-build-artifact-layout.md](25-build-artifact-layout.md), with
+- [ ] Finalize the public package-image contract: canonical binary extension,
+      `stark inspect-pkg --format json|text`, deterministic inspection output
+      conventions, and bootstrap policy for the legacy `.starkpkg.json` path.
+- [ ] Design the durable binary format: header, magic, format version,
+      target/profile facts, section directory, stable section IDs, durable
+      compiler-fact policy, string/name tables, and typed index tables that
+      cooperate with the compiler interner model.
+- [ ] Implement the Stark package-image stack: binary writer/reader, logical
+      models, builders, loaders, bridge code, shared codecs, and deterministic
+      JSON/text inspection rendering from binary images.
+- [ ] Add package-image diagnostics and compatibility behavior for malformed
+      headers, unknown required sections, bad offsets/lengths, format
+      mismatches, target/profile mismatches, and any temporary legacy JSON load
+      path.
+- [ ] Update tests so normal dependency loading uses binary images while
+      golden/debug tests compare deterministic inspection output.
+- [ ] Route package-image outputs into the accepted
+      `.stark/build/<profile>/<target-triple>/<stage>/pkg/` layout, with
       inspection views under `artifacts/` or an explicit caller output path.
 
 ## 9. Documentation Work

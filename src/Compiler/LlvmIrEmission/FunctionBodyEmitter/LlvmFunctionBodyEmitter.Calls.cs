@@ -259,24 +259,53 @@ internal sealed partial class LlvmFunctionBodyEmitter
                 return false;
             }
 
-            if (!TryMaterializeDictionaryKeyScalarArgument(call, abiCallee.UserParameters[0], 0, keyType, out var value))
+            if (IsSupportedDictionaryKeyScalarType(keyType))
             {
-                return false;
+                if (!TryMaterializeDictionaryKeyScalarArgument(call, abiCallee.UserParameters[0], 0, keyType, out var value))
+                {
+                    return false;
+                }
+
+                EmitDictionaryKeyHashValue(result, keyType, value);
+                return true;
             }
 
-            EmitDictionaryKeyHashValue(result, keyType, value);
-            return true;
+            if (IsSupportedDictionaryKeyTextType(keyType)
+                && TryMaterializeDictionaryKeyAggregateArgument(call, abiCallee.UserParameters[0], 0, keyType, out var textValue))
+            {
+                EmitDictionaryKeyTextHashValue(result, keyType, textValue);
+                return true;
+            }
+
+            return false;
         }
 
-        if (call.Type.Kind != StarkTypeKind.Bool
-            || !TryMaterializeDictionaryKeyScalarArgument(call, abiCallee.UserParameters[0], 0, keyType, out var left)
-            || !TryMaterializeDictionaryKeyScalarArgument(call, abiCallee.UserParameters[1], 1, keyType, out var right))
+        if (call.Type.Kind != StarkTypeKind.Bool)
         {
             return false;
         }
 
-        AppendLine($"  {result} = icmp eq {MapType(keyType)} {left}, {right}");
-        return true;
+        if (IsSupportedDictionaryKeyScalarType(keyType))
+        {
+            if (!TryMaterializeDictionaryKeyScalarArgument(call, abiCallee.UserParameters[0], 0, keyType, out var left)
+                || !TryMaterializeDictionaryKeyScalarArgument(call, abiCallee.UserParameters[1], 1, keyType, out var right))
+            {
+                return false;
+            }
+
+            AppendLine($"  {result} = icmp eq {MapType(keyType)} {left}, {right}");
+            return true;
+        }
+
+        if (IsSupportedDictionaryKeyTextType(keyType)
+            && TryMaterializeDictionaryKeyAggregateArgument(call, abiCallee.UserParameters[0], 0, keyType, out var leftText)
+            && TryMaterializeDictionaryKeyAggregateArgument(call, abiCallee.UserParameters[1], 1, keyType, out var rightText))
+        {
+            EmitDictionaryKeyTextEqualsValue(result, keyType, leftText, rightText);
+            return true;
+        }
+
+        return false;
     }
 
     private static DictionaryKeyCallSiteOperation? TryResolveDictionaryKeyCallSiteOperation(
@@ -344,7 +373,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
 
         var firstParameterType = NormalizeDictionaryKeyType(userParameters[0].SourceType);
         if (userParameters[0].SourceType.BorrowKind != StarkBorrowKind.None
-            && IsSupportedDictionaryKeyScalarType(firstParameterType))
+            && IsSupportedDictionaryKeyBuiltinType(firstParameterType))
         {
             keyType = firstParameterType;
         }
@@ -357,7 +386,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         {
             var parameterType = NormalizeDictionaryKeyType(userParameters[index].SourceType);
             if (userParameters[index].SourceType.BorrowKind != StarkBorrowKind.None
-                && IsSupportedDictionaryKeyScalarType(parameterType))
+                && IsSupportedDictionaryKeyBuiltinType(parameterType))
             {
                 if (parameterType != keyType)
                 {
@@ -383,7 +412,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         out StarkTypeSymbol keyType)
     {
         keyType = NormalizeDictionaryKeyType(call.Arguments[argumentIndex].Type);
-        if (IsSupportedDictionaryKeyScalarType(keyType))
+        if (IsSupportedDictionaryKeyBuiltinType(keyType))
         {
             return true;
         }
@@ -394,7 +423,7 @@ internal sealed partial class LlvmFunctionBodyEmitter
         if (indirectArgumentAddress?.Type is { Kind: StarkTypeKind.RawPointer, ElementType: not null } pointerType)
         {
             keyType = NormalizeDictionaryKeyType(pointerType.ElementType);
-            return IsSupportedDictionaryKeyScalarType(keyType);
+            return IsSupportedDictionaryKeyBuiltinType(keyType);
         }
 
         keyType = StarkTypeSymbols.Error;
@@ -498,6 +527,98 @@ internal sealed partial class LlvmFunctionBodyEmitter
         return loaded;
     }
 
+    private bool TryMaterializeDictionaryKeyAggregateArgument(
+        SsaCallRValue call,
+        AbiParameterSymbol parameter,
+        int argumentIndex,
+        StarkTypeSymbol keyType,
+        out string value)
+    {
+        value = string.Empty;
+        var argument = call.Arguments[argumentIndex];
+        if (parameter.Kind == AbiParameterKind.Direct)
+        {
+            value = FormatValue(argument);
+            return true;
+        }
+
+        if (parameter.Kind != AbiParameterKind.IndirectIn)
+        {
+            return false;
+        }
+
+        var llvmType = MapType(keyType);
+        var indirectArgumentAddress = call.IndirectArgumentAddresses is not null && argumentIndex < call.IndirectArgumentAddresses.Count
+            ? call.IndirectArgumentAddresses[argumentIndex]
+            : null;
+        if (indirectArgumentAddress is not null)
+        {
+            value = LoadDictionaryKeyAggregateValue(
+                llvmType,
+                FormatValue(indirectArgumentAddress),
+                GetKnownPointerAlignmentSuffix(indirectArgumentAddress, keyType),
+                $"dict_key_text_arg_{argumentIndex.ToString(CultureInfo.InvariantCulture)}");
+            return true;
+        }
+
+        var promotedLocal = call.IndirectArgumentLocalNames is not null && argumentIndex < call.IndirectArgumentLocalNames.Count
+            ? call.IndirectArgumentLocalNames[argumentIndex]
+            : null;
+        if (!string.IsNullOrWhiteSpace(promotedLocal))
+        {
+            var promotedParameter = _abiFunction.UserParameters.FirstOrDefault(
+                candidate => string.Equals(candidate.SourceName, promotedLocal, StringComparison.Ordinal));
+            if (promotedParameter is not null)
+            {
+                if (promotedParameter.Kind == AbiParameterKind.IndirectIn)
+                {
+                    value = LoadDictionaryKeyAggregateValue(
+                        llvmType,
+                        $"%{EscapeIdentifier(promotedParameter.LlvmName)}",
+                        GetTypeAlignmentSuffix(keyType),
+                        $"dict_key_text_param_{argumentIndex.ToString(CultureInfo.InvariantCulture)}");
+                    return true;
+                }
+
+                EnsureParameterSlotExists(promotedParameter, promotedParameter.SourceType);
+                value = LoadDictionaryKeyAggregateValue(
+                    llvmType,
+                    $"%{EscapeIdentifier($"slot_param_{promotedParameter.SourceName}")}",
+                    GetStackObjectAlignmentSuffix(keyType),
+                    $"dict_key_text_param_slot_{argumentIndex.ToString(CultureInfo.InvariantCulture)}");
+                return true;
+            }
+
+            EnsureLocalSlotExists(promotedLocal!, parameter.SourceType);
+            value = LoadDictionaryKeyAggregateValue(
+                llvmType,
+                GetLocalSlotPointer(promotedLocal!),
+                GetLocalSlotAlignmentSuffix(promotedLocal!, keyType),
+                $"dict_key_text_local_{argumentIndex.ToString(CultureInfo.InvariantCulture)}");
+            return true;
+        }
+
+        if (argument.Type.BorrowKind == StarkBorrowKind.None
+            && NormalizeDictionaryKeyType(argument.Type) == keyType)
+        {
+            value = FormatValue(argument);
+            return true;
+        }
+
+        return false;
+    }
+
+    private string LoadDictionaryKeyAggregateValue(
+        string llvmType,
+        string address,
+        string alignmentSuffix,
+        string tempPrefix)
+    {
+        var loaded = $"%{EscapeIdentifier(CreateAbiTempName(tempPrefix))}";
+        AppendLine($"  {loaded} = load {llvmType}, ptr {address}{alignmentSuffix}");
+        return loaded;
+    }
+
     private void EmitDictionaryKeyHashValue(string result, StarkTypeSymbol keyType, string value)
     {
         var llvmType = MapType(keyType);
@@ -518,6 +639,22 @@ internal sealed partial class LlvmFunctionBodyEmitter
         AppendLine($"  {result} = {opcode} {llvmType} {value} to i64");
     }
 
+    private void EmitDictionaryKeyTextHashValue(string result, StarkTypeSymbol keyType, string value)
+    {
+        var helperName = keyType.Kind == StarkTypeKind.Ascii
+            ? AsciiHashHelperName
+            : UnicodeHashHelperName;
+        AppendLine($"  {result} = call i64 @{EscapeIdentifier(helperName)}({MapType(keyType)} {value})");
+    }
+
+    private void EmitDictionaryKeyTextEqualsValue(string result, StarkTypeSymbol keyType, string left, string right)
+    {
+        var helperName = keyType.Kind == StarkTypeKind.Ascii
+            ? AsciiEqualityHelperName
+            : UnicodeEqualityHelperName;
+        AppendLine($"  {result} = call i1 @{EscapeIdentifier(helperName)}({MapType(keyType)} {left}, {MapType(keyType)} {right})");
+    }
+
     private static StarkTypeSymbol NormalizeDictionaryKeyType(StarkTypeSymbol type)
     {
         return StarkTypeSymbols.WithQualifiers(
@@ -531,6 +668,17 @@ internal sealed partial class LlvmFunctionBodyEmitter
     private static bool IsSupportedDictionaryKeyScalarType(StarkTypeSymbol type)
     {
         return type.Kind is StarkTypeKind.Bool or StarkTypeKind.Integer;
+    }
+
+    private static bool IsSupportedDictionaryKeyTextType(StarkTypeSymbol type)
+    {
+        return type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode;
+    }
+
+    private static bool IsSupportedDictionaryKeyBuiltinType(StarkTypeSymbol type)
+    {
+        return IsSupportedDictionaryKeyScalarType(type)
+            || IsSupportedDictionaryKeyTextType(type);
     }
 
     private bool TryEmitAsciiToUnicodeLiteralCallSiteSpecialization(

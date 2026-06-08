@@ -44,7 +44,7 @@ public sealed class LlvmIrEmissionTests
 
             unsafe fn i32[min max] Run()
             {
-                stack fnptr<fn i32[min max](i32[min max], i32[min max])> op = Add;
+                stack fnptr<unsafe fn i32[min max](i32[min max], i32[min max])> op = Add;
                 return op(40, 2);
             }
             """,
@@ -1052,7 +1052,7 @@ public sealed class LlvmIrEmissionTests
                 return box.Value;
             }
 
-            unsafe fn i32[min max] Apply(fnptr<fn i32[min max](borrow Box)> op, borrow Box box)
+            unsafe fn i32[min max] Apply(fnptr<unsafe fn i32[min max](borrow Box)> op, borrow Box box)
             {
                 return op(box);
             }
@@ -1172,7 +1172,7 @@ public sealed class LlvmIrEmissionTests
                 return;
             }
 
-            unsafe fn void Apply(fnptr<fn void(init u32[0 max][])> op, init u32[0 max][] destination)
+            unsafe fn void Apply(fnptr<unsafe fn void(init u32[0 max][])> op, init u32[0 max][] destination)
             {
                 op(destination);
                 return;
@@ -1214,7 +1214,7 @@ public sealed class LlvmIrEmissionTests
             }
 
             unsafe fn void Apply(
-                fnptr<fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>)> op,
+                fnptr<unsafe fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>)> op,
                 rawmutptr<i32[min max]> left,
                 rawmutptr<i32[min max]> right)
                 {
@@ -1257,7 +1257,7 @@ public sealed class LlvmIrEmissionTests
             }
 
             unsafe fn void Apply(
-                fnptr<fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>) where overlap(arg0, arg1)> op,
+                fnptr<unsafe fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>) where overlap(arg0, arg1)> op,
                 rawmutptr<i32[min max]> left,
                 rawmutptr<i32[min max]> right)
                 where overlap(left, right)
@@ -1299,7 +1299,7 @@ public sealed class LlvmIrEmissionTests
             }
 
             unsafe fn void Apply(
-                fnptr<fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>) where same(arg0, arg1)> op,
+                fnptr<unsafe fn void(rawmutptr<i32[min max]>, rawmutptr<i32[min max]>) where same(arg0, arg1)> op,
                 rawmutptr<i32[min max]> left,
                 rawmutptr<i32[min max]> right)
                 where same(left, right)
@@ -1345,7 +1345,7 @@ public sealed class LlvmIrEmissionTests
                 return value.A + value.B + value.C;
             }
 
-            unsafe fn i64[min max] Apply(fnptr<fn i64[min max](Big)> op, Big value)
+            unsafe fn i64[min max] Apply(fnptr<unsafe fn i64[min max](Big)> op, Big value)
             {
                 return op(value);
             }
@@ -1393,7 +1393,7 @@ public sealed class LlvmIrEmissionTests
                 };
             }
 
-            unsafe fn Big Apply(fnptr<fn Big(i64[min max])> op, i64[min max] seed)
+            unsafe fn Big Apply(fnptr<unsafe fn Big(i64[min max])> op, i64[min max] seed)
             {
                 return op(seed);
             }
@@ -2967,6 +2967,36 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
+    public void FfiVarargsPercentSAcceptsRawCCharPointer()
+    {
+        var result = Compile(
+            """
+            module Demo
+
+            public ffi varargs unsafe fn i32[min max] printf(ascii format);
+
+            export unsafe fn i32[min max] main()
+            {
+                stack mut System.C.c_char[6] name =
+                {
+                    83, 116, 97, 114, 107, 0
+                };
+
+                return printf("name=%s", &name[0]);
+            }
+            """,
+            new CompilerOptions(
+                EmitLlvmIr: true,
+                OptimizationLevel: CompilerOptimizationLevel.O0));
+
+        Assert.True(result.Succeeded, string.Join(", ", result.Diagnostics.Select(static diagnostic => diagnostic.ToString())));
+        var llvm = GetLlvm(result);
+
+        Assert.Contains("declare i32 @printf(ptr readonly, ...)", llvm);
+        Assert.Contains("call i32 (ptr, ...) @printf(", llvm);
+    }
+
+    [Fact]
     public void InternalizedImmutableGlobalsUseUnnamedAddrOnlyWhenAddressesStayInsignificant()
     {
         var result = Compile(
@@ -3492,7 +3522,8 @@ public sealed class LlvmIrEmissionTests
         var llvm = GetLlvmRaw(result);
 
         Assert.Matches(@"load %Box, ptr @Current, align 4, !invariant\.load !\d+", llvm);
-        Assert.Matches(@"load %Box, ptr @Frozen, align 4, !invariant\.load !\d+", llvm);
+        Assert.Contains("ret i32 7", ExtractDefinitionBody(llvm, "ReadConst"));
+        Assert.DoesNotContain("load %Box, ptr @Frozen", ExtractDefinitionBody(llvm, "ReadConst"));
         Assert.Matches(@"load i32, ptr %v\d+, align 4, !invariant\.load !\d+", llvm);
         Assert.DoesNotContain("load i32, ptr @Counter, !invariant.load", llvm);
     }
@@ -10963,7 +10994,7 @@ public sealed class LlvmIrEmissionTests
     }
 
     [Fact]
-    public void ImportedGlobalsUseQualifiedDependencySymbols()
+    public void ImportedGlobalsUseQualifiedDependencySymbolsAndFoldConstValues()
     {
         var result = Compile(
             """
@@ -11003,7 +11034,7 @@ public sealed class LlvmIrEmissionTests
         Assert.Contains("@Math_Counter = external global i32", llvm);
         Assert.Contains("load i32, ptr @Math_Counter", llvm);
         Assert.Matches(@"store i32 %[^,]+, ptr @Math_Counter", llvm);
-        Assert.Contains("load i8, ptr @Math_Answer", llvm);
+        Assert.DoesNotContain("load i8, ptr @Math_Answer", llvm);
     }
 
     [Fact]
@@ -13766,7 +13797,7 @@ public sealed class LlvmIrEmissionTests
             }
 
             unsafe fn void Apply(
-                fnptr<fn void(rawptr<i32[min max]>[arg1], u8[1 10])> op,
+                fnptr<unsafe fn void(rawptr<i32[min max]>[arg1], u8[1 10])> op,
                 rawptr<i32[min max]>[count] input,
                 u8[1 10] count)
                 {

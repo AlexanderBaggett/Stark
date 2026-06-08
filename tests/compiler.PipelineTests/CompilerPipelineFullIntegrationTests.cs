@@ -3053,6 +3053,253 @@ public sealed class CompilerPipelineFullIntegrationTests
 
 
     [Fact]
+    public void ManifestBackedThreadSafetyLawAttributesFeedComptimeStructuralFactsWithoutSourceFiles()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-law-attribute-facts-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct RawHolder
+                {
+                    [Grant(Transferable)]
+                    public rawptr<i32[min max]> Pointer;
+                }
+
+                public struct Box<T, comptime u8[1 8] N>
+                {
+                    public T Value;
+                }
+
+                [Grant(Shareable) where Transferable(Box<T, 4>)]
+                public struct Shared<T>
+                {
+                    public T Value;
+                }
+
+                public struct Sync<T>
+                {
+                    [Grant(Shareable) where Transferable(Box<T, 4>)]
+                    public T Payload;
+                }
+
+                [Grant(Transferable)]
+                public struct Token
+                {
+                    [Deny(Shareable)]
+                    public i32[min max] Value;
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    finite law i32[min max] Run()
+                    {
+                        if (comptime System.Compiler.TypeThreadSafetyLawAttributeCount<Facade.Token>() == 1)
+                        {
+                            if (comptime (System.Compiler.TypeThreadSafetyLawAttributeLawName<Facade.Token, 0>() == "Transferable"))
+                            {
+                                if (comptime System.Compiler.TypeThreadSafetyLawAttributeIsGrant<Facade.Token, 0>())
+                                {
+                                    if (comptime System.Compiler.FieldThreadSafetyLawAttributeIsDeny<Facade.Token, 0, 0>())
+                                    {
+                                        if (comptime System.Compiler.TypeThreadSafetyLawAttributeConditionTypeIs<Facade.Shared<Facade.RawHolder>, Facade.Box<Facade.RawHolder, 4>, 0>())
+                                        {
+                                            if (comptime (System.Compiler.TypeThreadSafetyLawAttributeConditionTypeDisplayName<Facade.Shared<Facade.RawHolder>, 0>() == "Facade.Box<Facade.RawHolder, 4>"))
+                                            {
+                                                if (comptime (System.Compiler.TypeThreadSafetyLawAttributeConditionTypeBaseName<Facade.Shared<Facade.RawHolder>, 0>() == "Facade.Box"))
+                                                {
+                                                    if (comptime System.Compiler.TypeThreadSafetyLawAttributeConditionTypeIsNamed<Facade.Shared<Facade.RawHolder>, 0>()
+                                                        && comptime System.Compiler.TypeThreadSafetyLawAttributeConditionTypeIsStruct<Facade.Shared<Facade.RawHolder>, 0>()
+                                                        && comptime System.Compiler.TypeThreadSafetyLawAttributeConditionTypeHasConcreteLayout<Facade.Shared<Facade.RawHolder>, 0>()
+                                                        && comptime System.Compiler.TypeThreadSafetyLawAttributeConditionTypeIsGenericInstantiation<Facade.Shared<Facade.RawHolder>, 0>())
+                                                    {
+                                                        if (comptime System.Compiler.TypeThreadSafetyLawAttributeConditionTypeArgumentCount<Facade.Shared<Facade.RawHolder>, 0>() == 1
+                                                            && comptime System.Compiler.TypeThreadSafetyLawAttributeConditionTypeComptimeArgumentCount<Facade.Shared<Facade.RawHolder>, 0>() == 1)
+                                                        {
+                                                            if (comptime System.Compiler.FieldThreadSafetyLawAttributeConditionTypeIs<Facade.Sync<Facade.RawHolder>, Facade.Box<Facade.RawHolder, 4>, 0, 0>())
+                                                            {
+                                                                if (comptime (System.Compiler.FieldThreadSafetyLawAttributeConditionTypeDisplayName<Facade.Sync<Facade.RawHolder>, 0, 0>() == "Facade.Box<Facade.RawHolder, 4>"))
+                                                                {
+                                                                    if (comptime (System.Compiler.FieldThreadSafetyLawAttributeConditionTypeBaseName<Facade.Sync<Facade.RawHolder>, 0, 0>() == "Facade.Box"))
+                                                                    {
+                                                                        if (comptime System.Compiler.FieldThreadSafetyLawAttributeConditionTypeIsNamed<Facade.Sync<Facade.RawHolder>, 0, 0>()
+                                                                            && comptime System.Compiler.FieldThreadSafetyLawAttributeConditionTypeIsStruct<Facade.Sync<Facade.RawHolder>, 0, 0>()
+                                                                            && comptime System.Compiler.FieldThreadSafetyLawAttributeConditionTypeHasConcreteLayout<Facade.Sync<Facade.RawHolder>, 0, 0>()
+                                                                            && comptime System.Compiler.FieldThreadSafetyLawAttributeConditionTypeIsGenericInstantiation<Facade.Sync<Facade.RawHolder>, 0, 0>())
+                                                                        {
+                                                                            if (comptime System.Compiler.FieldThreadSafetyLawAttributeConditionTypeArgumentCount<Facade.Sync<Facade.RawHolder>, 0, 0>() == 1
+                                                                                && comptime System.Compiler.FieldThreadSafetyLawAttributeConditionTypeComptimeArgumentCount<Facade.Sync<Facade.RawHolder>, 0, 0>() == 1)
+                                                                            {
+                                                                                return 42;
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        return 0;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    OptimizationLevel: CompilerOptimizationLevel.O0));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+            Assert.NotNull(llvmModule);
+            Assert.Contains("ret i32 42", llvmModule.Text);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+
+    [Fact]
+    public void ManifestBackedMethodThreadSafetyLawPredicatesFeedComptimeStructuralFactsWithoutSourceFiles()
+    {
+        var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-method-law-predicate-facts-");
+        var manifestPath = Path.Combine(tempDirectory.FullName, "libFacade.starkpkg.json");
+        var facadePath = Path.Combine(tempDirectory.FullName, "Facade.stark");
+
+        try
+        {
+            var pipeline = DefaultCompilerPipeline.Create();
+            var libraryResult = pipeline.Run(new CompilationInput(
+                """
+                module Facade
+
+                public struct RawHolder
+                {
+                    [Grant(Transferable)]
+                    public rawptr<i32[min max]> Pointer;
+                }
+
+                public struct Box<T, comptime u8[1 8] N>
+                {
+                    public T Value;
+                }
+
+                public struct Gate<T>
+                {
+                    public fn void Move(T value) where Transferable(Box<T, 4>)
+                    {
+                    }
+                }
+                """,
+                facadePath));
+
+            Assert.True(libraryResult.Succeeded, string.Join(", ", libraryResult.Diagnostics.Select(static d => d.ToString())));
+
+            var manifest = PackageImageBuilder.Create(
+                libraryResult,
+                Path.Combine(tempDirectory.FullName, OperatingSystem.IsWindows() ? "Facade.lib" : "libFacade.a"));
+            File.WriteAllText(manifestPath, manifest.ToJson());
+            File.Delete(facadePath);
+
+            var consumerResult = pipeline.Run(
+                new CompilationInput(
+                    """
+                    import Facade
+                    module Demo
+
+                    finite law i32[min max] Run()
+                    {
+                        if (comptime System.Compiler.MethodThreadSafetyLawPredicateCount<Facade.Gate<Facade.RawHolder>, 0>() == 1)
+                        {
+                            if (comptime (System.Compiler.MethodThreadSafetyLawPredicateLawName<Facade.Gate<Facade.RawHolder>, 0, 0>() == "Transferable"))
+                            {
+                                if (comptime System.Compiler.MethodThreadSafetyLawPredicateTypeIs<Facade.Gate<Facade.RawHolder>, Facade.Box<Facade.RawHolder, 4>, 0, 0>())
+                                {
+                                    if (comptime (System.Compiler.MethodThreadSafetyLawPredicateTypeDisplayName<Facade.Gate<Facade.RawHolder>, 0, 0>() == "Facade.Box<Facade.RawHolder, 4>"))
+                                    {
+                                        if (comptime (System.Compiler.MethodThreadSafetyLawPredicateTypeBaseName<Facade.Gate<Facade.RawHolder>, 0, 0>() == "Facade.Box"))
+                                        {
+                                            if (comptime System.Compiler.MethodThreadSafetyLawPredicateTypeIsNamed<Facade.Gate<Facade.RawHolder>, 0, 0>()
+                                                && comptime System.Compiler.MethodThreadSafetyLawPredicateTypeIsStruct<Facade.Gate<Facade.RawHolder>, 0, 0>()
+                                                && comptime System.Compiler.MethodThreadSafetyLawPredicateTypeHasConcreteLayout<Facade.Gate<Facade.RawHolder>, 0, 0>()
+                                                && comptime System.Compiler.MethodThreadSafetyLawPredicateTypeIsGenericInstantiation<Facade.Gate<Facade.RawHolder>, 0, 0>())
+                                            {
+                                                if (comptime System.Compiler.MethodThreadSafetyLawPredicateTypeArgumentCount<Facade.Gate<Facade.RawHolder>, 0, 0>() == 1)
+                                                {
+                                                    if (comptime System.Compiler.MethodThreadSafetyLawPredicateTypeComptimeArgumentCount<Facade.Gate<Facade.RawHolder>, 0, 0>() == 1)
+                                                    {
+                                                        return 42;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        return 0;
+                    }
+                    """,
+                    Path.Combine(tempDirectory.FullName, "Demo.stark")),
+                new CompilerOptions(
+                    ModuleResolver: new FileSystemModuleResolver(tempDirectory.FullName),
+                    OptimizationLevel: CompilerOptimizationLevel.O0));
+
+            Assert.True(consumerResult.Succeeded, string.Join(", ", consumerResult.Diagnostics.Select(static d => d.ToString())));
+            Assert.True(consumerResult.Artifacts.TryGet(CompilerArtifactKeys.LlvmIrModule, out LlvmIrModule? llvmModule));
+            Assert.NotNull(llvmModule);
+            Assert.Contains("ret i32 42", llvmModule.Text);
+        }
+        finally
+        {
+            try
+            {
+                tempDirectory.Delete(recursive: true);
+            }
+            catch
+            {
+                // Best effort cleanup only.
+            }
+        }
+    }
+
+
+    [Fact]
     public void ManifestBackedGenericEnumsCanBeInstantiatedWithoutSourceFiles()
     {
         var tempDirectory = Directory.CreateTempSubdirectory("stark-manifest-generic-enum-pipeline-");

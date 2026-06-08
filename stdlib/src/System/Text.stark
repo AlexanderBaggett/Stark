@@ -1,5 +1,6 @@
 import System.Math
 import System.Memory
+import System.Collections
 module System.Text
 
 public enum Encoding
@@ -29,6 +30,16 @@ public finite law i64[min max] AsciiLength(ascii source);
 internal unsafe finite law rawptr<i32[min max]> UnicodeData(unicode source);
 public finite law i64[min max] UnicodeLength(unicode source);
 
+internal inline finite law u64[0 max] TextHashOffsetBasis()
+{
+    return (u64[0 max])14695981039346656037;
+}
+
+internal inline finite law u64[0 max] TextHashPrime()
+{
+    return (u64[0 max])1099511628211;
+}
+
 internal fn i32[min max] UnsignedByte(i8[min max] value)
 {
     if (value < 0)
@@ -37,6 +48,356 @@ internal fn i32[min max] UnsignedByte(i8[min max] value)
     }
 
     return (i32[min max])value;
+}
+
+internal inline finite law u64[0 max] UnsignedCodePoint(i32[min max] value)
+{
+    if (value < 0)
+    {
+        return (u64[0 max])((i64[min max])value + 4294967296);
+    }
+
+    return (u64[0 max])value;
+}
+
+internal inline finite law u64[0 max] MixAsciiHash(u64[0 max] hash, i8[min max] unit)
+{
+    return (hash ^ (u64[0 max])UnsignedByte(unit)) *% TextHashPrime();
+}
+
+internal inline finite law u64[0 max] MixUnicodeHash(u64[0 max] hash, i32[min max] unit)
+{
+    return (hash ^ UnsignedCodePoint(unit)) *% TextHashPrime();
+}
+
+internal finite law u64[0 max] HashAsciiSlice(
+    borrow i8[min max][] source,
+    u64[0 2 ** 63 - 1] count)
+{
+    stack mut u64[0 max] hash = TextHashOffsetBasis();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        hash = MixAsciiHash(hash, source[index]);
+    }
+
+    return hash;
+}
+
+internal finite law u64[0 max] HashUnicodeSlice(
+    borrow i32[min max][] source,
+    u64[0 2 ** 63 - 1] count)
+{
+    stack mut u64[0 max] hash = TextHashOffsetBasis();
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        hash = MixUnicodeHash(hash, source[index]);
+    }
+
+    return hash;
+}
+
+internal finite law bool EqualsAsciiSlices(
+    borrow i8[min max][] left,
+    borrow i8[min max][] right,
+    u64[0 2 ** 63 - 1] leftLength,
+    u64[0 2 ** 63 - 1] rightLength)
+    where overlap(left, right)
+{
+    if (leftLength != rightLength)
+    {
+        return false;
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < leftLength; index += 1)
+    {
+        if (left[index] != right[index])
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+internal finite law bool EqualsUnicodeSlices(
+    borrow i32[min max][] left,
+    borrow i32[min max][] right,
+    u64[0 2 ** 63 - 1] leftLength,
+    u64[0 2 ** 63 - 1] rightLength)
+    where overlap(left, right)
+{
+    if (leftLength != rightLength)
+    {
+        return false;
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < leftLength; index += 1)
+    {
+        if (left[index] != right[index])
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+internal finite law System.Collections.Ordering CompareAsciiSlices(
+    borrow i8[min max][] left,
+    borrow i8[min max][] right,
+    u64[0 2 ** 63 - 1] leftLength,
+    u64[0 2 ** 63 - 1] rightLength)
+    where overlap(left, right)
+{
+    stack mut u64[0 2 ** 63 - 1] count = leftLength;
+    if (rightLength < count)
+    {
+        count = rightLength;
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack i32[min max] leftUnit = UnsignedByte(left[index]);
+        stack i32[min max] rightUnit = UnsignedByte(right[index]);
+        if (leftUnit < rightUnit)
+        {
+            return System.Collections.Ordering.Less;
+        }
+
+        if (leftUnit > rightUnit)
+        {
+            return System.Collections.Ordering.Greater;
+        }
+    }
+
+    if (leftLength < rightLength)
+    {
+        return System.Collections.Ordering.Less;
+    }
+
+    if (leftLength > rightLength)
+    {
+        return System.Collections.Ordering.Greater;
+    }
+
+    return System.Collections.Ordering.Equal;
+}
+
+internal finite law System.Collections.Ordering CompareUnicodeSlices(
+    borrow i32[min max][] left,
+    borrow i32[min max][] right,
+    u64[0 2 ** 63 - 1] leftLength,
+    u64[0 2 ** 63 - 1] rightLength)
+    where overlap(left, right)
+{
+    stack mut u64[0 2 ** 63 - 1] count = leftLength;
+    if (rightLength < count)
+    {
+        count = rightLength;
+    }
+
+    for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+    {
+        stack u64[0 max] leftUnit = UnsignedCodePoint(left[index]);
+        stack u64[0 max] rightUnit = UnsignedCodePoint(right[index]);
+        if (leftUnit < rightUnit)
+        {
+            return System.Collections.Ordering.Less;
+        }
+
+        if (leftUnit > rightUnit)
+        {
+            return System.Collections.Ordering.Greater;
+        }
+    }
+
+    if (leftLength < rightLength)
+    {
+        return System.Collections.Ordering.Less;
+    }
+
+    if (leftLength > rightLength)
+    {
+        return System.Collections.Ordering.Greater;
+    }
+
+    return System.Collections.Ordering.Equal;
+}
+
+public finite law u64[0 max] Hash(ascii value)
+{
+    unsafe
+    {
+        stack i64[min max] signedLength = AsciiLength(value);
+        if (signedLength <= 0)
+        {
+            return TextHashOffsetBasis();
+        }
+
+        stack rawptr<i8[min max]> data = AsciiData(value);
+        if (data == null)
+        {
+            return TextHashOffsetBasis();
+        }
+
+        stack mut u64[0 max] hash = TextHashOffsetBasis();
+        for willexit (stack mut i64[min max] index = 0; index < signedLength; index += 1)
+        {
+            hash = MixAsciiHash(hash, *(&data[index]));
+        }
+
+        return hash;
+    }
+}
+
+public finite law u64[0 max] Hash(unicode value)
+{
+    unsafe
+    {
+        stack i64[min max] signedLength = UnicodeLength(value);
+        if (signedLength <= 0)
+        {
+            return TextHashOffsetBasis();
+        }
+
+        stack rawptr<i32[min max]> data = UnicodeData(value);
+        if (data == null)
+        {
+            return TextHashOffsetBasis();
+        }
+
+        stack mut u64[0 max] hash = TextHashOffsetBasis();
+        for willexit (stack mut i64[min max] index = 0; index < signedLength; index += 1)
+        {
+            hash = MixUnicodeHash(hash, *(&data[index]));
+        }
+
+        return hash;
+    }
+}
+
+public finite law bool Equals(ascii left, ascii right)
+    where overlap(left, right)
+{
+    return left == right;
+}
+
+public finite law bool Equals(unicode left, unicode right)
+    where overlap(left, right)
+{
+    return left == right;
+}
+
+public finite law System.Collections.Ordering Compare(ascii left, ascii right)
+    where overlap(left, right)
+{
+    unsafe
+    {
+        stack i64[min max] leftSignedLength = AsciiLength(left);
+        stack i64[min max] rightSignedLength = AsciiLength(right);
+        if (leftSignedLength < 0 || rightSignedLength < 0)
+        {
+            return System.Collections.Ordering.Equal;
+        }
+
+        stack u64[0 2 ** 63 - 1] leftLength = (u64[0 2 ** 63 - 1])leftSignedLength;
+        stack u64[0 2 ** 63 - 1] rightLength = (u64[0 2 ** 63 - 1])rightSignedLength;
+        stack mut u64[0 2 ** 63 - 1] count = leftLength;
+        if (rightLength < count)
+        {
+            count = rightLength;
+        }
+
+        stack rawptr<i8[min max]> leftData = AsciiData(left);
+        stack rawptr<i8[min max]> rightData = AsciiData(right);
+        if ((leftData == null && leftLength != 0) || (rightData == null && rightLength != 0))
+        {
+            return System.Collections.Ordering.Equal;
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+        {
+            stack i32[min max] leftUnit = UnsignedByte(*(&leftData[index]));
+            stack i32[min max] rightUnit = UnsignedByte(*(&rightData[index]));
+            if (leftUnit < rightUnit)
+            {
+                return System.Collections.Ordering.Less;
+            }
+
+            if (leftUnit > rightUnit)
+            {
+                return System.Collections.Ordering.Greater;
+            }
+        }
+
+        if (leftLength < rightLength)
+        {
+            return System.Collections.Ordering.Less;
+        }
+
+        if (leftLength > rightLength)
+        {
+            return System.Collections.Ordering.Greater;
+        }
+
+        return System.Collections.Ordering.Equal;
+    }
+}
+
+public finite law System.Collections.Ordering Compare(unicode left, unicode right)
+    where overlap(left, right)
+{
+    unsafe
+    {
+        stack i64[min max] leftSignedLength = UnicodeLength(left);
+        stack i64[min max] rightSignedLength = UnicodeLength(right);
+        if (leftSignedLength < 0 || rightSignedLength < 0)
+        {
+            return System.Collections.Ordering.Equal;
+        }
+
+        stack u64[0 2 ** 63 - 1] leftLength = (u64[0 2 ** 63 - 1])leftSignedLength;
+        stack u64[0 2 ** 63 - 1] rightLength = (u64[0 2 ** 63 - 1])rightSignedLength;
+        stack mut u64[0 2 ** 63 - 1] count = leftLength;
+        if (rightLength < count)
+        {
+            count = rightLength;
+        }
+
+        stack rawptr<i32[min max]> leftData = UnicodeData(left);
+        stack rawptr<i32[min max]> rightData = UnicodeData(right);
+        if ((leftData == null && leftLength != 0) || (rightData == null && rightLength != 0))
+        {
+            return System.Collections.Ordering.Equal;
+        }
+
+        for willexit (stack mut u64[0 2 ** 63 - 1] index = 0; index < count; index += 1)
+        {
+            stack u64[0 max] leftUnit = UnsignedCodePoint(*(&leftData[index]));
+            stack u64[0 max] rightUnit = UnsignedCodePoint(*(&rightData[index]));
+            if (leftUnit < rightUnit)
+            {
+                return System.Collections.Ordering.Less;
+            }
+
+            if (leftUnit > rightUnit)
+            {
+                return System.Collections.Ordering.Greater;
+            }
+        }
+
+        if (leftLength < rightLength)
+        {
+            return System.Collections.Ordering.Less;
+        }
+
+        if (leftLength > rightLength)
+        {
+            return System.Collections.Ordering.Greater;
+        }
+
+        return System.Collections.Ordering.Equal;
+    }
 }
 
 internal fn bool IsUtf8ContinuationByte(i8[min max] value)
@@ -249,6 +610,8 @@ internal fn void CopyUnicodeSliceOverlapSafe(
 
 public struct OwnedAscii
 {
+    alias Writer = OwnedAscii;
+
     internal dynamic i8[min max] Bytes;
 
     OwnedAscii()
@@ -269,6 +632,29 @@ public struct OwnedAscii
     inline finite law bool IsEmpty(borrow OwnedAscii self)
     {
         return self.Bytes.Length == 0;
+    }
+
+    static finite law u64[0 max] Hash(borrow OwnedAscii value)
+    {
+        return HashAsciiSlice(value.AsSlice(), value.Bytes.Length);
+    }
+
+    static finite law bool Equals(borrow OwnedAscii left, borrow OwnedAscii right)
+        where overlap(left, right)
+    {
+        return EqualsAsciiSlices(left.AsSlice(), right.AsSlice(), left.Bytes.Length, right.Bytes.Length);
+    }
+
+    static finite law System.Collections.Ordering Compare(borrow OwnedAscii left, borrow OwnedAscii right)
+        where overlap(left, right)
+    {
+        return CompareAsciiSlices(left.AsSlice(), right.AsSlice(), left.Bytes.Length, right.Bytes.Length);
+    }
+
+    static fn System.Memory.MemoryStatus Format(borrow OwnedAscii value, mut borrow OwnedAscii writer)
+        where overlap(value, writer)
+    {
+        return writer.AppendSlice(value.AsSlice(), value.Bytes.Length);
     }
 
     finite retborrow i8[min max][] AsSlice(borrow OwnedAscii self)
@@ -735,6 +1121,8 @@ public struct OwnedAscii
 
 public struct OwnedUnicode
 {
+    alias Writer = OwnedUnicode;
+
     internal dynamic i32[min max] CodePoints;
 
     OwnedUnicode()
@@ -755,6 +1143,29 @@ public struct OwnedUnicode
     inline finite law bool IsEmpty(borrow OwnedUnicode self)
     {
         return self.CodePoints.Length == 0;
+    }
+
+    static finite law u64[0 max] Hash(borrow OwnedUnicode value)
+    {
+        return HashUnicodeSlice(value.AsSlice(), value.CodePoints.Length);
+    }
+
+    static finite law bool Equals(borrow OwnedUnicode left, borrow OwnedUnicode right)
+        where overlap(left, right)
+    {
+        return EqualsUnicodeSlices(left.AsSlice(), right.AsSlice(), left.CodePoints.Length, right.CodePoints.Length);
+    }
+
+    static finite law System.Collections.Ordering Compare(borrow OwnedUnicode left, borrow OwnedUnicode right)
+        where overlap(left, right)
+    {
+        return CompareUnicodeSlices(left.AsSlice(), right.AsSlice(), left.CodePoints.Length, right.CodePoints.Length);
+    }
+
+    static fn System.Memory.MemoryStatus Format(borrow OwnedUnicode value, mut borrow OwnedUnicode writer)
+        where overlap(value, writer)
+    {
+        return writer.AppendSlice(value.AsSlice(), value.CodePoints.Length);
     }
 
     finite retborrow i32[min max][] AsSlice(borrow OwnedUnicode self)
@@ -1273,6 +1684,29 @@ public struct OwnedUnicode
     }
 }
 
+public fn System.Memory.MemoryStatus Format(ascii value, mut borrow OwnedAscii writer)
+    where overlap(value, writer)
+{
+    return writer.AppendAscii(value);
+}
+
+public fn System.Memory.MemoryStatus Format(ascii value, mut borrow OwnedUnicode writer)
+    where overlap(value, writer)
+{
+    return writer.AppendAscii(value);
+}
+
+public fn System.Memory.MemoryStatus Format(unicode value, mut borrow OwnedUnicode writer)
+    where overlap(value, writer)
+{
+    return writer.AppendUnicode(value);
+}
+
+public fn System.Memory.MemoryStatus Format(unicode value, mut borrow OwnedAscii writer)
+{
+    return writer.AppendUnicodeAsUtf8(value);
+}
+
 public struct OwnedUtf16
 {
     internal dynamic i16[min max] CodeUnits;
@@ -1577,6 +2011,49 @@ public fn System.Memory.MemoryStatus FromUnicodeToAscii(out OwnedAscii destinati
 {
     destination = new();
     return destination.AppendUnicodeAsUtf8(source);
+}
+
+internal fn System.Memory.MemoryResult<OwnedAscii> CopyUnicodeToUtf8Ascii(unicode source)
+{
+    stack mut OwnedAscii destination = new OwnedAscii();
+    stack System.Memory.MemoryStatus status = destination.AppendUnicodeAsUtf8(source);
+    return FinishOwnedAsciiResult(destination, status);
+}
+
+internal fn System.Memory.MemoryResult<OwnedUnicode> CopyAsciiToUnicode(ascii source)
+{
+    stack mut OwnedUnicode destination = new OwnedUnicode();
+    stack System.Memory.MemoryStatus status = destination.AppendAscii(source);
+    return FinishOwnedUnicodeResult(destination, status);
+}
+
+internal unsafe fn System.Memory.MemoryResult<OwnedAscii> CopyAsciiPointer(
+    rawptr<i8[min max]>[length] data,
+    u64[0 2 ** 63 - 1] length)
+{
+    if (length == 0)
+    {
+        stack mut OwnedAscii empty = new OwnedAscii();
+        return System.Memory.MemoryResult<OwnedAscii>.Ok(empty);
+    }
+
+    if (data == null)
+    {
+        return System.Memory.MemoryResult<OwnedAscii>.Err(System.Memory.MemoryError.InvalidLayout);
+    }
+
+    stack mut OwnedAscii destination = new OwnedAscii();
+    stack System.Memory.MemoryStatus reserveStatus = destination.Reserve(length);
+    switch (reserveStatus)
+    {
+        case System.Memory.MemoryStatus.Err(var error):
+            return System.Memory.MemoryResult<OwnedAscii>.Err(error);
+        case System.Memory.MemoryStatus.Ok:
+    }
+
+    stack init i8[min max][] tail = init destination.Bytes[destination.Bytes.Length, length];
+    stack System.Memory.MemoryStatus copyStatus = System.Memory.InitializeBytesFromPointerDisjoint(length, data, tail);
+    return FinishOwnedAsciiResult(destination, copyStatus);
 }
 
 public fn System.Memory.MemoryStatus FromAsciiToUtf16(out OwnedUtf16 destination, ascii source)

@@ -692,13 +692,152 @@ internal static class SyntaxModelFactory
         return attributes;
     }
 
+    private static IReadOnlyList<ThreadSafetyLawAttributeModel> CreateThreadSafetyLawAttributes(
+        IEnumerable<StarkParser.AttributeListContext> attributeLists,
+        string targetDescription,
+        List<SyntaxModelDiagnostic> diagnostics)
+    {
+        var attributes = new List<ThreadSafetyLawAttributeModel>();
+        foreach (var attribute in attributeLists.SelectMany(static list => list.attribute()))
+        {
+            if (!TryCreateThreadSafetyLawAttribute(attribute, targetDescription, diagnostics, out var model))
+            {
+                continue;
+            }
+
+            attributes.Add(model);
+        }
+
+        return attributes;
+    }
+
+    private static bool TryCreateThreadSafetyLawAttribute(
+        StarkParser.AttributeContext attribute,
+        string targetDescription,
+        List<SyntaxModelDiagnostic> diagnostics,
+        out ThreadSafetyLawAttributeModel model)
+    {
+        model = default!;
+        var attributeName = attribute.qualifiedName().GetText();
+        if (!TryParseThreadSafetyLawAttributeKind(attributeName, out var kind))
+        {
+            if (attribute.attributeCondition() is not null)
+            {
+                diagnostics.Add(new SyntaxModelDiagnostic(
+                    "STK3050",
+                    $"Attribute '[{attributeName}]' on {targetDescription} cannot use a thread-safety law condition. Only [Grant(...)] may use 'where Transferable(T)' or 'where Shareable(T)'.",
+                    attribute.Start.Line,
+                    attribute.Start.Column + 1));
+            }
+
+            return false;
+        }
+
+        if (attribute.attributeArgument() is not [var lawArgument])
+        {
+            diagnostics.Add(new SyntaxModelDiagnostic(
+                "STK3050",
+                $"Attribute '[{attributeName}]' on {targetDescription} must name exactly one thread-safety law: Transferable or Shareable.",
+                attribute.Start.Line,
+                attribute.Start.Column + 1));
+            return false;
+        }
+
+        var lawName = lawArgument.GetText();
+        if (!IsThreadSafetyLawName(lawName))
+        {
+            diagnostics.Add(new SyntaxModelDiagnostic(
+                "STK3050",
+                $"Unknown thread-safety law '{lawName}' on {targetDescription}. Supported laws are Transferable and Shareable.",
+                lawArgument.Start.Line,
+                lawArgument.Start.Column + 1));
+            return false;
+        }
+
+        ThreadSafetyLawPredicateModel? condition = null;
+        if (attribute.attributeCondition() is { } conditionContext)
+        {
+            if (kind != ThreadSafetyLawAttributeKind.Grant)
+            {
+                diagnostics.Add(new SyntaxModelDiagnostic(
+                    "STK3050",
+                    $"Attribute '[Deny({lawName})]' on {targetDescription} cannot be conditional; only [Grant(...)] may use a thread-safety law condition.",
+                    conditionContext.Start.Line,
+                    conditionContext.Start.Column + 1));
+                return false;
+            }
+
+            condition = CreateThreadSafetyLawPredicate(
+                conditionContext.lawPredicateContract(),
+                targetDescription,
+                diagnostics);
+            if (condition is null)
+            {
+                return false;
+            }
+        }
+
+        model = new ThreadSafetyLawAttributeModel(kind, lawName, condition);
+        return true;
+    }
+
+    private static ThreadSafetyLawPredicateModel? CreateThreadSafetyLawPredicate(
+        StarkParser.LawPredicateContractContext predicate,
+        string targetDescription,
+        List<SyntaxModelDiagnostic> diagnostics)
+    {
+        var lawName = predicate.Identifier().GetText();
+        if (!IsThreadSafetyLawName(lawName))
+        {
+            diagnostics.Add(new SyntaxModelDiagnostic(
+                "STK3050",
+                $"Unknown thread-safety law predicate '{lawName}' on {targetDescription}. Supported laws are Transferable and Shareable.",
+                predicate.Identifier().Symbol.Line,
+                predicate.Identifier().Symbol.Column + 1));
+            return null;
+        }
+
+        return new ThreadSafetyLawPredicateModel(lawName, predicate.type_().GetText());
+    }
+
+    private static bool TryParseThreadSafetyLawAttributeKind(string attributeName, out ThreadSafetyLawAttributeKind kind)
+    {
+        if (string.Equals(attributeName, "Grant", StringComparison.Ordinal))
+        {
+            kind = ThreadSafetyLawAttributeKind.Grant;
+            return true;
+        }
+
+        if (string.Equals(attributeName, "Deny", StringComparison.Ordinal))
+        {
+            kind = ThreadSafetyLawAttributeKind.Deny;
+            return true;
+        }
+
+        kind = default;
+        return false;
+    }
+
+    private static bool IsThreadSafetyLawAttribute(string attributeName)
+    {
+        return string.Equals(attributeName, "Grant", StringComparison.Ordinal)
+            || string.Equals(attributeName, "Deny", StringComparison.Ordinal);
+    }
+
+    private static bool IsThreadSafetyLawName(string lawName)
+    {
+        return string.Equals(lawName, "Transferable", StringComparison.Ordinal)
+            || string.Equals(lawName, "Shareable", StringComparison.Ordinal);
+    }
+
     private static ModuleBackendOptimizationMode ResolveBackendOptimizationMode(
         IReadOnlyList<ModuleAttributeModel> attributes,
         IReadOnlyList<StarkParser.AttributeContext> attributeContexts,
         string targetDescription,
         List<SyntaxModelDiagnostic> diagnostics,
         bool allowTestingAttributes = false,
-        bool allowStructLayoutAttributes = false)
+        bool allowStructLayoutAttributes = false,
+        bool allowThreadSafetyLawAttributes = false)
     {
         var backendOptimizationMode = ModuleBackendOptimizationMode.Default;
         var backendAttributeCount = 0;
@@ -755,6 +894,21 @@ internal static class SyntaxModelFactory
                 diagnostics.Add(new SyntaxModelDiagnostic(
                     "STK2110",
                     $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. Layout attributes are only supported on structs.",
+                    attributeContext.Start.Line,
+                    attributeContext.Start.Column + 1));
+                continue;
+            }
+
+            if (IsThreadSafetyLawAttribute(attribute.Name))
+            {
+                if (allowThreadSafetyLawAttributes)
+                {
+                    continue;
+                }
+
+                diagnostics.Add(new SyntaxModelDiagnostic(
+                    "STK2110",
+                    $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. Thread-safety law attributes are supported only on type declarations and fields.",
                     attributeContext.Start.Line,
                     attributeContext.Start.Column + 1));
                 continue;
@@ -822,11 +976,17 @@ internal static class SyntaxModelFactory
         IReadOnlyList<ModuleAttributeModel> attributes,
         IReadOnlyList<StarkParser.AttributeContext> attributeContexts,
         string targetDescription,
-        List<SyntaxModelDiagnostic> diagnostics)
+        List<SyntaxModelDiagnostic> diagnostics,
+        bool allowThreadSafetyLawAttributes = false)
     {
         for (var index = 0; index < attributes.Count; index++)
         {
             var attribute = attributes[index];
+            if (allowThreadSafetyLawAttributes && IsThreadSafetyLawAttribute(attribute.Name))
+            {
+                continue;
+            }
+
             var attributeContext = attributeContexts[index];
             diagnostics.Add(new SyntaxModelDiagnostic(
                 "STK2110",
@@ -883,12 +1043,17 @@ internal static class SyntaxModelFactory
 
         if (declaration.structDeclaration() is { } structDeclaration)
         {
+            var threadSafetyLawAttributes = CreateThreadSafetyLawAttributes(
+                declaration.attributeList(),
+                $"struct '{structDeclaration.Identifier().GetText()}'",
+                diagnostics);
             var backendOptimizationMode = ResolveBackendOptimizationMode(
                 declarationAttributes,
                 declarationAttributeContexts,
                 $"struct '{structDeclaration.Identifier().GetText()}'",
                 diagnostics,
-                allowStructLayoutAttributes: true);
+                allowStructLayoutAttributes: true,
+                allowThreadSafetyLawAttributes: true);
             declarations.Add(new TopLevelDeclarationModel(
                 structDeclaration.Identifier().GetText(),
                 DeclarationKind.Struct,
@@ -900,7 +1065,8 @@ internal static class SyntaxModelFactory
                     backendOptimizationMode,
                     diagnostics),
                 Attributes: declarationAttributes,
-                BackendOptimizationMode: backendOptimizationMode));
+                BackendOptimizationMode: backendOptimizationMode,
+                ThreadSafetyLawAttributes: threadSafetyLawAttributes));
 
             foreach (var member in structDeclaration.structBody().structMember())
             {
@@ -956,11 +1122,16 @@ internal static class SyntaxModelFactory
 
         if (declaration.recordDeclaration() is { } recordDeclaration)
         {
+            var threadSafetyLawAttributes = CreateThreadSafetyLawAttributes(
+                declaration.attributeList(),
+                $"record '{recordDeclaration.Identifier().GetText()}'",
+                diagnostics);
             var backendOptimizationMode = ResolveBackendOptimizationMode(
                 declarationAttributes,
                 declarationAttributeContexts,
                 $"record '{recordDeclaration.Identifier().GetText()}'",
-                diagnostics);
+                diagnostics,
+                allowThreadSafetyLawAttributes: true);
             declarations.Add(new TopLevelDeclarationModel(
                 recordDeclaration.Identifier().GetText(),
                 DeclarationKind.Record,
@@ -972,7 +1143,8 @@ internal static class SyntaxModelFactory
                     backendOptimizationMode,
                     diagnostics),
                 Attributes: declarationAttributes,
-                BackendOptimizationMode: backendOptimizationMode));
+                BackendOptimizationMode: backendOptimizationMode,
+                ThreadSafetyLawAttributes: threadSafetyLawAttributes));
 
             foreach (var member in recordDeclaration.recordBody().recordMember())
             {
@@ -1028,16 +1200,23 @@ internal static class SyntaxModelFactory
 
         if (declaration.enumDeclaration() is { } enumDeclaration)
         {
+            var threadSafetyLawAttributes = CreateThreadSafetyLawAttributes(
+                declaration.attributeList(),
+                $"enum '{enumDeclaration.Identifier().GetText()}'",
+                diagnostics);
             AddUnsupportedAttributeDiagnostics(
                 declarationAttributes,
                 declarationAttributeContexts,
                 $"enum '{enumDeclaration.Identifier().GetText()}'",
-                diagnostics);
+                diagnostics,
+                allowThreadSafetyLawAttributes: true);
             declarations.Add(new TopLevelDeclarationModel(
                 enumDeclaration.Identifier().GetText(),
                 DeclarationKind.Enum,
                 visibility,
-                null));
+                null,
+                Attributes: declarationAttributes,
+                ThreadSafetyLawAttributes: threadSafetyLawAttributes));
             return;
         }
 
@@ -1290,10 +1469,16 @@ internal static class SyntaxModelFactory
         string targetDescription,
         List<SyntaxModelDiagnostic> diagnostics)
     {
+        foreach (var attribute in attributeContexts)
+        {
+            _ = TryCreateThreadSafetyLawAttribute(attribute, targetDescription, diagnostics, out _);
+        }
+
         for (var index = 0; index < attributes.Count; index++)
         {
             var attribute = attributes[index];
-            if (IsFieldLayoutAttribute(attribute.Name))
+            if (IsFieldLayoutAttribute(attribute.Name)
+                || IsThreadSafetyLawAttribute(attribute.Name))
             {
                 continue;
             }
@@ -1301,7 +1486,7 @@ internal static class SyntaxModelFactory
             var attributeContext = attributeContexts[index];
             diagnostics.Add(new SyntaxModelDiagnostic(
                 "STK2110",
-                $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. Field layout attributes only support '[FieldOffset(N)]'.",
+                $"Unsupported attribute '[{attribute.Name}]' on {targetDescription}. Fields support '[FieldOffset(N)]', '[Grant(Transferable)]', '[Grant(Shareable)]', '[Deny(Transferable)]', and '[Deny(Shareable)]'.",
                 attributeContext.Start.Line,
                 attributeContext.Start.Column + 1));
         }
@@ -1420,7 +1605,11 @@ internal static class SyntaxModelFactory
             BackendOptimizationMode: backendOptimizationMode,
             DisjointParameterGroups: CreateDisjointParameterGroups(parameterList, memoryContractClauses),
             OverlapParameterGroups: CreateOverlapParameterGroups(memoryContractClauses),
-            SameParameterGroups: CreateSameParameterGroups(memoryContractClauses));
+            SameParameterGroups: CreateSameParameterGroups(memoryContractClauses),
+            ThreadSafetyLawPredicates: CreateThreadSafetyLawPredicates(
+                memoryContractClauses,
+                targetDescription ?? $"function '{name}'",
+                diagnostics));
     }
 
     private static ParameterModel CreateParameterModel(StarkParser.ParameterContext parameter)
@@ -1510,6 +1699,40 @@ internal static class SyntaxModelFactory
                 static contract => contract.sameContract()?.expressionList())
             .Select(static group => new ParameterSameGroup(group))
             .ToArray();
+    }
+
+    private static IReadOnlyList<ThreadSafetyLawPredicateModel> CreateThreadSafetyLawPredicates(
+        IReadOnlyList<StarkParser.ParameterMemoryContractClauseContext> memoryContractClauses,
+        string targetDescription,
+        List<SyntaxModelDiagnostic>? diagnostics)
+    {
+        var predicates = new List<ThreadSafetyLawPredicateModel>();
+        foreach (var clause in memoryContractClauses)
+        {
+            foreach (var contract in clause.parameterMemoryContract())
+            {
+                if (contract.lawPredicateContract() is not { } predicate)
+                {
+                    continue;
+                }
+
+                if (diagnostics is null)
+                {
+                    predicates.Add(new ThreadSafetyLawPredicateModel(
+                        predicate.Identifier().GetText(),
+                        predicate.type_().GetText()));
+                    continue;
+                }
+
+                var model = CreateThreadSafetyLawPredicate(predicate, targetDescription, diagnostics);
+                if (model is not null)
+                {
+                    predicates.Add(model);
+                }
+            }
+        }
+
+        return predicates;
     }
 
     private static IReadOnlyList<IReadOnlyList<string>> CreateParameterRelationGroups(

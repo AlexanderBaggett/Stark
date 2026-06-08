@@ -25,6 +25,7 @@ public class StandardLibraryTestSuite
 
         Assert.True(moduleGraph.ContainsLoadedModule("System"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.BitOperations"));
+        Assert.True(moduleGraph.ContainsLoadedModule("System.C"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Collections"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.Console"));
         Assert.True(moduleGraph.ContainsLoadedModule("System.FileSystem"));
@@ -272,6 +273,7 @@ public class StandardLibraryTestSuite
 
             Assert.Contains(modules, module => module.ModuleName == "System");
             Assert.Contains(modules, module => module.ModuleName == "System.BitOperations");
+            Assert.Contains(modules, module => module.ModuleName == "System.C");
             Assert.Contains(modules, module => module.ModuleName == "System.Console");
             Assert.Contains(modules, module => module.ModuleName == "System.FileSystem");
             Assert.Contains(modules, module => module.ModuleName == "System.IO");
@@ -311,6 +313,7 @@ public class StandardLibraryTestSuite
             var rootModule = modules.Single(module => module.ModuleName == "System");
             var reExports = rootModule.EffectiveSourceSurface.ReExports?.Select(static item => item.ModuleName).ToArray() ?? [];
             Assert.Contains("System.BitOperations", reExports);
+            Assert.Contains("System.C", reExports);
             Assert.Contains("System.Collections", reExports);
             Assert.Contains("System.Console", reExports);
             Assert.Contains("System.FileSystem", reExports);
@@ -396,6 +399,20 @@ public class StandardLibraryTestSuite
             Assert.Contains("RotateLeft", bitOperationsFunctions);
             Assert.Contains("RotateRight", bitOperationsFunctions);
 
+            var cModule = modules.Single(module => module.ModuleName == "System.C");
+            var cTypes = cModule.EffectiveSourceSurface.Types?.Select(static item => item.Name).ToArray() ?? [];
+            var cFunctions = cModule.EffectiveSourceSurface.Functions?.Select(static item => item.Name).ToArray() ?? [];
+            Assert.Contains("CStringError", cTypes);
+            Assert.Contains("CStringResult", cTypes);
+            Assert.Contains("CStr", cTypes);
+            Assert.Contains("OwnedCStr", cTypes);
+            Assert.Contains("CCharBuffer", cTypes);
+            Assert.Contains("FromAscii", cFunctions);
+            Assert.Contains("FromUnicodeUtf8", cFunctions);
+            Assert.Contains("ToAscii", cFunctions);
+            Assert.Contains("ToUnicodeUtf8", cFunctions);
+            Assert.Contains("NewCCharBuffer", cFunctions);
+
             var memoryModule = modules.Single(module => module.ModuleName == "System.Memory");
             var memoryTypes = memoryModule.EffectiveSourceSurface.Types?.Select(static item => item.Name).ToArray() ?? [];
             Assert.Contains("MemoryError", memoryTypes);
@@ -410,6 +427,7 @@ public class StandardLibraryTestSuite
             Assert.Contains("Queue", collectionsTypes);
             Assert.Contains("LinkedList", collectionsTypes);
             Assert.Contains("Dictionary", collectionsTypes);
+            Assert.Contains("HashSet", collectionsTypes);
             Assert.Contains("Equatable", collectionsTypes);
             Assert.Contains("Hashable", collectionsTypes);
             Assert.Contains("DictionaryKey", collectionsTypes);

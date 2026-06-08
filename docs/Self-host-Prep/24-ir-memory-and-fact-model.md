@@ -195,25 +195,21 @@ validation before facts enter compiler tables.
 
 - [x] Decide OQ-16/S17: arena/table storage with typed handles is the blessed IR
       memory model for self-hosting.
-- [ ] Define the shared typed-handle conventions for compiler IDs, including
-      naming, visibility, invalid-handle policy, and whether any tables need
-      generation counters.
-- [ ] Define table/arena ownership scopes for syntax, HIR, MIR, SSA, package
-      imports, backend state, and per-pass temporary state.
-- [ ] Add or finalize `System.Memory` support needed for compiler-owned
-      arenas/tables, bulk release, and fast dense storage.
-- [ ] Define the first fact categories for values, functions, blocks, types,
-      symbols, packages, diagnostics, alias proofs, ABI, layout, alignment,
-      integer ranges, and ownership/drop facts.
-- [ ] Define fact durability: transient, recomputable, durable package fact, or
-      debug-only.
-- [ ] Define the lowering policy table for HIR to MIR, MIR to SSA, SSA
-      optimization, ABI lowering, libLLVM emission, and package-image write/load.
-- [ ] Add fact-transfer helpers to IR builders so common preserve/translate paths
-      are explicit and low effort.
-- [ ] Add validation that reports dropped `forbid-drop` facts and stale/wrong
-      handle use at phase boundaries.
-- [ ] Teach package-image sections to preserve durable compiler facts and reject
+- [ ] Define and implement the shared typed-handle/table model: naming,
+      visibility, invalid-handle policy, optional generation counters,
+      ownership scopes for each compiler phase, and the `System.Memory` support
+      needed for compiler-owned arenas/tables, bulk release, and fast dense
+      storage.
+- [ ] Define and implement the first-class fact model: categories for values,
+      functions, blocks, types, symbols, packages, diagnostics, alias proofs,
+      ABI, layout, alignment, integer ranges, ownership/drop facts, durability
+      classes, and the lowering policy table from HIR through package-image
+      write/load.
+- [ ] Add low-friction fact-transfer helpers and phase-boundary validation so IR
+      builders can preserve/translate facts explicitly, detect dropped
+      `forbid-drop` facts, and reject stale or wrong-handle use.
+- [ ] Preserve durable compiler facts through package-image sections and reject
       malformed or incompatible fact sections during load.
-- [ ] Add focused tests for fact preservation through lowering, optimization,
-      package-image round trip, and libLLVM emission.
+- [ ] Add focused tests for typed handles, fact preservation through lowering
+      and optimization, package-image round trips, phase-boundary validation,
+      and libLLVM emission facts.

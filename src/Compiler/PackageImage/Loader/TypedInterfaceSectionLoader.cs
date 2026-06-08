@@ -73,7 +73,8 @@ internal static partial class PackageImageLoader
                         type.Destructor.IsMutable,
                         BackendOptimizationMode: typeBackendOptimizationMode),
                 Attributes: BuildTypeAttributes(typeBackendOptimizationMode, type),
-                BackendOptimizationMode: typeBackendOptimizationMode));
+                BackendOptimizationMode: typeBackendOptimizationMode,
+                ThreadSafetyLawAttributes: BuildThreadSafetyLawAttributeModels(type.ThreadSafetyLawAttributes)));
 
             foreach (var method in (type.Methods ?? []).OrderBy(static item => item.Name, StringComparer.Ordinal))
             {
@@ -134,7 +135,8 @@ internal static partial class PackageImageLoader
                         backendOptimizationMode: methodBackendOptimizationMode,
                         disjointParameterGroups: method.DisjointParameterGroups,
                         overlapParameterGroups: method.OverlapParameterGroups,
-                        sameParameterGroups: method.SameParameterGroups),
+                        sameParameterGroups: method.SameParameterGroups,
+                        threadSafetyLawPredicates: method.ThreadSafetyLawPredicates),
                     Attributes: BuildBackendAttributes(methodBackendOptimizationMode),
                     BackendOptimizationMode: methodBackendOptimizationMode));
             }
@@ -204,7 +206,8 @@ internal static partial class PackageImageLoader
                     backendOptimizationMode: functionBackendOptimizationMode,
                     disjointParameterGroups: function.DisjointParameterGroups,
                     overlapParameterGroups: function.OverlapParameterGroups,
-                    sameParameterGroups: function.SameParameterGroups),
+                    sameParameterGroups: function.SameParameterGroups,
+                    threadSafetyLawPredicates: function.ThreadSafetyLawPredicates),
                 Attributes: BuildBackendAttributes(functionBackendOptimizationMode),
                 BackendOptimizationMode: functionBackendOptimizationMode));
         }
@@ -280,6 +283,33 @@ internal static partial class PackageImageLoader
         return backendOptimizationMode == ModuleBackendOptimizationMode.Opaque
             ? [new ModuleAttributeModel("Backend", ["Opaque"])]
             : Array.Empty<ModuleAttributeModel>();
+    }
+
+    private static IReadOnlyList<ThreadSafetyLawAttributeModel>? BuildThreadSafetyLawAttributeModels(
+        IReadOnlyList<StarkPackageTypedThreadSafetyLawAttributeManifest>? attributes)
+    {
+        if (attributes is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        return attributes
+            .Select(attribute => new ThreadSafetyLawAttributeModel(
+                ParseThreadSafetyLawAttributeModelKind(attribute.Kind),
+                attribute.LawName,
+                attribute.Condition is { } condition
+                    ? new ThreadSafetyLawPredicateModel(
+                        condition.LawName,
+                        RenderTypeReference(condition.Type))
+                    : null))
+            .ToArray();
+    }
+
+    private static ThreadSafetyLawAttributeKind ParseThreadSafetyLawAttributeModelKind(string kind)
+    {
+        return string.Equals(kind, "deny", StringComparison.OrdinalIgnoreCase)
+            ? ThreadSafetyLawAttributeKind.Deny
+            : ThreadSafetyLawAttributeKind.Grant;
     }
 
     private static IReadOnlyList<ModuleAttributeModel> BuildTypeAttributes(

@@ -1140,9 +1140,11 @@ internal sealed class SsaIrValidator
         switch (instruction)
         {
             case SsaValueInstruction valueInstruction:
+                ValidateScopedNoAliasGroups(function, valueInstruction.ScopedNoAliasGroups, valueInstruction.Location);
                 ValidateRValue(function, valueInstruction.Value, valueDefinitions, localDefinitions, currentAbi, valueInstruction.Location);
                 break;
             case SsaCallInstruction call:
+                ValidateScopedNoAliasGroups(function, call.ScopedNoAliasGroups, call.Location);
                 foreach (var argument in call.Arguments)
                 {
                     ValidateValue(function, argument, valueDefinitions, call.Location);
@@ -1152,6 +1154,7 @@ internal sealed class SsaIrValidator
                 ValidateDirectCall(function, call, localDefinitions, currentAbi, call.Location);
                 break;
             case SsaIndirectCallInstruction indirectCall:
+                ValidateScopedNoAliasGroups(function, indirectCall.ScopedNoAliasGroups, indirectCall.Location);
                 ValidateValue(function, indirectCall.Target, valueDefinitions, indirectCall.Location);
                 foreach (var argument in indirectCall.Arguments)
                 {
@@ -1187,6 +1190,7 @@ internal sealed class SsaIrValidator
                 ValidateValue(function, storeLocal.Value, valueDefinitions, storeLocal.Location);
                 break;
             case SsaStoreIndirectInstruction storeIndirect:
+                ValidateScopedNoAliasGroups(function, storeIndirect.ScopedNoAliasGroups, storeIndirect.Location);
                 ValidateValue(function, storeIndirect.Address, valueDefinitions, storeIndirect.Location);
                 ValidateValue(function, storeIndirect.Value, valueDefinitions, storeIndirect.Location);
                 ValidateRawPointerValue(function, storeIndirect.Address, "indirect store address", storeIndirect.Location);
@@ -1194,6 +1198,7 @@ internal sealed class SsaIrValidator
                 ValidateValueShape(function, storeIndirect.ValueType, storeIndirect.Value.Type, "indirect store value", storeIndirect.Location);
                 break;
             case SsaCopyMemoryInstruction copyMemory:
+                ValidateScopedNoAliasGroups(function, copyMemory.ScopedNoAliasGroups, copyMemory.Location);
                 ValidateValue(function, copyMemory.DestinationAddress, valueDefinitions, copyMemory.Location);
                 ValidateValue(function, copyMemory.SourceAddress, valueDefinitions, copyMemory.Location);
                 ValidateRawPointerValue(function, copyMemory.DestinationAddress, "copy destination address", copyMemory.Location);
@@ -1210,6 +1215,163 @@ internal sealed class SsaIrValidator
                 Report(function, null, $"unsupported SSA instruction type '{instruction.GetType().Name}' reached validation.");
                 break;
         }
+    }
+
+    private void ValidateScopedNoAliasGroups(
+        SsaFunction function,
+        IReadOnlyList<ScopedNoAliasGroup>? groups,
+        SourceLocation? fallbackLocation)
+    {
+        if (groups is not { Count: > 0 })
+        {
+            return;
+        }
+
+        var seenScopeIds = new HashSet<string>(StringComparer.Ordinal);
+        var parameterNames = function.Parameters
+            .Select(static parameter => parameter.Name)
+            .ToHashSet(StringComparer.Ordinal);
+        foreach (var group in groups)
+        {
+            var proof = group.ProofCarrier;
+            var location = proof?.Location ?? fallbackLocation;
+            if (string.IsNullOrWhiteSpace(group.ScopeId))
+            {
+                Report(function, location, "scoped noalias group is missing a scope id.");
+            }
+            else if (!seenScopeIds.Add(group.ScopeId))
+            {
+                Report(function, location, $"scoped noalias group '{group.ScopeId}' is attached more than once to the same SSA instruction.");
+            }
+
+            ValidateAliasProofRoots(function, parameterNames, group.ScopeId, group.RootKeys, location, "scoped noalias group");
+
+            if (proof is null)
+            {
+                Report(function, fallbackLocation, $"scoped noalias group '{group.ScopeId}' is missing its alias proof carrier.");
+                continue;
+            }
+
+            if (!Enum.IsDefined(typeof(AliasProofCarrierKind), proof.Kind))
+            {
+                Report(function, location, $"alias proof carrier '{proof.ProofId}' has unknown proof kind '{(int)proof.Kind}'.");
+            }
+
+            if (string.IsNullOrWhiteSpace(proof.ProofId))
+            {
+                Report(function, location, "alias proof carrier is missing a proof id.");
+            }
+            else if (!string.Equals(proof.ProofId, group.ScopeId, StringComparison.Ordinal))
+            {
+                Report(function, location, $"alias proof carrier '{proof.ProofId}' does not match scoped noalias group '{group.ScopeId}'.");
+            }
+
+            ValidateAliasProofRoots(function, parameterNames, proof.ProofId, proof.RootKeys, location, "alias proof carrier");
+
+            if (!RootSetsEqual(group.RootKeys, proof.RootKeys))
+            {
+                Report(function, location, $"alias proof carrier '{proof.ProofId}' roots do not match scoped noalias group '{group.ScopeId}' roots.");
+            }
+        }
+    }
+
+    private void ValidateAliasProofRoots(
+        SsaFunction function,
+        ISet<string> parameterNames,
+        string proofId,
+        IReadOnlyList<string> rootKeys,
+        SourceLocation? location,
+        string usage)
+    {
+        var roots = rootKeys
+            .Where(static rootKey => !string.IsNullOrWhiteSpace(rootKey))
+            .ToArray();
+        var distinctRoots = roots
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        if (roots.Length < 2)
+        {
+            Report(function, location, $"{usage} '{proofId}' must name at least two memory roots.");
+        }
+
+        if (roots.Length != rootKeys.Count || distinctRoots.Length != roots.Length)
+        {
+            Report(function, location, $"{usage} '{proofId}' contains blank or duplicate memory roots.");
+        }
+
+        foreach (var root in distinctRoots)
+        {
+            if (!IsValidAliasProofRootKey(root))
+            {
+                Report(function, location, $"{usage} '{proofId}' uses invalid memory-root key '{root}'.");
+                continue;
+            }
+
+            if (!TryGetAliasProofParameterName(root, out var parameterName)
+                || !parameterNames.Contains(parameterName))
+            {
+                Report(function, location, $"{usage} '{proofId}' uses unknown parameter memory-root key '{root}'.");
+            }
+        }
+    }
+
+    private static bool RootSetsEqual(IReadOnlyList<string> left, IReadOnlyList<string> right)
+    {
+        var leftRoots = CanonicalAliasProofRoots(left);
+        var rightRoots = CanonicalAliasProofRoots(right);
+        return leftRoots.SequenceEqual(rightRoots, StringComparer.Ordinal);
+    }
+
+    private static string[] CanonicalAliasProofRoots(IReadOnlyList<string> rootKeys)
+    {
+        return rootKeys
+            .Where(static rootKey => !string.IsNullOrWhiteSpace(rootKey))
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(static rootKey => rootKey, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static bool IsValidAliasProofRootKey(string rootKey)
+    {
+        if (!rootKey.StartsWith("param:", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var suffixStart = rootKey.IndexOf('[', StringComparison.Ordinal);
+        if (suffixStart < 0)
+        {
+            return rootKey.Length > "param:".Length;
+        }
+
+        return suffixStart > "param:".Length
+            && rootKey.EndsWith(']')
+            && rootKey.Length > suffixStart + 2;
+    }
+
+    private static bool TryGetAliasProofParameterName(string rootKey, out string parameterName)
+    {
+        parameterName = string.Empty;
+        if (!rootKey.StartsWith("param:", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var nameStart = "param:".Length;
+        var nameEnd = rootKey.IndexOf('[', StringComparison.Ordinal);
+        if (nameEnd < 0)
+        {
+            nameEnd = rootKey.Length;
+        }
+
+        if (nameEnd <= nameStart)
+        {
+            return false;
+        }
+
+        parameterName = rootKey[nameStart..nameEnd];
+        return true;
     }
 
     private void ValidateRValue(

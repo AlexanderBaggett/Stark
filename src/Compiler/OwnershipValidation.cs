@@ -2360,6 +2360,11 @@ internal sealed class OwnershipValidator
             return ApplyUse(new ExpressionInfo(EvaluateLiteralType(literal)), state, summary, use, literal);
         }
 
+        if (expression.COMPTIME() is not null && expression.block() is not null)
+        {
+            return ApplyUse(new ExpressionInfo(StarkTypeSymbols.Error), state, summary, use, expression);
+        }
+
         if (expression.SIZEOF() is not null || expression.ALIGNOF() is not null)
         {
             _ = ResolveType(expression.type_());
@@ -4742,6 +4747,32 @@ internal sealed class OwnershipValidator
         bool allowFunctionReference)
     {
         var baseName = genericQualifiedName.qualifiedName().GetText();
+        if (CompileTimeStructuralFacts.TryGetFactKind(baseName, out _))
+        {
+            if (!allowFunctionReference
+                || !CompileTimeStructuralFacts.TryResolveArguments(
+                    baseName,
+                    genericQualifiedName,
+                    ResolveType,
+                    static (_, _, _) => { },
+                    default,
+                    _currentFunctionComptimeGenericParameters,
+                    comptimeValueSubstitution: null,
+                    out var structuralArguments))
+            {
+                return new ExpressionInfo(StarkTypeSymbols.Error);
+            }
+
+            if (structuralArguments.TargetType.Kind == StarkTypeKind.Error
+                || structuralArguments.AdditionalTypeArguments.Any(static argument => argument.Kind == StarkTypeKind.Error))
+            {
+                return new ExpressionInfo(StarkTypeSymbols.Error);
+            }
+
+            CompileTimeStructuralFacts.TryCreateSignature(baseName, structuralArguments, out var signature);
+            return new ExpressionInfo(signature.ReturnType, Function: signature);
+        }
+
         if (allowFunctionReference && TryGetFunctionOverloads(baseName, out var overloads))
         {
             var syntaxArgumentCount = genericQualifiedName.typeArgumentList().genericArgument().Length;

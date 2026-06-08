@@ -10,6 +10,8 @@ internal sealed class LlvmBuiltinAndHelperEmitter
     private const string UnicodeEqualityHelperName = "__stark_unicode_equal";
     private const string AsciiCompareHelperName = "__stark_ascii_compare";
     private const string UnicodeCompareHelperName = "__stark_unicode_compare";
+    private const string AsciiHashHelperName = "__stark_ascii_hash";
+    private const string UnicodeHashHelperName = "__stark_unicode_hash";
     private const string FixedArrayCompareHelperNamePrefix = "__stark_fixed_array_compare_";
     private const string ScalarizedAggregateCompareHelperNamePrefix = "__stark_named_compare_";
     private const string IntegerExponentHelperNamePrefix = "__stark_int_pow_i";
@@ -247,13 +249,14 @@ internal sealed class LlvmBuiltinAndHelperEmitter
 
     public void EmitInternalHelperDefinitions(StringBuilder builder, IEnumerable<TypedFunctionSignature> signatures)
     {
-        var systemMemoryBuiltins = CollectSystemMemoryAllocatorBuiltins(signatures);
+        var signatureList = signatures as IReadOnlyList<TypedFunctionSignature> ?? signatures.ToArray();
+        var systemMemoryBuiltins = CollectSystemMemoryAllocatorBuiltins(signatureList);
         var usesSystemMemoryAllocator = systemMemoryBuiltins.Contains(SystemMemoryBuiltinKind.Allocate)
             || systemMemoryBuiltins.Contains(SystemMemoryBuiltinKind.Reallocate)
             || systemMemoryBuiltins.Contains(SystemMemoryBuiltinKind.Free);
         var usesDynamicStorageAllocator = UsesDynamicStorageAllocator();
 
-        foreach (var textType in CollectTextEqualityTypes())
+        foreach (var textType in CollectTextEqualityTypes(signatureList))
         {
             EmitTextEqualityHelperDefinition(
                 builder,
@@ -268,6 +271,15 @@ internal sealed class LlvmBuiltinAndHelperEmitter
                 builder,
                 textType,
                 textType.Kind == StarkTypeKind.Ascii ? AsciiCompareHelperName : UnicodeCompareHelperName);
+            builder.AppendLine();
+        }
+
+        foreach (var textType in CollectTextHashTypes(signatureList))
+        {
+            EmitTextHashHelperDefinition(
+                builder,
+                textType,
+                textType.Kind == StarkTypeKind.Ascii ? AsciiHashHelperName : UnicodeHashHelperName);
             builder.AppendLine();
         }
 
@@ -1795,15 +1807,18 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         return true;
     }
 
-    private IReadOnlyList<StarkTypeSymbol> CollectTextEqualityTypes()
+    private IReadOnlyList<StarkTypeSymbol> CollectTextEqualityTypes(IReadOnlyList<TypedFunctionSignature> signatures)
     {
         return _enumerateBinaryOperations()
             .Where(static binary => binary.Operator is SsaBinaryOperator.Equal or SsaBinaryOperator.NotEqual)
             .Select(static binary => binary.Left.Type)
+            .Concat(CollectDictionaryKeyTextSignatureTypes(signatures, DictionaryKeyTextCallOperation.Equals))
+            .Concat(CollectDictionaryKeyTextTypes(DictionaryKeyTextCallOperation.Equals))
             .Select(NormalizeAggregateType)
             .Where(static type => type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode)
-            .Distinct()
-            .OrderBy(static type => type.DisplayName, StringComparer.Ordinal)
+            .GroupBy(static type => type.Kind)
+            .Select(static group => group.First())
+            .OrderBy(static type => type.Kind)
             .ToArray();
     }
 
@@ -1818,9 +1833,178 @@ internal sealed class LlvmBuiltinAndHelperEmitter
             .Select(static binary => binary.Left.Type)
             .Select(NormalizeAggregateType)
             .Where(static type => type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode)
-            .Distinct()
-            .OrderBy(static type => type.DisplayName, StringComparer.Ordinal)
+            .GroupBy(static type => type.Kind)
+            .Select(static group => group.First())
+            .OrderBy(static type => type.Kind)
             .ToArray();
+    }
+
+    private IReadOnlyList<StarkTypeSymbol> CollectTextHashTypes(IReadOnlyList<TypedFunctionSignature> signatures)
+    {
+        return CollectDictionaryKeyTextSignatureTypes(signatures, DictionaryKeyTextCallOperation.Hash)
+            .Concat(CollectDictionaryKeyTextTypes(DictionaryKeyTextCallOperation.Hash))
+            .Select(NormalizeAggregateType)
+            .Where(static type => type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode)
+            .GroupBy(static type => type.Kind)
+            .Select(static group => group.First())
+            .OrderBy(static type => type.Kind)
+            .ToArray();
+    }
+
+    private enum DictionaryKeyTextCallOperation
+    {
+        Hash,
+        Equals
+    }
+
+    private static IEnumerable<StarkTypeSymbol> CollectDictionaryKeyTextSignatureTypes(
+        IEnumerable<TypedFunctionSignature> signatures,
+        DictionaryKeyTextCallOperation operation)
+    {
+        foreach (var signature in signatures)
+        {
+            if (TryResolveDictionaryKeyTextCallOperation(
+                    signature.TemplateName,
+                    signature.DisplaySourceName,
+                    signature.Name) != operation)
+            {
+                continue;
+            }
+
+            var expectedParameterCount = operation == DictionaryKeyTextCallOperation.Hash ? 1 : 2;
+            if (signature.Parameters.Count != expectedParameterCount)
+            {
+                continue;
+            }
+
+            var keyType = NormalizeAggregateType(signature.Parameters[0].Type);
+            if (!IsTextType(keyType))
+            {
+                continue;
+            }
+
+            var allParametersMatch = true;
+            for (var index = 1; index < signature.Parameters.Count; index++)
+            {
+                if (NormalizeAggregateType(signature.Parameters[index].Type) != keyType)
+                {
+                    allParametersMatch = false;
+                    break;
+                }
+            }
+
+            if (allParametersMatch)
+            {
+                yield return keyType;
+            }
+        }
+    }
+
+    private IEnumerable<StarkTypeSymbol> CollectDictionaryKeyTextTypes(DictionaryKeyTextCallOperation operation)
+    {
+        foreach (var call in EnumerateDirectCallValues())
+        {
+            if (TryResolveDictionaryKeyTextCallOperation(call) != operation)
+            {
+                continue;
+            }
+
+            var expectedArgumentCount = operation == DictionaryKeyTextCallOperation.Hash ? 1 : 2;
+            if (call.Arguments.Count != expectedArgumentCount
+                || !TryResolveDictionaryKeyTextArgumentType(call, 0, out var keyType))
+            {
+                continue;
+            }
+
+            var allArgumentsMatch = true;
+            for (var index = 1; index < call.Arguments.Count; index++)
+            {
+                if (!TryResolveDictionaryKeyTextArgumentType(call, index, out var argumentType)
+                    || NormalizeAggregateType(argumentType) != NormalizeAggregateType(keyType))
+                {
+                    allArgumentsMatch = false;
+                    break;
+                }
+            }
+
+            if (allArgumentsMatch)
+            {
+                yield return keyType;
+            }
+        }
+    }
+
+    private IEnumerable<SsaCallRValue> EnumerateDirectCallValues()
+    {
+        return _enumerateSsaFunctions()
+            .SelectMany(static function => function.Blocks)
+            .SelectMany(static block => block.Instructions)
+            .OfType<SsaValueInstruction>()
+            .Select(static instruction => instruction.Value)
+            .OfType<SsaCallRValue>();
+    }
+
+    private static DictionaryKeyTextCallOperation? TryResolveDictionaryKeyTextCallOperation(SsaCallRValue call)
+    {
+        return TryResolveDictionaryKeyTextCallOperation(call.FunctionName);
+    }
+
+    private static DictionaryKeyTextCallOperation? TryResolveDictionaryKeyTextCallOperation(params string?[] functionNames)
+    {
+        foreach (var functionName in functionNames)
+        {
+            if (string.IsNullOrWhiteSpace(functionName))
+            {
+                continue;
+            }
+
+            if ((functionName is "System.Collections.DictionaryKey.Hash"
+                    or "DictionaryKey.Hash"
+                    or "System_Collections_DictionaryKey_Hash")
+                || functionName.Contains("System_Collections_DictionaryKey_Hash__", StringComparison.Ordinal))
+            {
+                return DictionaryKeyTextCallOperation.Hash;
+            }
+
+            if ((functionName is "System.Collections.DictionaryKey.Equals"
+                    or "DictionaryKey.Equals"
+                    or "System_Collections_DictionaryKey_Equals")
+                || functionName.Contains("System_Collections_DictionaryKey_Equals__", StringComparison.Ordinal))
+            {
+                return DictionaryKeyTextCallOperation.Equals;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryResolveDictionaryKeyTextArgumentType(
+        SsaCallRValue call,
+        int argumentIndex,
+        out StarkTypeSymbol keyType)
+    {
+        keyType = NormalizeAggregateType(call.Arguments[argumentIndex].Type);
+        if (IsTextType(keyType))
+        {
+            return true;
+        }
+
+        var indirectArgumentAddress = call.IndirectArgumentAddresses is not null && argumentIndex < call.IndirectArgumentAddresses.Count
+            ? call.IndirectArgumentAddresses[argumentIndex]
+            : null;
+        if (indirectArgumentAddress?.Type is { Kind: StarkTypeKind.RawPointer, ElementType: not null } pointerType)
+        {
+            keyType = NormalizeAggregateType(pointerType.ElementType);
+            return IsTextType(keyType);
+        }
+
+        keyType = StarkTypeSymbols.Error;
+        return false;
+    }
+
+    private static bool IsTextType(StarkTypeSymbol type)
+    {
+        return type.Kind is StarkTypeKind.Ascii or StarkTypeKind.Unicode;
     }
 
     private IReadOnlyList<int> CollectIntegerExponentBitWidths()
@@ -2241,6 +2425,49 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine();
         builder.AppendLine("return_equal:");
         builder.AppendLine("  ret i32 0");
+        builder.AppendLine("}");
+    }
+
+    private void EmitTextHashHelperDefinition(
+        StringBuilder builder,
+        StarkTypeSymbol textType,
+        string helperName)
+    {
+        var textLlvmType = MapType(textType);
+        var unitType = textType.Kind switch
+        {
+            StarkTypeKind.Ascii => StarkTypeSymbols.Integer(8),
+            StarkTypeKind.Unicode => StarkTypeSymbols.Integer(32),
+            _ => throw new InvalidOperationException($"Text hash helper requires an ascii/unicode type, but found '{textType.DisplayName}'.")
+        };
+        var unitLlvmType = MapType(unitType);
+
+        builder.AppendLine(BuildInternalAddressInsensitiveHelperSignature(
+            "i64",
+            helperName,
+            $"{textLlvmType} %value"));
+        builder.AppendLine("entry:");
+        builder.AppendLine($"  %text_hash_data = extractvalue {textLlvmType} %value, 0");
+        builder.AppendLine($"  %text_hash_length = extractvalue {textLlvmType} %value, 1");
+        builder.AppendLine("  br label %loop_header");
+        builder.AppendLine();
+        builder.AppendLine("loop_header:");
+        builder.AppendLine("  %text_hash_index = phi i64 [ 0, %entry ], [ %text_hash_next, %loop_body ]");
+        builder.AppendLine("  %text_hash_value = phi i64 [ 14695981039346656037, %entry ], [ %text_hash_mixed, %loop_body ]");
+        builder.AppendLine("  %text_hash_done = icmp eq i64 %text_hash_index, %text_hash_length");
+        builder.AppendLine("  br i1 %text_hash_done, label %return_hash, label %loop_body");
+        builder.AppendLine();
+        builder.AppendLine("loop_body:");
+        builder.AppendLine($"  %text_hash_unit_ptr = getelementptr{GetProvenInObjectGepFlags()} {unitLlvmType}, ptr %text_hash_data, i64 %text_hash_index");
+        builder.AppendLine($"  %text_hash_unit = load {unitLlvmType}, ptr %text_hash_unit_ptr");
+        builder.AppendLine($"  %text_hash_wide = zext {unitLlvmType} %text_hash_unit to i64");
+        builder.AppendLine("  %text_hash_xored = xor i64 %text_hash_value, %text_hash_wide");
+        builder.AppendLine("  %text_hash_mixed = mul i64 %text_hash_xored, 1099511628211");
+        builder.AppendLine("  %text_hash_next = add i64 %text_hash_index, 1");
+        builder.AppendLine("  br label %loop_header");
+        builder.AppendLine();
+        builder.AppendLine("return_hash:");
+        builder.AppendLine("  ret i64 %text_hash_value");
         builder.AppendLine("}");
     }
 
@@ -3639,6 +3866,16 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         builder.AppendLine("entry:");
         var left = EmitDictionaryKeyParameterLoad(builder, abiFunction.UserParameters[0], keyType, "dict_key_left");
         var right = EmitDictionaryKeyParameterLoad(builder, abiFunction.UserParameters[1], keyType, "dict_key_right");
+        if (contract.UsesCompilerKnownText)
+        {
+            var helperName = keyType.Kind == StarkTypeKind.Ascii
+                ? AsciiEqualityHelperName
+                : UnicodeEqualityHelperName;
+            builder.AppendLine($"  %dict_key_equal = call i1 @{EscapeIdentifier(helperName)}({llvmType} {left}, {llvmType} {right})");
+            builder.AppendLine("  ret i1 %dict_key_equal");
+            return;
+        }
+
         builder.AppendLine($"  %dict_key_equal = icmp eq {llvmType} {left}, {right}");
         builder.AppendLine("  ret i1 %dict_key_equal");
     }
@@ -3664,6 +3901,16 @@ internal sealed class LlvmBuiltinAndHelperEmitter
         var llvmType = MapType(keyType);
         builder.AppendLine("entry:");
         var value = EmitDictionaryKeyParameterLoad(builder, abiFunction.UserParameters[0], keyType, "dict_key_value");
+        if (contract.UsesCompilerKnownText)
+        {
+            var helperName = keyType.Kind == StarkTypeKind.Ascii
+                ? AsciiHashHelperName
+                : UnicodeHashHelperName;
+            builder.AppendLine($"  %dict_key_hash = call i64 @{EscapeIdentifier(helperName)}({llvmType} {value})");
+            builder.AppendLine("  ret i64 %dict_key_hash");
+            return;
+        }
+
         var hashValue = keyType.Kind switch
         {
             StarkTypeKind.Bool => EmitIntegerHashConversion(builder, "i1", value, "dict_key_hash"),

@@ -71,9 +71,19 @@ internal static partial class PackageImageLoader
         {
             EmitBackendAttribute(builder, string.Empty, type.BackendOptimizationMode);
             EmitStructLayoutAttributes(builder, type);
+            EmitThreadSafetyLawAttributes(builder, string.Empty, type.ThreadSafetyLawAttributes);
             builder.Append(type.Visibility);
             builder.Append(' ');
-            builder.Append(type.Kind);
+            if (string.Equals(type.Kind, "trait", StringComparison.Ordinal)
+                && type.IsDynTrait)
+            {
+                builder.Append("dyn trait");
+            }
+            else
+            {
+                builder.Append(type.Kind);
+            }
+
             builder.Append(' ');
             builder.Append(type.Name);
             AppendGenericParameterList(builder, type.GenericParameters, type.ComptimeGenericParameters);
@@ -169,6 +179,8 @@ internal static partial class PackageImageLoader
                         builder.Append(explicitOffsetBytes);
                         builder.Append(")] ");
                     }
+
+                    EmitThreadSafetyLawAttributes(builder, string.Empty, field.ThreadSafetyLawAttributes);
 
                     if (!string.IsNullOrWhiteSpace(field.Visibility)
                         && !string.Equals(field.Visibility, "public", StringComparison.Ordinal))
@@ -281,6 +293,7 @@ internal static partial class PackageImageLoader
                     builder.Append('(');
                     builder.Append(string.Join(", ", method.Parameters.Select(parameter => RenderParameter(parameter, emitDisjointPrefix: method.IsFfi))));
                     builder.Append(')');
+                    AppendTypeParameterConstraints(builder, method.TypeParameterConstraints);
                     AppendParameterMemoryContractGroups(
                         builder,
                         method.Parameters,
@@ -288,6 +301,7 @@ internal static partial class PackageImageLoader
                         method.OverlapParameterGroups,
                         method.SameParameterGroups,
                         emitDisjointGroups: method.IsFfi);
+                    AppendThreadSafetyLawPredicates(builder, method.ThreadSafetyLawPredicates);
                     if (methodBodyText is null)
                     {
                         builder.AppendLine(";");
@@ -470,7 +484,22 @@ internal static partial class PackageImageLoader
         var typedInterface = module.EffectiveTypedInterface;
         if (typedInterface?.TypeAliases is { } typedTypeAliases)
         {
-            return typedTypeAliases.Select(ConvertTypeAliasManifest).ToArray();
+            var sourceTypeAliasesByName = (module.EffectiveSourceSurface.TypeAliases ?? [])
+                .ToDictionary(static typeAlias => typeAlias.Name, StringComparer.Ordinal);
+            return typedTypeAliases
+                .Select(typeAlias =>
+                {
+                    var converted = ConvertTypeAliasManifest(typeAlias);
+                    return sourceTypeAliasesByName.TryGetValue(converted.Name, out var sourceTypeAlias)
+                        ? converted with
+                        {
+                            TargetType = sourceTypeAlias.TargetType,
+                            GenericParameters = sourceTypeAlias.GenericParameters ?? converted.GenericParameters,
+                            ComptimeGenericParameters = sourceTypeAlias.ComptimeGenericParameters ?? converted.ComptimeGenericParameters
+                        }
+                        : converted;
+                })
+                .ToArray();
         }
 
         return module.EffectiveSourceSurface.TypeAliases ?? [];
@@ -513,7 +542,8 @@ internal static partial class PackageImageLoader
             StructLayout = sourceType.StructLayout ?? typedType.StructLayout,
             PackBytes = sourceType.PackBytes ?? typedType.PackBytes,
             AlignBytes = sourceType.AlignBytes ?? typedType.AlignBytes,
-            ImplementedTraits = sourceType.ImplementedTraits ?? typedType.ImplementedTraits
+            ImplementedTraits = sourceType.ImplementedTraits ?? typedType.ImplementedTraits,
+            IsDynTrait = typedType.IsDynTrait || sourceType.IsDynTrait
         };
     }
 
@@ -627,6 +657,48 @@ internal static partial class PackageImageLoader
         AppendParameterMemoryContractGroups(builder, parameters, "same", sameGroups, skipFullyPrefixedDisjointGroups: false);
     }
 
+    private static void AppendThreadSafetyLawPredicates(
+        StringBuilder builder,
+        IReadOnlyList<StarkPackageThreadSafetyLawPredicateManifest>? predicates)
+    {
+        if (predicates is not { Count: > 0 })
+        {
+            return;
+        }
+
+        foreach (var predicate in predicates)
+        {
+            builder.Append(" where ");
+            builder.Append(predicate.LawName);
+            builder.Append('(');
+            builder.Append(predicate.Type);
+            builder.Append(')');
+        }
+    }
+
+    private static void AppendTypeParameterConstraints(
+        StringBuilder builder,
+        IReadOnlyList<StarkPackageTypeParameterConstraintManifest>? constraints)
+    {
+        if (constraints is not { Count: > 0 })
+        {
+            return;
+        }
+
+        foreach (var constraint in constraints)
+        {
+            if (constraint.BoundTraits.Count == 0)
+            {
+                continue;
+            }
+
+            builder.Append(" where ");
+            builder.Append(constraint.ParameterName);
+            builder.Append(": ");
+            builder.Append(string.Join(", ", constraint.BoundTraits));
+        }
+    }
+
     private static void AppendParameterMemoryContractGroups(
         StringBuilder builder,
         IReadOnlyList<StarkPackageParameterManifest> parameters,
@@ -673,6 +745,44 @@ internal static partial class PackageImageLoader
             builder.Append(string.Join(", ", operands ?? names));
             builder.Append(')');
         }
+    }
+
+    private static void EmitThreadSafetyLawAttributes(
+        StringBuilder builder,
+        string indent,
+        IReadOnlyList<StarkPackageThreadSafetyLawAttributeManifest>? attributes)
+    {
+        if (attributes is not { Count: > 0 })
+        {
+            return;
+        }
+
+        foreach (var attribute in attributes)
+        {
+            builder.Append(indent);
+            builder.Append('[');
+            builder.Append(RenderThreadSafetyLawAttributeKind(attribute.Kind));
+            builder.Append('(');
+            builder.Append(attribute.LawName);
+            builder.Append(')');
+            if (attribute.Condition is { } condition)
+            {
+                builder.Append(" where ");
+                builder.Append(condition.LawName);
+                builder.Append('(');
+                builder.Append(condition.Type);
+                builder.Append(')');
+            }
+
+            builder.Append("] ");
+        }
+    }
+
+    private static string RenderThreadSafetyLawAttributeKind(string kind)
+    {
+        return string.Equals(kind, "deny", StringComparison.OrdinalIgnoreCase)
+            ? "Deny"
+            : "Grant";
     }
 
     private static void EmitFunction(StringBuilder builder, StarkPackageFunctionManifest function, string? bodyText = null)
@@ -734,6 +844,7 @@ internal static partial class PackageImageLoader
         var emitDisjointContracts = function.IsFfi || function.Asm is not null;
         builder.Append(string.Join(", ", function.Parameters.Select(parameter => RenderParameter(parameter, emitDisjointPrefix: emitDisjointContracts))));
         builder.Append(')');
+        AppendTypeParameterConstraints(builder, function.TypeParameterConstraints);
         AppendParameterMemoryContractGroups(
             builder,
             function.Parameters,
@@ -741,6 +852,7 @@ internal static partial class PackageImageLoader
             function.OverlapParameterGroups,
             function.SameParameterGroups,
             emitDisjointContracts);
+        AppendThreadSafetyLawPredicates(builder, function.ThreadSafetyLawPredicates);
 
         if (function.Asm is null && bodyText is null)
         {
@@ -830,7 +942,8 @@ internal static partial class PackageImageLoader
         ModuleBackendOptimizationMode backendOptimizationMode = ModuleBackendOptimizationMode.Default,
         IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? disjointParameterGroups = null,
         IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? overlapParameterGroups = null,
-        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? sameParameterGroups = null)
+        IReadOnlyList<StarkPackageParameterDisjointGroupManifest>? sameParameterGroups = null,
+        IReadOnlyList<StarkPackageTypedThreadSafetyLawPredicateManifest>? threadSafetyLawPredicates = null)
     {
         var parsedInlinePreference = ParseInlinePreferenceOrDefault(inlinePreference);
         return new FunctionDeclarationModel(
@@ -865,7 +978,23 @@ internal static partial class PackageImageLoader
             BackendOptimizationMode: backendOptimizationMode,
             DisjointParameterGroups: BuildParameterDisjointGroups(parameters, disjointParameterGroups),
             OverlapParameterGroups: BuildParameterOverlapGroups(overlapParameterGroups),
-            SameParameterGroups: BuildParameterSameGroups(sameParameterGroups));
+            SameParameterGroups: BuildParameterSameGroups(sameParameterGroups),
+            ThreadSafetyLawPredicates: BuildThreadSafetyLawPredicateModels(threadSafetyLawPredicates));
+    }
+
+    private static IReadOnlyList<ThreadSafetyLawPredicateModel>? BuildThreadSafetyLawPredicateModels(
+        IReadOnlyList<StarkPackageTypedThreadSafetyLawPredicateManifest>? predicates)
+    {
+        if (predicates is not { Count: > 0 })
+        {
+            return null;
+        }
+
+        return predicates
+            .Select(predicate => new ThreadSafetyLawPredicateModel(
+                predicate.LawName,
+                RenderTypeReference(predicate.Type)))
+            .ToArray();
     }
 
     private static IReadOnlyList<ParameterDisjointGroup>? BuildParameterDisjointGroups(
@@ -984,16 +1113,6 @@ internal static partial class PackageImageLoader
         {
             if (template.TypedBody is not null)
             {
-                if (CanOmitBridgeBodyText(template.TypedBody))
-                {
-                    continue;
-                }
-
-                if (TryRenderGenericTemplateBody(template, out var renderedBodyText))
-                {
-                    templates[BuildGenericTemplateLookupKey(template.QualifiedName, template.OverloadKey)] = renderedBodyText;
-                }
-
                 continue;
             }
 
@@ -1014,16 +1133,6 @@ internal static partial class PackageImageLoader
         {
             if (template.TypedBody is not null)
             {
-                if (CanOmitBridgeBodyText(template.TypedBody))
-                {
-                    continue;
-                }
-
-                if (TryRenderGenericTemplateBody(template, out var renderedBodyText))
-                {
-                    templates[BuildGenericTemplateLookupKey(template.QualifiedName, template.OverloadKey)] = renderedBodyText;
-                }
-
                 continue;
             }
 
@@ -1245,9 +1354,33 @@ internal static partial class PackageImageLoader
                     return false;
                 }
 
+                string? ifConditionPatternText = null;
+                if (statement.ConditionPattern is not null
+                    && !TryRenderImportedTypedTemplatePattern(
+                        statement.ConditionPattern,
+                        enumPatternsByOrdinal,
+                        aggregatePatternsByOrdinal,
+                        objectCreationsByOrdinal,
+                        enumConstructorsByOrdinal,
+                        enumCallsByOrdinal,
+                        enumValuesByOrdinal,
+                        directCallsByOrdinal,
+                        fieldAccessesByOrdinal,
+                        memberCallsByOrdinal,
+                        out ifConditionPatternText))
+                {
+                    return false;
+                }
+
                 AppendIndent(builder, indentLevel);
                 builder.Append("if (");
                 builder.Append(ifConditionText);
+                if (ifConditionPatternText is not null)
+                {
+                    builder.Append(" is ");
+                    builder.Append(ifConditionPatternText);
+                }
+
                 builder.Append(") ");
                 if (!TryRenderImportedTypedTemplateStatementBlock(
                         builder,
@@ -1307,12 +1440,36 @@ internal static partial class PackageImageLoader
                     return false;
                 }
 
+                string? whileConditionPatternText = null;
+                if (statement.ConditionPattern is not null
+                    && !TryRenderImportedTypedTemplatePattern(
+                        statement.ConditionPattern,
+                        enumPatternsByOrdinal,
+                        aggregatePatternsByOrdinal,
+                        objectCreationsByOrdinal,
+                        enumConstructorsByOrdinal,
+                        enumCallsByOrdinal,
+                        enumValuesByOrdinal,
+                        directCallsByOrdinal,
+                        fieldAccessesByOrdinal,
+                        memberCallsByOrdinal,
+                        out whileConditionPatternText))
+                {
+                    return false;
+                }
+
                 AppendIndent(builder, indentLevel);
                 builder.Append("while ");
                 builder.Append(statement.LoopBehavior);
                 AppendLoopContracts(builder, statement.LoopContractNames);
                 builder.Append(" (");
                 builder.Append(whileConditionText);
+                if (whileConditionPatternText is not null)
+                {
+                    builder.Append(" is ");
+                    builder.Append(whileConditionPatternText);
+                }
+
                 builder.Append(") ");
                 if (!TryRenderImportedTypedTemplateStatementBlock(
                         builder,
@@ -1725,6 +1882,218 @@ internal static partial class PackageImageLoader
         return true;
     }
 
+    private static bool TryRenderImportedTypedTemplatePattern(
+        ImportedTemplateTypedSwitchFieldPatternSummary pattern,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumPatternManifest> enumPatternsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateAggregatePatternManifest> aggregatePatternsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateObjectCreationManifest> objectCreationsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumConstructorManifest> enumConstructorsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumCallManifest> enumCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumValueManifest> enumValuesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateDirectCallManifest> directCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateFieldAccessManifest> fieldAccessesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateMemberCallManifest> memberCallsByOrdinal,
+        out string text)
+    {
+        text = string.Empty;
+
+        switch (pattern.Kind)
+        {
+            case ImportedTemplateTypedSwitchFieldPatternKind.Discard:
+                text = "_";
+                return true;
+
+            case ImportedTemplateTypedSwitchFieldPatternKind.Capture:
+                if (string.IsNullOrWhiteSpace(pattern.Name))
+                {
+                    return false;
+                }
+
+                text = $"var {pattern.Name}";
+                return true;
+
+            case ImportedTemplateTypedSwitchFieldPatternKind.Literal:
+                return pattern.Expression is not null
+                    && TryRenderImportedTypedTemplateExpression(
+                        pattern.Expression,
+                        objectCreationsByOrdinal,
+                        enumConstructorsByOrdinal,
+                        enumCallsByOrdinal,
+                        enumValuesByOrdinal,
+                        directCallsByOrdinal,
+                        fieldAccessesByOrdinal,
+                        memberCallsByOrdinal,
+                        out text);
+
+            case ImportedTemplateTypedSwitchFieldPatternKind.Range:
+                if (pattern.Expression is null
+                    || pattern.EndExpression is null
+                    || !TryRenderImportedTypedTemplateExpression(
+                        pattern.Expression,
+                        objectCreationsByOrdinal,
+                        enumConstructorsByOrdinal,
+                        enumCallsByOrdinal,
+                        enumValuesByOrdinal,
+                        directCallsByOrdinal,
+                        fieldAccessesByOrdinal,
+                        memberCallsByOrdinal,
+                        out var startText)
+                    || !TryRenderImportedTypedTemplateExpression(
+                        pattern.EndExpression,
+                        objectCreationsByOrdinal,
+                        enumConstructorsByOrdinal,
+                        enumCallsByOrdinal,
+                        enumValuesByOrdinal,
+                        directCallsByOrdinal,
+                        fieldAccessesByOrdinal,
+                        memberCallsByOrdinal,
+                        out var endText))
+                {
+                    return false;
+                }
+
+                text = $"{startText}..{endText}";
+                return true;
+
+            case ImportedTemplateTypedSwitchFieldPatternKind.ListPattern:
+            {
+                var renderedMembers = new List<string>(pattern.Members.Count);
+                foreach (var member in pattern.Members)
+                {
+                    if (!TryRenderImportedTypedTemplatePattern(
+                            member,
+                            enumPatternsByOrdinal,
+                            aggregatePatternsByOrdinal,
+                            objectCreationsByOrdinal,
+                            enumConstructorsByOrdinal,
+                            enumCallsByOrdinal,
+                            enumValuesByOrdinal,
+                            directCallsByOrdinal,
+                            fieldAccessesByOrdinal,
+                            memberCallsByOrdinal,
+                            out var memberText))
+                    {
+                        return false;
+                    }
+
+                    renderedMembers.Add(memberText);
+                }
+
+                text = $"[{string.Join(", ", renderedMembers)}]";
+                return true;
+            }
+
+            case ImportedTemplateTypedSwitchFieldPatternKind.EnumPattern:
+                if (pattern.Ordinal is not { } enumOrdinal
+                    || !enumPatternsByOrdinal.TryGetValue(enumOrdinal, out var enumPattern))
+                {
+                    return false;
+                }
+
+                return TryRenderImportedTypedTemplateAggregateLikePattern(
+                    $"{RenderTypeReference(enumPattern.EnumType)}.{enumPattern.VariantName}",
+                    pattern.Name,
+                    enumPattern.Members ?? [],
+                    pattern.Members,
+                    enumPatternsByOrdinal,
+                    aggregatePatternsByOrdinal,
+                    objectCreationsByOrdinal,
+                    enumConstructorsByOrdinal,
+                    enumCallsByOrdinal,
+                    enumValuesByOrdinal,
+                    directCallsByOrdinal,
+                    fieldAccessesByOrdinal,
+                    memberCallsByOrdinal,
+                    out text);
+
+            case ImportedTemplateTypedSwitchFieldPatternKind.AggregatePattern:
+                if (pattern.Ordinal is not { } aggregateOrdinal
+                    || !aggregatePatternsByOrdinal.TryGetValue(aggregateOrdinal, out var aggregatePattern))
+                {
+                    return false;
+                }
+
+                return TryRenderImportedTypedTemplateAggregateLikePattern(
+                    RenderTypeReference(aggregatePattern.Type),
+                    pattern.Name,
+                    aggregatePattern.Members ?? [],
+                    pattern.Members,
+                    enumPatternsByOrdinal,
+                    aggregatePatternsByOrdinal,
+                    objectCreationsByOrdinal,
+                    enumConstructorsByOrdinal,
+                    enumCallsByOrdinal,
+                    enumValuesByOrdinal,
+                    directCallsByOrdinal,
+                    fieldAccessesByOrdinal,
+                    memberCallsByOrdinal,
+                    out text);
+
+            default:
+                return false;
+        }
+    }
+
+    private static bool TryRenderImportedTypedTemplateAggregateLikePattern(
+        string targetText,
+        string? wholeCaptureName,
+        IReadOnlyList<StarkPackageTemplateEnumPatternMemberManifest> publishedMembers,
+        IReadOnlyList<ImportedTemplateTypedSwitchFieldPatternSummary> memberPatterns,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumPatternManifest> enumPatternsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateAggregatePatternManifest> aggregatePatternsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateObjectCreationManifest> objectCreationsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumConstructorManifest> enumConstructorsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumCallManifest> enumCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateEnumValueManifest> enumValuesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateDirectCallManifest> directCallsByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateFieldAccessManifest> fieldAccessesByOrdinal,
+        IReadOnlyDictionary<int, StarkPackageTemplateMemberCallManifest> memberCallsByOrdinal,
+        out string text)
+    {
+        text = string.Empty;
+
+        if (!string.IsNullOrWhiteSpace(wholeCaptureName))
+        {
+            text = $"{targetText} {wholeCaptureName}";
+            return memberPatterns.Count == 0;
+        }
+
+        if (memberPatterns.Count == 0)
+        {
+            text = targetText;
+            return true;
+        }
+
+        var renderedMembers = new List<string>(memberPatterns.Count);
+        for (var index = 0; index < memberPatterns.Count; index++)
+        {
+            if (!TryRenderImportedTypedTemplatePattern(
+                    memberPatterns[index],
+                    enumPatternsByOrdinal,
+                    aggregatePatternsByOrdinal,
+                    objectCreationsByOrdinal,
+                    enumConstructorsByOrdinal,
+                    enumCallsByOrdinal,
+                    enumValuesByOrdinal,
+                    directCallsByOrdinal,
+                    fieldAccessesByOrdinal,
+                    memberCallsByOrdinal,
+                    out var memberText))
+            {
+                return false;
+            }
+
+            renderedMembers.Add(publishedMembers.Count == memberPatterns.Count
+                ? $"{publishedMembers[index].FieldName}: {memberText}"
+                : memberText);
+        }
+
+        text = publishedMembers.Count == memberPatterns.Count
+            ? $"{targetText} {{ {string.Join(", ", renderedMembers)} }}"
+            : $"{targetText}({string.Join(", ", renderedMembers)})";
+        return true;
+    }
+
     private static bool TryRenderImportedTypedTemplateExpression(
         ImportedTemplateTypedBodyExpressionSummary expression,
         IReadOnlyDictionary<int, StarkPackageTemplateObjectCreationManifest> objectCreationsByOrdinal,
@@ -1764,6 +2133,9 @@ internal static partial class PackageImageLoader
             ImportedTemplateTypedBodyExpressionKind.Conversion => expression.Type is { } conversionType && expression.Args.Count == 1
                 ? $"({conversionType.DisplayName}){RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}"
                 : string.Empty,
+            ImportedTemplateTypedBodyExpressionKind.TryPropagation => expression.Args.Count == 1
+                ? $"try {RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}"
+                : string.Empty,
             ImportedTemplateTypedBodyExpressionKind.UnaryOperation => expression.Name is { } unaryOperator && expression.Args.Count == 1
                 ? $"{unaryOperator}{RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}"
                 : string.Empty,
@@ -1781,6 +2153,9 @@ internal static partial class PackageImageLoader
                 memberCallsByOrdinal),
             ImportedTemplateTypedBodyExpressionKind.Conditional => expression.Args.Count == 3
                 ? $"{RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)} ? {RenderImportedTypedTemplateExpression(expression.Args[1], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)} : {RenderImportedTypedTemplateExpression(expression.Args[2], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)}"
+                : string.Empty,
+            ImportedTemplateTypedBodyExpressionKind.Comptime => expression.Args.Count == 1
+                ? $"comptime ({RenderImportedTypedTemplateExpression(expression.Args[0], objectCreationsByOrdinal, enumConstructorsByOrdinal, enumCallsByOrdinal, enumValuesByOrdinal, directCallsByOrdinal, fieldAccessesByOrdinal, memberCallsByOrdinal)})"
                 : string.Empty,
             ImportedTemplateTypedBodyExpressionKind.TypeLayout => expression.Type is not null && expression.Name is not null
                 ? $"{expression.Name}({expression.Type.DisplayName})"
@@ -2093,12 +2468,35 @@ internal static partial class PackageImageLoader
             return false;
         }
 
+        if (statement.ConditionPattern is not null
+            && !CanOmitBridgeBodyText(statement.ConditionPattern))
+        {
+            return false;
+        }
+
         return (statement.BodyStatements ?? []).All(CanOmitBridgeBodyText)
             && (statement.InitializerStatements ?? []).All(CanOmitBridgeBodyText)
             && (statement.IteratorStatements ?? []).All(CanOmitBridgeBodyText)
             && (statement.SwitchCases ?? []).All(static switchCase => (switchCase.Statements ?? []).All(CanOmitBridgeBodyText))
             && (statement.ThenStatements ?? []).All(CanOmitBridgeBodyText)
             && (statement.ElseStatements ?? []).All(CanOmitBridgeBodyText);
+    }
+
+    private static bool CanOmitBridgeBodyText(StarkPackageTypedTemplatePatternManifest pattern)
+    {
+        if (pattern.Expression is not null
+            && !CanOmitBridgeBodyText(pattern.Expression))
+        {
+            return false;
+        }
+
+        if (pattern.EndExpression is not null
+            && !CanOmitBridgeBodyText(pattern.EndExpression))
+        {
+            return false;
+        }
+
+        return (pattern.Members ?? []).All(CanOmitBridgeBodyText);
     }
 
     private static bool CanOmitBridgeBodyText(StarkPackageTypedTemplateExpressionManifest expression)
@@ -2459,7 +2857,9 @@ internal static partial class PackageImageLoader
             DisjointParameterGroups: function.DisjointParameterGroups,
             OverlapParameterGroups: function.OverlapParameterGroups,
             SameParameterGroups: function.SameParameterGroups,
-            ComptimeGenericParameters: function.ComptimeGenericParameters);
+            ComptimeGenericParameters: function.ComptimeGenericParameters,
+            TypeParameterConstraints: ConvertTypeParameterConstraints(function.TypeParameterConstraints),
+            ThreadSafetyLawPredicates: ConvertThreadSafetyLawPredicates(function.ThreadSafetyLawPredicates));
     }
 
     private static StarkPackageTypeManifest ConvertTypeManifest(StarkPackageTypedTypeManifest type)
@@ -2474,7 +2874,8 @@ internal static partial class PackageImageLoader
                     field.Name,
                     RenderTypeReference(field.Type),
                     field.Visibility,
-                    field.ExplicitOffsetBytes))
+                    field.ExplicitOffsetBytes,
+                    ConvertThreadSafetyLawAttributes(field.ThreadSafetyLawAttributes)))
                 .ToArray(),
             type.GenericParameters,
             type.PrimaryConstructorParameters?.Select(parameter => new StarkPackageParameterManifest(
@@ -2526,7 +2927,9 @@ internal static partial class PackageImageLoader
                 DisjointParameterGroups: method.DisjointParameterGroups,
                 OverlapParameterGroups: method.OverlapParameterGroups,
                 SameParameterGroups: method.SameParameterGroups,
-                ComptimeGenericParameters: method.ComptimeGenericParameters))
+                ComptimeGenericParameters: method.ComptimeGenericParameters,
+                TypeParameterConstraints: ConvertTypeParameterConstraints(method.TypeParameterConstraints),
+                ThreadSafetyLawPredicates: ConvertThreadSafetyLawPredicates(method.ThreadSafetyLawPredicates)))
                 .ToArray(),
             type.Destructor,
             BackendOptimizationMode: type.BackendOptimizationMode,
@@ -2538,7 +2941,52 @@ internal static partial class PackageImageLoader
                 associatedType.Name,
                 associatedType.TargetType is null ? null : RenderTypeReference(associatedType.TargetType)))
                 .ToArray(),
-            ComptimeGenericParameters: type.ComptimeGenericParameters);
+            ComptimeGenericParameters: type.ComptimeGenericParameters,
+            IsDynTrait: type.IsDynTrait,
+            ThreadSafetyLawAttributes: ConvertThreadSafetyLawAttributes(type.ThreadSafetyLawAttributes));
+    }
+
+    private static IReadOnlyList<StarkPackageThreadSafetyLawPredicateManifest>? ConvertThreadSafetyLawPredicates(
+        IReadOnlyList<StarkPackageTypedThreadSafetyLawPredicateManifest>? predicates)
+    {
+        return predicates is not { Count: > 0 }
+            ? null
+            : predicates
+                .Select(predicate => new StarkPackageThreadSafetyLawPredicateManifest(
+                    predicate.LawName,
+                    RenderTypeReference(predicate.Type)))
+                .ToArray();
+    }
+
+    private static IReadOnlyList<StarkPackageTypeParameterConstraintManifest>? ConvertTypeParameterConstraints(
+        IReadOnlyList<StarkPackageTypedTypeParameterConstraintManifest>? constraints)
+    {
+        return constraints is not { Count: > 0 }
+            ? null
+            : constraints
+                .Select(constraint => new StarkPackageTypeParameterConstraintManifest(
+                    constraint.ParameterName,
+                    constraint.BoundTraits
+                        .Select(RenderTypeReference)
+                        .ToArray()))
+                .ToArray();
+    }
+
+    private static IReadOnlyList<StarkPackageThreadSafetyLawAttributeManifest>? ConvertThreadSafetyLawAttributes(
+        IReadOnlyList<StarkPackageTypedThreadSafetyLawAttributeManifest>? attributes)
+    {
+        return attributes is not { Count: > 0 }
+            ? null
+            : attributes
+                .Select(attribute => new StarkPackageThreadSafetyLawAttributeManifest(
+                    attribute.Kind,
+                    attribute.LawName,
+                    attribute.Condition is { } condition
+                        ? new StarkPackageThreadSafetyLawPredicateManifest(
+                            condition.LawName,
+                            RenderTypeReference(condition.Type))
+                        : null))
+                .ToArray();
     }
 
     private static StarkPackageGlobalManifest ConvertGlobalManifest(StarkPackageTypedGlobalManifest global)
@@ -2574,6 +3022,10 @@ internal static partial class PackageImageLoader
             "fixedarray" when initializer.Elements is { Count: > 0 } =>
                 $"{{ {string.Join(", ", initializer.Elements.Select(RenderConstantInitializer))} }}",
             "fixedarray" => "{ }",
+            "namedaggregate" =>
+                $"comptime {{ stack {RenderTypeReference(initializer.Type)} value; return value; }}",
+            "enumaggregate" =>
+                $"comptime {{ stack {RenderTypeReference(initializer.Type)} value; return value; }}",
             _ => "0"
         };
     }
